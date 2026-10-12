@@ -5,11 +5,17 @@ cmake-build-*/
 *.elf
 *.hex
 *.bin
+*.uf2
+*.uf2.sha256
 *.map
 node_modules/
 .svelte-kit/
 dist/
+output/
+.playwright-cli/
 target/
+.build/
+.swiftpm/
 .env
 .env.*
 !.env.example
@@ -18,3 +24,7 @@ target/
 *.kicad_sch.lck
 *.kicad_pcb.lck
 *-backups/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/corehid/
+src-tauri/resources/firmware/*.uf2
