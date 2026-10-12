@@ -1,0 +1,17 @@
+{
+  "name": "@opensimgear/cockpit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "simulator:build": "swift build --package-path simulator/macos",
+    "simulator:test": "swift test --package-path simulator/macos && node --test simulator/bridge.test.mjs",
+    "simulator:verify": "mkdir -p simulator/.build/module-cache && xcrun swiftc -module-cache-path simulator/.build/module-cache simulator/verify-hid.swift -o simulator/.build/verify-hid && simulator/.build/verify-hid",
+    "pico:build": "node simulator/pico/build.mjs",
+    "pico:test": "node simulator/pico/test.mjs && node --test simulator/pico-bridge.test.mjs simulator/pico-integration.test.mjs simulator/pico-hid-names.test.mjs simulator/pico-hid-names-helper.test.mjs"
+  },
+  "dependencies": {
+    "serialport": "13.0.0"
+  },
+  "packageManager": "pnpm@11.25.0"
+}
