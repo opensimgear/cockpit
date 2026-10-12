@@ -1,24 +1,27 @@
-# OpenSimGear cockpit
+# OpenSimGear Cockpit
 
-Desktop configuration and HID test application built with **Tauri 2, Rust, Svelte 5, TypeScript, and Vite**. The interface retains the website's green and slate palette and light/dark logos.
+Desktop application for discovering OpenSimGear gateways, registering controllers and viewing HID inputs, built with Tauri 2, Rust, Svelte 5, TypeScript and Vite. It supports a physical Pico W USB simulator and the STM32 [device-gateway](https://github.com/opensimgear/device-gateway) prototype through separate native serial adapters.
 
-- **Gateways**: one card per connected gateway, with its device inventory and Add/Delete controls.
-- **Devices**: the device inventory; selecting a card opens its dedicated configuration and HID input workspace.
-- **Topology**: the gateway and module connection map.
+## Current implementation
 
-## Current behavior
+The interface provides gateway inventory, device search/filtering, controller registration, a connection map, dedicated device detail/input pages, activity history and saved appearance preferences. Compatible gateways are detected automatically; only one gateway backend is selected at a time. Pending controller changes become active through an explicit USB layout reconnect.
 
-Cockpit supports device discovery and selection, search and filtering, setup ownership, separate settings drafts with explicit Apply & save/Discard, simulated input controls, adding/removing modules, explicit USB layout reconnects, activity history, and saved appearance preferences.
+| Backend | Implemented behavior | Validation as of 2026-10-12 |
+| --- | --- | --- |
+| Pico W simulator | Simulated inputs published as real USB HID controllers; add/remove modules, setup claims, settings drafts with Apply & save/Discard, automatic start and reconnect | Physical macOS Tauri and browser tests passed, including real inputs, controller names, four → five → four enumeration, neutralization and serial release |
+| STM32 CAN gateway | CAN device discovery, Add controller, persistent registry Apply layout, offline slot retention and read-only input views | Rust/frontend tests, C formatter conformance, cross-firmware integration and macOS app/DMG builds passed; physical STM32 USB/CAN acceptance remains pending |
 
-A **Pico W USB gateway** publishes simulated CAN module controls as real USB HID joystick interfaces. The desktop app communicates through a native Rust serial service; it does not require a Node server or HTTP bridge at runtime. The service owns bounded protocol requests, firmware identity checks, heartbeat/liveness handling, setup leases, and reconnection to the same board. On macOS, Rust applies individual controller names directly through IOKit. The Pico backend requires no Apple virtual-HID entitlement or signing identity. Follow the [Pico flashing and setup instructions](simulator/pico/README.md).
+The **Pico** supports up to eight joystick interfaces, each with 32 buttons and six axes. Settings and registrations remain in board RAM until reset. Rust owns bounded serial requests, protocol checks, UI liveness, setup leases and reconnection to the same board. On macOS, IOKit applies individual controller names directly from Rust. App exit or failed UI liveness neutralizes simulated inputs and releases serial access.
 
-Pico settings and registration stay in board RAM until reset. Physical CAN/sensors, persistent configuration, production protocol adapters, firmware update automation, and usable SimHub profiles remain pending. Axis calibration remains a visual demo.
+The **STM32 gateway** supports up to ten retained controller slots, each with 128 buttons, four hats and eight axes. Add controller stages discovered capabilities; Apply layout saves the registry in gateway flash, rebuilds USB HID and reconnects by gateway UID. Offline or stale modules keep neutral slots. Direct module USB takes input ownership and leaves the gateway slot neutral. Physical HID continues independently when Cockpit closes and releases serial access. Device settings writes and simulated input controls are unavailable for this backend.
 
-Serial access opens automatically after a compatible Pico is detected and its handshake succeeds. Application exit, lost UI liveness, or serial failure neutralizes inputs and releases the connection. USB controller interfaces remain enumerated until a physical disconnect or explicit layout reconnect. Setup sessions are independent of input testing.
+STM32 discovery requires OpenSimGear manufacturer metadata, a product name containing `gateway`, a valid 24-hex UID and a bounded protocol-2 snapshot handshake. Pico discovery requires experimental VID/PID `cafe:4010`, an `OSG-PICO-` serial and a compatible handshake. macOS cu/tty aliases are deduplicated. Controller registration and layout changes remain explicit after automatic discovery.
 
-## Run the desktop app
+The STM32 module/gateway wire transport is **private CAN FD v2, not Cyphal**. Pico keeps its separate simulator protocol. Runtime module profiles/calibration, output sessions, firmware update/recovery UI, SimHub profiles, direct USB/CAN inventory merging and simultaneous multi-gateway routing remain future work. Windows/Linux physical serial/HID acceptance and distribution signing/notarization are also pending.
 
-Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system, Node.js 20.19+ or 22.12+, and pnpm. Rust **1.90.0** is pinned in `rust-toolchain.toml` for the current Tauri dependencies. Desktop preparation bundles the Pico firmware; the packaged app needs neither Node nor a Swift compiler.
+## Run and build
+
+Install the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), Node.js 20.19+ or 22.12+, and the pnpm version declared in `package.json`. Rust 1.90.0 is pinned in `rust-toolchain.toml`.
 
 From this repository:
 
@@ -27,9 +30,7 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` prepares the firmware resource, runs Tauri, and opens the desktop window. Tauri supplies `TAURI_ENV_PLATFORM`, so its Vite UI server uses `127.0.0.1:1420` and installs no Node gateway bridges. Hardware requests go through native IPC.
-
-To validate and package:
+`pnpm dev` prepares the bundled Pico firmware, launches Tauri and serves the development UI on `127.0.0.1:1420`. Desktop hardware requests use native Rust IPC. The installed app needs neither Node nor a Swift compiler.
 
 ```sh
 pnpm check
@@ -38,75 +39,59 @@ pnpm native:test
 pnpm build
 ```
 
-`pnpm build` prepares desktop resources and runs `tauri build`; packaged artifacts are written under `src-tauri/target/release/bundle/`. Local macOS development can use ad-hoc signing without an Apple identity for the Pico backend. Distribution signing and notarization are separate release work. Windows/Linux device access and packaging have not been verified on physical machines.
+`pnpm build` prepares resources and packages the app under `src-tauri/target/release/bundle/`. Local macOS builds can use ad-hoc signing; distribution signing is separate release work. Some serial tests use process-wide state; run `pnpm native:test -- --test-threads=1` when reproducing the recorded serial validation.
 
-### Browser development fallback
-
-The browser development app remains available explicitly:
+### Browser development
 
 ```sh
 pnpm web:dev
 ```
 
-Open `http://127.0.0.1:5173/`. This mode retains the local Vite/Node Pico serial bridge. Do not connect the same Pico from desktop and browser simultaneously. `pnpm ui:build` and `pnpm web:build` build frontend assets only; `pnpm preview` serves those assets with the Pico browser bridge. The normal desktop build and installed app use Rust native services.
+Open `http://127.0.0.1:5173/`. This mode uses the Vite/Node Pico bridge. STM32 CAN gateway access uses the desktop app. Avoid simultaneous desktop/browser access to the same Pico. `pnpm ui:build` and `pnpm web:build` build frontend assets; `pnpm preview` serves them with the Pico bridge.
 
-### Pico W USB simulator
+### Pico firmware and independent HID checks
 
 ```sh
 pnpm pico:build
 pnpm pico:test
-```
-
-The firmware build produces `simulator/pico/build/osg-pico-gateway.uf2` and a copy in `public/firmware/`. Cockpit's **Flashing instructions** opens its local guide. In the desktop guide, **Download gateway firmware** saves the bundled UF2 to Downloads without overwriting an existing file; copy the saved file onto RPI-RP2 yourself. Rebuild the desktop app after a firmware build to refresh its bundled image. No build or download command flashes a connected board.
-
-Refresh ports, **Connect Pico**, then **Start gateway**. Select a module and open **Inputs**. Use **Add device** or **Remove module**, followed by **Reconnect gateway** and **Start gateway**, to test a changed USB layout. Up to eight independent interfaces can each expose 32 buttons and six axes. Offline modules retain neutral slots; an empty inventory leaves CDC serial available. Logical module identities remain stable while compact interface numbers can change after removal.
-
-A physical Pico W was tested with the earlier browser bridge on **2026-10-12**, including real buttons/axes, addition/removal of a fifth controller, neutralization, and recovery across USB layout reconnects. Firmware 0.1.1 was then flashed and its individual OSG names verified after the automatic reboot. These historical observations are recorded in [the Pico acceptance notes](simulator/pico/README.md#hardware-acceptance-check) and `output/pico-hardware/`. They establish firmware/browser behavior; native Tauri acceptance is recorded separately.
-
-### Independent simulator checks
-
-```sh
 pnpm pico:verify --watch --timeout 20
 ```
 
-The IOHIDManager verifier prints OS enumeration, descriptors, raw reports, and parsed elements for Pico controllers. It observes devices independently of Cockpit state. Host C sanitizer tests, firmware/UF2 checks, Rust/Node transport tests, and UI checks do not substitute for physical device tests. The Pico's `cafe:4010` identifiers and simulator wire protocol are experimental; production USB allocation and protocol integration remain pending.
+The Pico build produces `simulator/pico/build/osg-pico-gateway.uf2` and a copy in `public/firmware/`. Rebuild the desktop app to refresh its bundled image. The flashing guide exports that fixed UF2 to Downloads without overwriting an existing file; copy it to RPI-RP2 manually. Build/export commands do not flash a connected board. See the [Pico setup guide](simulator/pico/README.md) for SDK/toolchain preparation and lifecycle behavior.
 
-### Native acceptance
+`pico:verify` uses an independent macOS IOHIDManager observer to inspect actual OS descriptors, reports and parsed elements. It requires Apple's developer tools; it is a development verifier rather than an installed-app dependency.
 
-The macOS Tauri app was tested on **2026-10-12** with the physical Pico W and an independent IOHID observer. Individual controller names, shifter/panel buttons, all three pedal axes, real **four → five → four** controller enumeration, held-input neutralization on removal and app quit, and serial release passed. The final release app also delivered shifter inputs from bundled assets with its development server stopped, and exported the bundled firmware to Downloads with the expected SHA-256. The UI now uses separate gateway, inventory, and device-detail pages.
+## Validation records
 
-The Pico-only release app and DMG built successfully; **22 Rust tests**, **11 frontend transport/guide tests**, Pico firmware/transport checks, formatting, and Svelte checks passed. See the [native hardware and build report](docs/verification/2026-10-12-tauri-pico.md). Raw logs, build records, and screenshots remain local in the ignored `output/tauri-hardware/` directory. Windows/Linux hardware behavior requires its own platform checks.
+The [native Pico acceptance report](docs/verification/2026-10-12-tauri-pico.md) records actual controller naming, shifter/panel buttons, pedal axes, controller addition/removal, held-input neutralization, serial release, packaged execution without a development server and bundled firmware export. Earlier browser acceptance is recorded in the [Pico guide](simulator/pico/README.md#hardware-acceptance-check).
 
-## Layout
+The [STM32 integration report](docs/verification/2026-10-12-stm32-can.md) records 35 Rust tests, 24 frontend transport/discovery/guide tests, Svelte validation, frontend and macOS packaging builds, C-generated fixtures and cross-firmware software checks. Its browser scenario used simulated responses. No assembled STM32 gateway/module chain was tested. Counts describe that recorded run; host checks do not establish physical or cross-platform acceptance.
 
-- src/: Svelte/TypeScript interface.
-- [simulator/pico/](simulator/pico/README.md): Pico W firmware, C protocol tests, UF2 build, browser bridge fallback, and flashing instructions.
-- `simulator/verify-hid.swift`: independent macOS observer for real Pico HID inputs.
-- [src-tauri/](src-tauri/README.md): Tauri shell, native Rust gateway services, capabilities, and bundled resources.
-- [integration-profiles/](integration-profiles/README.md): versioned SimHub profiles; initial integration is Windows-specific.
+Raw Pico logs, screenshots and packaging evidence are retained locally in ignored `output/` directories.
 
-## Version-one scope
+## Repository layout
 
-Configure connected modules through direct USB serial or any of multiple USB-connected gateways. Present one device inventory keyed by stable module identity, show current and last-known gateway attachment separately, and resolve actions through current routes. Each gateway owns a separate single CAN chain through two parallel sockets; node IDs are scoped by stable gateway identity, not globally unique. Merge direct USB/CAN sightings, report duplicate identities across independent chains, and invalidate routes and pending sessions when their gateway disconnects or restarts. Module moves retain logical identity and module settings; destination registration and affected gateway HID layout changes remain explicit, with no guarantee that game bindings follow the move.
+- `src/`: Svelte/TypeScript interface and transport/discovery tests.
+- [src-tauri/](src-tauri/README.md): Rust gateway services, IPC permissions and bundled resources.
+- [simulator/pico/](simulator/pico/README.md): Pico firmware, lifecycle tests, build and flashing instructions.
+- `simulator/verify-hid.swift`: independent macOS HID observer.
+- [integration-profiles/](integration-profiles/README.md): placeholder for future SimHub profiles.
+- `docs/verification/`: recorded software and hardware acceptance.
 
-Discover capabilities, register/replace modules explicitly, preserve compatible settings, and require fresh calibration for replacement hardware where applicable. Use explicit Apply/Save, a single configuration writer, and clear USB reconnect notices for layout changes. Offline backup/restore is deferred.
+## Planned production scope
 
-Open device serial ports only during an explicit setup/test session and release them afterward so SimHub can access them. Firmware updates are user-initiated through direct USB, with model/hardware checks and interrupted-update recovery; a debug recovery path remains required. No automatic flashing.
+A future inventory will merge direct USB and CAN sightings by stable module identity across independent gateways. Routes will bind gateway/module identity to the current session and diagnose duplicate identities. Moving a module will preserve its logical identity and device settings while destination registration and USB layout changes remain explicit; game bindings across different gateway USB identities are not guaranteed.
 
-End configuration sessions when a route changes, leave drafts uncommitted, and require a fresh writer claim and explicit Apply/Save on the new route. Cached gateway inventory outside a serial session is last-known state, not live reachability.
-
-Use a compatible pinned protocol release through Rust/TypeScript adapters and shared conformance vectors. Builds on all three operating systems do not substitute for testing real device access on each platform.
+Runtime configuration will use one writer, separate drafts and explicit Apply/Save with interrupted-write protection. Calibration, replacement compatibility and firmware updates require model/hardware checks and recovery paths. Output sessions need freshness and ownership rules. Canonical Cyphal application definitions and compatible host adapters remain to be implemented. The current STM32 adapter provides registry management rather than module configuration over CAN.
 
 ## Related repositories
 
-- [Protocol](https://github.com/opensimgear/protocol): shared definitions and compatibility rules.
-- [Firmware common](https://github.com/opensimgear/firmware-common): reusable C implementation.
-- [Device template](https://github.com/opensimgear/device-template): new-device scaffold with planned hello-world firmware and starter KiCad board.
-- [Cockpit](https://github.com/opensimgear/cockpit): desktop configuration application.
-- [Website](https://github.com/opensimgear/opensimgear.github.io): system architecture and user documentation.
+- [Device gateway](https://github.com/opensimgear/device-gateway): STM32 USB/CAN gateway firmware and electronics.
+- [Device template](https://github.com/opensimgear/device-template): generic Rev B module, build-time control profiles and production/home-milling layouts.
+- [Firmware common](https://github.com/opensimgear/firmware-common): shared C acquisition, profiles, USB support and dependency pins.
+- [Protocol](https://github.com/opensimgear/protocol): private v2 contracts, reference codec, conformance vectors and future production definitions.
+- [Website](https://github.com/opensimgear/opensimgear.github.io): architecture, guides, equipment database and calculators.
 
 ## Licensing
 
-License selection is pending. No license grant is implied by this scaffold. Firmware, mechanical design, and electronics will each need documented license coverage before releases and any public USB identifier application.
-
-Compatible Pico gateways connect and start automatically on launch and USB discovery. Discovery requires VID `cafe`, PID `4010`, and an `OSG-PICO-` serial; the protocol handshake still verifies compatibility. Matching macOS cu/tty paths are deduplicated, preferring the call-out cu path. Multiple candidates are tried automatically in stable path order; incompatible or unavailable attachments are skipped. Automatic start waits during setup claims, pending controller changes, or when no registered modules are online. The gateway card is shown only while connected, with its module inventory and Add/Delete controls. Failed attachments can be retried or unplugged and reconnected.
+OpenSimGear license selection remains pending; no license grant is implied for newly authored application or firmware code. Upstream components retain their own licenses. Production USB allocation and release licensing remain pending.

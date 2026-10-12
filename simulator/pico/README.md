@@ -20,12 +20,12 @@ pnpm install
 pnpm dev
 ```
 
-1. In the desktop window, select **Pico W · USB** as the gateway backend. The [desktop setup](../../README.md#run-the-desktop-app) lists Tauri/Rust build prerequisites. For the browser fallback, run `pnpm web:dev` and open `http://127.0.0.1:5173/`.
-2. Refresh the USB ports, choose the Pico's `/dev/tty.usbmodem…` or `/dev/cu.usbmodem…` port, and click **Connect Pico**. The native service verifies the firmware identity and protocol before accepting the connection.
-3. Click **Start gateway**. Select a module and open **Inputs**. Buttons toggle held states; sliders send unsigned 16-bit axes. Panel encoder directions are exposed as buttons. Physical USB HID applications can read these reports while Cockpit holds the separate CDC interface.
+1. Cockpit discovers compatible gateways automatically. A Pico is recognized by `cafe:4010`, its `OSG-PICO-` serial and a verified protocol handshake. The [desktop setup](../../README.md#run-and-build) lists Tauri/Rust prerequisites. For the browser fallback, run `pnpm web:dev` and open `http://127.0.0.1:5173/`.
+2. With the Pico selected, automatic startup waits for setup claims to end and any pending layout change to be applied. Explicit port refresh, connection and start controls remain available for recovery. macOS discovery prefers `/dev/cu.usbmodem…` over its duplicate tty alias.
+3. Select a module and open **Inputs**. Buttons toggle held states; sliders send unsigned 16-bit axes. Panel encoder directions are exposed as buttons. Physical USB HID applications can read these reports while Cockpit holds the separate CDC interface.
 4. Open a setup session to edit a label, debounce, or inversion, then use **Apply & save**. End the setup session before changing the layout or disconnecting. HID input tests do not need a setup session.
 
-The default inventory is a three-button shifter, three-axis pedal set, sixteen-button panel, and an offline one-axis handbrake. Offline modules keep their published interface and emit neutral inputs. **Stop gateway** also neutralizes reports while leaving the USB interfaces enumerated. **Disconnect Pico** stops the simulator and releases serial access. Unplugging, closing serial, closing Cockpit or losing its UI connection, or a ten-second firmware command timeout stops inputs; connect/start explicitly to resume.
+The default inventory is a three-button shifter, three-axis pedal set, sixteen-button panel, and an offline one-axis handbrake. Offline modules keep their published interface and emit neutral inputs. **Stop gateway** also neutralizes reports while leaving the USB interfaces enumerated. **Disconnect Pico** stops the simulator and releases serial access. Unplugging, closing serial, closing Cockpit or losing its UI connection, or a ten-second firmware command timeout stops inputs. Cockpit can rediscover/restart the board when its normal automatic-start conditions are met; failed discovery can be retried explicitly.
 
 ## Add and remove modules
 
@@ -33,7 +33,7 @@ Use **Add device** to choose a type, unique stable module identity, name, button
 
 Use **Remove module** in the inspector to remove a registration. Its currently published inputs are neutralized immediately. Reconnect to remove its USB HID interface. Removing a pending module cancels its registration; removing the final module leaves a valid CDC-only gateway from which new modules can be added.
 
-**Reconnect gateway** acknowledges the command, disconnects USB, rebuilds its descriptors, then reconnects with the new layout. Cockpit reopens the same board, verifies its identity, rediscovers the inventory, and releases old setup claims and pending input jobs. Click **Start gateway** afterward. The USB port path can change across re-enumeration. Check game bindings: logical module IDs stay stable, but compact USB interface numbers can change when modules are removed.
+**Reconnect gateway** acknowledges the command, disconnects USB, rebuilds its descriptors, then reconnects with the new layout. Cockpit reopens the same board, verifies its identity, rediscovers the inventory, and releases old setup claims and pending input jobs. Automatic startup resumes when registered modules are online and setup claims are released; **Start gateway** remains available explicitly. The USB port path can change across re-enumeration. Check game bindings: logical module IDs stay stable, but compact USB interface numbers can change when modules are removed.
 
 All interfaces share the Pico's board-specific USB serial, `OSG-PICO-…`. Firmware discovery exposes each logical module ID and its `hidInterface` number. The `OSG-SIM-…` module serial in the protocol is a logical identity, not an independent USB serial.
 
