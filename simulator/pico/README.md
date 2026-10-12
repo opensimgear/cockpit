@@ -69,7 +69,7 @@ pnpm native:test
 pnpm transport:test
 pnpm check
 pnpm build
-pnpm simulator:verify --watch --timeout 20
+pnpm pico:verify --watch --timeout 20
 ```
 
 `pico:test` runs host C protocol/lifecycle/report/descriptor tests with address and undefined-behavior sanitizers, UF2 conversion tests, browser transport tests, and bridge-to-real-C-protocol integration tests. `native:test` checks the Rust serial service separately; `transport:test` checks UI IPC routing and the browser fallback. Mock serial transport tests do **not** establish physical USB enumeration or report delivery. The independent macOS IOHID verifier observes actual OS devices and reports, including Pico joystick interfaces.

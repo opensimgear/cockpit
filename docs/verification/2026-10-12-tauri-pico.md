@@ -51,4 +51,10 @@ Raw evidence remains in the ignored local directory `output/tauri-hardware/`; th
 - `final-release-hid-events.ndjson`: standalone release shifter press/release.
 - `cockpit-release.png`, `release-final-ax.txt`, and `firmware-export.png`: standalone UI, final accessibility state, and successful native firmware export.
 
-These observations establish the tested macOS Pico workflows. Windows/Linux hardware behavior and Apple-authorized CoreHID virtual controller creation remain unverified. Inversion, a CDC-only empty inventory, serial timeout, and physical unplug/replug recovery require separate hardware checks. Automated protocol tests do not substitute for those observations.
+These observations establish the tested macOS Pico workflows. Windows/Linux hardware behavior remains unverified. Inversion, a CDC-only empty inventory, serial timeout, and physical unplug/replug recovery require separate hardware checks. Automated protocol tests do not substitute for those observations.
+
+## Pico-only follow-up
+
+The Pico-only desktop build was checked on the same date. The simulator selection was removed, and bundled resources contain only firmware and resource documentation. The standalone app connected to the same Pico, discovered the original four modules, and started with neutral shifter inputs and released setup ownership. The screenshot remains local at `output/pico-only/cockpit.png`.
+
+Validation passed: 22 Rust tests, 11 frontend transport/guide tests, 41 Pico bridge/naming/integration tests, two UF2 tests, and the C protocol/lifecycle/report/descriptor checks. Svelte reported zero errors and warnings, formatting passed, and both macOS app and DMG rebuilt successfully. The narrowed independent HID observer enumerated the four Pico controllers with their individual OSG names. This follow-up did not repeat the full physical button/axis/add/remove sequence recorded above.

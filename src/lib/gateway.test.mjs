@@ -47,13 +47,6 @@ test('desktop Pico requests use native IPC with the complete request and stable 
   ]);
 });
 
-test('desktop CoreHID requests use its native supervisor', async () => {
-  const api = transport();
-  await api.gatewayRequest({ command: 'status' }, 'corehid');
-  assert.equal(api.calls[0].command, 'corehid_gateway');
-  assert.ok(api.calls.every(call => call.kind === 'invoke'));
-});
-
 test('native gateway command errors preserve returned state for UI reconciliation', async () => {
   const api = transport({ result: { ok: false, state, error: 'Setup access is already claimed.' } });
   await assert.rejects(api.gatewayRequest({ command: 'claim', moduleId: 'OSG-PD-01' }), error => {
@@ -72,20 +65,19 @@ test('native IPC failure surfaces an error without falling back to HTTP', async 
 
 test('claim release during desktop unload uses IPC and the same owner ID', async () => {
   const api = transport();
-  api.releaseOnExit('OSG-SQ-01', 'pico');
+  api.releaseOnExit('OSG-SQ-01');
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(api.calls, [{ kind: 'invoke', command: 'pico_gateway', args: { request: { command: 'release', moduleId: 'OSG-SQ-01', clientId: 'test-client-uuid' } } }]);
 });
 
-test('explicit browser mode retains both bridge routes and unload keepalive', async () => {
+test('explicit browser mode uses the Pico bridge and unload keepalive', async () => {
   const api = transport({ desktop: false });
-  await api.gatewayRequest({ command: 'ports' }, 'pico');
-  await api.gatewayRequest({ command: 'status' }, 'corehid');
-  api.releaseOnExit('OSG-SQ-01', 'pico');
-  assert.deepEqual(api.calls.map(call => call.url), ['/api/pico-gateway/', '/api/gateway/', '/api/pico-gateway/']);
+  await api.gatewayRequest({ command: 'ports' });
+  api.releaseOnExit('OSG-SQ-01');
+  assert.deepEqual(api.calls.map(call => call.url), ['/api/pico-gateway/', '/api/pico-gateway/']);
   assert.ok(api.calls.every(call => call.kind === 'fetch'));
-  assert.equal(api.calls[2].options.keepalive, true);
-  assert.deepEqual(JSON.parse(api.calls[2].options.body), { command: 'release', moduleId: 'OSG-SQ-01', clientId: 'test-client-uuid' });
+  assert.equal(api.calls[1].options.keepalive, true);
+  assert.deepEqual(JSON.parse(api.calls[1].options.body), { command: 'release', moduleId: 'OSG-SQ-01', clientId: 'test-client-uuid' });
 });
 
 test('desktop links open the packaged guide or external browser without navigating the main app', async () => {

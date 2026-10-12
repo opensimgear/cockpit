@@ -1,15 +1,13 @@
 // Independent observer: reads the operating system's HID devices and events.
 // Compile: xcrun swiftc -module-cache-path simulator/.build/module-cache simulator/verify-hid.swift -o simulator/.build/verify-hid
 // List:    simulator/.build/verify-hid
-// Watch:   simulator/.build/verify-hid --watch --timeout 15 [--serial OSG-SIM-OSG-SQ-0042]
+// Watch:   simulator/.build/verify-hid --watch --timeout 15 [--serial OSG-PICO-...]
 // Pico:    use its OSG-PICO-... gateway serial; usbInterfaceNumber maps each HID to discovery's hidInterface.
 import Foundation
 import IOKit
 import IOKit.hid
 import Darwin
 
-private let simulatorVendor = 0x1209
-private let simulatorProducts = 0xF101...0xF105
 private let picoVendor = 0xCAFE
 private let picoProduct = 0x4010
 
@@ -29,16 +27,15 @@ private func registryID(_ device: IOHIDDevice) -> UInt64 {
     return id
 }
 
-private func isSimulator(_ device: IOHIDDevice, serial: String?) -> Bool {
+private func isPico(_ device: IOHIDDevice, serial: String?) -> Bool {
     guard let vendor = property(device, kIOHIDVendorIDKey) as? NSNumber,
           let product = property(device, kIOHIDProductIDKey) as? NSNumber,
           let deviceSerial = property(device, kIOHIDSerialNumberKey) as? String else { return false }
-    let coreHID = vendor.intValue == simulatorVendor && simulatorProducts.contains(product.intValue)
     let pico = vendor.intValue == picoVendor && product.intValue == picoProduct &&
         deviceSerial.hasPrefix("OSG-PICO-") &&
         (property(device, kIOHIDPrimaryUsagePageKey) as? NSNumber)?.intValue == 1 &&
         (property(device, kIOHIDPrimaryUsageKey) as? NSNumber)?.intValue == 4
-    return (coreHID || pico) && (serial == nil || deviceSerial == serial)
+    return pico && (serial == nil || deviceSerial == serial)
 }
 
 private func usbMetadata(_ device: IOHIDDevice) -> [String: Any] {
@@ -124,7 +121,7 @@ private final class WatchState {
     init(serial: String?) { self.serial = serial }
 
     func matched(_ device: IOHIDDevice) {
-        guard isSimulator(device, serial: serial) else { return }
+        guard isPico(device, serial: serial) else { return }
         let id = registryID(device)
         guard monitors[id] == nil else { return }
         let monitor = DeviceMonitor(device: device, state: self)
@@ -135,7 +132,7 @@ private final class WatchState {
     }
 
     func removed(_ device: IOHIDDevice) {
-        guard isSimulator(device, serial: serial) else { return }
+        guard isPico(device, serial: serial) else { return }
         emit(["event": "removed", "registryID": registryID(device),
               "stableSerial": property(device, kIOHIDSerialNumberKey) as? String ?? ""])
         // Keep callback contexts and buffers alive until the manager has closed.
@@ -167,7 +164,7 @@ private let valueCallback: IOHIDValueCallback = { context, result, _, value in
     let state = Unmanaged<WatchState>.fromOpaque(context).takeUnretainedValue()
     let element = IOHIDValueGetElement(value)
     let device = IOHIDElementGetDevice(element)
-    guard isSimulator(device, serial: state.serial) else { return }
+    guard isPico(device, serial: state.serial) else { return }
     state.valueCount += 1
     emit(["event": "element", "registryID": registryID(device),
           "stableSerial": property(device, kIOHIDSerialNumberKey) as? String ?? "",
@@ -192,18 +189,15 @@ while !args.isEmpty {
         guard !args.isEmpty else { emit(["error": "--serial requires a HID serial number"]); exit(2) }
         selectedSerial = args.removeFirst()
     case "--help":
-        print("verify-hid [--watch] [--timeout SECONDS] [--serial SERIAL_NUMBER]\nCoreHID example: OSG-SIM-OSG-SQ-0042\nPico: OSG-PICO-... (all module interfaces share the gateway serial).\nReads simulator 0x1209:0xF101–0xF105 and Pico joystick interfaces 0xCAFE:0x4010 with OSG-PICO- serials.\nMap usbInterfaceNumber to the gateway discovery snapshot's hidInterface field.")
+        print("verify-hid [--watch] [--timeout SECONDS] [--serial SERIAL_NUMBER]\nPico: OSG-PICO-... (all module interfaces share the gateway serial).\nReads Pico joystick interfaces 0xCAFE:0x4010 with OSG-PICO- serials.\nMap usbInterfaceNumber to the gateway discovery snapshot's hidInterface field.")
         exit(0)
     default: emit(["error": "Unknown argument: \(argument)"]); exit(2)
     }
 }
 
 let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-var matching: [[String: Int]] = simulatorProducts.map {
-    [kIOHIDVendorIDKey: simulatorVendor, kIOHIDProductIDKey: $0]
-}
-matching.append([kIOHIDVendorIDKey: picoVendor, kIOHIDProductIDKey: picoProduct,
-                 kIOHIDPrimaryUsagePageKey: 1, kIOHIDPrimaryUsageKey: 4])
+let matching = [[kIOHIDVendorIDKey: picoVendor, kIOHIDProductIDKey: picoProduct,
+                 kIOHIDPrimaryUsagePageKey: 1, kIOHIDPrimaryUsageKey: 4]]
 IOHIDManagerSetDeviceMatchingMultiple(manager, matching as CFArray)
 private let state = WatchState(serial: selectedSerial)
 if watch {
@@ -220,7 +214,7 @@ guard openResult == kIOReturnSuccess else {
     exit(1)
 }
 let devices = (IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> ?? [])
-    .filter { isSimulator($0, serial: selectedSerial) }
+    .filter { isPico($0, serial: selectedSerial) }
     .sorted { registryID($0) < registryID($1) }
 emit(["event": "snapshot", "count": devices.count, "devices": devices.map(deviceDescription)])
 if watch {

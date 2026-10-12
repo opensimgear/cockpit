@@ -1,4 +1,3 @@
-mod corehid;
 mod firmware;
 mod hid_names;
 pub mod pico;
@@ -19,35 +18,22 @@ fn local_document(url: &tauri::Url) -> bool {
             && url.port() == Some(1420))
 }
 
-struct NativeGateways {
+struct NativeGateway {
     pico: Arc<pico::PicoService>,
-    corehid: Arc<corehid::CoreHidService>,
 }
 
-impl NativeGateways {
+impl NativeGateway {
     fn shutdown(&self) {
         self.pico.shutdown();
-        self.corehid.shutdown();
     }
 }
 
 #[tauri::command]
 async fn pico_gateway(
     request: Value,
-    state: tauri::State<'_, NativeGateways>,
+    state: tauri::State<'_, NativeGateway>,
 ) -> Result<Value, String> {
     let service = state.pico.clone();
-    tauri::async_runtime::spawn_blocking(move || service.request(request))
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn corehid_gateway(
-    request: Value,
-    state: tauri::State<'_, NativeGateways>,
-) -> Result<Value, String> {
-    let service = state.corehid.clone();
     tauri::async_runtime::spawn_blocking(move || service.request(request))
         .await
         .map_err(|error| error.to_string())
@@ -107,22 +93,19 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            let resources = app.path().resource_dir()?;
-            app.manage(NativeGateways {
+            app.manage(NativeGateway {
                 pico: Arc::new(pico::PicoService::new()),
-                corehid: Arc::new(corehid::CoreHidService::new(resources)),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             pico_gateway,
-            corehid_gateway,
             open_pico_flashing_guide,
             export_pico_firmware
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                window.state::<NativeGateways>().shutdown();
+                window.state::<NativeGateway>().shutdown();
                 window.app_handle().exit(0);
             }
         })
@@ -133,7 +116,7 @@ pub fn run() {
             event,
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
-            handle.state::<NativeGateways>().shutdown();
+            handle.state::<NativeGateway>().shutdown();
         }
     });
 }
