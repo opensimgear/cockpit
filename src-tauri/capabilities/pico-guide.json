@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pico-guide",
+  "description": "The bundled flashing guide can save the fixed Pico firmware image to Downloads.",
+  "windows": ["pico-guide"],
+  "permissions": ["allow-export-pico-firmware"]
+}

@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
-  plugins: [svelte(), gatewaySimulator(), picoGateway()],
+  plugins: [svelte(), ...(process.env.TAURI_ENV_PLATFORM ? [] : [gatewaySimulator(), picoGateway()])],
   clearScreen: false,
-  server: { port: 5173, strictPort: true },
+  server: { port: process.env.TAURI_ENV_PLATFORM ? 1420 : 5173, strictPort: true, watch: { ignored: ['**/src-tauri/**'] } },
   build: {
     rollupOptions: {
       input: { main: resolve(root, 'index.html'), pico: resolve(root, 'pico-flashing.html') },

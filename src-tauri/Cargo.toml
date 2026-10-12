@@ -1,0 +1,25 @@
+[package]
+name = "osg-cockpit"
+version = "0.1.0"
+description = "OpenSimGear Cockpit"
+authors = ["OpenSimGear"]
+edition = "2021"
+rust-version = "1.90"
+default-run = "osg-cockpit"
+
+[lib]
+name = "osg_cockpit"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde_json = "1"
+serialport = "4.8"
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

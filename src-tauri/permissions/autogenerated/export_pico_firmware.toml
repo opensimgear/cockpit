@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-pico-firmware"
+description = "Enables the export_pico_firmware command without any pre-configured scope."
+commands.allow = ["export_pico_firmware"]
+
+[[permission]]
+identifier = "deny-export-pico-firmware"
+description = "Denies the export_pico_firmware command without any pre-configured scope."
+commands.deny = ["export_pico_firmware"]

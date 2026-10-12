@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "dev": "pnpm desktop:prepare && tauri dev",
+    "build": "pnpm desktop:prepare && tauri build",
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "simulator:build": "swift build --package-path simulator/macos",
@@ -13,10 +13,13 @@
     "simulator:verify": "mkdir -p simulator/.build/module-cache && xcrun swiftc -module-cache-path simulator/.build/module-cache simulator/verify-hid.swift -o simulator/.build/verify-hid && simulator/.build/verify-hid",
     "pico:build": "node simulator/pico/build.mjs",
     "pico:test": "node simulator/pico/test.mjs && node --test simulator/pico-bridge.test.mjs simulator/pico-integration.test.mjs simulator/pico-hid-names.test.mjs simulator/pico-hid-names-helper.test.mjs",
+    "tauri": "tauri",
+    "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "ui:dev": "vite --host 127.0.0.1",
     "ui:build": "vite build",
     "web:dev": "vite --host 127.0.0.1",
     "web:build": "vite build",
+    "native:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "transport:test": "node --test src/lib/gateway.test.mjs src/pico-guide.test.mjs"
   },
   "dependencies": {
@@ -27,6 +30,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@tauri-apps/cli": "^2.12.2",
     "@types/node": "^24.19.2",
     "svelte-check": "^4.3.3",
     "typescript": "^5.9.3",

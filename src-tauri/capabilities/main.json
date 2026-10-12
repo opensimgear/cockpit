@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The local Cockpit window can manage gateway sessions and open its documentation.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-pico-gateway",
+    "allow-corehid-gateway",
+    "allow-open-pico-flashing-guide",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://www.opensimgear.org" },
+        { "url": "https://www.opensimgear.org/docs/architecture/desktop-cockpit/" },
+        { "url": "https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.hid.virtual.device" }
+      ]
+    }
+  ]
+}
