@@ -1,6 +1,6 @@
 # OpenSimGear Cockpit
 
-Desktop application for discovering OpenSimGear gateways, registering controllers and viewing HID inputs, built with Tauri 2, Rust, Svelte 5, TypeScript and Vite. It supports a physical Pico W USB simulator and the STM32 [device-gateway](https://github.com/opensimgear/device-gateway) prototype through separate native serial adapters.
+Desktop application for discovering OpenSimGear gateways, configuring modules, registering controllers and viewing HID inputs, built with Tauri 2, Rust, Svelte 5, TypeScript and Vite. It supports a physical Pico W USB simulator and the STM32 [device-gateway](https://github.com/opensimgear/device-gateway) prototype through separate native serial adapters. A native firmware emulator runs the production STM32 configuration and Cyphal code for development and acceptance testing.
 
 ## Current implementation
 
@@ -9,15 +9,15 @@ The interface provides gateway inventory, device search/filtering, controller re
 | Backend | Implemented behavior | Validation as of 2026-10-12 |
 | --- | --- | --- |
 | Pico W simulator | Simulated inputs published as real USB HID controllers; add/remove modules, setup claims, settings drafts with Apply & save/Discard, automatic start and reconnect | Physical macOS Tauri and browser tests passed, including real inputs, controller names, four → five → four enumeration, neutralization and serial release |
-| STM32 CAN gateway | CAN device discovery, Add controller, persistent registry Apply layout, offline slot retention and read-only input views | Rust/frontend tests, C formatter conformance, cross-firmware integration and macOS app/DMG builds passed; physical STM32 USB/CAN acceptance remains pending |
+| STM32 CAN gateway | CAN discovery, runtime control mappings/calibration, writer claims, Apply/Save/Discard, persistent registry Apply layout, offline slot retention and read-only input views | Native firmware, Rust and browser acceptance cover configuration and dynamic descriptors; physical STM32 USB/CAN acceptance remains pending |
 
 The **Pico** supports up to eight joystick interfaces, each with 32 buttons and six axes. Settings and registrations remain in board RAM until reset. Rust owns bounded serial requests, protocol checks, UI liveness, setup leases and reconnection to the same board. On macOS, IOKit applies individual controller names directly from Rust. App exit or failed UI liveness neutralizes simulated inputs and releases serial access.
 
-The **STM32 gateway** supports up to ten retained controller slots, each with 128 buttons, four hats and eight axes. Add controller stages discovered capabilities; Apply layout saves the registry in gateway flash, rebuilds USB HID and reconnects by gateway UID. Offline or stale modules keep neutral slots. Direct module USB takes input ownership and leaves the gateway slot neutral. Physical HID continues independently when Cockpit closes and releases serial access. Device settings writes and simulated input controls are unavailable for this backend.
+The **STM32 gateway** supports up to ten retained controller slots, each with 128 buttons, four hats and eight axes. A setup session edits module names, expansion banks, buttons, hats, encoders, selectors and calibrated axes. Apply activates a validated draft; Apply & save journals it on the module. Add controller stages discovered capabilities; Apply layout saves the registry in gateway flash, rebuilds USB HID and reconnects by gateway UID. A changed module profile stays neutral in its retained gateway slot until the user applies that layout. Offline or stale modules also keep neutral slots. Direct module USB takes input ownership and leaves the gateway slot neutral. Physical HID continues independently when Cockpit closes and releases serial access. Physical STM32 input views are read-only.
 
 STM32 discovery requires OpenSimGear manufacturer metadata, a product name containing `gateway`, a valid 24-hex UID and a bounded protocol-2 snapshot handshake. Pico discovery requires experimental VID/PID `cafe:4010`, an `OSG-PICO-` serial and a compatible handshake. macOS cu/tty aliases are deduplicated. Controller registration and layout changes remain explicit after automatic discovery.
 
-The STM32 generic device/gateway transport uses **Cyphal/CAN**, identified by `canProtocol=3` in the unchanged CDC v2 console. Cockpit also accepts older gateways reporting private CAN v2 and preserves the observed CAN version in its state. Pico keeps its separate simulator protocol. Runtime module profiles/calibration, output sessions, firmware update/recovery UI, SimHub profiles, direct USB/CAN inventory merging and simultaneous multi-gateway routing remain future work. Windows/Linux physical serial/HID acceptance and distribution signing/notarization are also pending.
+The STM32 generic device/gateway transport uses **Cyphal/CAN**, identified by `canProtocol=3` in the CDC v2 console. Configuration uses bounded, identity/boot/lease/epoch guarded Cyphal transfers and the module's shared direct-USB handler. Cockpit also accepts older gateways reporting private CAN v2 and preserves the observed CAN version in its state; configuration requires matching firmware with the new handler. Pico keeps its separate simulator protocol. Output sessions, firmware update/recovery UI, SimHub profiles, direct USB/CAN inventory merging and simultaneous multi-gateway routing remain future work. Windows/Linux physical serial/HID acceptance and distribution signing/notarization are also pending.
 
 ## Run and build
 
@@ -49,6 +49,28 @@ pnpm web:dev
 
 Open `http://127.0.0.1:5173/`. This mode uses the Vite/Node Pico bridge. STM32 CAN gateway access uses the desktop app. Avoid simultaneous desktop/browser access to the same Pico. `pnpm ui:build` and `pnpm web:build` build frontend assets; `pnpm preview` serves them with the Pico bridge.
 
+### Native STM32 firmware emulator
+
+From the parent workspace with adjacent `device-template`, `device-gateway`, `protocol` and `cockpit` checkouts:
+
+```sh
+python3 cockpit/simulator/native-gateway/build.py --sanitize
+CARGO_TARGET_DIR="$PWD/.research/cockpit-native-target" cargo build \
+  --manifest-path cockpit/src-tauri/Cargo.toml --bin osg-emulator-service
+OSG_NATIVE_EMULATOR="$PWD/.research/native-gateway/native-gateway" \
+  OSG_EMULATOR_SERVICE="$PWD/.research/cockpit-native-target/debug/osg-emulator-service" \
+  pnpm --dir cockpit web:dev
+```
+
+Open `http://127.0.0.1:5173/`. Cockpit automatically discovers the native gateway and module. The local browser bridge forwards to the production Rust STM32 service, which exchanges actual CDC lines with the C emulator. The emulator runs the shared configuration, flash journal, descriptor, report and Cyphal handlers. It provides deterministic contact/ADC injection, reboot and fault controls to acceptance tests; it does not enumerate an OS USB device. The desktop development app can use the same `OSG_NATIVE_EMULATOR` executable override. This override is limited to debug builds.
+
+```sh
+python3 cockpit/simulator/native-gateway/test_native.py
+pnpm --dir cockpit native:runtime:test
+```
+
+See the [native emulator guide](simulator/native-gateway/README.md) and [configuration acceptance report](docs/verification/2026-10-12-native-configuration.md) for lifecycle, persistence and test boundaries.
+
 ### Pico firmware and independent HID checks
 
 ```sh
@@ -67,6 +89,8 @@ The [native Pico acceptance report](docs/verification/2026-10-12-tauri-pico.md) 
 
 The [STM32 integration report](docs/verification/2026-10-12-stm32-can.md) records 35 Rust tests, 24 frontend transport/discovery/guide tests, Svelte validation, frontend and macOS packaging builds, C-generated fixtures and cross-firmware software checks. Its browser scenario used simulated responses. No assembled STM32 gateway/module chain was tested. Counts describe that recorded run; host checks do not establish physical or cross-platform acceptance.
 
+The subsequent [native configuration acceptance](docs/verification/2026-10-12-native-configuration.md) records 38 Rust tests, 29 frontend transport/configuration tests and the complete browser flow through the actual Rust adapter and production C emulator. It covers persistence, dynamic descriptors, changed configuration generations and fault recovery. Physical STM32 USB/CAN acceptance remains pending.
+
 Raw Pico logs, screenshots and packaging evidence are retained locally in ignored `output/` directories.
 
 ## Repository layout
@@ -74,6 +98,7 @@ Raw Pico logs, screenshots and packaging evidence are retained locally in ignore
 - `src/`: Svelte/TypeScript interface and transport/discovery tests.
 - [src-tauri/](src-tauri/README.md): Rust gateway services, IPC permissions and bundled resources.
 - [simulator/pico/](simulator/pico/README.md): Pico firmware, lifecycle tests, build and flashing instructions.
+- [simulator/native-gateway/](simulator/native-gateway/README.md): production C gateway/module emulator and deterministic fault acceptance.
 - `simulator/verify-hid.swift`: independent macOS HID observer.
 - [integration-profiles/](integration-profiles/README.md): placeholder for future SimHub profiles.
 - `docs/verification/`: recorded software and hardware acceptance.
@@ -82,7 +107,7 @@ Raw Pico logs, screenshots and packaging evidence are retained locally in ignore
 
 A future inventory will merge direct USB and CAN sightings by stable module identity across independent gateways. Routes will bind gateway/module identity to the current session and diagnose duplicate identities. Moving a module will preserve its logical identity and device settings while destination registration and USB layout changes remain explicit; game bindings across different gateway USB identities are not guaranteed.
 
-Runtime configuration will use one writer, separate drafts and explicit Apply/Save with interrupted-write protection. Calibration, replacement compatibility and firmware updates require model/hardware checks and recovery paths. Output sessions need freshness and ownership rules. Canonical Cyphal application definitions cover discovery and input delivery; the STM32 adapter provides registry management through CDC. Module configuration over CAN remains future work.
+Runtime configuration now uses one writer, separate drafts and explicit Apply/Save with interrupted-write protection. Canonical Cyphal application definitions cover discovery, input delivery and module configuration; the STM32 adapter provides configuration and registry management through CDC. Replacement compatibility and firmware updates still require model/hardware checks and recovery paths. Output sessions need freshness and ownership rules.
 
 ## Related repositories
 

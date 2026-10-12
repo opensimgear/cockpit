@@ -2,6 +2,8 @@
 build/
 cmake-build-*/
 .cache/
+__pycache__/
+*.py[cod]
 *.elf
 *.hex
 *.bin

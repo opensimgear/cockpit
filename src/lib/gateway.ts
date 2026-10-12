@@ -1,6 +1,7 @@
 import type { DeviceKind, Settings } from './devices';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import type { RuntimeSnapshot, RuntimeConfig } from './runtime-config';
 
 export type GatewayBackend = 'pico' | 'stm32';
 export type GatewayPort = { path: string; manufacturer?: string; friendlyName?: string; serialNumber?: string; vendorId?: string; productId?: string; backend?: GatewayBackend };
@@ -25,6 +26,8 @@ export type SimulatedModule = {
   activeSlot?: number;
   reportId?: number | null;
   canConfigure?: boolean;
+  boot?: number;
+  configurationGeneration?: number;
   serialNumber: string;
   hidInterface?: number | null;
   usbSerialNumber?: string;
@@ -36,11 +39,14 @@ export type GatewayState = {
   gatewaySerial?: string; protocolVersion?: number; firmwareVersion?: string; reconnecting?: boolean;
   epoch?: number; canProtocol?: number; maxModules?: number; needsApply?: boolean;
   hidNaming?: { supported: boolean; applied: boolean; error?: string };
+  moduleConfigs?: Record<string, RuntimeSnapshot>;
 };
-export type GatewayCommand = 'status' | 'start' | 'stop' | 'input' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'presence' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'add' | 'remove';
-export type GatewayRequest = { command: GatewayCommand; backend?: GatewayBackend; moduleId?: string; buttons?: number[]; axes?: number[]; online?: boolean; settings?: Settings; port?: string; module?: NewModule };
+export type GatewayCommand = 'status' | 'start' | 'stop' | 'input' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'presence' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'add' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset';
+export type GatewayRequest = { command: GatewayCommand; backend?: GatewayBackend; moduleId?: string; buttons?: number[]; axes?: number[]; online?: boolean; settings?: Settings; port?: string; module?: NewModule; config?: RuntimeConfig };
 
 const clientId = crypto.randomUUID();
+const emulator = () => '__OSG_NATIVE_EMULATOR__' in globalThis && !!(globalThis as { __OSG_NATIVE_EMULATOR__?: boolean }).__OSG_NATIVE_EMULATOR__;
+const browserEndpoint = () => emulator() ? '/api/native-gateway/' : '/api/pico-gateway/';
 type GatewayResult = { ok: boolean; state?: GatewayState; error?: string };
 let nativeQueue: Promise<unknown> = Promise.resolve();
 let nativeBackend: GatewayBackend = 'pico';
@@ -92,10 +98,10 @@ export async function gatewayRequest(request: GatewayRequest): Promise<GatewaySt
     }
     return resultState(result);
   }
-  if (request.backend === 'stm32') throw new GatewayError('Use the Cockpit desktop app to connect a CAN gateway.');
+  if (request.backend === 'stm32' && !emulator()) throw new GatewayError('Use the Cockpit desktop app to connect a CAN gateway.');
   const payload = { ...request };
   delete payload.backend;
-  const response = await fetch('/api/pico-gateway/', {
+  const response = await fetch(browserEndpoint(), {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSG-Simulator': '1' },
     body: JSON.stringify({ ...payload, clientId }), signal: AbortSignal.timeout(135_000),
   });
@@ -110,7 +116,7 @@ export function releaseOnExit(moduleId: string) {
     void nativeRequest({ command: 'release', moduleId }).catch(() => {});
     return;
   }
-  void fetch('/api/pico-gateway/', {
+  void fetch(browserEndpoint(), {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSG-Simulator': '1' },
     body: JSON.stringify({ command: 'release', moduleId, clientId }), keepalive: true,
   }).catch(() => {});

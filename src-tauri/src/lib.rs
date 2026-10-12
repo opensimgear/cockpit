@@ -1,8 +1,10 @@
+mod emulator;
 mod firmware;
 mod hid_names;
 pub mod pico;
 mod protocol;
-mod stm32;
+mod runtime;
+pub mod stm32;
 mod transport;
 
 use serde_json::Value;

@@ -23,12 +23,21 @@ flash operation. Offline registered slots remain visible.
 
 Physical gateway HID input continues independently of Cockpit and CDC. Closing
 the service releases serial access without sending a stop or changing inputs.
-Simulated input, presence, Add device, start/stop and device settings writes are
-unsupported for this adapter. Its local setup claims only gate registry changes;
-they do not implement module configuration over CAN. The prototype gateway uses
+Simulated input, presence, Add device and start/stop are unsupported on physical
+STM32 gateways. Runtime configuration routes bounded commands to the module over
+Cyphal, using its exclusive writer, drafts and Apply/Save/Discard. Claims bind to
+gateway epoch and module identity/boot/route; settings readback waits for activation
+and reconciles lost commit replies without repeating the mutation. Trusted active
+configuration caches bind to the module's boot and configuration generation. The prototype gateway uses
 one HID interface with separate report IDs/collections, so the Pico macOS naming
 worker is not used. Each backend currently owns one connection; routing several
 physical gateways and merging direct USB device sightings remain future work.
+
+In debug builds, `OSG_NATIVE_EMULATOR` selects an absolute executable for the native
+production-C emulator. Its serial factory keeps one process across connections so
+USB layout reconnects retain the emulated flash. `osg-emulator-service` exposes the
+same Rust STM32 service to the local development browser bridge; it provides no
+production HTTP endpoint. See the [native configuration acceptance](../docs/verification/2026-10-12-native-configuration.md).
 
 ## Build resources and permissions
 
@@ -49,9 +58,17 @@ Transport tests verify native-only IPC and browser fallback, ownership identity,
 
 Independent [native hardware evidence](../docs/verification/2026-10-12-tauri-pico.md) confirms actual Pico inputs and names, adding/removing real controller interfaces, held-input neutralization on removal and quit, and serial release. The final release app ran from bundled assets with no development server; native firmware export was checked against the source UF2 hash. Historical browser evidence remains in `output/pico-hardware/`. Windows/Linux device access and packaging remain unverified on their target systems.
 
-On 2026-10-12, the combined Rust suite passed 35 tests, including 13 STM32
-gateway adapter tests using mocked transport and unmodified [C formatter fixtures](tests/fixtures/README.md).
+The earlier [STM32 integration run](../docs/verification/2026-10-12-stm32-can.md)
+passed 35 Rust tests, including 13 STM32 gateway adapter tests using mocked
+transport and [C formatter fixtures](tests/fixtures/README.md).
 These are host and mocked transport checks; physical STM32 USB/CAN hardware
 acceptance remains pending. Direct-USB/CAN inventory merging, multiple gateway
-routes, production protocol adapters, module settings routing and firmware update
-automation remain future work described by the repository's version-one scope.
+routes and firmware update automation remain future work.
+
+The subsequent runtime configuration checks passed 38 Rust tests and 29 frontend
+transport/configuration tests. They exercise the actual Rust adapter
+against the native C gateway/module and real Cyphal frames, including all control
+types, flash recovery, descriptor changes, boot/generation cache invalidation and
+lost-reply readback. The browser
+acceptance report above records the full visible Cockpit flow and its physical
+USB/HAL test boundary.

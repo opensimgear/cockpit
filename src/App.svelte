@@ -4,6 +4,8 @@
   import { automaticGatewayAction, gatewayCandidates } from './lib/gateway-automation';
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
+  import RuntimeEditor from './lib/RuntimeEditor.svelte';
+  import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { gatewayRequest, releaseOnExit, openCockpitLink, GatewayError, type GatewayRequest, type GatewayState, type NewModule } from './lib/gateway';
 
@@ -35,6 +37,7 @@
   let view = $state<View>('gateways');
   let devices = $state<Device[]>([]);
   let drafts = $state<Record<string, Settings>>({});
+  let runtimeDrafts = $state<Record<string, RuntimeConfig>>({});
   let selectedId = $state('');
   let search = $state('');
   let filter = $state('all');
@@ -72,7 +75,8 @@
   const dirty = $derived(!!selected && !!draft && !settingsEqual(draft, selected.settings));
   const automation = $derived(automaticGatewayAction(gateway, { paused: automaticPaused, setupActive: sessionId !== null, failedPorts: failedAutoPorts }));
   const gatewayConnected = $derived(!!gateway?.connected);
-  const editing = $derived(!physicalGateway && !!selected && sessionId === selectedId && selected.online && gatewayConnected);
+  const editing = $derived(!!selected && sessionId === selectedId && selected.online && gatewayConnected);
+  const runtimeSnapshot = $derived(gateway?.moduleConfigs?.[selectedId]);
   const filtered = $derived(devices.filter(device =>
     `${device.name} ${device.settings.label} ${device.id}`.toLowerCase().includes(search.toLowerCase()) && (filter !== 'online' || device.online)
   ));
@@ -99,9 +103,17 @@
     const connectionChanged = !!state.gatewaySerial && (gateway?.gatewaySerial !== state.gatewaySerial || gateway?.backend !== state.backend);
     if (connectionChanged || (gateway?.connected && !state.connected) || state.reconnecting) {
       cancelInputs(); sessionId = null;
-      if (connectionChanged) { rememberDrafts(); devices = []; drafts = { ...draftCache.get(draftKey(state)) }; }
+      if (connectionChanged) { rememberDrafts(); devices = []; drafts = { ...draftCache.get(draftKey(state)) }; runtimeDrafts={}; }
     }
     const ids = new Set(state.modules.map(module => module.id));
+    for(const module of state.modules) {
+      const previous=gateway?.modules.find(item=>item.id===module.id);
+      if(previous&&(previous.boot!==module.boot||previous.configurationGeneration!==module.configurationGeneration)) delete runtimeDrafts[module.id];
+    }
+    for(const [id,snapshot] of Object.entries(state.moduleConfigs??{})) {
+      const previous=gateway?.moduleConfigs?.[id];
+      if(!runtimeDrafts[id] || (previous&&configEqual(runtimeDrafts[id],previous.config))) runtimeDrafts[id]=cloneConfig(snapshot.config);
+    }
     if (modal === 'remove' && !ids.has(removeTarget.id)) { modal = null; notify('That module has already been removed.'); }
     devices = devices.filter(device => ids.has(device.id));
     gateway = state;
@@ -110,6 +122,7 @@
       const device = devices.find(device => device.id === module.id);
       if (device) {
         const clean = settingsEqual(drafts[device.id], device.settings);
+        device.name = module.name;
         device.online = module.online && !!state.connected;
         device.firmware = state.backend === 'stm32' ? `Gateway ${state.firmwareVersion ?? ''} · CAN v${state.canProtocol ?? 2}` : `Pico ${state.firmwareVersion ?? 'simulator'}`;
         device.route = `${state.backend === 'stm32' ? 'OpenSimGear CAN gateway' : 'Pico W USB gateway'} · ${module.directUsb ? 'direct USB owns inputs' : state.backend === 'stm32' ? 'CAN FD' : 'simulated CAN'}`;
@@ -262,9 +275,8 @@
     events = [{ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), message, detail }, ...events];
   }
   function toggleTheme() { light = !light; if (!persist('osg-light', light)) notify('Theme changed for this session. Local storage is unavailable.'); }
-  function selectDevice(id: string) { selectedId = id; tab = 'setup'; view = 'device'; }
+  async function selectDevice(id: string) { selectedId = id; tab = 'setup'; view = 'device'; if(physicalGateway&&gateway?.modules.find(m=>m.id===id)?.canConfigure) await sendGateway({command:'config_read',moduleId:id}); }
   async function toggleSession() {
-    if (physicalGateway) return;
     if (sessionId) {
       const id = sessionId;
       if (!await sendGateway({ command: 'release', moduleId: id })) return;
@@ -277,7 +289,7 @@
       if (!await sendGateway({ command: 'claim', moduleId: id })) return;
       sessionId = id;
       log('Setup session started', `${name} · configuration access claimed in the gateway bridge.`);
-      notify('Simulator setup session started. Settings are now editable.');
+      notify('Setup session started. Settings are now editable.');
     }
   }
   async function applySettings() {
@@ -292,6 +304,15 @@
     notify('Configuration applied to the gateway simulator.');
   }
   function discard() { drafts[selectedId] = { ...selected.settings }; notify('Draft discarded. Saved settings restored.'); }
+  async function runtimeRequest(command:GatewayRequest['command'],config?:RuntimeConfig) {
+    const id=selectedId;
+    if(!await sendGateway({command,moduleId:id,config})) return false;
+    const snapshot=gateway?.moduleConfigs?.[id];
+    if(snapshot) runtimeDrafts[id]=cloneConfig(snapshot.config);
+    log('Module configuration updated', command==='config_apply' ? 'Applied on the module. Save to retain it after reboot.' : command==='config_apply_save'||command==='config_save' ? 'Settings saved on the module.' : 'Draft restored from active settings.');
+    if(needsReconnect) notify('Module updated. End setup and apply the gateway layout to publish the changed controls.');
+    return true;
+  }
   async function rescan() { if (await sendGateway({ command: 'status' })) { log('Discovery refreshed', `${devices.filter(device => device.online).length} modules online.`); notify('Device inventory refreshed.'); } }
   async function registerDevice(id: string) {
     if (await sendGateway({ command: 'register', moduleId: id })) {
@@ -433,7 +454,8 @@
               <div class="inspector-body">
                 {#if !selected.online}<div class="notice offline-notice"><Icon name="alert" size={17} /><div><strong>Device is offline</strong><p>Reconnect this module to configure it. Its saved identity and settings are preserved.</p></div></div>{/if}
                 {#if physicalGateway && tab === 'setup'}
-                  <div class="notice"><Icon name="info" size={17} /><p>Inputs and capabilities are discovered from the device. Calibration and device settings are currently built into its firmware.</p></div>
+                  {#if runtimeSnapshot&&runtimeDrafts[selectedId]}<RuntimeEditor bind:config={runtimeDrafts[selectedId]} snapshot={runtimeSnapshot} {editing} busy={gatewayBusy} request={runtimeRequest} />
+                  {:else}<div class="notice"><Icon name="info" size={17} /><p>{hidModule?.canConfigure ? 'Read module configuration by opening a setup session.' : 'This module firmware does not expose runtime configuration. Inputs remain available.'}</p></div>{/if}
                   <dl class="device-details"><div><dt>Controller registration</dt><dd>{hidModule?.registered ? 'Registered' : 'Discovered'}</dd></div><div><dt>USB report ID</dt><dd>{hidModule?.reportId ?? 'Pending'}</dd></div><div><dt>Input owner</dt><dd>{hidModule?.directUsb ? 'Device USB' : 'Gateway'}</dd></div></dl>
                   {#if hidModule?.profileMatch === false && (hidModule?.activeSlot ?? -1) >= 0}<div class="notice amber-notice"><Icon name="alert" size={17} /><p>The device profile has changed. Update its registration and apply the controller layout to resume inputs.</p></div>{/if}
                 {:else if tab === 'setup'}
@@ -446,10 +468,10 @@
                   <dl class="device-details"><div><dt>Stable identity</dt><dd>{selected.id}</dd></div><div><dt>Connection</dt><dd>{selected.route}</dd></div><div><dt>Firmware</dt><dd>{selected.firmware}</dd></div><div><dt>Capabilities</dt><dd>{selected.inputs}</dd></div><div><dt>Configuration owner</dt><dd>{editing ? 'Cockpit simulator' : 'None'}</dd></div></dl><div class="notice"><Icon name="info" size={17} /><p>{physicalGateway ? `The gateway serial is ${gateway?.gatewaySerial ?? ''}. This controller uses report ID ${hidModule?.reportId ?? 'pending'} on the shared HID interface. Registration is saved in gateway flash when the layout is applied.` : `USB interfaces share the Pico serial ${gateway?.gatewaySerial ?? ''}. This module maps to USB interface ${hidModule?.hidInterface ?? 'pending'}. Settings stay in RAM until the Pico resets.`}</p></div>
                 {/if}
               </div>
-              {#if !physicalGateway}<div class="inspector-footer">
-                <button class={editing || sessionId ? 'secondary-button session-button' : 'primary-button session-button'} disabled={gatewayBusy || (!selected.online && !sessionId)} onclick={toggleSession}><Icon name={sessionId ? 'stop' : 'play'} size={15} />{sessionId && !editing ? `End ${sessionDevice?.settings.label} session` : sessionId ? 'End setup session' : 'Start setup session'}</button>
-                {#if dirty}<div class="save-actions"><button class="text-button" onclick={discard}>Discard</button><button class="primary-button" disabled={gatewayBusy || !editing || !draft.label.trim()} onclick={applySettings}><Icon name="check" size={15} />Apply & save</button></div>{/if}
-              </div>{/if}
+              <div class="inspector-footer">
+                <button class={editing || sessionId ? 'secondary-button session-button' : 'primary-button session-button'} disabled={gatewayBusy || (!selected.online && !sessionId) || (physicalGateway&&!hidModule?.canConfigure&&!sessionId)} onclick={toggleSession}><Icon name={sessionId ? 'stop' : 'play'} size={15} />{sessionId && !editing ? `End ${sessionDevice?.settings.label} session` : sessionId ? 'End setup session' : 'Start setup session'}</button>
+                {#if !physicalGateway&&dirty}<div class="save-actions"><button class="text-button" onclick={discard}>Discard</button><button class="primary-button" disabled={gatewayBusy || !editing || !draft.label.trim()} onclick={applySettings}><Icon name="check" size={15} />Apply & save</button></div>{/if}
+              </div>
             </section>
           </div>
         {/if}

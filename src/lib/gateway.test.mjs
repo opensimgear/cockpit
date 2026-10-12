@@ -9,7 +9,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const state = { running: false, needsReconnect: false, connected: true, modules: [] };
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function transport({ desktop = true, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
+function transport({ desktop = true, emulator = false, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
   const calls = [];
   const exported = {};
   vm.runInNewContext(compiled, {
@@ -27,6 +27,7 @@ function transport({ desktop = true, result = { ok: true, state }, invokeResults
       throw new Error(`Unexpected import: ${name}`);
     },
     crypto: { randomUUID: () => 'test-client-uuid' },
+    __OSG_NATIVE_EMULATOR__: emulator,
     AbortSignal,
     fetch: async (url, options) => {
       calls.push({ kind: 'fetch', url, options });
@@ -45,6 +46,16 @@ test('desktop Pico requests use native IPC with the complete request and stable 
     { kind: 'invoke', command: 'pico_gateway', args: { request: { ...request, clientId: 'test-client-uuid' } } },
     { kind: 'invoke', command: 'pico_gateway', args: { request: { command: 'claim', moduleId: request.moduleId, clientId: 'test-client-uuid' } } },
   ]);
+});
+
+test('development emulator browser sends STM32 setup and cleanup through the native Rust service endpoint',async()=>{
+  const api=transport({desktop:false,emulator:true});
+  const config={name:'Controller',expanderMask:0,buttons:[[0,0,0]],axes:[],hats:[],encoders:[],selectors:[]};
+  await api.gatewayRequest({command:'config_apply_save',backend:'stm32',moduleId:'00112233445566778899aabbccddeeff',config});
+  api.releaseOnExit('00112233445566778899aabbccddeeff');
+  assert.deepEqual(api.calls.map(call=>call.url),['/api/native-gateway/','/api/native-gateway/']);
+  assert.deepEqual(JSON.parse(api.calls[0].options.body),{command:'config_apply_save',moduleId:'00112233445566778899aabbccddeeff',config,clientId:'test-client-uuid'});
+  assert.equal(api.calls[1].options.keepalive,true);
 });
 
 test('native gateway command errors preserve returned state for UI reconciliation', async () => {

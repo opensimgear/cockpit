@@ -18,6 +18,7 @@ const NO_CONNECTION: &str = "Connect the OpenSimGear CAN gateway first.";
 const FRAME_LIMIT: usize = 16_384;
 const MODULE_LIMIT: usize = 10;
 const INVALID: &str = "Unsupported or malformed OpenSimGear CAN gateway snapshot (protocol 2).";
+const CONFIG_UNKNOWN: &str = "The module configuration reply was lost. Its settings may have committed; readback is required before another write.";
 
 #[derive(Clone)]
 struct Timing {
@@ -219,6 +220,8 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
             || (pending >= 0 && !pending_slots.insert(pending))
             || (active >= 0 && !active_slots.insert(active))
             || number(&module["lease"], u32::MAX as u64).is_none()
+            || (!module["configurationGeneration"].is_null()
+                && number(&module["configurationGeneration"], u32::MAX as u64).is_none())
             || (pending < 0 && module["pendingProfileMatch"] == true)
             || (active < 0 && module["profileMatch"] == true)
             || [
@@ -256,14 +259,14 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
             "registered":pending >= 0,"active":delivering,
             "directUsb":module["directUsb"],"profileMatch":module["profileMatch"],
             "pendingProfileMatch":module["pendingProfileMatch"],
-            "hasInput":module["hasInput"],"node":node,"lease":module["lease"],
+            "hasInput":module["hasInput"],"node":node,"lease":module["lease"],"boot":module["boot"],"sourceNode":module["sourceNode"],"configurationGeneration":module["configurationGeneration"],
             "pendingSlot":pending,"activeSlot":active,
             "reportId":if active >= 0 {json!(active + 1)} else {Value::Null},
             "buttonCount":discovered.buttons,"axisCount":discovered.axes,"hatCount":discovered.hats,
             "buttons":buttons,"axes":axes,"hats":hats,"axisUsage":discovered.usages,
             "neutral":discovered.neutral,"profile":discovered.value,
             "serialNumber":id,"usbSerialNumber":uid.to_ascii_lowercase(),"hidInterface":Value::Null,
-            "settings":{"label":label,"debounce":10,"inverted":false},"canConfigure":false
+            "settings":{"label":label,"debounce":10,"inverted":false},"canConfigure":module["boot"].as_u64().is_some_and(|v|v>0) && wire["canProtocol"]==3
         }));
     }
     Ok(
@@ -286,6 +289,7 @@ struct Claim {
     node: u64,
     lease: u64,
     direct_usb: bool,
+    boot: Option<u64>,
 }
 struct Board {
     info: PortInfo,
@@ -301,6 +305,8 @@ struct Gateway {
     request_id: u32,
     timing: Timing,
     cancel: Arc<AtomicBool>,
+    configs: HashMap<String, Value>,
+    active_configs: HashMap<String, (u64, Option<u64>, Value)>,
 }
 impl Gateway {
     fn new(factory: Box<dyn Factory>, timing: Timing, cancel: Arc<AtomicBool>) -> Self {
@@ -314,6 +320,8 @@ impl Gateway {
             request_id: 0,
             timing,
             cancel,
+            configs: HashMap::new(),
+            active_configs: HashMap::new(),
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
@@ -340,11 +348,28 @@ impl Gateway {
         Ok(ports)
     }
     fn close(&mut self) {
+        // Best effort release never retries a settings commit. Firmware also
+        // expires its writer lease if USB or this process disappears.
+        if let Some(connection) = self.connection.as_mut() {
+            for (id, claim) in &self.claims {
+                if let (Some(boot), Some(epoch)) = (claim.boot, self.state["epoch"].as_u64()) {
+                    self.request_id = self.request_id.wrapping_add(1).max(1);
+                    let line = format!(
+                        "cockpit {} {epoch} config {id} {boot} release {}\n",
+                        self.request_id,
+                        crate::runtime::owner(&claim.client)
+                    );
+                    let _ = connection.write_all(line.as_bytes());
+                }
+            }
+            let _ = connection.flush();
+        }
         if let Some(mut connection) = self.connection.take() {
             let _ = connection.set_control_lines(false, false);
         }
         self.buffer.clear();
         self.claims.clear();
+        self.configs.clear();
         self.state["connected"] = json!(false);
         self.state["running"] = json!(false);
         self.state["reconnecting"] = json!(false);
@@ -369,10 +394,34 @@ impl Gateway {
                     && module["node"].as_u64() == Some(claim.node)
                     && module["lease"].as_u64() == Some(claim.lease)
                     && module["directUsb"].as_bool() == Some(claim.direct_usb)
+                    && module["boot"].as_u64() == claim.boot
             })
         });
         state["ports"] = self.state["ports"].clone();
         state["port"] = self.state["port"].clone();
+        self.configs.retain(|id, _| {
+            state["modules"].as_array().unwrap().iter().any(|m| {
+                m["id"] == *id
+                    && m["online"] == true
+                    && self.state["modules"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|previous| {
+                            previous["id"] == *id
+                                && previous["boot"] == m["boot"]
+                                && previous["configurationGeneration"]
+                                    == m["configurationGeneration"]
+                        })
+            })
+        });
+        self.active_configs.retain(|id, (boot, generation, _)| {
+            state["modules"].as_array().unwrap().iter().any(|module| {
+                module["id"] == *id
+                    && module["boot"].as_u64() == Some(*boot)
+                    && module["configurationGeneration"].as_u64() == *generation
+            })
+        });
         self.state = state;
         Ok(())
     }
@@ -382,13 +431,15 @@ impl Gateway {
         }
         self.request_id = self.request_id.wrapping_add(1).max(1);
         let id = self.request_id;
-        let wire = if command == "snapshot" {
+        let wire = if let Some(action) = command.strip_prefix("emulator ") {
+            format!("emulator {id} {action}\n")
+        } else if command == "snapshot" {
             format!("cockpit {id} snapshot\n")
         } else {
             let epoch = number(&self.state["epoch"], u32::MAX as u64).ok_or(NO_CONNECTION)?;
             format!("cockpit {id} {epoch} {command}\n")
         };
-        if wire.len() > 79 {
+        if wire.len() > 512 {
             return Err("Gateway command is too long.".into());
         }
         let deadline = Instant::now() + timeout;
@@ -454,15 +505,66 @@ impl Gateway {
         })();
         match result {
             Ok(value) => {
+                if command.starts_with("emulator ") {
+                    if value["ok"] == true {
+                        self.state["emulator"] = value["emulator"].clone();
+                        return Ok(());
+                    }
+                    return Err(value["error"]
+                        .as_str()
+                        .unwrap_or("Emulator control failed.")
+                        .into());
+                }
                 if let Err(error) = self.accept(&value["state"]) {
                     self.close();
                     return Err(error);
+                }
+                if command.starts_with("config ") && !value["targetConfig"].is_null() {
+                    if let Err(error) = crate::runtime::validate(&value["targetConfig"]) {
+                        self.close();
+                        return Err(error);
+                    }
+                    if let Some(id) = command.split_whitespace().nth(1) {
+                        self.configs
+                            .insert(id.into(), value["targetConfig"].clone());
+                        if value["targetConfig"]["view"] == "active"
+                            || value["targetConfig"]["dirty"] == false
+                        {
+                            if let Some(module) = self.state["modules"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .find(|module| module["id"] == id)
+                            {
+                                if let Some(boot) = module["boot"].as_u64() {
+                                    let mut active = value["targetConfig"].clone();
+                                    active["view"] = json!("active");
+                                    active["dirty"] = json!(false);
+                                    self.active_configs.insert(
+                                        id.into(),
+                                        (boot, module["configurationGeneration"].as_u64(), active),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else if command.starts_with("config ") && value["ok"] == true {
+                    self.close();
+                    return Err("The module did not return a configuration snapshot.".into());
                 }
                 if value["ok"] == false {
                     match value["error"].as_str().filter(|s|printable(s,256)) {
                         Some("stale_epoch")=>Err("Gateway restarted; inventory was refreshed. Review it before retrying the change.".into()),
                         Some("registration_rejected")=>Err("Gateway rejected registration: the module must be online with a compatible profile and a free slot.".into()),
-                        Some("flash_save_failed")=>Err("Gateway could not save its registry; its USB layout was not changed.".into()),
+                        Some("flash_save_failed")=>Err(if command.starts_with("config ") {"The module could not save its settings. Its active settings and USB layout were preserved."} else {"Gateway could not save its registry; its USB layout was not changed."}.into()),
+                        Some("writer_busy")=>Err("Another configuration client owns this module. End its setup session or wait for its lease to expire.".into()),
+                        Some("writer_required")=>{self.claims.remove(command.split_whitespace().nth(1).unwrap_or(""));Err("The module setup lease ended. Start a fresh setup session before saving changes.".into())},
+                        Some("invalid_profile")=>Err("The module rejected these mappings. Check duplicate contacts, expansion banks, ADC channels and HID usages.".into()),
+                        Some("invalid_axis")=>Err("The module rejected an axis. Check its ADC channel, HID usage, calibration range, inversion and deadzone.".into()),
+                        Some("stale_module_boot")|Some("stale_module_route")=>Err("The module restarted or changed routes. Read its settings and start a fresh setup session.".into()),
+                        Some("apply_pending")=>Err("The module is still activating its previous settings. Refresh its configuration before another change.".into()),
+                        Some("persistence_unavailable")=>Err("This module cannot persist settings; Apply remains available for this boot.".into()),
+                        Some("configuration_timeout")=>{self.close();Err(CONFIG_UNKNOWN.into())},
                         Some(error)=>Err(format!("CAN gateway rejected the request: {error}")),
                         None=>{self.close();Err(INVALID.into())},
                     }
@@ -491,6 +593,13 @@ impl Gateway {
         }
         let expected =
             expected.unwrap_or_else(|| info.serial_number.as_ref().unwrap().to_ascii_lowercase());
+        if self
+            .board
+            .as_ref()
+            .is_some_and(|board| board.uid != expected)
+        {
+            self.active_configs.clear();
+        }
         self.board = Some(Board {
             info: info.clone(),
             uid: expected,
@@ -615,6 +724,86 @@ impl Gateway {
             true
         });
     }
+    fn config_command(&mut self, id: &str, command: &str) -> Result<(), String> {
+        if !hex_identity(id, 32) {
+            return Err("Module identity must be 32 hexadecimal digits.".into());
+        }
+        let module = self.state["modules"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|m| m["id"] == id && m["online"] == true)
+            .ok_or("Reconnect the module before configuration.")?;
+        let boot = module["boot"]
+            .as_u64()
+            .filter(|v| *v > 0)
+            .ok_or("This firmware does not support runtime configuration.")?;
+        self.exchange(
+            &format!("config {id} {boot} {command}"),
+            self.timing.command,
+        )
+    }
+    fn config_commit(
+        &mut self,
+        id: &str,
+        command: &str,
+        expected: Option<&Value>,
+        saved: bool,
+    ) -> Result<(), String> {
+        let board = self.board.as_ref().ok_or(NO_CONNECTION)?.info.clone();
+        let uid = self.board.as_ref().unwrap().uid.clone();
+        let boot = self.state["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == id)
+            .map(|m| m["boot"].clone())
+            .ok_or("Module disappeared.")?;
+        let result = self.config_command(id, command);
+        if result.is_ok() {
+            let deadline = Instant::now() + self.timing.command;
+            while self
+                .configs
+                .get(id)
+                .is_some_and(|v| v["pendingApply"] == true)
+            {
+                if Instant::now() >= deadline {
+                    return Err("Module activation is still pending. Read its configuration before making another change.".into());
+                }
+                self.sleep(self.timing.poll)?;
+                self.exchange("snapshot", self.timing.command)?;
+                self.config_command(id, "get_active")?;
+            }
+            return Ok(());
+        }
+        if self.connection.is_some() && result.as_ref().is_err_and(|error| error != CONFIG_UNKNOWN)
+        {
+            return result;
+        }
+        self.close();
+        // A lost reply may follow a successful commit. Reconnect and read only;
+        // never replay apply/save on an ambiguous outcome.
+        self.open(board, Some(uid), Instant::now() + self.timing.reconnect)?;
+        if !self.state["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == id && m["boot"] == boot)
+        {
+            return Err("Module restarted during configuration. Read its settings and start a new setup session; the commit was not repeated.".into());
+        }
+        self.config_command(id, "get_active")?;
+        let actual = self
+            .configs
+            .get(id)
+            .ok_or("The module returned without a configuration readback.")?;
+        if expected.is_none_or(|config| actual["config"] == *config)
+            && (!saved || actual["generation"] == actual["savedGeneration"])
+        {
+            return Ok(());
+        }
+        Err("The commit reply was lost and readback did not confirm the requested settings. Review the module and start a new setup session; the commit was not repeated.".into())
+    }
     fn decorated(&self, client: Option<&str>) -> Value {
         let mut state = self.state.clone();
         let mut claims: Vec<_> = self
@@ -625,6 +814,21 @@ impl Gateway {
             .collect();
         claims.sort();
         state["claimedModules"] = json!(claims);
+        let mut configs: HashMap<String, Value> = self
+            .active_configs
+            .iter()
+            .map(|(id, (_, _, snapshot))| (id.clone(), snapshot.clone()))
+            .collect();
+        configs.extend(self.configs.clone());
+        state["moduleConfigs"] = json!(configs);
+        for module in state["modules"].as_array_mut().into_iter().flatten() {
+            if let Some(config) = module["id"].as_str().and_then(|id| configs.get(id)) {
+                if config["view"] == "active" || config["dirty"] == false {
+                    module["settings"]["label"] = config["config"]["name"].clone();
+                    module["name"] = config["config"]["name"].clone();
+                }
+            }
+        }
         state
     }
     fn handle(&mut self, request: &Value) -> Result<(), String> {
@@ -661,33 +865,205 @@ impl Gateway {
             return Err("End setup sessions before changing the CAN gateway layout.".into());
         }
         match command {
-            "ports"=>{self.ports()?;Ok(())},
-            "status" if self.connection.is_none()=>{self.ports()?;Ok(())},
-            "status"=>self.exchange("snapshot",self.timing.command),
-            "connect"=>{
-                let port=self.ports()?.into_iter().find(|p|request["port"]==p.path)
+            "emulator"
+                if cfg!(debug_assertions) && std::env::var_os("OSG_NATIVE_EMULATOR").is_some() =>
+            {
+                if self.connection.is_none() {
+                    let port = self.ports()?.into_iter().next().ok_or(NO_CONNECTION)?;
+                    self.open(port, None, Instant::now() + self.timing.command)?;
+                }
+                let action = request["action"]
+                    .as_str()
+                    .filter(|v| {
+                        v.len() <= 128
+                            && v.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b' ' || b == b'_')
+                    })
+                    .ok_or("Invalid emulator action.")?;
+                self.exchange(&format!("emulator {action}"), self.timing.command)
+            }
+            "ports" => {
+                self.ports()?;
+                Ok(())
+            }
+            "status" if self.connection.is_none() => {
+                self.ports()?;
+                Ok(())
+            }
+            "status" => {
+                self.exchange("snapshot", self.timing.command)?;
+                let held: Vec<_> = self
+                    .claims
+                    .iter()
+                    .filter(|(_, claim)| claim.client == client)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in held {
+                    if self.claims[&id].boot.is_none() {
+                        continue;
+                    }
+                    self.config_command(&id, "get")?;
+                    let owner = crate::runtime::owner(client);
+                    if self
+                        .configs
+                        .get(&id)
+                        .is_some_and(|config| config["owner"].as_u64() == Some(owner as u64))
+                    {
+                        self.config_command(&id, &format!("claim {owner}"))?;
+                    } else {
+                        self.claims.remove(&id);
+                    }
+                }
+                Ok(())
+            }
+            "connect" => {
+                let port = self
+                    .ports()?
+                    .into_iter()
+                    .find(|p| request["port"] == p.path)
                     .ok_or("Select an available OpenSimGear CAN gateway port.")?;
-                self.open(port,None,Instant::now()+self.timing.command)
-            },
-            "disconnect"=>{self.close();Ok(())},
-            "register"|"unregister"|"remove"=>{
-                if !hex_identity(&module_id,32) { return Err("Module identity must be 32 hexadecimal digits.".into()); }
-                let verb=if command=="register" {"register"} else {"unregister"};
-                self.exchange(&format!("{verb} {module_id}"),self.timing.command)
-            },
-            "save"=>self.exchange("save",self.timing.command),
-            "apply"|"reconnect"=>self.apply(),
-            "claim"=>{
-                if self.claims.get(&module_id).is_some_and(|c|c.client!=client) { return Err("Another Cockpit session owns this module.".into()); }
-                self.exchange("snapshot",self.timing.command)?;
-                let module=self.state["modules"].as_array().unwrap().iter().find(|m|m["id"]==module_id && m["online"]==true)
+                self.open(port, None, Instant::now() + self.timing.command)
+            }
+            "disconnect" => {
+                self.close();
+                Ok(())
+            }
+            "register" | "unregister" | "remove" => {
+                if !hex_identity(&module_id, 32) {
+                    return Err("Module identity must be 32 hexadecimal digits.".into());
+                }
+                let verb = if command == "register" {
+                    "register"
+                } else {
+                    "unregister"
+                };
+                self.exchange(&format!("{verb} {module_id}"), self.timing.command)
+            }
+            "save" => self.exchange("save", self.timing.command),
+            "apply" | "reconnect" => self.apply(),
+            "claim" => {
+                if self
+                    .claims
+                    .get(&module_id)
+                    .is_some_and(|c| c.client != client)
+                {
+                    return Err("Another Cockpit session owns this module.".into());
+                }
+                self.exchange("snapshot", self.timing.command)?;
+                let module = self.state["modules"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|m| m["id"] == module_id && m["online"] == true)
                     .ok_or("Reconnect the module before starting a session.")?;
-                self.claims.insert(module_id,Claim{client:client.into(),seen:Instant::now(),node:module["node"].as_u64().unwrap(),
-                    lease:module["lease"].as_u64().unwrap(),direct_usb:module["directUsb"].as_bool().unwrap()});Ok(())
-            },
-            "release"=>{if self.claims.get(&module_id).is_some_and(|c|c.client==client) {self.claims.remove(&module_id);}Ok(())},
-            "input"|"presence"|"add"|"configure"|"start"|"stop"=>Err("This action is unavailable for physical CAN devices. Inputs come from hardware; device configuration transport is not implemented.".into()),
-            _=>Err("Unknown CAN gateway command.".into()),
+                let claim = Claim {
+                    client: client.into(),
+                    seen: Instant::now(),
+                    node: module["node"].as_u64().unwrap(),
+                    lease: module["lease"].as_u64().unwrap(),
+                    direct_usb: module["directUsb"].as_bool().unwrap(),
+                    boot: module["boot"].as_u64(),
+                };
+                if claim.boot.is_some() {
+                    self.config_command(
+                        &module_id,
+                        &format!("claim {}", crate::runtime::owner(client)),
+                    )?;
+                }
+                self.claims.insert(module_id, claim);
+                Ok(())
+            }
+            "release" => {
+                if self
+                    .claims
+                    .get(&module_id)
+                    .is_some_and(|c| c.client == client)
+                {
+                    if self.claims[&module_id].boot.is_some() {
+                        self.config_command(
+                            &module_id,
+                            &format!("release {}", crate::runtime::owner(client)),
+                        )?;
+                    }
+                    self.claims.remove(&module_id);
+                }
+                Ok(())
+            }
+            "config_read" => self.config_command(&module_id, "get_active"),
+            "config_apply" | "config_apply_save" | "config_save" | "config_discard"
+            | "config_reset" => {
+                if !self
+                    .claims
+                    .get(&module_id)
+                    .is_some_and(|c| c.client == client && c.boot.is_some())
+                {
+                    return Err(
+                        "Start a fresh setup session before changing module configuration.".into(),
+                    );
+                }
+                let owner = crate::runtime::owner(client);
+                if matches!(command, "config_apply" | "config_apply_save") {
+                    let commands = crate::runtime::commands(&request["config"], owner)?;
+                    for child in commands {
+                        self.config_command(&module_id, &child)?;
+                    }
+                }
+                let verb = match command {
+                    "config_apply" => "apply",
+                    "config_apply_save" => "apply_save",
+                    "config_save" => "save",
+                    "config_discard" => "discard",
+                    _ => "reset",
+                };
+                if matches!(
+                    command,
+                    "config_apply" | "config_apply_save" | "config_save"
+                ) {
+                    let expected = if command == "config_save" {
+                        self.configs.get(&module_id).map(|v| v["config"].clone())
+                    } else {
+                        Some(request["config"].clone())
+                    };
+                    self.config_commit(
+                        &module_id,
+                        &format!("{verb} {owner}"),
+                        expected.as_ref(),
+                        command != "config_apply",
+                    )?;
+                    if self
+                        .configs
+                        .get(&module_id)
+                        .is_some_and(|v| v["owner"].as_u64() == Some(owner as u64))
+                    {
+                        if let Some(module) = self.state["modules"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|m| m["id"] == module_id && m["online"] == true)
+                        {
+                            self.claims.insert(
+                                module_id,
+                                Claim {
+                                    client: client.into(),
+                                    seen: Instant::now(),
+                                    node: module["node"].as_u64().unwrap(),
+                                    lease: module["lease"].as_u64().unwrap(),
+                                    direct_usb: module["directUsb"].as_bool().unwrap(),
+                                    boot: module["boot"].as_u64(),
+                                },
+                            );
+                        }
+                    }
+                    Ok(())
+                } else {
+                    self.config_command(&module_id, &format!("{verb} {owner}"))
+                }
+            }
+            "input" | "presence" | "add" | "configure" | "start" | "stop" => Err(
+                "This action is unavailable for physical CAN devices. Inputs come from hardware."
+                    .into(),
+            ),
+            _ => Err("Unknown CAN gateway command.".into()),
         }
     }
     fn request(&mut self, request: Value) -> Value {
@@ -727,7 +1103,10 @@ impl Default for Stm32Service {
 }
 impl Stm32Service {
     pub fn new() -> Self {
-        Self::with_factory(Box::new(NativeFactory), Timing::default())
+        let factory: Box<dyn Factory> = crate::emulator::EmulatorFactory::from_environment()
+            .map(|factory| Box::new(factory) as Box<dyn Factory>)
+            .unwrap_or_else(|| Box::new(NativeFactory));
+        Self::with_factory(factory, Timing::default())
     }
     fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
         let (sender, receiver) = mpsc::sync_channel(8);
@@ -1129,6 +1508,34 @@ mod tests {
             ),
             context,
         )
+    }
+    #[test]
+    fn cached_configuration_survives_usb_reconnect_but_expires_on_same_boot_generation_change() {
+        let (mut gateway, _) = harness();
+        let mut wire = state();
+        wire["modules"][0]["boot"] = json!(100);
+        wire["modules"][0]["configurationGeneration"] = json!(5);
+        gateway.accept(&wire).unwrap();
+        let cached = json!({"view":"active","dirty":false,"config":{"name":"Current controller"}});
+        gateway.configs.insert(MODULE.into(), cached.clone());
+        gateway
+            .active_configs
+            .insert(MODULE.into(), (100, Some(5), cached.clone()));
+        gateway.close();
+        gateway.accept(&wire).unwrap();
+        assert_eq!(
+            gateway.decorated(Some(CLIENT))["modules"][0]["name"],
+            "Current controller"
+        );
+        gateway.configs.insert(MODULE.into(), cached);
+        wire["modules"][0]["configurationGeneration"] = json!(6);
+        gateway.accept(&wire).unwrap();
+        assert!(gateway.configs.is_empty());
+        assert!(gateway.active_configs.is_empty());
+        assert!(gateway.decorated(Some(CLIENT))["moduleConfigs"][MODULE].is_null());
+        assert_eq!(gateway.state["modules"][0]["boot"], 100);
+        wire["modules"][0]["configurationGeneration"] = json!(u64::from(u32::MAX) + 1);
+        assert!(gateway.accept(&wire).is_err());
     }
     fn request(gateway: &mut Gateway, command: &str, mut value: Value) -> Value {
         value["command"] = json!(command);
