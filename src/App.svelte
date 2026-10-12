@@ -1,22 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { automaticGatewayAction, gatewayCandidates } from './lib/gateway-automation';
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { gatewayRequest, releaseOnExit, openCockpitLink, GatewayError, type GatewayRequest, type GatewayState, type NewModule } from './lib/gateway';
 
-  type Layout = 'workbench' | 'focus' | 'map';
-  type View = 'overview' | 'devices' | 'connections' | 'activity' | 'preferences';
-  const layouts: { id: Layout; name: string; icon: string; description: string }[] = [
-    { id: 'workbench', name: 'Workbench', icon: 'grid', description: 'A little of everything. Your devices and their settings, side by side.' },
-    { id: 'focus', name: 'Device focus', icon: 'sliders', description: 'One device, all the details. More room for setup and input testing.' },
-    { id: 'map', name: 'Rig map', icon: 'network', description: 'See how it connects. Follow a gateway’s chain and inspect each module.' },
-  ];
+  const gatewayName = 'Pico W USB gateway';
+
+  type View = 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'preferences';
   const navigation: { id: View; label: string; icon: string }[] = [
-    { id: 'overview', label: 'Overview', icon: 'grid' },
+    { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
-    { id: 'connections', label: 'Connections', icon: 'network' },
+    { id: 'topology', label: 'Topology', icon: 'network' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
   ];
   function showDialog(node: HTMLDialogElement) {
@@ -36,11 +33,8 @@
       return value as T;
     } catch { return fallback; }
   }
-  const initialLayout = stored<Layout>('osg-layout', 'workbench');
-  let layout = $state<Layout>(layouts.some(item => item.id === initialLayout) ? initialLayout : 'workbench');
   let light = $state(stored<boolean>('osg-light', false));
-  let view = $state<View>('overview');
-  let selectedPort = $state('');
+  let view = $state<View>('gateways');
   let devices = $state<Device[]>([]);
   let drafts = $state<Record<string, Settings>>({});
   let selectedId = $state('');
@@ -48,7 +42,10 @@
   let filter = $state('all');
   let tab = $state('setup');
   let sessionId = $state<string | null>(null);
+  const notificationDuration = 5000;
   let toast = $state('');
+  let toastSequence = $state(0);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let modal = $state<'help' | 'register' | 'remove' | null>(null);
   let removeTarget = $state({ id: '', label: '' });
   let newModule = $state<NewModule>({ id: '', name: 'OSG Button panel', kind: 'panel', buttonCount: 16, axisCount: 0 });
@@ -61,22 +58,23 @@
   const axisTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
   const pendingInputs = new SvelteSet<string>();
   let refreshing = false;
+  let monitoring = false;
+  let disposed = false;
+  let automaticPaused = $state(false);
+  const failedAutoPorts = new SvelteSet<string>();
   let connectionEpoch = 0;
   const draftCache = new SvelteMap<string, Record<string, Settings>>();
-  let calibrated = $state<Record<string, boolean>>({});
-  let events = $state([{ time: 'Just now', message: 'Simulator workspace opened', detail: 'Connect a flashed Pico W, then start the gateway to test real USB HID inputs.' }]);
+  let events = $state([{ time: 'Just now', message: 'Workspace opened', detail: 'Compatible Pico gateways connect and start automatically when plugged in.' }]);
   const sessionDevice = $derived(devices.find(device => device.id === sessionId));
   const selected = $derived(devices.find(device => device.id === selectedId)!);
   const draft = $derived(drafts[selectedId]);
   const dirty = $derived(!!selected && !!draft && !settingsEqual(draft, selected.settings));
-  const dirtyCount = $derived(devices.filter(device => !settingsEqual(drafts[device.id], device.settings)).length);
+  const automation = $derived(automaticGatewayAction(gateway, { paused: automaticPaused, setupActive: sessionId !== null, failedPorts: failedAutoPorts }));
   const gatewayConnected = $derived(!!gateway?.connected);
   const editing = $derived(!!selected && sessionId === selectedId && selected.online && gatewayConnected);
   const filtered = $derived(devices.filter(device =>
     `${device.name} ${device.settings.label} ${device.id}`.toLowerCase().includes(search.toLowerCase()) && (filter !== 'online' || device.online)
   ));
-  const activeLayout = $derived(view === 'connections' ? 'map' : layout);
-  const layoutDescription = $derived(layouts.find(item => item.id === activeLayout)!.description);
   const hidModule = $derived(gateway?.modules.find(module => module.id === selectedId));
   const controlsReady = $derived(gatewayConnected && !!gateway?.running && !!hidModule?.active && !!selected?.online);
   const held = $derived(inputValues[selectedId]?.buttons ?? []);
@@ -100,13 +98,12 @@
     const connectionChanged = state.gatewaySerial && gateway?.gatewaySerial !== state.gatewaySerial;
     if (connectionChanged || (gateway?.connected && !state.connected) || state.reconnecting) {
       cancelInputs(); sessionId = null;
-      if (connectionChanged) { rememberDrafts(); devices = []; drafts = { ...draftCache.get(draftKey(state)) }; calibrated = {}; }
+      if (connectionChanged) { rememberDrafts(); devices = []; drafts = { ...draftCache.get(draftKey(state)) }; }
     }
     const ids = new Set(state.modules.map(module => module.id));
     if (modal === 'remove' && !ids.has(removeTarget.id)) { modal = null; notify('That module has already been removed.'); }
     devices = devices.filter(device => ids.has(device.id));
     gateway = state;
-    if (state.ports && !state.ports.some(port => port.path === selectedPort)) selectedPort = state.ports[0]?.path ?? '';
     needsReconnect = state.needsReconnect;
     for (const module of state.modules) {
       const device = devices.find(device => device.id === module.id);
@@ -117,13 +114,13 @@
         device.settings = { ...module.settings };
         if (clean) drafts[device.id] = { ...module.settings };
       } else {
-        devices.push({ id: module.id, name: module.name, kind: module.kind, subtitle: 'Your controls, within reach.', online: module.online && !!state.connected, route: 'Gateway 01 · simulated CAN', inputs: [module.buttonCount ? `${module.buttonCount} buttons` : '', module.axisCount ? `${module.axisCount} axes` : ''].filter(Boolean).join(' · '), firmware: `Pico ${state.firmwareVersion ?? 'simulator'}`, settings: { ...module.settings } });
+        devices.push({ id: module.id, name: module.name, kind: module.kind, subtitle: 'Your controls, within reach.', online: module.online && !!state.connected, route: `${gatewayName} · simulated CAN`, inputs: [module.buttonCount ? `${module.buttonCount} buttons` : '', module.axisCount ? `${module.axisCount} axes` : ''].filter(Boolean).join(' · '), firmware: `Pico ${state.firmwareVersion ?? 'simulator'}`, settings: { ...module.settings } });
         drafts[module.id] ??= { ...module.settings };
       }
       if (!module.online || (!inputSending && !axisTimers.has(module.id) && !pendingInputs.has(module.id))) inputValues[module.id] = { buttons: [...module.buttons], axes: [...module.axes] };
     }
-    for (const id of Object.keys(drafts)) if (!ids.has(id)) { delete drafts[id]; delete inputValues[id]; delete calibrated[id]; clearTimeout(axisTimers.get(id)); axisTimers.delete(id); pendingInputs.delete(id); }
-    if (!ids.has(selectedId)) selectedId = devices[0]?.id ?? '';
+    for (const id of Object.keys(drafts)) if (!ids.has(id)) { delete drafts[id]; delete inputValues[id]; clearTimeout(axisTimers.get(id)); axisTimers.delete(id); pendingInputs.delete(id); }
+    if (!ids.has(selectedId)) { selectedId = ''; if (view === 'device') view = 'devices'; }
     if (sessionId && (!state.modules.find(module => module.id === sessionId)?.online || (state.claimedModules && !state.claimedModules.includes(sessionId)))) { sessionId = null; notify('Setup access was released. Start a new session to save changes.'); }
   }
   async function sendGateway(request: GatewayRequest, quiet = false) {
@@ -147,20 +144,14 @@
       return false;
     } finally { if (!quiet) gatewayBusy = false; else refreshing = false; }
   }
-  async function toggleGateway() {
-    const stopping = gateway?.running;
-    if (stopping) cancelInputs();
-    if (await sendGateway({ command: stopping ? 'stop' : 'start' })) {
-      log(stopping ? 'Gateway stopped' : 'Gateway started', stopping ? 'HID inputs neutralized. USB controller interfaces remain connected.' : 'Module controllers are available to host HID applications.');
-      notify(stopping ? 'Gateway stopped.' : 'HID input testing is ready.');
-    }
+  async function retryGateway() {
+    automaticPaused = false;
+    failedAutoPorts.clear();
+    await monitorGateway();
   }
-  async function connectPico() {
-    cancelInputs();
-    if (await sendGateway({ command: gateway?.connected ? 'disconnect' : 'connect', port: selectedPort })) {
-      log(gateway?.connected ? 'Pico connected' : 'Pico disconnected', gateway?.connected ? `${gateway.gatewaySerial} · ${gateway.port}. Start the gateway to test inputs.` : 'Serial access released; HID inputs neutralized.');
-      notify(gateway?.connected ? 'Pico connected. Start the gateway to test inputs.' : 'Pico disconnected.');
-    }
+  function confirmRemove(device: Device) {
+    removeTarget = { id: device.id, label: device.settings.label };
+    modal = 'remove';
   }
   async function setPresence() {
     const online = !selected.online;
@@ -208,12 +199,39 @@
     clearTimeout(axisTimers.get(id));
     axisTimers.set(id, setTimeout(() => { axisTimers.delete(id); void sendInput(id); }, 60));
   }
+  async function runAutomaticGateway() {
+    if (disposed || gatewayBusy || inputSending) return;
+    let next = automaticGatewayAction(gateway, { paused: automaticPaused, setupActive: sessionId !== null, failedPorts: failedAutoPorts });
+    if (next.command === 'connect') {
+      const port = next.port!;
+      failedAutoPorts.add(port);
+      if (!await sendGateway({ command: 'connect', port }) || disposed) return;
+      failedAutoPorts.delete(port);
+      log('Pico connected automatically', gateway?.gatewaySerial ?? port);
+      next = automaticGatewayAction(gateway, { paused: automaticPaused, setupActive: sessionId !== null, failedPorts: failedAutoPorts });
+    }
+    if (next.command === 'start') {
+      if (await sendGateway({ command: 'start' })) log('Gateway started automatically', 'Compatible modules are ready for USB HID input testing.');
+      else automaticPaused = true;
+    }
+  }
+  async function monitorGateway() {
+    if (disposed || monitoring || gatewayBusy || inputSending || refreshing) return;
+    monitoring = true;
+    try {
+      if (!await sendGateway({ command: 'status' }, true) || disposed) return;
+      if (!gatewayConnected && gatewayCandidates(gateway?.ports).length === 0) automaticPaused = false;
+      for (const port of failedAutoPorts) if (!gateway?.ports?.some(item => item.path === port)) failedAutoPorts.delete(port);
+      await runAutomaticGateway();
+    } finally { monitoring = false; }
+  }
   onMount(() => {
-    void sendGateway({ command: 'status' }, true);
-    const timer = setInterval(() => { if (!gatewayBusy && !inputSending) void sendGateway({ command: 'status' }, true); }, 3000);
+    disposed = false;
+    void monitorGateway();
+    const timer = setInterval(() => { void monitorGateway(); }, 3000);
     const release = () => { if (sessionId) releaseOnExit(sessionId); };
     window.addEventListener('pagehide', release);
-    return () => { clearInterval(timer); for (const timer of axisTimers.values()) clearTimeout(timer); window.removeEventListener('pagehide', release); release(); };
+    return () => { disposed = true; clearTimeout(toastTimer); clearInterval(timer); for (const timer of axisTimers.values()) clearTimeout(timer); window.removeEventListener('pagehide', release); release(); };
   });
 
   function openLink(event: MouseEvent) {
@@ -224,17 +242,23 @@
   function persist(key: string, value: unknown): boolean {
     try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
   }
-  function notify(message: string) { toast = message; }
+  function dismissNotification() {
+    clearTimeout(toastTimer);
+    toastTimer = undefined;
+    toast = '';
+  }
+  function notify(message: string) {
+    if (disposed) return;
+    dismissNotification();
+    toast = message;
+    toastSequence++;
+    toastTimer = setTimeout(dismissNotification, notificationDuration);
+  }
   function log(message: string, detail: string) {
     events = [{ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), message, detail }, ...events];
   }
-  function chooseLayout(next: Layout) {
-    layout = next;
-    view = 'overview';
-    if (!persist('osg-layout', next)) notify('Layout changed for this session. Local storage is unavailable.');
-  }
   function toggleTheme() { light = !light; if (!persist('osg-light', light)) notify('Theme changed for this session. Local storage is unavailable.'); }
-  function selectDevice(id: string) { selectedId = id; tab = 'setup'; }
+  function selectDevice(id: string) { selectedId = id; tab = 'setup'; view = 'device'; }
   async function toggleSession() {
     if (sessionId) {
       const id = sessionId;
@@ -291,114 +315,107 @@
       notify(needsReconnect ? 'Module removed. Reconnect the gateway to update USB controllers.' : 'Pending module removed.');
     }
   }
-  async function reconnectDemo() {
+  async function reconnectGateway() {
     cancelInputs(); sessionId = null;
     if (!await sendGateway({ command: 'reconnect' })) return;
     log('Gateway reconnected', 'HID controllers rebuilt with the registered layout. Check host controller bindings.');
-    notify('USB layout updated. Start the gateway to test inputs.');
+    notify('USB layout updated.');
+    await runAutomaticGateway();
   }
 </script>
 
-<div class:light class="prototype">
-  <div class="variant-bar">
-    <div class="variant-label"><span class="prototype-dot"></span><strong>COCKPIT</strong><span class="divider"></span><span>Layout exploration</span></div>
-    <div class="variant-switch" aria-label="Layout variants">
-      {#each layouts as item, i (item.id)}
-        <button class:active={layout === item.id} aria-pressed={layout === item.id} onclick={() => chooseLayout(item.id)}><Icon name={item.icon} size={15} /><span>{item.name}</span><small>0{i + 1}</small></button>
-      {/each}
-    </div>
-    <span class="version-label">PROTOTYPE / 0.1</span>
-  </div>
-
+<div class:light class="cockpit">
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="https://www.opensimgear.org" target="_blank" rel="noreferrer" onclick={openLink}><img src={light ? '/logo-light.svg' : '/logo-dark.svg'} alt="" /><span><strong>Open</strong>SimGear<small>COCKPIT</small></span></a>
-      <div class="rig-switcher"><span class="rig-avatar"><Icon name="wheel" size={21} /></span><div><strong>My racing rig</strong><small>Gateway simulator</small></div><span class="rig-chevron"><Icon name="chevron" size={14} /></span></div>
       <div class="nav-label">WORKSPACE</div>
       <nav aria-label="Main navigation">
         {#each navigation as item (item.id)}
-          <button title={item.label} class:current={view === item.id} onclick={() => { view = item.id; }}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{devices.length}</span>{/if}</button>
+          <button title={item.label} class:current={view === item.id || (item.id === 'devices' && view === 'device')} onclick={() => { view = item.id; }}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{devices.length}</span>{/if}</button>
         {/each}
       </nav>
       <div class="sidebar-bottom">
         <button class="sidebar-link" class:current={view === 'preferences'} onclick={() => { view = 'preferences'; }}><Icon name="settings" size={18} />Preferences</button>
         <a class="sidebar-link" href="https://www.opensimgear.org/docs/architecture/desktop-cockpit/" target="_blank" rel="noreferrer" onclick={openLink}><Icon name="help" size={18} />Documentation<Icon name="external" size={13} /></a>
-        <div class="demo-note"><Icon name="info" size={17} /><div><strong>Virtual modules. Real HID.</strong><p>Connect a Pico W to test real USB controllers in your simulator.</p></div></div>
         <div class="sidebar-version"><span>Open hardware. Your control.</span><small>v0.1.0</small></div>
       </div>
     </aside>
 
     <div class="main-shell">
-      <header class="topbar"><div class="breadcrumb">Workspace<Icon name="chevron" size={13} /><strong>{view.charAt(0).toUpperCase() + view.slice(1)}</strong></div><div class="topbar-actions"><span class="demo-pill">{gateway?.running ? 'USB HID active' : 'Simulator'}</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About this prototype" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
+      <header class="topbar"><div class="breadcrumb">Workspace<Icon name="chevron" size={13} /><strong>{view === 'device' ? selected?.settings.label ?? 'Device' : view.charAt(0).toUpperCase() + view.slice(1)}</strong></div><div class="topbar-actions"><span class="connection-pill">{gateway?.running ? 'USB HID active' : gatewayConnected ? 'Gateway stopped' : 'Gateway disconnected'}</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
         {#if view === 'activity'}
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
-          <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This demo session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
+          <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
         {:else if view === 'preferences'}
           <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Preferences</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
-          <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div><div class="preference-row"><div><strong>Default layout</strong><p>Your choice is remembered on this device.</p></div><select aria-label="Default layout" value={layout} onchange={event => { layout = event.currentTarget.value as Layout; persist('osg-layout', layout); }}>{#each layouts as item (item.id)}<option value={item.id}>{item.name}</option>{/each}</select></div></section>
-        {:else}
-          <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>{view === 'connections' ? 'Everything connected.' : view === 'devices' ? 'Meet your devices.' : activeLayout === 'focus' ? 'Dial in the details.' : activeLayout === 'map' ? 'Everything connected.' : 'Your rig. In sync.'}</h1><p>{layoutDescription}</p></div><button class="secondary-button scan-button" disabled={gatewayBusy} onclick={rescan}><Icon name="refresh" size={16} />Rescan devices</button></div>
-          <section class="gateway-control" aria-label="Gateway simulator">
-            <span class="gateway-icon"><Icon name="network" size={23} /></span>
-            <div class="gateway-copy">
-              <strong>Pico W USB gateway <span class="quiet-tag">{gatewayBusy ? 'Working…' : gateway?.running ? `${gateway.modules.filter(module => module.active).length} active modules` : gatewayConnected ? 'Stopped' : 'Disconnected'}</span></strong>
-              <p>{gateway?.connected ? `${gateway.gatewaySerial} · ${gateway.port}. Simulated CAN modules publish real USB HID reports.` : 'Flash the gateway firmware, connect your Pico W with a data cable, and choose its USB serial port.'}</p>
-              <div class="gateway-connection">
+          <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
+        {:else if view === 'gateways'}
+          <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Gateways</h1><p>Your connected gateways and their devices.</p></div></div>
+          <section class="gateway-list" aria-label="Gateways">
+            {#if gatewayConnected}
+              <section class="gateway-control" aria-label="Pico gateway">
+                <div class="gateway-card-header">
+                  <span class="gateway-icon"><Icon name="network" size={23} /></span>
+                  <div class="gateway-copy">
+                    <strong>{gatewayName} <span class="quiet-tag">{gatewayBusy ? 'Working…' : gateway?.running ? 'USB HID active' : 'Waiting to start'}</span></strong>
+                    <p>{gateway?.gatewaySerial} · {gateway?.port}</p>
+                    <p class="automation-status" role="status">{automation.reason}</p>
+                    {#if gatewayError}<p class="gateway-error" role="alert">{gatewayError}</p><button class="text-button" disabled={gatewayBusy} onclick={retryGateway}>Retry gateway</button>{/if}
+                    {#if gateway?.hidNaming?.error}<p class="gateway-error" role="alert">Controller names could not be updated: {gateway.hidNaming.error}</p>{/if}
+                  </div>
+                </div>
+                <div class="gateway-modules">
+                  <div class="gateway-modules-heading"><h3>Devices <span>{devices.length} / 8</span></h3><button class="secondary-button" disabled={gatewayBusy || devices.length >= 8 || sessionId !== null || !!gateway?.claimedModules?.length} onclick={openAdd}><Icon name="plus" size={14} />Add device</button></div>
+                  <ul class="gateway-device-list">
+                    {#each devices as device (device.id)}
+                      <li>
+                        <button class="gateway-device-link" onclick={() => selectDevice(device.id)}><span class="status-dot" class:offline={!device.online}></span><span><strong>{device.settings.label}</strong><small>{device.inputs} · {device.online ? 'Online' : 'Offline'}</small></span><Icon name="chevron" size={13} /></button>
+                        <button class="icon-button delete-device" aria-label={`Delete ${device.settings.label}`} title={`Delete ${device.settings.label}`} disabled={gatewayBusy || sessionId !== null || !!gateway?.claimedModules?.length} onclick={() => confirmRemove(device)}><Icon name="trash" size={15} /></button>
+                      </li>
+                    {:else}
+                      <li class="gateway-devices-empty">No devices registered. Add a simulated module to get started.</li>
+                    {/each}
+                  </ul>
+                </div>
+              </section>
+              {#if needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>{gatewayName} needs a reconnect</strong><p>Module names and controller layout changes take effect on USB after reconnection. Check your simulator bindings afterward.</p></div><button class="secondary-button" disabled={gatewayBusy || sessionId !== null} onclick={reconnectGateway}><Icon name="usb" size={15} />Reconnect gateway</button></div>{/if}
 
-                  <label>USB serial port<select aria-label="Pico USB serial port" bind:value={selectedPort} disabled={gatewayBusy || !!gateway?.connected}><option value="">{gateway?.ports?.length ? 'Choose a USB port' : 'No USB serial ports found'}</option>{#each gateway?.ports ?? [] as port (port.path)}<option value={port.path}>{port.path}{port.manufacturer ? ` · ${port.manufacturer}` : ''}</option>{/each}</select></label>
-                  <button class="icon-button" aria-label="Refresh USB ports" disabled={gatewayBusy || !!gateway?.connected} onclick={() => sendGateway({ command: 'ports' })}><Icon name="refresh" size={16} /></button>
-
-              </div>
-              {#if gatewayError}<p class="gateway-error" role="alert">{gatewayError}</p>{/if}
-              {#if gateway?.connected && gateway.hidNaming?.error}<p class="gateway-error" role="alert">Controller names could not be updated: {gateway.hidNaming.error}</p>{/if}
-            </div>
-            <div class="gateway-actions">
-              <button class="secondary-button" disabled={gatewayBusy || sessionId !== null || (!gateway?.connected && !selectedPort)} onclick={connectPico}><Icon name="usb" size={15} />{gateway?.connected ? 'Disconnect Pico' : 'Connect Pico'}</button>
-              <button class="primary-button" disabled={gatewayBusy || sessionId !== null || !gatewayConnected} onclick={toggleGateway}><Icon name={gateway?.running ? 'stop' : 'play'} size={15} />{gateway?.running ? 'Stop gateway' : 'Start gateway'}</button>
-              <button class="secondary-button" disabled={gatewayBusy || !gatewayConnected || devices.length >= 8 || sessionId !== null} onclick={openAdd}><Icon name="plus" size={15} />Add device</button>
-              <a class="text-button" href="/pico-flashing.html" target="_blank" rel="noreferrer" onclick={openLink}>Flashing instructions<Icon name="external" size={12} /></a>
-            </div>
+            {:else}
+              <p class="gateway-discovery" role="status">Connect an OpenSimGear gateway to start.</p>
+              {#if gatewayError && gatewayCandidates(gateway?.ports).length}<div class="notice amber-notice" role="alert"><p>{gatewayError}</p><button class="text-button" disabled={gatewayBusy} onclick={retryGateway}>Retry discovery</button></div>{/if}
+            {/if}
           </section>
-          <div class="stat-grid">
-            <div class="stat"><span class="stat-icon"><Icon name="devices" size={20} /></span><div><small>Simulated modules online</small><strong>{devices.filter(device => device.online).length}<span> / {devices.length}</span></strong></div><span class="status-dot"></span></div>
-            <div class="stat"><span class="stat-icon"><Icon name="network" size={20} /></span><div><small>Gateway</small><strong>{gateway?.running ? '01' : '00'}<span> · USB</span></strong></div><span class="stat-tag">{gateway?.running ? 'Active' : 'Stopped'}</span></div>
-            <div class="stat"><span class="stat-icon"><Icon name="sliders" size={20} /></span><div><small>Configuration</small><strong>{dirtyCount ? String(dirtyCount).padStart(2, '0') : 'All saved'}{#if dirtyCount}<span> draft{dirtyCount > 1 ? 's' : ''}</span>{/if}</strong></div></div>
-            <div class="stat"><span class="stat-icon"><Icon name="usb" size={20} /></span><div><small>Setup session</small><strong>{sessionId ? 'Active' : 'Released'}</strong></div><span class="stat-tag" class:amber={sessionId !== null}>{sessionId ? 'Cockpit' : 'Available'}</span></div>
-          </div>
-
-          {#if needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>Gateway 01 needs a reconnect</strong><p>Module names and controller layout changes take effect on USB after reconnection. Check your simulator bindings afterward.</p></div><button class="secondary-button" disabled={gatewayBusy || sessionId !== null} onclick={reconnectDemo}><Icon name="usb" size={15} />Reconnect gateway</button></div>{/if}
-
-          {#if selected}
-          <div class="workspace" class:focus-layout={activeLayout === 'focus'} class:map-layout={activeLayout === 'map'}>
-            <div class="workspace-primary">
-              {#if activeLayout === 'workbench'}
-                <div class="section-heading"><div><h2>Your devices <span>{devices.length}</span></h2><p>A place for every part of your rig.</p></div></div>
+        {:else if view === 'devices'}
+          <div class="page-heading"><div><div class="eyebrow">YOUR CONTROLLERS</div><h1>Devices</h1><p>Select a device to configure it and test its inputs.</p></div><button class="secondary-button scan-button" disabled={gatewayBusy} onclick={rescan}><Icon name="refresh" size={16} />Rescan devices</button></div>
                 <div class="inventory-toolbar"><label class="search-field"><Icon name="search" size={16} /><input aria-label="Search devices" placeholder="Find a device…" bind:value={search} /></label><select aria-label="Filter devices" bind:value={filter}><option value="all">All devices</option><option value="online">Connected</option></select></div>
                 <div class="device-grid">
                   {#each filtered as device (device.id)}
-                    <button class="device-card" class:selected={selectedId === device.id} class:offline={!device.online} onclick={() => selectDevice(device.id)} aria-pressed={selectedId === device.id}>
-                      <div class="card-top"><span class="connection-badge"><span class="status-dot" class:offline={!device.online}></span>{device.online ? 'Connected' : 'Offline'}</span>{#if selectedId === device.id}<span class="selected-check"><Icon name="check" size={13} /></span>{:else}<Icon name="arrow" size={15} />{/if}</div>
+                    <button class="device-card" class:offline={!device.online} onclick={() => selectDevice(device.id)}>
+                      <div class="card-top"><span class="connection-badge"><span class="status-dot" class:offline={!device.online}></span>{device.online ? 'Connected' : 'Offline'}</span><Icon name="arrow" size={15} /></div>
                       <div class="card-illustration"><DeviceIllustration kind={device.kind} compact /></div>
                       <div class="card-copy"><h3>{device.settings.label}</h3><p>{device.inputs}</p><div class="card-route"><Icon name={device.online ? 'network' : 'usb'} size={12} />{device.route}{#if !settingsEqual(drafts[device.id], device.settings)}<span class="draft-dot" title="Unsaved changes"></span>{/if}</div></div>
                     </button>
-                  {:else}<div class="empty-state"><Icon name="search" size={26} /><strong>No matching devices</strong><p>Try another name or show all devices.</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; }}>Clear filters</button></div>{/each}
+                  {:else}<div class="empty-state"><Icon name="search" size={26} /><strong>{devices.length ? 'No matching devices' : 'No devices yet'}</strong><p>{devices.length ? 'Try another name or show all devices.' : 'Plug in your Pico gateway to discover modules automatically.'}</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; }}>Clear filters</button></div>{/each}
                 </div>
-                <div class="connection-summary"><span class="gateway-icon"><Icon name="network" size={23} /></span><div><strong>Gateway 01</strong><p>One virtual gateway. Stable controller identities.</p></div><button aria-label="View gateway connections" class="icon-button" onclick={() => { view = 'connections'; }}><Icon name="arrow" size={19} /></button><span class="status-dot"></span></div>
-              {:else if activeLayout === 'focus'}
-                <div class="device-rail" aria-label="Select a device">{#each devices as device (device.id)}<button class:active={selectedId === device.id} onclick={() => selectDevice(device.id)}><span class="status-dot" class:offline={!device.online}></span>{device.settings.label}</button>{/each}</div>
-                <section class="panel focus-stage"><div class="stage-title"><div><span class="eyebrow">DEVICE WORKSPACE</span><h2>{selected.name}</h2><p>{selected.subtitle}</p></div><span class="connection-badge"><span class="status-dot" class:offline={!selected.online}></span>{selected.online ? 'Connected' : 'Offline'}</span></div><div class="large-device"><DeviceIllustration kind={selected.kind} /></div><div class="stage-metadata"><div><small>STABLE IDENTITY</small><strong>{selected.id}</strong></div><div><small>ACTIVE ROUTE</small><strong>{selected.route}</strong></div><div><small>CAPABILITIES</small><strong>{selected.inputs}</strong></div></div></section>
-                <section class="panel focus-inputs"><div class="panel-heading"><h2>Input test</h2><span class="quiet-tag">{controlsReady ? 'Live HID output' : 'Simulator inputs'}</span></div>{@render inputTester()}</section>
-              {:else}
-                <section class="panel rig-map"><div class="panel-heading"><div><h2>Your connection map</h2><p>Stable device identities. A single linear CAN chain.</p></div><span class="quiet-tag"><span class="status-dot" class:offline={!gatewayConnected}></span>{gatewayConnected ? 'Connected' : 'Last known'}</span></div><div class="map-host"><Icon name="monitor" size={28} /><strong>Your computer</strong><small>HID host</small></div><div class="usb-line"><span>USB HID + serial</span></div><div class="map-gateway"><span class="gateway-icon"><Icon name="network" size={23} /></span><div><strong>Gateway 01</strong><small>{gateway?.gatewaySerial ?? 'OSG-GW-SIM'} · one simulated CAN chain</small></div><span class="status-dot"></span></div><div class="can-spine"><span>Simulated CAN chain</span></div><div class="map-nodes">{#each devices.filter(device => device.online) as device (device.id)}<button class:active={selectedId === device.id} onclick={() => selectDevice(device.id)}><div class="node-art"><DeviceIllustration kind={device.kind} compact /></div><strong>{device.settings.label}</strong><small>{device.id}</small><span class="connection-badge"><span class="status-dot"></span>Connected</span></button>{/each}</div><div class="map-terminators"><span><i></i>Gateway endpoint terminated</span><span>Final module endpoint terminated<i></i></span></div>{#if devices.some(device => device.id === 'OSG-HB-0023' && !device.online)}<div class="map-direct"><Icon name="usb" size={19} /><div><strong>Reserved controller slot</strong><small>Handbrake · simulated module currently offline</small></div><button class="text-button" onclick={() => selectDevice('OSG-HB-0023')}>Inspect<Icon name="arrow" size={14} /></button></div>{/if}</section>
+        {:else if view === 'topology'}
+          <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Topology</h1><p>Follow your gateway’s simulated CAN chain.</p></div></div>
+                <section class="panel rig-map"><div class="panel-heading"><div><h2>Your connection map</h2><p>Stable device identities. A single linear CAN chain.</p></div><span class="quiet-tag"><span class="status-dot" class:offline={!gatewayConnected}></span>{gatewayConnected ? 'Connected' : 'Last known'}</span></div><div class="map-host"><Icon name="monitor" size={28} /><strong>Your computer</strong><small>HID host</small></div><div class="usb-line"><span>USB HID + serial</span></div><div class="map-gateway"><span class="gateway-icon"><Icon name="network" size={23} /></span><div><strong>{gatewayName}</strong><small>{gateway?.gatewaySerial ?? 'OSG-GW-SIM'} · one simulated CAN chain</small></div><span class="status-dot"></span></div><div class="can-spine"><span>Simulated CAN chain</span></div><div class="map-nodes">{#each devices.filter(device => device.online) as device (device.id)}<button class:active={selectedId === device.id} onclick={() => selectDevice(device.id)}><div class="node-art"><DeviceIllustration kind={device.kind} compact /></div><strong>{device.settings.label}</strong><small>{device.id}</small><span class="connection-badge"><span class="status-dot"></span>Connected</span></button>{/each}</div><div class="map-terminators"><span><i></i>Gateway endpoint terminated</span><span>Final module endpoint terminated<i></i></span></div>{#if devices.some(device => device.id === 'OSG-HB-0023' && !device.online)}<div class="map-direct"><Icon name="usb" size={19} /><div><strong>Reserved controller slot</strong><small>Handbrake · simulated module currently offline</small></div><button class="text-button" onclick={() => selectDevice('OSG-HB-0023')}>Inspect<Icon name="arrow" size={14} /></button></div>{/if}</section>
                 <div class="map-footnote"><Icon name="info" size={16} /><p>Gateway sockets continue the same bus. Device identities stay consistent as connections change.</p></div>
-              {/if}
-            </div>
+        {:else if view === 'device' && selected}
+          <button class="text-button device-back" onclick={() => { view = 'devices'; }}><Icon name="arrow" size={14} />Back to devices</button>
+          <div class="page-heading"><div><div class="eyebrow">DEVICE WORKSPACE</div><h1>{selected.settings.label}</h1><p>Configuration and live controller inputs.</p></div></div>
+          {#if needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>{gatewayName} needs a reconnect</strong><p>Module names and controller layout changes take effect on USB after reconnection. Check your simulator bindings afterward.</p></div><button class="secondary-button" disabled={gatewayBusy || sessionId !== null} onclick={reconnectGateway}><Icon name="usb" size={15} />Reconnect gateway</button></div>{/if}
 
+          {#if gatewayError}<div class="notice amber-notice" role="alert"><Icon name="alert" size={17} /><p>{gatewayError}</p></div>{/if}
+          <div class="device-workspace">
+            <div>
+                <section class="panel device-stage"><div class="stage-title"><div><span class="eyebrow">DEVICE WORKSPACE</span><h2>{selected.name}</h2><p>{selected.subtitle}</p></div><span class="connection-badge"><span class="status-dot" class:offline={!selected.online}></span>{selected.online ? 'Connected' : 'Offline'}</span></div><div class="large-device"><DeviceIllustration kind={selected.kind} /></div><div class="stage-metadata"><div><small>STABLE IDENTITY</small><strong>{selected.id}</strong></div><div><small>ACTIVE ROUTE</small><strong>{selected.route}</strong></div><div><small>CAPABILITIES</small><strong>{selected.inputs}</strong></div></div></section>
+                <section class="panel device-inputs"><div class="panel-heading"><h2>Input test</h2><span class="quiet-tag">{controlsReady ? 'Live HID output' : 'Simulator inputs'}</span></div>{@render inputTester()}</section>
+            </div>
             <section class="panel inspector" aria-label="Selected device settings">
-              <div class="inspector-heading"><div><span class="eyebrow">{activeLayout === 'focus' ? 'CONFIGURATION' : 'SELECTED DEVICE'}</span><h2>{selected.settings.label}</h2></div><span class="model-badge">{selected.kind === 'shifter' ? 'SQ' : selected.kind === 'pedals' ? 'PD' : selected.kind === 'panel' ? 'BP' : selected.kind === 'wheel' ? 'WH' : 'HB'}</span></div>
-              {#if activeLayout !== 'focus'}<div class="inspector-art"><DeviceIllustration kind={selected.kind} compact /><span class="art-id">{selected.id}</span></div>{/if}
-              <div class="inspector-tabs" aria-label="Device sections">{#each ['setup', 'inputs', 'details'] as item (item)}<button class:active={tab === item} aria-pressed={tab === item} onclick={() => { tab = item; }}>{item.charAt(0).toUpperCase() + item.slice(1)}</button>{/each}</div>
+              <div class="inspector-heading"><div><span class="eyebrow">CONFIGURATION</span><h2>{selected.settings.label}</h2></div><span class="model-badge">{selected.kind === 'shifter' ? 'SQ' : selected.kind === 'pedals' ? 'PD' : selected.kind === 'panel' ? 'BP' : selected.kind === 'wheel' ? 'WH' : 'HB'}</span></div>
+              <div class="inspector-tabs" aria-label="Device sections">{#each ['setup', 'details'] as item (item)}<button class:active={tab === item} aria-pressed={tab === item} onclick={() => { tab = item; }}>{item.charAt(0).toUpperCase() + item.slice(1)}</button>{/each}</div>
               <div class="inspector-body">
                 {#if !selected.online}<div class="notice offline-notice"><Icon name="alert" size={17} /><div><strong>Device is offline</strong><p>Reconnect this module to configure it. Its saved identity and settings are preserved.</p></div></div>{/if}
                 {#if tab === 'setup'}
@@ -406,10 +423,7 @@
                   <label class="field-label" for="device-name">Device name<span>Saved in simulator</span></label><input class="text-input" id="device-name" bind:value={draft.label} disabled={!editing} maxlength="80" />
                   <div class="setting-heading"><label for="debounce">Input debounce</label><span>{draft.debounce}<small> ms</small></span></div><input id="debounce" aria-label="Input debounce" type="range" min="1" max="50" step="1" bind:value={draft.debounce} disabled={!editing} /><div class="range-labels"><span>1 ms</span><span>50 ms</span></div><p class="field-help">Ignore brief contact noise for a clean input.</p>
                   {#if selected.kind !== 'panel'}<div class="toggle-row"><div><strong>Invert {selected.kind === 'shifter' ? 'shift direction' : 'input direction'}</strong><p>{selected.kind === 'shifter' ? 'Swap the upshift and downshift inputs.' : 'Reverse the reported input direction.'}</p></div><button class="toggle" class:on={draft.inverted} role="switch" aria-checked={draft.inverted} aria-label="Invert input direction" disabled={!editing} onclick={() => { draft.inverted = !draft.inverted; }}><span></span></button></div>{/if}
-                  {#if selected.kind === 'pedals' || selected.kind === 'handbrake'}<div class="calibration-row"><div><strong>Axis calibration</strong><p>{calibrated[selected.id] ? 'Demo range captured in this session.' : 'Capture a fresh range for this hardware.'}</p></div><button class="text-button" disabled={!editing} onclick={() => { calibrated[selected.id] = true; log('Demo calibration captured', `${selected.name} · simulated axis range only.`); notify('Simulated axis range captured. Real calibration requires connected hardware.'); }}>{calibrated[selected.id] ? 'Recapture' : 'Calibrate'}</button></div>{/if}
                   <div class="configuration-status"><span class="status-dot" class:draft-dot={dirty}></span>{dirty ? 'Unsaved changes' : 'Configuration up to date'}<span>{dirty ? 'Draft' : 'Saved'}</span></div>
-                {:else if tab === 'inputs'}
-                  <div class="input-heading"><h3>Input monitor</h3><p>Exercise module controls and send HID reports to macOS.</p></div>{@render inputTester()}
                 {:else}
                   <dl class="device-details"><div><dt>Stable identity</dt><dd>{selected.id}</dd></div><div><dt>Connection</dt><dd>{selected.route}</dd></div><div><dt>Firmware</dt><dd>{selected.firmware}</dd></div><div><dt>Capabilities</dt><dd>{selected.inputs}</dd></div><div><dt>Configuration owner</dt><dd>{editing ? 'Cockpit simulator' : 'None'}</dd></div></dl><div class="notice"><Icon name="info" size={17} /><p>{`USB interfaces share the Pico serial ${gateway?.gatewaySerial ?? ''}. This module maps to USB interface ${hidModule?.hidInterface ?? 'pending'}. Settings stay in RAM until the Pico resets.`}</p></div>
                 {/if}
@@ -417,27 +431,28 @@
               <div class="inspector-footer">
                 <button class={editing || sessionId ? 'secondary-button session-button' : 'primary-button session-button'} disabled={gatewayBusy || (!selected.online && !sessionId)} onclick={toggleSession}><Icon name={sessionId ? 'stop' : 'play'} size={15} />{sessionId && !editing ? `End ${sessionDevice?.settings.label} session` : sessionId ? 'End setup session' : 'Start setup session'}</button>
                 {#if dirty}<div class="save-actions"><button class="text-button" onclick={discard}>Discard</button><button class="primary-button" disabled={gatewayBusy || !editing || !draft.label.trim()} onclick={applySettings}><Icon name="check" size={15} />Apply & save</button></div>{/if}
-                <button class="text-button remove-module" disabled={gatewayBusy || !gatewayConnected || sessionId !== null} onclick={() => { removeTarget = { id: selected.id, label: selected.settings.label }; modal = 'remove'; }}><Icon name="close" size={14} />Remove module</button>
-                <p><Icon name="info" size={12} />HID input tests run independently of setup sessions.</p>
               </div>
             </section>
           </div>
-          {:else}
-            <section class="panel empty-gateway"><Icon name="usb" size={32} /><h2>{gatewayConnected ? 'No modules registered' : 'Connect your gateway'}</h2><p>{gatewayConnected ? 'Use Add device on the Pico gateway card, reconnect the gateway, and start testing.' : 'Connect a flashed Pico W to discover its modules. The USB serial port opens only when you connect.'}</p></section>
-          {/if}
-          <div class="layout-caption"><span>LAYOUT {activeLayout === 'workbench' ? '01' : activeLayout === 'focus' ? '02' : '03'}</span><p>{activeLayout === 'workbench' ? 'Workbench · an overview that keeps configuration within reach.' : activeLayout === 'focus' ? 'Device focus · a spacious workspace for one module at a time.' : 'Rig map · connection context for setup and troubleshooting.'}</p></div>
         {/if}
       </main>
-      <footer class="statusbar"><span><span class="status-dot"></span>{sessionId ? `Simulator setup: ${sessionDevice?.settings.label}` : 'Setup access released'}</span><span class="statusbar-right">{gateway?.running ? 'USB HID active' : gatewayConnected ? 'Gateway stopped' : 'Gateway disconnected'}<span class="divider"></span>Simulated CAN modules<span class="divider"></span><Icon name="check" size={12} />Local prototype</span></footer>
     </div>
   </div>
 
-  {#if toast}<div class="toast" role="status"><span class="toast-icon"><Icon name="check" size={16} /></span><p>{toast}</p><button class="icon-button" aria-label="Dismiss notification" onclick={() => { toast = ''; }}><Icon name="close" size={15} /></button></div>{/if}
+  {#if toast}
+    {#key toastSequence}
+      <div class="toast" role="status" style={`--toast-duration: ${notificationDuration}ms`}>
+        <span class="toast-icon"><Icon name="check" size={16} /></span><p>{toast}</p>
+        <button class="icon-button" aria-label="Dismiss notification" onclick={dismissNotification}><Icon name="close" size={15} /></button>
+        <span class="toast-countdown" aria-hidden="true"></span>
+      </div>
+    {/key}
+  {/if}
   {#if modal}
     <div class="modal-backdrop"><dialog class="modal" aria-labelledby="modal-title" {@attach showDialog} onclose={() => { modal = null; }}>
       <button class="modal-close icon-button" aria-label="Close dialog" onclick={() => { modal = null; }}><Icon name="close" /></button>
       {#if modal === 'help'}
-        <span class="modal-icon"><Icon name="wheel" size={30} /></span><span class="eyebrow">WELCOME TO YOUR COCKPIT</span><h2 id="modal-title">Built around your hardware.</h2><p>Connect your flashed Pico W, start the gateway, and test its real USB HID controllers with simulated module inputs.</p><div class="notice"><Icon name="info" size={18} /><p>Add or remove modules, then explicitly reconnect to update the USB layout. Offline modules retain their controller slots with neutral inputs. Settings and registration stay in Pico RAM until reset. CAN and axis calibration are simulated.</p></div><a class="primary-button" href="/pico-flashing.html" target="_blank" rel="noreferrer" onclick={openLink}>Flashing instructions<Icon name="external" size={16} /></a>
+        <span class="modal-icon"><Icon name="wheel" size={30} /></span><span class="eyebrow">WELCOME TO YOUR COCKPIT</span><h2 id="modal-title">Built around your hardware.</h2><p>Plug in your flashed Pico W. Cockpit connects and starts a compatible gateway automatically so you can test real USB HID controllers with simulated module inputs.</p><div class="notice"><Icon name="info" size={18} /><p>Add or remove modules, then explicitly reconnect to update the USB layout. Offline modules retain their controller slots with neutral inputs. Settings and registration stay in Pico RAM until reset. CAN transport is simulated.</p></div><a class="primary-button" href="/pico-flashing.html" target="_blank" rel="noreferrer" onclick={openLink}>Flashing instructions<Icon name="external" size={16} /></a>
       {:else if modal === 'remove'}
         <span class="modal-icon"><Icon name="close" size={30} /></span><span class="eyebrow">REMOVE REGISTRATION</span><h2 id="modal-title">Remove {removeTarget.label}?</h2><p>This removes {removeTarget.id} from the gateway inventory and discards its settings and unsaved draft. Published inputs are neutralized immediately. Reconnect the gateway to remove its USB HID interface.</p><div class="modal-actions"><button class="secondary-button" onclick={() => { modal = null; }}>Cancel</button><button class="primary-button" disabled={gatewayBusy} onclick={removeModule}>Remove module</button></div>
       {:else}

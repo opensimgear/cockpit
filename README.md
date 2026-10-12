@@ -1,10 +1,10 @@
 # OpenSimGear cockpit
 
-Desktop configuration and HID test application built with **Tauri 2, Rust, Svelte 5, TypeScript, and Vite**. The existing interface retains the website's green and slate palette, light/dark logos, and three switchable layouts:
+Desktop configuration and HID test application built with **Tauri 2, Rust, Svelte 5, TypeScript, and Vite**. The interface retains the website's green and slate palette and light/dark logos.
 
-- **Workbench**: device cards beside an inspector; recommended daily default.
-- **Device focus**: more room for one module's configuration and input tuning.
-- **Rig map**: gateway and CAN-chain context for connection diagnostics.
+- **Gateways**: one card per connected gateway, with its device inventory and Add/Delete controls.
+- **Devices**: the device inventory; selecting a card opens its dedicated configuration and HID input workspace.
+- **Topology**: the gateway and module connection map.
 
 ## Current behavior
 
@@ -14,7 +14,7 @@ A **Pico W USB gateway** publishes simulated CAN module controls as real USB HID
 
 Pico settings and registration stay in board RAM until reset. Physical CAN/sensors, persistent configuration, production protocol adapters, firmware update automation, and usable SimHub profiles remain pending. Axis calibration remains a visual demo.
 
-Serial access opens only after **Connect Pico**. Stop/disconnect neutralizes inputs, and **Disconnect Pico**, application exit, lost UI liveness, or serial failure releases the connection. USB controller interfaces remain enumerated until a physical disconnect or explicit layout reconnect. Setup sessions are independent of input testing.
+Serial access opens automatically after a compatible Pico is detected and its handshake succeeds. Application exit, lost UI liveness, or serial failure neutralizes inputs and releases the connection. USB controller interfaces remain enumerated until a physical disconnect or explicit layout reconnect. Setup sessions are independent of input testing.
 
 ## Run the desktop app
 
@@ -42,7 +42,7 @@ pnpm build
 
 ### Browser development fallback
 
-The browser prototype remains available explicitly:
+The browser development app remains available explicitly:
 
 ```sh
 pnpm web:dev
@@ -73,7 +73,7 @@ The IOHIDManager verifier prints OS enumeration, descriptors, raw reports, and p
 
 ### Native acceptance
 
-The macOS Tauri app was tested on **2026-10-12** with the physical Pico W and an independent IOHID observer. Individual controller names, shifter/panel buttons, all three pedal axes, real **four → five → four** controller enumeration, held-input neutralization on removal and app quit, and serial release passed. The final release app also delivered shifter inputs from bundled assets with its development server stopped, and exported the bundled firmware to Downloads with the expected SHA-256. All three UI layouts remain available.
+The macOS Tauri app was tested on **2026-10-12** with the physical Pico W and an independent IOHID observer. Individual controller names, shifter/panel buttons, all three pedal axes, real **four → five → four** controller enumeration, held-input neutralization on removal and app quit, and serial release passed. The final release app also delivered shifter inputs from bundled assets with its development server stopped, and exported the bundled firmware to Downloads with the expected SHA-256. The UI now uses separate gateway, inventory, and device-detail pages.
 
 The Pico-only release app and DMG built successfully; **22 Rust tests**, **11 frontend transport/guide tests**, Pico firmware/transport checks, formatting, and Svelte checks passed. See the [native hardware and build report](docs/verification/2026-10-12-tauri-pico.md). Raw logs, build records, and screenshots remain local in the ignored `output/tauri-hardware/` directory. Windows/Linux hardware behavior requires its own platform checks.
 
@@ -108,3 +108,5 @@ Use a compatible pinned protocol release through Rust/TypeScript adapters and sh
 ## Licensing
 
 License selection is pending. No license grant is implied by this scaffold. Firmware, mechanical design, and electronics will each need documented license coverage before releases and any public USB identifier application.
+
+Compatible Pico gateways connect and start automatically on launch and USB discovery. Discovery requires VID `cafe`, PID `4010`, and an `OSG-PICO-` serial; the protocol handshake still verifies compatibility. Matching macOS cu/tty paths are deduplicated, preferring the call-out cu path. Multiple candidates are tried automatically in stable path order; incompatible or unavailable attachments are skipped. Automatic start waits during setup claims, pending controller changes, or when no registered modules are online. The gateway card is shown only while connected, with its module inventory and Add/Delete controls. Failed attachments can be retried or unplugged and reconnected.

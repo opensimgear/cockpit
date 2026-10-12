@@ -59,7 +59,7 @@ export async function gatewayRequest(request: GatewayRequest): Promise<GatewaySt
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSG-Simulator': '1' },
     body: JSON.stringify({ ...request, clientId }), signal: AbortSignal.timeout(135_000),
   });
-  if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('Start the browser prototype with pnpm web:dev to enable its gateway bridge.');
+  if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('Start the browser development app with pnpm web:dev to enable its gateway bridge.');
   const result: GatewayResult = await response.json();
   if (!response.ok) throw new GatewayError(result.error ?? 'The gateway request failed.', result.state);
   return resultState(result);
