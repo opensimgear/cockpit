@@ -51,3 +51,17 @@ test('multiple gateways connect deterministically and failed candidates do not b
   assert.equal(action({ ...state, ports: [other, port] }, options).port, port.path);
   assert.equal(action({ ...state, ports: [other, port] }, { ...options, failedPorts: new Set([port.path]) }).port, other.path);
 });
+
+const physicalPort = { path: '/dev/cu.usbmodemCAN', manufacturer: 'OpenSimGear', friendlyName: 'CAN Gateway Rev A', serialNumber: '00112233445566778899aabb', vendorId: '1209', productId: '1234' };
+test('CAN discovery requires gateway product metadata and a stable UID without an invented VID', () => {
+  assert.equal(gatewayCandidates([physicalPort])[0].backend, 'stm32');
+  for (const changed of [{ manufacturer: 'Other' }, { manufacturer: 'OpenSimGear clone' }, { friendlyName: 'Generic Device' }, { serialNumber: 'OSG-PICO-12345678' }, { serialNumber: '0'.repeat(24) }, { serialNumber: 'f'.repeat(24) }])
+    assert.equal(gatewayCandidates([{ ...physicalPort, ...changed }]).length, 0);
+  assert.equal(action({ ...state, ports: [port, physicalPort] }, options).backend, 'stm32');
+});
+test('physical gateways never receive simulator start or automatic USB apply commands', () => {
+  for (const changed of [{ running: false }, { needsReconnect: true }, { modules: [] }]) {
+    const result = action({ ...state, backend: 'stm32', connected: true, ...changed }, options);
+    assert.equal(result.command, undefined);
+  }
+});

@@ -9,7 +9,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const state = { running: false, needsReconnect: false, connected: true, modules: [] };
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function transport({ desktop = true, result = { ok: true, state }, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
+function transport({ desktop = true, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
   const calls = [];
   const exported = {};
   vm.runInNewContext(compiled, {
@@ -20,7 +20,7 @@ function transport({ desktop = true, result = { ok: true, state }, invokeError, 
         invoke: async (command, args) => {
           calls.push({ kind: 'invoke', command, ...(args ? { args: plain(args) } : {}) });
           if (invokeError) throw invokeError;
-          return result;
+          return invokeResults ? invokeResults(command, args.request) : result;
         },
       };
       if (name === '@tauri-apps/plugin-opener') return { openUrl: async url => { calls.push({ kind: 'open', url }); } };
@@ -60,7 +60,7 @@ test('native gateway command errors preserve returned state for UI reconciliatio
 test('native IPC failure surfaces an error without falling back to HTTP', async () => {
   const api = transport({ invokeError: 'Native gateway service is unavailable.' });
   await assert.rejects(api.gatewayRequest({ command: 'status' }), /Native gateway service is unavailable/);
-  assert.deepEqual(api.calls.map(call => call.kind), ['invoke']);
+  assert.deepEqual(api.calls.map(call => call.kind), ['invoke', 'invoke']);
 });
 
 test('claim release during desktop unload uses IPC and the same owner ID', async () => {
@@ -72,10 +72,11 @@ test('claim release during desktop unload uses IPC and the same owner ID', async
 
 test('explicit browser mode uses the Pico bridge and unload keepalive', async () => {
   const api = transport({ desktop: false });
-  await api.gatewayRequest({ command: 'ports' });
+  await api.gatewayRequest({ command: 'ports', backend: 'pico' });
   api.releaseOnExit('OSG-SQ-01');
   assert.deepEqual(api.calls.map(call => call.url), ['/api/pico-gateway/', '/api/pico-gateway/']);
   assert.ok(api.calls.every(call => call.kind === 'fetch'));
+  assert.deepEqual(JSON.parse(api.calls[0].options.body), { command: 'ports', clientId: 'test-client-uuid' });
   assert.equal(api.calls[1].options.keepalive, true);
   assert.deepEqual(JSON.parse(api.calls[1].options.body), { command: 'release', moduleId: 'OSG-SQ-01', clientId: 'test-client-uuid' });
 });
@@ -98,5 +99,39 @@ test('browser links retain standard browser navigation', () => {
   let prevented = false;
   assert.equal(api.openCockpitLink({ preventDefault: () => { prevented = true; } }), undefined);
   assert.equal(prevented, false);
+  assert.deepEqual(api.calls, []);
+});
+
+test('disconnected discovery combines both native inventories without opening serial ports', async () => {
+  const pico = { ...state, backend: 'pico', connected: false, ports: [{ path: 'COM1' }] };
+  const stm32 = { ...state, backend: 'stm32', connected: false, ports: [{ path: 'COM2' }] };
+  const api = transport({ invokeResults: command => ({ ok: true, state: command === 'stm32_gateway' ? stm32 : pico }) });
+  const found = await api.gatewayRequest({ command: 'status' });
+  assert.deepEqual(plain(found.ports), [{ path: 'COM1' }, { path: 'COM2' }]);
+  assert.deepEqual(api.calls.map(call => call.command), ['pico_gateway', 'stm32_gateway']);
+});
+
+test('CAN gateway requests use their own adapter and subsequent polling retains it', async () => {
+  const physical = { ...state, backend: 'stm32', gatewaySerial: '00112233445566778899aabb' };
+  const api = transport({ result: { ok: true, state: physical } });
+  await api.gatewayRequest({ command: 'connect', backend: 'stm32', port: 'COM2' });
+  await api.gatewayRequest({ command: 'register', moduleId: '00112233445566778899aabbccddeeff' });
+  await api.gatewayRequest({ command: 'status' });
+  assert.ok(api.calls.every(call => call.command === 'stm32_gateway'));
+  assert.ok(api.calls.every(call => !('backend' in call.args.request)));
+});
+
+test('switching a connected backend closes its service before opening the next', async () => {
+  const api = transport({ invokeResults: (command, request) => ({ ok: true, state: { ...state, backend: command === 'stm32_gateway' ? 'stm32' : 'pico', connected: request.command !== 'disconnect' } }) });
+  await api.gatewayRequest({ command: 'connect', backend: 'pico', port: 'COM1' });
+  await api.gatewayRequest({ command: 'connect', backend: 'stm32', port: 'COM2' });
+  assert.deepEqual(api.calls.map(call => [call.command, call.args.request.command]), [
+    ['pico_gateway', 'connect'], ['pico_gateway', 'disconnect'], ['stm32_gateway', 'connect'],
+  ]);
+});
+
+test('physical CAN gateway selection in browser mode explains the desktop requirement', async () => {
+  const api = transport({ desktop: false });
+  await assert.rejects(api.gatewayRequest({ command: 'connect', backend: 'stm32', port: 'COM2' }), /desktop app/);
   assert.deepEqual(api.calls, []);
 });

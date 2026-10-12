@@ -2,6 +2,7 @@ mod firmware;
 mod hid_names;
 pub mod pico;
 mod protocol;
+mod stm32;
 mod transport;
 
 use serde_json::Value;
@@ -20,12 +21,25 @@ fn local_document(url: &tauri::Url) -> bool {
 
 struct NativeGateway {
     pico: Arc<pico::PicoService>,
+    stm32: Arc<stm32::Stm32Service>,
 }
 
 impl NativeGateway {
     fn shutdown(&self) {
         self.pico.shutdown();
+        self.stm32.shutdown();
     }
+}
+
+#[tauri::command]
+async fn stm32_gateway(
+    request: Value,
+    state: tauri::State<'_, NativeGateway>,
+) -> Result<Value, String> {
+    let service = state.stm32.clone();
+    tauri::async_runtime::spawn_blocking(move || service.request(request))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -95,11 +109,13 @@ pub fn run() {
         .setup(|app| {
             app.manage(NativeGateway {
                 pico: Arc::new(pico::PicoService::new()),
+                stm32: Arc::new(stm32::Stm32Service::new()),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             pico_gateway,
+            stm32_gateway,
             open_pico_flashing_guide,
             export_pico_firmware
         ])

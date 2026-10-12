@@ -128,7 +128,7 @@ impl Factory for NativeFactory {
             .timeout(read_timeout)
             .open()
             .map(|connection| Box::new(NativeConnection(connection)) as Box<dyn Connection>)
-            .map_err(|error| format!("Could not open the Pico serial port: {error}"))
+            .map_err(|error| format!("Could not open the USB serial port: {error}"))
     }
 }
 

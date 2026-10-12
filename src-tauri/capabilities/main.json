@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "allow-pico-gateway",
+    "allow-stm32-gateway",
     "allow-open-pico-flashing-guide",
     {
       "identifier": "opener:allow-open-url",

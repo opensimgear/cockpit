@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stm32-gateway"
+description = "Enables the stm32_gateway command without any pre-configured scope."
+commands.allow = ["stm32_gateway"]
+
+[[permission]]
+identifier = "deny-stm32-gateway"
+description = "Denies the stm32_gateway command without any pre-configured scope."
+commands.deny = ["stm32_gateway"]
