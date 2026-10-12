@@ -4,14 +4,33 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
     "simulator:build": "swift build --package-path simulator/macos",
     "simulator:test": "swift test --package-path simulator/macos && node --test simulator/bridge.test.mjs",
     "simulator:verify": "mkdir -p simulator/.build/module-cache && xcrun swiftc -module-cache-path simulator/.build/module-cache simulator/verify-hid.swift -o simulator/.build/verify-hid && simulator/.build/verify-hid",
     "pico:build": "node simulator/pico/build.mjs",
-    "pico:test": "node simulator/pico/test.mjs && node --test simulator/pico-bridge.test.mjs simulator/pico-integration.test.mjs simulator/pico-hid-names.test.mjs simulator/pico-hid-names-helper.test.mjs"
+    "pico:test": "node simulator/pico/test.mjs && node --test simulator/pico-bridge.test.mjs simulator/pico-integration.test.mjs simulator/pico-hid-names.test.mjs simulator/pico-hid-names-helper.test.mjs",
+    "ui:dev": "vite --host 127.0.0.1",
+    "ui:build": "vite build",
+    "web:dev": "vite --host 127.0.0.1",
+    "web:build": "vite build",
+    "transport:test": "node --test src/lib/gateway.test.mjs src/pico-guide.test.mjs"
   },
   "dependencies": {
-    "serialport": "13.0.0"
+    "@tauri-apps/api": "^2.12.3",
+    "@tauri-apps/plugin-opener": "^2.7.1",
+    "serialport": "13.0.0",
+    "svelte": "^5.55.4"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@types/node": "^24.19.2",
+    "svelte-check": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
   },
   "packageManager": "pnpm@11.25.0"
 }
