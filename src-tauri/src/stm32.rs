@@ -180,7 +180,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
     let uid = wire["identity"].as_str().ok_or_else(bad)?;
     if wire["gatewayType"] != "stm32-can-gateway"
         || wire["protocol"] != 2
-        || wire["canProtocol"] != 2
+        || !matches!(wire["canProtocol"].as_u64(), Some(2 | 3))
         || wire["maxModules"] != MODULE_LIMIT
         || !hex_identity(uid, 24)
         || !wire["running"].is_boolean()
@@ -268,7 +268,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
     }
     Ok(
         json!({"backend":"stm32","gatewaySerial":uid.to_ascii_lowercase(),
-        "gatewayType":wire["gatewayType"],"protocolVersion":2,"canProtocol":2,
+        "gatewayType":wire["gatewayType"],"protocolVersion":2,"canProtocol":wire["canProtocol"],
         "firmwareVersion":wire["firmware"],"epoch":wire["epoch"],"maxModules":MODULE_LIMIT,
         "running":wire["running"],"needsReconnect":wire["needsApply"],"needsApply":wire["needsApply"],
         "reconnecting":false,"connected":true,"modules":modules,
@@ -818,11 +818,23 @@ mod tests {
     const NEUTRAL: &str = "0000880800000080";
 
     fn state() -> Value {
-        json!({"gatewayType":"stm32-can-gateway","protocol":2,"canProtocol":2,
-            "firmware":"0.2.0","identity":UID,"epoch":65536,"running":true,"needsApply":false,"maxModules":10,
+        json!({"gatewayType":"stm32-can-gateway","protocol":2,"canProtocol":3,
+            "firmware":"0.3.0","identity":UID,"epoch":65536,"running":true,"needsApply":false,"maxModules":10,
             "modules":[{"identity":MODULE,"online":true,"directUsb":false,"node":1,"lease":65537,
                 "profile":{"buttons":9,"axes":2,"hats":3,"revision":1,"axisUsage":[48,49],"neutral":[0,32768]},
                 "pendingSlot":0,"activeSlot":0,"profileMatch":true,"pendingProfileMatch":true,"hasInput":true,"report":"0100870834120080"}]})
+    }
+    #[test]
+    fn preserves_can_contract_version_for_legacy_and_cyphal_gateways() {
+        for version in [2, 3] {
+            let mut wire = state();
+            wire["canProtocol"] = json!(version);
+            let decoded = snapshot(&wire, Some(UID)).unwrap();
+            assert_eq!(decoded["canProtocol"], version);
+        }
+        let mut wire = state();
+        wire["canProtocol"] = json!(4);
+        assert!(snapshot(&wire, None).is_err());
     }
     #[test]
     fn accepts_actual_c_firmware_formatter_conformance_vectors() {

@@ -17,7 +17,7 @@ The **STM32 gateway** supports up to ten retained controller slots, each with 12
 
 STM32 discovery requires OpenSimGear manufacturer metadata, a product name containing `gateway`, a valid 24-hex UID and a bounded protocol-2 snapshot handshake. Pico discovery requires experimental VID/PID `cafe:4010`, an `OSG-PICO-` serial and a compatible handshake. macOS cu/tty aliases are deduplicated. Controller registration and layout changes remain explicit after automatic discovery.
 
-The STM32 module/gateway wire transport is **private CAN FD v2, not Cyphal**. Pico keeps its separate simulator protocol. Runtime module profiles/calibration, output sessions, firmware update/recovery UI, SimHub profiles, direct USB/CAN inventory merging and simultaneous multi-gateway routing remain future work. Windows/Linux physical serial/HID acceptance and distribution signing/notarization are also pending.
+The STM32 generic device/gateway transport uses **Cyphal/CAN**, identified by `canProtocol=3` in the unchanged CDC v2 console. Cockpit also accepts older gateways reporting private CAN v2 and preserves the observed CAN version in its state. Pico keeps its separate simulator protocol. Runtime module profiles/calibration, output sessions, firmware update/recovery UI, SimHub profiles, direct USB/CAN inventory merging and simultaneous multi-gateway routing remain future work. Windows/Linux physical serial/HID acceptance and distribution signing/notarization are also pending.
 
 ## Run and build
 
@@ -82,14 +82,14 @@ Raw Pico logs, screenshots and packaging evidence are retained locally in ignore
 
 A future inventory will merge direct USB and CAN sightings by stable module identity across independent gateways. Routes will bind gateway/module identity to the current session and diagnose duplicate identities. Moving a module will preserve its logical identity and device settings while destination registration and USB layout changes remain explicit; game bindings across different gateway USB identities are not guaranteed.
 
-Runtime configuration will use one writer, separate drafts and explicit Apply/Save with interrupted-write protection. Calibration, replacement compatibility and firmware updates require model/hardware checks and recovery paths. Output sessions need freshness and ownership rules. Canonical Cyphal application definitions and compatible host adapters remain to be implemented. The current STM32 adapter provides registry management rather than module configuration over CAN.
+Runtime configuration will use one writer, separate drafts and explicit Apply/Save with interrupted-write protection. Calibration, replacement compatibility and firmware updates require model/hardware checks and recovery paths. Output sessions need freshness and ownership rules. Canonical Cyphal application definitions cover discovery and input delivery; the STM32 adapter provides registry management through CDC. Module configuration over CAN remains future work.
 
 ## Related repositories
 
 - [Device gateway](https://github.com/opensimgear/device-gateway): STM32 USB/CAN gateway firmware and electronics.
 - [Device template](https://github.com/opensimgear/device-template): generic Rev B module, build-time control profiles and production/home-milling layouts.
 - [Firmware common](https://github.com/opensimgear/firmware-common): shared C acquisition, profiles, USB support and dependency pins.
-- [Protocol](https://github.com/opensimgear/protocol): private v2 contracts, reference codec, conformance vectors and future production definitions.
+- [Protocol](https://github.com/opensimgear/protocol): Cyphal DSDL, shared transport, CDC contracts and conformance checks.
 - [Website](https://github.com/opensimgear/opensimgear.github.io): architecture, guides, equipment database and calculators.
 
 ## Licensing

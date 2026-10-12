@@ -11,7 +11,7 @@ The Pico service owns USB serial enumeration, automatic or explicit connection, 
 On macOS, individual Pico HID service names are applied directly from Rust through IOKit, matching VID/PID, usage, board serial, and USB interface. No runtime Swift compiler or virtual-HID entitlement is required for Pico communication or naming. The composite USB product retains its gateway name, and applications that cache names may need a rescan.
 
 The separate `stm32_gateway` command adapts the physical STM32 CAN gateway's
-prototype protocol 2. USB metadata selects OpenSimGear gateway candidates with
+CDC protocol 2 with either legacy CAN v2 or Cyphal application contract 3. USB metadata selects OpenSimGear gateway candidates with
 24-digit hexadecimal UID serials; a correlated bounded snapshot verifies their role,
 versions, identity and capabilities before accepting state. No experimental
 VID/PID is baked into discovery. Its worker polls inventory and decodes up to
