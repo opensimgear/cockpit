@@ -14,9 +14,13 @@ Repository scaffold initialized. The Tauri application, device access, and SimHu
 
 ## Version-one scope
 
-Configure connected modules through direct USB serial or a gateway. Discover capabilities, register/replace modules explicitly, preserve compatible settings, and require fresh calibration for replacement hardware where applicable. Use explicit Apply/Save, a single configuration writer, and clear USB reconnect notices for layout changes. Offline backup/restore is deferred.
+Configure connected modules through direct USB serial or any of multiple USB-connected gateways. Present one device inventory keyed by stable module identity, show current and last-known gateway attachment separately, and resolve actions through current routes. Each gateway owns a separate single CAN chain through two parallel sockets; node IDs are scoped by stable gateway identity, not globally unique. Merge direct USB/CAN sightings, report duplicate identities across independent chains, and invalidate routes and pending sessions when their gateway disconnects or restarts. Module moves retain logical identity and module settings; destination registration and affected gateway HID layout changes remain explicit, with no guarantee that game bindings follow the move.
+
+Discover capabilities, register/replace modules explicitly, preserve compatible settings, and require fresh calibration for replacement hardware where applicable. Use explicit Apply/Save, a single configuration writer, and clear USB reconnect notices for layout changes. Offline backup/restore is deferred.
 
 Open device serial ports only during an explicit setup/test session and release them afterward so SimHub can access them. Firmware updates are user-initiated through direct USB, with model/hardware checks and interrupted-update recovery; a debug recovery path remains required. No automatic flashing.
+
+End configuration sessions when a route changes, leave drafts uncommitted, and require a fresh writer claim and explicit Apply/Save on the new route. Cached gateway inventory outside a serial session is last-known state, not live reachability.
 
 Use a compatible pinned protocol release through Rust/TypeScript adapters and shared conformance vectors. Builds on all three operating systems do not substitute for testing real device access on each platform.
 
