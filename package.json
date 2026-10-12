@@ -17,7 +17,7 @@
     "web:dev": "vite --host 127.0.0.1",
     "web:build": "vite build",
     "native:test": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "transport:test": "node --test src/lib/gateway.test.mjs src/pico-guide.test.mjs",
+    "transport:test": "node --test src/lib/gateway.test.mjs src/lib/gateway-automation.test.mjs src/pico-guide.test.mjs",
     "pico:verify": "mkdir -p simulator/.build/module-cache && xcrun swiftc -module-cache-path simulator/.build/module-cache simulator/verify-hid.swift -o simulator/.build/verify-hid && simulator/.build/verify-hid"
   },
   "dependencies": {

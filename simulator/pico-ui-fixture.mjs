@@ -8,12 +8,18 @@ import { createProtocolFixture } from './pico-protocol-fixture.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const fixture = createProtocolFixture();
+let attached = process.env.OSG_UI_USB_DISCONNECTED !== '1';
+process.on('SIGUSR1', () => {
+  attached = !attached;
+  if (!attached) fixture.unplug();
+  console.log(`Fixture USB ${attached ? 'attached' : 'detached'}`);
+});
 const server = await createServer({
   root,
   configFile: false,
   plugins: [svelte(), picoGateway({
     SerialPort: fixture.SerialPort,
-    listPorts: fixture.listPorts,
+    listPorts: async () => !attached ? [] : (await fixture.listPorts()).map(port => ({ ...port, vendorId: 'cafe', productId: '4010' })),
     reconnectDelay: 25,
     reconnectPoll: 25,
     reconnectTimeout: 2000,
