@@ -102,7 +102,7 @@ mod unix {
             return None;
         }
         let value: Value = serde_json::from_slice(&bytes).ok()?;
-        if value["protocol"] != 2
+        if !matches!(value["protocol"].as_u64(), Some(2 | 3))
             || value["role"] != "gateway"
             || value["serialNumber"] != serial
             || value["manufacturer"] != "OpenSimGear"
@@ -339,10 +339,12 @@ mod unix {
             assert!(discover_in(&fixture.directory).is_empty());
             fixture.advertise(json!({}));
             assert_eq!(discover_in(&fixture.directory).len(), 1);
+            fixture.advertise(json!({"protocol":3}));
+            assert_eq!(discover_in(&fixture.directory).len(), 1);
             for patch in [
                 json!({"pid":2147483647}),
                 json!({"role":"module"}),
-                json!({"protocol":3}),
+                json!({"protocol":4}),
                 json!({"serialNumber":"ffeeddccbbaa998877665544"}),
                 json!({"endpoint":"../outside.sock"}),
                 json!({"manufacturer":"Other"}),

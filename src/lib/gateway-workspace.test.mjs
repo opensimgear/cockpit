@@ -204,3 +204,21 @@ test('dispose prevents late transport completions from publishing UI updates', a
   assert.equal(f.changes.length, count);
   assert.equal(f.workspace.entries.length, 0);
 });
+
+test('automatic controller publication is observed without client registration or Apply and disabled devices remain configurable', async () => {
+  const f = fixture();
+  for (const current of f.states.values()) {
+    Object.assign(current, { protocolVersion: 3, lifecycle: 'automatic', running: true, layoutPending: false });
+    Object.assign(current.modules[0], { enabled: false, published: false, descriptorIndex: -1, canConfigure: true });
+  }
+  await f.workspace.refresh();
+  assert.equal(f.entry(first).state.modules[0].enabled, false);
+  assert.ok(f.entry(first).state.moduleConfigs[module.id]);
+  assert.ok(f.calls.some(call => call.command === 'config_read' && call.gatewayId === first));
+  assert.ok(f.calls.every(call => !['register', 'apply', 'reconnect', 'enable'].includes(call.command)));
+  const current = f.states.get(first);
+  current.modules.push({ ...current.modules[0], id: 'new-device', enabled: true, published: true, descriptorIndex: 0 });
+  await f.workspace.refresh();
+  assert.equal(f.entry(first).state.modules.find(item => item.id === 'new-device').enabled, true);
+  assert.equal(f.entry(first).state.modules.find(item => item.id === module.id).enabled, false);
+});

@@ -66,6 +66,14 @@ test('physical gateways never receive simulator start or automatic USB apply com
   }
 });
 
+test('automatic gateways observe firmware-owned controller updates without manual Apply', () => {
+  for (const layoutPending of [false, true]) {
+    const result = action({ ...state, backend: 'stm32', connected: true, lifecycle: 'automatic', layoutPending }, options);
+    assert.equal(result.command, undefined);
+    assert.doesNotMatch(result.reason, /Apply|register/);
+  }
+});
+
 test('configuration discovery reads one new device at a time and resumes after cache invalidation', () => {
   const first = { id: 'first', online: true, canConfigure: true };
   const second = { ...first, id: 'second' };
@@ -88,6 +96,6 @@ test('configuration discovery skips unavailable routes and stays idle during set
   ] };
   assert.equal(nextConfigurationRead(current, false), 'readable');
   assert.equal(nextConfigurationRead(current, true), undefined);
-  for (const change of [{ connected: false }, { reconnecting: true }, { backend: 'pico' }])
+  for (const change of [{ connected: false }, { reconnecting: true }, { layoutPending: true }, { backend: 'pico' }])
     assert.equal(nextConfigurationRead({ ...current, ...change }, false), undefined);
 });

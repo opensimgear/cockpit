@@ -1,20 +1,24 @@
 # STM32 gateway protocol fixtures
 
-`stm32-gateway-v2.json` is the gateway C formatter output, with LF line endings, on
-2026-10-12. The canonical fixture belongs to the OpenSimGear protocol repository's
+`stm32-gateway-v3.json` is the current gateway C formatter output for the automatic
+controller lifecycle. `stm32-gateway-v2.json` retains the older manual contract.
+The canonical fixtures belong to the OpenSimGear protocol repository's
 `test-vectors/` directory. This checked-in copy keeps Cockpit unit tests independent
 of another checkout. To regenerate after running the E2E dependency bootstrap:
 
 ```sh
 cmake -S .e2e/deps/device-gateway/firmware -B .e2e/build/gateway-vectors
 cmake --build .e2e/build/gateway-vectors
-.e2e/build/gateway-vectors/osg_gateway_test --cockpit-vectors > src-tauri/tests/fixtures/stm32-gateway-v2.json
+.e2e/build/gateway-vectors/osg_gateway_test --cockpit-vectors > src-tauri/tests/fixtures/stm32-gateway-v3.json
 ```
 
-The console remains CDC v2 and now reports `canProtocol=3`
-and firmware `0.3.0` for the Cyphal gateway. It includes discovery, pending and active profiles, maximum
-generic capabilities, direct USB ownership, offline slots, stale epochs and
-profile changes. `stm32::tests::accepts_actual_c_firmware_formatter_conformance_vectors`
-validates and decodes these actual C outputs. Update both copies together after
+CDC v3 reports `canProtocol=3`, automatic lifecycle, declared discovered/remembered/
+controller capacities, explicit enabled/published flags, descriptor positions and
+report IDs, frozen profile compatibility, layout generations and admission errors.
+Its vectors cover enrollment, pending/active profiles, generic maximum capabilities,
+direct USB ownership, offline ghosts, stale epochs, Disable and pending Enable.
+`stm32::tests::accepts_actual_c_automatic_lifecycle_formatter_vectors` validates those
+actual C outputs; the older formatter test checks v2 independently. Update the
+canonical and Cockpit copies together after
 changing the wire format; handcrafted mock serial states supplement these
 fixtures for transport failures and registry lifecycle tests.

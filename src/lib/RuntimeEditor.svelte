@@ -1,7 +1,7 @@
 <script lang="ts">
   import { mappingFields, mappingLimits, configurationError, configEqual, resizeMappings, type RuntimeConfig, type RuntimeSnapshot, type MappingKind } from './runtime-config';
   import type { GatewayCommand } from './gateway';
-  let { config = $bindable(), snapshot, editing, busy, request }: { config:RuntimeConfig; snapshot:RuntimeSnapshot; editing:boolean; busy:boolean; request:(command:GatewayCommand,config?:RuntimeConfig)=>Promise<boolean> } = $props();
+  let { config = $bindable(), snapshot, editing, busy, request, automatic = false, controllerEnabled = true }: { config:RuntimeConfig; snapshot:RuntimeSnapshot; editing:boolean; busy:boolean; request:(command:GatewayCommand,config?:RuntimeConfig)=>Promise<boolean>; automatic?:boolean; controllerEnabled?:boolean } = $props();
   const kinds:MappingKind[]=['buttons','axes','hats','encoders','selectors'];
   const singular:Record<MappingKind,string>={buttons:'Button',axes:'Axis',hats:'Hat',encoders:'Encoder',selectors:'Selector'};
   const error=$derived(configurationError(config));
@@ -11,7 +11,7 @@
 </script>
 
 <section aria-label="Runtime module configuration">
-  <div class="notice"><p>Map your physical inputs, calibrate axes and save settings on the module. Apply updates the module. Changes to control counts, axis usages or neutral values also need an explicit gateway <strong>Apply layout</strong> after this setup session ends.</p></div>
+  <div class="notice"><p>Map your physical inputs, calibrate axes and save settings on the module. Apply updates the module. {#if automatic}{#if controllerEnabled}If control counts, axis usages or neutral values change, end this setup session and use <strong>Update profile</strong> to publish the changed USB controls.{:else}This disabled device stays remembered. Its saved controls will be used when you explicitly enable its controller.{/if}{:else}Changes to control counts, axis usages or neutral values also need an explicit gateway <strong>Apply layout</strong> after this setup session ends.{/if}</p></div>
   <label class="field-label" for="runtime-name">Device name<span>Stored on module</span></label>
   <input id="runtime-name" class="text-input" bind:value={config.name} disabled={!editing||busy} maxlength="63" />
   <div class="module-counts">
@@ -46,7 +46,7 @@
     <button class="primary-button" disabled={!editing||busy||!!error||(!dirty&&!unsaved)} onclick={()=>dirty?request('config_apply_save',config):request('config_save')}>Apply &amp; save</button>
   </div>
   <details><summary>Restore build defaults</summary><p class="field-help">Load the module's original mappings into a draft, then review and apply them.</p><button class="secondary-button" disabled={!editing||busy} onclick={()=>request('config_reset')}>Load defaults</button></details>
-  <p class="field-help">Gateway controller slots keep their active profile until Apply layout reconnects USB. Changed counts, axis usages or neutral values stay neutral on the gateway until that layout is applied.</p>
+  <p class="field-help">{#if automatic}{#if controllerEnabled}The existing USB profile stays fixed until you explicitly update it. Changed counts, axis usages or neutral values keep its inputs neutral until then.{:else}Module settings remain editable while this device is online. Enable appends its controller to the current USB order.{/if}{:else}Gateway controller registrations keep their active profile until Apply layout reconnects USB. Changed counts, axis usages or neutral values stay neutral on the gateway until that layout is applied.{/if}</p>
   <details><summary>Generated HID descriptor</summary>{#if snapshot.layout}<p class="field-help">{snapshot.layout.buttons} buttons · {snapshot.layout.axes} axes · {snapshot.layout.hats} hats · {snapshot.layout.reportBytes} report bytes</p>{:else}<p class="field-help">Complete the input mappings before generating a valid descriptor.</p>{/if}<textarea class="text-input" aria-label="Generated HID descriptor" readonly rows="4" value={snapshot.descriptorHex}></textarea></details>
 </section>
 

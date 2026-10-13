@@ -15,10 +15,14 @@ use std::{
 
 const CLOSED: &str = "Cockpit physical gateway service has closed.";
 const NO_CONNECTION: &str = "Connect the OpenSimGear CAN gateway first.";
-const FRAME_LIMIT: usize = 16_384;
-const MODULE_LIMIT: usize = 10;
-const INVALID: &str = "Unsupported or malformed OpenSimGear CAN gateway snapshot (protocol 2).";
+const FRAME_LIMIT: usize = 65_536;
+const MODULE_LIMIT: usize = 10; // Legacy CDC v2.
+const AUTOMATIC_MODULE_LIMIT: usize = 32;
+const INVALID: &str =
+    "Unsupported or malformed OpenSimGear CAN gateway snapshot (protocol 2 or 3).";
 const CONFIG_UNKNOWN: &str = "The module configuration reply was lost. Its settings may have committed; readback is required before another write.";
+const CONFIG_ROUTE_NOT_READY: &str =
+    "The device is renewing its CAN connection. Wait for its route before configuration.";
 const CONFIG_ROUTE_CHANGED: &str =
     "The module configuration route changed while awaiting its reply.";
 
@@ -181,13 +185,32 @@ fn report(value: &Value, profile: &Profile) -> Result<(Vec<usize>, Vec<u16>, Vec
 fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
     let bad = || INVALID.to_owned();
     let uid = wire["identity"].as_str().ok_or_else(bad)?;
+    let automatic = wire["protocol"] == 3;
+    let capacity = if automatic {
+        number(&wire["maxModules"], AUTOMATIC_MODULE_LIMIT as u64)
+            .filter(|value| *value > 0)
+            .ok_or_else(bad)? as usize
+    } else {
+        MODULE_LIMIT
+    };
+    let layout_pending = if automatic {
+        &wire["layoutPending"]
+    } else {
+        &wire["needsApply"]
+    };
     if wire["gatewayType"] != "stm32-can-gateway"
-        || wire["protocol"] != 2
+        || !matches!(wire["protocol"].as_u64(), Some(2 | 3))
         || !matches!(wire["canProtocol"].as_u64(), Some(2 | 3))
-        || wire["maxModules"] != MODULE_LIMIT
+        || wire["maxModules"] != capacity
         || !hex_identity(uid, 24)
         || !wire["running"].is_boolean()
-        || !wire["needsApply"].is_boolean()
+        || !layout_pending.is_boolean()
+        || (automatic
+            && (wire["lifecycle"] != "automatic"
+                || (!wire["layoutError"].is_null()
+                    && !wire["layoutError"]
+                        .as_str()
+                        .is_some_and(|s| printable(s, 128)))))
         || number(&wire["epoch"], u32::MAX as u64)
             .filter(|epoch| *epoch > 0)
             .is_none()
@@ -202,39 +225,65 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
         );
     }
     let input = wire["modules"].as_array().ok_or_else(bad)?;
-    if input.len() > MODULE_LIMIT {
+    if input.len() > capacity {
         return Err(bad());
     }
     let mut ids = HashSet::new();
     let mut nodes = HashSet::new();
     let mut pending_slots = HashSet::new();
     let mut active_slots = HashSet::new();
+    let mut report_ids = HashSet::new();
     let mut modules = Vec::new();
     for module in input {
         let id = module["identity"].as_str().ok_or_else(bad)?;
         let id = id.to_ascii_lowercase();
-        let pending = slot(&module["pendingSlot"]).ok_or_else(bad)?;
-        let active = slot(&module["activeSlot"]).ok_or_else(bad)?;
-        let node = number(&module["node"], 10).ok_or_else(bad)?;
+        let (pending, active, report_id) = if automatic {
+            let enabled = module["enabled"].as_bool().ok_or_else(bad)?;
+            let published = module["published"].as_bool().ok_or_else(bad)?;
+            let index = module["descriptorIndex"]
+                .as_i64()
+                .filter(|index| (-1..capacity as i64).contains(index))
+                .ok_or_else(bad)?;
+            let report_id = if published {
+                number(&module["reportId"], 255)
+                    .filter(|id| *id > 0)
+                    .ok_or_else(bad)? as i64
+            } else {
+                if !module["reportId"].is_null() {
+                    return Err(bad());
+                }
+                -1
+            };
+            if published != (index >= 0) || (published && !report_ids.insert(report_id)) {
+                return Err(bad());
+            }
+            if wire["layoutPending"] == false
+                && wire["layoutError"].is_null()
+                && enabled != published
+            {
+                return Err(bad());
+            }
+            (if enabled { 0 } else { -1 }, index, report_id)
+        } else {
+            let pending = slot(&module["pendingSlot"]).ok_or_else(bad)?;
+            let active = slot(&module["activeSlot"]).ok_or_else(bad)?;
+            (pending, active, if active >= 0 { active + 1 } else { -1 })
+        };
+        let node = number(&module["node"], capacity as u64).ok_or_else(bad)?;
         if !hex_identity(&id, 32)
             || !ids.insert(id.clone())
             || (node > 0 && !nodes.insert(node))
-            || (pending >= 0 && !pending_slots.insert(pending))
+            || (!automatic && pending >= 0 && !pending_slots.insert(pending))
             || (active >= 0 && !active_slots.insert(active))
             || number(&module["lease"], u32::MAX as u64).is_none()
             || (!module["configurationGeneration"].is_null()
                 && number(&module["configurationGeneration"], u32::MAX as u64).is_none())
-            || (pending < 0 && module["pendingProfileMatch"] == true)
+            || (!automatic && pending < 0 && module["pendingProfileMatch"] == true)
             || (active < 0 && module["profileMatch"] == true)
-            || [
-                "online",
-                "directUsb",
-                "profileMatch",
-                "pendingProfileMatch",
-                "hasInput",
-            ]
-            .iter()
-            .any(|key| !module[key].is_boolean())
+            || ["online", "directUsb", "profileMatch", "hasInput"]
+                .iter()
+                .any(|key| !module[key].is_boolean())
+            || (!automatic && !module["pendingProfileMatch"].is_boolean())
         {
             return Err(bad());
         }
@@ -245,6 +294,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
         let label = format!("CAN device {}", &id[24..]);
         let delivering = wire["running"] == true
             && active >= 0
+            && (!automatic || module["enabled"] == true)
             && module["online"] == true
             && module["directUsb"] == false
             && module["profileMatch"] == true
@@ -262,8 +312,11 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
             "directUsb":module["directUsb"],"profileMatch":module["profileMatch"],
             "pendingProfileMatch":module["pendingProfileMatch"],
             "hasInput":module["hasInput"],"node":node,"lease":module["lease"],"boot":module["boot"],"sourceNode":module["sourceNode"],"configurationGeneration":module["configurationGeneration"],
-            "pendingSlot":pending,"activeSlot":active,
-            "reportId":if active >= 0 {json!(active + 1)} else {Value::Null},
+            "pendingSlot":if automatic {Value::Null} else {json!(pending)},"activeSlot":if automatic {Value::Null} else {json!(active)},
+            "enabled":if automatic {module["enabled"].clone()} else {Value::Null},
+            "published":if automatic {module["published"].clone()} else {Value::Null},
+            "descriptorIndex":if automatic {json!(active)} else {Value::Null},
+            "reportId":if report_id >= 0 {json!(report_id)} else {Value::Null},
             "buttonCount":discovered.buttons,"axisCount":discovered.axes,"hatCount":discovered.hats,
             "buttons":buttons,"axes":axes,"hats":hats,"axisUsage":discovered.usages,
             "neutral":discovered.neutral,"profile":discovered.value,
@@ -271,11 +324,61 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
             "settings":{"label":label,"debounce":10,"inverted":false},"canConfigure":module["boot"].as_u64().is_some_and(|v|v>0) && wire["canProtocol"]==3
         }));
     }
+    if automatic && (0..active_slots.len() as i64).any(|index| !active_slots.contains(&index)) {
+        return Err(bad());
+    }
+    if automatic && !wire["admissionFailure"].is_null() {
+        let failure = &wire["admissionFailure"];
+        if !failure["identity"]
+            .as_str()
+            .is_some_and(|id| hex_identity(id, 32))
+            || !failure["error"].as_str().is_some_and(|s| printable(s, 128))
+        {
+            return Err(bad());
+        }
+    }
+    if automatic && number(&wire["rejectedAnnouncements"], u32::MAX as u64).is_none() {
+        return Err(bad());
+    }
+    if automatic {
+        if wire["canProtocol"] != 3 {
+            return Err(bad());
+        }
+        for key in ["maxRemembered", "maxControllers"] {
+            if number(&wire[key], AUTOMATIC_MODULE_LIMIT as u64)
+                .filter(|value| *value > 0)
+                .is_none()
+            {
+                return Err(bad());
+            }
+        }
+        for key in ["activeGeneration", "pendingGeneration"] {
+            if number(&wire[key], u32::MAX as u64).is_none() {
+                return Err(bad());
+            }
+        }
+        let remembered = wire["maxRemembered"].as_u64().unwrap() as usize;
+        let controllers = wire["maxControllers"].as_u64().unwrap() as usize;
+        if input.len() > remembered
+            || active_slots.len() > controllers
+            || input
+                .iter()
+                .filter(|module| module["enabled"] == true)
+                .count()
+                > controllers
+        {
+            return Err(bad());
+        }
+    }
     Ok(
         json!({"backend":"stm32","gatewaySerial":uid.to_ascii_lowercase(),
-        "gatewayType":wire["gatewayType"],"protocolVersion":2,"canProtocol":wire["canProtocol"],
-        "firmwareVersion":wire["firmware"],"epoch":wire["epoch"],"maxModules":MODULE_LIMIT,
-        "running":wire["running"],"needsReconnect":wire["needsApply"],"needsApply":wire["needsApply"],
+        "gatewayType":wire["gatewayType"],"protocolVersion":wire["protocol"],"canProtocol":wire["canProtocol"],
+        "firmwareVersion":wire["firmware"],"epoch":wire["epoch"],"maxModules":capacity,
+        "maxRemembered":wire["maxRemembered"],"maxControllers":wire["maxControllers"],"activeGeneration":wire["activeGeneration"],"pendingGeneration":wire["pendingGeneration"],
+        "running":wire["running"],"needsReconnect":if automatic {json!(false)} else {wire["needsApply"].clone()},"needsApply":if automatic {json!(false)} else {wire["needsApply"].clone()},
+        "lifecycle":if automatic {json!("automatic")} else {Value::Null},
+        "layoutPending":if automatic {layout_pending.clone()} else {json!(false)},"layoutError":if automatic {wire["layoutError"].clone()} else {Value::Null},
+        "admissionFailure":if automatic {wire["admissionFailure"].clone()} else {Value::Null},"rejectedAnnouncements":if automatic {wire["rejectedAnnouncements"].clone()} else {json!(0)},
         "reconnecting":false,"connected":true,"modules":modules,
         "hidNaming":{"supported":false,"applied":false}}),
     )
@@ -490,7 +593,7 @@ impl Gateway {
                     Ok(0) => return Err("CAN gateway was unplugged.".into()),
                     Ok(count) => {
                         if self.buffer.len() + count > FRAME_LIMIT {
-                            return Err("CAN gateway serial frame exceeds 16384 bytes.".into());
+                            return Err("CAN gateway serial frame exceeds 65536 bytes.".into());
                         }
                         self.buffer.extend_from_slice(&chunk[..count]);
                     }
@@ -548,6 +651,10 @@ impl Gateway {
                     match value["error"].as_str().filter(|s|printable(s,256)) {
                         Some("stale_epoch")=>Err("Gateway restarted; inventory was refreshed. Review it before retrying the change.".into()),
                         Some("registration_rejected")=>Err("Gateway rejected registration: the module must be online with a compatible profile and a free slot.".into()),
+                        Some("device_online")|Some("forget_online")=>Err("Disconnect the CAN device before removing its remembered identity.".into()),
+                        Some("unknown_device")=>Err("This device is no longer remembered by the gateway. Refresh its inventory.".into()),
+                        Some("layout_pending")=>Err("The gateway is already updating its USB controllers. Wait for it to return before another change.".into()),
+                        Some("controller_capacity")|Some("inventory_full")|Some("registry_full")=>Err("The gateway has reached its device capacity. Remove an offline remembered device before adding another.".into()),
                         Some("flash_save_failed")=>Err(if command.starts_with("config ") {"The module could not save its settings. Its active settings and USB layout were preserved."} else {"Gateway could not save its registry; its USB layout was not changed."}.into()),
                         Some("writer_busy")=>Err("Another configuration client owns this module. End its setup session or wait for its lease to expire.".into()),
                         Some("writer_required")=>{self.claims.remove(command.split_whitespace().nth(1).unwrap_or(""));Err("The module setup lease ended. Start a fresh setup session before saving changes.".into())},
@@ -558,6 +665,7 @@ impl Gateway {
                         Some("persistence_unavailable")=>Err("This module cannot persist settings; Apply remains available for this boot.".into()),
                         Some("configuration_timeout")=>{self.close();Err(CONFIG_UNKNOWN.into())},
                         Some("configuration_route_changed")=>Err(CONFIG_ROUTE_CHANGED.into()),
+                        Some("configuration_route_not_ready")=>Err(CONFIG_ROUTE_NOT_READY.into()),
                         Some(error)=>Err(format!("CAN gateway rejected the request: {error}")),
                         None=>{self.close();Err(INVALID.into())},
                     }
@@ -630,6 +738,9 @@ impl Gateway {
         Ok(())
     }
     fn apply(&mut self) -> Result<(), String> {
+        if self.automatic() {
+            return Err("This gateway updates USB controllers automatically; manual layout Apply is unavailable.".into());
+        }
         self.exchange("snapshot", self.timing.command)?;
         if self.state["needsApply"] != true {
             return Ok(());
@@ -706,6 +817,148 @@ impl Gateway {
         self.close();
         Err(format!("CAN gateway did not return after apply. Reconnect it to inspect whether the layout committed; apply was not repeated.{}",last_error.map(|e|format!(" {e}")).unwrap_or_default()))
     }
+
+    fn automatic(&self) -> bool {
+        self.state["protocolVersion"] == 3 && self.state["lifecycle"] == "automatic"
+    }
+
+    /// Recover the same physical gateway after firmware-owned USB enumeration.
+    /// This path sends only snapshots; it never replays a lifecycle mutation.
+    fn recover_automatic(&mut self, deadline: Instant) -> Result<(), String> {
+        let board = self.board.as_ref().ok_or(NO_CONNECTION)?;
+        let uid = board.uid.clone();
+        let vendor = board.info.vendor_id.clone();
+        let product = board.info.product_id.clone();
+        self.close();
+        self.state["reconnecting"] = json!(true);
+        let mut last_error = None;
+        while Instant::now() < deadline && !self.cancel.load(Ordering::Acquire) {
+            if let Some(port) = self.ports()?.into_iter().find(|port| {
+                port.serial_number
+                    .as_deref()
+                    .is_some_and(|serial| serial.eq_ignore_ascii_case(&uid))
+                    && port.vendor_id == vendor
+                    && port.product_id == product
+            }) {
+                match self.open(port, Some(uid.clone()), deadline) {
+                    Ok(()) if self.automatic() => return Ok(()),
+                    Ok(()) => {
+                        self.close();
+                        return Err("The gateway returned with an incompatible controller lifecycle; review its firmware before another change.".into());
+                    }
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            self.state["reconnecting"] = json!(true);
+            self.sleep(self.timing.poll)?;
+        }
+        self.close();
+        Err(format!("The same CAN gateway did not return after its USB layout changed. Reconnect it to inspect its saved state; the operation was not repeated.{}", last_error.map(|error| format!(" {error}")).unwrap_or_default()))
+    }
+
+    fn lifecycle_matches(&self, action: &str, id: &str) -> bool {
+        let module = self.state["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|module| module["id"] == id);
+        match (action, module) {
+            ("forget", None) => true,
+            ("enable", Some(module)) => module["enabled"] == true && module["published"] == true,
+            ("disable", Some(module)) => module["enabled"] == false && module["published"] == false,
+            ("update-profile", Some(module)) => {
+                module["enabled"] == true
+                    && module["published"] == true
+                    && module["profileMatch"] == true
+            }
+            _ => false,
+        }
+    }
+
+    fn observe_layout(&mut self, target: Option<(&str, &str)>) -> Result<(), String> {
+        let deadline = Instant::now() + self.timing.reconnect;
+        loop {
+            if self.connection.is_none() {
+                self.recover_automatic(deadline)?;
+            }
+            if let Some(error) = self.state["layoutError"].as_str() {
+                return Err(format!("The gateway could not publish its USB controller layout ({error}). Its saved state must be reviewed; the operation was not repeated."));
+            }
+            if self.state["layoutPending"] == false {
+                if target.is_none_or(|(action, id)| self.lifecycle_matches(action, id)) {
+                    self.state["reconnecting"] = json!(false);
+                    return Ok(());
+                }
+                return Err("The gateway returned, but its current controller state does not confirm this change. Review the inventory; the operation was not repeated.".into());
+            }
+            if Instant::now() >= deadline {
+                return Err("The gateway controller update is still pending. Review its inventory before another change; the operation was not repeated.".into());
+            }
+            self.state["reconnecting"] = json!(true);
+            self.sleep(self.timing.poll)?;
+            if let Err(error) = self.exchange(
+                "snapshot",
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(self.timing.command),
+            ) {
+                if self.connection.is_some() {
+                    return Err(error);
+                }
+            }
+        }
+    }
+
+    fn automatic_snapshot(&mut self) -> Result<(), String> {
+        let result = self.exchange("snapshot", self.timing.command);
+        if let Err(error) = result {
+            if self.connection.is_some() {
+                return Err(error);
+            }
+            self.recover_automatic(Instant::now() + self.timing.reconnect)?;
+        }
+        if self.state["layoutPending"] == true {
+            self.observe_layout(None)?;
+        }
+        Ok(())
+    }
+
+    fn change_controller(&mut self, action: &str, id: &str) -> Result<(), String> {
+        if !self.automatic() {
+            return Err("This older gateway does not support remembered Enable, Disable or Remove. Update its firmware to use automatic controllers.".into());
+        }
+        if !hex_identity(id, 32) {
+            return Err("Module identity must be 32 hexadecimal digits.".into());
+        }
+        self.automatic_snapshot()?;
+        let module = self.state["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|module| module["id"] == id)
+            .ok_or("This device is no longer remembered by the gateway.")?;
+        if action == "forget" && module["online"] == true {
+            return Err(
+                "Disconnect the CAN device before removing its remembered identity.".into(),
+            );
+        }
+        if matches!(action, "enable" | "disable")
+            && self.lifecycle_matches(action, id)
+            && self.state["layoutError"].is_null()
+        {
+            return Ok(());
+        }
+        if action == "update-profile" && (module["online"] != true || module["enabled"] != true) {
+            return Err("Profile updates require an enabled, online device.".into());
+        }
+        // A lost reply is ambiguous. Reconnect and inspect, never repeat the write.
+        if let Err(error) = self.exchange(&format!("{action} {id}"), self.timing.command) {
+            if self.connection.is_some() {
+                return Err(error);
+            }
+        }
+        self.observe_layout(Some((action, id)))
+    }
     fn expire_claims(&mut self, client: Option<&str>) {
         self.claims.retain(|_, claim| {
             if claim.seen.elapsed() > self.timing.claim_timeout {
@@ -736,6 +989,48 @@ impl Gateway {
             self.timing.command,
         )
     }
+
+    /// An autonomous arrival can disconnect CDC during a configuration read.
+    /// Retry only this read after rediscovering the same board and module boot.
+    fn read_active(&mut self, id: &str, boot: Option<&Value>) -> Result<(), String> {
+        if !self.automatic() {
+            return self.config_command(id, "get_active");
+        }
+        let deadline = Instant::now() + self.timing.reconnect;
+        loop {
+            self.automatic_snapshot()?;
+            if boot.is_some_and(|boot| {
+                !self.state["modules"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|module| {
+                        module["id"] == id && module["boot"] == *boot && module["online"] == true
+                    })
+            }) {
+                return Err("Module restarted during configuration. Read its settings and start a new setup session; the commit was not repeated.".into());
+            }
+            match self.config_command(id, "get_active") {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if self.connection.is_some()
+                        && error != CONFIG_ROUTE_CHANGED
+                        && error != CONFIG_ROUTE_NOT_READY =>
+                {
+                    return Err(error)
+                }
+                Err(error) => {
+                    if Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    if self.connection.is_none() {
+                        self.recover_automatic(deadline)?;
+                    }
+                    self.sleep(self.timing.poll)?;
+                }
+            }
+        }
+    }
     fn config_commit(
         &mut self,
         id: &str,
@@ -743,6 +1038,7 @@ impl Gateway {
         expected: Option<&Value>,
         saved: bool,
     ) -> Result<(), String> {
+        let automatic = self.automatic();
         let board = self.board.as_ref().ok_or(NO_CONNECTION)?.info.clone();
         let uid = self.board.as_ref().unwrap().uid.clone();
         let boot = self.state["modules"]
@@ -754,7 +1050,12 @@ impl Gateway {
             .ok_or("Module disappeared.")?;
         let result = self.config_command(id, command);
         if result.is_ok() {
-            let deadline = Instant::now() + self.timing.command;
+            let deadline = Instant::now()
+                + if automatic {
+                    self.timing.reconnect
+                } else {
+                    self.timing.command
+                };
             let mut pending = self
                 .configs
                 .get(id)
@@ -764,7 +1065,11 @@ impl Gateway {
                     return Err("Module activation is still pending. Read its configuration before making another change.".into());
                 }
                 self.sleep(self.timing.poll)?;
-                self.exchange("snapshot", self.timing.command)?;
+                if automatic {
+                    self.automatic_snapshot()?;
+                } else {
+                    self.exchange("snapshot", self.timing.command)?;
+                }
                 if !self.state["modules"]
                     .as_array()
                     .unwrap()
@@ -775,7 +1080,11 @@ impl Gateway {
                 }
                 // Activation renews the module lease. A read started just before
                 // its new announcement can lose that route; retry only the read.
-                if let Err(error) = self.config_command(id, "get_active") {
+                if let Err(error) = if automatic {
+                    self.read_active(id, Some(&boot))
+                } else {
+                    self.config_command(id, "get_active")
+                } {
                     if error != CONFIG_ROUTE_CHANGED {
                         return Err(error);
                     }
@@ -792,10 +1101,14 @@ impl Gateway {
         {
             return result;
         }
-        self.close();
         // A lost reply may follow a successful commit. Reconnect and read only;
         // never replay apply/save on an ambiguous outcome.
-        self.open(board, Some(uid), Instant::now() + self.timing.reconnect)?;
+        if automatic {
+            self.recover_automatic(Instant::now() + self.timing.reconnect)?;
+        } else {
+            self.close();
+            self.open(board, Some(uid), Instant::now() + self.timing.reconnect)?;
+        }
         if !self.state["modules"]
             .as_array()
             .unwrap()
@@ -804,7 +1117,11 @@ impl Gateway {
         {
             return Err("Module restarted during configuration. Read its settings and start a new setup session; the commit was not repeated.".into());
         }
-        self.config_command(id, "get_active")?;
+        if automatic {
+            self.read_active(id, Some(&boot))?;
+        } else {
+            self.config_command(id, "get_active")?;
+        }
         let actual = self
             .configs
             .get(id)
@@ -869,6 +1186,10 @@ impl Gateway {
                 | "register"
                 | "unregister"
                 | "remove"
+                | "enable"
+                | "disable"
+                | "forget"
+                | "update-profile"
                 | "apply"
                 | "reconnect"
                 | "save"
@@ -886,7 +1207,11 @@ impl Gateway {
                 Ok(())
             }
             "status" => {
-                self.exchange("snapshot", self.timing.command)?;
+                if self.automatic() {
+                    self.automatic_snapshot()?;
+                } else {
+                    self.exchange("snapshot", self.timing.command)?;
+                }
                 let held: Vec<_> = self
                     .claims
                     .iter()
@@ -935,6 +1260,9 @@ impl Gateway {
                 Ok(())
             }
             "register" | "unregister" | "remove" => {
+                if self.automatic() {
+                    return Err("This gateway enables devices automatically. Use Enable, Disable or Remove for remembered devices.".into());
+                }
                 if !hex_identity(&module_id, 32) {
                     return Err("Module identity must be 32 hexadecimal digits.".into());
                 }
@@ -944,6 +1272,12 @@ impl Gateway {
                     "unregister"
                 };
                 self.exchange(&format!("{verb} {module_id}"), self.timing.command)
+            }
+            "enable" | "disable" | "forget" | "update-profile" => {
+                self.change_controller(command, &module_id)
+            }
+            "save" if self.automatic() => {
+                Err("This gateway saves controller changes automatically.".into())
             }
             "save" => self.exchange("save", self.timing.command),
             "apply" | "reconnect" => self.apply(),
@@ -955,7 +1289,13 @@ impl Gateway {
                 {
                     return Err("Another Cockpit session owns this module.".into());
                 }
-                self.exchange("snapshot", self.timing.command)?;
+                if self.automatic() {
+                    // Publication renews CAN leases before devices accept their
+                    // next assignment. Probe with reads before sending claim once.
+                    self.read_active(&module_id, None)?;
+                } else {
+                    self.exchange("snapshot", self.timing.command)?;
+                }
                 let module = self.state["modules"]
                     .as_array()
                     .unwrap()
@@ -995,7 +1335,7 @@ impl Gateway {
                 }
                 Ok(())
             }
-            "config_read" => self.config_command(&module_id, "get_active"),
+            "config_read" => self.read_active(&module_id, None),
             "config_apply" | "config_apply_save" | "config_save" | "config_discard"
             | "config_reset" => {
                 if !self
@@ -1088,7 +1428,11 @@ impl Gateway {
             return;
         }
         self.expire_claims(None);
-        let _ = self.exchange("snapshot", self.timing.command);
+        if self.automatic() {
+            let _ = self.automatic_snapshot();
+        } else {
+            let _ = self.exchange("snapshot", self.timing.command);
+        }
     }
 }
 
@@ -1206,6 +1550,139 @@ mod tests {
                 "profile":{"buttons":9,"axes":2,"hats":3,"revision":1,"axisUsage":[48,49],"neutral":[0,32768]},
                 "pendingSlot":0,"activeSlot":0,"profileMatch":true,"pendingProfileMatch":true,"hasInput":true,"report":"0100870834120080"}]})
     }
+    fn automatic_state() -> Value {
+        let mut wire = state();
+        wire["protocol"] = json!(3);
+        wire["lifecycle"] = json!("automatic");
+        wire["maxModules"] = json!(32);
+        wire["maxRemembered"] = json!(32);
+        wire["maxControllers"] = json!(32);
+        wire["activeGeneration"] = json!(1);
+        wire["pendingGeneration"] = json!(1);
+        wire["layoutPending"] = json!(false);
+        wire["layoutError"] = Value::Null;
+        wire["admissionFailure"] = Value::Null;
+        wire["rejectedAnnouncements"] = json!(0);
+        let module = &mut wire["modules"][0];
+        module["enabled"] = json!(true);
+        module["published"] = json!(true);
+        module["descriptorIndex"] = json!(0);
+        module["reportId"] = json!(17);
+        wire
+    }
+    #[test]
+    fn automatic_snapshot_preserves_explicit_report_ids_and_validates_32_ordered_devices() {
+        let mut wire = automatic_state();
+        assert_eq!(snapshot(&wire, None).unwrap()["modules"][0]["reportId"], 17);
+        let mut modules = Vec::new();
+        for index in 0..32 {
+            let mut module = wire["modules"][0].clone();
+            module["identity"] = json!(format!("{:032x}", index + 1));
+            module["node"] = json!(index + 1);
+            module["descriptorIndex"] = json!(index);
+            module["reportId"] = json!(index + 1);
+            modules.push(module);
+        }
+        wire["modules"] = json!(modules);
+        let decoded = snapshot(&wire, None).unwrap();
+        assert_eq!(decoded["maxModules"], 32);
+        assert_eq!(decoded["modules"].as_array().unwrap().len(), 32);
+        assert_eq!(decoded["needsReconnect"], false);
+        assert_eq!(decoded["lifecycle"], "automatic");
+        wire["modules"][31]["descriptorIndex"] = json!(30);
+        assert!(snapshot(&wire, None).is_err());
+    }
+
+    #[test]
+    fn automatic_snapshots_keep_offline_ghosts_and_online_disabled_configuration_routes() {
+        let mut wire = automatic_state();
+        wire["modules"][0]["online"] = json!(false);
+        wire["modules"][0]["report"] = json!(NEUTRAL);
+        let decoded = snapshot(&wire, None).unwrap();
+        assert_eq!(decoded["modules"][0]["published"], true);
+        assert_eq!(decoded["modules"][0]["enabled"], true);
+        assert_eq!(decoded["modules"][0]["active"], false);
+        let module = &mut wire["modules"][0];
+        module["online"] = json!(true);
+        module["enabled"] = json!(false);
+        module["published"] = json!(false);
+        module["descriptorIndex"] = json!(-1);
+        module["reportId"] = Value::Null;
+        module["profileMatch"] = json!(false);
+        module["boot"] = json!(100);
+        let decoded = snapshot(&wire, None).unwrap();
+        assert_eq!(decoded["modules"][0]["canConfigure"], true);
+        assert_eq!(decoded["modules"][0]["active"], false);
+    }
+
+    #[test]
+    fn rejects_malformed_automatic_lifecycle_order_identity_and_diagnostics() {
+        for (path, value) in [
+            ("/lifecycle", json!("manual")),
+            ("/maxModules", json!(33)),
+            ("/canProtocol", json!(2)),
+            ("/maxRemembered", json!(0)),
+            ("/maxControllers", json!(33)),
+            ("/activeGeneration", json!(-1)),
+            ("/pendingGeneration", json!(4294967296u64)),
+            ("/layoutPending", json!("true")),
+            ("/layoutError", json!({})),
+            ("/rejectedAnnouncements", json!(-1)),
+            ("/admissionFailure", json!({"identity":MODULE,"error":""})),
+            ("/modules/0/enabled", json!(false)),
+            ("/modules/0/published", json!(false)),
+            ("/modules/0/descriptorIndex", json!(1)),
+            ("/modules/0/reportId", json!(0)),
+            ("/modules/0/reportId", json!(256)),
+        ] {
+            let mut changed = automatic_state();
+            *changed.pointer_mut(path).unwrap() = value;
+            assert!(snapshot(&changed, None).is_err(), "accepted {path}");
+        }
+        for key in [
+            "canProtocol",
+            "maxRemembered",
+            "maxControllers",
+            "activeGeneration",
+            "pendingGeneration",
+        ] {
+            for omitted in [false, true] {
+                let mut changed = automatic_state();
+                if omitted {
+                    changed.as_object_mut().unwrap().remove(key);
+                } else {
+                    changed[key] = Value::Null;
+                }
+                assert!(
+                    snapshot(&changed, None).is_err(),
+                    "accepted absent/null {key}"
+                );
+            }
+        }
+        let mut wire = automatic_state();
+        wire["admissionFailure"] = json!({"identity":MODULE,"error":"registry_full"});
+        wire["rejectedAnnouncements"] = json!(4);
+        assert_eq!(
+            snapshot(&wire, None).unwrap()["admissionFailure"]["error"],
+            "registry_full"
+        );
+        let mut crowded = automatic_state();
+        let mut second = crowded["modules"][0].clone();
+        second["identity"] = json!("11112233445566778899aabbccddeeff");
+        second["node"] = json!(2);
+        second["descriptorIndex"] = json!(1);
+        second["reportId"] = json!(18);
+        crowded["modules"].as_array_mut().unwrap().push(second);
+        assert!(snapshot(&crowded, None).is_ok());
+        for key in ["maxRemembered", "maxControllers"] {
+            let mut reduced = crowded.clone();
+            reduced[key] = json!(1);
+            assert!(
+                snapshot(&reduced, None).is_err(),
+                "accepted inventory exceeding {key}"
+            );
+        }
+    }
     #[test]
     fn preserves_can_contract_version_for_legacy_and_cyphal_gateways() {
         for version in [2, 3] {
@@ -1245,6 +1722,55 @@ mod tests {
                 module["pendingProfileMatch"],
                 envelope["state"]["modules"][0]["pendingProfileMatch"]
             );
+        }
+    }
+    #[test]
+    fn accepts_actual_c_automatic_lifecycle_formatter_vectors() {
+        let fixtures: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/stm32-gateway-v3.json")).unwrap();
+        assert_eq!(fixtures.as_object().unwrap().len(), 11);
+        assert_eq!(
+            fixtures["staged_disabled"]["state"]["modules"][0]["enabled"],
+            false
+        );
+        assert_eq!(
+            fixtures["staged_disabled"]["state"]["modules"][0]["published"],
+            true
+        );
+        for (name, envelope) in fixtures.as_object().unwrap() {
+            let decoded = snapshot(&envelope["state"], Some("0123456789abcdef01234567"));
+            assert!(decoded.is_ok(), "{name}: {decoded:?}");
+            let decoded = decoded.unwrap();
+            let module = &decoded["modules"][0];
+            assert_eq!(decoded["protocolVersion"], 3);
+            assert_eq!(decoded["lifecycle"], "automatic");
+            assert_eq!(
+                module["enabled"],
+                envelope["state"]["modules"][0]["enabled"]
+            );
+            assert_eq!(
+                module["published"],
+                envelope["state"]["modules"][0]["published"]
+            );
+            assert_eq!(
+                module["reportId"],
+                envelope["state"]["modules"][0]["reportId"]
+            );
+            if name == "active_report" {
+                assert_eq!(module["active"], true);
+            } else {
+                assert_eq!(module["active"], false, "{name}");
+                assert_eq!(module["buttons"], json!([]));
+                assert_eq!(module["axes"], module["neutral"], "{name}");
+                assert!(
+                    module["hats"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|hat| *hat == 8),
+                    "{name}"
+                );
+            }
         }
     }
     fn info(path: &str) -> PortInfo {
@@ -1352,7 +1878,17 @@ mod tests {
         restart_on_register: bool,
         new_path: Option<String>,
         config_read_failures: usize,
+        config_route_not_ready: usize,
         config_restart: bool,
+        drop_config_ack: bool,
+        disconnect_config_read_once: bool,
+        disconnect_config_snapshot: bool,
+        reject_old_path: bool,
+        lifecycle_action: Option<String>,
+        drop_lifecycle_ack: bool,
+        fail_lifecycle: bool,
+        disconnect_snapshot_once: bool,
+        forget_race: bool,
     }
     type Context = Arc<Mutex<Mock>>;
     struct MockFactory(Context);
@@ -1365,7 +1901,17 @@ mod tests {
             Ok(self.0.lock().unwrap().ports.clone())
         }
         fn open(&mut self, port: &PortInfo, _: Duration) -> Result<Box<dyn Connection>, String> {
-            self.0.lock().unwrap().opened.push(port.path.clone());
+            let mut context = self.0.lock().unwrap();
+            context.opened.push(port.path.clone());
+            if context.reject_old_path
+                && context
+                    .ports
+                    .iter()
+                    .all(|candidate| candidate.path != port.path)
+            {
+                return Err("The former CDC path is no longer present.".into());
+            }
+            drop(context);
             Ok(Box::new(MockConnection {
                 context: self.0.clone(),
                 data: b"gatewayType=stm32-can-gateway protocol=2\r\ntype help for commands\r\n"
@@ -1401,6 +1947,34 @@ mod tests {
             context.writes.push(text.into());
             let mutation = tokens[2] != "snapshot";
             let command = if mutation { tokens[3] } else { tokens[2] };
+            if command == "snapshot" && context.disconnect_snapshot_once {
+                context.disconnect_snapshot_once = false;
+                if let Some(path) = context.new_path.clone() {
+                    context.ports[0].path = path;
+                }
+                return Ok(bytes.len());
+            }
+            if command == "snapshot" && !context.keep_pending {
+                if let Some(action) = context.lifecycle_action.take() {
+                    context.state["layoutPending"] = json!(false);
+                    if action == "forget" {
+                        context.state["modules"] = json!([]);
+                    } else {
+                        let module = &mut context.state["modules"][0];
+                        let enabled = module["enabled"] == true;
+                        module["published"] = json!(enabled);
+                        module["descriptorIndex"] = json!(if enabled { 0 } else { -1 });
+                        module["reportId"] = if enabled { json!(17) } else { Value::Null };
+                        module["profileMatch"] = json!(enabled);
+                    }
+                    if let Some(path) = context.new_path.clone() {
+                        context.ports[0].path = path;
+                    }
+                    if context.swap_identity {
+                        context.state["identity"] = json!("99992233445566778899aabb");
+                    }
+                }
+            }
             if context.timeout.as_deref() == Some(command) {
                 return Ok(bytes.len());
             }
@@ -1423,6 +1997,30 @@ mod tests {
                 error = Some("stale_epoch");
             } else {
                 match command {
+                    "enable" | "disable" | "forget" | "update-profile" => {
+                        assert_eq!(tokens[4], MODULE);
+                        if command == "forget" && context.forget_race {
+                            context.state["modules"][0]["online"] = json!(true);
+                        }
+                        if context.fail_lifecycle {
+                            error = Some("flash_save_failed");
+                        } else if command == "forget"
+                            && context.state["modules"][0]["online"] == true
+                        {
+                            error = Some("device_online");
+                        } else {
+                            context.state["layoutPending"] = json!(true);
+                            if command != "forget" {
+                                context.state["modules"][0]["enabled"] =
+                                    json!(command != "disable");
+                            }
+                            context.state["modules"][0]["report"] = json!(NEUTRAL);
+                            context.lifecycle_action = Some(command.into());
+                            if let Some(path) = context.new_path.clone() {
+                                context.ports[0].path = path;
+                            }
+                        }
+                    }
                     "register" => {
                         assert_eq!(tokens[4], MODULE);
                         context.state["modules"][0]["pendingSlot"] = json!(0);
@@ -1442,8 +2040,31 @@ mod tests {
                     "config" => {
                         assert_eq!(tokens[4], MODULE);
                         let pending = tokens[6] == "apply_save";
-                        assert!(pending || tokens[6] == "get_active");
-                        if !pending && context.config_read_failures > 0 {
+                        assert!(pending || matches!(tokens[6], "get_active" | "claim"));
+                        if (pending && context.drop_config_ack)
+                            || (!pending && context.disconnect_config_read_once)
+                        {
+                            context.drop_config_ack = false;
+                            context.disconnect_config_read_once = false;
+                            if let Some(path) = context.new_path.clone() {
+                                context.ports[0].path = path;
+                            }
+                            if context.config_restart {
+                                context.state["modules"][0]["boot"] = json!(101);
+                            }
+                            return Ok(bytes.len());
+                        }
+                        if pending && context.disconnect_config_snapshot {
+                            context.disconnect_config_snapshot = false;
+                            context.disconnect_snapshot_once = true;
+                            context.state["layoutPending"] = json!(true);
+                            context.lifecycle_action = Some("update-profile".into());
+                            context.state["modules"][0]["report"] = json!(NEUTRAL);
+                        }
+                        if context.config_route_not_ready > 0 {
+                            context.config_route_not_ready -= 1;
+                            error = Some("configuration_route_not_ready");
+                        } else if !pending && context.config_read_failures > 0 {
                             context.config_read_failures -= 1;
                             context.state["modules"][0]["lease"] = json!(65538);
                             context.state["modules"][0]["configurationGeneration"] = json!(2);
@@ -1452,7 +2073,12 @@ mod tests {
                             }
                             error = Some("configuration_route_changed");
                         } else {
-                            target_config = json!({"generation":2,"savedGeneration":2,"owner":17,
+                            let owner = if tokens[6] == "claim" {
+                                tokens[7].parse::<u32>().unwrap()
+                            } else {
+                                17
+                            };
+                            target_config = json!({"generation":2,"savedGeneration":2,"owner":owner,
                                 "dirty":false,"pendingApply":pending,"view":"active","valid":true,
                                 "config":{"name":"Saved pedals","expanderMask":0,"buttons":[[0,0,0]],
                                     "axes":[],"hats":[],"encoders":[],"selectors":[]}});
@@ -1462,6 +2088,12 @@ mod tests {
                 }
             }
             let ack = context.state.clone();
+            if matches!(command, "enable" | "disable" | "forget" | "update-profile")
+                && error.is_none()
+                && context.drop_lifecycle_ack
+            {
+                return Ok(bytes.len());
+            }
             if command == "apply" && error.is_none() {
                 if !context.keep_pending {
                     context.state["needsApply"] = json!(false);
@@ -1525,7 +2157,17 @@ mod tests {
             restart_on_register: false,
             new_path: None,
             config_read_failures: 0,
+            config_route_not_ready: 0,
             config_restart: false,
+            drop_config_ack: false,
+            disconnect_config_read_once: false,
+            disconnect_config_snapshot: false,
+            reject_old_path: false,
+            lifecycle_action: None,
+            drop_lifecycle_ack: false,
+            fail_lifecycle: false,
+            disconnect_snapshot_once: false,
+            forget_race: false,
         }));
         (
             Gateway::new(
@@ -1535,6 +2177,156 @@ mod tests {
             ),
             context,
         )
+    }
+    fn automatic_harness() -> (Gateway, Context) {
+        let (gateway, context) = harness();
+        context.lock().unwrap().state = automatic_state();
+        (gateway, context)
+    }
+
+    #[test]
+    fn automatic_disable_enable_and_forget_are_observed_without_manual_apply() {
+        let (mut gateway, context) = automatic_harness();
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        let disabled = request(&mut gateway, "disable", json!({"moduleId":MODULE}));
+        assert_eq!(disabled["ok"], true, "{disabled}");
+        assert_eq!(disabled["state"]["modules"][0]["enabled"], false);
+        assert_eq!(disabled["state"]["modules"][0]["published"], false);
+        assert_eq!(
+            request(&mut gateway, "status", json!({}))["state"]["modules"][0]["enabled"],
+            false
+        );
+        let enabled = request(&mut gateway, "enable", json!({"moduleId":MODULE}));
+        assert_eq!(enabled["ok"], true, "{enabled}");
+        assert_eq!(enabled["state"]["modules"][0]["reportId"], 17);
+        let rejected = request(&mut gateway, "forget", json!({"moduleId":MODULE}));
+        assert_eq!(rejected["ok"], false);
+        assert!(rejected["error"].as_str().unwrap().contains("Disconnect"));
+        context.lock().unwrap().state["modules"][0]["online"] = json!(false);
+        let forgotten = request(&mut gateway, "forget", json!({"moduleId":MODULE}));
+        assert_eq!(forgotten["ok"], true, "{forgotten}");
+        assert_eq!(forgotten["state"]["modules"], json!([]));
+        let writes = &context.lock().unwrap().writes;
+        assert!(writes.iter().all(|wire| !wire.contains(" apply")
+            && !wire.contains(" register")
+            && !wire.contains(" save")));
+    }
+
+    #[test]
+    fn lost_automatic_mutation_ack_recovers_same_uid_changed_path_without_replay() {
+        let (mut gateway, context) = automatic_harness();
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        {
+            let mut mock = context.lock().unwrap();
+            mock.drop_lifecycle_ack = true;
+            mock.new_path = Some("/dev/cu.usbmodemGW2".into());
+        }
+        let response = request(&mut gateway, "disable", json!({"moduleId":MODULE}));
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["state"]["port"], "/dev/cu.usbmodemGW2");
+        assert_eq!(response["state"]["modules"][0]["published"], false);
+        let mock = context.lock().unwrap();
+        assert_eq!(
+            mock.writes
+                .iter()
+                .filter(|wire| wire.contains(" disable "))
+                .count(),
+            1
+        );
+        assert_eq!(mock.opened.len(), 2);
+    }
+
+    #[test]
+    fn spontaneous_usb_reconnect_recovers_by_uid_with_read_only_snapshots() {
+        let (mut gateway, context) = automatic_harness();
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        {
+            let mut mock = context.lock().unwrap();
+            mock.disconnect_snapshot_once = true;
+            mock.new_path = Some("/dev/cu.usbmodemGW3".into());
+        }
+        let response = request(&mut gateway, "status", json!({}));
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["state"]["port"], "/dev/cu.usbmodemGW3");
+        assert!(context
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .all(|wire| wire.ends_with(" snapshot\n")));
+    }
+
+    #[test]
+    fn lifecycle_failure_pending_race_and_identity_swap_never_replay_mutations() {
+        for scenario in ["flash", "pending", "race", "identity", "lost_no_commit"] {
+            let (mut gateway, context) = automatic_harness();
+            assert_eq!(connect(&mut gateway)["ok"], true);
+            let action = if scenario == "race" {
+                "forget"
+            } else {
+                "disable"
+            };
+            {
+                let mut mock = context.lock().unwrap();
+                match scenario {
+                    "flash" => mock.fail_lifecycle = true,
+                    "pending" => mock.keep_pending = true,
+                    "race" => {
+                        mock.state["modules"][0]["online"] = json!(false);
+                        mock.state["modules"][0]["report"] = json!(NEUTRAL);
+                        mock.forget_race = true;
+                    }
+                    "identity" => {
+                        mock.swap_identity = true;
+                        mock.drop_lifecycle_ack = true;
+                    }
+                    "lost_no_commit" => mock.timeout = Some(action.into()),
+                    _ => unreachable!(),
+                }
+            }
+            let response = request(&mut gateway, action, json!({"moduleId":MODULE}));
+            assert_eq!(response["ok"], false, "{scenario}: {response}");
+            assert_eq!(
+                context
+                    .lock()
+                    .unwrap()
+                    .writes
+                    .iter()
+                    .filter(|wire| wire.contains(&format!(" {action} ")))
+                    .count(),
+                1
+            );
+            if scenario == "flash" {
+                assert_eq!(response["state"]["modules"][0]["published"], true);
+            }
+            if scenario == "identity" {
+                assert_eq!(response["state"]["connected"], false);
+                assert_eq!(response["state"]["gatewaySerial"], UID);
+            }
+            if scenario == "race" {
+                assert_eq!(response["state"]["modules"][0]["online"], true);
+            }
+        }
+    }
+
+    #[test]
+    fn automatic_gateways_reject_old_manual_commands_and_legacy_gateways_reject_new_lifecycle() {
+        let (mut gateway, context) = automatic_harness();
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        for command in ["register", "unregister", "save", "apply", "reconnect"] {
+            assert_eq!(
+                request(&mut gateway, command, json!({"moduleId":MODULE}))["ok"],
+                false
+            );
+        }
+        assert_eq!(context.lock().unwrap().writes.len(), 1);
+        let (mut gateway, context) = harness();
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        assert_eq!(
+            request(&mut gateway, "disable", json!({"moduleId":MODULE}))["ok"],
+            false
+        );
+        assert_eq!(context.lock().unwrap().writes.len(), 1);
     }
     #[test]
     fn configuration_activation_retries_readback_after_lease_renewal_without_repeating_save() {
@@ -1593,6 +2385,165 @@ mod tests {
             mock.writes
                 .iter()
                 .filter(|wire| wire.contains("get_active"))
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn automatic_configuration_reconciles_changed_cdc_path_without_repeating_commit() {
+        for scenario in [
+            "lost_commit_ack",
+            "lost_activation_snapshot",
+            "lost_readback",
+        ] {
+            let (mut gateway, context) = automatic_harness();
+            {
+                let mut mock = context.lock().unwrap();
+                mock.state["modules"][0]["boot"] = json!(100);
+                mock.new_path = Some("/dev/cu.usbmodemAuto2".into());
+                mock.reject_old_path = true;
+                match scenario {
+                    "lost_commit_ack" => mock.drop_config_ack = true,
+                    "lost_activation_snapshot" => mock.disconnect_config_snapshot = true,
+                    "lost_readback" => mock.disconnect_config_read_once = true,
+                    _ => unreachable!(),
+                }
+            }
+            assert_eq!(connect(&mut gateway)["ok"], true);
+            gateway
+                .config_commit(MODULE, "apply_save 17", None, true)
+                .unwrap_or_else(|error| panic!("{scenario}: {error}"));
+            assert_eq!(gateway.state["port"], "/dev/cu.usbmodemAuto2", "{scenario}");
+            assert_eq!(gateway.configs[MODULE]["config"]["name"], "Saved pedals");
+            assert_eq!(gateway.configs[MODULE]["pendingApply"], false);
+            let mock = context.lock().unwrap();
+            assert_eq!(
+                mock.writes
+                    .iter()
+                    .filter(|wire| wire.contains("apply_save"))
+                    .count(),
+                1,
+                "{scenario}"
+            );
+            assert_eq!(mock.opened, [PATH, "/dev/cu.usbmodemAuto2"], "{scenario}");
+        }
+    }
+
+    #[test]
+    fn automatic_read_recovers_changed_path_but_ambiguous_commit_rejects_new_module_boot() {
+        let (mut gateway, context) = automatic_harness();
+        {
+            let mut mock = context.lock().unwrap();
+            mock.state["modules"][0]["boot"] = json!(100);
+            mock.new_path = Some("/dev/cu.usbmodemAuto2".into());
+            mock.reject_old_path = true;
+            mock.disconnect_config_read_once = true;
+            mock.config_read_failures = 1;
+        }
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        assert_eq!(
+            request(&mut gateway, "config_read", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        assert_eq!(gateway.state["port"], "/dev/cu.usbmodemAuto2");
+        let (mut gateway, context) = automatic_harness();
+        {
+            let mut mock = context.lock().unwrap();
+            mock.state["modules"][0]["boot"] = json!(100);
+            mock.drop_config_ack = true;
+            mock.config_restart = true;
+            mock.new_path = Some("/dev/cu.usbmodemAuto2".into());
+            mock.reject_old_path = true;
+        }
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        assert!(gateway
+            .config_commit(MODULE, "apply_save 17", None, true)
+            .unwrap_err()
+            .contains("Module restarted"));
+        assert_eq!(
+            context
+                .lock()
+                .unwrap()
+                .writes
+                .iter()
+                .filter(|wire| wire.contains("apply_save"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn automatic_configuration_waits_for_new_can_route_only_on_reads() {
+        let (mut gateway, context) = automatic_harness();
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(100);
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        context.lock().unwrap().config_route_not_ready = 2;
+        assert_eq!(
+            request(&mut gateway, "config_read", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        assert_eq!(context.lock().unwrap().opened, [PATH]);
+        assert_eq!(
+            context
+                .lock()
+                .unwrap()
+                .writes
+                .iter()
+                .filter(|wire| wire.contains("get_active"))
+                .count(),
+            3
+        );
+        context.lock().unwrap().config_route_not_ready = 1;
+        assert_eq!(
+            gateway
+                .config_commit(MODULE, "apply_save 17", None, true)
+                .unwrap_err(),
+            CONFIG_ROUTE_NOT_READY
+        );
+        assert_eq!(
+            context
+                .lock()
+                .unwrap()
+                .writes
+                .iter()
+                .filter(|wire| wire.contains("apply_save"))
+                .count(),
+            1
+        );
+        context.lock().unwrap().config_route_not_ready = 1000;
+        let started = Instant::now();
+        assert_eq!(
+            gateway.read_active(MODULE, None).unwrap_err(),
+            CONFIG_ROUTE_NOT_READY
+        );
+        assert!(started.elapsed() < Duration::from_millis(150));
+        assert!(
+            context.lock().unwrap().config_route_not_ready > 0,
+            "A permanently unavailable route must remain bounded"
+        );
+    }
+
+    #[test]
+    fn automatic_claim_waits_for_can_route_before_sending_one_claim() {
+        let (mut gateway, context) = automatic_harness();
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(100);
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        context.lock().unwrap().config_route_not_ready = 2;
+        let response = request(&mut gateway, "claim", json!({"moduleId":MODULE}));
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["state"]["claimedModules"], json!([MODULE]));
+        let mock = context.lock().unwrap();
+        assert_eq!(
+            mock.writes
+                .iter()
+                .filter(|wire| wire.contains("get_active"))
+                .count(),
+            3
+        );
+        assert_eq!(
+            mock.writes
+                .iter()
+                .filter(|wire| wire.contains(" claim "))
                 .count(),
             1
         );
