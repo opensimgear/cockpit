@@ -162,7 +162,7 @@ impl Config {
             Ok(_) => Self::parse(&read_json(path, 16_384)?).map(Some),
         }
     }
-    /// Callers also validate the selected live device descriptor before saving.
+    /// The runtime validates the selected live device descriptor before starting.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         Self::parse(&self.value())?;
         Catalogue::load(&self.catalogue_path)?;

@@ -63,11 +63,11 @@ native instrumented test suite:
 
 | Changed production area | Covered / measured lines | Line coverage |
 | --- | --- | --- |
-| DCS-BIOS core | 673 / 691 | 97.40% |
-| Background DCS runtime | 407 / 466 | 87.34% |
+| DCS-BIOS core | 672 / 691 | 97.25% |
+| Background DCS runtime | 406 / 465 | 87.31% |
 | Panel event validator | 55 / 55 | 100% |
 | Native action validation | — | 97.75% |
-| Native action/event routing | — | 93.60% |
+| Native action/event routing | — | 93.82% |
 
 All four production-process scenarios passed in 49.12 seconds. The final
 master-caution scenario, including one-time Stop release, passed in 6.42 seconds.

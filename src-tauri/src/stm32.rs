@@ -1306,6 +1306,15 @@ impl Gateway {
             ));
         }
         crate::panel_events::validate(&reply, read)?;
+        let module = self.state["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|module| module["id"] == id)
+            .ok_or(crate::panel_events::INVALID)?;
+        if reply["buttonCount"] != module["buttonCount"] {
+            return Err("The input event layout does not match the device's current profile. Establish a new baseline.".into());
+        }
         reply["boot"] = route[3].clone();
         reply["route"] = route.clone();
         self.events.insert(
@@ -2356,7 +2365,7 @@ mod tests {
                         } else if let Some(error) = context.action_error {
                             json!({"ok":false,"error":error})
                         } else {
-                            let mut reply = json!({"ok":true,"schemaVersion":1,"stream":1,"head":2,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"encoderButtons":[]});
+                            let mut reply = json!({"ok":true,"schemaVersion":1,"stream":1,"head":2,"oldest":1,"overflow":0,"buttonCount":9,"held":vec![false;9],"encoderButtons":[]});
                             if tokens[6] == "read" {
                                 reply["after"] = json!(0);
                                 reply["next"] = json!(2);
@@ -2659,6 +2668,7 @@ mod tests {
             Value::Null,
             json!({"ok":false,"error":5}),
             json!({"ok":true,"schemaVersion":99}),
+            json!({"ok":true,"schemaVersion":1,"stream":1,"head":0,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"encoderButtons":[]}),
         ] {
             context.lock().unwrap().action_replies.push_back(reply);
             assert_eq!(
