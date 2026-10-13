@@ -34,7 +34,7 @@ pnpm native:test
 pnpm build
 ```
 
-`pnpm build` packages the application under `src-tauri/target/release/bundle/`. Local macOS builds can use ad-hoc signing; distribution signing/notarization remains future work.
+`pnpm build` packages the application under `src-tauri/target/release/bundle/`. Local macOS builds can use ad-hoc signing.
 
 GitHub Actions runs frontend type checks, transport tests and the UI build on every push and pull request. A Linux native job compiles/tests the Rust application, checks dependency bootstrap behavior, and runs the independent gateway/device acceptance scenarios with sanitizers. Integration dependency manifests and run reports are uploaded as CI artifacts.
 
@@ -68,12 +68,10 @@ The [simultaneous gateway acceptance record](docs/verification/2026-10-13-multip
 - [src-tauri/](src-tauri/README.md): normal Rust gateway adapters, IPC permissions and protocol tests.
 - `scripts/native-gateway-bridge.mjs`: ordinary local browser development transport.
 - `tests/e2e/`: repository-owned dependency bootstrap and integration scenarios.
-- [integration-profiles/](integration-profiles/README.md): future SimHub integration profiles.
+- [integration-profiles/](integration-profiles/README.md): integration profile directory.
 - `docs/verification/`: historical software and hardware acceptance records. Older reports describe the implementation at the time of their run.
 
-## Remaining scope
-
-Direct USB/CAN inventory merging, output sessions, firmware update/recovery UI and SimHub profiles remain future work. Physical Windows/Linux serial/HID acceptance, distribution signing/notarization, production USB allocation and release licensing are pending. Everything remains work in progress; this migration introduces no release versions.
+Implementation and qualification work is tracked in the [GitHub project](https://github.com/orgs/opensimgear/projects/2).
 
 ## Related repositories
 
@@ -85,4 +83,4 @@ Direct USB/CAN inventory merging, output sessions, firmware update/recovery UI a
 
 ## Licensing
 
-OpenSimGear license selection remains pending; no license grant is implied for newly authored application or firmware code. Upstream components retain their own licenses.
+No OpenSimGear license grant is implied for newly authored application or firmware code. Upstream components retain their own licenses.
