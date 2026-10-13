@@ -12,7 +12,7 @@ The STM32 CAN gateway supports ten retained controller slots, each with up to 12
 
 The Pico USB adapter retains normal discovery, setup claims, settings and USB reconnection. Settings remain in board RAM until reset. On macOS, Rust applies individual controller names through IOKit. Its firmware and input-generation tools live in the [gateway repository's Pico directory](https://github.com/opensimgear/device-gateway/tree/main/simulation/pico).
 
-STM32 discovery verifies manufacturer/product metadata, a 24-hex UID and a bounded CDC protocol-2 snapshot. Configuration uses the production Cyphal/CAN contract (`canProtocol=3`) with identity, boot, writer, request and epoch validation. Older private CAN-v2 inventory remains readable. Local gateways receive the same handshake checks as USB serial gateways; on macOS/Linux they advertise in the current user's private `/tmp/opensimgear-<user-id>/gateways/` directory. Local streams do not create OS USB/HID controllers.
+STM32 discovery verifies manufacturer/product metadata, a 24-hex UID and a bounded CDC protocol-2 snapshot. Configuration uses the production Cyphal/CAN contract (`canProtocol=3`) with identity, boot, writer, request and epoch validation. After Apply, readback follows the device's renewed lease with bounded read retries; a device reboot stops reconciliation, and writes are never replayed. Older private CAN-v2 inventory remains readable. Local gateways receive the same handshake checks as USB serial gateways; on macOS/Linux they advertise in the current user's private `/tmp/opensimgear-<user-id>/gateways/` directory. Local streams do not create OS USB/HID controllers.
 
 ## Run and build
 

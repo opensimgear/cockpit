@@ -19,6 +19,8 @@ const FRAME_LIMIT: usize = 16_384;
 const MODULE_LIMIT: usize = 10;
 const INVALID: &str = "Unsupported or malformed OpenSimGear CAN gateway snapshot (protocol 2).";
 const CONFIG_UNKNOWN: &str = "The module configuration reply was lost. Its settings may have committed; readback is required before another write.";
+const CONFIG_ROUTE_CHANGED: &str =
+    "The module configuration route changed while awaiting its reply.";
 
 #[derive(Clone)]
 struct Timing {
@@ -555,6 +557,7 @@ impl Gateway {
                         Some("apply_pending")=>Err("The module is still activating its previous settings. Refresh its configuration before another change.".into()),
                         Some("persistence_unavailable")=>Err("This module cannot persist settings; Apply remains available for this boot.".into()),
                         Some("configuration_timeout")=>{self.close();Err(CONFIG_UNKNOWN.into())},
+                        Some("configuration_route_changed")=>Err(CONFIG_ROUTE_CHANGED.into()),
                         Some(error)=>Err(format!("CAN gateway rejected the request: {error}")),
                         None=>{self.close();Err(INVALID.into())},
                     }
@@ -752,17 +755,36 @@ impl Gateway {
         let result = self.config_command(id, command);
         if result.is_ok() {
             let deadline = Instant::now() + self.timing.command;
-            while self
+            let mut pending = self
                 .configs
                 .get(id)
-                .is_some_and(|v| v["pendingApply"] == true)
-            {
+                .is_some_and(|v| v["pendingApply"] == true);
+            while pending {
                 if Instant::now() >= deadline {
                     return Err("Module activation is still pending. Read its configuration before making another change.".into());
                 }
                 self.sleep(self.timing.poll)?;
                 self.exchange("snapshot", self.timing.command)?;
-                self.config_command(id, "get_active")?;
+                if !self.state["modules"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m["id"] == id && m["boot"] == boot && m["online"] == true)
+                {
+                    return Err("Module restarted during configuration. Read its settings and start a new setup session; the commit was not repeated.".into());
+                }
+                // Activation renews the module lease. A read started just before
+                // its new announcement can lose that route; retry only the read.
+                if let Err(error) = self.config_command(id, "get_active") {
+                    if error != CONFIG_ROUTE_CHANGED {
+                        return Err(error);
+                    }
+                } else {
+                    pending = self
+                        .configs
+                        .get(id)
+                        .is_some_and(|v| v["pendingApply"] == true);
+                }
             }
             return Ok(());
         }
@@ -1329,6 +1351,8 @@ mod tests {
         swap_identity: bool,
         restart_on_register: bool,
         new_path: Option<String>,
+        config_read_failures: usize,
+        config_restart: bool,
     }
     type Context = Arc<Mutex<Mock>>;
     struct MockFactory(Context);
@@ -1389,6 +1413,7 @@ mod tests {
                 return Ok(bytes.len());
             }
             let mut error = None;
+            let mut target_config = Value::Null;
             if context.restart_on_register && command == "register" {
                 context.state["epoch"] = json!(131072);
             }
@@ -1414,6 +1439,25 @@ mod tests {
                     "apply" if context.fail_apply => error = Some("flash_save_failed"),
                     "apply" => {}
                     "snapshot" | "save" => {}
+                    "config" => {
+                        assert_eq!(tokens[4], MODULE);
+                        let pending = tokens[6] == "apply_save";
+                        assert!(pending || tokens[6] == "get_active");
+                        if !pending && context.config_read_failures > 0 {
+                            context.config_read_failures -= 1;
+                            context.state["modules"][0]["lease"] = json!(65538);
+                            context.state["modules"][0]["configurationGeneration"] = json!(2);
+                            if context.config_restart {
+                                context.state["modules"][0]["boot"] = json!(101);
+                            }
+                            error = Some("configuration_route_changed");
+                        } else {
+                            target_config = json!({"generation":2,"savedGeneration":2,"owner":17,
+                                "dirty":false,"pendingApply":pending,"view":"active","valid":true,
+                                "config":{"name":"Saved pedals","expanderMask":0,"buttons":[[0,0,0]],
+                                    "axes":[],"hats":[],"encoders":[],"selectors":[]}});
+                        }
+                    }
                     _ => panic!("unexpected command {command}"),
                 }
             }
@@ -1445,7 +1489,7 @@ mod tests {
             self.data.extend(
                 format!(
                     "{}\n",
-                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack})
+                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack,"targetConfig":target_config})
                 )
                 .bytes(),
             );
@@ -1480,6 +1524,8 @@ mod tests {
             swap_identity: false,
             restart_on_register: false,
             new_path: None,
+            config_read_failures: 0,
+            config_restart: false,
         }));
         (
             Gateway::new(
@@ -1489,6 +1535,67 @@ mod tests {
             ),
             context,
         )
+    }
+    #[test]
+    fn configuration_activation_retries_readback_after_lease_renewal_without_repeating_save() {
+        let (mut gateway, context) = harness();
+        {
+            let mut mock = context.lock().unwrap();
+            mock.state["modules"][0]["boot"] = json!(100);
+            mock.state["modules"][0]["configurationGeneration"] = json!(1);
+            mock.config_read_failures = 1;
+        }
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        gateway
+            .config_commit(MODULE, "apply_save 17", None, true)
+            .unwrap();
+        assert_eq!(gateway.configs[MODULE]["config"]["name"], "Saved pedals");
+        assert_eq!(gateway.configs[MODULE]["pendingApply"], false);
+        let mock = context.lock().unwrap();
+        assert_eq!(
+            mock.writes
+                .iter()
+                .filter(|wire| wire.contains("apply_save"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            mock.writes
+                .iter()
+                .filter(|wire| wire.contains("get_active"))
+                .count(),
+            2
+        );
+    }
+    #[test]
+    fn configuration_activation_rejects_a_reboot_during_readback_without_repeating_save() {
+        let (mut gateway, context) = harness();
+        {
+            let mut mock = context.lock().unwrap();
+            mock.state["modules"][0]["boot"] = json!(100);
+            mock.config_read_failures = 1;
+            mock.config_restart = true;
+        }
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        assert!(gateway
+            .config_commit(MODULE, "apply_save 17", None, true)
+            .unwrap_err()
+            .contains("Module restarted"));
+        let mock = context.lock().unwrap();
+        assert_eq!(
+            mock.writes
+                .iter()
+                .filter(|wire| wire.contains("apply_save"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            mock.writes
+                .iter()
+                .filter(|wire| wire.contains("get_active"))
+                .count(),
+            1
+        );
     }
     #[test]
     fn cached_configuration_survives_usb_reconnect_but_expires_on_same_boot_generation_change() {
