@@ -400,6 +400,29 @@ struct Board {
     info: PortInfo,
     uid: String,
 }
+#[derive(Clone)]
+struct ActionCache {
+    route: Value,
+    value: Value,
+}
+fn action_route(state: &Value, id: &str) -> Option<Value> {
+    state["modules"]
+        .as_array()?
+        .iter()
+        .find(|module| {
+            module["id"] == id
+                && module["online"] == true
+                && module["boot"].as_u64().is_some_and(|boot| boot > 0)
+        })
+        .map(|module| {
+            json!([
+                state["epoch"],
+                module["node"],
+                module["lease"],
+                module["boot"]
+            ])
+        })
+}
 struct Gateway {
     factory: Box<dyn Factory>,
     connection: Option<Box<dyn Connection>>,
@@ -412,6 +435,8 @@ struct Gateway {
     cancel: Arc<AtomicBool>,
     configs: HashMap<String, Value>,
     active_configs: HashMap<String, (u64, Option<u64>, Value)>,
+    actions: HashMap<String, ActionCache>,
+    action_reply: Option<Value>,
 }
 impl Gateway {
     fn new(factory: Box<dyn Factory>, timing: Timing, cancel: Arc<AtomicBool>) -> Self {
@@ -429,6 +454,8 @@ impl Gateway {
             cancel,
             configs: HashMap::new(),
             active_configs: HashMap::new(),
+            actions: HashMap::new(),
+            action_reply: None,
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
@@ -477,6 +504,13 @@ impl Gateway {
         self.buffer.clear();
         self.claims.clear();
         self.configs.clear();
+        for cache in self.actions.values_mut() {
+            if cache.value["status"] != "unsupported" {
+                cache.value["status"] = json!("uncertain");
+                cache.value["states"] = json!([]);
+                cache.value["error"] = json!("Reconnect the device and refresh its output state.");
+            }
+        }
         self.state["connected"] = json!(false);
         self.state["running"] = json!(false);
         self.state["reconnecting"] = json!(false);
@@ -506,6 +540,8 @@ impl Gateway {
         });
         state["ports"] = self.state["ports"].clone();
         state["port"] = self.state["port"].clone();
+        self.actions
+            .retain(|id, cache| action_route(&state, id).as_ref() == Some(&cache.route));
         self.configs.retain(|id, _| {
             state["modules"].as_array().unwrap().iter().any(|m| {
                 m["id"] == *id
@@ -533,6 +569,7 @@ impl Gateway {
         Ok(())
     }
     fn exchange(&mut self, command: &str, timeout: Duration) -> Result<(), String> {
+        self.action_reply = None;
         if self.connection.is_none() {
             return Err(NO_CONNECTION.into());
         }
@@ -614,6 +651,9 @@ impl Gateway {
                     self.close();
                     return Err(error);
                 }
+                if command.starts_with("action ") && !value["targetAction"].is_null() {
+                    self.action_reply = Some(value["targetAction"].clone());
+                }
                 if command.starts_with("config ") && !value["targetConfig"].is_null() {
                     if let Err(error) = crate::runtime::validate(&value["targetConfig"]) {
                         self.close();
@@ -666,6 +706,9 @@ impl Gateway {
                         Some("configuration_timeout")=>{self.close();Err(CONFIG_UNKNOWN.into())},
                         Some("configuration_route_changed")=>Err(CONFIG_ROUTE_CHANGED.into()),
                         Some("configuration_route_not_ready")=>Err(CONFIG_ROUTE_NOT_READY.into()),
+                        Some("action_timeout")=>Err(crate::actions::UNKNOWN.into()),
+                        Some("action_unsupported")=>Err("This firmware does not advertise device actions.".into()),
+                        Some("action_route_changed")|Some("action_route_not_ready")=>Err("The device action route changed. Refresh its actions before retrying.".into()),
                         Some(error)=>Err(format!("CAN gateway rejected the request: {error}")),
                         None=>{self.close();Err(INVALID.into())},
                     }
@@ -990,6 +1033,219 @@ impl Gateway {
         )
     }
 
+    fn action_command(
+        &mut self,
+        id: &str,
+        route: &mut Value,
+        child: &str,
+    ) -> Result<Value, String> {
+        if action_route(&self.state, id).as_ref() != Some(route) {
+            return Err("The device action route changed. Discover its actions again.".into());
+        }
+        let deadline = Instant::now() + self.timing.command;
+        let original = route.clone();
+        let result = loop {
+            let result = self.exchange(
+                &format!("action {id} {} {child}", route[3]),
+                self.timing.command,
+            );
+            if !child.starts_with("invoke ")
+                && result.as_ref().is_err_and(|error| {
+                    error == CONFIG_ROUTE_NOT_READY || error == CONFIG_ROUTE_CHANGED
+                })
+                && Instant::now() < deadline
+            {
+                thread::sleep(
+                    Duration::from_millis(50)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+                self.exchange("snapshot", self.timing.command)?;
+                let refreshed = action_route(&self.state, id)
+                    .ok_or("The device went offline during action discovery.")?;
+                if refreshed[0] != original[0] || refreshed[3] != original[3] {
+                    return Err(
+                        "The device restarted during action discovery. Discover its actions again."
+                            .into(),
+                    );
+                }
+                *route = refreshed;
+            } else {
+                break result;
+            }
+        };
+        let reply = self.action_reply.take();
+        if let Err(error) = result {
+            // Older devices dispatch unknown actions through the settings
+            // handler: ERR invalid_request plus a valid configuration snapshot.
+            // Only this explicit legacy discovery reply means unsupported;
+            // timeouts and malformed replies remain unknown/errors.
+            if child.starts_with("describe ")
+                && error.ends_with(": invalid_request")
+                && reply
+                    .as_ref()
+                    .is_some_and(|snapshot| crate::runtime::validate(snapshot).is_ok())
+            {
+                return Err("This firmware does not advertise device actions.".into());
+            }
+            return Err(if error.contains("timed out") || error == CONFIG_UNKNOWN {
+                crate::actions::UNKNOWN.into()
+            } else {
+                error
+            });
+        }
+        if action_route(&self.state, id).as_ref() != Some(route) {
+            return Err("The device action route changed. Discover its actions again.".into());
+        }
+        let reply = reply.ok_or(crate::actions::INVALID)?;
+        if reply["ok"] == false {
+            let error = reply["error"]
+                .as_str()
+                .filter(|s| printable(s, 128))
+                .ok_or(crate::actions::INVALID)?;
+            return Err(match error {
+                "failed" => crate::actions::UNKNOWN.into(),
+                "unknownCommand"
+                | "unknown_command"
+                | "unsupported_command"
+                | "unsupported"
+                | "unknown" => "This firmware does not advertise device actions.".into(),
+                "staleCatalogue" | "stale_catalogue" | "stale_catalogue_revision" => {
+                    "The device action catalogue changed. Discover its actions again.".into()
+                }
+                _ => format!("The device rejected the action: {error}"),
+            });
+        }
+        Ok(reply)
+    }
+
+    fn action_request(&mut self, id: &str, command: &str, request: &Value) -> Result<(), String> {
+        if !hex_identity(id, 32) {
+            return Err("Module identity must be 32 hexadecimal digits.".into());
+        }
+        let mut route = action_route(&self.state, id)
+            .ok_or("Reconnect the device before using its actions.")?;
+        if command == "action_invoke" && request["boot"] != route[3] {
+            return Err("The device restarted. Discover its actions again.".into());
+        }
+        let mut cached = self
+            .actions
+            .get(id)
+            .filter(|cache| cache.route == route)
+            .map(|cache| cache.value.clone())
+            .unwrap_or_else(
+                || json!({"boot":route[3],"actions":[],"states":[],"status":"unknown"}),
+            );
+        let result: Result<(), String> = (|| {
+            if command == "action_describe" {
+                let mut descriptors = Vec::new();
+                let mut offset = 0;
+                let mut catalogue_revision = None;
+                let mut catalogue_total = None;
+                let mut ids = HashSet::new();
+                loop {
+                    let reply =
+                        self.action_command(id, &mut route, &format!("describe {offset}"))?;
+                    let (revision, total, next, page) = crate::actions::page(&reply, offset)?;
+                    if catalogue_revision.is_some_and(|expected| expected != revision)
+                        || catalogue_total.is_some_and(|expected| expected != total)
+                    {
+                        return Err("The device action catalogue changed during discovery. Discover it again.".into());
+                    }
+                    catalogue_revision = Some(revision);
+                    catalogue_total = Some(total);
+                    for action in page {
+                        if !ids.insert(action["id"].as_str().unwrap().to_owned()) {
+                            return Err(crate::actions::INVALID.into());
+                        }
+                        descriptors.push(action);
+                    }
+                    if let Some(next) = next {
+                        offset = next;
+                    } else {
+                        break;
+                    }
+                }
+                cached = json!({"boot":route[3],"catalogueRevision":catalogue_revision,"actions":descriptors,"states":[],"status":"ready","error":null});
+            }
+            let revision = cached["catalogueRevision"]
+                .as_u64()
+                .ok_or("Discover the device actions before using them.")?;
+            let descriptors = cached["actions"]
+                .as_array()
+                .ok_or(crate::actions::INVALID)?
+                .clone();
+            let invocation = command == "action_invoke";
+            let child = if invocation {
+                if cached["status"] != "ready" {
+                    return Err("Refresh the output state before invoking another action.".into());
+                }
+                if request["catalogueRevision"].as_u64() != Some(revision) {
+                    return Err(
+                        "The device action catalogue changed. Discover its actions again.".into(),
+                    );
+                }
+                let action = descriptors
+                    .iter()
+                    .find(|action| action["id"] == request["actionId"])
+                    .ok_or("This action is no longer advertised by the device.")?;
+                let args = crate::actions::arguments(action, &request["values"])?;
+                format!(
+                    "invoke {revision} {}{}",
+                    action["id"].as_str().unwrap(),
+                    if args.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", args.join(" "))
+                    }
+                )
+            } else {
+                "state".into()
+            };
+            let reply = self.action_command(id, &mut route, &child)?;
+            if invocation && reply["id"] != request["actionId"] {
+                return Err(crate::actions::INVALID.into());
+            }
+            let states = crate::actions::states(&reply, revision, &descriptors, invocation)?;
+            if invocation {
+                let existing = cached["states"]
+                    .as_array_mut()
+                    .ok_or(crate::actions::INVALID)?;
+                for state in states {
+                    existing.retain(|prior| prior["id"] != state["id"]);
+                    existing.push(state);
+                }
+            } else {
+                cached["states"] = json!(states);
+            }
+            cached["status"] = json!("ready");
+            cached["error"] = Value::Null;
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            cached["status"] = json!(if error.contains("does not advertise")
+                || error.contains("unknown_command")
+                || error.contains("unknown_gateway_command")
+                || error.contains("unknown_action_command")
+            {
+                "unsupported"
+            } else if error == crate::actions::UNKNOWN {
+                "uncertain"
+            } else {
+                "error"
+            });
+            cached["error"] = json!(error);
+            cached["states"] = json!([]);
+        }
+        self.actions.insert(
+            id.into(),
+            ActionCache {
+                route,
+                value: cached,
+            },
+        );
+        result
+    }
+
     /// An autonomous arrival can disconnect CDC during a configuration read.
     /// Retry only this read after rediscovering the same board and module boot.
     fn read_active(&mut self, id: &str, boot: Option<&Value>) -> Result<(), String> {
@@ -1150,6 +1406,11 @@ impl Gateway {
             .collect();
         configs.extend(self.configs.clone());
         state["moduleConfigs"] = json!(configs);
+        state["moduleActions"] = json!(self
+            .actions
+            .iter()
+            .map(|(id, cache)| (id.clone(), cache.value.clone()))
+            .collect::<HashMap<_, _>>());
         for module in state["modules"].as_array_mut().into_iter().flatten() {
             if let Some(config) = module["id"].as_str().and_then(|id| configs.get(id)) {
                 if config["view"] == "active" || config["dirty"] == false {
@@ -1198,6 +1459,9 @@ impl Gateway {
             return Err("End setup sessions before changing the CAN gateway layout.".into());
         }
         match command {
+            "action_describe" | "action_state" | "action_invoke" => {
+                self.action_request(&module_id, command, request)
+            }
             "ports" => {
                 self.ports()?;
                 Ok(())
@@ -1889,6 +2153,10 @@ mod tests {
         fail_lifecycle: bool,
         disconnect_snapshot_once: bool,
         forget_race: bool,
+        action_enabled: bool,
+        action_error: Option<&'static str>,
+        action_replies: VecDeque<Value>,
+        action_outer_error: Option<&'static str>,
     }
     type Context = Arc<Mutex<Mock>>;
     struct MockFactory(Context);
@@ -1988,6 +2256,7 @@ mod tests {
             }
             let mut error = None;
             let mut target_config = Value::Null;
+            let mut target_action = Value::Null;
             if context.restart_on_register && command == "register" {
                 context.state["epoch"] = json!(131072);
             }
@@ -1997,6 +2266,35 @@ mod tests {
                 error = Some("stale_epoch");
             } else {
                 match command {
+                    "action" => {
+                        assert_eq!(tokens[4], MODULE);
+                        assert_eq!(tokens[5], "100");
+                        error = context.action_outer_error;
+                        if let Some(reply) = context.action_replies.pop_front() {
+                            target_action = reply;
+                        } else if let Some(error) = context.action_error {
+                            target_action = json!({"ok":false,"error":error});
+                        } else if context.config_route_not_ready > 0 {
+                            context.config_route_not_ready -= 1;
+                            error = Some("configuration_route_not_ready");
+                        } else {
+                            target_action = match tokens[6] {
+                                "describe" => {
+                                    json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"total":1,"next":null,"actions":[{"id":"led.set_enabled","label":"LED","endpoint":"led","semantics":"setter","readable":true,"parameters":[{"id":"enabled","label":"Enabled","type":"boolean"}]}]})
+                                }
+                                "state" => {
+                                    json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"states":[{"id":"led.set_enabled","values":[context.action_enabled]}]})
+                                }
+                                "invoke" => {
+                                    assert_eq!(tokens[7], "1");
+                                    assert_eq!(tokens[8], "led.set_enabled");
+                                    context.action_enabled = tokens[9] == "1";
+                                    json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"id":"led.set_enabled","values":[context.action_enabled]})
+                                }
+                                _ => panic!("unexpected action"),
+                            };
+                        }
+                    }
                     "enable" | "disable" | "forget" | "update-profile" => {
                         assert_eq!(tokens[4], MODULE);
                         if command == "forget" && context.forget_race {
@@ -2121,7 +2419,7 @@ mod tests {
             self.data.extend(
                 format!(
                     "{}\n",
-                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack,"targetConfig":target_config})
+                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack,"targetConfig":target_config,"targetAction":target_action})
                 )
                 .bytes(),
             );
@@ -2168,6 +2466,10 @@ mod tests {
             fail_lifecycle: false,
             disconnect_snapshot_once: false,
             forget_race: false,
+            action_enabled: false,
+            action_error: None,
+            action_replies: VecDeque::new(),
+            action_outer_error: None,
         }));
         (
             Gateway::new(
@@ -2182,6 +2484,242 @@ mod tests {
         let (gateway, context) = harness();
         context.lock().unwrap().state = automatic_state();
         (gateway, context)
+    }
+
+    fn action_harness() -> (Gateway, Context) {
+        let (gateway, context) = automatic_harness();
+        let mut mock = context.lock().unwrap();
+        mock.state["modules"][0]["boot"] = json!(100);
+        mock.state["modules"][0]["enabled"] = json!(false);
+        mock.state["modules"][0]["published"] = json!(false);
+        mock.state["modules"][0]["descriptorIndex"] = json!(-1);
+        mock.state["modules"][0]["reportId"] = Value::Null;
+        mock.state["modules"][0]["profileMatch"] = json!(false);
+        mock.state["modules"][0]["directUsb"] = json!(true);
+        mock.state["modules"][0]["report"] = json!(NEUTRAL);
+        drop(mock);
+        (gateway, context)
+    }
+    #[test]
+    fn actions_route_without_hid_or_writer_and_validate_before_sending() {
+        let (mut gateway, context) = action_harness();
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        let described = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
+        assert_eq!(described["ok"], true, "{described}");
+        assert_eq!(
+            described["state"]["moduleActions"][MODULE]["states"][0]["values"],
+            json!([false])
+        );
+        let writes = context.lock().unwrap().writes.len();
+        for extra in [
+            json!({"boot":101,"catalogueRevision":1,"actionId":"led.set_enabled","values":[true]}),
+            json!({"boot":100,"catalogueRevision":2,"actionId":"led.set_enabled","values":[true]}),
+            json!({"boot":100,"catalogueRevision":1,"actionId":"absent","values":[true]}),
+            json!({"boot":100,"catalogueRevision":1,"actionId":"led.set_enabled","values":["1"]}),
+        ] {
+            let mut extra = extra;
+            extra["moduleId"] = json!(MODULE);
+            assert_eq!(request(&mut gateway, "action_invoke", extra)["ok"], false);
+            // An explicit fresh read clears validation errors without a writer.
+            assert_eq!(
+                request(&mut gateway, "action_state", json!({"moduleId":MODULE}))["ok"],
+                true
+            );
+        }
+        assert_eq!(
+            context.lock().unwrap().writes.len(),
+            writes + 4,
+            "invalid invokes never reach the device"
+        );
+        let applied = request(
+            &mut gateway,
+            "action_invoke",
+            json!({"moduleId":MODULE,"boot":100,"catalogueRevision":1,"actionId":"led.set_enabled","values":[true]}),
+        );
+        assert_eq!(applied["ok"], true, "{applied}");
+        assert_eq!(
+            applied["state"]["moduleActions"][MODULE]["states"][0]["values"],
+            json!([true])
+        );
+        assert!(gateway.claims.is_empty());
+        assert!(!context
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .any(|line| line.contains(" config ") || line.contains(" save")));
+    }
+    #[test]
+    fn action_timeout_is_uncertain_and_never_replays_invoke() {
+        let (mut gateway, context) = action_harness();
+        connect(&mut gateway);
+        assert_eq!(
+            request(&mut gateway, "action_describe", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        context.lock().unwrap().timeout = Some("action".into());
+        let reply = request(
+            &mut gateway,
+            "action_invoke",
+            json!({"moduleId":MODULE,"boot":100,"catalogueRevision":1,"actionId":"led.set_enabled","values":[true]}),
+        );
+        assert_eq!(reply["ok"], false);
+        assert_eq!(
+            reply["state"]["moduleActions"][MODULE]["status"],
+            "uncertain"
+        );
+        assert!(reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("may have changed"));
+        assert_eq!(
+            context
+                .lock()
+                .unwrap()
+                .writes
+                .iter()
+                .filter(|line| line.contains(" invoke "))
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn action_unsupported_is_explicit_and_cache_expires_on_route_or_boot_change() {
+        let (mut gateway, context) = action_harness();
+        connect(&mut gateway);
+        context.lock().unwrap().action_error = Some("unknownCommand");
+        let reply = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
+        assert_eq!(
+            reply["state"]["moduleActions"][MODULE]["status"],
+            "unsupported"
+        );
+        assert_eq!(reply["state"]["connected"], true);
+        let mut wire = context.lock().unwrap().state.clone();
+        wire["modules"][0]["boot"] = json!(101);
+        gateway.accept(&wire).unwrap();
+        assert!(gateway.actions.is_empty());
+        context.lock().unwrap().action_error = None;
+        wire["modules"][0]["boot"] = json!(100);
+        gateway.accept(&wire).unwrap();
+        assert_eq!(
+            request(&mut gateway, "action_describe", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        wire["modules"][0]["lease"] = json!(65539);
+        gateway.accept(&wire).unwrap();
+        assert!(gateway.actions.is_empty());
+    }
+    #[test]
+    fn legacy_configuration_rejection_means_unsupported_only_for_valid_discovery_reply() {
+        let (mut gateway, context) = action_harness();
+        connect(&mut gateway);
+        let configuration = json!({"generation":1,"savedGeneration":1,"owner":0,"dirty":false,"pendingApply":false,"view":"active","valid":true,
+            "config":{"name":"Legacy board","expanderMask":0,"buttons":[[0,0,0]],"axes":[],"hats":[],"encoders":[],"selectors":[]}});
+        context.lock().unwrap().action_outer_error = Some("invalid_request");
+        context
+            .lock()
+            .unwrap()
+            .action_replies
+            .push_back(configuration.clone());
+        let unsupported = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
+        assert_eq!(unsupported["ok"], false);
+        assert_eq!(
+            unsupported["state"]["moduleActions"][MODULE]["status"],
+            "unsupported"
+        );
+        assert_eq!(
+            unsupported["state"]["connected"], true,
+            "older firmware keeps its existing input connection"
+        );
+        let mut malformed = configuration;
+        malformed["config"]["buttons"] = json!("invalid");
+        context.lock().unwrap().action_replies.push_back(malformed);
+        let unknown = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
+        assert_eq!(
+            unknown["state"]["moduleActions"][MODULE]["status"], "error",
+            "malformed legacy reply cannot claim unsupported"
+        );
+    }
+    #[test]
+    fn action_reads_retry_only_known_unready_routes() {
+        let (mut gateway, context) = action_harness();
+        connect(&mut gateway);
+        context.lock().unwrap().config_route_not_ready = 1;
+        let reply = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(
+            context
+                .lock()
+                .unwrap()
+                .writes
+                .iter()
+                .filter(|line| line.contains(" describe 0"))
+                .count(),
+            2
+        );
+    }
+    #[test]
+    fn action_catalogue_pages_are_atomic_and_failed_callbacks_require_readback() {
+        let (mut gateway, context) = action_harness();
+        connect(&mut gateway);
+        let descriptor = |id: &str| json!({"id":id,"label":"Run","endpoint":"output","semantics":"oneShot","readable":false,"parameters":[]});
+        context.lock().unwrap().action_replies = VecDeque::from([
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":4,"total":2,"next":1,"actions":[descriptor("first")]}),
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":4,"total":2,"next":null,"actions":[descriptor("second")]}),
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":4,"states":[]}),
+        ]);
+        let described = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
+        assert_eq!(described["ok"], true, "{described}");
+        assert_eq!(
+            described["state"]["moduleActions"][MODULE]["actions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        context.lock().unwrap().action_replies.push_back(
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":4,"id":"first","values":[]}),
+        );
+        assert_eq!(
+            request(
+                &mut gateway,
+                "action_invoke",
+                json!({"moduleId":MODULE,"boot":100,"catalogueRevision":4,"actionId":"first","values":[]})
+            )["ok"],
+            true
+        );
+        context.lock().unwrap().action_error = Some("failed");
+        let uncertain = request(
+            &mut gateway,
+            "action_invoke",
+            json!({"moduleId":MODULE,"boot":100,"catalogueRevision":4,"actionId":"second","values":[]}),
+        );
+        assert_eq!(
+            uncertain["state"]["moduleActions"][MODULE]["status"],
+            "uncertain"
+        );
+        context.lock().unwrap().action_replies = VecDeque::from([
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":4,"total":2,"next":1,"actions":[descriptor("first")]}),
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":5,"total":2,"next":null,"actions":[descriptor("second")]}),
+        ]);
+        let changed = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
+        assert_eq!(changed["ok"], false);
+        assert!(changed["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed during discovery"));
+        assert_eq!(
+            changed["state"]["moduleActions"][MODULE]["catalogueRevision"], 4,
+            "partial catalogue never replaces the complete cache"
+        );
+        context.lock().unwrap().action_replies = VecDeque::from([
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":4,"total":2,"next":1,"actions":[descriptor("first")]}),
+            json!({"ok":true,"schemaVersion":1,"catalogueRevision":4,"total":2,"next":null,"actions":[descriptor("first")]}),
+        ]);
+        assert_eq!(
+            request(&mut gateway, "action_describe", json!({"moduleId":MODULE}))["ok"],
+            false
+        );
     }
 
     #[test]

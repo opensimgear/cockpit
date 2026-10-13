@@ -1,5 +1,6 @@
 import { GatewayError, gatewayRequest, type GatewayPort, type GatewayRequest, type GatewayState } from './gateway';
 import { candidateBackend, gatewayCandidates, nextConfigurationRead } from './gateway-automation';
+import { nextActionRead } from './device-actions';
 
 export type GatewayEntry = {
   id: string;
@@ -171,6 +172,8 @@ export class GatewayWorkspace {
     }
     const unread = nextConfigurationRead(entry.state, claimed);
     if (unread) await this.send(entry, { command: 'config_read', moduleId: unread });
+    const actionUnread = nextActionRead(entry.state);
+    if (actionUnread) await this.send(entry, { command: 'action_describe', moduleId: actionUnread });
   }
 
   request(gatewayId: string, request: GatewayRequest): Promise<GatewayState> {

@@ -2,6 +2,7 @@ import type { DeviceKind, Settings } from './devices';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { RuntimeSnapshot, RuntimeConfig } from './runtime-config';
+import type { DeviceActions, ActionValue } from './device-actions';
 
 export type GatewayBackend = 'pico' | 'stm32';
 export type GatewayPort = { gatewayId?: string; path: string; manufacturer?: string; friendlyName?: string; serialNumber?: string; vendorId?: string; productId?: string; backend?: GatewayBackend };
@@ -45,9 +46,10 @@ export type GatewayState = {
   admissionFailure?: { identity: string; error: string } | null; rejectedAnnouncements?: number;
   hidNaming?: { supported: boolean; applied: boolean; error?: string };
   moduleConfigs?: Record<string, RuntimeSnapshot>;
+  moduleActions?: Record<string, DeviceActions>;
 };
-export type GatewayCommand = 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset';
-export type GatewayRequest = { command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig };
+export type GatewayCommand = 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke';
+export type GatewayRequest = { command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[] };
 
 const clientId = crypto.randomUUID();
 const browserEndpoint = '/api/gateway/';

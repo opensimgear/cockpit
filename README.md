@@ -79,6 +79,49 @@ The [automatic lifecycle acceptance record](docs/verification/2026-10-13-automat
 
 Implementation and qualification work is tracked in the [GitHub project](https://github.com/orgs/opensimgear/projects/2).
 
+## Manual device actions
+
+Each online CAN device can advertise a bounded action catalogue independently of
+its HID controls. Cockpit discovers the catalogue once per current route, then
+renders manual controls for booleans, enums, bounded integers, RGB colors, bounded
+UTF-8 strings and actions without arguments. The device workspace's **Device
+actions** panel provides discovery, Apply/Run and applied-state readback. Controls
+remain available when a remembered device's HID controller is disabled or direct
+USB owns its inputs. Older firmware continues to provide inputs without actions.
+
+The JSON device simulation advertises RGB LED 1 and boolean LED 2. The current
+board advertises its physical status LED's `auto`, `on` and `off` modes. `auto`
+restores firmware status indication; LED overrides reset on device reboot. These
+temporary actions do not acquire configuration claims, save flash or change HID
+descriptors. Applied state confirms the device callback, rather than electrical
+verification of the LED.
+
+Cockpit binds cached descriptors/readback to gateway identity, epoch, device
+identity, boot and route, and validates arguments against the catalogue revision
+before transmitting. A lost invoke reply leaves state uncertain and is never
+replayed automatically. Reconnect and use **Refresh state** to reconcile it;
+catalogue changes require **Discover again**. See the
+[action protocol](https://github.com/opensimgear/protocol/blob/main/serial/device-actions.md).
+
+`pnpm transport:test` includes argument, routing and state-label tests. Native
+tests cover discovery, stale revisions/boots, unsupported firmware, read retries
+and uncertain replies. `pnpm e2e` also exercises actual production firmware
+processes for RGB/boolean outputs, disabled HID, direct USB, same-identity devices
+on separate gateways and lost-reply recovery. DCS-BIOS bindings are subsequent
+milestones; manual actions establish their reusable output interface.
+The [device actions acceptance record](docs/verification/2026-10-13-device-actions.md)
+documents the production process checks and measured coverage; `pnpm
+actions:coverage` enforces the frontend action helper's coverage threshold. CI
+also runs `scripts/action-coverage.py` to gate Rust production action coverage
+above 70%.
+
+The combined device-action and DCS-BIOS roadmap is tracked by these milestone stories:
+
+1. [Manual device actions](https://github.com/opensimgear/cockpit/issues/13): advertised actions, gateway routing and Cockpit controls.
+2. [First DCS-BIOS button and LED path](https://github.com/opensimgear/cockpit/issues/14): master-caution commands and feedback bindings.
+3. [Displays and encoders](https://github.com/opensimgear/cockpit/issues/15): bounded text, formatting, ordered input events and traffic measurements.
+4. [Profiles and hardware qualification](https://github.com/opensimgear/cockpit/issues/16): wider aircraft coverage, ownership, reconnects and hardware validation.
+
 ## Related repositories
 
 - [Device gateway](https://github.com/opensimgear/device-gateway): STM32 USB/CAN gateway firmware, electronics and gateway simulation.

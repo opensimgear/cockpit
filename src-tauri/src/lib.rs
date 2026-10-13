@@ -1,3 +1,4 @@
+mod actions;
 pub mod gateways;
 mod hid_names;
 mod local_gateway;
