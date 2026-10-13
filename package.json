@@ -15,8 +15,9 @@
     "web:native": "vite --mode native --host 127.0.0.1",
     "web:build": "vite build",
     "native:test": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "transport:test": "node --test scripts/native-gateway-bridge.test.mjs src/lib/gateway.test.mjs src/lib/gateway-automation.test.mjs src/lib/gateway-workspace.test.mjs src/lib/controller-lifecycle.test.mjs src/lib/runtime-config.test.mjs src/lib/device-actions.test.mjs",
+    "transport:test": "node --test scripts/native-gateway-bridge.test.mjs src/lib/gateway.test.mjs src/lib/gateway-automation.test.mjs src/lib/gateway-workspace.test.mjs src/lib/controller-lifecycle.test.mjs src/lib/runtime-config.test.mjs src/lib/device-actions.test.mjs src/lib/dcs-bios.test.mjs",
     "actions:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/device-actions.test.mjs",
+    "dcs:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/dcs-bios.test.mjs",
     "e2e": "python3 tests/e2e/run.py"
   },
   "dependencies": {

@@ -33,6 +33,54 @@ route after a layout change, while invokes are sent once. A timeout or failed
 application acknowledgement requires readback and never replays the invocation.
 Unsupported firmware remains connected and usable for its existing inputs.
 
+## Ordered events and DCS-BIOS
+
+`events_state` and `events_read` use the production module event handler through
+`cockpit <id> <epoch> events <identity> <boot> <child>` and its separate
+`targetEvents` reply. `moduleEvents` validates schema, mapped button bounds,
+boot/stream, consecutive sequences, cursor and route before exposure. The device
+retains 64 debounced transitions and returns nonconsuming pages of up to 16.
+Input acquisition continues with HID disabled. Startup, reconnect, stream
+changes and gaps establish a fresh head/held baseline; historical events are not
+sent to the simulator. The canonical
+[event contract](https://github.com/opensimgear/protocol/blob/main/serial/panel-input-events.md)
+also specifies ring overflow and encoder pairs.
+
+The global `dcs_status`, `dcs_configure`, `dcs_start` and `dcs_stop` operations
+manage one saved profile through `gateway_request`. Configure takes `dcsConfig`;
+responses expose `state.dcsBios` independently of gateway inventory. This global
+state must be merged without replacing a selected gateway's state. Native Start
+requires a connected, online CAN module with settled layout, HID disabled and
+unpublished, no report ID and no active direct USB input. It validates a mapped
+non-encoder button and a readable boolean setter or board status LED mode setter.
+The manager protects the bound LED from manual invocations while running.
+
+The Rust worker receives DCS-BIOS UDP export, decodes bounded synchronized
+little-endian writes, verifies advancing update counters and resolves
+`UFC_MASTER_CAUTION`/`MASTER_CAUTION` from the installed `doc/json` catalogue.
+Aircraft name and fresh feedback gate command delivery. It drains ordered panel
+events independently of frontend status polling. A baseline held button must
+release before arming. Disarm/Stop sends one release for a previously forwarded
+press, without replaying presses. Retention overwrites and actual cursor gaps
+have separate diagnostic counters. Missing/stale export, unsupported aircraft
+and explicit Stop request LED off; output failure is visible and recovery reads
+applied state before setting it again. Ambiguous simulator sends do not replay.
+
+Configuration is stored as `dcs-bios.json` under the platform's Cockpit settings
+directory. `OSG_DCS_BIOS_CONFIG` overrides that path for isolated tests.
+Application startup loads settings without starting UDP or event processing;
+Start is explicit, settings changes require Stop, and shutdown stops the worker.
+Global Stop remains accessible without a present module. The local
+[DCS-BIOS peer and synthetic catalogue](../simulation/dcs-bios/README.md) exercise
+this path without a simulator installation. Current-board firmware exposes the
+same button/event/LED contract, but physical hardware and live DCS acceptance are
+deferred.
+
+CI's `scripts/dcs-bios-coverage.py` measures instrumented native tests and gates
+the production sections of `dcs_bios.rs`, `dcs_runtime.rs` and `panel_events.rs`
+individually above 70% line coverage. Frontend profile helpers have a separate
+line/branch/function gate through `pnpm dcs:coverage`.
+
 The Pico adapter owns normal USB serial discovery, protocol checks, control lines, UI liveness, setup leases and reconnect to the same board. It reads live inputs and configures settings; it rejects input/inventory injection commands. Stop/disconnect and app exit release access and neutralize this older firmware's reports. Settings remain in board RAM. On macOS the native IOKit helper updates individual joystick service names after matching VID/PID, serial, usage and interface.
 
 ## Local gateway transport
@@ -69,6 +117,7 @@ Only the main local window receives gateway command permissions. External links 
 ```sh
 pnpm check
 pnpm transport:test
+pnpm dcs:coverage
 pnpm native:test
 pnpm e2e
 ```

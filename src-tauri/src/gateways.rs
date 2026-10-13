@@ -97,9 +97,10 @@ fn empty_state() -> Value {
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 pub struct GatewayManager {
     provider: Arc<dyn Provider>,
-    sessions: Mutex<BTreeMap<String, Arc<dyn Adapter>>>,
+    sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
     closed: AtomicBool,
+    dcs: crate::dcs_runtime::DcsRuntime,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -111,11 +112,26 @@ impl GatewayManager {
         Self::with_provider(Arc::new(NativeProvider))
     }
     fn with_provider(provider: Arc<dyn Provider>) -> Self {
+        let sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        let targets = sessions.clone();
+        let panel = Arc::new(move |request: Value| {
+            let adapter = targets
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(request["gatewayId"].as_str().unwrap_or(""))
+                .cloned();
+            adapter.map_or_else(
+                || json!({"ok":false,"error":"Connect the bound gateway first."}),
+                |adapter| adapter.request(request),
+            )
+        });
         Self {
             provider,
-            sessions: Mutex::new(BTreeMap::new()),
+            sessions,
             inventory: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
+            dcs: crate::dcs_runtime::DcsRuntime::new(panel, crate::dcs_runtime::config_path()),
         }
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
@@ -153,6 +169,7 @@ impl GatewayManager {
             response["state"]["gatewayId"] = json!(id);
             response["state"]["backend"] = json!(id.split_once(':').unwrap().0);
         }
+        response["state"]["dcsBios"] = self.dcs.status();
         response
     }
     fn error(&self, message: &str, id: Option<&str>) -> Value {
@@ -177,6 +194,12 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if command.starts_with("dcs_") {
+            return match self.dcs.request(&request) {
+                Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
+                Err(error) => self.error(&error, None),
+            };
+        }
         let backend = match request.get("backend") {
             Some(Value::String(s)) if s == "pico" || s == "stm32" => Some(s.clone()),
             Some(_) => return self.error("Unknown gateway backend.", None),
@@ -272,7 +295,16 @@ impl GatewayManager {
         };
         request["gatewayId"] = json!(id);
         request.as_object_mut().unwrap().remove("backend");
-        let response = adapter.request(request);
+        let bound_led = command == "action_invoke" && self.dcs.bound_led(&request);
+        let mut response = adapter.request(if bound_led {
+            json!({"command":"status","clientId":request["clientId"],"gatewayId":id})
+        } else {
+            request
+        });
+        if bound_led {
+            response["ok"] = json!(false);
+            response["error"] = json!("Stop DCS-BIOS before manually controlling its bound LED.");
+        }
         if response["state"]["connected"] == true {
             let backend = id.split_once(':').unwrap().0;
             if response["state"]["gatewaySerial"]
@@ -296,6 +328,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.dcs.stop();
         let sessions =
             std::mem::take(&mut *self.sessions.lock().unwrap_or_else(|p| p.into_inner()));
         // Cancellation/release happens concurrently, bounded by each adapter's own deadlines.

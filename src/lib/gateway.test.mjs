@@ -50,6 +50,45 @@ test('desktop routes the complete explicitly scoped request through one native m
   ]);
 });
 
+test('DCS-BIOS profile and lifecycle use the same native request in desktop and browser', async () => {
+  const config = { schemaVersion: 1, cataloguePath: '/DCS-BIOS/doc/json', gatewayId: first, moduleId: 'panel',
+    button: 0, ledActionId: 'led.boolean.set_enabled', commandHost: '127.0.0.1', commandPort: 7778,
+    listenAddress: '0.0.0.0', listenPort: 5010, multicastGroup: '239.255.50.10', multicastInterface: '127.0.0.1', freshnessMs: 1500 };
+  const result = { ok: true, state: { running: false, needsReconnect: false, modules: [],
+    dcsBios: { configured: true, running: false, config, status: 'stopped' } } };
+  for (const desktop of [true, false]) {
+    const api = transport({ desktop, result });
+    const requests = [{ command: 'dcs_configure', gatewayId: first, dcsConfig: config },
+      ...['dcs_status', 'dcs_start', 'dcs_stop'].map(command => ({ command, gatewayId: first }))];
+    for (const request of requests) assert.deepEqual(plain((await api.gatewayRequest(request)).dcsBios), result.state.dcsBios);
+    assert.deepEqual(api.calls.map(call => desktop ? call.args.request : JSON.parse(call.options.body)),
+      requests.map(request => ({ ...request, clientId: 'test-client-uuid' })));
+  }
+});
+
+test('global DCS requests stay ordered while gateway and inventory requests are slow', async () => {
+  const gatewayWaiting = deferred();
+  const inventoryWaiting = deferred();
+  const dcsWaiting = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'status') await gatewayWaiting.promise;
+    if (request.command === 'ports') await inventoryWaiting.promise;
+    if (request.command === 'dcs_configure') await dcsWaiting.promise;
+    return { ok: true, state };
+  } });
+  const pendingGateway = api.gatewayRequest({ command: 'status', gatewayId: first });
+  const pendingInventory = api.gatewayRequest({ command: 'ports' });
+  const pendingConfig = api.gatewayRequest({ command: 'dcs_configure' });
+  const pendingStop = api.gatewayRequest({ command: 'dcs_stop' });
+  await tick();
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['status', 'ports', 'dcs_configure']);
+  dcsWaiting.resolve();
+  await Promise.all([pendingConfig, pendingStop]);
+  assert.equal(api.calls.at(-1).args.request.command, 'dcs_stop');
+  gatewayWaiting.resolve(); inventoryWaiting.resolve();
+  await Promise.all([pendingGateway, pendingInventory]);
+});
+
 test('discovery is one aggregate request and never changes or disconnects either connection', async () => {
   const api = transport();
   await api.gatewayRequest({ command: 'connect', gatewayId: first, backend: 'stm32', port: 'COM1' });
