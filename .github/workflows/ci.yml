@@ -23,6 +23,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm transport:test
+      - run: pnpm actions:coverage
       - run: pnpm ui:build
 
   native:
@@ -48,6 +49,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Native tests and desktop compile
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Device action coverage above 70 percent
+        run: |
+          rustup component add llvm-tools-preview
+          python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
       - name: Bootstrap behavior tests
         run: python3 -m unittest discover -s tests/e2e -p 'test_*.py'
       - name: Independent gateway and device acceptance
@@ -60,4 +65,7 @@ jobs:
           path: |
             .e2e/resolved-dependencies.json
             .e2e/runs/
+            .research/action-coverage/action-summary.json
+            .research/action-coverage/native-tests.log
+            .research/action-coverage/lines.txt
           if-no-files-found: ignore

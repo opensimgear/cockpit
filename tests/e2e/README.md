@@ -49,6 +49,12 @@ without network access using `python3 -m unittest discover -s tests/e2e -p 'test
 
 For workspace research directories, add `--output-dir /absolute/path/to/.research/cockpit-e2e`; dependency checkouts, builds, launch manifests and evidence then stay under that directory.
 
+Each acceptance scenario supplies a fresh `OSG_SIMULATION_NAMESPACE` to its
+Cockpit service, gateways and devices. Their discovery directory is
+`/tmp/opensimgear-<user-id>/gateways-<namespace>`, isolating local CDC endpoints
+from any already running desktop and other acceptance runs. All participating
+simulation binaries must support this optional namespace variable.
+
 The first Cockpit scenario starts its normal native gateway service before the gateway,
 then launches three JSON-configured devices. It verifies automatic enable/append,
 configuration Apply & save, explicit changed-profile refresh, real input reports,
@@ -64,6 +70,14 @@ to the gateway. It checks aggregate discovery, rejected commands without a gatew
 identity, independent errors/disconnects, and crash recovery while the other gateway
 keeps its configuration writer and accepts saved changes. Correlated browser requests
 also verify that a paused gateway cannot block status requests to its peer.
+
+The manual-action scenario discovers the production device's RGB and boolean LED
+descriptors, invokes them through the normal Rust adapter and reads applied state
+from the independent device. It verifies unchanged HID descriptors/configuration,
+no writer claim, argument and revision validation, stale boot rejection, disabled
+HID and direct USB ownership, and isolation of identical device IDs on two
+gateways. Dropping the action acknowledgement establishes uncertain state and
+recovery through reconnect/readback without replaying the action.
 
 Native simulations execute the production configuration, flash journal, Cyphal
 transport, registry and descriptor code. Loopback TCP carries CDC bytes and UDP

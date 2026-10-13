@@ -947,6 +947,13 @@ mod tests {
             }
             let mut reply = None;
             match command {
+                "hello" if context.swap_identity => {
+                    // One stale USB inventory read lets the handshake observe
+                    // the replacement. Later discovery exposes its real serial,
+                    // rather than retrying that mismatch until the deadline.
+                    context.ports[0].serial_number =
+                        context.state["gatewaySerial"].as_str().map(str::to_owned);
+                }
                 "start" => {
                     context.state["running"] = json!(true);
                     for module in context.state["modules"].as_array_mut().unwrap() {
@@ -1292,7 +1299,12 @@ mod tests {
     fn reconnect_follows_usb_serial_to_new_port_and_rejects_a_different_board() {
         for swap in [false, true] {
             let (mut gateway, context) = harness();
-            connect(&mut gateway);
+            // This exercises identity reconciliation, not a response timeout.
+            // Parallel CI scheduling must leave time to consume the handshake.
+            gateway.timing.command = Duration::from_secs(1);
+            gateway.timing.hello = Duration::from_secs(1);
+            gateway.timing.reconnect = Duration::from_secs(2);
+            assert_eq!(connect(&mut gateway)["ok"], true);
             {
                 let mut context = context.lock().unwrap();
                 context.new_path = Some("/dev/cu.usbmodemOSG9".into());
@@ -1301,8 +1313,16 @@ mod tests {
             let result = request(&mut gateway, "reconnect", json!({}), CLIENT_A);
             if swap {
                 assert_eq!(result["ok"], false);
-                assert!(result["error"].as_str().unwrap().contains("different Pico"));
+                assert!(
+                    result["error"].as_str().unwrap().contains("different Pico"),
+                    "{result}"
+                );
                 assert_eq!(result["state"]["connected"], false);
+                assert_eq!(
+                    context.lock().unwrap().opened,
+                    [PATH, "/dev/cu.usbmodemOSG9"],
+                    "replacement metadata must prevent repeated handshakes"
+                );
             } else {
                 assert_eq!(result["ok"], true);
                 assert_eq!(result["state"]["port"], "/dev/cu.usbmodemOSG9");

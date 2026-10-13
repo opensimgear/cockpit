@@ -30,8 +30,29 @@ mod unix {
         unsafe { geteuid() }
     }
 
-    fn directory() -> PathBuf {
-        PathBuf::from(format!("/tmp/opensimgear-{}/gateways", uid()))
+    fn namespace_directory(namespace: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+        let suffix = if let Some(namespace) = namespace {
+            let namespace = namespace.to_str()?;
+            if namespace.is_empty()
+                || namespace.len() > 31
+                || !namespace
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+            {
+                return None;
+            }
+            format!("gateways-{namespace}")
+        } else {
+            "gateways".into()
+        };
+        Some(PathBuf::from(format!(
+            "/tmp/opensimgear-{}/{suffix}",
+            uid()
+        )))
+    }
+
+    fn directory() -> Option<PathBuf> {
+        namespace_directory(std::env::var_os("OSG_SIMULATION_NAMESPACE").as_deref())
     }
 
     fn identity(value: &str) -> bool {
@@ -243,13 +264,16 @@ mod unix {
     }
 
     pub(super) fn allowed_path(path: &str) -> bool {
-        endpoint(&directory(), path).is_some()
+        directory().is_some_and(|directory| endpoint(&directory, path).is_some())
     }
     pub(super) fn ports() -> Vec<PortInfo> {
-        discover_in(&directory())
+        directory()
+            .map(|directory| discover_in(&directory))
+            .unwrap_or_default()
     }
     pub(super) fn open(port: &PortInfo, timeout: Duration) -> Result<Box<dyn Connection>, String> {
-        open_in(&directory(), port, timeout)
+        let directory = directory().ok_or("Invalid local gateway namespace.")?;
+        open_in(&directory, port, timeout)
     }
 
     #[cfg(test)]
@@ -263,6 +287,38 @@ mod unix {
         };
 
         const SERIAL: &str = "00112233445566778899aabb";
+        #[test]
+        fn simulation_namespace_is_optional_bounded_and_never_falls_back_on_invalid_input() {
+            use std::ffi::OsStr;
+            assert_eq!(
+                namespace_directory(None).unwrap(),
+                PathBuf::from(format!("/tmp/opensimgear-{}/gateways", uid()))
+            );
+            for value in ["actions-ui", "Run_1.2", "a"] {
+                assert_eq!(
+                    namespace_directory(Some(OsStr::new(value))).unwrap(),
+                    PathBuf::from(format!("/tmp/opensimgear-{}/gateways-{value}", uid()))
+                );
+            }
+            for value in [
+                "",
+                "../other",
+                "path/name",
+                "with space",
+                "é",
+                "abcdefghijklmnopqrstuvwxyz123456",
+            ] {
+                assert!(namespace_directory(Some(OsStr::new(value))).is_none());
+            }
+            let default = namespace_directory(None).unwrap();
+            let isolated = namespace_directory(Some(OsStr::new("actions-ui"))).unwrap();
+            let default_socket = format!("unix:{}/{SERIAL}.sock", default.display());
+            assert!(endpoint(&default, &default_socket).is_some());
+            assert!(
+                endpoint(&isolated, &default_socket).is_none(),
+                "namespaced clients cannot open the default Unix endpoint"
+            );
+        }
         struct Fixture {
             root: PathBuf,
             directory: PathBuf,
@@ -307,7 +363,7 @@ mod unix {
 
         #[test]
         fn local_endpoint_paths_are_confined_to_current_user_gateway_directory() {
-            let root = directory();
+            let root = directory().unwrap();
             assert!(allowed_path(&format!(
                 "unix:{}/{SERIAL}.sock",
                 root.display()

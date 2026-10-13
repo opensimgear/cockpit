@@ -16,6 +16,23 @@ CDC-v2 uses its existing registration/layout Apply workflow; Pico retains its ol
 
 Runtime configuration routes bounded commands to the device using its exclusive writer, draft and Apply/Save/Discard operations. Claims bind to gateway epoch, device identity, boot and route. Readback confirms activation and reconciles lost commit replies; CDC v3 readback follows the same gateway across changed CDC paths and verifies the module boot. Read-only configuration reads wait for the renewed CAN route after an automatic publication; a configuration mutation is never replayed. Cached configuration binds to the device boot and configuration generation. Fresh request-counter seeds distinguish new client sessions from a running device's completed-request cache.
 
+`action_describe`, `action_state` and `action_invoke` route the device's generic
+action handler through `cockpit <id> <epoch> action <identity> <boot> <child>`.
+The outer `targetAction` reply is independent of `targetConfig`. Discovery follows
+bounded pages (up to four actions per page, sixteen total) and validates IDs,
+parameter constraints, revision consistency and duplicate descriptors before
+exposing controls. Boolean, signed integer, enum, RGB and bounded UTF-8 string
+arguments are validated and encoded without allowing serial command injection.
+The decorated `moduleActions` state contains the complete catalogue, applied
+readback and explicit ready/unsupported/error/uncertain status.
+
+Action cache entries bind to this gateway's epoch and module identity/node/lease/
+boot; stale or offline routes invalidate them. Actions do not require a settings
+writer or HID registration/input ownership. Describe/state may wait for a fresh
+route after a layout change, while invokes are sent once. A timeout or failed
+application acknowledgement requires readback and never replays the invocation.
+Unsupported firmware remains connected and usable for its existing inputs.
+
 The Pico adapter owns normal USB serial discovery, protocol checks, control lines, UI liveness, setup leases and reconnect to the same board. It reads live inputs and configures settings; it rejects input/inventory injection commands. Stop/disconnect and app exit release access and neutralize this older firmware's reports. Settings remain in board RAM. On macOS the native IOKit helper updates individual joystick service names after matching VID/PID, serial, usage and interface.
 
 ## Local gateway transport
@@ -23,6 +40,15 @@ The Pico adapter owns normal USB serial discovery, protocol checks, control line
 Normal macOS/Linux discovery also reads bounded gateway advertisements from `/tmp/opensimgear-<user-id>/gateways/`. Directories and files must belong to the current user with private permissions; stale process advertisements and invalid paths are ignored. Valid metadata selects a loopback TCP endpoint or a private Unix stream. Opening revalidates discovery, then applies the same CDC identity and epoch checks as a USB serial connection.
 
 The gateway owns its advertisement and lifetime. Device inventory is obtained exclusively through the gateway protocol. This transport is independent of how a gateway is implemented and contains no simulation factory or administrative input controls.
+
+For isolated local simulation runs, set `OSG_SIMULATION_NAMESPACE` to the same
+value on Cockpit/service, gateway and device processes. Names use 1–31 ASCII
+letters, digits, dots, underscores or hyphens; discovery then uses
+`/tmp/opensimgear-<user-id>/gateways-<namespace>`. Unset preserves ordinary
+discovery. Invalid values disable local discovery/opening without falling back
+to the ordinary directory. Production process acceptance creates a fresh private
+namespace per scenario, so an already running desktop cannot attach to its CDC
+endpoints.
 
 ## Browser development
 

@@ -7,6 +7,8 @@ import ts from 'typescript';
 const compile = async name => ts.transpileModule(await readFile(new URL(name, import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const actions = {};
+vm.runInNewContext(await compile('./device-actions.ts'), { exports: actions });
 const automation = {};
 vm.runInNewContext(await compile('./gateway-automation.ts'), { exports: automation });
 class GatewayError extends Error { constructor(message, state) { super(message); this.state = state; } }
@@ -14,6 +16,7 @@ const exported = {};
 vm.runInNewContext(await compile('./gateway-workspace.ts'), {
   exports: exported, require(name) {
     if (name === './gateway-automation') return automation;
+    if (name === './device-actions') return actions;
     if (name === './gateway') return { GatewayError, gatewayRequest: () => { throw new Error('A fake transport is required.'); } };
     throw new Error(`Unexpected import ${name}`);
   },

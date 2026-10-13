@@ -3,6 +3,7 @@
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';
+  import ManualActions from './lib/ManualActions.svelte';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
@@ -385,7 +386,7 @@
           </section>
         {:else if view === 'device' && selected}
           <button class="text-button device-back" onclick={() => { view = 'devices'; }}><Icon name="arrow" size={14} />Back to devices</button>
-          <div class="page-heading"><div><div class="eyebrow">DEVICE WORKSPACE</div><h1>{selected.settings.label}</h1><p>Configuration and live controller inputs.</p></div></div>
+          <div class="page-heading"><div><div class="eyebrow">DEVICE WORKSPACE</div><h1>{selected.settings.label}</h1><p>Configuration, live controller inputs and manual device actions.</p></div></div>
           {#if lifecycle && gateway?.layoutPending}<div class="reconnect-notice" role="status"><Icon name="usb" size={19} /><div><strong>Updating USB controllers…</strong><p>The gateway saves this change and reconnects automatically.</p></div></div>
           {:else if needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>{physicalGateway ? 'Controller layout changes pending' : `${gatewayName} needs a reconnect`}</strong><p>Apply the pending controller layout to reconnect USB. Check your game bindings afterward.</p></div><button class="secondary-button" disabled={gatewayBusy || !gatewayConnected || gateway?.reconnecting || !!gateway?.claimedModules?.length} onclick={() => reconnectGateway(selected.gatewayId)}><Icon name="usb" size={15} />{physicalGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}
 
@@ -395,6 +396,7 @@
             <div>
                 <section class="panel device-stage"><div class="stage-title"><div><span class="eyebrow">DEVICE WORKSPACE</span><h2>{selected.name}</h2><p>{selected.subtitle}</p></div><span class="connection-badge"><span class="status-dot" class:offline={!selected.online}></span>{selected.online ? 'Connected' : 'Offline'}</span></div><div class="large-device"><DeviceIllustration kind={selected.kind} /></div><div class="stage-metadata"><div><small>STABLE IDENTITY</small><strong>{selected.id}</strong></div><div><small>ACTIVE ROUTE</small><strong>{selected.route}</strong></div><div><small>CAPABILITIES</small><strong>{selected.inputs}</strong></div></div></section>
                 <section class="panel device-inputs"><div class="panel-heading"><h2>Live inputs</h2><span class="quiet-tag">{controlsReady ? 'Live HID output' : 'Device inputs'}</span></div>{@render inputTester()}</section>
+                {#key selected.key}<ManualActions state={gateway} module={hidModule} busy={gatewayBusy} request={request => sendGateway(selected.gatewayId, request)} />{/key}
             </div>
             <section class="panel inspector" aria-label="Selected device settings">
               <div class="inspector-heading"><div><span class="eyebrow">CONFIGURATION</span><h2>{selected.settings.label}</h2></div><span class="model-badge">{selected.kind === 'shifter' ? 'SQ' : selected.kind === 'pedals' ? 'PD' : selected.kind === 'panel' ? 'BP' : selected.kind === 'wheel' ? 'WH' : 'HB'}</span></div>

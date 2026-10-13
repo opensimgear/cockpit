@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const isolatedEnvironment = () => ({ ...process.env, OSG_SIMULATION_NAMESPACE: `cockpit-e2e-${randomBytes(8).toString('hex')}` });
 
 function processClient(executable, args = [], env = process.env) {
   const child = spawn(executable, args, { stdio: ['pipe', 'pipe', 'pipe'], env });
@@ -66,7 +67,7 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
   const launch = JSON.parse(await readFile(process.env.OSG_E2E_MANIFEST, 'utf8'));
   const executable = launch.gatewayBinary;
   const serviceExecutable = launch.serviceBinary;
-  const environment = { ...process.env };
+  const environment = isolatedEnvironment();
   const uid = randomBytes(12).toString('hex');
   const gatewayId = `stm32:${uid}`;
   const identities = Array.from({ length: 3 }, () => randomBytes(16).toString('hex'));
@@ -333,7 +334,8 @@ test('one Cockpit serves simultaneous gateways with isolated device identities, 
   definition.identity = moduleId;
   const definitionPath = resolve(stateDirectory, 'device.json');
   await writeFile(definitionPath, JSON.stringify(definition, null, 2));
-  const service = processClient(launch.serviceBinary);
+  const environment = isolatedEnvironment();
+  const service = processClient(launch.serviceBinary, [], environment);
   const gateways = [];
   const devices = [];
   let adminId = 0;
@@ -361,10 +363,10 @@ test('one Cockpit serves simultaneous gateways with isolated device identities, 
     assert.fail(`${description}: ${JSON.stringify(result)}`);
   };
   const startGateway = index => processClient(launch.gatewayBinary, ['--identity', uids[index],
-    '--state-dir', resolve(stateDirectory, `gateway-${index}`)]);
+    '--state-dir', resolve(stateDirectory, `gateway-${index}`)], environment);
   const startDevice = index => processClient(launch.python, [resolve(launch.deviceRepository, 'simulation/run.py'),
     '--config', definitionPath, '--gateway', uids[index], '--state-dir', resolve(stateDirectory, `device-${index}`),
-    '--output-dir', launch.deviceBuild, '--no-build']);
+    '--output-dir', launch.deviceBuild, '--no-build'], environment);
   const configurations = [
     { name: 'Gateway A pedals', expanderMask: 0, buttons: [[0, 0, 0]],
       axes: [[0, 48, 0, 4095, 0, 0, 0]], hats: [], encoders: [], selectors: [] },
@@ -526,5 +528,118 @@ test('one Cockpit serves simultaneous gateways with isolated device identities, 
     await service.stop();
     for (const device of devices) await device.stop();
     for (const gateway of gateways) await gateway.stop();
+  }
+});
+
+
+test('Cockpit discovers advertised LED actions and routes manual outputs independently of HID and writer ownership', { timeout: 120_000 }, async () => {
+  assert.ok(process.env.OSG_E2E_MANIFEST, 'Run tests/e2e/run.py to provision external components first');
+  const launch = JSON.parse(await readFile(process.env.OSG_E2E_MANIFEST, 'utf8'));
+  const uids = [randomBytes(12).toString('hex'), randomBytes(12).toString('hex')];
+  const moduleId = randomBytes(16).toString('hex');
+  const gatewayIds = uids.map(uid => `stm32:${uid}`);
+  await mkdir(launch.artifacts, { recursive: true });
+  const directory = await mkdtemp(resolve(launch.artifacts, 'manual-actions-'));
+  const definition = JSON.parse(await readFile(resolve(launch.deviceRepository, 'simulation/configs/button-panel.json'), 'utf8'));
+  definition.identity = moduleId;
+  const definitionPath = resolve(directory, 'panel.json');
+  await writeFile(definitionPath, JSON.stringify(definition, null, 2));
+  const environment = isolatedEnvironment();
+  const service = processClient(launch.serviceBinary, [], environment);
+  const gateways = [], devices = [];
+  const ports = [];
+  let adminId = 0;
+  const request = (index, command, extra = {}) => service.line(JSON.stringify({ command, gatewayId: gatewayIds[index], clientId: 'manual-device-actions-acceptance', ...extra }));
+  const ok = async (index, command, extra = {}) => {
+    const response = await request(index, command, extra);
+    assert.equal(response.ok, true, `${command}: ${response.error}`);
+    return response.state;
+  };
+  const admin = async (process, command) => {
+    const response = await process.line(`sim ${++adminId} ${command}`);
+    assert.equal(response.ok, true, response.error);
+    return response.simulation;
+  };
+  const wait = async (operation, accepts, description) => {
+    let result;
+    for (let attempt = 0; attempt < 70; attempt++) {
+      result = await operation();
+      if (accepts(result)) return result;
+      await sleep(100);
+    }
+    assert.fail(`${description}: ${JSON.stringify(result)}`);
+  };
+  const invoke = async (index, actionId, values, revision = 1) => {
+    const state = await ok(index, 'status');
+    return request(index, 'action_invoke', { moduleId, boot: state.modules.find(m => m.id === moduleId).boot, catalogueRevision: revision, actionId, values });
+  };
+  try {
+    for (const [index, uid] of uids.entries()) {
+      gateways.push(processClient(launch.gatewayBinary, ['--identity', uid, '--state-dir', resolve(directory, `gateway-${index}`)], environment));
+      const inventory = await wait(() => ok(index, 'ports'), state => state.ports.some(port => port.serialNumber === uid), 'Independent gateway advertisement');
+      ports.push(inventory.ports.find(port => port.serialNumber === uid));
+      await ok(index, 'connect', { backend: 'stm32', port: ports[index].path });
+      devices.push(processClient(launch.python, [resolve(launch.deviceRepository, 'simulation/run.py'), '--config', definitionPath,
+        '--gateway', uid, '--state-dir', resolve(directory, `device-${index}`), '--output-dir', launch.deviceBuild, '--no-build'], environment));
+      await wait(() => ok(index, 'status'), state => state.modules.some(m => m.id === moduleId && m.online) && !state.layoutPending, 'Independent device route');
+      const described = await ok(index, 'action_describe', { moduleId });
+      const catalogue = described.moduleActions[moduleId];
+      assert.equal(catalogue.status, 'ready');
+      assert.equal(catalogue.actions.length, 2);
+      assert.equal(catalogue.actions.find(action => action.id === 'led.rgb.set_color').parameters[0].type, 'rgb');
+      assert.equal(catalogue.actions.find(action => action.id === 'led.boolean.set_enabled').parameters[0].type, 'boolean');
+    }
+    const before = await admin(gateways[0], 'inspect');
+    const moduleBefore = await admin(devices[0], 'inspect');
+    let applied = await invoke(0, 'led.rgb.set_color', ['12ABEF']);
+    assert.equal(applied.ok, true, applied.error);
+    applied = await invoke(0, 'led.boolean.set_enabled', [true]);
+    assert.equal(applied.ok, true, applied.error);
+    const readback = await ok(0, 'action_state', { moduleId });
+    assert.deepEqual(readback.moduleActions[moduleId].states.find(s => s.id === 'led.rgb.set_color').values, ['12ABEF']);
+    assert.deepEqual(readback.moduleActions[moduleId].states.find(s => s.id === 'led.boolean.set_enabled').values, [true]);
+    const peer = await ok(1, 'action_state', { moduleId });
+    assert.deepEqual(peer.moduleActions[moduleId].states.find(s => s.id === 'led.rgb.set_color').values, ['000000'], 'The same module identity on another gateway is isolated');
+    assert.deepEqual(peer.moduleActions[moduleId].states.find(s => s.id === 'led.boolean.set_enabled').values, [false]);
+    assert.equal((await admin(gateways[0], 'inspect')).descriptorHex, before.descriptorHex, 'Manual output changes preserve HID descriptors');
+    assert.equal((await admin(devices[0], 'inspect')).module.generation, moduleBefore.module.generation, 'Actions do not write configuration');
+    assert.equal((await admin(devices[0], 'inspect')).module.owner, 0, 'Actions do not acquire a writer claim');
+    for (const [actionId, values, revision] of [['led.rgb.set_color', ['#000000'], 1], ['led.boolean.set_enabled', [1], 1], ['missing.action', [], 1], ['led.boolean.set_enabled', [false], 2]]) {
+      const rejected = await invoke(0, actionId, values, revision);
+      assert.equal(rejected.ok, false, 'Invalid requests are rejected before a device mutation');
+      await ok(0, 'action_state', { moduleId });
+      assert.deepEqual((await admin(devices[0], 'inspect')).actions.states.find(s => s.id === 'led.rgb.set_color').values, ['12ABEF']);
+    }
+    let state = await ok(0, 'disable', { moduleId });
+    assert.equal(state.modules.find(m => m.id === moduleId).enabled, false);
+    await ok(0, 'action_describe', { moduleId });
+    assert.equal((await invoke(0, 'led.boolean.set_enabled', [false])).ok, true, 'Disabled online HID devices remain actionable');
+    await admin(devices[0], 'direct 1');
+    await wait(() => ok(0, 'status'), state => state.modules.find(m => m.id === moduleId).directUsb, 'Direct USB ownership');
+    await ok(0, 'action_describe', { moduleId });
+    assert.equal((await invoke(0, 'led.rgb.set_color', ['FF0000'])).ok, true, 'Direct USB input ownership does not block action routing');
+    state = await ok(0, 'status');
+    const boot = state.modules.find(m => m.id === moduleId).boot;
+    const stale = await request(0, 'action_invoke', { moduleId, boot: boot + 1, catalogueRevision: 1, actionId: 'led.rgb.set_color', values: ['000000'] });
+    assert.equal(stale.ok, false);
+    assert.deepEqual((await admin(devices[0], 'inspect')).actions.states.find(s => s.id === 'led.rgb.set_color').values, ['FF0000']);
+    await admin(gateways[0], 'drop_reply 1');
+    const uncertain = await invoke(0, 'led.rgb.set_color', ['ABCDEF']);
+    assert.equal(uncertain.ok, false);
+    assert.equal(uncertain.state.moduleActions[moduleId].status, 'uncertain');
+    assert.match(uncertain.error, /may have changed/);
+    const output = await admin(devices[0], 'inspect');
+    assert.deepEqual(output.actions.states.find(s => s.id === 'led.rgb.set_color').values, ['ABCDEF'], 'A lost acknowledgement may still apply the output');
+    await admin(gateways[0], 'drop_reply 0');
+    await ok(0, 'connect', { backend: 'stm32', port: ports[0].path });
+    await ok(0, 'action_state', { moduleId });
+    const recovered = await ok(0, 'action_state', { moduleId });
+    assert.equal(recovered.moduleActions[moduleId].status, 'ready');
+    assert.deepEqual(recovered.moduleActions[moduleId].states.find(s => s.id === 'led.rgb.set_color').values, ['ABCDEF']);
+    assert.equal((await invoke(1, 'led.boolean.set_enabled', [true])).ok, true, 'The second gateway remains usable after the first loses a reply');
+    await writeFile(resolve(directory, 'manual-actions-acceptance.json'), JSON.stringify({ passed: true, gatewayIds, moduleId,
+      scenarios: ['typed discovery', 'RGB/boolean invocation', 'applied readback', 'HID/configuration preservation', 'two-gateway same-identity isolation', 'invalid arguments', 'stale catalogue', 'stale boot', 'disabled HID', 'direct USB', 'lost acknowledgement', 'readback recovery'] }, null, 2));
+  } finally {
+    await Promise.allSettled([...devices, ...gateways, service].map(process => process.stop()));
   }
 });
