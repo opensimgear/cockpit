@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { actionError, initialValues, outputSummary, type ActionValue, type DeviceAction, type DeviceActions } from './device-actions';
+  import { actionError, initialValues, integerInputValue, outputSummary, type ActionValue, type DeviceAction, type DeviceActions } from './device-actions';
   let { action, snapshot, ready, busy, invoke }: {
     action: DeviceAction; snapshot: DeviceActions; ready: boolean; busy: boolean;
     invoke: (action: DeviceAction, values: ActionValue[]) => Promise<boolean>;
@@ -28,7 +28,7 @@
     {:else if parameter.type === 'enum'}
       <select id={fieldId} value={String(values[index] ?? '')} onchange={event => { values[index] = event.currentTarget.value; }}>{#each parameter.options ?? [] as option (option)}<option value={option}>{option}</option>{/each}</select>
     {:else if parameter.type === 'integer'}
-      <input id={fieldId} type="number" min={parameter.minimum} max={parameter.maximum} step="1" value={Number(values[index])} oninput={event => { values[index] = Number(event.currentTarget.value); }} />
+      <input id={fieldId} type="number" min={parameter.minimum} max={parameter.maximum} step="1" value={Number(values[index])} oninput={event => { values[index] = integerInputValue(event.currentTarget.value); }} />
     {:else if parameter.type === 'rgb'}
       <div class="color-value"><input id={fieldId} type="color" value={`#${values[index] ?? '000000'}`} oninput={event => { values[index] = event.currentTarget.value.slice(1).toUpperCase(); }} /><span>#{values[index]}</span></div>
     {:else}

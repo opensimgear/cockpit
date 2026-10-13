@@ -33,6 +33,11 @@ export function initialValues(action: DeviceAction, snapshot?: DeviceActions): A
     parameter.type === 'rgb' ? '000000' : ''));
 }
 
+/** Preserve a missing numeric field as invalid until the user supplies a value. */
+export function integerInputValue(value: string): number {
+  return value.trim() === '' ? Number.NaN : Number(value);
+}
+
 export function actionError(action: DeviceAction, values: ActionValue[]): string {
   if (values.length !== action.parameters.length) return 'This action has incomplete arguments.';
   for (const [index, parameter] of action.parameters.entries()) {

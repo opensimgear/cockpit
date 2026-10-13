@@ -7,7 +7,7 @@ const exported = {};
 vm.runInNewContext(ts.transpileModule(await readFile(new URL('./device-actions.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: exported, TextEncoder }, { filename: new URL('./device-actions.ts', import.meta.url).pathname });
-const { actionReady, nextActionRead, initialValues, actionError, outputSummary } = exported;
+const { actionReady, nextActionRead, initialValues, integerInputValue, actionError, outputSummary } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
 const module = { id: 'device', online: true, boot: 100, active: false, enabled: false, directUsb: true };
 const state = { backend: 'stm32', connected: true, modules: [module] };
@@ -46,6 +46,17 @@ test('manual argument validation rejects incomplete, out of range and wrong type
   assert.equal(actionError(action, [false, -1, 'auto', '123456']), '');
   assert.match(actionError(action, []), /incomplete/);
   for (const values of [[1, 1, 'auto', '123456'], [true, 11, 'auto', '123456'], [true, 1.5, 'auto', '123456'], [true, 1, 'invalid', '123456'], [true, 1, 'auto', '#123456']]) assert.match(actionError(action, values), /Check/);
+});
+
+test('integer controls reject blank and invalid input while accepting an explicit zero', () => {
+  const integer = { ...action, parameters: [{ id: 'level', label: 'Level', type: 'integer', minimum: -10, maximum: 10 }] };
+  for (const input of ['', ' ', 'invalid', 'Infinity', '1.5', '11']) {
+    assert.match(actionError(integer, [integerInputValue(input)]), /Check level/);
+  }
+  for (const input of ['0', '-10', '10']) {
+    assert.equal(integerInputValue(input), Number(input));
+    assert.equal(actionError(integer, [integerInputValue(input)]), '');
+  }
 });
 
 test('readback labels are explicit about unknown and unreadable states', () => {

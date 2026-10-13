@@ -13,7 +13,7 @@ software state, rather than electrical measurement.
 ## Checks
 
 - `pnpm check`: zero errors and warnings.
-- `pnpm transport:test`: 53 passing frontend/bridge tests, including five new
+- `pnpm transport:test`: 54 passing frontend/bridge tests, including six new
   action helper scenarios.
 - `pnpm ui:build`: production frontend build passed.
 - Native Rust suite: 77 passing tests. Four existing socket tests require local
@@ -41,9 +41,9 @@ Measured production code coverage exceeds 70%, excluding Rust unit test bodies:
 | --- | ---: | ---: |
 | Rust action descriptor/value validation and encoding | 173 / 177 | 97.74% |
 | Rust action route, transport and request methods | 180 / 195 | 92.31% |
-| TypeScript action helper execution | — | 87.50% |
+| TypeScript action helper execution | — | 88.52% |
 
-The TypeScript helper also has 97.06% branch and 100% function coverage. Its
+The TypeScript helper also has 97.18% branch and 100% function coverage. Its
 `pnpm actions:coverage` command enforces a 71% minimum on all three measures.
 The native `scripts/action-coverage.py` gate enforces more than 70% production
 line coverage in CI. Rust coverage used the matching toolchain's `llvm-tools-preview`,
@@ -64,3 +64,13 @@ LED on, and both UI and device readback agreed. The settings stayed at generatio
 1 with no writer claim, flash writes, pending apply, descriptor change or module
 reconnect. Screenshots and exact readback are retained in workspace
 `.research/device-actions/ui-smoke/`.
+
+## Review correction
+
+Independent review found that clearing an integer control converted the empty
+field to zero. Empty or invalid numeric input now remains invalid and blocks
+Apply, while an explicit zero remains valid within the advertised bounds. The
+regression covers blank, malformed, fractional and out-of-range input as well
+as zero and both bounds. Frontend tests, Svelte checks, production UI build and
+the action coverage gate passed after the correction; a second review found no
+further issue with rendering or submission.
