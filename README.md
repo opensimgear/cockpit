@@ -36,6 +36,8 @@ pnpm build
 
 `pnpm build` packages the application under `src-tauri/target/release/bundle/`. Local macOS builds can use ad-hoc signing; distribution signing/notarization remains future work.
 
+GitHub Actions runs frontend type checks, transport tests and the UI build on every push and pull request. A Linux native job compiles/tests the Rust application, checks dependency bootstrap behavior, and runs the independent gateway/device acceptance scenarios with sanitizers. Integration dependency manifests and run reports are uploaded as CI artifacts.
+
 For browser development through the same normal Rust adapters:
 
 ```sh

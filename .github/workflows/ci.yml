@@ -1,0 +1,63 @@
+name: Cockpit checks and integration
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cockpit-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm transport:test
+      - run: pnpm ui:build
+
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.e2e/build/cockpit
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Tauri and serial platform dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - run: pnpm install --frozen-lockfile
+      - name: Native tests and desktop compile
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Bootstrap behavior tests
+        run: python3 -m unittest discover -s tests/e2e -p 'test_*.py'
+      - name: Independent gateway and device acceptance
+        run: python3 tests/e2e/run.py --sanitize
+      - name: Upload integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cockpit-integration-evidence
+          path: |
+            .e2e/resolved-dependencies.json
+            .e2e/runs/
+          if-no-files-found: ignore
