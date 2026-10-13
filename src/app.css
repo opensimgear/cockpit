@@ -313,6 +313,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 3px; margi
 .gateway-device-link small { display: block; font-size: 9px; margin-top: 5px; color: var(--muted); }
 .gateway-device-link > svg { color: var(--muted); }
 .gateway-device-link:hover strong { color: var(--accent); }
+.gateway-device-list .ghost .gateway-device-link { opacity: .5; }
+.gateway-device-list .device-disabled .gateway-device-link { opacity: .65; }
+.controller-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .delete-device:hover { color: #e8b67a; }
 .gateway-devices-empty { color: var(--muted); font-size: 10px; line-height: 1.7; }
 .gateway-discovery { display: flex; align-items: start; gap: 12px; color: var(--muted); padding: 18px 0; }

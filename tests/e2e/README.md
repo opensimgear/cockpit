@@ -47,11 +47,15 @@ this repository’s `.e2e/` to force clean provisioning. Run one bootstrap per r
 at a time. Bootstrap retry, executable-mode and submodule behavior can be checked
 without network access using `python3 -m unittest discover -s tests/e2e -p 'test_*.py'`.
 
+For workspace research directories, add `--output-dir /absolute/path/to/.research/cockpit-e2e`; dependency checkouts, builds, launch manifests and evidence then stay under that directory.
+
 The first Cockpit scenario starts its normal native gateway service before the gateway,
-then launches three JSON-configured devices. It verifies live discovery, full
-configuration Apply & save, registration and dynamic layout Apply, real input
-reports, neutral offline slots, device/gateway crash recovery, saved configuration,
-writer contention after Cockpit restart, and independent process lifetimes.
+then launches three JSON-configured devices. It verifies automatic enable/append,
+configuration Apply & save, explicit changed-profile refresh, real input reports,
+neutral offline ghosts, disabled online configuration, persistent Disable across
+announcements and gateway restart, append-on-Enable, offline Forget and automatic
+arrival of a forgotten identity. It also covers device/gateway crash recovery,
+writer contention after Cockpit restart and independent process lifetimes.
 
 The simultaneous-gateway scenario connects two gateway processes through one normal
 Cockpit service. Each gateway has a device with the same identity, which verifies

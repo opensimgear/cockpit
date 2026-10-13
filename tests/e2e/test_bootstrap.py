@@ -16,8 +16,8 @@ import bootstrap
 
 class BootstrapTests(unittest.TestCase):
     def setUp(self):
-        scratch = Path(__file__).resolve().parents[2] / '.e2e'
-        scratch.mkdir(exist_ok=True)
+        scratch = Path(os.environ.get('OSG_E2E_TEST_OUTPUT', Path(__file__).resolve().parents[2] / '.e2e'))
+        scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix='bootstrap-test-', dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
@@ -30,6 +30,17 @@ class BootstrapTests(unittest.TestCase):
             'device-template': {'url': str(self.source), 'ref': 'main'},
         }))
         self.dependencies = bootstrap.Dependencies(self.runner, {'device-template': self.source})
+
+    def test_explicit_output_directory_contains_checkouts_and_rejects_symlinks(self):
+        output = self.directory / 'research/integration'
+        dependencies = bootstrap.Dependencies(self.runner, {'device-template': self.source}, output)
+        checkout = dependencies.acquire('device-template')
+        self.assertTrue(checkout.is_relative_to(output))
+        self.assertTrue((output / 'resolved-dependencies.json').is_file())
+        alias = self.directory / 'output-alias'
+        alias.symlink_to(output, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            bootstrap.Dependencies(self.runner, {}, alias)
 
     def git(self, repository, *arguments):
         return subprocess.check_output(['git', '-C', str(repository), *arguments], stderr=subprocess.PIPE).decode().strip()

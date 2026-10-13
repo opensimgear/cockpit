@@ -12,6 +12,9 @@ export type GatewayModule = {
   online: boolean;
   registered: boolean;
   active: boolean;
+  enabled?: boolean;
+  published?: boolean;
+  descriptorIndex?: number;
   buttonCount: number;
   axisCount: number;
   hatCount?: number;
@@ -37,10 +40,13 @@ export type GatewayState = {
   backend?: GatewayBackend; connected?: boolean; port?: string | null; ports?: GatewayPort[];
   gatewayId?: string; gatewaySerial?: string; protocolVersion?: number; firmwareVersion?: string; reconnecting?: boolean;
   epoch?: number; canProtocol?: number; maxModules?: number; needsApply?: boolean;
+  maxRemembered?: number; maxControllers?: number; activeGeneration?: number; pendingGeneration?: number;
+  lifecycle?: 'automatic'; layoutPending?: boolean; layoutError?: string | null;
+  admissionFailure?: { identity: string; error: string } | null; rejectedAnnouncements?: number;
   hidNaming?: { supported: boolean; applied: boolean; error?: string };
   moduleConfigs?: Record<string, RuntimeSnapshot>;
 };
-export type GatewayCommand = 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset';
+export type GatewayCommand = 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset';
 export type GatewayRequest = { command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig };
 
 const clientId = crypto.randomUUID();

@@ -62,12 +62,12 @@ def reject_dirty_submodules(source):
 
 
 class Dependencies:
-    def __init__(self, repository, sources):
+    def __init__(self, repository, sources, output_directory=None):
         self.repository = Path(repository).resolve()
-        self.directory = self.repository / '.e2e'
+        self.directory = Path(output_directory).expanduser().absolute() if output_directory else self.repository / '.e2e'
         if self.directory.is_symlink():
-            raise ValueError('.e2e must not be a symlink')
-        self.directory.mkdir(exist_ok=True)
+            raise ValueError('The integration output directory must not be a symlink')
+        self.directory.mkdir(parents=True, exist_ok=True)
         self.sources = sources
         self.resolved = {}
         self.manifest = json.loads((self.repository / 'tests/e2e/dependencies.json').read_text())

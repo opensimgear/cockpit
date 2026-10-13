@@ -91,7 +91,7 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     ...(command === 'ports' ? {} : { gatewayId }), ...extra, clientId }));
   const ok = async (command, extra) => {
     const response = await request(command, extra);
-    assert.equal(response.ok, true, response.error);
+    assert.equal(response.ok, true, `${command} ${extra?.moduleId ?? ''}: ${response.error}`);
     return response.state;
   };
   const admin = async (process, action) => {
@@ -127,7 +127,9 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
 
     device = startDevice();
     state = await wait(() => { device.assertRunning(); return ok('status'); }, state => state.modules.some(module => module.id === moduleId && module.online), 'Separately started device is discovered over CAN');
-    assert.equal(state.modules.find(module => module.id === moduleId).registered, false);
+    assert.equal(state.protocolVersion, 3);
+    assert.equal(state.lifecycle, 'automatic');
+    assert.equal(state.modules.find(module => module.id === moduleId).enabled, true);
     peers.push(startDevice(1), startDevice(2));
     state = await wait(() => ok('status'), state => state.modules.length === 3 && state.modules.every(module => module.online), 'Three independent JSON devices join the gateway');
     for (const [index, id] of identities.entries()) {
@@ -151,14 +153,11 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     assert.equal(state.moduleConfigs[moduleId].pendingApply, false);
     assert.equal((await admin(gateway, 'inspect')).descriptorHex, before.descriptorHex, 'Module settings do not publish a pending gateway layout');
     await ok('release', { moduleId });
-    state = await ok('register', { moduleId });
-    for (const id of identities.slice(1)) state = await ok('register', { moduleId: id });
-    assert.equal(state.needsApply, true);
-    state = await ok('reconnect');
-    assert.equal(state.needsApply, false);
+    state = await ok('update-profile', { moduleId });
+    assert.equal(state.layoutPending, false);
     assert.equal(state.modules.find(module => module.id === moduleId).profileMatch, true);
     assert.equal(state.modules.find(module => module.id === moduleId).reportId, 1);
-    assert.equal(state.modules.filter(module => module.registered && module.profileMatch).length, 3);
+    assert.equal(state.modules.filter(module => module.enabled && module.published && module.profileMatch).length, 3);
 
     await admin(device, 'contact 0 1');
     await admin(device, 'axis 0 100');
@@ -175,10 +174,12 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
 
     const boot = state.modules.find(module => module.id === moduleId).boot;
     await device.stop('SIGKILL');
-    state = await wait(() => ok('status'), state => !state.modules.find(module => module.id === moduleId)?.online, 'Device loss becomes offline without losing its controller slot');
+    state = await wait(() => ok('status'), state => !state.modules.find(module => module.id === moduleId)?.online, 'Device loss becomes a retained neutral ghost controller');
     const offline = state.modules.find(module => module.id === moduleId);
     assert.equal(state.modules.filter(module => module.online).length, 2, 'The other devices keep running independently');
-    assert.equal(offline.activeSlot, 0);
+    assert.equal(offline.descriptorIndex, 0);
+    assert.equal(offline.enabled, true);
+    assert.equal(offline.published, true);
     assert.deepEqual(offline.buttons, []);
     assert.deepEqual(offline.axes, [0, 32768]);
     assert.deepEqual(offline.hats, [8]);
@@ -190,6 +191,20 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     state = await ok('config_read', { moduleId });
     assert.deepEqual(state.moduleConfigs[moduleId].config, config);
 
+    const survivingOrder = state.modules.filter(module => module.id !== moduleId).sort((a, b) => a.descriptorIndex - b.descriptorIndex).map(module => ({ id: module.id, reportId: module.reportId }));
+    state = await ok('disable', { moduleId });
+    assert.equal(state.modules.find(module => module.id === moduleId).enabled, false);
+    assert.equal(state.modules.find(module => module.id === moduleId).published, false);
+    assert.equal(state.modules.find(module => module.id === moduleId).reportId, null);
+    await sleep(1100);
+    state = await ok('status');
+    assert.equal(state.modules.find(module => module.id === moduleId).enabled, false, 'Repeated announcements cannot re-enable a remembered disabled device');
+    state = await ok('config_read', { moduleId });
+    assert.deepEqual(state.moduleConfigs[moduleId].config, config, 'Disabled online devices remain configurable');
+    await ok('claim', { moduleId });
+    state = await ok('config_apply_save', { moduleId, config });
+    assert.deepEqual(state.moduleConfigs[moduleId].config, config);
+    await ok('release', { moduleId });
     const epoch = state.epoch;
     await gateway.stop('SIGKILL');
     await wait(() => request('status'), response => response.state?.connected === false, 'Gateway process loss closes the native connection');
@@ -201,11 +216,14 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     assert.ok(state.epoch > epoch);
     state = await wait(() => ok('status'), state => {
       const module = state.modules.find(module => module.id === moduleId);
-      return module?.online && module.activeSlot === 0 && module.profileMatch;
-    }, 'Persisted gateway registration and running device recover together');
-    assert.equal(state.needsApply, false);
+      return module?.online && module.enabled === false && module.published === false;
+    }, 'Explicit disable survives gateway restart and continuing announcements');
+    assert.equal(state.layoutPending, false);
     state = await ok('config_read', { moduleId });
     assert.deepEqual(state.moduleConfigs[moduleId].config, config);
+    state = await ok('enable', { moduleId });
+    assert.equal(state.modules.find(module => module.id === moduleId).descriptorIndex, 2, 'Explicit re-enable appends after surviving controllers');
+    assert.deepEqual(state.modules.filter(module => module.id !== moduleId).sort((a, b) => a.descriptorIndex - b.descriptorIndex).map(module => ({ id: module.id, reportId: module.reportId })), survivingOrder);
 
     // Two fresh Cockpit processes used to reuse the same initial request IDs.
     // The device keeps its immutable completed-request cache across app exits.
@@ -239,6 +257,49 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     state = await ok('config_read', { moduleId });
     assert.deepEqual(state.moduleConfigs[moduleId].config, config, 'The new app session reads the saved configuration while both firmware processes keep running');
 
+    const onlineForget = await request('forget', { moduleId });
+    assert.equal(onlineForget.ok, false, 'Remembered online devices cannot be forgotten');
+    await device.stop();
+    state = await wait(() => ok('status'), state => state.modules.find(module => module.id === moduleId)?.online === false, 'Device disconnect is ghosted before manual removal');
+    state = await ok('forget', { moduleId });
+    assert.equal(state.modules.some(module => module.id === moduleId), false, 'Manual removal deletes the offline remembered identity');
+    device = startDevice();
+    state = await wait(() => ok('status'), state => state.modules.find(module => module.id === moduleId)?.published, 'A forgotten identity arriving again is automatically enabled as a new entry');
+    assert.equal(state.modules.find(module => module.id === moduleId).descriptorIndex, 2);
+    state = await ok('config_read', { moduleId });
+    assert.deepEqual(state.moduleConfigs[moduleId].config, config, 'Forgetting a gateway record does not erase the module configuration');
+
+    await admin(device, 'contact 0 1');
+    await admin(device, 'axis 0 100');
+    await admin(device, 'axis 1 4095');
+    await admin(device, 'contact 2 1');
+    await wait(() => ok('status'), state => {
+      const module = state.modules.find(module => module.id === moduleId);
+      return module?.buttons.includes(1) && module.axes[0] === 65535 && module.hats[0] === 0;
+    }, 'Held inputs are present before disabling the controller');
+    state = await ok('disable', { moduleId });
+    const disabled = state.modules.find(module => module.id === moduleId);
+    assert.deepEqual(disabled.buttons, [], 'Disabled inventory never retains held buttons');
+    assert.deepEqual(disabled.axes, [0, 32768]);
+    assert.deepEqual(disabled.hats, [8]);
+    for (const id of identities.slice(1)) state = await ok('disable', { moduleId: id });
+    assert.equal(state.modules.length, 3, 'Disabling all controllers preserves remembered inventory');
+    assert.ok(state.modules.every(module => !module.enabled && !module.published && module.reportId === null && module.descriptorIndex === -1));
+    const emptyLayout = await admin(gateway, 'inspect');
+    assert.deepEqual(emptyLayout.gatewayReports, [], 'A zero-controller layout has no permanent joystick collection');
+    assert.equal(emptyLayout.descriptorHex, '', 'The zero-controller layout has no joystick report descriptor');
+    state = await ok('config_read', { moduleId });
+    assert.equal(state.connected, true, 'CDC configuration remains available with zero enabled controllers');
+    assert.deepEqual(state.moduleConfigs[moduleId].config, config);
+    const reconnects = emptyLayout.gatewayReconnects;
+    await sleep(1100);
+    state = await ok('status');
+    assert.ok(state.modules.every(module => !module.enabled && !module.published), 'Continuing announcements preserve an empty controller layout');
+    assert.equal((await admin(gateway, 'inspect')).gatewayReconnects, reconnects);
+    state = await ok('enable', { moduleId });
+    assert.equal(state.modules.find(module => module.id === moduleId).descriptorIndex, 0, 'The first enabled controller appends to an empty layout');
+    assert.equal((await admin(gateway, 'inspect')).gatewayReports.length, 1);
+
     service.child.stdin.end();
     await new Promise(resolve => service.child.once('exit', resolve));
     assert.doesNotThrow(() => process.kill(gateway.child.pid, 0), 'Closing Cockpit leaves the independently started gateway running');
@@ -247,7 +308,9 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     assert.equal((await admin(device, 'inspect')).module.config.name, config.name);
     await writeFile(resolve(stateDirectory, 'result.json'), JSON.stringify({ ok: true, gateway: uid, devices: identities,
       savedConfig: config, reportHex: gatewayState.gatewayReports[0].hex,
-      checks: ['cockpit-first', 'three-json-devices', 'configuration-save', 'dynamic-layout', 'live-inputs',
+      checks: ['cockpit-first', 'automatic-device-enrollment', 'three-json-devices', 'configuration-save', 'explicit-profile-refresh', 'live-inputs',
+        'offline-ghost', 'disabled-configurable', 'disabled-announcements', 'disabled-gateway-restart', 'append-reenable', 'offline-forget',
+        'forgotten-auto-arrival', 'held-input-disable-neutrality', 'zero-controllers', 'enable-from-empty-layout',
         'device-restart', 'gateway-restart', 'cockpit-crash-reopen', 'independent-lifetimes'] }, null, 2));
     console.log(`Evidence: ${stateDirectory}`);
   } finally {
@@ -337,11 +400,10 @@ test('one Cockpit serves simultaneous gateways with isolated device identities, 
       const state = await ok('config_apply_save', index, { moduleId, config: configurations[index] });
       assert.deepEqual(state.moduleConfigs[moduleId].config, configurations[index]);
       await ok('release', index, { moduleId });
-      await ok('register', index, { moduleId });
-      const applied = await ok('reconnect', index);
+      const applied = await ok('update-profile', index, { moduleId });
       assert.equal(module(applied).reportId, 1, 'Each gateway owns its own HID report numbering');
       assert.equal(module(applied).profileMatch, true);
-      assert.equal(applied.needsApply, false);
+      assert.equal(applied.layoutPending, false);
     }
     await admin(devices[0], 'contact 0 1');
     await admin(devices[0], 'axis 0 4095');
@@ -408,7 +470,21 @@ test('one Cockpit serves simultaneous gateways with isolated device identities, 
     const epochB = stateB.epoch;
 
     await gateways[0].stop('SIGKILL');
-    await wait(() => request('status', 0), response => response.state?.connected === false, 'Only the failed gateway connection closes');
+    let failedPeerSettled = false;
+    const failedPeer = wait(() => request('status', 0), response => response.state?.connected === false,
+      'Only the failed gateway connection closes').finally(() => { failedPeerSettled = true; });
+    // Each real Cockpit session polls independently. Keep B's UI and writer
+    // lease active while A spends its recovery deadline rediscovering its UID.
+    while (!failedPeerSettled) {
+      stateB = await Promise.race([ok('status', 1), sleep(1500).then(() => {
+        throw new Error('Gateway B was blocked while gateway A recovered');
+      })]);
+      assert.equal(stateB.connected, true);
+      assert.equal(stateB.epoch, epochB);
+      assert.ok(stateB.claimedModules.includes(moduleId));
+      await sleep(200);
+    }
+    await failedPeer;
     stateB = await ok('status', 1);
     assert.equal(stateB.connected, true);
     assert.equal(stateB.epoch, epochB);
@@ -427,8 +503,8 @@ test('one Cockpit serves simultaneous gateways with isolated device identities, 
     const restoredPort = inventory.ports.find(port => port.gatewayId === gatewayIds[0]);
     await ok('connect', 0, { backend: 'stm32', port: restoredPort.path });
     const restored = await wait(() => ok('status', 0), state => state.epoch > epochA
-      && module(state)?.online && module(state).registered && module(state).profileMatch, 'Gateway A restores its own registration independently');
-    assert.equal(restored.needsApply, false);
+      && module(state)?.online && module(state).enabled && module(state).published && module(state).profileMatch, 'Gateway A restores its own remembered controllers independently');
+    assert.equal(restored.layoutPending, false);
     for (const index of [0, 1]) {
       const state = await ok('config_read', index, { moduleId });
       assert.equal(state.connected, true);
