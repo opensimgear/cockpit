@@ -1,5 +1,7 @@
 # Native Tauri Cockpit and Pico W verification
 
+> Historical acceptance record. This describes the implementation at the time of the run. The repository-owned simulation migration superseded the commands and Cockpit simulation controls below; those commands are retained as evidence and are not current setup instructions. Use the [current Cockpit guide](../../README.md) and [repository-owned E2E bootstrap](../../tests/e2e/README.md).
+
 Verified on macOS on **2026-10-12** with Pico W gateway `OSG-PICO-E661640843565431`. The native application drove the controls. An independent IOHID observer read actual controller descriptors, input reports, OS element values, and attach/remove events; it did not open CDC, send inputs, or change names. All observed inputs belonged to that board.
 
 The detailed lifecycle checks used the native development build. The final standalone release was checked separately at `tauri://localhost`, with its development server stopped, to confirm bundled assets and native services worked together.

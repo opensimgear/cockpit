@@ -6,10 +6,14 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('./gateway.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-const state = { running: false, needsReconnect: false, connected: true, modules: [] };
+const first = 'stm32:00112233445566778899aabb';
+const second = 'stm32:00112233445566778899aacc';
+const state = { gatewayId: first, backend: 'stm32', running: false, needsReconnect: false, connected: true, modules: [] };
 const plain = value => JSON.parse(JSON.stringify(value));
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-function transport({ desktop = true, emulator = false, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
+function transport({ desktop = true, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
   const calls = [];
   const exported = {};
   vm.runInNewContext(compiled, {
@@ -26,9 +30,7 @@ function transport({ desktop = true, emulator = false, result = { ok: true, stat
       if (name === '@tauri-apps/plugin-opener') return { openUrl: async url => { calls.push({ kind: 'open', url }); } };
       throw new Error(`Unexpected import: ${name}`);
     },
-    crypto: { randomUUID: () => 'test-client-uuid' },
-    __OSG_NATIVE_EMULATOR__: emulator,
-    AbortSignal,
+    crypto: { randomUUID: () => 'test-client-uuid' }, AbortSignal,
     fetch: async (url, options) => {
       calls.push({ kind: 'fetch', url, options });
       return { ok: responseOK, headers: { get: () => contentType }, json: async () => result };
@@ -37,112 +39,105 @@ function transport({ desktop = true, emulator = false, result = { ok: true, stat
   return { ...exported, calls };
 }
 
-test('desktop Pico requests use native IPC with the complete request and stable owner ID', async () => {
+test('desktop routes the complete explicitly scoped request through one native manager IPC', async () => {
   const api = transport();
-  const request = { command: 'input', moduleId: 'OSG-PD-01', buttons: [], axes: [65535, 123, 0] };
+  const request = { command: 'configure', gatewayId: first, moduleId: 'same-device', settings: { label: 'Pedals', debounce: 5, inverted: false } };
   assert.equal(await api.gatewayRequest(request), state);
-  await api.gatewayRequest({ command: 'claim', moduleId: request.moduleId });
+  await api.gatewayRequest({ command: 'claim', gatewayId: second, moduleId: request.moduleId });
   assert.deepEqual(api.calls, [
-    { kind: 'invoke', command: 'pico_gateway', args: { request: { ...request, clientId: 'test-client-uuid' } } },
-    { kind: 'invoke', command: 'pico_gateway', args: { request: { command: 'claim', moduleId: request.moduleId, clientId: 'test-client-uuid' } } },
+    { kind: 'invoke', command: 'gateway_request', args: { request: { ...request, clientId: 'test-client-uuid' } } },
+    { kind: 'invoke', command: 'gateway_request', args: { request: { command: 'claim', gatewayId: second, moduleId: request.moduleId, clientId: 'test-client-uuid' } } },
   ]);
 });
 
-test('development emulator browser sends STM32 setup and cleanup through the native Rust service endpoint',async()=>{
-  const api=transport({desktop:false,emulator:true});
-  const config={name:'Controller',expanderMask:0,buttons:[[0,0,0]],axes:[],hats:[],encoders:[],selectors:[]};
-  await api.gatewayRequest({command:'config_apply_save',backend:'stm32',moduleId:'00112233445566778899aabbccddeeff',config});
-  api.releaseOnExit('00112233445566778899aabbccddeeff');
-  assert.deepEqual(api.calls.map(call=>call.url),['/api/native-gateway/','/api/native-gateway/']);
-  assert.deepEqual(JSON.parse(api.calls[0].options.body),{command:'config_apply_save',moduleId:'00112233445566778899aabbccddeeff',config,clientId:'test-client-uuid'});
-  assert.equal(api.calls[1].options.keepalive,true);
+test('discovery is one aggregate request and never changes or disconnects either connection', async () => {
+  const api = transport();
+  await api.gatewayRequest({ command: 'connect', gatewayId: first, backend: 'stm32', port: 'COM1' });
+  await api.gatewayRequest({ command: 'connect', gatewayId: second, backend: 'stm32', port: 'COM2' });
+  await api.gatewayRequest({ command: 'ports' });
+  await api.gatewayRequest({ command: 'status', gatewayId: first });
+  assert.deepEqual(api.calls.map(call => [call.command, call.args.request.command, call.args.request.gatewayId]), [
+    ['gateway_request', 'connect', first], ['gateway_request', 'connect', second],
+    ['gateway_request', 'ports', undefined], ['gateway_request', 'status', first],
+  ]);
 });
 
-test('native gateway command errors preserve returned state for UI reconciliation', async () => {
-  const api = transport({ result: { ok: false, state, error: 'Setup access is already claimed.' } });
-  await assert.rejects(api.gatewayRequest({ command: 'claim', moduleId: 'OSG-PD-01' }), error => {
+test('a slow gateway preserves its own ordering while another gateway and discovery progress', async () => {
+  const waiting = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.gatewayId === first && request.command === 'claim') await waiting.promise;
+    return { ok: true, state: { ...state, gatewayId: request.gatewayId } };
+  } });
+  const claim = api.gatewayRequest({ command: 'claim', gatewayId: first, moduleId: 'same-device' });
+  const save = api.gatewayRequest({ command: 'config_save', gatewayId: first, moduleId: 'same-device' });
+  await api.gatewayRequest({ command: 'status', gatewayId: second });
+  await api.gatewayRequest({ command: 'ports' });
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['claim', 'status', 'ports']);
+  waiting.resolve();
+  await Promise.all([claim, save]);
+  assert.equal(api.calls.at(-1).args.request.command, 'config_save');
+});
+
+test('a failed request preserves its returned state and does not poison that gateway queue', async () => {
+  let fail = true;
+  const api = transport({ invokeResults: () => fail
+    ? { ok: false, state, error: 'Setup access is already claimed.' }
+    : { ok: true, state } });
+  await assert.rejects(api.gatewayRequest({ command: 'claim', gatewayId: first, moduleId: 'same-device' }), error => {
     assert.ok(error instanceof api.GatewayError);
     assert.equal(error.message, 'Setup access is already claimed.');
     assert.equal(error.state, state);
     return true;
   });
+  fail = false;
+  assert.equal(await api.gatewayRequest({ command: 'status', gatewayId: first }), state);
 });
 
-test('native IPC failure surfaces an error without falling back to HTTP', async () => {
+test('native IPC failure surfaces without an HTTP fallback', async () => {
   const api = transport({ invokeError: 'Native gateway service is unavailable.' });
-  await assert.rejects(api.gatewayRequest({ command: 'status' }), /Native gateway service is unavailable/);
-  assert.deepEqual(api.calls.map(call => call.kind), ['invoke', 'invoke']);
+  await assert.rejects(api.gatewayRequest({ command: 'ports' }), /Native gateway service is unavailable/);
+  assert.deepEqual(api.calls.map(call => call.kind), ['invoke']);
 });
 
-test('claim release during desktop unload uses IPC and the same owner ID', async () => {
+test('desktop unload releases only the claimed gateway with the same owner ID', async () => {
   const api = transport();
-  api.releaseOnExit('OSG-SQ-01');
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(api.calls, [{ kind: 'invoke', command: 'pico_gateway', args: { request: { command: 'release', moduleId: 'OSG-SQ-01', clientId: 'test-client-uuid' } } }]);
+  api.releaseOnExit('same-device', second);
+  await tick();
+  assert.deepEqual(api.calls, [{ kind: 'invoke', command: 'gateway_request', args: {
+    request: { command: 'release', moduleId: 'same-device', gatewayId: second, clientId: 'test-client-uuid' },
+  } }]);
 });
 
-test('explicit browser mode uses the Pico bridge and unload keepalive', async () => {
+test('browser forwards the same scoped contract and unload uses keepalive', async () => {
   const api = transport({ desktop: false });
-  await api.gatewayRequest({ command: 'ports', backend: 'pico' });
-  api.releaseOnExit('OSG-SQ-01');
-  assert.deepEqual(api.calls.map(call => call.url), ['/api/pico-gateway/', '/api/pico-gateway/']);
-  assert.ok(api.calls.every(call => call.kind === 'fetch'));
-  assert.deepEqual(JSON.parse(api.calls[0].options.body), { command: 'ports', clientId: 'test-client-uuid' });
-  assert.equal(api.calls[1].options.keepalive, true);
-  assert.deepEqual(JSON.parse(api.calls[1].options.body), { command: 'release', moduleId: 'OSG-SQ-01', clientId: 'test-client-uuid' });
+  await api.gatewayRequest({ command: 'ports' });
+  await api.gatewayRequest({ command: 'connect', gatewayId: first, backend: 'stm32', port: 'COM1' });
+  await api.gatewayRequest({ command: 'claim', gatewayId: second, moduleId: 'same-device' });
+  api.releaseOnExit('same-device', second);
+  assert.ok(api.calls.every(call => call.url === '/api/gateway/' && call.kind === 'fetch'));
+  assert.deepEqual(api.calls.map(call => JSON.parse(call.options.body)), [
+    { command: 'ports', clientId: 'test-client-uuid' },
+    { command: 'connect', gatewayId: first, backend: 'stm32', port: 'COM1', clientId: 'test-client-uuid' },
+    { command: 'claim', gatewayId: second, moduleId: 'same-device', clientId: 'test-client-uuid' },
+    { command: 'release', gatewayId: second, moduleId: 'same-device', clientId: 'test-client-uuid' },
+  ]);
+  assert.equal(api.calls.at(-1).options.keepalive, true);
 });
 
-test('desktop links open the packaged guide or external browser without navigating the main app', async () => {
+test('browser rejects a missing gateway bridge without treating HTML as state', async () => {
+  const api = transport({ desktop: false, contentType: 'text/html' });
+  await assert.rejects(api.gatewayRequest({ command: 'ports' }), /pnpm web:dev/);
+});
+
+test('desktop documentation links open externally; browser links retain browser navigation', async () => {
   const api = transport();
   let prevented = 0;
   const event = href => ({ preventDefault: () => { prevented++; }, currentTarget: { getAttribute: () => href } });
-  await api.openCockpitLink(event('/pico-flashing.html'));
   await api.openCockpitLink(event('https://www.opensimgear.org'));
-  assert.equal(prevented, 2);
-  assert.deepEqual(api.calls, [
-    { kind: 'invoke', command: 'open_pico_flashing_guide' },
-    { kind: 'open', url: 'https://www.opensimgear.org' },
-  ]);
-});
-
-test('browser links retain standard browser navigation', () => {
-  const api = transport({ desktop: false });
-  let prevented = false;
-  assert.equal(api.openCockpitLink({ preventDefault: () => { prevented = true; } }), undefined);
-  assert.equal(prevented, false);
-  assert.deepEqual(api.calls, []);
-});
-
-test('disconnected discovery combines both native inventories without opening serial ports', async () => {
-  const pico = { ...state, backend: 'pico', connected: false, ports: [{ path: 'COM1' }] };
-  const stm32 = { ...state, backend: 'stm32', connected: false, ports: [{ path: 'COM2' }] };
-  const api = transport({ invokeResults: command => ({ ok: true, state: command === 'stm32_gateway' ? stm32 : pico }) });
-  const found = await api.gatewayRequest({ command: 'status' });
-  assert.deepEqual(plain(found.ports), [{ path: 'COM1' }, { path: 'COM2' }]);
-  assert.deepEqual(api.calls.map(call => call.command), ['pico_gateway', 'stm32_gateway']);
-});
-
-test('CAN gateway requests use their own adapter and subsequent polling retains it', async () => {
-  const physical = { ...state, backend: 'stm32', gatewaySerial: '00112233445566778899aabb' };
-  const api = transport({ result: { ok: true, state: physical } });
-  await api.gatewayRequest({ command: 'connect', backend: 'stm32', port: 'COM2' });
-  await api.gatewayRequest({ command: 'register', moduleId: '00112233445566778899aabbccddeeff' });
-  await api.gatewayRequest({ command: 'status' });
-  assert.ok(api.calls.every(call => call.command === 'stm32_gateway'));
-  assert.ok(api.calls.every(call => !('backend' in call.args.request)));
-});
-
-test('switching a connected backend closes its service before opening the next', async () => {
-  const api = transport({ invokeResults: (command, request) => ({ ok: true, state: { ...state, backend: command === 'stm32_gateway' ? 'stm32' : 'pico', connected: request.command !== 'disconnect' } }) });
-  await api.gatewayRequest({ command: 'connect', backend: 'pico', port: 'COM1' });
-  await api.gatewayRequest({ command: 'connect', backend: 'stm32', port: 'COM2' });
-  assert.deepEqual(api.calls.map(call => [call.command, call.args.request.command]), [
-    ['pico_gateway', 'connect'], ['pico_gateway', 'disconnect'], ['stm32_gateway', 'connect'],
-  ]);
-});
-
-test('physical CAN gateway selection in browser mode explains the desktop requirement', async () => {
-  const api = transport({ desktop: false });
-  await assert.rejects(api.gatewayRequest({ command: 'connect', backend: 'stm32', port: 'COM2' }), /desktop app/);
-  assert.deepEqual(api.calls, []);
+  assert.equal(prevented, 1);
+  assert.deepEqual(api.calls, [{ kind: 'open', url: 'https://www.opensimgear.org' }]);
+  const browser = transport({ desktop: false });
+  assert.equal(browser.openCockpitLink(event('https://www.opensimgear.org')), undefined);
+  assert.equal(prevented, 1);
+  assert.deepEqual(browser.calls, []);
 });

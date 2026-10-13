@@ -6,7 +6,7 @@ import ts from 'typescript';
 const source = await readFile(new URL('./gateway-automation.ts', import.meta.url), 'utf8');
 const exported = {};
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exported });
-const { gatewayCandidates, automaticGatewayAction: action } = exported;
+const { gatewayCandidates, automaticGatewayAction: action, nextConfigurationRead } = exported;
 const port = { path: '/dev/cu.usbmodemOSG', vendorId: 'cafe', productId: '4010', serialNumber: 'OSG-PICO-0123456789ABCDEF' };
 const state = { connected: false, running: false, modules: [{ online: true, registered: true }], ports: [port] };
 const options = { paused: false, setupActive: false, failedPorts: new Set() };
@@ -64,4 +64,30 @@ test('physical gateways never receive simulator start or automatic USB apply com
     const result = action({ ...state, backend: 'stm32', connected: true, ...changed }, options);
     assert.equal(result.command, undefined);
   }
+});
+
+test('configuration discovery reads one new device at a time and resumes after cache invalidation', () => {
+  const first = { id: 'first', online: true, canConfigure: true };
+  const second = { ...first, id: 'second' };
+  const current = { ...state, connected: true, backend: 'stm32', modules: [first, second] };
+  assert.equal(nextConfigurationRead(current, false), 'first');
+  current.moduleConfigs = { first: { config: { name: 'Pedals' } } };
+  assert.equal(nextConfigurationRead(current, false), 'second');
+  current.moduleConfigs.second = { config: { name: 'Panel' } };
+  assert.equal(nextConfigurationRead(current, false), undefined);
+  delete current.moduleConfigs.first;
+  assert.equal(nextConfigurationRead(current, false), 'first');
+});
+
+test('configuration discovery skips unavailable routes and stays idle during setup or reconnect', () => {
+  const candidate = { id: 'readable', online: true, canConfigure: true };
+  const current = { ...state, connected: true, backend: 'stm32', modules: [
+    { ...candidate, id: 'offline', online: false },
+    { ...candidate, id: 'legacy', canConfigure: false },
+    { ...candidate, id: 'direct-usb', directUsb: true }, candidate,
+  ] };
+  assert.equal(nextConfigurationRead(current, false), 'readable');
+  assert.equal(nextConfigurationRead(current, true), undefined);
+  for (const change of [{ connected: false }, { reconnecting: true }, { backend: 'pico' }])
+    assert.equal(nextConfigurationRead({ ...current, ...change }, false), undefined);
 });

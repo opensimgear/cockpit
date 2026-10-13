@@ -35,7 +35,7 @@ export function automaticGatewayAction(
   if (options.setupActive || state.claimedModules?.length) return { reason: 'Waiting for setup access to be released.' };
   if (!state.connected) {
     const candidates = gatewayCandidates(state.ports);
-    if (!candidates.length) return { reason: 'Waiting for an OpenSimGear CAN gateway or Pico simulator.' };
+    if (!candidates.length) return { reason: 'Waiting for an OpenSimGear gateway.' };
     const candidate = candidates.find(port => !options.failedPorts.has(port.path));
     if (!candidate) return { reason: 'Automatic connection failed. Check the error and retry discovery, or unplug and reconnect the Pico.' };
     return { command: 'connect', port: candidate.path, backend: candidate.backend, reason: 'Connecting to your OpenSimGear gateway…' };
@@ -45,4 +45,11 @@ export function automaticGatewayAction(
   if (state.needsReconnect) return { reason: 'Reconnect the gateway to publish pending controller changes before starting.' };
   if (!state.modules.some(module => module.online && module.registered)) return { reason: 'No registered online modules to start.' };
   return { command: 'start', reason: 'Starting your gateway…' };
+}
+
+/** Hydrate one device's normal configuration per inventory poll. */
+export function nextConfigurationRead(state: GatewayState | null, setupActive: boolean): string | undefined {
+  if (!state?.connected || state.backend !== 'stm32' || state.reconnecting || setupActive) return;
+  return state.modules.find(module => module.online && module.canConfigure && !module.directUsb &&
+    !state.moduleConfigs?.[module.id])?.id;
 }

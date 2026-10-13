@@ -1,5 +1,7 @@
 # Cockpit native configuration acceptance — 2026-10-12
 
+> Historical acceptance record. This describes the implementation at the time of the run. The repository-owned simulation migration superseded the commands and Cockpit simulation controls below; those commands are retained as evidence and are not current setup instructions. Use the [current Cockpit guide](../../README.md) and [repository-owned E2E bootstrap](../../tests/e2e/README.md).
+
 This work-in-progress acceptance exercises the visible Cockpit UI, its production
 Rust STM32 adapter and the native emulator linking production gateway/module C.
 The browser bridge forwards requests to Rust; no JavaScript firmware snapshots or
@@ -116,7 +118,7 @@ include the reserved stack/heap; they do not establish measured runtime stack us
 ## Reproduce
 
 From the parent workspace, using matching adjacent checkouts and the pinned common
-source described in the [emulator guide](../../simulator/native-gateway/README.md):
+source described in the then-current `simulator/native-gateway/README.md`:
 
 ```sh
 python3 cockpit/simulator/native-gateway/build.py --sanitize

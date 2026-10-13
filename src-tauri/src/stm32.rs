@@ -62,7 +62,7 @@ fn printable(value: &str, limit: usize) -> bool {
 
 /// Metadata only selects a candidate. A fresh protocol handshake validates
 /// its role and stable UID before its inventory or controls can be used.
-fn candidate(port: &PortInfo) -> bool {
+pub(crate) fn candidate(port: &PortInfo) -> bool {
     allowed_path(&port.path)
         && port
             .serial_number
@@ -317,7 +317,9 @@ impl Gateway {
             state: empty_state(),
             buffer: Vec::new(),
             claims: HashMap::new(),
-            request_id: 0,
+            // Module replies survive a Cockpit disconnect in an immutable
+            // route/request-ID cache. A new adapter needs a fresh counter origin.
+            request_id: (uuid::Uuid::new_v4().as_u128() as u32).max(1),
             timing,
             cancel,
             configs: HashMap::new(),
@@ -431,9 +433,7 @@ impl Gateway {
         }
         self.request_id = self.request_id.wrapping_add(1).max(1);
         let id = self.request_id;
-        let wire = if let Some(action) = command.strip_prefix("emulator ") {
-            format!("emulator {id} {action}\n")
-        } else if command == "snapshot" {
+        let wire = if command == "snapshot" {
             format!("cockpit {id} snapshot\n")
         } else {
             let epoch = number(&self.state["epoch"], u32::MAX as u64).ok_or(NO_CONNECTION)?;
@@ -505,16 +505,6 @@ impl Gateway {
         })();
         match result {
             Ok(value) => {
-                if command.starts_with("emulator ") {
-                    if value["ok"] == true {
-                        self.state["emulator"] = value["emulator"].clone();
-                        return Ok(());
-                    }
-                    return Err(value["error"]
-                        .as_str()
-                        .unwrap_or("Emulator control failed.")
-                        .into());
-                }
                 if let Err(error) = self.accept(&value["state"]) {
                     self.close();
                     return Err(error);
@@ -865,23 +855,6 @@ impl Gateway {
             return Err("End setup sessions before changing the CAN gateway layout.".into());
         }
         match command {
-            "emulator"
-                if cfg!(debug_assertions) && std::env::var_os("OSG_NATIVE_EMULATOR").is_some() =>
-            {
-                if self.connection.is_none() {
-                    let port = self.ports()?.into_iter().next().ok_or(NO_CONNECTION)?;
-                    self.open(port, None, Instant::now() + self.timing.command)?;
-                }
-                let action = request["action"]
-                    .as_str()
-                    .filter(|v| {
-                        v.len() <= 128
-                            && v.bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b == b' ' || b == b'_')
-                    })
-                    .ok_or("Invalid emulator action.")?;
-                self.exchange(&format!("emulator {action}"), self.timing.command)
-            }
             "ports" => {
                 self.ports()?;
                 Ok(())
@@ -922,7 +895,18 @@ impl Gateway {
                     .into_iter()
                     .find(|p| request["port"] == p.path)
                     .ok_or("Select an available OpenSimGear CAN gateway port.")?;
-                self.open(port, None, Instant::now() + self.timing.command)
+                let expected = request["gatewayId"]
+                    .as_str()
+                    .and_then(|id| id.strip_prefix("stm32:"))
+                    .map(str::to_owned);
+                if expected.as_ref().is_some_and(|id| {
+                    port.serial_number
+                        .as_ref()
+                        .is_none_or(|serial| !serial.eq_ignore_ascii_case(id))
+                }) {
+                    return Err("Gateway identity does not match the selected port.".into());
+                }
+                self.open(port, expected, Instant::now() + self.timing.command)
             }
             "disconnect" => {
                 self.close();
@@ -1103,10 +1087,7 @@ impl Default for Stm32Service {
 }
 impl Stm32Service {
     pub fn new() -> Self {
-        let factory: Box<dyn Factory> = crate::emulator::EmulatorFactory::from_environment()
-            .map(|factory| Box::new(factory) as Box<dyn Factory>)
-            .unwrap_or_else(|| Box::new(NativeFactory));
-        Self::with_factory(factory, Timing::default())
+        Self::with_factory(Box::new(NativeFactory), Timing::default())
     }
     fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
         let (sender, receiver) = mpsc::sync_channel(8);
@@ -1580,6 +1561,33 @@ mod tests {
         assert_eq!(context.lock().unwrap().writes.len(), 1);
         assert!(context.lock().unwrap().writes[0].ends_with(" snapshot\n"));
     }
+
+    #[test]
+    fn scoped_connection_rejects_port_and_handshake_identity_mismatches() {
+        let (mut gateway, context) = harness();
+        let wrong = "abcdefabcdefabcdefabcdef";
+        assert_eq!(
+            request(
+                &mut gateway,
+                "connect",
+                json!({"port":PATH,"gatewayId":format!("stm32:{wrong}")})
+            )["ok"],
+            false
+        );
+        assert!(context.lock().unwrap().opened.is_empty());
+        context.lock().unwrap().state["identity"] = json!(wrong);
+        assert_eq!(
+            request(
+                &mut gateway,
+                "connect",
+                json!({"port":PATH,"gatewayId":format!("stm32:{UID}")})
+            )["ok"],
+            false
+        );
+        assert_eq!(context.lock().unwrap().writes.len(), 1);
+        assert!(context.lock().unwrap().writes[0].ends_with(" snapshot\n"));
+        assert_eq!(context.lock().unwrap().lines.last(), Some(&(false, false)));
+    }
     #[test]
     fn fragmented_stale_frames_cannot_replace_inventory() {
         let (mut gateway, context) = harness();
@@ -1596,8 +1604,8 @@ mod tests {
         assert_eq!(connect(&mut gateway)["ok"], true);
         stage_remove(&mut gateway);
         assert_eq!(
-            context.lock().unwrap().writes[1],
-            format!("cockpit 2 65536 unregister {MODULE}\n")
+            context.lock().unwrap().writes[1].splitn(3, ' ').nth(2),
+            Some(format!("65536 unregister {MODULE}\n").as_str())
         );
         context.lock().unwrap().restart_on_register = true;
         let result = request(&mut gateway, "register", json!({"moduleId":MODULE}));
@@ -1610,8 +1618,8 @@ mod tests {
             true
         );
         assert_eq!(
-            context.lock().unwrap().writes[3],
-            format!("cockpit 4 131072 register {MODULE}\n")
+            context.lock().unwrap().writes[3].splitn(3, ' ').nth(2),
+            Some(format!("131072 register {MODULE}\n").as_str())
         );
     }
     #[test]

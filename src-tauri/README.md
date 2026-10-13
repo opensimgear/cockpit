@@ -1,74 +1,48 @@
-# Tauri desktop services
+# Cockpit native gateway services
 
-Cockpit is a Tauri 2 desktop app using the existing Svelte 5/TypeScript interface. `pnpm dev` prepares desktop resources and launches Tauri; `pnpm build` packages the app. Rust 1.90.0 is pinned in the repository toolchain file. Install the [platform prerequisites](https://v2.tauri.app/start/prerequisites/) before building.
+Cockpit is a Tauri 2 desktop application. `pnpm dev` launches the desktop; `pnpm build` packages it. Rust 1.90.0 is pinned in the repository. The installed app communicates directly with gateway transports and does not depend on firmware source, simulation executables or external development tools.
 
-## Native gateway services
+## Adapters and lifecycle
 
-The main window invokes `pico_gateway` with the existing JSON request/state contract. The desktop UI never falls back to HTTP gateway requests. The explicit `pnpm web:dev` mode retains the Pico Vite/Node bridge for browser development.
+The main window invokes `gateway_request` with typed JSON request/state messages. Its shared `GatewayManager` keeps an independent adapter worker and connection for every connected gateway, including multiple gateways using the same backend. Each worker bounds requests, correlates replies and validates gateway identity before accepting state. One gateway's configuration, inputs, claims, errors and reconnect never replace another gateway's session.
 
-The Pico service owns USB serial enumeration, automatic or explicit connection, bounded requests with correlation IDs, firmware/protocol validation, control lines, heartbeat and UI liveness, module setup leases, and reconnection to the same physical gateway identity. Setup ownership gates configuration and layout changes; disconnect, failure, and reconnect invalidate pending work and claims. Stop/disconnect and application exit neutralize reports and release serial access. Firmware inventories and settings remain in Pico RAM.
+Global `ports` reads metadata from all compatible endpoints without opening or disconnecting them. Every port has a stable `gatewayId`: `stm32:<lowercase UID>` or `pico:<USB serial>`. Requests for a gateway include that ID; responses repeat it in `state.gatewayId`. Connecting verifies that the requested identity matches both the selected port metadata and the protocol handshake. Legacy unscoped operations are accepted only when exactly one session exists; ambiguous operations fail before reaching any adapter. Module identities and setup ownership are scoped to the gateway session, so two gateways can report the same device ID independently.
 
-On macOS, individual Pico HID service names are applied directly from Rust through IOKit, matching VID/PID, usage, board serial, and USB interface. No runtime Swift compiler or virtual-HID entitlement is required for Pico communication or naming. The composite USB product retains its gateway name, and applications that cache names may need a rescan.
+The manager only holds its session map while finding a worker. CDC operations and periodic polling run independently, so a slow or unplugged gateway does not block the others. Application shutdown cancels and closes every adapter, releasing its setup access.
 
-The separate `stm32_gateway` command adapts the physical STM32 CAN gateway's
-CDC protocol 2 with either legacy CAN v2 or Cyphal application contract 3. USB metadata selects OpenSimGear gateway candidates with
-24-digit hexadecimal UID serials; a correlated bounded snapshot verifies their role,
-versions, identity and capabilities before accepting state. No experimental
-VID/PID is baked into discovery. Its worker polls inventory and decodes up to
-128 buttons, four hats and eight axes per module. Registry changes carry the
-observed gateway epoch; stale epochs refresh state and reject the write. Apply
-reconnects to the same UID, including after a changed serial port path. A lost
-apply acknowledgement triggers inventory reconciliation without replaying the
-flash operation. Offline registered slots remain visible.
+The STM32 adapter implements CDC protocol 2 with legacy CAN-v2 inventory and production Cyphal/CAN contract 3 configuration. It validates the gateway UID, protocol, role, capabilities and epoch. Registry changes use the observed epoch; Apply reconnects to the same UID, including after a changed serial path, and reconciles a lost acknowledgement without replaying a flash mutation. Offline registrations remain visible and neutral. Closing the connection leaves gateway/device input delivery running independently.
 
-Physical gateway HID input continues independently of Cockpit and CDC. Closing
-the service releases serial access without sending a stop or changing inputs.
-Simulated input, presence, Add device and start/stop are unsupported on physical
-STM32 gateways. Runtime configuration routes bounded commands to the module over
-Cyphal, using its exclusive writer, drafts and Apply/Save/Discard. Claims bind to
-gateway epoch and module identity/boot/route; settings readback waits for activation
-and reconciles lost commit replies without repeating the mutation. Trusted active
-configuration caches bind to the module's boot and configuration generation. The prototype gateway uses
-one HID interface with separate report IDs/collections, so the Pico macOS naming
-worker is not used. Each backend currently owns one connection; routing several
-physical gateways and merging direct USB device sightings remain future work.
+Runtime configuration routes bounded commands to the device using its exclusive writer, draft and Apply/Save/Discard operations. Claims bind to gateway epoch, device identity, boot and route. Readback confirms activation and reconciles lost commit replies; cached configuration binds to the device boot and configuration generation. Fresh request-counter seeds distinguish new client sessions from a running device's completed-request cache.
 
-In debug builds, `OSG_NATIVE_EMULATOR` selects an absolute executable for the native
-production-C emulator. Its serial factory keeps one process across connections so
-USB layout reconnects retain the emulated flash. `osg-emulator-service` exposes the
-same Rust STM32 service to the local development browser bridge; it provides no
-production HTTP endpoint. See the [native configuration acceptance](../docs/verification/2026-10-12-native-configuration.md).
+The Pico adapter owns normal USB serial discovery, protocol checks, control lines, UI liveness, setup leases and reconnect to the same board. It reads live inputs and configures settings; it rejects input/inventory injection commands. Stop/disconnect and app exit release access and neutralize this older firmware's reports. Settings remain in board RAM. On macOS the native IOKit helper updates individual joystick service names after matching VID/PID, serial, usage and interface.
 
-## Build resources and permissions
+## Local gateway transport
 
-`pnpm desktop:prepare` copies the built Pico firmware into the bundle resources. The installed Pico workflow needs no external development tools. Locally built macOS apps can use ad-hoc signing for Pico testing; distribution signing/notarization is separate release work.
+Normal macOS/Linux discovery also reads bounded gateway advertisements from `/tmp/opensimgear-<user-id>/gateways/`. Directories and files must belong to the current user with private permissions; stale process advertisements and invalid paths are ignored. Valid metadata selects a loopback TCP endpoint or a private Unix stream. Opening revalidates discovery, then applies the same CDC identity and epoch checks as a USB serial connection.
 
-Only the `main` window receives native gateway command permissions. External opening is restricted to the listed documentation HTTPS URLs. The flashing guide is a bundled Vite entry point in a separate local window without gateway command access. Its only native action exports the fixed bundled UF2 to Downloads without overwriting existing files; it accepts no arbitrary path or firmware input and never flashes a board. Packaged content uses a restrictive content security policy; the Tauri development server on port 1420 does not install gateway HTTP bridges.
+The gateway owns its advertisement and lifetime. Device inventory is obtained exclusively through the gateway protocol. This transport is independent of how a gateway is implemented and contains no simulation factory or administrative input controls.
 
-## Validation
+## Browser development
+
+The debug `osg-gateway-service` binary exposes the same `GatewayManager` as newline-delimited JSON over standard input/output. Vite's local `/api/gateway/` bridge uses it for browser development and integration. The bridge requires a same-origin loopback request, `X-OSG-Client: 1`, POST and bounded JSON bodies. It uses `{requestId, request}` envelopes with correlated `{requestId, response}` replies, allowing different gateways to respond independently. At most 32 service requests run concurrently. Raw request/response lines remain available for sequential CLI consumers. The desktop uses IPC and does not enable the HTTP bridge.
+
+```sh
+CARGO_TARGET_DIR="$PWD/.e2e/build/cockpit" cargo build \
+  --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
+pnpm web:dev
+```
+
+The bridge defaults to `.e2e/build/cockpit/debug/osg-gateway-service` within this repository; `OSG_GATEWAY_SERVICE` accepts an absolute executable override. Gateway and device processes are managed by their owners, outside this service.
+
+## Permissions and validation
+
+Only the main local window receives gateway command permissions. External links use the opener with explicitly permitted documentation URLs. Packaged content uses a restrictive content security policy. Firmware building and flashing instructions belong to the firmware repositories.
 
 ```sh
 pnpm check
 pnpm transport:test
 pnpm native:test
-pnpm build
+pnpm e2e
 ```
 
-Transport tests verify native-only IPC and browser fallback, ownership identity, error reconciliation, release behavior, firmware export routing, and link routing. Rust tests verify Pico protocol, serial lifecycle, naming, and firmware export; mocked transports do not establish physical USB enumeration or report delivery. On 2026-10-12, the Pico-only build passed 22 Rust tests and 11 frontend tests, and macOS release app/DMG packaging succeeded.
-
-Independent [native hardware evidence](../docs/verification/2026-10-12-tauri-pico.md) confirms actual Pico inputs and names, adding/removing real controller interfaces, held-input neutralization on removal and quit, and serial release. The final release app ran from bundled assets with no development server; native firmware export was checked against the source UF2 hash. Historical browser evidence remains in `output/pico-hardware/`. Windows/Linux device access and packaging remain unverified on their target systems.
-
-The earlier [STM32 integration run](../docs/verification/2026-10-12-stm32-can.md)
-passed 35 Rust tests, including 13 STM32 gateway adapter tests using mocked
-transport and [C formatter fixtures](tests/fixtures/README.md).
-These are host and mocked transport checks; physical STM32 USB/CAN hardware
-acceptance remains pending. Direct-USB/CAN inventory merging, multiple gateway
-routes and firmware update automation remain future work.
-
-The subsequent runtime configuration checks passed 38 Rust tests and 29 frontend
-transport/configuration tests. They exercise the actual Rust adapter
-against the native C gateway/module and real Cyphal frames, including all control
-types, flash recovery, descriptor changes, boot/generation cache invalidation and
-lost-reply readback. The browser
-acceptance report above records the full visible Cockpit flow and its physical
-USB/HAL test boundary.
+Frontend tests cover native IPC, browser transport, discovery, ownership, error reconciliation and configuration validation. Rust tests cover fleet routing, same-backend and cross-backend isolation, duplicate module IDs, identity mismatches, concurrent operations and shutdown, plus transport boundaries, protocol validation, setup ownership, reconnect, stale replies, layout recovery and local discovery. Browser bridge tests verify out-of-order response correlation and rejection of unmatched responses. C formatter [fixtures](tests/fixtures/README.md) verify production wire compatibility without requiring another checkout for unit tests. Repository-owned E2E bootstrapping builds the production gateway/device simulations in `.e2e/`; it requires no workspace parent setup. Local stream tests do not establish physical USB/HID enumeration or hardware CAN behavior.

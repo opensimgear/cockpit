@@ -4,27 +4,23 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "pnpm desktop:prepare && tauri dev",
-    "build": "pnpm desktop:prepare && tauri build",
+    "dev": "tauri dev",
+    "build": "tauri build",
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "pico:build": "node simulator/pico/build.mjs",
-    "pico:test": "node simulator/pico/test.mjs && node --test simulator/pico-bridge.test.mjs simulator/pico-integration.test.mjs simulator/pico-hid-names.test.mjs simulator/pico-hid-names-helper.test.mjs",
     "tauri": "tauri",
-    "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "ui:dev": "vite --host 127.0.0.1",
     "ui:build": "vite build",
     "web:dev": "vite --host 127.0.0.1",
+    "web:native": "vite --mode native --host 127.0.0.1",
     "web:build": "vite build",
     "native:test": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "native:runtime:test": "node --test scripts/test-native-runtime.mjs",
-    "transport:test": "node --test src/lib/gateway.test.mjs src/lib/gateway-automation.test.mjs src/lib/runtime-config.test.mjs src/pico-guide.test.mjs",
-    "pico:verify": "mkdir -p simulator/.build/module-cache && xcrun swiftc -module-cache-path simulator/.build/module-cache simulator/verify-hid.swift -o simulator/.build/verify-hid && simulator/.build/verify-hid"
+    "transport:test": "node --test scripts/native-gateway-bridge.test.mjs src/lib/gateway.test.mjs src/lib/gateway-automation.test.mjs src/lib/gateway-workspace.test.mjs src/lib/runtime-config.test.mjs",
+    "e2e": "python3 tests/e2e/run.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",
     "@tauri-apps/plugin-opener": "^2.7.1",
-    "serialport": "13.0.0",
     "svelte": "^5.55.4"
   },
   "devDependencies": {

@@ -34,6 +34,9 @@ impl PortInfo {
 }
 
 pub(crate) fn allowed_path(path: &str) -> bool {
+    if crate::local_gateway::allowed_path(path) {
+        return true;
+    }
     let ascii_suffix = |suffix: &str| {
         !suffix.is_empty()
             && suffix
@@ -92,38 +95,47 @@ impl Connection for NativeConnection {
 }
 impl Factory for NativeFactory {
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
-        serialport::available_ports()
-            .map_err(|error| format!("Could not enumerate USB serial ports: {error}"))
-            .map(|ports| {
-                ports
-                    .into_iter()
-                    .filter(|port| allowed_path(&port.port_name))
-                    .map(|port| {
-                        let mut info = PortInfo {
-                            path: port.port_name,
-                            serial_number: None,
-                            vendor_id: None,
-                            product_id: None,
-                            manufacturer: None,
-                            friendly_name: None,
-                        };
-                        if let serialport::SerialPortType::UsbPort(usb) = port.port_type {
-                            info.serial_number = usb.serial_number;
-                            info.vendor_id = Some(format!("{:04x}", usb.vid));
-                            info.product_id = Some(format!("{:04x}", usb.pid));
-                            info.manufacturer = usb.manufacturer;
-                            info.friendly_name = usb.product;
-                        }
-                        info
-                    })
-                    .collect()
-            })
+        let mut local = crate::local_gateway::ports();
+        match serialport::available_ports() {
+            Ok(ports) => {
+                local.extend(
+                    ports
+                        .into_iter()
+                        .filter(|port| allowed_path(&port.port_name))
+                        .map(|port| {
+                            let mut info = PortInfo {
+                                path: port.port_name,
+                                serial_number: None,
+                                vendor_id: None,
+                                product_id: None,
+                                manufacturer: None,
+                                friendly_name: None,
+                            };
+                            if let serialport::SerialPortType::UsbPort(usb) = port.port_type {
+                                info.serial_number = usb.serial_number;
+                                info.vendor_id = Some(format!("{:04x}", usb.vid));
+                                info.product_id = Some(format!("{:04x}", usb.pid));
+                                info.manufacturer = usb.manufacturer;
+                                info.friendly_name = usb.product;
+                            }
+                            info
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                Ok(local)
+            }
+            Err(_) if !local.is_empty() => Ok(local),
+            Err(error) => Err(format!("Could not enumerate USB serial ports: {error}")),
+        }
     }
     fn open(
         &mut self,
         port: &PortInfo,
         read_timeout: Duration,
     ) -> Result<Box<dyn Connection>, String> {
+        if port.path.starts_with("unix:") || port.path.starts_with("tcp:") {
+            return crate::local_gateway::open(port, read_timeout);
+        }
         serialport::new(&port.path, 115_200)
             .timeout(read_timeout)
             .open()

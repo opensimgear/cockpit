@@ -6,9 +6,7 @@
     "main"
   ],
   "permissions": [
-    "allow-pico-gateway",
-    "allow-stm32-gateway",
-    "allow-open-pico-flashing-guide",
+    "allow-gateway-request",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
@@ -17,6 +15,9 @@
         },
         {
           "url": "https://www.opensimgear.org/docs/architecture/desktop-cockpit/"
+        },
+        {
+          "url": "https://github.com/opensimgear/device-gateway/tree/main/simulation/pico"
         }
       ]
     }

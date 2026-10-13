@@ -696,7 +696,7 @@ impl Gateway {
         let client = request["clientId"]
             .as_str()
             .filter(|id| identifier(id, 16, 80))
-            .ok_or("Missing simulator client identity. Reload Cockpit.")?;
+            .ok_or("Missing Cockpit client identity. Reload Cockpit.")?;
         let command = request["command"]
             .as_str()
             .ok_or("Unknown Pico gateway command.")?;
@@ -704,7 +704,7 @@ impl Gateway {
         self.expire_claims(Some(client));
         if matches!(
             command,
-            "add" | "register" | "remove" | "reconnect" | "stop" | "disconnect" | "connect"
+            "register" | "reconnect" | "stop" | "disconnect" | "connect"
         ) && !self.claims.is_empty()
         {
             return Err("End active setup sessions before changing the gateway layout.".into());
@@ -720,8 +720,18 @@ impl Gateway {
                     .into_iter()
                     .find(|port| request["port"] == port.path)
                     .ok_or("Select an available USB serial port for the flashed Pico gateway.")?;
+                let expected = request["gatewayId"]
+                    .as_str()
+                    .and_then(|id| id.strip_prefix("pico:"))
+                    .map(str::to_owned);
+                if expected
+                    .as_ref()
+                    .is_some_and(|id| selected.serial_number.as_ref() != Some(id))
+                {
+                    return Err("Gateway identity does not match the selected port.".into());
+                }
                 self.disconnect();
-                self.open(selected, None, None)?;
+                self.open(selected, expected, None)?;
                 let stopped = self.exchange(json!({"command":"stop"}), self.timing.command)?;
                 if stopped["ok"] != true {
                     self.close_port();
@@ -780,8 +790,7 @@ impl Gateway {
                     Ok(json!({"ok":true}))
                 }
             }
-            "status" | "start" | "stop" | "input" | "register" | "reconnect" | "presence"
-            | "configure" | "add" | "remove" => {
+            "status" | "start" | "stop" | "register" | "reconnect" | "configure" => {
                 if command == "configure"
                     && !self
                         .claims
@@ -790,23 +799,11 @@ impl Gateway {
                 {
                     return Err("Start a setup session before saving this module.".into());
                 }
-                if command == "presence"
-                    && request["online"] == false
-                    && self
-                        .claims
-                        .get(module_id)
-                        .is_some_and(|claim| claim.client != client)
-                {
-                    return Err("Another Cockpit tab owns this module’s setup session.".into());
-                }
                 let result = if command == "reconnect" {
                     self.reconnect()?
                 } else {
                     self.exchange(request.clone(), self.timing.command)?
                 };
-                if result["ok"] == true && command == "presence" && request["online"] == false {
-                    self.claims.remove(module_id);
-                }
                 Ok(result)
             }
             _ => Err("Unknown Pico gateway command.".into()),
@@ -957,40 +954,6 @@ mod tests {
                     }
                 }
                 "stop" => neutral_firmware(&mut context.state),
-                "input" => {
-                    let module = context.state["modules"]
-                        .as_array_mut()
-                        .unwrap()
-                        .iter_mut()
-                        .find(|module| module["id"] == request["moduleId"])
-                        .unwrap();
-                    if let Some(buttons) = request.get("buttons") {
-                        module["buttons"] = buttons.clone();
-                    }
-                    if let Some(axes) = request.get("axes") {
-                        module["axes"] = axes.clone();
-                    }
-                }
-                "presence" => {
-                    let module = context.state["modules"]
-                        .as_array_mut()
-                        .unwrap()
-                        .iter_mut()
-                        .find(|module| module["id"] == request["moduleId"])
-                        .unwrap();
-                    module["online"] = request["online"].clone();
-                    if module["online"] == false {
-                        module["buttons"] = json!([]);
-                        module["axes"] = json!([0]);
-                    }
-                }
-                "remove" => {
-                    context.state["modules"]
-                        .as_array_mut()
-                        .unwrap()
-                        .retain(|module| module["id"] != request["moduleId"]);
-                    context.state["needsReconnect"] = json!(true);
-                }
                 "reconnect" => {
                     neutral_firmware(&mut context.state);
                     let mut ack = context.state.clone();
@@ -1149,6 +1112,46 @@ mod tests {
     }
 
     #[test]
+    fn scoped_connection_validates_metadata_and_hello_before_controller_commands() {
+        let (mut gateway, context) = harness();
+        let wrong = "OSG-PICO-DIFFERENT1234";
+        let result = request(
+            &mut gateway,
+            "connect",
+            json!({"port":PATH,"gatewayId":format!("pico:{wrong}")}),
+            CLIENT_A,
+        );
+        assert_eq!(result["ok"], false);
+        assert!(context.lock().unwrap().opened.is_empty());
+        {
+            let mut context = context.lock().unwrap();
+            context.state["gatewaySerial"] = json!(wrong);
+            for module in context.state["modules"].as_array_mut().unwrap() {
+                module["usbSerialNumber"] = json!(wrong);
+            }
+        }
+        let result = request(
+            &mut gateway,
+            "connect",
+            json!({"port":PATH,"gatewayId":"pico:OSG-PICO-0123456789ABCDEF"}),
+            CLIENT_A,
+        );
+        assert_eq!(result["ok"], false);
+        assert!(result["error"].as_str().unwrap().contains("different Pico"));
+        assert_eq!(
+            context
+                .lock()
+                .unwrap()
+                .writes
+                .iter()
+                .map(|r| r["command"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>(),
+            ["hello"]
+        );
+        assert_eq!(context.lock().unwrap().lines.last(), Some(&(false, false)));
+    }
+
+    #[test]
     fn wrong_protocol_closes_before_sending_controller_commands() {
         for (field, value) in [
             ("backend", json!("other")),
@@ -1174,27 +1177,21 @@ mod tests {
             let (mut gateway, context) = harness();
             assert_eq!(connect(&mut gateway)["ok"], true);
             request(&mut gateway, "start", json!({}), CLIENT_A);
-            request(
-                &mut gateway,
-                "input",
-                json!({"moduleId":MODULE,"buttons":[1],"axes":[60_000]}),
-                CLIENT_A,
-            );
+            {
+                let mut context = context.lock().unwrap();
+                context.state["modules"][0]["buttons"] = json!([1]);
+                context.state["modules"][0]["axes"] = json!([60_000]);
+            }
             request(&mut gateway, "claim", json!({"moduleId":MODULE}), CLIENT_A);
             {
                 let mut context = context.lock().unwrap();
                 match failure {
-                    "timeout" => context.timeout = Some("input".into()),
-                    "malformed" => context.malformed = Some("input".into()),
-                    _ => context.oversized = Some("input".into()),
+                    "timeout" => context.timeout = Some("status".into()),
+                    "malformed" => context.malformed = Some("status".into()),
+                    _ => context.oversized = Some("status".into()),
                 }
             }
-            let result = request(
-                &mut gateway,
-                "input",
-                json!({"moduleId":MODULE,"buttons":[1]}),
-                CLIENT_A,
-            );
+            let result = request(&mut gateway, "status", json!({}), CLIENT_A);
             assert_eq!(result["ok"], false, "{failure}");
             assert_eq!(result["state"]["connected"], false);
             assert_eq!(result["state"]["modules"][0]["buttons"], json!([]));
@@ -1212,7 +1209,7 @@ mod tests {
 
     #[test]
     fn setup_leases_protect_configuration_layout_and_other_clients() {
-        let (mut gateway, _) = harness();
+        let (mut gateway, context) = harness();
         connect(&mut gateway);
         assert_eq!(
             request(
@@ -1232,15 +1229,7 @@ mod tests {
             request(&mut gateway, "claim", json!({"moduleId":MODULE}), CLIENT_B)["ok"],
             false
         );
-        for command in [
-            "add",
-            "register",
-            "remove",
-            "reconnect",
-            "stop",
-            "disconnect",
-            "connect",
-        ] {
+        for command in ["register", "reconnect", "stop", "disconnect", "connect"] {
             let result = request(
                 &mut gateway,
                 command,
@@ -1256,8 +1245,8 @@ mod tests {
         assert_eq!(
             request(
                 &mut gateway,
-                "presence",
-                json!({"moduleId":MODULE,"online":false}),
+                "configure",
+                json!({"moduleId":MODULE,"settings":{}}),
                 CLIENT_B
             )["ok"],
             false
@@ -1277,12 +1266,7 @@ mod tests {
             )["ok"],
             true
         );
-        request(
-            &mut gateway,
-            "presence",
-            json!({"moduleId":MODULE,"online":false}),
-            CLIENT_A,
-        );
+        context.lock().unwrap().state["modules"][0]["online"] = json!(false);
         assert_eq!(
             request(&mut gateway, "claim", json!({"moduleId":MODULE}), CLIENT_A)["ok"],
             false
@@ -1333,38 +1317,35 @@ mod tests {
     }
 
     #[test]
-    fn removal_ui_loss_and_unplug_leave_no_held_inputs() {
-        let (mut gateway, context) = harness();
-        connect(&mut gateway);
-        request(&mut gateway, "start", json!({}), CLIENT_A);
-        request(
-            &mut gateway,
-            "input",
-            json!({"moduleId":MODULE,"buttons":[1],"axes":[65_535]}),
-            CLIENT_A,
-        );
-        assert_eq!(
-            request(&mut gateway, "remove", json!({"moduleId":MODULE}), CLIENT_A)["state"]
-                ["modules"],
-            json!([])
-        );
-        gateway.heartbeat(Instant::now() - Duration::from_millis(50));
-        assert_eq!(gateway.state["connected"], false);
-        assert_eq!(context.lock().unwrap().lines.last(), Some(&(false, false)));
-        let (mut gateway, context) = harness();
-        connect(&mut gateway);
-        request(&mut gateway, "start", json!({}), CLIENT_A);
-        request(
-            &mut gateway,
-            "input",
-            json!({"moduleId":MODULE,"buttons":[1],"axes":[65_535]}),
-            CLIENT_A,
-        );
-        context.lock().unwrap().unplugged = true;
-        let result = request(&mut gateway, "status", json!({}), CLIENT_A);
-        assert_eq!(result["ok"], false);
-        assert_eq!(result["state"]["modules"][0]["buttons"], json!([]));
-        assert_eq!(result["state"]["modules"][0]["axes"], json!([0]));
+    fn ui_loss_and_unplug_leave_no_stale_inputs() {
+        for unplug in [false, true] {
+            let (mut gateway, context) = harness();
+            connect(&mut gateway);
+            request(&mut gateway, "start", json!({}), CLIENT_A);
+            {
+                let mut context = context.lock().unwrap();
+                context.state["modules"][0]["buttons"] = json!([1]);
+                context.state["modules"][0]["axes"] = json!([65_535]);
+            }
+            assert_eq!(
+                request(&mut gateway, "status", json!({}), CLIENT_A)["state"]["modules"][0]
+                    ["buttons"],
+                json!([1])
+            );
+            if unplug {
+                context.lock().unwrap().unplugged = true;
+                assert_eq!(
+                    request(&mut gateway, "status", json!({}), CLIENT_A)["ok"],
+                    false
+                );
+            } else {
+                gateway.heartbeat(Instant::now() - Duration::from_millis(50));
+            }
+            assert_eq!(gateway.state["connected"], false);
+            assert_eq!(gateway.state["modules"][0]["buttons"], json!([]));
+            assert_eq!(gateway.state["modules"][0]["axes"], json!([0]));
+            assert_eq!(context.lock().unwrap().lines.last(), Some(&(false, false)));
+        }
     }
 
     #[test]
@@ -1382,11 +1363,11 @@ mod tests {
             service.request(json!({"command":"connect","port":PATH,"clientId":CLIENT_A}))["ok"],
             true
         );
-        context.lock().unwrap().timeout = Some("input".into());
+        context.lock().unwrap().timeout = Some("start".into());
         let pending = service.clone();
         let request = thread::spawn(move || {
             pending.request(
-                json!({"command":"input","moduleId":MODULE,"buttons":[1],"clientId":CLIENT_A}),
+                json!({"command":"start","moduleId":MODULE,"buttons":[1],"clientId":CLIENT_A}),
             )
         });
         while !context
@@ -1394,7 +1375,7 @@ mod tests {
             .unwrap()
             .writes
             .iter()
-            .any(|request| request["command"] == "input")
+            .any(|request| request["command"] == "start")
         {
             thread::sleep(Duration::from_millis(1));
         }
@@ -1454,11 +1435,11 @@ mod tests {
             service.request(json!({"command":"claim","moduleId":MODULE,"clientId":CLIENT_A}))["ok"],
             true
         );
-        context.lock().unwrap().timeout = Some("input".into());
+        context.lock().unwrap().timeout = Some("start".into());
         let in_flight = service.clone();
         let mut callers = vec![thread::spawn(move || {
             in_flight.request(
-                json!({"command":"input","moduleId":MODULE,"buttons":[1],"clientId":CLIENT_A}),
+                json!({"command":"start","moduleId":MODULE,"buttons":[1],"clientId":CLIENT_A}),
             )
         })];
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -1467,7 +1448,7 @@ mod tests {
             .unwrap()
             .writes
             .iter()
-            .any(|request| request["command"] == "input")
+            .any(|request| request["command"] == "start")
         {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(1));
@@ -1495,249 +1476,20 @@ mod tests {
         }
     }
 
-    // This fixture executes the production C parser/state machine over pipes. USB and
-    // serial enumeration remain injected; no physical device can be opened by this test.
-    struct CProcess {
-        child: Mutex<std::process::Child>,
-        input: Mutex<std::process::ChildStdin>,
-        output: Mutex<mpsc::Receiver<Vec<u8>>>,
-        directory: std::path::PathBuf,
-    }
-    impl Drop for CProcess {
-        fn drop(&mut self) {
-            let child = self.child.get_mut().unwrap();
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = std::fs::remove_dir_all(&self.directory);
-        }
-    }
-    struct CFactory(Arc<CProcess>);
-    struct CConnection {
-        process: Arc<CProcess>,
-        pending: VecDeque<u8>,
-        timeout: Duration,
-    }
-    impl Factory for CFactory {
-        fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
-            let mut port = info(PATH);
-            port.serial_number = Some("OSG-PICO-MOCK-0123456789ABCDEF".into());
-            Ok(vec![port])
-        }
-        fn open(&mut self, _: &PortInfo, timeout: Duration) -> Result<Box<dyn Connection>, String> {
-            Ok(Box::new(CConnection {
-                process: self.0.clone(),
-                pending: VecDeque::new(),
-                timeout,
-            }))
-        }
-    }
-    impl Read for CConnection {
-        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-            if self.pending.is_empty() {
-                match self
-                    .process
-                    .output
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(self.timeout)
-                {
-                    Ok(data) => self.pending.extend(data),
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        return Err(io::ErrorKind::TimedOut.into())
-                    }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
-                }
-            }
-            let count = buffer.len().min(self.pending.len());
-            for byte in &mut buffer[..count] {
-                *byte = self.pending.pop_front().unwrap();
-            }
-            Ok(count)
-        }
-    }
-    impl Write for CConnection {
-        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-            self.process.input.lock().unwrap().write(data)
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            self.process.input.lock().unwrap().flush()
-        }
-    }
-    impl Connection for CConnection {
-        fn set_control_lines(&mut self, dtr: bool, _: bool) -> Result<(), String> {
-            if !dtr {
-                let stop = format!(
-                    "{}\n",
-                    json!({"id":Uuid::new_v4().to_string(),"command":"stop"})
-                );
-                self.write_all(stop.as_bytes())
-                    .map_err(|error| error.to_string())?;
-                self.flush().map_err(|error| error.to_string())?;
-            }
-            Ok(())
-        }
-    }
-    fn c_fixture() -> Arc<CProcess> {
-        use std::{
-            io::{BufRead, BufReader},
-            process::{Command, Stdio},
-        };
-        let pico = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../simulator/pico");
-        let directory =
-            std::env::temp_dir().join(format!("osg-cockpit-protocol-{}", Uuid::new_v4()));
-        std::fs::create_dir(&directory).unwrap();
-        let executable = directory.join("osg-gateway-stdio");
-        let output = Command::new("cc")
-            .arg("-std=c11")
-            .arg("-Wall")
-            .arg("-Wextra")
-            .arg("-Werror")
-            .arg("-I")
-            .arg(pico.join("src"))
-            .arg(pico.join("src/gateway.c"))
-            .arg(pico.join("tests/gateway_stdio.c"))
-            .arg("-o")
-            .arg(&executable)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "C fixture compilation failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let mut child = Command::new(&executable)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        let input = child.stdin.take().unwrap();
-        let output = child.stdout.take().unwrap();
-        let (sender, receiver) = mpsc::channel();
-        thread::spawn(move || {
-            let mut reader = BufReader::new(output);
-            loop {
-                let mut data = Vec::new();
-                match reader.read_until(b'\n', &mut data) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        if sender.send(data).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-        Arc::new(CProcess {
-            child: Mutex::new(child),
-            input: Mutex::new(input),
-            output: Mutex::new(receiver),
-            directory,
-        })
-    }
-
     #[test]
-    fn native_service_preserves_full_production_firmware_module_lifecycle() {
-        let fixture = c_fixture();
-        let mut durations = timing();
-        durations.command = Duration::from_millis(500);
-        durations.hello = Duration::from_millis(500);
-        durations.reconnect = Duration::from_millis(500);
-        let mut gateway = Gateway::new(
-            Box::new(CFactory(fixture)),
-            durations,
-            Arc::new(AtomicBool::new(false)),
-            false,
-        );
-        let connected = connect(&mut gateway);
-        assert_eq!(connected["ok"], true, "{connected}");
-        assert_eq!(connected["state"]["modules"].as_array().unwrap().len(), 4);
-        assert_eq!(connected["state"]["firmwareVersion"], "0.1.1");
-        request(&mut gateway, "claim", json!({"moduleId":MODULE}), CLIENT_A);
-        let configured = request(
-            &mut gateway,
-            "configure",
-            json!({"moduleId":MODULE,"settings":{"label":"OSG Native test","debounce":0,"inverted":false}}),
-            CLIENT_A,
-        );
-        assert_eq!(configured["ok"], true, "{configured}");
-        request(
-            &mut gateway,
-            "release",
-            json!({"moduleId":MODULE}),
-            CLIENT_A,
-        );
-        assert_eq!(
-            request(&mut gateway, "reconnect", json!({}), CLIENT_A)["ok"],
-            true
-        );
-        assert_eq!(
-            request(&mut gateway, "start", json!({}), CLIENT_A)["ok"],
-            true
-        );
-        let pressed = request(
-            &mut gateway,
-            "input",
-            json!({"moduleId":MODULE,"buttons":[1]}),
-            CLIENT_A,
-        );
-        assert_eq!(pressed["ok"], true, "{pressed}");
-        assert_eq!(pressed["state"]["modules"][0]["buttons"], json!([1]));
-        let offline = request(
-            &mut gateway,
-            "presence",
-            json!({"moduleId":MODULE,"online":false}),
-            CLIENT_A,
-        );
-        assert_eq!(offline["state"]["modules"][0]["buttons"], json!([]));
-        request(
-            &mut gateway,
-            "presence",
-            json!({"moduleId":MODULE,"online":true}),
-            CLIENT_A,
-        );
-        let added = request(
-            &mut gateway,
-            "add",
-            json!({"module":{"id":"OSG-NATIVE-0001","name":"OSG Native panel","kind":"panel","buttonCount":8,"axisCount":0}}),
-            CLIENT_A,
-        );
-        assert_eq!(added["ok"], true, "{added}");
-        assert_eq!(added["state"]["modules"].as_array().unwrap().len(), 5);
-        assert_eq!(added["state"]["modules"][4]["registered"], false);
-        let rebuilt = request(&mut gateway, "reconnect", json!({}), CLIENT_A);
-        assert_eq!(rebuilt["ok"], true, "{rebuilt}");
-        assert_eq!(rebuilt["state"]["modules"][4]["hidInterface"], 6);
-        assert_eq!(rebuilt["state"]["running"], false);
-        request(&mut gateway, "start", json!({}), CLIENT_A);
-        let new_press = request(
-            &mut gateway,
-            "input",
-            json!({"moduleId":"OSG-NATIVE-0001","buttons":[8]}),
-            CLIENT_A,
-        );
-        assert_eq!(new_press["state"]["modules"][4]["buttons"], json!([8]));
-        assert_eq!(
-            request(
-                &mut gateway,
-                "remove",
-                json!({"moduleId":"OSG-NATIVE-0001"}),
-                CLIENT_A
-            )["ok"],
-            true
-        );
-        assert_eq!(
-            request(&mut gateway, "reconnect", json!({}), CLIENT_A)["state"]["modules"]
-                .as_array()
+    fn client_rejects_input_and_inventory_injection_without_serial_writes() {
+        let (mut gateway, context) = harness();
+        connect(&mut gateway);
+        let before = context.lock().unwrap().writes.len();
+        for command in ["input", "presence", "add", "remove"] {
+            let result = request(&mut gateway, command, json!({"moduleId":MODULE}), CLIENT_A);
+            assert_eq!(result["ok"], false);
+            assert!(result["error"]
+                .as_str()
                 .unwrap()
-                .len(),
-            4
-        );
-        assert_eq!(
-            request(&mut gateway, "disconnect", json!({}), CLIENT_A)["state"]["connected"],
-            false
-        );
-        assert_eq!(connect(&mut gateway)["state"]["running"], false);
+                .contains("Unknown Pico gateway command"));
+        }
+        assert_eq!(context.lock().unwrap().writes.len(), before);
         gateway.shutdown();
     }
 }

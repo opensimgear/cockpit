@@ -1,4 +1,5 @@
 .DS_Store
+.e2e/
 build/
 cmake-build-*/
 .cache/
