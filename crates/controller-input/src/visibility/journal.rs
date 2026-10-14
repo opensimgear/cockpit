@@ -154,6 +154,14 @@ pub trait Backend {
     fn read(&mut self) -> Result<State, String>;
     fn change(&mut self, expected: &State, desired: &State) -> Result<(), String>;
 }
+impl<T: Backend + ?Sized> Backend for Box<T> {
+    fn read(&mut self) -> Result<State, String> {
+        (**self).read()
+    }
+    fn change(&mut self, expected: &State, desired: &State) -> Result<(), String> {
+        (**self).change(expected, desired)
+    }
+}
 fn step(
     backend: &mut impl Backend,
     store: &mut Store,

@@ -326,3 +326,42 @@ fn diagnostic_only_descriptors_cannot_establish_an_input_baseline() {
     r.report(&id, 1, &BTreeMap::from([(0, 0), (1, 1)])).unwrap();
     assert_eq!(r.inspect(&id, 0).unwrap()["source"]["baselineReady"], false);
 }
+
+#[test]
+fn visibility_sources_require_current_physical_windows_baselines() {
+    let mut registry = Registry::default();
+    let mut definition = fixture("physical", None);
+    definition.identity.backend = "windows-raw-input".into();
+    let id = registry.connect(definition).unwrap();
+    assert!(registry
+        .visibility_sources(std::slice::from_ref(&id))
+        .is_err());
+    registry
+        .report(&id, 1, &BTreeMap::from([(0, 0), (1, 0)]))
+        .unwrap();
+    registry.report(&id, 2, &BTreeMap::from([(2, 0)])).unwrap();
+    assert_eq!(
+        registry
+            .visibility_sources(std::slice::from_ref(&id))
+            .unwrap()[0]
+            .interface,
+        "physical"
+    );
+    registry.disconnect(&id);
+    assert!(registry.visibility_sources(&[id]).is_err());
+    for virtual_target in [false, true] {
+        let mut definition = fixture(if virtual_target { "vjoy" } else { "synthetic" }, None);
+        if virtual_target {
+            definition.identity.backend = "windows-raw-input".into();
+            definition.identity.vendor_id = 0x1234;
+            definition.identity.product_id = 0xbead;
+        }
+        if virtual_target { assert!(registry.connect(definition).is_err()); continue; }
+        let id = registry.connect(definition).unwrap();
+        registry
+            .report(&id, 1, &BTreeMap::from([(0, 0), (1, 0)]))
+            .unwrap();
+        registry.report(&id, 2, &BTreeMap::from([(2, 0)])).unwrap();
+        assert!(registry.visibility_sources(&[id]).is_err());
+    }
+}

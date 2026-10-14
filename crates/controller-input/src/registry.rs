@@ -428,6 +428,39 @@ impl Registry {
             "sources":self.sources.values().skip(offset).take(PAGE_SIZE).map(Source::summary).collect::<Vec<_>>(),
             "total":self.sources.len(),"offset":offset,"limit":PAGE_SIZE})
     }
+    pub fn visibility_sources(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<crate::visibility::session::Source>, String> {
+        if ids.is_empty() || ids.len() > 16 {
+            return Err("Select 1 to 16 physical controllers.".into());
+        }
+        ids.iter()
+            .map(|id| {
+                let source = self
+                    .sources
+                    .get(id)
+                    .filter(|source| source.ready())
+                    .ok_or("Selected controller requires a complete current baseline.")?;
+                let identity = &source.saved.identity;
+                if identity.backend != "windows-raw-input"
+                    || (identity.vendor_id == 0x1234 && identity.product_id == 0xbead)
+                {
+                    return Err(
+                        "HidHide selection requires an observed physical Windows controller."
+                            .into(),
+                    );
+                }
+                Ok(crate::visibility::session::Source {
+                    id: id.clone(),
+                    session: self.session.clone(),
+                    generation: source.generation,
+                    sequence: source.sequence,
+                    interface: identity.path.clone(),
+                })
+            })
+            .collect()
+    }
     pub fn inspect(&self, id: &str, offset: usize) -> Result<Value, String> {
         let s = self.sources.get(id).ok_or("Unknown controller.")?;
         Ok(

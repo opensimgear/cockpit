@@ -295,9 +295,9 @@ impl GatewayManager {
         };
         if command.starts_with("game_") {
             if matches!(command.as_str(), "game_activate" | "game_launch")
-                && self.mapping_host.provisioning_active()
+                && (self.mapping_host.provisioning_active() || self.controllers.visibility_active())
             {
-                return self.error("Wait for virtual-controller provisioning and verified cleanup before activating a game.", None);
+                return self.error("Restore standalone visibility and finish virtual-controller provisioning before activating a captured game profile.", None);
             }
             let mut response = match self.games.request(&request) {
                 Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
@@ -310,7 +310,14 @@ impl GatewayManager {
             return response;
         }
         if let Err(error) = self.games.guard_request(&request) {
-            if command != "mapping_provision_cancel" {
+            if !matches!(
+                command.as_str(),
+                "mapping_provision_cancel"
+                    | "controller_visibility_status"
+                    | "controller_visibility_inspect"
+                    | "controller_visibility_processes"
+                    | "controller_visibility_restore"
+            ) {
                 return self.error(&error, None);
             }
         }

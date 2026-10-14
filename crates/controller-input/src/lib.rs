@@ -29,6 +29,7 @@ pub struct ControllerService {
     path: Option<PathBuf>,
     persistence: Mutex<()>,
     storage_valid: bool,
+    visibility: visibility::service::Service,
 }
 impl ControllerService {
     pub fn new(path: Option<PathBuf>, native: bool) -> Self {
@@ -106,9 +107,16 @@ impl ControllerService {
                     "Native controller capture is not qualified on this platform yet. The read-only qualification probe is available separately; ordinary capture stays disabled.".into();
             }
         }
+        let visibility = visibility::service::Service::new(
+            path.as_ref()
+                .and_then(|p| p.parent())
+                .map(|p| p.to_path_buf()),
+            registry.clone(),
+        );
         Self {
             registry,
             stop,
+            visibility,
             worker: Mutex::new(worker),
             path,
             persistence: Mutex::new(()),
@@ -160,6 +168,17 @@ impl ControllerService {
         let command = request["command"]
             .as_str()
             .ok_or("Missing controller command.")?;
+        if command.starts_with("controller_visibility_") {
+            return self.visibility.request(request);
+        }
+        if self.visibility.active()
+            && matches!(
+                command,
+                "controller_update" | "controller_forget" | "controller_reassign"
+            )
+        {
+            return Err("Restore visibility before editing controller identities.".into());
+        }
         let id = request["sourceId"].as_str().unwrap_or("");
         let offset = match request.get("offset") {
             None => 0,
@@ -218,7 +237,11 @@ impl ControllerService {
             .unwrap_or_else(|p| p.into_inner())
             .stream_page(session, after)
     }
+    pub fn visibility_active(&self) -> bool {
+        self.visibility.active()
+    }
     pub fn shutdown(&self) {
+        self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();

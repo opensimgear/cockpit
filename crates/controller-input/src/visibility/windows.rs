@@ -25,6 +25,9 @@ impl Drop for Handle {
     }
 }
 pub struct Kernel(Handle);
+// The uniquely owned kernel handle may move to the visibility worker. Calls are
+// serialized through &mut self; no shared access or overlapping IO is introduced.
+unsafe impl Send for Kernel {}
 fn open(path: &str, access: u32) -> Result<Handle, String> {
     if path.is_empty() || path.len() > 4096 || path.contains('\0') {
         return Err("Invalid Windows path.".into());
@@ -141,6 +144,14 @@ impl Kernel {
         Ok(returned as usize)
     }
 }
+impl super::runtime::Adapter for Driver<Kernel> {
+    fn executable(&mut self, path: &str) -> Result<String, String> {
+        executable(path)
+    }
+    fn instance(&mut self, interface: &str) -> Result<String, String> {
+        instance(interface)
+    }
+}
 /// Existing local executable, resolved by an OS handle (not string substitution).
 pub fn executable(path: &str) -> Result<String, String> {
     if !Path::new(path).is_absolute()
@@ -201,6 +212,52 @@ pub fn instance(interface: &str) -> Result<String, String> {
         String::from_utf16(&buffer[..used - 1]).map_err(|_| "Invalid HID instance encoding.")?;
     policy::instance(&result)?;
     Ok(result)
+}
+
+/// Read-only executable selection. PID is display context; only the path is saved.
+pub fn applications(offset: usize) -> Result<serde_json::Value, String> {
+    use windows_sys::Win32::System::{Diagnostics::ToolHelp::*, Threading::*};
+    if offset > 256 {
+        return Err("Invalid process page.".into());
+    }
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let snapshot = Handle(snapshot);
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    let mut found = unsafe { Process32FirstW(snapshot.0, &mut entry) };
+    let mut applications = vec![];
+    let mut visited = 0;
+    while found != 0 && visited < 2048 && applications.len() < 256 {
+        visited += 1;
+        let process =
+            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID) };
+        if !process.is_null() {
+            let process = Handle(process);
+            let mut buffer = [0u16; 1024];
+            let mut length = buffer.len() as u32;
+            if unsafe { QueryFullProcessImageNameW(process.0, 0, buffer.as_mut_ptr(), &mut length) }
+                != 0
+                && length > 0
+                && (length as usize) < buffer.len()
+            {
+                if let Ok(path) = String::from_utf16(&buffer[..length as usize]) {
+                    if path.to_lowercase().ends_with(".exe") && Path::new(&path).is_absolute() {
+                        applications
+                            .push(serde_json::json!({"pid":entry.th32ProcessID,"path":path}));
+                    }
+                }
+            }
+        }
+        found = unsafe { Process32NextW(snapshot.0, &mut entry) };
+    }
+    Ok(
+        serde_json::json!({"processes":applications.iter().skip(offset).take(16).collect::<Vec<_>>(),"next":if offset+16<applications.len(){Some(offset+16)}else{None},"total":applications.len()}),
+    )
 }
 #[cfg(test)]
 #[path = "windows_tests.rs"]

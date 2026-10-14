@@ -12,7 +12,7 @@ sha2 = "0.10"
 tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Graphics_Gdi", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Properties"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Graphics_Gdi", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Properties", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "=0.13.2"

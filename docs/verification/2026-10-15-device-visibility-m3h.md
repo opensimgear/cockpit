@@ -39,22 +39,51 @@ instance. The release provides persistent settings, so this adapter makes no
 automatic-unhide-on-crash claim. HidHide's device handle serializes its configuration
 clients; direct external registry edits still require conflict detection.
 
-## Pending implementation and qualification
+## Device controls and standalone supervision
 
-The per-device UI, local intent storage, source-generation supervision and explicit
-Apply/Restore service integration are still being implemented. Physical normal and
-inverse-mode probes, executable relocation, reconnect, combined vJoy sessions and
-real game visibility remain unqualified. Source/report capture through Raw Input
+The device detail view now stores an independent, disabled-by-default visibility
+opt-in and per-source intent. Users can select a running executable or enter its
+absolute path, save intent, inspect the dependency, and explicitly Apply or
+Restore. Saving intent never opens the driver. Apply and persistent recovery
+remain disabled at both the service and native write boundaries. A read-only
+inspection of the installed driver in the Windows Tauri app succeeded; the
+rendered Apply/Restore buttons were disabled and no JavaScript exceptions occurred.
+
+A worker owns the driver handle, validated source identities and durable journal.
+It requires a fresh report after hiding, checks capture without frontend polling,
+and restores its owned changes on source loss, instance changes, executable
+relocation or cancellation. External policy changes cause conflict reporting.
+Active visibility blocks reassignment and uncoordinated game launch; emergency
+Restore remains available during game guards. Restart recovery requires an exact
+recorded session ID and explicit action. No startup path reapplies stored intent.
+
+## Pending qualification
+
+Physical normal and inverse-mode probes, executable relocation, reconnect, real
+process-crash recovery and game visibility remain unqualified. Combined vJoy/game
+profile coordination is tracked in #32. Source/report capture through Raw Input
 must be qualified separately from DirectInput enumeration; M0 did not establish
-universal invisibility. None of these gaps is treated as passing acceptance.
+universal invisibility. None of these gaps is treated as passing acceptance, and
+#26 remains open with both production qualification gates false.
 
-The new policy, journal, wire and Windows adapter are included in the existing
-native controller coverage gate (71% minimum per module). Initial Windows measured
-coverage: policy 98.37%, journal 94.21%, wire 100%, native visibility adapter 87.42%.
+The released driver exposes persistent settings. The journal supports explicit
+recovery after process exit; it does not claim automatic unhide after a crash.
+Linux/macOS visibility is tracked separately in #29.
 
-Validation for this core checkpoint: 35 Windows and 36 Linux controller tests pass.
+## Validation
+
+Windows controller coverage runs 48 passing tests, including fixture-backed IPC
+Apply/Restore, missing dependencies, exact source identity, post-hide fresh-report
+requirements, executable relocation, cancellation, external conflicts and durable
+recovery. Fixtures never change the installed driver's hiding policy.
+
+Measured Windows line coverage: policy 98.32%, journal 94.39%, wire 100%, settings
+96.75%, session 98.08%, worker 85.93%, service 86.67%, native visibility 85.78%.
+All new and existing controller modules retain the 71% minimum gate on each
+supported CI host. The frontend check passes with zero errors or warnings.
+
 The Windows native application regression suite passes 288 tests with three
-explicit hardware/archive tests ignored. That working tree includes separate ACR
-changes; exact committed-state validation is reported by CI after push. Linux
-visibility coverage is policy 98.37%, journal 94.82%, wire 100%; every existing
-controller module also retains its 71% coverage gate.
+explicit hardware/archive tests ignored. That local working tree includes
+separate ACR changes; exact committed-state validation is reported by CI after
+push. The core checkpoint dacd464 passed all 11 CI jobs on Windows, Linux and
+macOS: https://github.com/opensimgear/cockpit/actions/runs/38650993121.

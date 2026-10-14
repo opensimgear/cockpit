@@ -1,4 +1,5 @@
-export type ControllerCommand = 'controller_list' | 'controller_inspect' | 'controller_update' | 'controller_forget' | 'controller_reassign';
+import type { VisibilityCommand, VisibilityStatus } from './visibility';
+export type ControllerCommand = VisibilityCommand | 'controller_list' | 'controller_inspect' | 'controller_update' | 'controller_forget' | 'controller_reassign';
 export type HostController = {
   id: string; name: string; role: string; origin: 'host-controller'; backend: string;
   vendorId: number; productId: number; osgHid: boolean; online: boolean;
@@ -11,6 +12,7 @@ export type ControllerControl = {
   value: { native: number; normalized: number | null } | null;
 };
 export type ControllerResult = {
+  visibility?: VisibilityStatus;
   session?: string; backendStatus?: string; diagnostic?: string; sources?: HostController[];
   source?: HostController; identity?: { path: string; collection: string; serial: string | null; fingerprint: string };
   diagnostics?: string[]; controls?: ControllerControl[]; offset: number; total: number; limit: number;

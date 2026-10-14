@@ -53,3 +53,18 @@ fn native_transport_rejects_writes_and_malformed_requests_before_io() {
     assert!(kernel.call(2049, None).is_err());
     assert!(kernel.call(2048, None).is_err()); // A regular file cannot answer HidHide IOCTLs.
 }
+
+#[test]
+fn running_executable_selection_is_bounded_and_read_only() {
+    let result = applications(0).unwrap();
+    let values = result["processes"].as_array().unwrap();
+    assert!(values.len() <= 16);
+    for value in values {
+        assert!(Path::new(value["path"].as_str().unwrap()).is_absolute());
+    }
+    assert!(applications(257).is_err());
+    assert!(applications(256).unwrap()["processes"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}

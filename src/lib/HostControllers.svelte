@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
+  import DeviceVisibility from './DeviceVisibility.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { controllerRoles, controlLabel, inputLabel, type ControllerResult, type HostController } from './controllers';
   let { topology = false }: { topology?: boolean } = $props();
@@ -91,6 +92,7 @@
       {#if source.online && (inventory.sources ?? []).some(s => !s.online)}
         <div class="metadata"><label>Moved to another USB port?<select bind:value={remembered}><option value="">Choose a remembered offline controller</option>{#each (inventory.sources ?? []).filter(s => !s.online) as previous}<option value={previous.id}>{previous.name}</option>{/each}</select></label><button class="secondary-button" disabled={busy || !remembered} onclick={() => mutate({ command: 'controller_reassign', sourceId: remembered, observedId: source.id })}>Reassign this connection</button></div>
       {/if}
+      {#key source.id}<DeviceVisibility {source} />{/key}
       <div class="control-grid">
         {#each detail.controls ?? [] as control (control.capability.id)}
           <div class="control" class:pressed={control.capability.kind === 'button' && control.value?.normalized === 1}>
