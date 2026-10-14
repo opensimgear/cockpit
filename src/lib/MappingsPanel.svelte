@@ -171,11 +171,16 @@
   <div class="recording"><table><thead><tr><th>Report</th><th>Target</th><th>Reason</th><th>Pressed buttons</th><th>Axes</th><th>Hats</th></tr></thead><tbody>{#each records.slice().reverse() as item (item.cursor)}<tr><td>{item.report.sequence}</td><td>{item.report.target}</td><td>{item.report.reason}</td><td>{item.report.state.buttons.flatMap((pressed, i) => pressed ? [i + 1] : []).join(', ') || '—'}</td><td>{item.report.state.axes.join(', ') || '—'}</td><td>{item.report.state.hats.map(h => h === null ? 'neutral' : String(h)).join(', ') || '—'}</td></tr>{:else}<tr><td colspan="6">Start a preview and move an assigned control.</td></tr>{/each}</tbody></table></div>
 </section>
 <section class="panel mapping-panel" aria-label="Virtual controllers">
-  <div class="mapping-row"><h2>Virtual controllers</h2><button class="secondary-button" disabled={busy} onclick={() => action(async () => { virtual = await request({ command: 'mapping_virtual_inspect' }); })}>Inspect vJoy</button></div>
-  <label class="enable-option"><input type="checkbox" checked={status.virtualDevices?.enabled ?? false} disabled={busy} onchange={event => action(async () => { await request({ command: 'mapping_virtual_enable', enabled: event.currentTarget.checked }); })} />Enable installed vJoy for this computer</label>
+  <div class="mapping-row"><h2>Virtual controllers</h2><button class="secondary-button" disabled={busy} onclick={() => action(async () => { virtual = await request({ command: 'mapping_virtual_inspect' }); })}>Inspect {status.virtualDevices?.backend === 'uinput' ? 'Linux output' : 'vJoy'}</button></div>
+  <label class="enable-option"><input type="checkbox" checked={status.virtualDevices?.enabled ?? false} disabled={busy} onchange={event => action(async () => { await request({ command: 'mapping_virtual_enable', enabled: event.currentTarget.checked }); })} />Enable {status.virtualDevices?.backend === 'uinput' ? 'Linux virtual devices' : 'installed vJoy'} for this computer</label>
   <p>{virtual?.reason ?? status.virtualDevices?.reason ?? 'Virtual output is optional and disabled by default.'}</p>
   {#each virtual?.slots ?? [] as slot}<div class="virtual-slot"><strong>vJoy slot {slot.id} · {slot.status}</strong><span>{slot.buttons} buttons · {slot.axes.length} axes · {slot.continuousHats} continuous hats · {slot.discreteHats} discrete hats{slot.forceFeedback ? ' · force feedback' : ''}{slot.ownerPid ? ' · owner PID ' + slot.ownerPid : ''}</span></div>{/each}
-  {#if profile && virtual}
+  {#if profile && status.virtualDevices?.backend === 'uinput'}
+    <h3>Linux device templates</h3>
+    <p>Up to eight axes, 32 buttons and four hats per device. Templates are saved locally. Devices exist only during an explicitly started live session; game bindings after recreation still need qualification.</p>
+    <div class="mapping-row">{#each profile.targets as target}<label>{target.name}<select bind:value={slotAssignments[target.id]}><option value={undefined}>Choose a local identity</option>{#each Array.from({length:16},(_,i)=>i+1) as slot}<option value={slot}>Controller {slot}</option>{/each}</select></label>{/each}
+    <button class="secondary-button" disabled={busy || status.running || profile.targets.some(t => !slotAssignments[t.id] || t.layout.buttons > 32 || t.layout.axes.length > 8)} onclick={() => action(async () => { if (!profile) return; const bindings = profile.targets.map(target => ({target: target.id, slot: slotAssignments[target.id], axes: target.layout.axes.map((_,i)=>0x30+i), layout:target.layout})); await request({command:'mapping_targets_save',profileId:profile.id,bindings}); notice='Linux templates saved. No device was created.'; })}>Save Linux templates</button></div>
+  {:else if profile && virtual}
     <h3>Local target slots</h3>
     <div class="mapping-row">{#each profile.targets as target}<label>{target.name}<select bind:value={slotAssignments[target.id]}><option value={undefined}>Choose a matching slot</option>{#each virtual.slots ?? [] as slot}<option value={slot.id} disabled={slot.buttons !== target.layout.buttons || slot.axes.length !== target.layout.axes.length || slot.continuousHats !== target.layout.hats || slot.discreteHats !== 0 || slot.forceFeedback}>Slot {slot.id} · {slot.buttons} buttons, {slot.axes.length} axes, {slot.continuousHats} hats</option>{/each}</select></label>{/each}
     <button class="secondary-button" disabled={busy || profile.targets.some(t => !slotAssignments[t.id])} onclick={() => action(async () => { const bindings = profile.targets.map(target => { const slot = virtual?.slots?.find(s => s.id === slotAssignments[target.id]); if (!slot) throw new Error('Inspect the selected slot first.'); return { target: target.id, slot: slot.id, axes: slot.axes.map(a => a.usage), layout: target.layout }; }); await request({ command: 'mapping_targets_save', profileId: profile.id, bindings }); notice = 'Local slots saved. Activation will recheck the actual layouts.'; })}>Save target slots</button></div>
@@ -186,7 +191,7 @@
       {#if status.outputRecovery.error}
         <p>{status.outputRecovery.error}</p>
       {:else}
-        <p>Inspect vJoy slots {status.outputRecovery.slots?.join(', ')} before starting another live mapping.
+        <p>Inspect output identities {status.outputRecovery.slots?.join(', ')} before starting another live mapping.
         {status.outputRecovery.phase === 'confirmed' ? 'The previous run confirmed ownership; recovery remains subject to driver qualification.' : 'The previous operation was interrupted before its outcome was confirmed. No output will be sent automatically.'}</p>
       {/if}
     </div>
@@ -203,6 +208,7 @@
     <button class="secondary-button" disabled={busy || !status.provisioningQualified || operation.refreshUncertain || status.provisioning?.active} onclick={() => action(async () => { await request({ command: 'mapping_provision_recover', operation: operation.operation }); })}>Recover previous layout</button>
     </div>
   {/each}
+  {#if status.virtualDevices?.backend !== 'uinput'}
   <fieldset disabled={busy || !status.provisioningQualified || status.provisioning?.active}>
       <legend>New controller layout</legend>
       <label>Buttons <input type="number" min="0" max="128" step="1" bind:value={createButtons} /></label>
@@ -210,10 +216,13 @@
       <div class="axis-options">{#each axisNames as axis, index}<label><input type="checkbox" bind:group={createAxes} value={index} />{axis}</label>{/each}</div>
       <small>Starter: eight axes, 32 buttons and one hat. Created layouts persist across mapping changes. Force feedback is unavailable.</small>
   </fieldset>
+  {/if}
   <div class="mapping-row">
+    {#if status.virtualDevices?.backend !== 'uinput'}
     <label>New vJoy slot<select bind:value={createSlot} disabled={!status.provisioningQualified || busy}>{#each Array.from({ length: 16 }, (_, i) => i + 1) as slot}<option value={slot} disabled={virtual?.slots?.some(s => s.id === slot)}>Slot {slot}</option>{/each}</select></label>
     <button class="secondary-button" disabled={busy || !status.provisioningQualified || !status.virtualDevices?.enabled || status.provisioning?.active || status.running} title={status.provisioningQualified ? 'Create the selected persistent layout' : 'Windows layout validation is incomplete'} onclick={() => action(async () => { await request({ command: 'mapping_virtual_create', slot: createSlot, layout: { axes: createAxes.reduce((mask, index) => mask | (1 << index), 0), buttons: createButtons, hats: createHats } }); })}>Create virtual controller</button>
-    <button class="secondary-button" disabled={busy || !profile || !status.virtualDevices?.qualified || status.provisioning?.active || status.outputRecovery?.required} title="Requires qualified Windows output" onclick={() => action(async () => { if (profile) await request({ command: 'mapping_virtual_start', profileId: profile.id }); })}>Start live output</button>
+    {/if}
+    <button class="secondary-button" disabled={busy || !profile || !status.virtualDevices?.qualified || status.provisioning?.active || status.outputRecovery?.required} title="Requires qualified native output" onclick={() => action(async () => { if (profile) await request({ command: 'mapping_virtual_start', profileId: profile.id }); })}>Start live output</button>
     <button class="secondary-button" disabled={busy || !status.virtualDevices?.qualified || status.running || !(status.outputRecovery?.required || status.recoveryRequired)} onclick={() => action(async () => { await request({ command: 'mapping_virtual_recover' }); })}>Recover virtual output</button>
     {#if status.outputRecovery?.token && (status.outputRecovery.phase === 'intent' || status.outputRecovery.phase === 'releasing')}
       <button class="secondary-button" disabled={busy || !status.virtualDevices?.qualified || status.running} onclick={() => action(async () => { await request({ command: 'mapping_virtual_acknowledge', token: status.outputRecovery?.token }); notice = 'Recovery record acknowledged. No virtual output was changed.'; })}>Acknowledge inspected output</button>

@@ -38,7 +38,7 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
-    sources = [root / f'crates/virtual-controller/src/{module}.rs' for module in (['descriptor', 'vjoy', 'feeder', 'worker', 'supervisor', 'provision', 'inspection', 'session', 'entry', 'output_journal'] + (['windows', 'registry', 'windows_provision', 'journal_security', 'windows_refresh', 'windows_process', 'windows_coordination', 'windows_launcher', 'windows_provision_entry', 'windows_jobs'] if os.name == 'nt' else []))]
+    sources = [root / f'crates/virtual-controller/src/{module}.rs' for module in (['uinput', 'descriptor', 'vjoy', 'feeder', 'worker', 'supervisor', 'provision', 'inspection', 'session', 'entry', 'output_journal'] + (['windows', 'registry', 'windows_provision', 'journal_security', 'windows_refresh', 'windows_process', 'windows_coordination', 'windows_launcher', 'windows_provision_entry', 'windows_jobs'] if os.name == 'nt' else ['linux_uinput'] if sys.platform == 'linux' else []))]
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',

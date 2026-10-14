@@ -18,7 +18,21 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
+#[cfg(not(target_os = "linux"))]
 pub const QUALIFICATION: &str = "Live vJoy output and layout changes remain disabled until Windows validation is complete. You can use recording previews and inspect installed devices.";
+#[cfg(target_os = "linux")]
+pub const QUALIFICATION: &str = osg_virtual_controller::uinput::REASON;
+pub const BACKEND: &str = osg_virtual_controller::entry::BACKEND;
+fn linux_readiness() -> Value {
+    #[cfg(target_os = "linux")]
+    {
+        osg_virtual_controller::linux_uinput::readiness()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        json!({})
+    }
+}
 pub type Inspector = Arc<dyn Fn() -> Result<Vec<Slot>, String> + Send + Sync>;
 pub struct Service {
     #[cfg(windows)]
@@ -213,7 +227,7 @@ impl Service {
                         self.qualified && osg_virtual_controller::windows_launcher::QUALIFIED
                     );
                 }
-                status["virtualDevices"] = json!({"enabled":settings.value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION});
+                status["virtualDevices"] = json!({"backend":BACKEND,"enabled":settings.value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION});
                 status["deviceHiding"] = json!({"enabled":settings.value.device_hiding});
                 Ok(status)
             }
@@ -222,7 +236,9 @@ impl Service {
                     .as_bool()
                     .ok_or("Enablement must be an explicit boolean.")?;
                 let stop_error = if enabled {
-                    (self.inspector)()?;
+                    if !cfg!(target_os = "linux") {
+                        (self.inspector)()?;
+                    }
                     None
                 } else {
                     let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
@@ -243,8 +259,13 @@ impl Service {
             }
             "mapping_targets_save" => {
                 let profile = self.store()?.load(profile_id()?)?;
-                let bindings = serde_json::from_value(request["bindings"].clone())
-                    .map_err(|e| e.to_string())?;
+                let bindings: Vec<osg_virtual_controller::vjoy::Binding> =
+                    serde_json::from_value(request["bindings"].clone())
+                        .map_err(|e| e.to_string())?;
+                #[cfg(target_os = "linux")]
+                for binding in &bindings {
+                    osg_virtual_controller::uinput::Template::new(binding.clone())?;
+                }
                 self.settings
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
@@ -399,14 +420,30 @@ impl Service {
                 r.simulate(&token, &source, changes)?;
                 Ok(r.status())
             }
-            "mapping_virtual_inspect" => match (self.inspector)() {
-                Ok(slots) => Ok(
-                    json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION,"slots":slots}),
-                ),
-                Err(error) => Ok(
-                    json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"unsupported","qualified":self.qualified,"reason":error.chars().take(512).collect::<String>(),"slots":[]}),
-                ),
-            },
+            "mapping_virtual_inspect" => {
+                if cfg!(target_os = "linux") {
+                    let mut readiness = linux_readiness();
+                    readiness["backend"] = json!(BACKEND);
+                    readiness["enabled"] = json!(
+                        self.settings
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .value
+                            .virtual_devices
+                    );
+                    readiness["slots"] = json!([]);
+                    readiness["limits"] = json!({"axes":8,"buttons":32,"hats":4,"targets":8});
+                    return Ok(readiness);
+                }
+                match (self.inspector)() {
+                    Ok(slots) => Ok(
+                        json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION,"slots":slots}),
+                    ),
+                    Err(error) => Ok(
+                        json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"unsupported","qualified":self.qualified,"reason":error.chars().take(512).collect::<String>(),"slots":[]}),
+                    ),
+                }
+            }
             "mapping_virtual_create" | "mapping_provision_recover" => {
                 if !self.qualified {
                     return Err(QUALIFICATION.into());

@@ -140,6 +140,14 @@ pub struct Position {
 }
 const _: () = assert!(std::mem::size_of::<Position>() == 124);
 pub trait Driver {
+    /// Persisted templates are prepared before acquisition; installed vJoy slots need no setup.
+    fn prepare(&mut self, _bindings: &[Binding]) -> Result<(), String> {
+        Ok(())
+    }
+    /// Creator-handle devices disappear on process exit and must never be recreated for recovery.
+    fn ephemeral(&self) -> bool {
+        false
+    }
     fn check(&mut self) -> Result<(), String>;
     fn inspect(&mut self, slot: u8) -> Result<Slot, String>;
     fn acquire(&mut self, slot: u8) -> Result<(), String>;

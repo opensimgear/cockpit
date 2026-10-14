@@ -156,6 +156,7 @@ impl<D: Driver> Feeder<D> {
                     .into(),
             );
         }
+        self.driver.prepare(&bindings)?;
         self.driver.check()?;
         let mut targets = BTreeSet::new();
         let mut slots = BTreeSet::new();
@@ -244,6 +245,11 @@ impl<D: Driver> Feeder<D> {
             if !targets.insert(&binding.target) || !slots.insert(binding.slot) {
                 return Err("Recovery targets and slots must be unique.".into());
             }
+        }
+        // A fresh worker cannot own a previous creator handle. Recovery must not
+        // recreate an ephemeral device or replay fallback into a new identity.
+        if self.driver.ephemeral() {
+            return Ok(());
         }
         self.driver.check()?;
         let mut errors = Vec::new();

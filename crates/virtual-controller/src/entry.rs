@@ -1,25 +1,33 @@
 //! Private subprocess entry point. The application qualification gate is checked
 //! before constructing a live session; ordinary startup never loads the SDK.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 use crate::vjoy::Driver;
 use crate::{
     session::{Channel, Factory},
     supervisor::Worker,
 };
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 use std::io::{BufRead, BufReader};
 use std::{
     io::{self, Write},
     sync::Arc,
     time::Duration,
 };
+#[cfg(not(target_os = "linux"))]
 pub const ARGUMENT: &str = "--osg-vjoy-feeder";
+#[cfg(target_os = "linux")]
+pub const ARGUMENT: &str = "--osg-uinput-feeder";
+pub const BACKEND: &str = if cfg!(target_os = "linux") {
+    "uinput"
+} else {
+    "vjoy"
+};
 pub fn factory() -> Factory {
     Arc::new(|| {
         let mut worker = Worker::spawn(
             &std::env::current_exe().map_err(|e| e.to_string())?,
             &[ARGUMENT.into()],
-            "vjoy",
+            BACKEND,
             Duration::from_secs(3),
         )?;
         worker.response_timeout(Duration::from_millis(100));
@@ -34,17 +42,17 @@ pub fn helper_main() -> Option<i32> {
     Some(run())
 }
 fn failure(mut output: impl Write, error: &str) -> i32 {
-    let message = serde_json::json!({"ok":false,"backend":"vjoy","protocol":1,"error":error.chars().take(512).collect::<String>()});
+    let message = serde_json::json!({"ok":false,"backend":BACKEND,"protocol":1,"error":error.chars().take(512).collect::<String>()});
     let _ = writeln!(output, "{message}");
     1
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
     driver: D,
     input: R,
     output: W,
 ) -> i32 {
-    match crate::worker::serve(driver, input, output, "vjoy") {
+    match crate::worker::serve(driver, input, output, BACKEND) {
         Ok(()) => 0,
         Err(_) => 1,
     }
@@ -55,7 +63,16 @@ fn run() -> i32 {
         Ok(driver) => serve(driver, BufReader::new(io::stdin()), io::stdout()),
         Err(error) => failure(io::stdout().lock(), &error),
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    match crate::linux_uinput::Native::open() {
+        Ok(backend) => serve(
+            crate::uinput::Output::new(backend),
+            BufReader::new(io::stdin()),
+            io::stdout(),
+        ),
+        Err(error) => failure(io::stdout().lock(), &error),
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         failure(io::stdout().lock(), "vJoy requires Windows.")
     }
@@ -84,6 +101,8 @@ mod tests {
     #[test]
     fn entry_keeps_ordinary_startup_inert_and_reports_worker_failures() {
         assert!(helper_main().is_none());
+        #[cfg(target_os = "linux")]
+        assert_eq!(run(), 1);
         // A test harness is not a feeder; reject it before any reports.
         assert!(factory()().is_err());
         let mut bytes = Vec::new();

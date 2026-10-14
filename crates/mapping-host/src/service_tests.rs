@@ -89,13 +89,17 @@ fn stored_preview_runs_without_optional_drivers_and_keeps_edges() {
     assert_eq!(status["running"], true);
     assert_eq!(status["ready"], true);
     assert_eq!(calls.load(Ordering::Relaxed), 0);
-    assert_eq!(
-        service
-            .request(&json!({"command":"mapping_virtual_inspect"}))
-            .unwrap()["state"],
-        "unsupported"
-    );
-    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    let inspected = service
+        .request(&json!({"command":"mapping_virtual_inspect"}))
+        .unwrap();
+    assert_eq!(inspected["qualified"], false);
+    if cfg!(target_os = "linux") {
+        assert_eq!(inspected["backend"], "uinput");
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    } else {
+        assert_eq!(inspected["state"], "unsupported");
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
     for command in [
         "mapping_virtual_create",
         "mapping_virtual_start",
@@ -187,10 +191,12 @@ fn malformed_requests_and_unavailable_sources_do_not_replace_preview() {
 #[test]
 fn enabling_requires_explicit_inspection_and_target_settings_do_not_activate() {
     let (service, _root, profile, _, calls) = setup();
-    assert!(service
-        .request(&json!({"command":"mapping_virtual_enable","enabled":true}))
-        .is_err());
-    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    let enabled = service.request(&json!({"command":"mapping_virtual_enable","enabled":true}));
+    assert_eq!(enabled.is_ok(), cfg!(target_os = "linux"));
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        usize::from(!cfg!(target_os = "linux"))
+    );
     assert!(service
         .request(&json!({"command":"mapping_virtual_enable","enabled":"yes"}))
         .is_err());
@@ -277,4 +283,60 @@ fn stop_cancels_a_start_waiting_for_its_profile_without_reviving_after_reply() {
         false
     );
     assert!(service.request(&json!({"command":"mapping_assignments_get","profileId":p.id,"role":"left","offset":"0"})).is_err());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn linux_templates_persist_and_limits_are_checked_without_native_creation() {
+    let (service, root, mut profile, _, calls) = setup();
+    let bindings: Vec<osg_virtual_controller::vjoy::Binding> = profile
+        .targets
+        .iter()
+        .enumerate()
+        .map(|(i, t)| osg_virtual_controller::vjoy::Binding {
+            target: t.id.clone(),
+            slot: i as u8 + 1,
+            axes: t
+                .layout
+                .axes
+                .iter()
+                .enumerate()
+                .map(|(i, _)| 0x30 + i as u32)
+                .collect(),
+            layout: t.layout.clone(),
+        })
+        .collect();
+    service
+        .request(
+            &json!({"command":"mapping_targets_save","profileId":profile.id,"bindings":bindings}),
+        )
+        .unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    let restored = crate::settings::Settings::open(Some(root.path().join("local-settings.json")));
+    assert_eq!(restored.value.targets[&profile.id].len(), 2);
+    assert_eq!(
+        service
+            .request(&json!({"command":"mapping_status"}))
+            .unwrap()["virtualDevices"]["backend"],
+        "uinput"
+    );
+    assert_eq!(
+        service
+            .request(&json!({"command":"mapping_virtual_inspect"}))
+            .unwrap()["limits"]["buttons"],
+        32
+    );
+    profile.targets[0].layout.buttons = 33;
+    service.store().unwrap().save(&profile).unwrap();
+    let mut invalid = bindings;
+    invalid[0].layout = profile.targets[0].layout.clone();
+    assert!(service
+        .request(
+            &json!({"command":"mapping_targets_save","profileId":profile.id,"bindings":invalid})
+        )
+        .is_err());
+    assert!(service
+        .request(&json!({"command":"mapping_virtual_start","profileId":profile.id}))
+        .is_err());
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
 }

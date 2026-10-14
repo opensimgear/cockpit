@@ -183,7 +183,7 @@ fn qualified_fixture_requires_opt_in_and_delivers_edges_without_ui_polling() {
     let run = service
         .request(&json!({"command":"mapping_virtual_start","profileId":profile.id}))
         .unwrap();
-    assert_eq!(run["preview"]["mode"], "vjoy");
+    assert_eq!(run["preview"]["mode"], BACKEND);
     for command in [
         "mapping_preview_start",
         "mapping_virtual_start",
@@ -203,7 +203,7 @@ fn qualified_fixture_requires_opt_in_and_delivers_edges_without_ui_polling() {
         service
             .request(&json!({"command":"mapping_status"}))
             .unwrap()["mode"],
-        "vjoy"
+        BACKEND
     );
     let calls = state.lock().unwrap().calls.clone();
     let edges: Vec<_> = calls

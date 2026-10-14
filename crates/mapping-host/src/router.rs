@@ -338,7 +338,7 @@ impl Router {
         }
         if profile.requirements.device_hiding {
             return Err(
-                "This run requires device hiding, which is not available in the vJoy-only backend."
+                "This run requires device hiding, which is not available in a standalone output session."
                     .into(),
             );
         }
@@ -436,7 +436,7 @@ impl Router {
     }
     pub fn status(&self) -> serde_json::Value {
         let engine = self.runtime.engine();
-        json!({"running":engine.is_some_and(|e| e.active()),"ready":engine.is_some_and(|e| e.ready()),"mode":if self.live() { "vjoy" } else { "recording" },"recoveryRequired":self.output.as_ref().is_some_and(|o| o.recovery_required()),"token":self.runtime.token().ok(),"profileId":engine.map(|e| &e.profile().id),"fault":self.fault.as_deref().or_else(|| engine.and_then(|e| e.fault())),"recordingCursor":self.runtime.recording.cursor()})
+        json!({"running":engine.is_some_and(|e| e.active()),"ready":engine.is_some_and(|e| e.ready()),"mode":if self.live() { crate::service::BACKEND } else { "recording" },"recoveryRequired":self.output.as_ref().is_some_and(|o| o.recovery_required()),"token":self.runtime.token().ok(),"profileId":engine.map(|e| &e.profile().id),"fault":self.fault.as_deref().or_else(|| engine.and_then(|e| e.fault())),"recordingCursor":self.runtime.recording.cursor()})
     }
 }
 #[cfg(test)]

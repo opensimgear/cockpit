@@ -40,3 +40,7 @@ pub mod windows_provision_entry;
 pub mod windows_jobs;
 
 pub mod descriptor;
+
+#[cfg(target_os = "linux")]
+pub mod linux_uinput;
+pub mod uinput;
