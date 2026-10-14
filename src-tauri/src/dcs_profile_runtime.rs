@@ -538,9 +538,14 @@ impl Device {
         fresh: bool,
         meter: &mut Meter,
         shared: &Arc<Mutex<Shared>>,
+        cancel: &AtomicBool,
     ) -> Result<(bool, u64), String> {
         let target = &self.prepared.target;
         let state = call(panel, target, "status", json!({}))?;
+        if cancel.load(Ordering::Acquire) {
+            self.release(transport, meter);
+            return Ok((false, 0));
+        }
         let m = module(&state, target, self.prepared.input)?;
         if token(&state, &m) != self.prepared.route {
             self.release(transport, meter);
@@ -566,11 +571,29 @@ impl Device {
             for input in &self.inputs {
                 source(&input.binding, events)?;
             }
-            if fresh && !still_fresh(shared, export.epoch, profile.profile.network.freshness_ms) {
+            if fresh
+                && !still_fresh(
+                    shared,
+                    export.epoch,
+                    profile.profile.network.freshness_ms,
+                    cancel,
+                )
+            {
                 self.release(transport, meter);
                 return Ok((false, events["overflow"].as_u64().unwrap()));
             }
             for input in &mut self.inputs {
+                if fresh
+                    && !still_fresh(
+                        shared,
+                        export.epoch,
+                        profile.profile.network.freshness_ms,
+                        cancel,
+                    )
+                {
+                    self.release(transport, meter);
+                    return Ok((false, events["overflow"].as_u64().unwrap()));
+                }
                 input.baseline(events, fresh, transport, meter)?;
             }
             self.cursor = Some((
@@ -602,12 +625,26 @@ impl Device {
                 source(&input.binding, events)?;
             }
             for event in events["events"].as_array().unwrap() {
-                if !still_fresh(shared, export.epoch, profile.profile.network.freshness_ms) {
+                if !still_fresh(
+                    shared,
+                    export.epoch,
+                    profile.profile.network.freshness_ms,
+                    cancel,
+                ) {
                     self.release(transport, meter);
                     return Ok((false, events["overflow"].as_u64().unwrap()));
                 }
                 meter.events += 1;
                 for input in &mut self.inputs {
+                    if !still_fresh(
+                        shared,
+                        export.epoch,
+                        profile.profile.network.freshness_ms,
+                        cancel,
+                    ) {
+                        self.release(transport, meter);
+                        return Ok((false, events["overflow"].as_u64().unwrap()));
+                    }
                     input.event(
                         event["control"].as_u64().unwrap() as usize,
                         event["pressed"].as_bool().unwrap(),
@@ -617,11 +654,25 @@ impl Device {
                     )?;
                 }
             }
-            if !still_fresh(shared, export.epoch, profile.profile.network.freshness_ms) {
+            if !still_fresh(
+                shared,
+                export.epoch,
+                profile.profile.network.freshness_ms,
+                cancel,
+            ) {
                 self.release(transport, meter);
                 return Ok((false, events["overflow"].as_u64().unwrap()));
             }
             for input in &mut self.inputs {
+                if !still_fresh(
+                    shared,
+                    export.epoch,
+                    profile.profile.network.freshness_ms,
+                    cancel,
+                ) {
+                    self.release(transport, meter);
+                    return Ok((false, events["overflow"].as_u64().unwrap()));
+                }
                 input.axis(events, transport, meter)?;
             }
             self.cursor = Some((stream, events["next"].as_u64().unwrap() as u32));
@@ -635,7 +686,15 @@ impl Device {
         Ok((more, overflow))
     }
 }
-fn still_fresh(shared: &Arc<Mutex<Shared>>, epoch: u64, freshness: u64) -> bool {
+fn still_fresh(
+    shared: &Arc<Mutex<Shared>>,
+    epoch: u64,
+    freshness: u64,
+    cancel: &AtomicBool,
+) -> bool {
+    if cancel.load(Ordering::Acquire) {
+        return false;
+    }
     let shared = shared.lock().unwrap_or_else(|p| p.into_inner());
     shared.export.epoch == epoch
         && shared.export.fresh
@@ -652,6 +711,7 @@ fn apply_output(
     binding: &Output,
     desired: &Value,
     latest: Option<&dyn Fn() -> Value>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(bool, Value), String> {
     let state = call(panel, &prepared.target, "action_describe", json!({}))?;
     let m = module(&state, &prepared.target, prepared.input)?;
@@ -673,6 +733,9 @@ fn apply_output(
     // A slow read can outlive many export updates. Choose the newest desired
     // setter value after reconciliation, before starting its one invocation.
     let desired = latest.map_or_else(|| desired.clone(), |latest| latest());
+    if cancel.is_some_and(|cancel| cancel.load(Ordering::Acquire)) {
+        return Err("The DCS-BIOS profile is stopping; its pending output was discarded.".into());
+    }
     crate::actions::arguments(action, &desired)?;
     if catalogue["states"].as_array().is_some_and(|s| {
         s.iter()
@@ -731,6 +794,9 @@ fn gateway_worker(
             }
             next_poll = now + POLL;
             for device in &mut devices {
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
                 let (export, fresh) = {
                     let shared = shared.lock().unwrap_or_else(|p| p.into_inner());
                     let e = shared.export.clone();
@@ -743,7 +809,7 @@ fn gateway_worker(
                 };
                 let previous = device.prepared.route.clone();
                 let result = device.poll(
-                    &profile, &panel, &transport, &export, fresh, &mut meter, &shared,
+                    &profile, &panel, &transport, &export, fresh, &mut meter, &shared, &cancel,
                 );
                 let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
                 if previous != device.prepared.route {
@@ -799,6 +865,9 @@ fn gateway_worker(
                 }
             }
         }
+        if cancel.load(Ordering::Acquire) {
+            break;
+        }
         // Drain ordered inputs first. At most one blocking output is in flight
         // on this gateway; every other gateway has its own independent worker.
         if backlog {
@@ -829,7 +898,14 @@ fn gateway_worker(
                         .clone()
                 };
                 let started = Instant::now();
-                let result = apply_output(&panel, prepared, &binding, &desired, Some(&latest));
+                let result = apply_output(
+                    &panel,
+                    prepared,
+                    &binding,
+                    &desired,
+                    Some(&latest),
+                    Some(&cancel),
+                );
                 meter.latency(started.elapsed().as_secs_f64() * 1000.0);
                 let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
                 let output = state.outputs.get_mut(&binding.id).unwrap();
@@ -887,7 +963,7 @@ fn gateway_worker(
             .prepared;
         let action = prepared.actions.get(&binding.id).unwrap();
         let result = format_output(binding, None, false, action).and_then(|value| {
-            apply_output(&panel, prepared, binding, &value, None).map(|(_, applied)| applied)
+            apply_output(&panel, prepared, binding, &value, None, None).map(|(_, applied)| applied)
         });
         let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
         let output = state.outputs.get_mut(&binding.id).unwrap();

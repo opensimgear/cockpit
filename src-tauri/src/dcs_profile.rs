@@ -656,7 +656,14 @@ pub(crate) fn format_output(
         };
         let result = match parameter["type"].as_str() {
             Some("boolean") => json!([on]),
-            Some("enum") => json!([if on { "on" } else { "off" }]),
+            Some("enum")
+                if parameter["options"].as_array().is_some_and(|options| {
+                    options.iter().any(|option| option == "on")
+                        && options.iter().any(|option| option == "off")
+                }) =>
+            {
+                json!([if on { "on" } else { "off" }])
+            }
             _ => return Err("Boolean feedback requires a boolean or on/off enum setter.".into()),
         };
         crate::actions::arguments(action, &result)?;
@@ -1375,6 +1382,12 @@ mod tests {
             format_output(binding, Some(&json!(2)), true, &action("boolean", 0, None)).is_err()
         );
         assert!(format_output(binding, Some(&json!(1)), true, &action("string", 7, None)).is_err());
+        let mut incomplete = action("enum", 0, None);
+        for options in [json!(["off"]), json!(["on"])] {
+            incomplete["parameters"][0]["options"] = options;
+            assert!(format_output(binding, None, true, &incomplete).is_err());
+            assert!(format_output(binding, None, false, &incomplete).is_err());
+        }
         let mut unavailable = action("boolean", 0, None);
         unavailable["readable"] = json!(false);
         assert!(format_output(binding, None, true, &unavailable).is_err());

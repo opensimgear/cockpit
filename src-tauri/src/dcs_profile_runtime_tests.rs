@@ -460,6 +460,95 @@ fn start_validates_hid_direct_routes_physical_kinds_and_live_output_capabilities
 }
 
 #[test]
+fn start_requires_both_boolean_enum_states_without_requiring_a_board_specific_action() {
+    let fixture = Fixture::new();
+    let mock = Mock::new();
+    let profile = fixture.compile(
+        vec![],
+        vec![output(
+            "warning",
+            A,
+            "MASTER_CAUTION",
+            "led.caution",
+            "boolean",
+        )],
+        1500,
+    );
+    let target = profile.outputs[0].binding.target.clone();
+    for options in [json!(["off"]), json!(["on"]), json!(["off", "on"])] {
+        mock.device(A, |device| {
+            device.actions[2]["parameters"][0] =
+                json!({"id":"mode","label":"Mode","type":"enum","options":options});
+            device.values.insert("led.caution".into(), json!(["off"]));
+        });
+        assert_eq!(
+            prepare_one(&profile, &mock.panel(), &target).is_ok(),
+            options.as_array().unwrap().len() == 2
+        );
+    }
+    assert!(mock.writes().is_empty());
+}
+
+#[test]
+fn stop_during_an_outstanding_event_read_discards_new_edges_and_only_releases_a_forwarded_press() {
+    for already_pressed in [false, true] {
+        let fixture = Fixture::new();
+        let mock = Mock::new();
+        let mut run = Running::start(fixture.compile(vec![button()], vec![], 1500), &mock);
+        fixture.send(&frame(1, None, None, None));
+        run.armed("ack");
+        if already_pressed {
+            mock.device(A, |device| device.edge(0, true));
+            wait("forwarded press before Stop", || {
+                run.value()["commandsSent"] == 1
+            });
+            fixture.expect(&["UFC_MASTER_CAUTION 1\n"]);
+        }
+        mock.delay_once(A, "events_read", 250);
+        wait("outstanding event read before Stop", || {
+            mock.entered.load(Ordering::Acquire) > 0
+        });
+        mock.device(A, |device| {
+            if already_pressed {
+                device.edge(0, false);
+            }
+            device.edge(0, true);
+            device.edge(0, false);
+        });
+        run.stop();
+        assert_eq!(
+            fixture.commands(),
+            if already_pressed {
+                vec!["UFC_MASTER_CAUTION 0\n".to_owned()]
+            } else {
+                vec![]
+            }
+        );
+        assert_eq!(run.value()["running"], false);
+    }
+}
+
+#[test]
+fn stop_during_output_reconciliation_discards_the_pending_value_and_applies_only_fallback() {
+    let fixture = Fixture::new();
+    let mock = Mock::new();
+    let mut run = Running::start(fixture.compile(vec![], vec![frequency(A)], 1500), &mock);
+    fixture.send(&frame(1, Some("251.000"), None, None));
+    run.applied("frequency", json!(["251.000"]));
+    mock.delay_once(A, "action_describe", 250);
+    fixture.send(&frame(2, Some("260.000"), None, None));
+    wait("outstanding output reconciliation before Stop", || {
+        mock.entered.load(Ordering::Acquire) > 0
+    });
+    run.stop();
+    assert!(!mock
+        .writes()
+        .iter()
+        .any(|(_, _, value)| *value == json!(["260.000"])));
+    assert_eq!(run.value()["outputs"][0]["applied"], json!(["       "]));
+}
+
+#[test]
 fn momentary_held_start_needs_release_then_preserves_short_edges_and_stop_neutral_once() {
     let fixture = Fixture::new();
     let mock = Mock::new();

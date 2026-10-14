@@ -105,6 +105,10 @@ Missing/stale/wrong-aircraft feedback applies configured fallback text or LED
 off. Route/boot/stream changes and event gaps rebaseline current input and
 reconcile current output. Readable state is checked before any new setter after
 an uncertain acknowledgement; one-shot actions cannot be feedback bindings.
+Boolean enum outputs must advertise both on and off before Start. Stop discards
+new commands from outstanding input reads and pending feedback setters; known
+forwarded button presses still receive their neutral cleanup release, and output
+fallbacks remain allowed.
 Gateway diagnostics include bounded pending depth/high-water, coalescing,
 latency mean/p95/max, throughput and maximum input polling interval. Local IPC
 allows 64 KiB profiles and 128 KiB replies; CDC/CAN budgets are unchanged. See the

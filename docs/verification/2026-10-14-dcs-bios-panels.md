@@ -64,7 +64,7 @@ for this workload; no bulk protocol or negotiated batch capability was added.
 
 ## Tests and coverage
 
-All 146 native tests, 79 frontend transport tests, legacy master-caution
+All 149 native tests, 79 frontend transport tests, legacy master-caution
 acceptance and 31 radio scenarios pass. A sustained frozen-counter test holds
 all six inputs disarmed and eight fallbacks stable for 1,001 ms (two freshness
 windows) across 30 continuing frozen frames before checking recovery. CI requires every measured changed
@@ -79,9 +79,9 @@ gates also require more than 70% branches and functions.
 | Device CAN configuration/client | 90.62% / 90.82% |
 | Gateway CDC / configuration forwarder | 96.97% / 90.41% |
 | Cockpit action validation / STM32 action routing | 97.86% / 93.85% |
-| Cockpit DCS parser / legacy runtime | 97.44% / 86.44% |
+| Cockpit DCS parser / legacy runtime | 97.58% / 86.44% |
 | Cockpit event validation | 100% |
-| Cockpit profile core / scheduler | 98.22% / 96.74% |
+| Cockpit profile core / scheduler | 98.23% / 96.03% |
 | Frontend schema 2 profile helpers | 86.30% |
 | Synthetic peer | 100% |
 
@@ -132,6 +132,24 @@ Local artifacts: `.research/milestone3/{native-coverage,action-coverage,ui}` and
 `.research/panel-outputs/cockpit-acceptance/dcs-radio-eoVkz1/`. Raw performance
 and acceptance reports contain diagnostics, samples and final desired/applied
 values. They are ignored build evidence; this record preserves the results.
+
+## Review corrections
+
+Independent review reproduced a Stop request during a delayed event read sending
+a newly returned button pair. Cancellation now gates commands after blocking
+reads, between inputs and before pending output dispatch. Tests cover both an
+unforwarded pair and an already-forwarded held press; only the latter receives
+one neutral cleanup release. Stop during a slow output read discards its pending
+value while allowing the configured fallback.
+
+An enum with only off previously passed Boolean feedback startup validation and
+failed when feedback became true. Formatting and Start now require both on and
+off. Tests reject either missing state before invoking a callback. Frontend
+selector metadata now uses arrays of triples, matching the advertised contract.
+
+The documentation commit was built separately from pending local website edits.
+It preserves the published master-caution anchor; 140-file checks, all 56 pages
+and internal links pass. Hardware/live-DCS qualification remains deferred.
 
 Broader aircraft support, profile import/export, output-only enrollment and
 physical qualification remain [Milestone 4](https://github.com/opensimgear/cockpit/issues/16).
