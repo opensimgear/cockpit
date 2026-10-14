@@ -33,6 +33,7 @@ struct Fake {
     fail: &'static str,
     refreshes: usize,
     attempts: usize,
+    removed: Vec<u8>,
 }
 impl Fake {
     fn new() -> Self {
@@ -42,6 +43,7 @@ impl Fake {
             fail: "",
             refreshes: 0,
             attempts: 0,
+            removed: vec![],
         }
     }
 }
@@ -82,6 +84,7 @@ impl Backend for Fake {
         Ok(())
     }
     fn remove(&mut self, id: u8) -> Result<(), String> {
+        self.removed.push(id);
         self.current.entries.remove(&id);
         Ok(())
     }
@@ -173,4 +176,23 @@ fn recovery_rejects_external_mutations_malformed_journals_and_busy_owners() {
     let mut mismatch = initial();
     mismatch.entries.insert(2, entry(2).unwrap());
     assert!(plan(mismatch, 3).is_err());
+}
+
+#[test]
+fn missing_owned_keys_retire_ownership_and_stale_plans_cannot_restart() {
+    let mut backend = Fake::new();
+    let mut journal = plan(initial(), 2).unwrap();
+    let id = journal.id.clone();
+    assert_eq!(execute(&mut backend, journal.clone()).unwrap().id, id);
+    let mut backend = Fake::new();
+    journal.written = BTreeSet::from([1, 2]);
+    assert!(execute(&mut backend, journal.clone()).is_err());
+    restore(&mut backend, &journal).unwrap();
+    assert_eq!(backend.removed, [2, 1]);
+    journal.committed = true;
+    journal.written.clear();
+    assert!(validate_journal(&journal).is_err());
+    journal.committed = false;
+    journal.id = id.to_uppercase();
+    assert!(validate_journal(&journal).is_err());
 }

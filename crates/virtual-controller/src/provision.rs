@@ -135,7 +135,15 @@ fn same_config(a: &Snapshot, b: &Snapshot) -> bool {
             == b.published.iter().map(|s| s.id).collect::<Vec<_>>()
 }
 pub fn create(backend: &mut impl Backend, target: u8) -> Result<Journal, String> {
-    let mut journal = plan(backend.snapshot()?, target)?;
+    let journal = plan(backend.snapshot()?, target)?;
+    execute(backend, journal)
+}
+/// Execute a validated plan with the operation ID shared by the helper and guardian.
+pub fn execute(backend: &mut impl Backend, mut journal: Journal) -> Result<Journal, String> {
+    validate_journal(&journal)?;
+    if journal.committed || !journal.written.is_empty() {
+        return Err("Provisioning requires a fresh uncommitted plan.".into());
+    }
     backend.journal(&journal)?;
     let result = (|| {
         let current = backend.snapshot()?;
@@ -182,19 +190,19 @@ pub fn create(backend: &mut impl Backend, target: u8) -> Result<Journal, String>
     }
     Ok(journal)
 }
-pub fn restore(backend: &mut impl Backend, journal: &Journal) -> Result<(), String> {
-    if journal.committed {
-        return Err(
-            "Provisioning is committed; preserve the persistent device and inspect its layout."
-                .into(),
-        );
-    }
+/// Validate durable journal intent without loading or mutating a driver.
+pub fn validate_journal(journal: &Journal) -> Result<(), String> {
     if journal.schema != 1
         || journal
             .written
             .iter()
             .any(|s| !journal.owned.contains_key(s))
-        || uuid::Uuid::parse_str(&journal.id).is_err()
+        || uuid::Uuid::parse_str(&journal.id)
+            .ok()
+            .map(|id| id.to_string())
+            .as_deref()
+            != Some(&journal.id)
+        || (journal.committed && journal.written.len() != journal.owned.len())
         || journal.owned.is_empty()
         || journal.owned.len() > 2
         || !journal.owned.contains_key(&journal.target)
@@ -211,6 +219,16 @@ pub fn restore(backend: &mut impl Backend, journal: &Journal) -> Result<(), Stri
             return Err("Journal cannot overwrite pre-existing descriptors.".into());
         }
     }
+    Ok(())
+}
+pub fn restore(backend: &mut impl Backend, journal: &Journal) -> Result<(), String> {
+    if journal.committed {
+        return Err(
+            "Provisioning is committed; preserve the persistent device and inspect its layout."
+                .into(),
+        );
+    }
+    validate_journal(journal)?;
     let actual = backend.snapshot()?;
     if actual.unexpected_parameters
         || actual.ancillary_fingerprint != journal.before.ancillary_fingerprint
@@ -254,9 +272,8 @@ pub fn restore(backend: &mut impl Backend, journal: &Journal) -> Result<(), Stri
         return Err("A pre-existing descriptor changed; preserving current settings.".into());
     }
     for slot in journal.written.iter().rev() {
-        if actual.entries.contains_key(slot) {
-            backend.remove(*slot)?;
-        }
+        // Retire durable ownership even when an external tool already removed the key.
+        backend.remove(*slot)?;
     }
     backend.refresh()?;
     let restored = backend.snapshot()?;

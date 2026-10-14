@@ -111,3 +111,33 @@ Follow-up validation passed on Windows and Linux: all native regressions (230 /
 coverage reached 98.49% router, 98.60% service, 97.62% settings, 93.67% parent
 session, 95.92% worker, 98.10% feeder and 76.32% private entry; every module still
 exceeds 71%. No physical output or layout mutation was performed.
+
+## Native provisioning storage follow-up
+
+The Windows registry backend now reads bounded raw descriptor and ancillary
+snapshots, preserves registry value types, and uses one registry transaction for
+descriptor creation and durable ownership. Recovery removes a descriptor and
+retires its ownership in the same transaction. Missing descriptors also retire
+ownership, preventing an old operation from deleting a later external recreation.
+Canonical operation IDs, immutable plans and committed-state checks reject stale
+or mismatched journal updates. Existing keys are never adopted as newly owned.
+
+This is storage code behind the unchanged feature gate. It is not yet connected
+to the elevated launcher, protected journal-directory setup, driver refresh or
+guardian. Ordinary startup does not construct this backend, change the registry,
+or enable Create. Those implementation tasks and physical qualification remain
+open in #25.
+
+Windows tests use disposable UUID-named HKCU fixtures, never the vJoy driver keys.
+This process's HKCU transaction attempts returned Windows error 6801 (resource
+manager inactive); the tests record that limitation and verify failure without
+descriptor changes. The read-only SYSTEM-hive transaction probe succeeded.
+Neither result proves atomic driver provisioning. On a Windows runner with
+working fixture transactions, the same tests additionally exercise atomic commit,
+rollback, external-key collision and removal/recreation protection.
+
+Final local checks: 32 Windows and 22 Linux virtual-controller tests passed.
+Windows production-line coverage was 96.74% for registry access, 76.19% for native
+provisioning storage and 96.62% for the portable transaction core. Every measured
+module still passes the 71% gate. The Windows Tauri development app rebuilt and
+read-only WebView inspection confirmed the visible gateway UI at port 1420.

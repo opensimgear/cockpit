@@ -9,3 +9,9 @@ pub mod vjoy;
 #[cfg(windows)]
 pub mod windows;
 pub mod worker;
+
+#[cfg(windows)]
+mod registry;
+
+#[cfg(windows)]
+pub mod windows_provision;
