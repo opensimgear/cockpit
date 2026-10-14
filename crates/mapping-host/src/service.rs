@@ -100,6 +100,24 @@ impl Service {
             persistence: Mutex::new(()),
         }
     }
+    fn recovery_path(&self) -> Result<PathBuf, String> {
+        self.root
+            .as_ref()
+            .map(|root| root.join("output-recovery.json"))
+            .ok_or("Local storage is required for live output recovery.".into())
+    }
+    fn recovery_status(&self) -> Value {
+        match self
+            .recovery_path()
+            .and_then(|path| osg_virtual_controller::output_journal::inspect(&path))
+        {
+            Ok(Some(record)) if record.pending() => {
+                json!({"required":true,"phase":record.phase,"token":record.token,"slots":record.bindings.iter().map(|b| b.slot).collect::<Vec<_>>()})
+            }
+            Ok(_) => json!({"required":false}),
+            Err(error) => json!({"required":true,"error":error}),
+        }
+    }
     pub fn handles(command: &str) -> bool {
         matches!(
             command,
@@ -114,6 +132,7 @@ impl Service {
                 | "mapping_virtual_start"
                 | "mapping_virtual_create"
                 | "mapping_virtual_recover"
+                | "mapping_virtual_acknowledge"
                 | "mapping_virtual_enable"
                 | "mapping_targets_save"
                 | "mapping_targets_get"
@@ -149,6 +168,7 @@ impl Service {
                     .status();
                 let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
                 status["storageError"] = json!(settings.error);
+                status["outputRecovery"] = self.recovery_status();
                 status["virtualDevices"] = json!({"enabled":settings.value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION});
                 status["deviceHiding"] = json!({"enabled":settings.value.device_hiding});
                 Ok(status)
@@ -283,12 +303,13 @@ impl Service {
                         .cloned()
                         .ok_or("Assign a local slot to every target before Start.")?;
                     drop(settings);
-                    router.start_live(
+                    router.start_live_with_journal(
                         profile,
                         assignments,
                         snapshot,
                         bindings,
                         self.output_factory.clone(),
+                        Some(self.recovery_path()?),
                     )?
                 } else {
                     router.start(profile, assignments, snapshot)?
@@ -337,12 +358,31 @@ impl Service {
                 ),
             },
             "mapping_virtual_create" => Err(QUALIFICATION.into()),
+            "mapping_virtual_acknowledge" => {
+                if !self.qualified {
+                    return Err(QUALIFICATION.into());
+                }
+                let router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+                if router.live() {
+                    return Err("Stop live output before acknowledging recovery.".into());
+                }
+                let token: RunToken = serde_json::from_value(
+                    request
+                        .get("token")
+                        .cloned()
+                        .ok_or("Inspect the interrupted run first.")?,
+                )
+                .map_err(|_| "Invalid recovery acknowledgement.")?;
+                osg_virtual_controller::output_journal::Store::open(self.recovery_path()?)?
+                    .acknowledge(&token)?;
+                Ok(json!({"acknowledged":true,"outputChanged":false}))
+            }
             "mapping_virtual_recover" => {
                 if !self.qualified {
                     return Err(QUALIFICATION.into());
                 }
                 let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
-                router.recover()?;
+                router.recover_durable(self.output_factory.clone(), self.recovery_path()?)?;
                 Ok(router.status())
             }
             _ => Err("Unknown mapping host command.".into()),

@@ -24,3 +24,5 @@ pub mod windows_refresh;
 
 #[cfg(windows)]
 pub mod windows_process;
+
+pub mod output_journal;

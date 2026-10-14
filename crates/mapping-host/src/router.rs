@@ -318,6 +318,17 @@ impl Router {
         bindings: Vec<osg_virtual_controller::vjoy::Binding>,
         factory: osg_virtual_controller::session::Factory,
     ) -> Result<RunToken, String> {
+        self.start_live_with_journal(profile, assignments, snapshot, bindings, factory, None)
+    }
+    pub fn start_live_with_journal(
+        &mut self,
+        profile: Profile,
+        assignments: Vec<Assignment>,
+        snapshot: stream::Snapshot,
+        bindings: Vec<osg_virtual_controller::vjoy::Binding>,
+        factory: osg_virtual_controller::session::Factory,
+        path: Option<std::path::PathBuf>,
+    ) -> Result<RunToken, String> {
         if self.runtime.token().is_ok()
             || self.output.as_ref().is_some_and(|o| o.recovery_required())
         {
@@ -336,11 +347,12 @@ impl Router {
         let token = candidate.start(profile, assignments, snapshot)?;
         let cursor = self.runtime.recording.cursor();
         // Acquire and confirm every target before replacing the stopped workspace.
-        let output = osg_virtual_controller::session::Session::start(
+        let output = osg_virtual_controller::session::Session::start_with_journal(
             factory,
             token.clone(),
             bindings,
             cursor,
+            path,
         )?;
         let mut reports = Vec::new();
         let mut after = Counter(0);
@@ -376,6 +388,26 @@ impl Router {
             self.fault = Some(error.clone());
             return Err(error);
         }
+        Ok(())
+    }
+    pub fn recover_durable(
+        &mut self,
+        factory: osg_virtual_controller::session::Factory,
+        path: std::path::PathBuf,
+    ) -> Result<(), String> {
+        if self.runtime.token().is_ok() {
+            return Err("Stop mapping before recovery.".into());
+        }
+        if self
+            .output
+            .as_ref()
+            .is_some_and(|o| o.active() || o.recovery_required())
+            || !osg_virtual_controller::output_journal::inspect(&path)?.is_some_and(|r| r.pending())
+        {
+            return self.recover();
+        }
+        osg_virtual_controller::session::Session::recover_stored(factory, path)?;
+        self.fault = None;
         Ok(())
     }
     pub fn recover(&mut self) -> Result<(), String> {

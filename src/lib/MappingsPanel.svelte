@@ -175,6 +175,17 @@
     <div class="mapping-row">{#each profile.targets as target}<label>{target.name}<select bind:value={slotAssignments[target.id]}><option value={undefined}>Choose a matching slot</option>{#each virtual.slots ?? [] as slot}<option value={slot.id} disabled={slot.buttons !== target.layout.buttons || slot.axes.length !== target.layout.axes.length || slot.continuousHats !== target.layout.hats || slot.discreteHats !== 0 || slot.forceFeedback}>Slot {slot.id} · {slot.buttons} buttons, {slot.axes.length} axes, {slot.continuousHats} hats</option>{/each}</select></label>{/each}
     <button class="secondary-button" disabled={busy || profile.targets.some(t => !slotAssignments[t.id])} onclick={() => action(async () => { const bindings = profile.targets.map(target => { const slot = virtual?.slots?.find(s => s.id === slotAssignments[target.id]); if (!slot) throw new Error('Inspect the selected slot first.'); return { target: target.id, slot: slot.id, axes: slot.axes.map(a => a.usage), layout: target.layout }; }); await request({ command: 'mapping_targets_save', profileId: profile.id, bindings }); notice = 'Local slots saved. Activation will recheck the actual layouts.'; })}>Save target slots</button></div>
   {/if}
+  {#if status.outputRecovery?.required}
+    <div class="notice" role="status">
+      <strong>Interrupted virtual output needs attention.</strong>
+      {#if status.outputRecovery.error}
+        <p>{status.outputRecovery.error}</p>
+      {:else}
+        <p>Inspect vJoy slots {status.outputRecovery.slots?.join(', ')} before starting another live mapping.
+        {status.outputRecovery.phase === 'confirmed' ? 'The previous run confirmed ownership; recovery remains subject to driver qualification.' : 'The previous operation was interrupted before its outcome was confirmed. No output will be sent automatically.'}</p>
+      {/if}
+    </div>
+  {/if}
   <div class="mapping-row"><button class="secondary-button" disabled title="Windows layout validation is incomplete">Create virtual controller</button><button class="secondary-button" disabled title="Windows output validation is incomplete">Start live output</button><button class="secondary-button" disabled title="Windows recovery validation is incomplete">Recover virtual output</button></div>
 </section>
 <style>

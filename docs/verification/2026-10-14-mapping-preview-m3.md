@@ -201,3 +201,55 @@ coverage. These are building blocks for the guardian; the elevated launcher,
 cancellation coordination, guardian entry and durable whole-app output recovery
 still require integration and qualification. No registry provisioning, PnP
 refresh or live virtual output was performed during these checks.
+## Refresh recovery fence, 15 October
+
+Commit beee690 distinguishes confirmed refresh-child exit from an uncertain
+termination or wait failure. Before launching refresh, the protected operation
+journal flushes a pending marker. Only confirmed child exit clears it. An
+uncertain result or helper death preserves that marker and blocks descriptor
+creation/removal, journal advancement and another refresh. Recovery cannot race
+an unconfirmed PnP child; the ambiguous operation requires explicit inspection.
+
+Fault injection covers failed termination/waits, confirmed failure and uncertain
+exit. Disposable registry fixtures verify the durable fence and corrupt-marker
+refusal. All 44 Windows and 23 Linux virtual-controller tests passed at that
+checkpoint. Windows refresh coverage was 93.23% and native provisioning storage
+78.64%. No PnP restart or driver mutation was executed.
+
+## Durable output recovery, 15 October
+
+Live session construction now writes bounded local intent before acquisition,
+records ownership only after the feeder acknowledges Start, and records release
+intent before Stop or recovery. Atomic replacement, file synchronization and an
+OS file lock protect the record; external edits are preserved as conflicts.
+Ordinary startup only inspects existing records and never acquires or resets a
+device. This uses Rust 1.90's standard file locking:
+https://doc.rust-lang.org/std/fs/struct.File.html#method.try_lock
+
+An explicit recovery request after restart can send fallback for a previously
+confirmed run, subject to fresh FREE ownership and exact-layout checks in the
+feeder. It never restarts mappings. Interrupted Start/release acknowledgements
+remain ambiguous; a separate exact-run acknowledgement clears the record without
+touching output. Both actions remain behind the unchanged qualification gate.
+Mappings shows pending/corrupt recovery status while recording previews remain
+available. A new live run cannot replace unresolved recovery intent.
+
+Tests exercise real process exit without destructors, OS lock release, competing
+sessions, corrupt/oversized records, external changes, lost Start acknowledgement,
+Stop/recovery ordering, restart fallback and no-output ambiguous acknowledgement.
+They also verify that ordinary startup creates no recovery files and cannot
+activate the gated recovery actions. The Windows Tauri WebView remained visible
+and responsive with the existing gateway/device workspace.
+
+All 50 Windows and 30 Linux virtual-controller tests passed; Windows mapping-host
+tests passed 15 checks (the earlier 14-check suite also passed on Linux), frontend
+type checking passed, and all 145 transport tests passed. Full local Windows
+desktop regression passed 288 library tests and the framing test; three existing
+live external-driver/game checks were ignored. The local checkout also contained
+unrelated simulator work, which is not included in this checkpoint.
+
+Production-line coverage: output journal 97.83%, session 91.53%, router 95.26%,
+service 98.12%; every measured module exceeds 71%. Actual driver/process-loss,
+game-binding and loaded timing qualification remains open. Elevated provisioning
+launch, cancellation/guardian integration and its physical qualification still
+remain to be completed. Create/live output/recovery stay disabled.

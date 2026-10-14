@@ -1,4 +1,5 @@
 //! One owned feeder process per live run, independent from UI polling.
+use crate::output_journal::{Phase, Store};
 use crate::{
     feeder::{Message, RENEW_US},
     supervisor::Worker,
@@ -8,7 +9,7 @@ use osg_mapping::{
     engine::{Counter, RunToken},
     runtime::RecordingSink,
 };
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 pub trait Channel: Send {
     fn request(&mut self, message: &Message) -> Result<(), String>;
@@ -37,6 +38,7 @@ pub struct Session {
     renewal: u64,
     renewed: Instant,
     recovery_required: bool,
+    journal: Option<Store>,
 }
 impl Session {
     pub fn start(
@@ -45,7 +47,28 @@ impl Session {
         bindings: Vec<Binding>,
         cursor: Counter,
     ) -> Result<Self, String> {
-        let mut worker = factory()?;
+        Self::start_with_journal(factory, token, bindings, cursor, None)
+    }
+    pub fn start_with_journal(
+        factory: Factory,
+        token: RunToken,
+        bindings: Vec<Binding>,
+        cursor: Counter,
+        path: Option<PathBuf>,
+    ) -> Result<Self, String> {
+        let mut journal = path.map(Store::open).transpose()?;
+        if let Some(store) = &mut journal {
+            store.begin(token.clone(), bindings.clone())?;
+        }
+        let mut worker = match factory() {
+            Ok(worker) => worker,
+            Err(error) => {
+                if let Some(store) = &mut journal {
+                    store.transition(Phase::Clean)?;
+                }
+                return Err(error);
+            }
+        };
         if let Err(error) = worker.request(&Message::Start {
             token: token.clone(),
             bindings: bindings.clone(),
@@ -57,7 +80,24 @@ impl Session {
                 "Feeder activation failed: {error}. Inspect target ownership before retrying."
             ));
         }
+        if let Some(store) = &mut journal {
+            if let Err(error) = store.transition(Phase::Confirmed) {
+                // Start was acknowledged, but ownership could not be saved. Stop
+                // immediately; never return a running session without its record.
+                if worker
+                    .request(&Message::Stop {
+                        token: token.clone(),
+                    })
+                    .is_ok()
+                {
+                    let _ = store.transition(Phase::Clean);
+                }
+                worker.terminate();
+                return Err(format!("Unable to persist output ownership: {error}"));
+            }
+        }
         Ok(Self {
+            journal,
             factory,
             worker: Some(worker),
             token,
@@ -67,6 +107,39 @@ impl Session {
             renewed: Instant::now(),
             recovery_required: false,
         })
+    }
+    /// Explicit restart recovery requires a previously acknowledged run.
+    /// Intent/release gaps require inspection and explicit no-output acknowledgement.
+    pub fn recover_stored(factory: Factory, path: PathBuf) -> Result<(), String> {
+        let store = Store::open(path)?;
+        let record = store
+            .record()
+            .cloned()
+            .ok_or("No interrupted output is recorded.")?;
+        if record.phase != Phase::Confirmed {
+            return Err("Output ownership is ambiguous or already clean; inspect it before acknowledging recovery.".into());
+        }
+        let mut session = Self {
+            factory,
+            worker: None,
+            token: record.token,
+            bindings: record.bindings,
+            cursor: Counter(0),
+            renewal: 0,
+            renewed: Instant::now(),
+            recovery_required: true,
+            journal: Some(store),
+        };
+        session.recover()
+    }
+    fn persist_phase(&mut self, phase: Phase) -> Result<(), String> {
+        if let Some(store) = &mut self.journal {
+            store.transition(phase)?;
+        }
+        if phase == Phase::Clean {
+            self.journal = None;
+        }
+        Ok(())
     }
     pub fn active(&self) -> bool {
         self.worker.is_some()
@@ -172,12 +245,17 @@ impl Session {
             session: uuid::Uuid::new_v4().to_string(),
             generation: Counter(1),
         };
+        if let Err(error) = self.persist_phase(Phase::Releasing) {
+            worker.terminate();
+            return Err(error);
+        }
         let result = worker.request(&Message::Recover {
             token,
             bindings: self.bindings.clone(),
         });
         worker.terminate();
         if result.is_ok() {
+            self.persist_phase(Phase::Clean)?;
             self.recovery_required = false;
         }
         result
@@ -186,6 +264,11 @@ impl Session {
         if !self.active() {
             return Ok(());
         }
+        if let Err(error) = self.persist_phase(Phase::Releasing) {
+            self.terminate();
+            self.recovery_required = true;
+            return Err(error);
+        }
         let result = self.send(Message::Stop {
             token: self.token.clone(),
         });
@@ -193,6 +276,9 @@ impl Session {
             return Err(self.fail(error));
         }
         self.terminate();
+        self.recovery_required = true;
+        self.persist_phase(Phase::Clean)?;
+        self.recovery_required = false;
         Ok(())
     }
 }

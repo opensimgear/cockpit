@@ -340,3 +340,94 @@ fn disabling_stays_disabled_when_stop_recovery_reports_a_failure() {
     );
     service.shutdown();
 }
+
+#[test]
+fn restart_status_recovery_and_ambiguous_acknowledgement_never_resume_mapping() {
+    use osg_virtual_controller::output_journal::{Phase, Store as RecoveryStore};
+    let (service, root, profile, _, state) = setup();
+    let path = root.path().join("output-recovery.json");
+    let bindings = service.settings.lock().unwrap().value.targets[&profile.id].clone();
+    let run = RunToken {
+        session: uuid::Uuid::new_v4().to_string(),
+        generation: Counter(1),
+    };
+    let mut journal = RecoveryStore::open(path.clone()).unwrap();
+    journal.begin(run.clone(), bindings.clone()).unwrap();
+    drop(journal);
+    let status = service
+        .request(&json!({"command":"mapping_status"}))
+        .unwrap();
+    assert_eq!(status["outputRecovery"]["phase"], "intent");
+    assert!(service
+        .request(&json!({"command":"mapping_virtual_recover"}))
+        .is_err());
+    assert!(service
+        .request(&json!({"command":"mapping_virtual_acknowledge"}))
+        .is_err());
+    assert!(service
+        .request(&json!({"command":"mapping_virtual_acknowledge","token":{}}))
+        .is_err());
+    assert_eq!(state.lock().unwrap().spawns, 0);
+    service
+        .request(&json!({"command":"mapping_preview_start","profileId":profile.id}))
+        .unwrap();
+    service.request(&json!({"command":"mapping_stop"})).unwrap();
+    service
+        .request(&json!({"command":"mapping_virtual_acknowledge","token":run}))
+        .unwrap();
+    let mut journal = RecoveryStore::open(path.clone()).unwrap();
+    journal.begin(run.clone(), bindings).unwrap();
+    journal.transition(Phase::Confirmed).unwrap();
+    drop(journal);
+    service
+        .request(&json!({"command":"mapping_virtual_recover"}))
+        .unwrap();
+    let status = service
+        .request(&json!({"command":"mapping_status"}))
+        .unwrap();
+    assert_eq!(status["running"], false);
+    assert_eq!(status["outputRecovery"]["required"], false);
+    assert!(state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .any(|c| c == "submit:1:0"));
+    std::fs::write(&path, b"corrupt").unwrap();
+    assert!(service
+        .request(&json!({"command":"mapping_status"}))
+        .unwrap()["outputRecovery"]["error"]
+        .is_string());
+    service
+        .request(&json!({"command":"mapping_preview_start","profileId":profile.id}))
+        .unwrap();
+    service.shutdown();
+}
+
+#[test]
+fn ordinary_startup_keeps_restart_recovery_and_acknowledgement_behind_qualification() {
+    let root = tempfile::tempdir().unwrap();
+    let service = Service::new(
+        Arc::new(ControllerService::new(None, false)),
+        Some(root.path().into()),
+        Arc::new(|| panic!("no inspection on recovery gate")),
+    );
+    for command in [
+        "mapping_virtual_recover",
+        "mapping_virtual_acknowledge",
+        "mapping_virtual_start",
+    ] {
+        assert_eq!(
+            service.request(&json!({"command":command})).unwrap_err(),
+            QUALIFICATION
+        );
+    }
+    assert_eq!(
+        service
+            .request(&json!({"command":"mapping_status"}))
+            .unwrap()["outputRecovery"]["required"],
+        false
+    );
+    assert!(!root.path().join("output-recovery.json").exists());
+    assert!(!root.path().join("output-recovery.lock").exists());
+}

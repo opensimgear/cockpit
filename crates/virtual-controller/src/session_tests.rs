@@ -9,6 +9,7 @@ struct State {
     dead: bool,
     fail: &'static str,
     fail_spawn: bool,
+    observe: Option<std::path::PathBuf>,
 }
 struct Child {
     state: Arc<Mutex<State>>,
@@ -17,6 +18,16 @@ struct Child {
 impl Channel for Child {
     fn request(&mut self, message: &Message) -> Result<(), String> {
         let mut state = self.state.lock().unwrap();
+        if let Some(path) = &state.observe {
+            let phase = crate::output_journal::inspect(path).unwrap().unwrap().phase;
+            match message {
+                Message::Start { .. } => assert_eq!(phase, Phase::Intent),
+                Message::Stop { .. } | Message::Recover { .. } => {
+                    assert_eq!(phase, Phase::Releasing)
+                }
+                _ => assert_eq!(phase, Phase::Confirmed),
+            }
+        }
         state.messages.push(message.clone());
         let command = match message {
             Message::Start { .. } => "start",
@@ -249,4 +260,146 @@ fn unresolved_recovery_is_visible_and_drop_stops_owned_run() {
         state.lock().unwrap().messages.last(),
         Some(Message::Stop { .. })
     ));
+}
+
+#[test]
+fn durable_activation_precedes_driver_calls_and_clean_stop_allows_a_new_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let (factory, state) = factory();
+    state.lock().unwrap().observe = Some(path.clone());
+    let run = token();
+    let mut session = Session::start_with_journal(
+        factory.clone(),
+        run.clone(),
+        vec![crate::vjoy::tests::binding()],
+        Counter(0),
+        Some(path.clone()),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::output_journal::inspect(&path)
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Confirmed
+    );
+    session.poll(&recording(&run, 1)).unwrap();
+    assert!(Session::start_with_journal(
+        factory.clone(),
+        token(),
+        vec![crate::vjoy::tests::binding()],
+        Counter(0),
+        Some(path.clone())
+    )
+    .is_err());
+    session.stop().unwrap();
+    assert_eq!(
+        crate::output_journal::inspect(&path)
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Clean
+    );
+    drop(session);
+    let mut session = Session::start_with_journal(
+        factory.clone(),
+        token(),
+        vec![crate::vjoy::tests::binding()],
+        Counter(0),
+        Some(path.clone()),
+    )
+    .unwrap();
+    state.lock().unwrap().dead = true;
+    assert!(session.poll(&RecordingSink::default()).is_err());
+    assert!(!session.recovery_required()); // Confirmed ownership allowed fallback.
+    assert_eq!(
+        crate::output_journal::inspect(&path)
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Clean
+    );
+}
+#[test]
+fn lost_start_acknowledgement_and_external_storage_changes_never_guess_ownership() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let (factory, state) = factory();
+    state.lock().unwrap().fail = "start";
+    assert!(Session::start_with_journal(
+        factory.clone(),
+        token(),
+        vec![crate::vjoy::tests::binding()],
+        Counter(0),
+        Some(path.clone())
+    )
+    .is_err());
+    let record = crate::output_journal::inspect(&path).unwrap().unwrap();
+    assert_eq!(record.phase, Phase::Intent);
+    assert!(Session::recover_stored(factory.clone(), path.clone()).is_err());
+    assert_eq!(state.lock().unwrap().spawned, 1);
+    Store::open(path.clone())
+        .unwrap()
+        .acknowledge(&record.token)
+        .unwrap();
+    state.lock().unwrap().fail = "";
+    state.lock().unwrap().fail_spawn = true;
+    assert!(Session::start_with_journal(
+        factory.clone(),
+        token(),
+        vec![crate::vjoy::tests::binding()],
+        Counter(0),
+        Some(path.clone())
+    )
+    .is_err());
+    assert_eq!(
+        crate::output_journal::inspect(&path)
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Clean
+    );
+    state.lock().unwrap().fail_spawn = false;
+    let mut session = Session::start_with_journal(
+        factory.clone(),
+        token(),
+        vec![crate::vjoy::tests::binding()],
+        Counter(0),
+        Some(path.clone()),
+    )
+    .unwrap();
+    std::fs::write(&path, b"external").unwrap();
+    assert!(session.stop().is_err());
+    assert!(session.recovery_required());
+    assert!(!session.active());
+    assert!(session.recover().is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+}
+#[test]
+fn restart_recovery_sends_only_fallback_and_refuses_ambiguous_or_missing_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let (factory, state) = factory();
+    assert!(Session::recover_stored(factory.clone(), path.clone()).is_err());
+    let mut store = Store::open(path.clone()).unwrap();
+    store
+        .begin(token(), vec![crate::vjoy::tests::binding()])
+        .unwrap();
+    store.transition(Phase::Confirmed).unwrap();
+    drop(store);
+    state.lock().unwrap().observe = Some(path.clone());
+    Session::recover_stored(factory.clone(), path.clone()).unwrap();
+    assert!(matches!(
+        state.lock().unwrap().messages.as_slice(),
+        [Message::Recover { .. }]
+    ));
+    assert_eq!(
+        crate::output_journal::inspect(&path)
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Clean
+    );
+    assert!(Session::recover_stored(factory.clone(), path).is_err());
 }
