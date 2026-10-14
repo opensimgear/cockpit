@@ -11,7 +11,7 @@ use std::{
 
 const COMMAND: &str = "UFC_MASTER_CAUTION";
 const FEEDBACK: &str = "MASTER_CAUTION";
-const MAX_DOCUMENT: u64 = 8 * 1024 * 1024;
+pub(crate) const MAX_DOCUMENT: u64 = 8 * 1024 * 1024;
 const MAX_FRAME: usize = 131_072;
 const CONFIG_ERROR: &str = "Invalid DCS-BIOS configuration.";
 const CATALOGUE_ERROR: &str = "The installed DCS-BIOS catalogue is incompatible or malformed.";
@@ -65,7 +65,67 @@ fn port(value: &Value, key: &str, default: u16) -> Result<u16, String> {
         .map(|n| n as u16)
         .ok_or(CONFIG_ERROR.into())
 }
-fn read_json(path: &Path, max: u64) -> Result<Value, String> {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Network {
+    pub command_host: Ipv4Addr,
+    pub command_port: u16,
+    pub listen_address: Ipv4Addr,
+    pub listen_port: u16,
+    pub multicast_group: Option<Ipv4Addr>,
+    pub multicast_interface: Ipv4Addr,
+    pub freshness_ms: u64,
+}
+impl Network {
+    pub fn parse(value: &Value) -> Result<Self, String> {
+        let group = value
+            .get("multicastGroup")
+            .map_or(Some("239.255.50.10"), Value::as_str)
+            .ok_or(CONFIG_ERROR)?;
+        let multicast_group = if group.is_empty() {
+            None
+        } else {
+            let group: Ipv4Addr = group.parse().map_err(|_| CONFIG_ERROR)?;
+            if !group.is_multicast() {
+                return Err(CONFIG_ERROR.into());
+            }
+            Some(group)
+        };
+        let command_host = address(value, "commandHost", "127.0.0.1")?;
+        let listen_address = address(value, "listenAddress", "0.0.0.0")?;
+        let multicast_interface = address(value, "multicastInterface", "127.0.0.1")?;
+        if command_host.is_unspecified()
+            || command_host.is_multicast()
+            || command_host.is_broadcast()
+            || listen_address.is_multicast()
+            || listen_address.is_broadcast()
+            || multicast_interface.is_multicast()
+            || multicast_interface.is_broadcast()
+        {
+            return Err(CONFIG_ERROR.into());
+        }
+        let freshness_ms = value
+            .get("freshnessMs")
+            .map_or(Some(1500), Value::as_u64)
+            .filter(|v| (100..=10_000).contains(v))
+            .ok_or(CONFIG_ERROR)?;
+        Ok(Self {
+            command_host,
+            command_port: port(value, "commandPort", 7778)?,
+            listen_address,
+            listen_port: port(value, "listenPort", 5010)?,
+            multicast_group,
+            multicast_interface,
+            freshness_ms,
+        })
+    }
+    pub fn value(&self) -> Value {
+        json!({"commandHost":self.command_host.to_string(),"commandPort":self.command_port,
+            "listenAddress":self.listen_address.to_string(),"listenPort":self.listen_port,
+            "multicastGroup":self.multicast_group.map(|g|g.to_string()).unwrap_or_default(),
+            "multicastInterface":self.multicast_interface.to_string(),"freshnessMs":self.freshness_ms})
+    }
+}
+pub(crate) fn read_json(path: &Path, max: u64) -> Result<Value, String> {
     let file = fs::File::open(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
     let mut bytes = Vec::new();
     file.take(max + 1)
@@ -101,50 +161,20 @@ impl Config {
         {
             return Err(CONFIG_ERROR.into());
         }
-        let group = value
-            .get("multicastGroup")
-            .map_or(Some("239.255.50.10"), Value::as_str)
-            .ok_or(CONFIG_ERROR)?;
-        let multicast_group = if group.is_empty() {
-            None
-        } else {
-            let group: Ipv4Addr = group.parse().map_err(|_| CONFIG_ERROR)?;
-            if !group.is_multicast() {
-                return Err(CONFIG_ERROR.into());
-            }
-            Some(group)
-        };
-        let command_host = address(value, "commandHost", "127.0.0.1")?;
-        let listen_address = address(value, "listenAddress", "0.0.0.0")?;
-        let multicast_interface = address(value, "multicastInterface", "127.0.0.1")?;
-        if command_host.is_unspecified()
-            || command_host.is_multicast()
-            || command_host.is_broadcast()
-            || listen_address.is_multicast()
-            || listen_address.is_broadcast()
-            || multicast_interface.is_multicast()
-            || multicast_interface.is_broadcast()
-        {
-            return Err(CONFIG_ERROR.into());
-        }
-        let freshness_ms = value
-            .get("freshnessMs")
-            .map_or(Some(1500), Value::as_u64)
-            .filter(|v| (100..=10_000).contains(v))
-            .ok_or(CONFIG_ERROR)?;
+        let network = Network::parse(value)?;
         Ok(Self {
             catalogue_path: path.into(),
             gateway_id: gateway.to_ascii_lowercase(),
             module_id: module.to_ascii_lowercase(),
             button,
             led_action_id: led.into(),
-            command_host,
-            command_port: port(value, "commandPort", 7778)?,
-            listen_address,
-            listen_port: port(value, "listenPort", 5010)?,
-            multicast_group,
-            multicast_interface,
-            freshness_ms,
+            command_host: network.command_host,
+            command_port: network.command_port,
+            listen_address: network.listen_address,
+            listen_port: network.listen_port,
+            multicast_group: network.multicast_group,
+            multicast_interface: network.multicast_interface,
+            freshness_ms: network.freshness_ms,
         })
     }
     pub fn value(&self) -> Value {
@@ -154,6 +184,17 @@ impl Config {
             "listenAddress":self.listen_address.to_string(),"listenPort":self.listen_port,
             "multicastGroup":self.multicast_group.map(|g|g.to_string()).unwrap_or_default(),
             "multicastInterface":self.multicast_interface.to_string(),"freshnessMs":self.freshness_ms})
+    }
+    pub(crate) fn network(&self) -> Network {
+        Network {
+            command_host: self.command_host,
+            command_port: self.command_port,
+            listen_address: self.listen_address,
+            listen_port: self.listen_port,
+            multicast_group: self.multicast_group,
+            multicast_interface: self.multicast_interface,
+            freshness_ms: self.freshness_ms,
+        }
     }
     pub fn load(path: &Path) -> Result<Option<Self>, String> {
         match fs::metadata(path) {
@@ -203,14 +244,14 @@ impl Config {
 }
 
 #[derive(Clone, Debug)]
-struct IntegerOutput {
-    address: u16,
+pub(crate) struct IntegerOutput {
+    pub(crate) address: u16,
     mask: u16,
     shift: u8,
-    maximum: u16,
+    pub(crate) maximum: u16,
 }
 impl IntegerOutput {
-    fn parse(value: &Value) -> Result<Self, String> {
+    pub(crate) fn parse(value: &Value) -> Result<Self, String> {
         let address = value["address"]
             .as_u64()
             .filter(|v| *v <= 65534 && *v % 2 == 0)
@@ -241,14 +282,14 @@ impl IntegerOutput {
             maximum,
         })
     }
-    fn read(&self, memory: &Memory) -> Option<u16> {
+    pub(crate) fn read(&self, memory: &Memory) -> Option<u16> {
         let offset = self.address as usize;
         (memory.valid[offset] && memory.valid[offset + 1]).then(|| {
             (u16::from_le_bytes([memory.bytes[offset], memory.bytes[offset + 1]]) & self.mask)
                 >> self.shift
         })
     }
-    fn read_blocks(&self, blocks: &[Block]) -> Option<u16> {
+    pub(crate) fn read_blocks(&self, blocks: &[Block]) -> Option<u16> {
         blocks.iter().rev().find_map(|block| {
             let offset = (self.address as usize).checked_sub(block.address as usize)?;
             let bytes = block.data.get(offset..offset + 2)?;
@@ -256,7 +297,7 @@ impl IntegerOutput {
         })
     }
 }
-fn control<'a>(document: &'a Value, id: &str) -> Result<&'a Value, String> {
+pub(crate) fn control<'a>(document: &'a Value, id: &str) -> Result<&'a Value, String> {
     let categories = document.as_object().ok_or(CATALOGUE_ERROR)?;
     let mut found = None;
     let mut count = 0;
@@ -285,11 +326,11 @@ fn sole_output(control: &Value) -> Result<&Value, String> {
 }
 #[derive(Clone, Debug)]
 pub struct Catalogue {
-    aircraft_names: HashSet<String>,
-    aircraft_address: u16,
-    aircraft_length: usize,
+    pub(crate) aircraft_names: HashSet<String>,
+    pub(crate) aircraft_address: u16,
+    pub(crate) aircraft_length: usize,
     feedback: IntegerOutput,
-    counter: IntegerOutput,
+    pub(crate) counter: IntegerOutput,
 }
 impl Catalogue {
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -436,18 +477,18 @@ pub fn validate_led(catalogue: &Value, action_id: &str) -> Result<LedBinding, St
 }
 
 #[derive(Debug)]
-struct Block {
-    address: u16,
-    data: Vec<u8>,
+pub(crate) struct Block {
+    pub(crate) address: u16,
+    pub(crate) data: Vec<u8>,
 }
 #[derive(Debug)]
-enum ExportEvent {
+pub(crate) enum ExportEvent {
     Frame(Vec<Block>),
     Reset,
 }
 /// Sync detection retains a possible marker across datagram boundaries. No
 /// address-space allocation or block can grow beyond the 16-bit wire bounds.
-struct Parser {
+pub(crate) struct Parser {
     counter_address: u16,
     sync: usize,
     active: bool,
@@ -459,7 +500,7 @@ struct Parser {
     frame_bytes: usize,
 }
 impl Parser {
-    fn new(counter_address: u16) -> Self {
+    pub(crate) fn new(counter_address: u16) -> Self {
         Self {
             counter_address,
             sync: 0,
@@ -472,7 +513,7 @@ impl Parser {
             frame_bytes: 0,
         }
     }
-    fn discard(&mut self) {
+    pub(crate) fn discard(&mut self) {
         self.active = false;
         self.header.clear();
         self.remaining = 0;
@@ -521,7 +562,7 @@ impl Parser {
             }
         }
     }
-    fn feed(&mut self, bytes: &[u8]) -> Vec<ExportEvent> {
+    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Vec<ExportEvent> {
         let mut events = Vec::new();
         for &byte in bytes {
             if byte == 0x55 {
@@ -553,36 +594,38 @@ impl Parser {
     }
 }
 #[derive(Clone)]
-struct Memory {
-    bytes: Vec<u8>,
-    valid: Vec<bool>,
+pub(crate) struct Memory {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) valid: Vec<bool>,
 }
 impl Memory {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             bytes: vec![0; 65536],
             valid: vec![false; 65536],
         }
     }
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.valid.fill(false);
     }
-    fn apply(&mut self, blocks: &[Block]) {
+    pub(crate) fn apply(&mut self, blocks: &[Block]) {
         for block in blocks {
             let range = block.address as usize..block.address as usize + block.data.len();
             self.bytes[range.clone()].copy_from_slice(&block.data);
             self.valid[range].fill(true);
         }
     }
-    fn string(&self, address: u16, length: usize) -> Option<String> {
+    pub(crate) fn string(&self, address: u16, length: usize) -> Option<String> {
         let start = address as usize;
         if !self.valid[start..start + length].iter().all(|v| *v) {
             return None;
         }
         let bytes = &self.bytes[start..start + length];
-        let end = bytes.iter().position(|b| *b == 0)?;
+        // DCS-BIOS StringAllocation writes a fixed byte width, padding unused
+        // characters with spaces. A NUL is accepted for older peers, not required.
+        let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
         let text = std::str::from_utf8(&bytes[..end]).ok()?;
-        (!text.chars().any(char::is_control)).then(|| text.to_owned())
+        (!text.chars().any(char::is_control)).then(|| text.trim_end_matches(' ').to_owned())
     }
 }
 
@@ -733,14 +776,18 @@ impl Session {
                     // name without incrementing the counter, so still honor it.
                     let mut candidate = self.memory.clone();
                     candidate.apply(&blocks);
-                    let aircraft = candidate
-                        .string(
-                            self.catalogue.aircraft_address,
-                            self.catalogue.aircraft_length,
-                        )
+                    let observed_aircraft = candidate.string(
+                        self.catalogue.aircraft_address,
+                        self.catalogue.aircraft_length,
+                    );
+                    let aircraft = observed_aircraft
+                        .clone()
                         .filter(|name| !name.is_empty() && name != "NONE");
                     if advance == Some(0) {
-                        if self.aircraft.is_some() && aircraft.is_none() {
+                        if self.aircraft.is_some()
+                            && observed_aircraft.is_some()
+                            && aircraft.is_none()
+                        {
                             self.aircraft = None;
                             intents.extend(self.invalidate());
                         }
@@ -781,7 +828,12 @@ impl Session {
             .last_frame
             .is_some_and(|t| now_ms.saturating_sub(t) > self.config.freshness_ms)
         {
+            // Remember the last accepted counter across silence. A frozen
+            // exporter must not become fresh again by repeating that counter
+            // after stale values and the input baseline have been cleared.
+            let counter = self.counter;
             intents.extend(self.invalidate());
+            self.counter = counter;
             self.parser.discard();
             self.parser.sync = 0;
         }
@@ -850,7 +902,7 @@ impl Session {
             "feedbackAgeMs":self.last_frame.map(|t|now_ms.saturating_sub(t)),
             "status":if self.command_uncertain {"error"} else if fresh {"active"} else if self.last_frame.is_some() || self.aircraft.is_some() {"stale"} else {"waiting"},
             "error":self.error,"eventOverflow":self.event_overflow,"commandsSent":self.commands_sent,
-            "ledValue":self.led_value,"needsBaseline":self.needs_baseline(),"armed":self.armed,
+            "ledValue":self.led_value,"needsBaseline":self.needs_baseline(),"armed":self.armed&&fresh,
             "commandUncertain":self.command_uncertain,"malformedFrames":self.malformed_frames})
     }
 }
@@ -862,6 +914,9 @@ pub struct Transport {
 }
 impl Transport {
     pub fn open(config: &Config) -> Result<Self, String> {
+        Self::open_network(&config.network())
+    }
+    pub(crate) fn open_network(config: &Network) -> Result<Self, String> {
         let receiver = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::DGRAM,
@@ -916,6 +971,28 @@ impl Transport {
         if !matches!(command, "UFC_MASTER_CAUTION 0\n" | "UFC_MASTER_CAUTION 1\n") {
             return Err("Invalid DCS-BIOS master-caution command.".into());
         }
+        self.send_bytes(command)
+    }
+    pub(crate) fn send_control(&self, command: &str, argument: &str) -> Result<(), String> {
+        if command.is_empty()
+            || command.len() > 64
+            || !command
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            || !(matches!(argument, "INC" | "DEC")
+                || argument
+                    .parse::<i32>()
+                    .is_ok_and(|n| (-65535..=65535).contains(&n))
+                    && argument.len() <= 6
+                    && argument
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || b == b'+' || b == b'-'))
+        {
+            return Err("Invalid catalogue control command.".into());
+        }
+        self.send_bytes(&format!("{command} {argument}\n"))
+    }
+    fn send_bytes(&self, command: &str) -> Result<(), String> {
         let written = self
             .sender
             .send_to(command.as_bytes(), self.command)
@@ -983,7 +1060,6 @@ mod tests {
         if let Some(name) = name {
             let mut data = [b' '; 24];
             data[..name.len()].copy_from_slice(name.as_bytes());
-            data[name.len()] = 0;
             write_block(&mut bytes, 0, &data);
         }
         if let Some(feedback) = feedback {
@@ -997,6 +1073,29 @@ mod tests {
             .feed(&frame(Some("A-10C"), Some(true), 1), 0)
             .contains(&Intent::Led(true)));
         assert!(session.feedback_fresh(0));
+    }
+    #[test]
+    fn fixed_width_space_padded_exports_and_older_nul_strings_are_readable() {
+        let mut s = session();
+        assert!(s
+            .feed(&frame(Some("A-10C"), Some(true), 1), 0)
+            .contains(&Intent::Led(true)));
+        assert_eq!(s.state(0)["aircraft"], "A-10C");
+        let mut memory = Memory::new();
+        memory.apply(&[Block {
+            address: 100,
+            data: b"251.000".to_vec(),
+        }]);
+        assert_eq!(memory.string(100, 7).as_deref(), Some("251.000"));
+        memory.apply(&[Block {
+            address: 110,
+            data: b"A-10C\0  ".to_vec(),
+        }]);
+        assert_eq!(memory.string(110, 8).as_deref(), Some("A-10C"));
+        assert!(
+            memory.string(100, 8).is_none(),
+            "Unknown trailing bytes cannot be guessed."
+        );
     }
     fn led_catalogue() -> Value {
         json!({"status":"ready","catalogueRevision":1,"actions":[{
@@ -1284,6 +1383,23 @@ mod tests {
         assert_eq!(session.state(1000)["feedbackAgeMs"], 1000);
         assert_eq!(session.tick(1501), vec![Intent::Led(false)]);
         assert!(!session.feedback_fresh(1501));
+    }
+    #[test]
+    fn repeated_frozen_frames_stay_stale_until_the_counter_advances() {
+        let mut s = session();
+        active(&mut s);
+        s.baseline(1, 1, 0, false, 0);
+        for now in [1501, 1600, 1800, 3000, 4500] {
+            s.feed(&frame(None, None, 1), now);
+            s.feed(&frame(Some("A-10C"), Some(true), 1), now);
+            assert!(!s.feedback_fresh(now));
+            assert_eq!(s.state(now)["armed"], false);
+        }
+        assert!(s
+            .feed(&frame(Some("A-10C"), Some(true), 2), 4501)
+            .contains(&Intent::Led(true)));
+        assert!(s.feedback_fresh(4501));
+        assert!(s.needs_baseline());
     }
     #[test]
     fn counter_wraps_normally_and_backward_update_requires_fresh_recovery() {

@@ -32,6 +32,58 @@ pub fn validate(reply: &Value, read: Option<(u32, u32)>) -> Result<(), String> {
     {
         return Err(INVALID.into());
     }
+    if reply.get("contactButtonCount").is_some() || reply.get("axisCount").is_some() {
+        let contacts = number(&reply["contactButtonCount"], 0, count)?;
+        let maintained = reply["maintainedButtons"].as_array().ok_or(INVALID)?;
+        let mut seen = HashSet::new();
+        if maintained.len() > contacts as usize
+            || maintained
+                .iter()
+                .any(|v| v.as_u64().is_none_or(|n| n >= contacts || !seen.insert(n)))
+            || encoders.len() > 16
+            || encoders.len() % 2 != 0
+            || encoders
+                .iter()
+                .enumerate()
+                .any(|(i, v)| v.as_u64() != Some(contacts + i as u64))
+        {
+            return Err(INVALID.into());
+        }
+        let selectors = reply["selectorButtons"].as_array().ok_or(INVALID)?;
+        if selectors.len() > 8
+            || contacts + encoders.len() as u64 + 3 * selectors.len() as u64 != count
+        {
+            return Err(INVALID.into());
+        }
+        for (index, group) in selectors.iter().enumerate() {
+            let group = group.as_array().ok_or(INVALID)?;
+            if group.len() != 3
+                || group.iter().enumerate().any(|(i, v)| {
+                    v.as_u64() != Some(contacts + encoders.len() as u64 + (index * 3 + i) as u64)
+                })
+            {
+                return Err(INVALID.into());
+            }
+        }
+        let axes = number(&reply["axisCount"], 0, 8)? as usize;
+        for key in ["axes", "axisNeutral", "axisUsage", "axisAvailable"] {
+            let values = reply[key].as_array().ok_or(INVALID)?;
+            if values.len() != axes
+                || values.iter().any(|v| {
+                    if key == "axisAvailable" {
+                        !v.is_boolean()
+                    } else if key == "axisUsage" {
+                        v.as_u64().is_none_or(|n| !(48..=56).contains(&n))
+                    } else {
+                        v.as_u64().is_none_or(|n| n > 65535)
+                    }
+                })
+            {
+                return Err(INVALID.into());
+            }
+        }
+        number(&reply["sampledAtMs"], 0, u32::MAX as u64)?;
+    }
     if let Some((expected_stream, after)) = read {
         if stream != expected_stream as u64
             || reply["after"].as_u64() != Some(after as u64)
@@ -71,6 +123,45 @@ mod tests {
     use serde_json::json;
     fn state() -> Value {
         json!({"ok":true,"schemaVersion":1,"stream":7,"head":2,"oldest":1,"overflow":0,"buttonCount":2,"held":[false,false],"encoderButtons":[1]})
+    }
+    #[test]
+    fn typed_sources_and_current_axes_have_exact_shapes_and_bounds() {
+        let v = json!({"ok":true,"schemaVersion":1,"stream":1,"head":0,"oldest":1,"overflow":0,
+            "buttonCount":7,"held":[false,false,false,false,false,false,false],"contactButtonCount":2,
+            "maintainedButtons":[0],"encoderButtons":[2,3],"selectorButtons":[[4,5,6]],
+            "axisCount":2,"axes":[65535,0],"axisNeutral":[32767,0],"axisUsage":[48,56],
+            "axisAvailable":[true,false],"sampledAtMs":4294967295u64});
+        assert!(validate(&v, None).is_ok());
+        for (key, value) in [
+            ("contactButtonCount", json!(8)),
+            ("maintainedButtons", json!([0, 0])),
+            ("maintainedButtons", json!([2])),
+            ("encoderButtons", json!([2])),
+            ("encoderButtons", json!([3, 2])),
+            ("selectorButtons", json!([])),
+            ("selectorButtons", json!([null])),
+            ("selectorButtons", json!([[4, 5]])),
+            ("selectorButtons", json!([[4, 6, 5]])),
+            ("axisCount", json!(9)),
+            ("axes", json!([65536, 0])),
+            ("axisNeutral", json!([-1, 0])),
+            ("axisUsage", json!([47, 48])),
+            ("axisUsage", json!([48, 57])),
+            ("axisAvailable", json!([true, 0])),
+            ("axisAvailable", json!([true])),
+            ("sampledAtMs", json!(4294967296u64)),
+        ] {
+            let mut invalid = v.clone();
+            invalid[key] = value;
+            assert!(validate(&invalid, None).is_err(), "{key}");
+        }
+        let mut incomplete = state();
+        incomplete["axisCount"] = json!(0);
+        assert!(validate(&incomplete, None).is_err());
+        let empty = json!({"ok":true,"schemaVersion":1,"stream":1,"head":0,"oldest":1,"overflow":0,
+            "buttonCount":0,"held":[],"contactButtonCount":0,"maintainedButtons":[],"encoderButtons":[],"selectorButtons":[],
+            "axisCount":0,"axes":[],"axisNeutral":[],"axisUsage":[],"axisAvailable":[],"sampledAtMs":0});
+        assert!(validate(&empty, None).is_ok());
     }
     fn page() -> Value {
         let mut v = state();

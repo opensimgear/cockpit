@@ -2,5 +2,14 @@
   "UFC": {
     "UFC_MASTER_CAUTION": {"identifier":"UFC_MASTER_CAUTION","inputs":[{"interface":"set_state","max_value":1}],"outputs":[]},
     "MASTER_CAUTION": {"identifier":"MASTER_CAUTION","inputs":[],"outputs":[{"type":"integer","address":4672,"mask":4,"shift_by":2,"max_value":1}]}
+  },
+  "UHF Radio": {
+    "UHF_PRESET_SEL": {"identifier":"UHF_PRESET_SEL","description":"UHF preset selector","inputs":[{"interface":"fixed_step"},{"interface":"set_state","max_value":20}],"outputs":[{"type":"integer","address":4722,"mask":31,"shift_by":0,"max_value":20}]},
+    "UHF_10MHZ_SEL": {"identifier":"UHF_10MHZ_SEL","description":"UHF 10 MHz selector","inputs":[{"interface":"fixed_step"},{"interface":"set_state","max_value":9}],"outputs":[{"type":"integer","address":4724,"mask":15,"shift_by":0,"max_value":9}]},
+    "UHF_VOL": {"identifier":"UHF_VOL","description":"UHF volume","inputs":[{"interface":"set_state","max_value":65535},{"interface":"variable_step","max_value":65535,"suggested_step":1024}],"outputs":[{"type":"integer","address":4720,"mask":65535,"shift_by":0,"max_value":65535}]},
+    "UHF_SQUELCH": {"identifier":"UHF_SQUELCH","description":"UHF squelch","inputs":[{"interface":"set_state","max_value":1}],"outputs":[{"type":"integer","address":4726,"mask":1,"shift_by":0,"max_value":1}]},
+    "UHF_TEST": {"identifier":"UHF_TEST","description":"UHF display test","inputs":[{"interface":"set_state","max_value":1}],"outputs":[{"type":"integer","address":4728,"mask":1,"shift_by":0,"max_value":1}]},
+    "UHF_FREQUENCY": {"identifier":"UHF_FREQUENCY","description":"UHF frequency","inputs":[],"outputs":[{"type":"string","address":4704,"max_length":7}]},
+    "UHF_PRESET": {"identifier":"UHF_PRESET","description":"UHF preset display","inputs":[],"outputs":[{"type":"string","address":4712,"max_length":2}]}
   }
 }

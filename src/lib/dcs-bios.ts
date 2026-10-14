@@ -1,17 +1,22 @@
 import type { DeviceAction, DeviceActions } from './device-actions';
 import type { GatewayModule, GatewayState } from './gateway';
+import type { DcsProfileConfig, DcsCataloguePage, DcsBindingStatus, DcsGatewayMetrics } from './dcs-profile';
 
-export type DcsBiosConfig = {
+export type DcsBiosLegacyConfig = {
   schemaVersion: 1; cataloguePath: string; gatewayId: string; moduleId: string;
   button: number; ledActionId: string; commandHost: string; commandPort: number;
   listenAddress: string; listenPort: number; multicastGroup: string;
   multicastInterface: string; freshnessMs: number;
 };
+export type DcsBiosConfig = DcsBiosLegacyConfig | DcsProfileConfig;
 export type DcsBiosStatus = {
   configured: boolean; running: boolean; config: DcsBiosConfig | null;
   aircraft: string | null; missionActive: boolean; feedbackFresh: boolean;
   feedbackAgeMs: number | null; status: 'stopped' | 'waiting' | 'active' | 'stale' | 'error';
   error: string | null; eventOverflow: number; eventGaps?: number; commandsSent: number; ledValue: boolean | null;
+  armed?: boolean; needsBaseline?: boolean; commandUncertain?: boolean;
+  catalogue?: DcsCataloguePage; inputs?: DcsBindingStatus[]; outputs?: DcsBindingStatus[];
+  gateways?: DcsGatewayMetrics[];
 };
 
 /** Only outputs the native master-caution profile can drive are offered. */
@@ -23,7 +28,7 @@ export function cautionLedActions(snapshot?: DeviceActions): DeviceAction[] {
         action.parameters[0].options?.includes('on') && action.parameters[0].options?.includes('off'))));
 }
 
-export function defaultDcsConfig(gatewayId: string, moduleId: string, saved?: DcsBiosConfig | null, actions: DeviceAction[] = []): DcsBiosConfig {
+export function defaultDcsConfig(gatewayId: string, moduleId: string, saved?: DcsBiosLegacyConfig | null, actions: DeviceAction[] = []): DcsBiosLegacyConfig {
   const sameDevice = saved?.gatewayId === gatewayId && saved.moduleId === moduleId;
   return { schemaVersion: 1, cataloguePath: '', button: 0, ledActionId: actions[0]?.id ?? '',
     commandHost: '127.0.0.1', commandPort: 7778, listenAddress: '0.0.0.0', listenPort: 5010,
@@ -31,12 +36,12 @@ export function defaultDcsConfig(gatewayId: string, moduleId: string, saved?: Dc
     ...saved, gatewayId, moduleId, ...(!sameDevice ? { button: 0, ledActionId: actions[0]?.id ?? '' } : {}) };
 }
 
-export function dcsConfigEqual(a: DcsBiosConfig, b?: DcsBiosConfig | null): boolean {
-  return !!b && (Object.keys(a) as (keyof DcsBiosConfig)[]).every(key => a[key] === b[key]);
+export function dcsConfigEqual(a: DcsBiosLegacyConfig, b?: DcsBiosLegacyConfig | null): boolean {
+  return !!b && (Object.keys(a) as (keyof DcsBiosLegacyConfig)[]).every(key => a[key] === b[key]);
 }
 
 /** Cheap form checks; native loading and network validation remain authoritative. */
-export function dcsConfigError(config: DcsBiosConfig): string {
+export function dcsConfigError(config: DcsBiosLegacyConfig): string {
   if (config.schemaVersion !== 1) return 'These DCS-BIOS settings use an unsupported version.';
   if (!config.cataloguePath.trim() || /[\u0000-\u001f\u007f]/.test(config.cataloguePath)) return 'Choose the installed DCS-BIOS doc/json folder.';
   if (!config.gatewayId || !config.moduleId) return 'Choose a device for this profile.';
@@ -54,7 +59,7 @@ export function dcsConfigError(config: DcsBiosConfig): string {
 }
 
 /** Recheck current ownership and catalogue immediately before enabling the bridge. */
-export function dcsStartError(state: GatewayState | null, module: GatewayModule | undefined, config: DcsBiosConfig): string {
+export function dcsStartError(state: GatewayState | null, module: GatewayModule | undefined, config: DcsBiosLegacyConfig): string {
   if (!state?.connected || state.backend !== 'stm32' || !module?.online || !module.boot) return 'Reconnect this CAN device before starting DCS-BIOS.';
   if (state.gatewayId !== config.gatewayId || module.id !== config.moduleId) return 'These settings belong to a different device.';
   if (state.reconnecting || state.layoutPending) return 'Wait for the gateway to finish updating its USB controllers.';

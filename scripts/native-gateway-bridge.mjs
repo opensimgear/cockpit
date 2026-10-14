@@ -39,7 +39,7 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
       let newline;
       while ((newline = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-        if (Buffer.byteLength(line) > 65_536) { failProcess(new Error('Native service response exceeds its limit.')); return; }
+        if (Buffer.byteLength(line) > 131_072) { failProcess(new Error('Native service response exceeds its limit.')); return; }
         let envelope;
         try { envelope = JSON.parse(line); }
         catch { failProcess(new Error('Native service returned invalid JSON.')); return; }
@@ -51,7 +51,7 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
         clearTimeout(task.timer);
         task.resolve(envelope.response);
       }
-      if (Buffer.byteLength(buffer) > 65_536) failProcess(new Error('Native service response exceeds its limit.'));
+      if (Buffer.byteLength(buffer) > 131_072) failProcess(new Error('Native service response exceeds its limit.'));
     });
   }
   function request(payload) {
@@ -84,7 +84,7 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
           let bodySize = 0;
           for await (const bytes of req) {
             bodySize += bytes.length;
-            if (bodySize > 16_384) throw new Error('Gateway request exceeds 16384 bytes.');
+            if (bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
             chunks.push(bytes);
           }
           res.end(JSON.stringify(await request(JSON.parse(Buffer.concat(chunks).toString('utf8')))));

@@ -2,10 +2,10 @@
   import ActionControl from './ActionControl.svelte';
   import { actionReady, type ActionValue, type DeviceAction } from './device-actions';
   import type { GatewayModule, GatewayRequest, GatewayState } from './gateway';
-  let { state, module, busy, request, managedActionId }: {
+  let { state, module, busy, request, managedActionIds = [] }: {
     state: GatewayState | null; module: GatewayModule | undefined; busy: boolean;
     request: (request: GatewayRequest) => Promise<boolean>;
-    managedActionId?: string;
+    managedActionIds?: string[];
   } = $props();
   const ready = $derived(actionReady(state, module));
   const snapshot = $derived(module ? state?.moduleActions?.[module.id] : undefined);
@@ -26,8 +26,8 @@
     {:else if snapshot?.status === 'ready' && !snapshot.actions.length}<p class="help">The device advertises no manual actions.</p>{/if}
     {#if snapshot?.status === 'uncertain'}<p class="help">The last command may have applied. Refresh state before another action.</p>{/if}
     {#each snapshot?.actions ?? [] as action (`${module?.boot}/${snapshot?.catalogueRevision}/${action.id}`)}
-      {#if action.id === managedActionId}<p class="help">{action.label} is managed by the running DCS-BIOS profile. Stop DCS-BIOS to control it manually.</p>{/if}
-      <ActionControl {action} snapshot={snapshot!} ready={ready && action.id !== managedActionId} {busy} {invoke} />
+      {#if managedActionIds.includes(action.id)}<p class="help">{action.label} is managed by the running DCS-BIOS profile. Stop DCS-BIOS to control it manually.</p>{/if}
+      <ActionControl {action} snapshot={snapshot!} ready={ready && !managedActionIds.includes(action.id)} {busy} {invoke} />
     {/each}
     <div class="toolbar"><button disabled={!ready || busy} onclick={() => request({ command: 'action_describe', moduleId: module?.id })}>{snapshot?.actions.length ? 'Discover again' : 'Discover actions'}</button><button disabled={!ready || busy || !snapshot?.catalogueRevision} onclick={() => request({ command: 'action_state', moduleId: module?.id })}>Refresh state</button></div>
     <p class="help">Actions work while this device’s USB controller is disabled or its direct USB owns the inputs. Applied state is device readback; physical output verification is separate.</p>

@@ -25,6 +25,7 @@ jobs:
       - run: pnpm transport:test
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage
+      - run: pnpm dcs-profile:coverage
       - run: pnpm ui:build
 
   native:

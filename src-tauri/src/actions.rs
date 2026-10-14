@@ -73,6 +73,23 @@ pub fn descriptor(action: &Value) -> Result<(), String> {
             return Err(INVALID.into());
         }
     }
+    if let Some(display) = action.get("display") {
+        let columns = display["columns"].as_u64().filter(|n| (1..=63).contains(n));
+        let rows = display["rows"].as_u64().filter(|n| (1..=4).contains(n));
+        if columns.zip(rows).is_none_or(|(columns, rows)| {
+            columns * rows > 63
+                || params.len() != 1
+                || params[0]["type"] != "string"
+                || params[0]["maxBytes"]
+                    .as_u64()
+                    .is_none_or(|max| max < columns * rows)
+        }) || !matches!(display["encoding"].as_str(), Some("ascii" | "utf8"))
+            || action["semantics"] != "setter"
+            || action["readable"] != true
+        {
+            return Err(INVALID.into());
+        }
+    }
     Ok(())
 }
 /// Validate a page and exact cursor progression before caching any descriptors.
@@ -146,6 +163,12 @@ pub fn arguments(action: &Value, values: &Value) -> Result<Vec<String>, String> 
                     .filter(|s| {
                         s.len() <= p["maxBytes"].as_u64().unwrap() as usize
                             && !s.chars().any(char::is_control)
+                            && action.get("display").is_none_or(|display| {
+                                s.chars().count() as u64
+                                    <= display["columns"].as_u64().unwrap()
+                                        * display["rows"].as_u64().unwrap()
+                                    && (display["encoding"] != "ascii" || s.is_ascii())
+                            })
                     })
                     .map(|s| {
                         if s.is_empty() {
@@ -209,6 +232,51 @@ mod tests {
         json!({"id":"output.set","label":"Output","endpoint":"output","semantics":"setter","readable":true,"parameters":[
         {"id":"enabled","label":"Enabled","type":"boolean"}, {"id":"level","label":"Level","type":"integer","minimum":-1,"maximum":100},
         {"id":"mode","label":"Mode","type":"enum","options":["auto","on","off"]}, {"id":"color","label":"Color","type":"rgb"}]})
+    }
+    #[test]
+    fn display_geometry_encoding_and_applied_text_are_bounded() {
+        let mut display = json!({"id":"display.text","label":"Text","endpoint":"display",
+            "semantics":"setter","readable":true,"parameters":[{"id":"text","label":"Text","type":"string","maxBytes":63}],
+            "display":{"columns":4,"rows":2,"encoding":"utf8"}});
+        assert_eq!(
+            arguments(&display, &json!(["éééééééé"])).unwrap()[0].len(),
+            32
+        );
+        assert!(arguments(&display, &json!(["123456789"])).is_err());
+        display["display"]["encoding"] = json!("ascii");
+        assert!(arguments(&display, &json!(["é"])).is_err());
+        assert!(arguments(&display, &json!(["12345678"])).is_ok());
+        for (key, value) in [
+            ("columns", json!(0)),
+            ("columns", json!(64)),
+            ("rows", json!(0)),
+            ("rows", json!(5)),
+            ("encoding", json!("latin1")),
+        ] {
+            let mut invalid = display.clone();
+            invalid["display"][key] = value;
+            assert!(descriptor(&invalid).is_err());
+        }
+        let mut invalid = display.clone();
+        invalid["display"]["columns"] = json!(32);
+        assert!(descriptor(&invalid).is_err());
+        for (key, value) in [
+            ("semantics", json!("oneShot")),
+            ("readable", json!(false)),
+            ("parameters", json!([])),
+        ] {
+            let mut invalid = display.clone();
+            invalid[key] = value;
+            assert!(descriptor(&invalid).is_err());
+        }
+        let mut invalid = display.clone();
+        invalid["parameters"][0]["maxBytes"] = json!(7);
+        assert!(descriptor(&invalid).is_err());
+        let mut invalid = display.clone();
+        invalid["parameters"][0]["type"] = json!("boolean");
+        assert!(descriptor(&invalid).is_err());
+        let readback = json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"states":[{"id":"display.text","values":["é"]}]});
+        assert!(states(&readback, 1, &[display], false).is_err());
     }
     #[test]
     fn encodes_every_type_without_command_injection() {

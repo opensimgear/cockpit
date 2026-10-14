@@ -24,7 +24,9 @@ parameter constraints, revision consistency and duplicate descriptors before
 exposing controls. Boolean, signed integer, enum, RGB and bounded UTF-8 string
 arguments are validated and encoded without allowing serial command injection.
 The decorated `moduleActions` state contains the complete catalogue, applied
-readback and explicit ready/unsupported/error/uncertain status.
+readback, the epoch/node/lease/boot route token and explicit ready/unsupported/error/uncertain status.
+Display string setters additionally validate declared columns/rows, encoding,
+logical scalar-cell capacity and byte budget before invocation or readback.
 
 Action cache entries bind to this gateway's epoch and module identity/node/lease/
 boot; stale or offline routes invalidate them. Actions do not require a settings
@@ -49,13 +51,13 @@ also specifies ring overflow and encoder pairs.
 The global `dcs_status`, `dcs_configure`, `dcs_start` and `dcs_stop` operations
 manage one saved profile through `gateway_request`. Configure takes `dcsConfig`;
 responses expose `state.dcsBios` independently of gateway inventory. This global
-state must be merged without replacing a selected gateway's state. Native Start
+state must be merged without replacing a selected gateway's state. Schema 1 Start
 requires a connected, online CAN module with settled layout, HID disabled and
 unpublished, no report ID and no active direct USB input. It validates a mapped
 non-encoder button and a readable boolean setter or board status LED mode setter.
 The manager protects the bound LED from manual invocations while running.
 
-The Rust worker receives DCS-BIOS UDP export, decodes bounded synchronized
+The legacy Rust worker receives DCS-BIOS UDP export, decodes bounded synchronized
 little-endian writes, verifies advancing update counters and resolves
 `UFC_MASTER_CAUTION`/`MASTER_CAUTION` from the installed `doc/json` catalogue.
 Aircraft name and fresh feedback gate command delivery. It drains ordered panel
@@ -77,9 +79,40 @@ same button/event/LED contract, but physical hardware and live DCS acceptance ar
 deferred.
 
 CI's `scripts/dcs-bios-coverage.py` measures instrumented native tests and gates
-the production sections of `dcs_bios.rs`, `dcs_runtime.rs` and `panel_events.rs`
+the production sections of `dcs_bios.rs`, `dcs_runtime.rs`, `panel_events.rs`,
+`dcs_profile.rs` and `dcs_profile_runtime.rs`
 individually above 70% line coverage. Frontend profile helpers have a separate
-line/branch/function gate through `pnpm dcs:coverage`.
+line/branch/function gates through `pnpm dcs:coverage` and `pnpm dcs-profile:coverage`.
+
+Schema2 generalizes the saved profile to named catalogue bindings: momentary
+buttons, maintained switches, fixed/variable-step encoders and calibrated axes,
+plus readable LED and bounded text/numeric display setters. `dcs_catalogue`
+returns bounded filtered pages from the installed A-10C catalogue, with raw
+output indexes and supported interfaces, without exposing wire addresses to the
+editor. Existing schema1 profiles still use the legacy worker until explicitly
+saved as schema2.
+
+`dcs_profile_runtime` keeps UDP decoding independent of one I/O worker per
+gateway. It commits feedback after complete advancing-counter frames, retains
+one latest pending value per output and prioritizes ordered event pages before
+the next setter. Output-only panels may keep HID enabled; input-bound panels
+retain the HID/direct-USB exclusion above. Switches and available axes send
+their current absolute state on a fresh baseline. Momentary held startup needs
+release, and encoder deltas never enter the coalescing queue. Slow reads
+recheck export freshness and physical capability metadata before commands.
+
+Missing/stale/wrong-aircraft feedback applies configured fallback text or LED
+off. Route/boot/stream changes and event gaps rebaseline current input and
+reconcile current output. Readable state is checked before any new setter after
+an uncertain acknowledgement; one-shot actions cannot be feedback bindings.
+Boolean enum outputs must advertise both on and off before Start. Stop discards
+new commands from outstanding input reads and pending feedback setters; known
+forwarded button presses still receive their neutral cleanup release, and output
+fallbacks remain allowed.
+Gateway diagnostics include bounded pending depth/high-water, coalescing,
+latency mean/p95/max, throughput and maximum input polling interval. Local IPC
+allows 64 KiB profiles and 128 KiB replies; CDC/CAN budgets are unchanged. See the
+[Milestone 3 verification record](../docs/verification/2026-10-14-dcs-bios-panels.md).
 
 The Pico adapter owns normal USB serial discovery, protocol checks, control lines, UI liveness, setup leases and reconnect to the same board. It reads live inputs and configures settings; it rejects input/inventory injection commands. Stop/disconnect and app exit release access and neutralize this older firmware's reports. Settings remain in board RAM. On macOS the native IOKit helper updates individual joystick service names after matching VID/PID, serial, usage and interface.
 

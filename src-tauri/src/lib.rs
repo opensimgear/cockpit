@@ -1,5 +1,7 @@
 mod actions;
 pub mod dcs_bios;
+mod dcs_profile;
+mod dcs_profile_runtime;
 mod dcs_runtime;
 pub mod gateways;
 mod hid_names;
