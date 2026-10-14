@@ -656,6 +656,34 @@ fn blocked_read_coalesces_latest_and_lost_reply_is_reconciled() {
 }
 
 #[test]
+fn uppercase_stm32_assignment_supports_the_same_owned_override_and_resume() {
+    let f = Fixture::new();
+    let mut c = config();
+    c["assignments"][0]["gatewayId"] = json!("stm32:00112233445566778899AABB");
+    f.save(c);
+    assert_eq!(
+        f.runtime.status()["config"]["assignments"][0]["gatewayId"],
+        A
+    );
+    f.start();
+    f.fresh(10, 6300);
+    f.applied("rpm", json!(["6300  "]));
+    f.request(
+        "integration_override",
+        json!({"bindingId":"rpm","values":["9999  "],"durationMs":2000}),
+    )
+    .unwrap();
+    f.applied("rpm", json!(["9999  "]));
+    f.request(
+        "integration_override",
+        json!({"bindingId":"rpm","resume":true}),
+    )
+    .unwrap();
+    f.applied("rpm", json!(["6300  "]));
+    assert_eq!(f.mock.plain_invocations(), 0);
+}
+
+#[test]
 fn override_expiry_uses_latest_value_and_frozen_packets_stay_stale() {
     let f = Fixture::new();
     let mut c = config();

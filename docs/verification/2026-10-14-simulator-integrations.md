@@ -30,7 +30,8 @@ PCB versions remain 0.1.0.
 
 ## Automated checks
 
-The full native suite passes 197 tests. The frontend suite passes 118 tests,
+The full native suite passes 199 library tests and one actual-service process
+regression. The frontend suite passes 118 tests,
 Svelte/TypeScript checking reports zero errors/warnings and the Vite production
 build passes. Five dependency-bootstrap behavior tests pass. Coverage gates use
 production code, excluding inline native test modules and generated/vendor code;
@@ -38,7 +39,7 @@ they enforce more than 70% for each maintained measured module.
 
 | Native production module | Line coverage |
 | --- | ---: |
-| Portable profile validation/formatting | 98.23% |
+| Portable profile validation/formatting | 98.24% |
 | Integration lifecycle/runtime | 94.96% |
 | Rally parser, sessions and telemetry | 98.80% |
 | Portable Windows acquisition helpers | 100.00% |
@@ -120,3 +121,31 @@ Authored byte fixtures and pinned developer provenance are in
 layout is developer-derived and mapping names cannot identify the producer;
 [the integration guide](../simulator-integrations.md) records source selection,
 freshness and qualification limits.
+
+## Corrections from merge review
+
+The browser service previously retained a 17,408-byte envelope limit while the
+manager and HTTP bridge accepted 64 KiB requests. A legal full-size authored
+telemetry frame could therefore return an uncorrelated error and terminate the
+bridge's service. The service now allows the complete payload plus 1 KiB for
+correlation framing. A regression launches the actual native executable and
+checks larger telemetry pages, an exact-limit payload, correlated over-limit
+rejection and a subsequent successful request on the same process.
+
+The UI also copied integration status from cached per-gateway inventories on
+every workspace notification. A slow or offline gateway's old running snapshot
+could overwrite the confirmed Stop response. Dedicated global requests and
+status polls now supply integration status; cached inventory updates only update
+gateway/device state. The actual workspace callback's before/after reproduction,
+frontend checks and official Svelte analysis confirm the correction.
+
+Local STM32 gateway identities now canonicalize during profile validation, while
+Pico serial spelling remains intact. A valid uppercase STM32 assignment can
+Save/Start, apply an owned override and Resume using the same route identity.
+Case aliases cannot bind the same physical endpoint twice through different roles.
+
+Independent firmware reviews passed fresh common/device sanitizer suites and
+the gateway/Pico/real-CAN stress checks. Protocol documentation now distinguishes
+stored output-only sentinels, raw CDC values and Cockpit normalization; the Pico
+guide identifies the all-inputs preset's capacity explicitly. Merge review
+evidence is under `.research/milestone4-review/` in the workspace.

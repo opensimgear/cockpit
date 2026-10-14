@@ -403,6 +403,10 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
                         .all(|b| b.is_ascii_alphanumeric() || b":._-".contains(&b))
             })
             .ok_or(INVALID)?;
+        let gateway = gateway
+            .split_once(':')
+            .and_then(|(backend, serial)| crate::gateways::canonical_id(backend, serial))
+            .ok_or(INVALID)?;
         let module = text(&row["moduleId"], 32, false)
             .filter(|s| {
                 s.len() == 32
@@ -414,10 +418,10 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
         if !role_ids.contains(role) || !assigned.insert(role) {
             return Err(INVALID.into());
         }
-        gateways.insert(gateway);
+        gateways.insert(gateway.clone());
         assignments.push(Assignment {
             role: role.into(),
-            gateway_id: gateway.into(),
+            gateway_id: gateway,
             module_id: module.to_ascii_lowercase(),
         });
     }
@@ -777,9 +781,41 @@ mod tests {
             row["id"] = json!(format!("o{i}"));
             row["role"] = json!(format!("r{i}"));
             c["document"]["outputs"].as_array_mut().unwrap().push(row);
-            c["assignments"].as_array_mut().unwrap().push(json!({"role":format!("r{i}"),"gatewayId":format!("gateway:{i}"),"moduleId":"00112233445566778899aabbccddeeff"}));
+            c["assignments"].as_array_mut().unwrap().push(json!({"role":format!("r{i}"),"gatewayId":format!("stm32:{:024x}", i + 1),"moduleId":"00112233445566778899aabbccddeeff"}));
         }
         assert!(validate(&c).is_err());
+    }
+    #[test]
+    fn canonical_gateway_identity_prevents_case_aliases_of_one_endpoint() {
+        let mut c = fixture();
+        let gateway = "stm32:00112233445566778899aabb";
+        c["assignments"][0]["gatewayId"] = json!(gateway);
+        c["document"]["roles"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"other","label":"Other role"}));
+        let mut row = c["document"]["outputs"][0].clone();
+        row["id"] = json!("other-rev");
+        row["role"] = json!("other");
+        c["document"]["outputs"].as_array_mut().unwrap().push(row);
+        let mut assignment = c["assignments"][0].clone();
+        assignment["role"] = json!("other");
+        assignment["gatewayId"] = json!("stm32:00112233445566778899AABB");
+        c["assignments"].as_array_mut().unwrap().push(assignment);
+        assert!(validate(&c)
+            .unwrap_err()
+            .contains("physical output endpoint"));
+        c["document"]["outputs"][1]["endpoint"] = json!("led.other");
+        let parsed = validate(&c).unwrap();
+        assert!(parsed.assignments.iter().all(|a| a.gateway_id == gateway));
+
+        // The Pico serial is an advertised textual identity; retain its case.
+        c = fixture();
+        c["assignments"][0]["gatewayId"] = json!("pico:OSG-PICO-00112233AABBCCDD");
+        assert_eq!(
+            validate(&c).unwrap().assignments[0].gateway_id,
+            "pico:OSG-PICO-00112233AABBCCDD"
+        );
     }
     fn fixture() -> Value {
         json!({"document":{"schemaVersion":1,"id":"rev-lights","name":"Rev lights","provider":"assetto-corsa-rally","context":{},"roles":[{"id":"lights","label":"Lights"}],"inputs":[],"outputs":[{"id":"rev","role":"lights","endpoint":"led.rgb","actionId":"led.rgb.set_color","channel":"rev_ratio","format":{"kind":"rgb","bands":[{"minimum":0.7,"color":"00FF00"},{"minimum":0.9,"color":"FF0000"}]}}]},"connection":{"source":"synthetic","freshnessMs":1500},"assignments":[{"role":"lights","gatewayId":"pico:OSG-PICO-0011223344556677","moduleId":"00112233445566778899aabbccddeeff"}]})

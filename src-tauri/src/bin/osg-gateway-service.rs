@@ -10,6 +10,10 @@ use std::{
     thread,
 };
 
+// GatewayManager limits the normalized request to 64 KiB. The transport must
+// also allow its correlation envelope (an 80-byte ID can require JSON escapes).
+const REQUEST_ENVELOPE_LIMIT: usize = 65_536 + 1_024;
+
 fn emit(output: &Mutex<io::Stdout>, response: Value) {
     let mut output = output.lock().unwrap_or_else(|p| p.into_inner());
     let _ = writeln!(output, "{response}");
@@ -26,7 +30,7 @@ fn main() {
     let mut requests: Vec<thread::JoinHandle<()>> = Vec::new();
     for line in io::stdin().lock().lines() {
         let request: Value = match line {
-            Ok(line) if line.len() <= 17_408 => match serde_json::from_str(&line) {
+            Ok(line) if line.len() <= REQUEST_ENVELOPE_LIMIT => match serde_json::from_str(&line) {
                 Ok(request) => request,
                 Err(_) => {
                     emit(&output, json!({"ok":false,"error":"Invalid JSON request."}));

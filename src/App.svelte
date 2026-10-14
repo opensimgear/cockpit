@@ -122,8 +122,6 @@
     const ids: string[] = [];
     for (const entry of next) {
       const before = entries.find(previous => previous.id === entry.id)?.state;
-      if (entry.state?.dcsBios) dcsBios = entry.state.dcsBios;
-      if (entry.state?.integration) integration = entry.state.integration;
       for (const module of entry.state?.modules ?? []) {
         const key = deviceKey(entry.id, module.id);
         ids.push(key);
