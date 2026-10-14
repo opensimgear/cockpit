@@ -82,3 +82,27 @@ jobs:
             .research/integration-coverage/native-tests.log
             .research/integration-coverage/lines.txt
           if-no-files-found: ignore
+
+  mapping-prototypes:
+    name: Mapping M0 prototypes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Portable framing, readiness, source and visibility contracts
+        run: python -m unittest discover -s .research/controller-mapping-m0 -v
+      - name: Bounded Rhai evaluation
+        run: cargo test --locked --manifest-path .research/controller-mapping-m0/rhai/Cargo.toml
+      - name: Compile Windows background-capture experiment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:.research\controller-mapping-m0\RawInputProbe.exe .research\controller-mapping-m0\RawInputProbe.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
