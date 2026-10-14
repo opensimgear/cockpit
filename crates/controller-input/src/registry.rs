@@ -180,7 +180,7 @@ impl Source {
             "vendorId":self.saved.identity.vendor_id,"productId":self.saved.identity.product_id,
             "osgHid":self.saved.identity.vendor_id==0xcafe && self.saved.identity.product_id==0x4010,
             "online":self.online,"generation":self.generation.to_string(),"sequence":self.sequence.to_string(),
-            "controlCount":self.controls.len(),"baselineReady":self.online && !self.controls.is_empty()
+            "controlCount":self.controls.len(),"baselineReady":self.online && self.controls.iter().any(|c|c.kind!=Kind::Diagnostic)
                 && self.controls.iter().filter(|c| c.kind!=Kind::Diagnostic).all(|c| self.values.contains_key(&c.id)),
             "identityConfidence":if self.saved.identity.serial.is_some() {"serial"} else {"local-path"}})
     }
@@ -355,6 +355,19 @@ impl Registry {
         report: u8,
         data: &BTreeMap<u16, u32>,
     ) -> Result<(), String> {
+        self.apply_values(id, report, data, true)
+    }
+    /// Incremental native values preserve untouched controls, including held buttons.
+    pub fn delta(&mut self, id: &str, report: u8, data: &BTreeMap<u16, u32>) -> Result<(), String> {
+        self.apply_values(id, report, data, false)
+    }
+    fn apply_values(
+        &mut self,
+        id: &str,
+        report: u8,
+        data: &BTreeMap<u16, u32>,
+        implicit_buttons: bool,
+    ) -> Result<(), String> {
         let s = self.sources.get_mut(id).ok_or("Unknown controller.")?;
         if !s.online {
             return Err("Controller is offline.".into());
@@ -364,7 +377,7 @@ impl Registry {
             let value = data
                 .get(&control.data_index)
                 .copied()
-                .or_else(|| (control.kind == Kind::Button).then_some(0));
+                .or_else(|| (implicit_buttons && control.kind == Kind::Button).then_some(0));
             if let Some(value) = value {
                 update.insert(control.id.clone(), control.decode(value)?);
             }

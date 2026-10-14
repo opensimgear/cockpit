@@ -301,3 +301,28 @@ fn service_reassignment_and_write_errors_are_explicit() {
         .is_err());
     assert!(s.registry.lock().unwrap().dirty);
 }
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn native_platforms_stay_gated_for_ordinary_startup() {
+    let service = ControllerService::new(None, true);
+    assert_eq!(service.status()["backendStatus"], "unavailable");
+    assert!(service.status()["diagnostic"]
+        .as_str()
+        .unwrap()
+        .contains("qualification"));
+    assert!(service.worker.lock().unwrap().is_none());
+    service.shutdown();
+}
+
+#[test]
+fn diagnostic_only_descriptors_cannot_establish_an_input_baseline() {
+    let mut r = Registry::default();
+    let mut device = fixture("diagnostic", None);
+    for control in &mut device.controls {
+        control.kind = Kind::Diagnostic;
+    }
+    let id = r.connect(device).unwrap();
+    r.report(&id, 1, &BTreeMap::from([(0, 0), (1, 1)])).unwrap();
+    assert_eq!(r.inspect(&id, 0).unwrap()["source"]["baselineReady"], false);
+}

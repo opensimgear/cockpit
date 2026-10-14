@@ -1,4 +1,10 @@
 //! Native input service shared by desktop and browser development transports.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod capture;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 pub mod registry;
 #[cfg(windows)]
 mod windows;
@@ -24,6 +30,13 @@ pub struct ControllerService {
 }
 impl ControllerService {
     pub fn new(path: Option<PathBuf>, native: bool) -> Self {
+        Self::start(path, native, false)
+    }
+    /// Explicit read-only qualification tool; never called by ordinary desktop startup.
+    pub fn qualification_probe() -> Self {
+        Self::start(None, true, true)
+    }
+    fn start(path: Option<PathBuf>, native: bool, probe: bool) -> Self {
         let mut registry = Registry::default();
         let loaded = path
             .as_ref()
@@ -52,14 +65,15 @@ impl ControllerService {
         }
         let registry = Arc::new(Mutex::new(registry));
         let stop = Arc::new(AtomicBool::new(false));
-        #[cfg(windows)]
-        let worker = if native {
+        let enabled = native
+            && (cfg!(windows) || (probe && cfg!(any(target_os = "linux", target_os = "macos"))));
+        let worker = if enabled {
             let shared = registry.clone();
             let stopped = stop.clone();
             match std::thread::Builder::new()
                 .name("controller-input".into())
                 .spawn(move || {
-                    let result = std::panic::catch_unwind(|| windows::run(shared.clone(), stopped))
+                    let result = std::panic::catch_unwind(|| native_run(shared.clone(), stopped))
                         .unwrap_or_else(|_| Err("Controller capture stopped unexpectedly.".into()));
                     let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
                     r.disconnect_all();
@@ -82,14 +96,12 @@ impl ControllerService {
         } else {
             None
         };
-        #[cfg(not(windows))]
-        let worker = None;
-        if !native || !cfg!(windows) {
+        if !enabled {
             let mut r = registry.lock().unwrap_or_else(|p| p.into_inner());
             r.backend_status = "unavailable".into();
             if r.diagnostic.is_empty() {
                 r.diagnostic =
-                    "Native controller capture is not qualified on this platform yet.".into();
+                    "Native controller capture is not qualified on this platform yet. The read-only qualification probe is available separately; ordinary capture stays disabled.".into();
             }
         }
         Self {
@@ -206,6 +218,25 @@ impl ControllerService {
 impl Drop for ControllerService {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+fn native_run(shared: Arc<Mutex<Registry>>, stop: Arc<AtomicBool>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        windows::run(shared, stop)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        capture::run(linux::Linux::new(), shared, stop)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        capture::run(macos::Mac::new()?, shared, stop)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (shared, stop);
+        Err("Unsupported native capture platform.".into())
     }
 }
 #[cfg(test)]

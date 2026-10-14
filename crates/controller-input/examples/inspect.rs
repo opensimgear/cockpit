@@ -1,7 +1,11 @@
 use osg_controller_input::ControllerService;
 use serde_json::json;
 fn main() {
-    let service = ControllerService::new(None, true);
+    let service = if std::env::args().any(|a| a == "--qualification-probe") {
+        ControllerService::qualification_probe()
+    } else {
+        ControllerService::new(None, true)
+    };
     for _ in 0..5 {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let state = service

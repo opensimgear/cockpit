@@ -137,6 +137,9 @@ jobs:
           python-version: "3.12"
       - name: Install pinned native coverage tools
         run: rustup component add llvm-tools-preview
+      - name: Linux controller development dependency
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends libudev-dev
       - name: Native controller tests and per-module coverage
         run: python scripts/controller-coverage.py
       - name: Windows desktop compilation and regression tests

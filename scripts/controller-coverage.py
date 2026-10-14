@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 
@@ -40,6 +41,11 @@ def main():
     sources = [root / 'crates/controller-input/src/lib.rs', root / 'crates/controller-input/src/registry.rs']
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/windows.rs')
+    sources.append(root / 'crates/controller-input/src/capture.rs')
+    if sys.platform.startswith('linux'):
+        sources.append(root / 'crates/controller-input/src/linux.rs')
+    if sys.platform == 'darwin':
+        sources.append(root / 'crates/controller-input/src/macos.rs')
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',

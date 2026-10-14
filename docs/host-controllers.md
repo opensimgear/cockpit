@@ -23,3 +23,19 @@ Discovery is read-only and independent of optional vJoy/HidHide. Known vJoy VID/
 Run `cargo test --manifest-path crates/controller-input/Cargo.toml` on each platform. On Windows this exercises the real message-window lifecycle plus authored HID descriptor/report/API-failure fixtures. `cargo run --manifest-path crates/controller-input/Cargo.toml --example inspect` performs five seconds of read-only native capture without saving settings or emitting controls. Logs may contain local hardware details; keep them in ignored research directories.
 
 `python scripts/controller-coverage.py` instruments the native library and gates each compiled production module at 71% line coverage. Windows reports its adapter independently. `pnpm controllers:coverage` gates frontend helpers at 71% lines/branches/functions. Software fixtures do not establish device, game, driver or platform qualification.
+
+## Linux and macOS qualification probes
+
+Linux evdev/udev and macOS IOHID capture are implemented behind a qualification gate. Ordinary Cockpit startup keeps them disabled and shows the reason in Host controllers. Output and device hiding are independent optional features.
+
+On a native test system, an explicit read-only developer probe is available:
+
+~~~sh
+cargo run --locked --manifest-path crates/controller-input/Cargo.toml --example inspect -- --qualification-probe
+~~~
+
+The probe lasts five seconds, uses no persistent metadata, and prints the inventory and the first page of each controller's values. It never installs drivers, changes permissions, grabs/seizes devices or creates output. Linux requires the system udev development package to build and read access to the selected evdev node to capture. Use session ACLs or a narrowly scoped udev rule; do not run all of Cockpit as root or make all input nodes writable. macOS uses system IOHID input access and reports denied access with Privacy & Security guidance; it does not request access automatically.
+
+The same local UUID and explicit reassignment rules apply on each platform. Recycled eventN/registry identifiers alone are not persistent identity. A missing reliable serial/topology observation requires explicit reassignment. Linux pairs ABS_HAT X/Y controls and re-queries kernel state after SYN_DROPPED. macOS invalidates a lost callback stream and rejects stale values against baseline timestamps.
+
+See [M1P evidence and remaining qualification](verification/2026-10-14-controller-capture-m1p.md). WSL's empty inventory and macOS compilation are not hardware acceptance. Normal activation remains unavailable until native device, background input, identity and report/baseline qualification is recorded.
