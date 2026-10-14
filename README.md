@@ -10,6 +10,9 @@ Cockpit connects to gateways through its normal USB serial and local stream tran
 DCS setup installs a checksum-pinned DCS-BIOS module into the selected Saved Games
 user folder, preserves existing exports and offers cancellation/recovery. Prepared
 connection settings populate new drafts; existing bindings remain explicit edits.
+ACR setup prepares native shared memory and reports verification for the exact
+runtime executable. Native profiles can be saved while the game is closed; Games
+selects the actual process at launch. Synthetic data never verifies native setup.
 
 **Games** discovers DCS World and Assetto Corsa Rally, shows found installations
 as tiles and offers a **Show all supported** switch for unavailable games. Game

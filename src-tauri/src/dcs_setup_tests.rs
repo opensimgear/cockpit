@@ -70,23 +70,33 @@ fn appends_once_preserving_third_party_exports_bom_crlf_and_legacy_bytes() {
     }
 }
 #[test]
-fn utf16_export_encoding_is_retained_without_rewriting_the_prefix() {
+fn utf16_exports_are_blocked_without_mutation_or_false_readiness() {
     for little in [true, false] {
         let mut before = if little {
             vec![0xff, 0xfe]
         } else {
             vec![0xfe, 0xff]
         };
-        for n in "-- Third party\r\n".encode_utf16() {
+        for n in format!("-- Third party\r\n{LOADER}\r\n").encode_utf16() {
             before.extend_from_slice(&if little {
                 n.to_le_bytes()
             } else {
                 n.to_be_bytes()
             });
         }
-        let after = with_loader(&before).unwrap();
-        assert!(after.starts_with(&before));
-        assert_eq!(loader_count(&after).unwrap(), 1);
+        assert!(with_loader(&before).unwrap_err().contains("UTF-16"));
+        let scratch = Scratch::new();
+        let target = scratch.target();
+        fixture_module(&target);
+        let export = target.join("Scripts/Export.lua");
+        fs::write(&export, &before).unwrap();
+        let state = inspect(&target).unwrap();
+        assert_eq!(state["ready"], false);
+        assert_eq!(state["repairable"], false);
+        assert!(setup(&target, &scratch.work(), || false, |_, _| {})
+            .unwrap_err()
+            .contains("UTF-16"));
+        assert_eq!(fs::read(export).unwrap(), before);
     }
     assert!(with_loader(&[0xff, 0xfe, 1]).is_err());
     assert!(with_loader(&[0xfe, 0xff, 0xd8, 0]).is_err());

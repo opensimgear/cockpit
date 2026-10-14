@@ -7,6 +7,8 @@ export type GameIntegrationSetup = {
   message: string; userFolder?: string; candidates?: string[]; version?: string; cataloguePath?: string;
   connection?: Record<string, unknown>; progress?: string; recoveryNeeded?: boolean;
   live?: 'waiting' | 'receiving' | 'stale'; liveMessage?: string; verified?: boolean;
+  channels?: Record<string, { status: string; value?: unknown }>; optionalMaxRpm?: boolean;
+  probeChannels?: Record<string, { status: 'available' | 'unknown' }>;
 };
 export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup };
 export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
@@ -29,6 +31,9 @@ export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
 export function gameIntegrationLabel(game: Game): string {
   if (!game.installed) return 'Game not installed';
   if (!game.integrationSetup) return 'Integration not checked';
+  if (game.id === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && game.integrationSetup.connection?.source === 'synthetic') return 'Synthetic test telemetry configured';
+  if (game.id === 'assetto-corsa-rally' && ['ready', 'needs-attention'].includes(game.integrationSetup.state) && game.integrationSetup.connection?.source === 'shared-memory' && !gameIntegrationNativeVerified(game)) return 'Telemetry configured · verification needed';
+  if (game.id === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && !gameIntegrationNativeVerified(game)) return 'Native telemetry not verified';
   const labels: Record<GameIntegrationSetup['state'], string> = {
     'not-installed': 'Game not installed', 'setup-required': 'Integration setup required',
     'setting-up': 'Setting up integration', ready: 'Ready for integration',
@@ -37,7 +42,20 @@ export function gameIntegrationLabel(game: Game): string {
   return labels[game.integrationSetup.state];
 }
 
+export function gameIntegrationNativeVerified(game: Game): boolean {
+  return game.id === 'assetto-corsa-rally' && game.integrationSetup?.verified === true && game.integrationSetup.connection?.source === 'shared-memory';
+}
+
+export function gameIntegrationReady(game: Game): boolean {
+  return game.installed && game.integrationSetup?.state === 'ready' && (game.id === 'dcs' || gameIntegrationNativeVerified(game));
+}
+
+export function gameIntegrationVerificationLabel(game: Game): string {
+  return gameIntegrationNativeVerified(game) ? 'Native telemetry verified' : 'Native telemetry not verified';
+}
+
 export function gameIntegrationLiveLabel(game: Game): string {
+  if (game.id === 'assetto-corsa-rally' && game.integrationSetup?.connection?.source === 'synthetic') return game.integrationSetup.live === 'receiving' ? 'Receiving synthetic test data' : game.integrationSetup.live === 'stale' ? 'Synthetic test data is stale' : 'Waiting for synthetic test data';
   return game.integrationSetup?.live === 'receiving' ? 'Receiving game data'
     : game.integrationSetup?.live === 'stale' ? 'Game data is stale' : 'Waiting for game data';
 }
@@ -53,6 +71,14 @@ export function gameIntegrationFolderError(folder: string): string {
   if (/[\u0000-\u001f\u007f]/.test(path)) return 'The folder path must not contain control characters.';
   if (!/^(?:[a-zA-Z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/.test(path)) return 'Enter an absolute folder path.';
   return '';
+}
+
+export function gameIntegrationTargetError(game: Game, folder: string): string {
+  return game.id === 'dcs' ? gameIntegrationFolderError(folder) : '';
+}
+
+export function gameIntegrationSetupRequest(game: Game, command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover', folder: string): GameRequest {
+  return { command, gameId: game.id, ...(game.id === 'dcs' && folder.trim() ? { userFolder: folder.trim() } : {}) };
 }
 
 export function gameIntegrationSetupBlockedReason(game: Game, session: GameSession, integrationActive: boolean): string {
@@ -119,9 +145,7 @@ export function gameProfileError(value: unknown): string {
     }
   }
   if (value.integration != null) {
-    const integration = JSON.parse(JSON.stringify(value.integration));
-    if (integration?.document?.provider === 'assetto-corsa-rally' && integration?.connection?.source === 'shared-memory' && integration.connection.processId == null) integration.connection.processId = 1;
-    const error = integrationError(integration);
+    const error = integrationError(value.integration);
     if (error) return error;
     const provider = (value.integration as IntegrationConfig).document.provider;
     if (provider !== (value.gameId === 'dcs' ? 'dcs-bios' : 'assetto-corsa-rally')) return 'The integration provider must match the selected game.';

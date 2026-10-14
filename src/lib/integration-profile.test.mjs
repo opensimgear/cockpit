@@ -112,3 +112,27 @@ test('synthetic byteframes preserve packet, epoch, raw gear, status and optional
   for(const status of ['paused','replay','off']) assert.equal(syntheticTelemetryFrame({packetId:0,epoch:1,rpm:0,gear:-1,speed:0,maxRpm:0,status}).staticPage.length,416);
   for(const change of [{packetId:-1},{epoch:0},{rpm:100001},{gear:32},{speed:NaN},{speed:-1},{maxRpm:-1},{status:'other'}]) assert.throws(()=>syntheticTelemetryFrame({packetId:1,epoch:1,rpm:1,gear:0,speed:0,maxRpm:0,status:'live',...change}));
 });
+
+test('native ACR profiles save before first launch while manual Start requires an actual process', () => {
+  const defaults = plain(newIntegrationConfig('assetto-corsa-rally'));
+  assert.equal('processId' in defaults.connection, false);
+  const c = config();
+  c.connection = defaults.connection;
+  assert.equal(integrationError(c), '');
+  const saved = structuredClone(c);
+  const message = 'Launch this integration from Games, or select a running ACR process for a manual session.';
+  assert.equal(integrationStartError(c, [target]), message);
+  c.connection.processId = null;
+  assert.equal(integrationError(c), '');
+  assert.equal(integrationStartError(c, [target]), message);
+  for (const processId of [0, -1, 1.5, 4294967296, '7', false]) {
+    c.connection.processId = processId;
+    assert.ok(integrationError(c));
+    assert.match(integrationStartError(c, [target]), /process ID/);
+  }
+  c.connection.processId = 123;
+  assert.equal(integrationError(c), '');
+  assert.equal(integrationStartError(c, [target]), '');
+  assert.equal(integrationStartError(saved, []), message);
+  assert.equal('processId' in saved.connection, false, 'Start guard never invents a process or changes the saved profile');
+});

@@ -25,7 +25,7 @@ export type IntegrationDocument = {
 export type IntegrationConnection = {
   freshnessMs: number; cataloguePath?: string; commandHost?: string; commandPort?: number;
   listenAddress?: string; listenPort?: number; multicastGroup?: string; multicastInterface?: string;
-  source?: 'shared-memory' | 'synthetic'; processId?: number;
+  source?: 'shared-memory' | 'synthetic'; processId?: number | null;
 };
 export type IntegrationAssignment = { role: string; gatewayId: string; moduleId: string };
 export type IntegrationConfig = { document: IntegrationDocument; connection: IntegrationConnection; assignments: IntegrationAssignment[] };
@@ -74,7 +74,7 @@ export function newIntegrationConfig(provider: IntegrationProvider = 'dcs-bios')
       context: provider === 'dcs-bios' ? { aircraftModule: 'A-10C' } : {}, roles: [{ id: 'panel', label: 'Panel' }], inputs: [], outputs: [] },
     connection: provider === 'dcs-bios' ? { freshnessMs: 1500, cataloguePath: '', commandHost: '127.0.0.1', commandPort: 7778,
       listenAddress: '0.0.0.0', listenPort: 5010, multicastGroup: '239.255.50.10', multicastInterface: '127.0.0.1' } :
-      { freshnessMs: 1500, source: 'shared-memory', processId: 0 }, assignments: [],
+      { freshnessMs: 1500, source: 'shared-memory' }, assignments: [],
   };
 }
 
@@ -139,7 +139,7 @@ export function integrationError(value: unknown, portableOnly = false): string {
     if (!text(c.cataloguePath,4096)) return 'Choose the installed DCS-BIOS doc/json directory.';
     if (![c.commandHost,c.listenAddress,c.multicastInterface].every(v => text(v,253) && !/\s/.test(v)) || !text(c.multicastGroup,253,true) || /\s/.test(c.multicastGroup)) return 'Enter UDP addresses without spaces; multicast may be blank.';
     if (!whole(c.commandPort,1,65535) || !whole(c.listenPort,1,65535)) return 'UDP ports must be from 1 to 65535.';
-  } else if (c.source !== 'synthetic' && (c.source !== 'shared-memory' || !whole(c.processId,1,4294967295))) return 'Choose synthetic telemetry or the Windows game process ID.';
+  } else if (c.source !== 'synthetic' && (c.source !== 'shared-memory' || c.processId != null && !whole(c.processId,1,4294967295))) return 'Choose synthetic telemetry or the Windows game process ID.';
   if (!Array.isArray(value.assignments) || value.assignments.length > 8) return 'Assign up to eight logical roles.';
   const assigned = new Map<string,string>(), gateways = new Set<string>();
   for (const a of value.assignments) {
@@ -220,6 +220,7 @@ export function integrationPhysicalControls(kind: DcsInputKind, events?: PanelIn
 }
 export function integrationStartError(config: IntegrationConfig, targets: IntegrationTarget[]): string {
   const error = integrationError(config); if (error) return error;
+  if (config.document.provider === 'assetto-corsa-rally' && config.connection.source === 'shared-memory' && config.connection.processId == null) return 'Launch this integration from Games, or select a running ACR process for a manual session.';
   for (const role of config.document.roles) {
     const rows = [...config.document.inputs, ...config.document.outputs].filter(row => row.role === role.id); if (!rows.length) continue;
     const target = roleTarget(config,role.id,targets);

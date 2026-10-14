@@ -1,11 +1,12 @@
+mod acr_setup;
 mod acr_windows;
 mod actions;
 pub mod dcs_bios;
 mod dcs_profile;
 mod dcs_profile_runtime;
 mod dcs_runtime;
-mod game_discovery;
 mod dcs_setup;
+mod game_discovery;
 mod game_integration_setup;
 mod game_telemetry;
 mod games;

@@ -544,6 +544,12 @@ impl IntegrationRuntime {
                     .config
                     .clone()
                     .ok_or("Save a validated integration profile before starting.")?;
+                if config.provider() == crate::game_telemetry::PROVIDER
+                    && config.connection["source"] == "shared-memory"
+                    && config.connection["processId"].is_null()
+                {
+                    return Err("Launch this integration from Games, or select a running ACR process for a manual session.".into());
+                }
                 settings.validation = self.inspect(&config);
                 if settings.validation["valid"] != true {
                     return Err("Current profile validation failed; review its diagnostics.".into());

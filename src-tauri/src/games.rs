@@ -379,7 +379,10 @@ impl GamesRuntime {
         let catalogue = platform.catalogue(&saved.manual);
         Self {
             inner: Arc::new(Inner {
-                setup: crate::game_integration_setup::GameIntegrationSetup::new(path.with_extension("integration-setup.json"), platform.integration_setup_supported()),
+                setup: crate::game_integration_setup::GameIntegrationSetup::new(
+                    path.with_extension("integration-setup.json"),
+                    platform.integration_setup_supported(),
+                ),
                 panel,
                 platform,
                 path,
@@ -409,6 +412,9 @@ impl GamesRuntime {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let mut catalogue = s.catalogue.clone();
+        self.inner
+            .setup
+            .auto_check(&catalogue, self.inner.platform.clone(), integration);
         self.inner.setup.decorate(&mut catalogue, integration, dcs);
         json!({"catalogue":catalogue,"profiles":s.saved.profiles.values().collect::<Vec<_>>(),"defaultProfiles":s.saved.defaults,
             "manualInstallations":s.saved.manual,"session":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":s.error})
@@ -473,12 +479,37 @@ impl GamesRuntime {
         }
         if command.starts_with("game_integration_") {
             let game_id = game_id(&request["gameId"])?;
-            let settings = self.inner.settings.lock().unwrap_or_else(|p| p.into_inner());
-            let game = settings.catalogue.iter().find(|g| g["id"] == game_id).cloned().ok_or("Choose a supported game.")?;
-            let session_active = self.inner.busy.load(Ordering::Acquire) || settings.journal.is_some();
+            let settings = self
+                .inner
+                .settings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            let game = settings
+                .catalogue
+                .iter()
+                .find(|g| g["id"] == game_id)
+                .cloned()
+                .ok_or("Choose a supported game.")?;
+            let session_active =
+                self.inner.busy.load(Ordering::Acquire) || settings.journal.is_some();
             drop(settings);
-            if session_active && !matches!(command, "game_integration_check" | "game_integration_cancel") { return Err("Deactivate or recover the current game session before integration setup.".into()); }
-            return self.inner.setup.request(request, &game, self.inner.platform.clone(), &self.inner.panel);
+            if session_active
+                && !matches!(
+                    command,
+                    "game_integration_check" | "game_integration_cancel"
+                )
+            {
+                return Err(
+                    "Deactivate or recover the current game session before integration setup."
+                        .into(),
+                );
+            }
+            return self.inner.setup.request(
+                request,
+                &game,
+                self.inner.platform.clone(),
+                &self.inner.panel,
+            );
         }
         if command == "game_deactivate" {
             if self.inner.busy.load(Ordering::Acquire) {
@@ -550,7 +581,7 @@ impl GamesRuntime {
             if command == "game_launch" && installation["launchSupported"] != true {
                 return Err("Game launching is unavailable on this platform.".into());
             }
-            self.inner.setup.preflight(&profile)?;
+            self.inner.setup.preflight(&profile, &installation)?;
             drop(s);
             self.inner.cancel.store(false, Ordering::Release);
             self.inner.busy.store(true, Ordering::Release);
@@ -1059,7 +1090,7 @@ impl Inner {
                     .ok_or("No executable was found.")?,
             )?;
             self.cancelled()?;
-            self.setup.preflight(&profile)?;
+            self.setup.preflight(&profile, &installation)?;
             let snapshot = self.snapshot(&profile, accepted)?;
             self.checkpoint(&snapshot)?;
             journal = Some(snapshot);

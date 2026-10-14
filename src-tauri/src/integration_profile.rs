@@ -371,9 +371,10 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
     } else {
         match connection["source"].as_str() {
             Some("shared-memory")
-                if connection["processId"]
-                    .as_u64()
-                    .is_some_and(|n| n > 0 && n <= u32::MAX as u64) =>
+                if connection["processId"].is_null()
+                    || connection["processId"]
+                        .as_u64()
+                        .is_some_and(|n| n > 0 && n <= u32::MAX as u64) =>
             {
                 ()
             }

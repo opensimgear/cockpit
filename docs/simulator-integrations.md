@@ -39,6 +39,11 @@ Formats include boolean/on-off enum LEDs, text/numeric displays with bounded enc
 
 ## Assetto Corsa Rally starter
 
+Games can prepare the native connection and verify its exact executable against
+a live telemetry session. Saving a native profile may defer the process ID until
+Games launches it; direct manual Start still needs a running process. Setup never
+installs a plugin or changes game files.
+
 The native source is **Windows shared memory**, selected with the Rally process ID. It opens existing `Local\acpmf_physics`, `Local\acpmf_graphics` and `Local\acpmf_static` mappings read-only. The researched executable basename is `acr.exe`; the implementation verifies the selected process identity/creation epoch and checks its lifetime. Shared mapping names are reused by other Assetto games and alone do not establish the producer. Run only the selected game when using these mappings. The source closes old mapping handles on exit/reset and uses bounded stable-copy retries.
 
 The adapter decodes explicit little-endian prefixes: physics packet ID at 0, raw gear at 16, RPM at 20 and speed km/h at 28; graphics status at 4; static maximum RPM at 412 and bounded UTF-16 context. Normalized channels are `rpm`, `gear` (reverse -1, neutral 0, forward 1+), `speed_kmh`, optional `max_rpm`, and derived `rev_ratio`. Live status and an advancing original physics packet ID establish freshness. Initial attachment, process/car/track changes and counter resets require a new baseline. Duplicate/frozen snapshots do not refresh the source; off, replay, pause, invalid or stale data falls back. Counter wrap is handled as unsigned progression.

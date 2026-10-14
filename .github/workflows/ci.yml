@@ -61,6 +61,17 @@ jobs:
           python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
           python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
           python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"
+      - name: Game integration setup coverage at least 71 percent
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.research/setup-coverage-target
+          OSG_DCS_SETUP_ARCHIVE: ${{ runner.temp }}/osg-dcs-bios-v0.11.7.zip
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 120 --retry 2 --retry-max-time 300 \
+            --max-filesize 8234988 \
+            --output "$OSG_DCS_SETUP_ARCHIVE" \
+            'https://github.com/DCS-Skunkworks/dcs-bios/releases/download/v0.11.7/DCS-BIOS_v0.11.7.zip'
+          python3 scripts/setup-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/setup-coverage"
       - name: Bootstrap behavior tests
         run: python3 -m unittest discover -s tests/e2e -p 'test_*.py'
       - name: Independent gateway and device acceptance
@@ -82,6 +93,9 @@ jobs:
             .research/integration-coverage/integration-summary.json
             .research/integration-coverage/native-tests.log
             .research/integration-coverage/lines.txt
+            .research/setup-coverage/setup-summary.json
+            .research/setup-coverage/native-tests.log
+            .research/setup-coverage/lines.txt
           if-no-files-found: ignore
 
   mapping-prototypes:

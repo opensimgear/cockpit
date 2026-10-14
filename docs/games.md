@@ -41,6 +41,25 @@ overrides are preserved; settings that do not match the installed module remain
 Needs attention. Native setup is unavailable on Linux/macOS, where profile editing
 and authored synthetic sources remain available.
 
+For ACR, **Set up telemetry** prepares native shared-memory connection settings;
+no game plugin or telemetry enablement file is installed. Setup fingerprints the
+actual runtime executable (including the Unreal child of a bootstrap executable).
+The first closed-game setup is configured but unverified. Enter a live stage and
+Recheck, or launch a captured integration from Games: fresh native data triggers an
+automatic check. Only a valid advancing native stream verifies that exact build.
+A previously verified unchanged build remains Ready while closed. Executable
+updates and incompatible layouts need rechecking; access errors and conflicting
+Assetto producers report their specific blocker.
+
+ACR profiles can be validated/saved while the game is closed with no process ID.
+Games resolves the real process when launching or activating the profile. A manual
+Start in Integrations requires a running PID. PIDs are never stored in setup
+records as game identity. RPM/gear/speed and optional maximum-RPM availability from
+the last native check are labelled separately from live values. Missing maximum
+RPM affects rev-ratio outputs only. Synthetic data exercises the adapter and never
+establishes native readiness. Shared mapping names do not identify their creator;
+known competing Assetto processes are rejected during checks and ongoing reads.
+
 ## Profiles
 
 Each game has a default hardware profile. Create additional named profiles and

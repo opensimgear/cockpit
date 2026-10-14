@@ -811,6 +811,9 @@ fn tokens(text: &str) -> Result<Vec<Token>, String> {
     Ok(result)
 }
 fn loader_count(bytes: &[u8]) -> Result<usize, String> {
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        return Err("Export.lua is encoded as UTF-16, which DCS cannot load. Its bytes were preserved. Save it as UTF-8 in your editor, then recheck.".into());
+    }
     let (text, _) = export_text(bytes)?;
     let tokens = tokens(&text)?;
     let pattern = ["dofile", "(", "lfs", ".", "writedir", "(", ")", ".."];

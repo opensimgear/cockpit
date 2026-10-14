@@ -5,7 +5,7 @@
   import type { DcsTarget } from './dcs-profile';
   import type { IntegrationConfig } from './integration-profile';
   import type { RuntimeConfig } from './runtime-config';
-  import { cloneGameProfile, defaultGameProfile, gameDeviceKey, gameIntegrationFolderError, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationSetupBlockedReason, gameIntegrationUserFolder, gameProfileEqual, gameProfileError, gameSessionLabel, newGameProfile, profileChangesBindings, supportedGames, visibleGames, type Game, type GameId, type GameProfile, type GameRequest, type GamesState } from './games';
+  import { cloneGameProfile, defaultGameProfile, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationSetupBlockedReason, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationVerificationLabel, gameIntegrationUserFolder, gameProfileEqual, gameProfileError, gameSessionLabel, newGameProfile, profileChangesBindings, supportedGames, visibleGames, type Game, type GameId, type GameProfile, type GameRequest, type GamesState } from './games';
 
   let { status, busy, request, targets, integration = null, integrationActive = false, readConfig, openIntegrations }: {
     status?: GamesState; busy: boolean; request: (request: GameRequest) => Promise<GamesState | false>;
@@ -33,7 +33,7 @@
   const setupRunning = $derived(gameState.catalogue.some(game => game.integrationSetup?.state === 'setting-up'));
   const locked = $derived(busy || pending || occupied || setupRunning);
   const setupBlocked = $derived(selected ? gameIntegrationSetupBlockedReason(selected, gameState.session, integrationActive) : '');
-  const folderError = $derived(gameIntegrationFolderError(integrationFolder));
+  const folderError = $derived(selected ? gameIntegrationTargetError(selected, integrationFolder) : '');
   const setupDisabled = $derived(locked || !!setupBlocked || !!folderError);
   $effect(() => { if (selected && !integrationFolderEdited) integrationFolder = gameIntegrationUserFolder(selected); });
   const compatibleIntegration = $derived(!!selected && integration?.document.provider === selected.provider);
@@ -61,7 +61,7 @@
   async function integrationCommand(command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover') {
     if (!selected) return;
     if (command === 'game_integration_setup' && setupDisabled) return;
-    await send({ command, gameId: selected.id, ...(integrationFolder.trim() ? { userFolder: integrationFolder.trim() } : {}) });
+    await send(gameIntegrationSetupRequest(selected, command, integrationFolder));
   }
   function createProfile() { if (selected) chooseProfile(newGameProfile(selected.id, gameState.profiles)); }
   async function saveProfile(): Promise<boolean> {
@@ -202,8 +202,8 @@
         </section>
         <section class="panel setup-panel" aria-label="Game integration setup">
           <div class="sidebar-title"><Icon name="link" size={17} /><h3>Integration setup</h3></div>
-          <div class={['setup-readiness', { ready: selected.integrationSetup?.state === 'ready', attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={selected.integrationSetup?.state === 'ready' ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={15} /><strong>{gameIntegrationLabel(selected)}</strong></div>
-          <p class="field-help">{selected.integrationSetup?.message ?? 'Check whether this game is ready to send data to your hardware.'}</p>
+          <div class={['setup-readiness', { ready: gameIntegrationReady(selected), attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={gameIntegrationReady(selected) ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={15} /><strong>{gameIntegrationLabel(selected)}</strong></div>
+          <p class="field-help">{selected.id === 'assetto-corsa-rally' && selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry does not verify the native game connection.' : selected.integrationSetup?.message ?? 'Check whether this game is ready to send data to your hardware.'}</p>
           {#if selected.id === 'dcs'}
             <p class="setup-version">DCS-BIOS <strong>{selected.integrationSetup?.version ?? '0.11.7'}</strong></p>
             {#if selected.integrationSetup?.candidates?.length}
@@ -212,17 +212,29 @@
             <label class="editor-label">DCS Saved Games folder<input class="text-input" aria-label="DCS Saved Games folder" bind:value={integrationFolder} disabled={locked || integrationActive} oninput={() => { integrationFolderEdited = true; }} placeholder="C:\Users\…\Saved Games\DCS" /></label>
             <p class="field-help">Set up installs DCS-BIOS and connects its export script here. Existing scripts are backed up.</p>
             {#if folderError && (integrationFolder || (selected.integrationSetup?.candidates?.length ?? 0) > 1)}<p class="setup-warning">{folderError}</p>{/if}
-            {#if selected.integrationSetup?.state === 'setting-up'}
-              <div class="setup-progress" role="status" aria-live="polite"><Icon name="refresh" size={14} /><span>{selected.integrationSetup.progress ?? 'Preparing integration…'}</span></div>
-              <button class="secondary-button setup-main-action" disabled={busy || pending} onclick={() => integrationCommand('game_integration_cancel')}>Cancel setup</button>
-            {:else if selected.integrationSetup?.recoveryNeeded}
-              <p class="setup-warning">Restore the files from the interrupted setup before trying again.</p>
-              <button class="secondary-button setup-main-action" disabled={locked || integrationActive} onclick={() => integrationCommand('game_integration_recover')}><Icon name="refresh" size={14} /> Recover integration setup</button>
-            {:else}
-              <button class="primary-button setup-main-action" disabled={setupDisabled} onclick={() => integrationCommand('game_integration_setup')}><Icon name={selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'refresh' : 'download'} size={14} /> {selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'Repair integration' : 'Set up integration'}</button>
-              {#if setupBlocked}<p class="field-help">{setupBlocked}</p>{/if}
+          {:else}
+            <p class="setup-version">{selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry' : 'Native shared memory'}{#if selected.integrationSetup?.version && selected.integrationSetup.connection?.source !== 'synthetic'} · Build <strong>{selected.integrationSetup.version}</strong>{/if}</p>
+            <p class="field-help">Set up configures Cockpit to read the running game's telemetry. Cockpit connects automatically when you launch a game profile.</p>
+            <div class={['native-verification', { verified: gameIntegrationNativeVerified(selected) }]}><Icon name={gameIntegrationNativeVerified(selected) ? 'check' : 'info'} size={13} /><span>{gameIntegrationVerificationLabel(selected)}</span></div>
+            {#if !gameIntegrationNativeVerified(selected)}<p class="field-help">Start ACR and enter a driving session, then recheck to verify compatible native telemetry.</p>{/if}
+            {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.probeChannels && Object.keys(selected.integrationSetup.probeChannels).length}
+              <details class="telemetry-channel-details"><summary>Last native check</summary><p>Channel availability from the last compatibility check. Live values appear separately when telemetry is receiving.</p><dl>{#each Object.entries(selected.integrationSetup.probeChannels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}</dd></div>{/each}</dl></details>
             {/if}
-          {:else}<p class="field-help">Automatic Rally telemetry setup will be available next.</p>{/if}
+            {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.channels && Object.keys(selected.integrationSetup.channels).length}
+              <details class="telemetry-channel-details"><summary>Telemetry channels</summary><dl>{#each Object.entries(selected.integrationSetup.channels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}{#if typeof value.value === 'number'} · {Number.isInteger(value.value) ? value.value : value.value.toFixed(1)}{:else if typeof value.value === 'string'} · {value.value}{/if}</dd></div>{/each}</dl></details>
+            {/if}
+            {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
+          {/if}
+          {#if selected.integrationSetup?.state === 'setting-up'}
+            <div class="setup-progress" role="status" aria-live="polite"><Icon name="refresh" size={14} /><span>{selected.integrationSetup.progress ?? 'Preparing integration…'}</span></div>
+            <button class="secondary-button setup-main-action" disabled={busy || pending} onclick={() => integrationCommand('game_integration_cancel')}>Cancel setup</button>
+          {:else if selected.integrationSetup?.recoveryNeeded}
+            <p class="setup-warning">Recover the interrupted setup before trying again.</p>
+            <button class="secondary-button setup-main-action" disabled={locked || integrationActive} onclick={() => integrationCommand('game_integration_recover')}><Icon name="refresh" size={14} /> Recover integration setup</button>
+          {:else}
+            <button class="primary-button setup-main-action" disabled={setupDisabled} onclick={() => integrationCommand('game_integration_setup')}><Icon name={selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'refresh' : selected.id === 'dcs' ? 'download' : 'link'} size={14} /> {selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'Repair integration' : selected.id === 'dcs' ? 'Set up integration' : 'Set up telemetry'}</button>
+            {#if setupBlocked}<p class="field-help">{setupBlocked}</p>{/if}
+          {/if}
           <button class="text-button setup-recheck" disabled={busy || pending || setupRunning || (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={12} /> Recheck readiness</button>
           <div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{gameIntegrationLiveLabel(selected)}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>
         </section>
@@ -242,7 +254,7 @@
               {:else}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="m0 107 65-67 48 45 64-65 90 72 39-33 34 35" stroke="currentColor" opacity=".2"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="36" opacity=".08"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="1.2" stroke-dasharray="8 7" opacity=".3"/><path d="m139 92 13-19h38l14 19 4 28h-74z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><path d="m151 91 7-12h26l8 12zM139 105h12M192 105h11M150 118h43" stroke="currentColor" stroke-width="1.5"/><path d="M140 122v8h10v-8M192 122v8h10v-8" stroke="currentColor" stroke-width="3"/></svg>{/if}
               <div class="game-wordmark">{game.id === 'dcs' ? 'DCS' : 'ACR'}<span>{game.id === 'dcs' ? 'WORLD' : 'RALLY'}</span></div>
             </div>
-            <div class="tile-copy"><div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div><p>{game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p><div class="tile-footer"><span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span><span>{profile?.name ?? 'Set up a profile'}</span></div><div class={['tile-integration', { ready: game.integrationSetup?.state === 'ready', attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={game.integrationSetup?.state === 'ready' ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></div>{#if game.installed}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{gameIntegrationLiveLabel(game)}</div>{/if}</div>
+            <div class="tile-copy"><div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div><p>{game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p><div class="tile-footer"><span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span><span>{profile?.name ?? 'Set up a profile'}</span></div><div class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></div>{#if game.id === 'assetto-corsa-rally' && game.installed}<div class={['tile-verification', { verified: gameIntegrationNativeVerified(game) }]}>{gameIntegrationVerificationLabel(game)}</div>{/if}{#if game.installed}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{gameIntegrationLiveLabel(game)}</div>{/if}</div>
           </button>
           {#if game.installed}<button class="primary-button tile-launch" disabled={locked || !game.launchSupported} aria-label={`Launch ${game.name}`} onclick={() => launchTile(game)}><Icon name="play" size={14} /> Launch</button>{/if}
         </article>
@@ -325,6 +337,8 @@
   .tile-integration.ready { color: var(--accent); }
   .tile-integration.attention { color: #c5a26e; }
   .tile-live { margin-top: 8px; }
+  .tile-verification { color: var(--muted); font-size: 9px; margin-top: 8px; }
+  .tile-verification.verified { color: var(--accent); }
   .live-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: var(--muted); }
   .live-dot.receiving { background: var(--accent); }
   .live-dot.stale { background: #c5a26e; }
@@ -410,6 +424,15 @@
   .setup-version { font-size: 9px; color: var(--muted); margin-top: 16px; }
   .setup-version strong { color: var(--soft); }
   .setup-panel input, .setup-panel select { font-family: ui-monospace, monospace; font-size: 9px; }
+  .native-verification { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #c5a26e; margin-top: 15px; }
+  .native-verification.verified { color: var(--accent); }
+  .telemetry-channel-details { font-size: 9px; color: var(--muted); margin-top: 15px; }
+  .telemetry-channel-details p { font-size: 9px; line-height: 1.8; margin-top: 10px; }
+  .telemetry-channel-details summary { cursor: pointer; color: var(--soft); }
+  .telemetry-channel-details dl { margin-top: 10px; }
+  .telemetry-channel-details dl > div { display: flex; justify-content: space-between; gap: 10px; line-height: 1.8; padding: 4px 0; }
+  .telemetry-channel-details dt { text-transform: capitalize; }
+  .telemetry-channel-details dd { text-align: right; margin: 0; }
   .setup-main-action { width: 100%; margin-top: 17px; font-size: 10px; }
   .setup-warning { font-size: 10px; line-height: 1.8; margin-top: 12px; }
   .setup-recheck { padding-left: 0; font-size: 9px; margin-top: 13px; }
@@ -434,7 +457,7 @@
   .session-warning { background: #b18b550a; border-color: #b18b5560; }
   .session-warning .session-icon { color: #c5a26e; }
   @media (hover: none) { .tile-launch { opacity: 1; transform: none; pointer-events: auto; } }
-  @media (max-width: 1050px) { .games-detail-layout { grid-template-columns: minmax(0, 1fr); } .game-sidebar { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; } .session-explainer { padding: 20px 4px; } }
+  @media (max-width: 1050px) { .games-detail-layout { grid-template-columns: minmax(0, 1fr); } .game-sidebar { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; } .setup-panel { margin-top: 0; } .session-explainer { padding: 20px 4px; } }
   @media (max-width: 600px) { .games-toolbar { align-items: start; } .toolbar-controls { align-items: end; flex-direction: column-reverse; gap: 12px; } .game-grid { grid-template-columns: 1fr; } .game-details-heading { flex-wrap: wrap; } .game-details-heading h2 { font-size: 19px; } .game-detail-mark { width: 50px; height: 50px; } .detail-launch { margin-left: 0; width: 100%; } .game-sidebar { grid-template-columns: 1fr; } .profile-picker, .peripheral-controls { flex-wrap: wrap; } .profile-picker label, .peripheral-controls label { flex-basis: 100%; } .editor-heading, .editor-body { padding: 16px; } .editor-footer { flex-wrap: wrap; } .editor-footer > button:first-child { flex-basis: 100%; justify-content: start; } .session-banner { flex-wrap: wrap; } .session-banner > button { margin-left: 33px; } }
   @media (prefers-reduced-motion: reduce) { .game-tile, .tile-launch, .switch-track, .switch-track::after { transition: none; } }
 </style>
