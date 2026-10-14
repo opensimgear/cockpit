@@ -147,6 +147,145 @@ fn bound_catalogue(config: &Config) -> Result<Value, String> {
         json!({"provider":"dcs-bios","aircraftModule":config.document["context"]["aircraftModule"],"controls":controls.into_values().collect::<Vec<_>>()}),
     )
 }
+fn preflight_panel(panel: Panel, value: &Value) -> Result<Panel, String> {
+    let rows = value
+        .as_array()
+        .filter(|rows| rows.len() <= 32)
+        .ok_or("Choose at most 32 game peripherals for integration preflight.")?;
+    let mut devices = BTreeMap::new();
+    for row in rows {
+        if !row.as_object().is_some_and(|o| {
+            o.keys().all(|k| {
+                matches!(
+                    k.as_str(),
+                    "gatewayId" | "moduleId" | "controller" | "config"
+                )
+            })
+        }) || !matches!(
+            row["controller"].as_str(),
+            Some("keep" | "enabled" | "disabled")
+        ) {
+            return Err("Invalid game peripheral projection.".into());
+        }
+        let gateway = row["gatewayId"]
+            .as_str()
+            .and_then(|id| id.split_once(':'))
+            .and_then(|(backend, serial)| crate::gateways::canonical_id(backend, serial))
+            .ok_or("Invalid projected gateway identity.")?;
+        let module = row["moduleId"]
+            .as_str()
+            .filter(|id| {
+                id.len() == 32
+                    && id.bytes().all(|b| b.is_ascii_hexdigit())
+                    && id.bytes().any(|b| b != b'0')
+                    && id.bytes().any(|b| b != b'f' && b != b'F')
+            })
+            .ok_or("Invalid projected peripheral identity.")?
+            .to_ascii_lowercase();
+        if let Some(config) = row.get("config") {
+            if !config.as_object().is_some_and(|o| {
+                o.keys().all(|k| {
+                    matches!(
+                        k.as_str(),
+                        "name"
+                            | "expanderMask"
+                            | "buttons"
+                            | "axes"
+                            | "hats"
+                            | "encoders"
+                            | "selectors"
+                    )
+                })
+            }) {
+                return Err("Invalid projected peripheral configuration fields.".into());
+            }
+            crate::runtime::commands(config, 1)?;
+        }
+        if devices.insert((gateway, module), row.clone()).is_some() {
+            return Err("A peripheral cannot be projected more than once.".into());
+        }
+    }
+    Ok(Arc::new(move |request| {
+        if !matches!(
+            request["command"].as_str(),
+            Some("status" | "action_describe" | "events_state")
+        ) {
+            return json!({"ok":false,"error":"Integration preflight only permits device reads."});
+        }
+        let route = (
+            request["gatewayId"].as_str().unwrap_or("").to_string(),
+            request["moduleId"].as_str().unwrap_or("").to_string(),
+        );
+        let mut reply = panel(request.clone());
+        let Some(device) = devices.get(&route) else {
+            return reply;
+        };
+        if reply["ok"] != true {
+            return reply;
+        }
+        if let Some(modules) = reply["state"]["modules"].as_array_mut() {
+            if let Some(module) = modules.iter_mut().find(|m| m["id"] == route.1) {
+                match device["controller"].as_str() {
+                    Some("disabled") => {
+                        module["enabled"] = json!(false);
+                        module["published"] = json!(false);
+                        module["reportId"] = Value::Null;
+                    }
+                    Some("enabled") => module["enabled"] = json!(true),
+                    _ => {}
+                }
+                // directUsb is an actual physical connection; a profile's
+                // desired gateway controller state cannot disconnect that cable.
+            }
+        }
+        if request["command"] == "events_state" {
+            if let Some(config) = device.get("config") {
+                let events = &mut reply["state"]["moduleEvents"][&route.1];
+                if let Err(error) = project_events(events, config) {
+                    return json!({"ok":false,"error":error});
+                }
+            }
+        }
+        reply
+    }))
+}
+fn project_events(events: &mut Value, config: &Value) -> Result<(), String> {
+    // First prove the real firmware's input protocol and typed capabilities.
+    // Forecasting a mapping must not invent firmware support or alter its route.
+    crate::panel_events::validate(events, None)?;
+    if events["contactButtonCount"].as_u64().is_none() || events["axisCount"].as_u64().is_none() {
+        return Err("Update the panel firmware to advertise typed input capabilities before projecting a game setup.".into());
+    }
+    let buttons = config["buttons"].as_array().unwrap();
+    let encoder_count = config["encoders"].as_array().unwrap().len() * 2;
+    let selector_count = config["selectors"].as_array().unwrap().len();
+    let count = buttons.len() + encoder_count + selector_count * 3;
+    let axes = config["axes"].as_array().unwrap();
+    events["buttonCount"] = json!(count);
+    events["contactButtonCount"] = json!(buttons.len());
+    events["held"] = json!(vec![false; count]);
+    events["maintainedButtons"] = json!(buttons
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b[1] != 0)
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>());
+    events["encoderButtons"] =
+        json!((buttons.len()..buttons.len() + encoder_count).collect::<Vec<_>>());
+    events["selectorButtons"] = json!((0..selector_count)
+        .map(|i| {
+            let start = buttons.len() + encoder_count + i * 3;
+            [start, start + 1, start + 2]
+        })
+        .collect::<Vec<_>>());
+    events["axisCount"] = json!(axes.len());
+    let neutral: Vec<_> = axes.iter().map(|a| a[4].clone()).collect();
+    events["axes"] = json!(neutral);
+    events["axisNeutral"] = json!(neutral);
+    events["axisUsage"] = json!(axes.iter().map(|a| a[1].clone()).collect::<Vec<_>>());
+    events["axisAvailable"] = json!(vec![false; axes.len()]);
+    crate::panel_events::validate(events, None)
+}
 impl IntegrationRuntime {
     pub(crate) fn new(panel: Panel, path: PathBuf) -> Self {
         let saved = fs::read(&path)
@@ -224,6 +363,9 @@ impl IntegrationRuntime {
         state
     }
     fn inspect(&self, config: &Config) -> Value {
+        self.inspect_with_panel(config, &self.panel)
+    }
+    fn inspect_with_panel(&self, config: &Config, panel: &Panel) -> Value {
         let result = (|| -> Result<Value, String> {
             let metadata = bound_catalogue(config)?;
             let diagnostics: Vec<_> = integration_profile::catalogue_diagnostics(config, &metadata)
@@ -234,11 +376,8 @@ impl IntegrationRuntime {
                 return Ok(json!({"valid":false,"diagnostics":diagnostics,"catalogue":metadata}));
             }
             let profile = compile(config)?;
-            let targets = crate::dcs_profile_runtime::validate_targets(
-                &profile,
-                &self.panel,
-                &controls(config),
-            )?;
+            let targets =
+                crate::dcs_profile_runtime::validate_targets(&profile, panel, &controls(config))?;
             Ok(
                 json!({"valid":true,"diagnostics":[],"signature":signature(&json!([metadata,targets])),"catalogueRevision":signature(&metadata),"provider":config.provider(),"catalogue":metadata,"targets":targets}),
             )
@@ -258,6 +397,48 @@ impl IntegrationRuntime {
         }
         match request["command"].as_str() {
             Some("integration_get_state") => Ok(()),
+            Some("integration_preflight") => {
+                if request.to_string().len() > 65_536
+                    || !request.as_object().is_some_and(|o| {
+                        o.keys().all(|k| {
+                            matches!(
+                                k.as_str(),
+                                "command" | "clientId" | "integrationConfig" | "gameDevices"
+                            )
+                        })
+                    })
+                {
+                    return Err("Invalid integration preflight request.".into());
+                }
+                let config = integration_profile::validate(&request["integrationConfig"])?;
+                let panel = preflight_panel(self.panel.clone(), &request["gameDevices"])?;
+                settings.validation = self.inspect_with_panel(&config, &panel);
+                settings.validation["preview"] = json!(true);
+                Ok(())
+            }
+            Some("integration_clear") => {
+                if settings.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+                    return Err("Stop the integration before clearing its settings.".into());
+                }
+                let revision = settings
+                    .revision
+                    .checked_add(1)
+                    .ok_or("Profile revision exhausted.")?;
+                match fs::remove_file(&self.path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.to_string()),
+                }
+                settings.config = None;
+                settings.accepted = None;
+                settings.validation = Value::Null;
+                settings.catalogue = Value::Null;
+                settings.revision = revision;
+                *self.state.lock().unwrap_or_else(|p| p.into_inner()) =
+                    json!({"running":false,"status":"stopped","error":null});
+                *self.provider.lock().unwrap_or_else(|p| p.into_inner()) = Value::Null;
+                Ok(())
+            }
             Some("integration_catalogue") => {
                 let config = if let Some(draft) = request.get("integrationConfig") {
                     let provider = draft["document"]["provider"]

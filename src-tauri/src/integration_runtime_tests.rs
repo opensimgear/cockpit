@@ -28,6 +28,255 @@ fn config() -> Value {
         "roles":[{"id":"radio","label":"Dashboard"}],"inputs":[],"outputs":[output("rpm","radio","rpm","rpm","integer")]},
         "connection":{"source":"synthetic","freshnessMs":1500},"assignments":[{"role":"radio","gatewayId":A,"moduleId":MODULE}]})
 }
+
+fn preflight_devices(controller: &str) -> Value {
+    json!([{"gatewayId":A,"moduleId":MODULE,"controller":controller}])
+}
+fn mapped_config() -> Value {
+    json!({"name":"Flight panel","expanderMask":0,"buttons":[[0,1,0],[1,0,0]],
+        "encoders":[[2,3]],"selectors":[[4,5]],"hats":[],"axes":[[0,48,0,4095,32767,0,0]]})
+}
+fn dcs_inputs() -> Value {
+    let mut c = config();
+    c["document"]["provider"] = json!("dcs-bios");
+    c["document"]["context"] = json!({"aircraftModule":"A-10C"});
+    c["document"]["outputs"] = json!([]);
+    c["document"]["inputs"] = json!([
+        {"id":"switch","role":"radio","kind":"switch","control":0,"command":"UHF_SQUELCH","interface":"set_state"},
+        {"id":"ack","role":"radio","kind":"button","control":1,"command":"UFC_MASTER_CAUTION","interface":"set_state"},
+        {"id":"detent","role":"radio","kind":"encoder","control":0,"command":"UHF_PRESET_SEL","interface":"fixed_step"},
+        {"id":"axis","role":"radio","kind":"axis","control":0,"command":"UHF_VOL","interface":"set_state"}
+    ]);
+    c["connection"] = json!({"cataloguePath":PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../simulation/dcs-bios/catalogue"),
+        "commandHost":"127.0.0.1","commandPort":7778,"listenAddress":"127.0.0.1","listenPort":5010,
+        "multicastGroup":"","multicastInterface":"127.0.0.1","freshnessMs":1500});
+    c
+}
+#[test]
+fn preflight_is_read_only_and_does_not_replace_saved_or_accepted_settings() {
+    let f = Fixture::new();
+    f.save(config());
+    let bytes = fs::read(&f.path).unwrap();
+    let before = f.runtime.status();
+    let accepted = f.runtime.settings.lock().unwrap().accepted.clone();
+    f.mock.fake.lock().unwrap().calls.clear();
+    f.request(
+        "integration_preflight",
+        json!({"integrationConfig":config(),"gameDevices":preflight_devices("keep")}),
+    )
+    .unwrap();
+    let status = f.runtime.status();
+    assert_eq!(status["validation"]["valid"], true);
+    assert_eq!(status["validation"]["preview"], true);
+    assert_eq!(status["config"], before["config"]);
+    assert_eq!(status["revision"], before["revision"]);
+    assert_eq!(f.runtime.settings.lock().unwrap().accepted, accepted);
+    assert_eq!(fs::read(&f.path).unwrap(), bytes);
+    {
+        let fake = f.mock.fake.lock().unwrap();
+        assert!(fake
+            .calls
+            .iter()
+            .all(|r| matches!(r["command"].as_str(), Some("status" | "action_describe"))));
+        assert!(fake.writes.is_empty());
+        assert!(fake.devices.values().all(|d| d.leases.is_empty()));
+    }
+    f.start();
+    f.request(
+        "integration_preflight",
+        json!({"integrationConfig":config(),"gameDevices":[]}),
+    )
+    .unwrap();
+    assert_eq!(f.runtime.status()["running"], true);
+    assert_eq!(fs::read(&f.path).unwrap(), bytes);
+}
+#[test]
+fn preflight_rejects_missing_providers_channels_and_output_capabilities() {
+    let f = Fixture::new();
+    let mut c = config();
+    c["document"]["provider"] = Value::Null;
+    assert!(f
+        .request(
+            "integration_preflight",
+            json!({"integrationConfig":c,"gameDevices":[]})
+        )
+        .is_err());
+    let mut c = config();
+    c["document"]["outputs"][0]["channel"] = json!("missing_channel");
+    f.request(
+        "integration_preflight",
+        json!({"integrationConfig":c,"gameDevices":[]}),
+    )
+    .unwrap();
+    assert_eq!(f.runtime.status()["validation"]["valid"], false);
+    assert!(f.mock.fake.lock().unwrap().calls.is_empty());
+    f.mock
+        .fake
+        .lock()
+        .unwrap()
+        .devices
+        .get_mut(A)
+        .unwrap()
+        .actions[0]["parameters"][0]["type"] = json!("boolean");
+    f.request(
+        "integration_preflight",
+        json!({"integrationConfig":config(),"gameDevices":[]}),
+    )
+    .unwrap();
+    assert_eq!(f.runtime.status()["validation"]["valid"], false);
+    assert!(!f.path.exists());
+    assert!(f.mock.fake.lock().unwrap().writes.is_empty());
+}
+#[test]
+fn preflight_forecasts_disabled_controller_and_physical_kinds_without_mutating_panel() {
+    let mut f = Fixture::new();
+    let source = f.mock.panel();
+    let panel: Panel = Arc::new(move |request| {
+        let mut reply = source(request);
+        reply["state"]["modules"][0]["enabled"] = json!(true);
+        reply["state"]["modules"][0]["published"] = json!(true);
+        reply["state"]["modules"][0]["reportId"] = json!(1);
+        reply
+    });
+    f.runtime = Arc::new(IntegrationRuntime::new(panel.clone(), f.path.clone()));
+    let c = dcs_inputs();
+    let mut devices = preflight_devices("disabled");
+    devices[0]["config"] = mapped_config();
+    f.request(
+        "integration_preflight",
+        json!({"integrationConfig":c,"gameDevices":devices}),
+    )
+    .unwrap();
+    assert_eq!(f.runtime.status()["validation"]["valid"], true);
+    let actual = panel(json!({"command":"events_state","gatewayId":A,"moduleId":MODULE}));
+    assert_eq!(actual["state"]["modules"][0]["enabled"], true);
+    assert_eq!(
+        actual["state"]["moduleEvents"][MODULE]["contactButtonCount"],
+        1
+    );
+    assert_eq!(actual["state"]["moduleEvents"][MODULE]["axes"], json!([0]));
+    let projected = preflight_panel(panel, &devices).unwrap()(
+        json!({"command":"events_state","gatewayId":A,"moduleId":MODULE}),
+    );
+    let events = &projected["state"]["moduleEvents"][MODULE];
+    assert_eq!(events["contactButtonCount"], 2);
+    assert_eq!(events["maintainedButtons"], json!([0]));
+    assert_eq!(events["encoderButtons"], json!([2, 3]));
+    assert_eq!(events["selectorButtons"], json!([[4, 5, 6]]));
+    assert_eq!(events["held"], json!(vec![false; 7]));
+    assert_eq!(events["axisNeutral"], json!([32767]));
+    assert_eq!(events["axes"], json!([32767]));
+    assert_eq!(events["axisAvailable"], json!([false]));
+    assert_eq!(events["sampledAtMs"], 1);
+    assert_eq!(
+        events["route"],
+        actual["state"]["moduleEvents"][MODULE]["route"]
+    );
+    assert!(f.mock.fake.lock().unwrap().writes.is_empty());
+}
+#[test]
+fn preflight_does_not_hide_direct_usb_or_invent_typed_firmware_support() {
+    let f = Fixture::new();
+    let mut devices = preflight_devices("disabled");
+    devices[0]["config"] = mapped_config();
+    for mode in ["directUsb", "legacy", "invalid"] {
+        let source = f.mock.panel();
+        let panel: Panel = Arc::new(move |request| {
+            let mut reply = source(request);
+            if mode == "directUsb" {
+                reply["state"]["modules"][0]["directUsb"] = json!(true);
+            }
+            if mode == "legacy" {
+                let events = reply["state"]["moduleEvents"][MODULE]
+                    .as_object_mut()
+                    .unwrap();
+                for key in [
+                    "contactButtonCount",
+                    "maintainedButtons",
+                    "selectorButtons",
+                    "axisCount",
+                    "axes",
+                    "axisNeutral",
+                    "axisUsage",
+                    "axisAvailable",
+                    "sampledAtMs",
+                ] {
+                    events.remove(key);
+                }
+            }
+            if mode == "invalid" {
+                reply["state"]["moduleEvents"][MODULE]["axisAvailable"] = json!([1]);
+            }
+            reply
+        });
+        let runtime = IntegrationRuntime::new(panel, f.path.clone());
+        runtime.request(&json!({"command":"integration_preflight","integrationConfig":dcs_inputs(),"gameDevices":devices})).unwrap();
+        assert_eq!(runtime.status()["validation"]["valid"], false, "{mode}");
+        runtime.stop(true);
+    }
+    f.request(
+        "integration_preflight",
+        json!({"integrationConfig":dcs_inputs(),"gameDevices":preflight_devices("enabled")}),
+    )
+    .unwrap();
+    assert_eq!(f.runtime.status()["validation"]["valid"], false);
+    assert!(f.mock.fake.lock().unwrap().writes.is_empty());
+}
+#[test]
+fn preflight_projection_rejects_unknown_fields_duplicates_and_invalid_routes_before_reads() {
+    let f = Fixture::new();
+    let device = preflight_devices("keep")[0].clone();
+    for devices in [
+        json!(vec![device.clone(); 33]),
+        json!([device.clone(), device.clone()]),
+        json!([{"gatewayId":"bad","moduleId":MODULE,"controller":"keep"}]),
+        json!([{"gatewayId":A,"moduleId":"0".repeat(32),"controller":"keep"}]),
+        json!([{"gatewayId":A,"moduleId":MODULE,"controller":"other"}]),
+        json!([{"gatewayId":A,"moduleId":MODULE,"controller":"keep","extra":true}]),
+        json!([{"gatewayId":A,"moduleId":MODULE,"controller":"keep","config":{"bad":true}}]),
+        json!([{"gatewayId":A,"moduleId":MODULE,"controller":"keep","config":{"name":"missing fields"}}]),
+        Value::Null,
+    ] {
+        assert!(f
+            .request(
+                "integration_preflight",
+                json!({"integrationConfig":config(),"gameDevices":devices})
+            )
+            .is_err());
+    }
+    assert!(f
+        .request(
+            "integration_preflight",
+            json!({"integrationConfig":config(),"gameDevices":[],"extra":true})
+        )
+        .is_err());
+    assert!(f.mock.fake.lock().unwrap().calls.is_empty());
+    let projected = preflight_panel(f.mock.panel(), &preflight_devices("keep")).unwrap();
+    assert_eq!(projected(json!({"command":"config_apply"}))["ok"], false);
+    let other = projected(json!({"command":"status","gatewayId":B,"moduleId":MODULE}));
+    assert_eq!(other["ok"], true);
+}
+
+#[test]
+fn clearing_stopped_integration_restores_unconfigured_state_durably() {
+    let f = Fixture::new();
+    f.save(config());
+    f.start();
+    assert!(f.request("integration_clear", json!({})).is_err());
+    f.request("integration_stop", json!({})).unwrap();
+    let revision = f.runtime.status()["revision"].as_u64().unwrap();
+    f.request("integration_clear", json!({})).unwrap();
+    assert_eq!(f.runtime.status()["configured"], false);
+    assert_eq!(f.runtime.status()["config"], Value::Null);
+    assert_eq!(f.runtime.status()["error"], Value::Null);
+    assert_eq!(f.runtime.status()["outputs"], Value::Null);
+    assert_eq!(f.runtime.status()["revision"], revision + 1);
+    assert!(!f.path.exists());
+    let loaded = IntegrationRuntime::new(f.mock.panel(), f.path.clone());
+    assert_eq!(loaded.status()["configured"], false);
+    f.request("integration_clear", json!({})).unwrap();
+    assert!(f.request("integration_start", json!({})).is_err());
+}
 fn cohort() -> Value {
     let mut value = config();
     value["document"]["roles"]

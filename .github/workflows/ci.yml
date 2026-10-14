@@ -28,6 +28,7 @@ jobs:
       - run: pnpm dcs-profile:coverage
       - run: pnpm debug:coverage
       - run: pnpm integration:coverage
+      - run: pnpm games:coverage
       - run: pnpm ui:build
 
   native:

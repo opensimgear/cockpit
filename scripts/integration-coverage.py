@@ -48,7 +48,7 @@ def main():
              '-o', str(profile)], root)
     sources = [root / 'src-tauri/src' / name
                for name in ['integration_profile.rs', 'integration_runtime.rs', 'game_telemetry.rs',
-                            'acr_windows.rs', 'output_leases.rs', 'runtime.rs']]
+                            'acr_windows.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'game_discovery.rs']]
     annotated = command([str(llvm / 'llvm-cov'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
     (output / 'lines.txt').write_text(annotated)

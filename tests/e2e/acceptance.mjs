@@ -2,6 +2,7 @@
 import test from 'node:test';
 import './dcs-panel-acceptance.mjs';
 import './integration-acceptance.mjs';
+import './games-acceptance.mjs';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';

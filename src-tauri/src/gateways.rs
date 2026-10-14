@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
     },
 };
 
@@ -100,9 +100,11 @@ pub struct GatewayManager {
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
     closed: AtomicBool,
-    integration_gate: Mutex<()>,
-    dcs: crate::dcs_runtime::DcsRuntime,
-    integration: crate::integration_runtime::IntegrationRuntime,
+    integration_gate: Arc<Mutex<()>>,
+    dcs: Arc<crate::dcs_runtime::DcsRuntime>,
+    integration: Arc<crate::integration_runtime::IntegrationRuntime>,
+    games: crate::games::GamesRuntime,
+    game_admission: RwLock<()>,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -128,20 +130,60 @@ impl GatewayManager {
                 |adapter| adapter.request(request),
             )
         });
+        let integration_gate = Arc::new(Mutex::new(()));
+        let dcs = Arc::new(crate::dcs_runtime::DcsRuntime::new(
+            panel.clone(),
+            crate::dcs_runtime::config_path(),
+        ));
+        let integration = Arc::new(crate::integration_runtime::IntegrationRuntime::new(
+            panel.clone(),
+            crate::dcs_runtime::config_path().with_file_name("integration.json"),
+        ));
+        let game_dcs = dcs.clone();
+        let game_integration = integration.clone();
+        let game_gate = integration_gate.clone();
+        let game_panel = Arc::new(move |request: Value| {
+            let command = request["command"].as_str().unwrap_or("");
+            if command.starts_with("integration_") || command.starts_with("dcs_") {
+                let _guard = game_gate.lock().unwrap_or_else(|p| p.into_inner());
+                let result = if command.starts_with("integration_") {
+                    if command == "integration_start" && game_dcs.status()["running"] == true {
+                        Err("Stop DCS-BIOS before starting another integration.".into())
+                    } else {
+                        game_integration.request(&request)
+                    }
+                } else if command == "dcs_start" && game_integration.running() {
+                    Err("Stop the active integration before starting DCS-BIOS.".into())
+                } else {
+                    game_dcs.request(&request)
+                };
+                let mut response = json!({"ok":result.is_ok(),"state":{
+                    "integration":game_integration.status(),"dcsBios":game_dcs.status()}});
+                if let Err(error) = result {
+                    response["error"] = json!(error);
+                }
+                response
+            } else {
+                panel(request)
+            }
+        });
+        let games = crate::games::GamesRuntime::new(
+            game_panel,
+            std::env::var_os("OSG_GAMES_CONFIG")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| crate::dcs_runtime::config_path().with_file_name("games.json")),
+            Arc::new(crate::game_discovery::NativePlatform),
+        );
         Self {
             provider,
             sessions,
             inventory: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
-            integration_gate: Mutex::new(()),
-            dcs: crate::dcs_runtime::DcsRuntime::new(
-                panel.clone(),
-                crate::dcs_runtime::config_path(),
-            ),
-            integration: crate::integration_runtime::IntegrationRuntime::new(
-                panel,
-                crate::dcs_runtime::config_path().with_file_name("integration.json"),
-            ),
+            integration_gate,
+            dcs,
+            integration,
+            games,
+            game_admission: RwLock::new(()),
         }
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
@@ -186,7 +228,28 @@ impl GatewayManager {
     fn error(&self, message: &str, id: Option<&str>) -> Value {
         self.decorate(json!({"ok":false,"error":message}), id)
     }
-    pub fn request(&self, mut request: Value) -> Value {
+    pub fn request(&self, request: Value) -> Value {
+        // Starting a game waits for manual requests admitted before it. Normal
+        // requests share this lock, preserving independent gateway workers.
+        // Coordinator callbacks address adapters directly after admission.
+        if request["command"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("game_") && c != "game_get_state")
+        {
+            let _admission = self
+                .game_admission
+                .write()
+                .unwrap_or_else(|p| p.into_inner());
+            self.request_inner(request)
+        } else {
+            let _admission = self
+                .game_admission
+                .read()
+                .unwrap_or_else(|p| p.into_inner());
+            self.request_inner(request)
+        }
+    }
+    fn request_inner(&self, mut request: Value) -> Value {
         if self.closed.load(Ordering::Acquire) {
             return self.error("Cockpit gateway manager has closed.", None);
         }
@@ -205,6 +268,17 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if command.starts_with("game_") {
+            let mut response = match self.games.request(&request) {
+                Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
+                Err(error) => self.error(&error, None),
+            };
+            response["state"]["games"] = self.games.status();
+            return response;
+        }
+        if let Err(error) = self.games.guard_request(&request) {
+            return self.error(&error, None);
+        }
         let _integration_guard =
             if command.starts_with("integration_") || command.starts_with("dcs_") {
                 Some(
@@ -370,6 +444,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.games.shutdown();
         self.integration.stop(true);
         self.dcs.shutdown();
         let sessions =
@@ -692,7 +767,7 @@ mod tests {
             .join(uuid::Uuid::new_v4().to_string())
             .join("profile.json");
         Arc::get_mut(&mut manager).unwrap().dcs =
-            crate::dcs_runtime::DcsRuntime::new(panel, path.clone());
+            Arc::new(crate::dcs_runtime::DcsRuntime::new(panel, path.clone()));
         for id in [FIRST, SECOND] {
             assert_eq!(
                 request(&manager, "connect", Some(id), json!({}))["ok"],

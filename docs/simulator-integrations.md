@@ -2,6 +2,12 @@
 
 Milestone 4 uses one provider-neutral binding document and separate local connection settings/device assignments. Open **Integrations** to import or create a profile. DCS-BIOS supports named inputs and outputs from an installed aircraft catalogue. The Assetto Corsa Rally starter advertises telemetry outputs only. Other games can add acquisition/decoding providers without adding game-specific LED commands to firmware.
 
+**Games** can capture a saved integration configuration in a game profile and
+start it as part of coordinated activation or launch. The captured configuration
+is independent of later edits in Integrations. On exit or deactivation, the game
+coordinator restores the previous peripheral and integration setup; interrupted
+sessions use explicit recovery. See [Games and hardware profiles](games.md).
+
 ## Portable and local settings
 
 A portable JSON document contains `schemaVersion:1`, `id`, `name`, `provider`, `context`, logical `roles`, and `inputs`/`outputs`. Bindings reference a role, named simulator control/channel and an advertised physical input or endpoint/action. DCS output ordinals retain their original catalogue indexes. Local `connection` settings and explicit role assignments to `(gatewayId,moduleId)` stay outside the exported document. Identical module identities on separate gateways remain distinct targets.

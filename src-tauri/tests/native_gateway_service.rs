@@ -70,6 +70,33 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
         true
     );
 
+    let games = exchange(
+        "games",
+        json!({"command":"game_get_state","clientId":"cockpit-service-boundary-test"}),
+    );
+    assert_eq!(games["ok"], true);
+    let catalogue = games["state"]["games"]["catalogue"].as_array().unwrap();
+    assert_eq!(catalogue.len(), 2);
+    assert!(catalogue.iter().any(|g| g["id"] == "dcs"));
+    assert!(catalogue.iter().any(|g| g["id"] == "assetto-corsa-rally"));
+    let profile = json!({"schemaVersion":1,"id":"service-dcs","gameId":"dcs","name":"Service test","devices":[]});
+    assert_eq!(
+        exchange(
+            "save-game",
+            json!({"command":"game_profile_save","clientId":"cockpit-service-boundary-test","gameProfile":profile})
+        )["ok"],
+        true
+    );
+    let saved = exchange(
+        "read-game",
+        json!({"command":"game_get_state","clientId":"cockpit-service-boundary-test"}),
+    );
+    assert!(saved["state"]["games"]["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["id"] == "service-dcs"));
+
     drop(exchange);
     drop(input);
     assert!(service.wait().unwrap().success());

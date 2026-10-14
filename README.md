@@ -1,10 +1,20 @@
 # OpenSimGear Cockpit
 
-Work-in-progress desktop application for discovering OpenSimGear gateways, configuring devices, managing automatically enabled USB controllers, viewing live inputs and connecting panel controls, LEDs and displays to DCS-BIOS and game telemetry, starting with Assetto Corsa Rally. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
+Work-in-progress desktop application for discovering OpenSimGear gateways and supported games, configuring devices, managing automatically enabled USB controllers, launching DCS World and Assetto Corsa Rally with hardware profiles, and connecting panel controls, LEDs and displays to DCS-BIOS and game telemetry. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
 
 Cockpit connects to gateways through its normal USB serial and local stream transports. Gateway and device simulations are maintained independently in [device-gateway/simulation](https://github.com/opensimgear/device-gateway/tree/main/simulation) and [device-template/simulation](https://github.com/opensimgear/device-template/tree/main/simulation). Cockpit neither creates simulated devices nor manages their processes.
 
 ## Current behavior
+
+**Games** discovers DCS World and Assetto Corsa Rally, shows found installations
+as tiles and offers a **Show all supported** switch for unavailable games. Game
+details manage custom installation paths and named profiles with peripheral
+configuration, controller enable/disable settings and a captured integration
+configuration. Launch activates the selected profile and monitors the game;
+exit or deactivation restores the previous setup. A durable journal supports
+explicit recovery after an interrupted session. Native launch targets Windows.
+See [the Games guide](docs/games.md) for setup, controller-binding consequences
+and recovery behavior.
 
 Every compatible gateway connects automatically and stays connected independently, including multiple gateways of the same type. The Gateways view shows a card for each gateway and its devices; Devices combines their inventories, and Topology shows one computer branching to every gateway and its device chain. Devices appear as they join after Cockpit starts. Configuration, controller lifecycle changes, live inputs and reconnects are routed by gateway identity. A busy, failed or restarting gateway does not interrupt the others, and identical module identities on separate gateways keep separate state and drafts. Device names come from normal runtime configuration. Previously connected gateways retain their last-known devices while offline.
 
@@ -39,6 +49,7 @@ pnpm transport:test
 pnpm dcs:coverage
 pnpm dcs-profile:coverage
 pnpm integration:coverage
+pnpm games:coverage
 pnpm native:test
 pnpm build
 ```

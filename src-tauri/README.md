@@ -2,6 +2,18 @@
 
 Cockpit is a Tauri 2 desktop application. `pnpm dev` launches the desktop; `pnpm build` packages it. Rust 1.90.0 is pinned in the repository. The installed app communicates directly with gateway transports and does not depend on firmware source, simulation executables or external development tools.
 
+The same `gateway_request` transport serves the global `game_*` commands.
+`game_discovery.rs` checks the fixed DCS World and Assetto Corsa Rally registry,
+Steam manifests and manual installations, and handles native Windows launches
+and process identity checks. `games.rs` persists named profiles and coordinates
+peripheral runtime Apply, controller publication and integrations through a
+native worker. Its journal records the previous setup before mutations, and
+readback reconciles uncertain replies without replaying writes. Activation
+admission waits for earlier manual requests and fences incompatible settings
+changes until deactivation or recovery. Native integration preflight forecasts
+the desired input setup using read-only requests before hardware changes.
+See [the Games guide](../docs/games.md) for recovery and validation limits.
+
 ## Adapters and lifecycle
 
 The main window invokes `gateway_request` with typed JSON request/state messages. Its shared `GatewayManager` keeps an independent adapter worker and connection for every connected gateway, including multiple gateways using the same backend. Each worker bounds requests, correlates replies and validates gateway identity before accepting state. One gateway's configuration, inputs, claims, errors and reconnect never replace another gateway's session.

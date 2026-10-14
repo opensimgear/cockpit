@@ -1139,7 +1139,12 @@ impl Gateway {
         Ok(())
     }
 
-    fn change_controller(&mut self, action: &str, id: &str) -> Result<(), String> {
+    fn change_controller(
+        &mut self,
+        action: &str,
+        id: &str,
+        expected_boot: Option<&Value>,
+    ) -> Result<(), String> {
         if !self.automatic() {
             return Err("This older gateway does not support remembered Enable, Disable or Remove. Update its firmware to use automatic controllers.".into());
         }
@@ -1153,6 +1158,13 @@ impl Gateway {
             .iter()
             .find(|module| module["id"] == id)
             .ok_or("This device is no longer remembered by the gateway.")?;
+        if let Some(expected) = expected_boot {
+            if expected.as_u64().is_none_or(|boot| boot == 0)
+                || expected.as_u64() != module["boot"].as_u64()
+            {
+                return Err("The peripheral restarted before its controller change. Refresh its state before retrying.".into());
+            }
+        }
         if action == "forget" && module["online"] == true {
             return Err(
                 "Disconnect the CAN device before removing its remembered identity.".into(),
@@ -1957,7 +1969,7 @@ impl Gateway {
                 self.exchange(&format!("{verb} {module_id}"), self.timing.command)
             }
             "enable" | "disable" | "forget" | "update-profile" => {
-                self.change_controller(command, &module_id)
+                self.change_controller(command, &module_id, request.get("boot"))
             }
             "save" if self.automatic() => {
                 Err("This gateway saves controller changes automatically.".into())
@@ -3541,6 +3553,37 @@ mod tests {
             .all(|wire| wire.ends_with(" snapshot\n")));
     }
 
+    #[test]
+    fn game_controller_changes_reject_a_restarted_module_before_writing() {
+        let (mut gateway, context) = automatic_harness();
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(100);
+        assert_eq!(
+            request(&mut gateway, "connect", json!({"port":PATH}))["ok"],
+            true
+        );
+        context.lock().unwrap().writes.clear();
+        for command in ["enable", "disable", "forget", "update-profile"] {
+            let reply = request(&mut gateway, command, json!({"moduleId":MODULE,"boot":99}));
+            assert_eq!(reply["ok"], false);
+            assert!(reply["error"].as_str().unwrap().contains("restarted"));
+        }
+        assert!(!context.lock().unwrap().writes.iter().any(|line| [
+            " enable ",
+            " disable ",
+            " forget ",
+            " update-profile "
+        ]
+        .iter()
+        .any(|verb| line.contains(verb))));
+        assert_eq!(
+            request(
+                &mut gateway,
+                "disable",
+                json!({"moduleId":MODULE,"boot":100})
+            )["ok"],
+            true
+        );
+    }
     #[test]
     fn lifecycle_failure_pending_race_and_identity_swap_never_replay_mutations() {
         for scenario in ["flash", "pending", "race", "identity", "lost_no_commit"] {

@@ -55,6 +55,14 @@ Cockpit service, gateways and devices. Their discovery directory is
 from any already running desktop and other acceptance runs. All participating
 simulation binaries must support this optional namespace variable.
 
+The Games scenario uses the normal Rust manager and independent production C
+gateway/peripheral simulations. It activates a saved game profile, verifies
+temporary settings and controller disable without saving device flash, checks
+the manual-settings guard, then restores configuration and controller
+publication. Restart verifies saved profiles and manual installation discovery
+without automatic activation. The authored `DCS.exe` file is only an installation
+fixture; the scenario uses **Activate profile** and never executes that file.
+
 The first Cockpit scenario starts its normal native gateway service before the gateway,
 then launches three JSON-configured devices. It verifies automatic enable/append,
 configuration Apply & save, explicit changed-profile refresh, real input reports,

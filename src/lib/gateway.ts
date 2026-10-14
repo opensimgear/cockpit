@@ -7,6 +7,7 @@ import type { DcsBiosConfig, DcsBiosStatus } from './dcs-bios';
 import type { DebugGateway, DebugOperation } from './debug-inputs';
 import type { PanelInputState } from './dcs-profile';
 import type { IntegrationConfig, IntegrationState, IntegrationCommandName, TelemetryFrame } from './integration-profile';
+import type { GamesState, GameProfile, GameId, GameCommand } from './games';
 
 export type GatewayBackend = 'pico' | 'stm32';
 export type GatewayPort = { gatewayId?: string; path: string; manufacturer?: string; friendlyName?: string; serialNumber?: string; vendorId?: string; productId?: string; backend?: GatewayBackend };
@@ -56,9 +57,10 @@ export type GatewayState = {
   dcsBios?: DcsBiosStatus;
   debug?: DebugGateway;
   integration?: IntegrationState;
+  games?: GamesState;
 };
-export type GatewayCommand = IntegrationCommandName | 'action_claim' | 'action_renew' | 'action_release' | 'action_ownership' | 'action_invoke_owned' | 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop' | 'debug_describe' | 'debug_invoke';
-export type GatewayRequest = { integrationConfig?: IntegrationConfig; bindingId?: string; durationMs?: number; resume?: boolean; revision?: number; telemetryFrame?: TelemetryFrame; ownershipToken?: string; leaseId?: number; ttlMs?: number; command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number; debugOperation?: DebugOperation; debugArgs?: number[]; preset?: string };
+export type GatewayCommand = GameCommand | IntegrationCommandName | 'action_claim' | 'action_renew' | 'action_release' | 'action_ownership' | 'action_invoke_owned' | 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop' | 'debug_describe' | 'debug_invoke';
+export type GatewayRequest = { gameProfile?: GameProfile; gameId?: GameId; profileId?: string; executable?: string | null; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean; integrationConfig?: IntegrationConfig; bindingId?: string; durationMs?: number; resume?: boolean; revision?: number; telemetryFrame?: TelemetryFrame; ownershipToken?: string; leaseId?: number; ttlMs?: number; command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number; debugOperation?: DebugOperation; debugArgs?: number[]; preset?: string };
 
 const clientId = crypto.randomUUID();
 const browserEndpoint = '/api/gateway/';
@@ -67,7 +69,7 @@ type GatewayResult = { ok: boolean; state?: GatewayState; error?: string };
 // hold up discovery or requests for another gateway, including the same backend.
 const requestQueues = new Map<string, Promise<unknown>>();
 function queuedRequest(request: GatewayRequest, operation: () => Promise<GatewayState>): Promise<GatewayState> {
-  const key = request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
+  const key = request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
   const previous = requestQueues.get(key) ?? Promise.resolve();
   const pending = previous.catch(() => {}).then(operation);
   const settled = pending.then(() => {}, () => {});

@@ -9,6 +9,8 @@
   import ManualActions from './lib/ManualActions.svelte';
   import DcsBiosPanel from './lib/DcsBiosPanel.svelte';
   import IntegrationsPanel from './lib/IntegrationsPanel.svelte';
+  import GamesPanel from './lib/GamesPanel.svelte';
+  import type { GamesState, GameRequest } from './lib/games';
   import type { IntegrationConfig, IntegrationRequest, IntegrationState } from './lib/integration-profile';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
@@ -18,11 +20,12 @@
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
+  type View = 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
     { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
+    { id: 'games', label: 'Games', icon: 'play' },
     { id: 'integrations', label: 'Integrations', icon: 'play' },
     { id: 'dcs-bios', label: 'DCS-BIOS', icon: 'play' },
     { id: 'topology', label: 'Topology', icon: 'network' },
@@ -45,6 +48,9 @@
   let light = $state(stored<boolean>('osg-light', false));
   let view = $state<View>('gateways');
   let entries = $state<GatewayEntry[]>([]);
+  let games = $state<GamesState>();
+  let gamesBusy = $state(false);
+  let gamesPolling = false;
   let integration = $state<IntegrationState>();
   let integrationDraft = $state<IntegrationConfig | null>(null);
   let integrationBusy = $state(false);
@@ -188,6 +194,33 @@
     if (!actions || !module || module.outputOnly || module.buttonCount + module.axisCount + (module.hatCount ?? 0) === 0) return actions;
     return sendGateway(gatewayId, { command: 'events_state', moduleId, boot: module.boot });
   }
+  async function sendGames(request: GameRequest, quiet = request.command === 'game_get_state'): Promise<GamesState | false> {
+    if (gamesBusy || quiet && gamesPolling) return false;
+    if (quiet) gamesPolling = true; else gamesBusy = true;
+    try {
+      const result = await gatewayRequest(request);
+      if (!disposed) {
+        if (result.games) games = result.games;
+        if (result.integration) integration = result.integration;
+        if (result.dcsBios) dcsBios = result.dcsBios;
+      }
+      return result.games ?? false;
+    } catch (error) {
+      if (!disposed && error instanceof GatewayError && error.state?.games) games = error.state.games;
+      if (!quiet) notify(error instanceof Error ? error.message : 'Game request failed.');
+      return false;
+    } finally { if (quiet) gamesPolling = false; else gamesBusy = false; }
+  }
+  async function readGameConfig(gatewayId: string, moduleId: string): Promise<RuntimeConfig | null> {
+    try {
+      const result = await workspace?.request(gatewayId, { command: 'config_read', moduleId });
+      const config = result?.moduleConfigs?.[moduleId]?.config;
+      return config ? cloneConfig(config) : null;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Peripheral configuration could not be read.');
+      return null;
+    }
+  }
   function managedOutputs(gatewayId: string, moduleId: string) {
     const actions = managedDcsActions(dcsBios, gatewayId, moduleId);
     if (integration?.running && integration.config) {
@@ -247,12 +280,14 @@
     void workspace.refresh();
     void sendDcs({ command: 'dcs_status' }, true);
     void sendIntegration({ command: 'integration_get_state' }, true);
+    void sendGames({ command: 'game_get_state' }, true);
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
     const integrationTimer = setInterval(() => { void sendIntegration({ command: 'integration_get_state' }, true); }, 1000);
     const dcsTimer = setInterval(() => { void sendDcs({ command: 'dcs_status' }, true); }, 1000);
+    const gamesTimer = setInterval(() => { void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     window.addEventListener('pagehide', release);
-    return () => { release(); disposed = true; clearTimeout(toastTimer); clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); window.removeEventListener('pagehide', release); workspace?.dispose(); };
+    return () => { release(); disposed = true; clearTimeout(toastTimer); clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
@@ -369,6 +404,8 @@
         {:else if view === 'preferences'}
           <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Preferences</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
           <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
+        {:else if view === 'games'}
+          <GamesPanel status={games} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => { view = 'integrations'; }} />
         {:else if view === 'integrations'}
           <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO YOUR GAMES</div><h1>Integrations</h1><p>Reusable profiles, device assignments and telemetry outputs.</p></div></div>
           <section class="panel dcs-profile-panel"><IntegrationsPanel bind:draft={integrationDraft} status={integration} targets={dcsTargets} busy={integrationBusy} request={sendIntegration} refresh={refreshIntegrationTarget} /></section>
