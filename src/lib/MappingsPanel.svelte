@@ -200,16 +200,16 @@
   {#each status.provisioningRecovery?.pending ?? [] as operation}
     <div class="notice" role="status"><strong>Interrupted layout change for slot {operation.target}</strong>
       <p>{operation.refreshUncertain ? 'Driver refresh completion is uncertain. Inspect the driver before attempting recovery.' : 'The previous layout change needs verified recovery before creating another controller.'}</p>
-      <fieldset disabled={busy || !status.provisioningQualified || status.provisioning?.active}>
+    <button class="secondary-button" disabled={busy || !status.provisioningQualified || operation.refreshUncertain || status.provisioning?.active} onclick={() => action(async () => { await request({ command: 'mapping_provision_recover', operation: operation.operation }); })}>Recover previous layout</button>
+    </div>
+  {/each}
+  <fieldset disabled={busy || !status.provisioningQualified || status.provisioning?.active}>
       <legend>New controller layout</legend>
       <label>Buttons <input type="number" min="0" max="128" step="1" bind:value={createButtons} /></label>
       <label>Continuous hats <input type="number" min="0" max="4" step="1" bind:value={createHats} /></label>
       <div class="axis-options">{#each axisNames as axis, index}<label><input type="checkbox" bind:group={createAxes} value={index} />{axis}</label>{/each}</div>
       <small>Starter: eight axes, 32 buttons and one hat. Created layouts persist across mapping changes. Force feedback is unavailable.</small>
-    </fieldset>
-    <button class="secondary-button" disabled={busy || !status.provisioningQualified || operation.refreshUncertain || status.provisioning?.active} onclick={() => action(async () => { await request({ command: 'mapping_provision_recover', operation: operation.operation }); })}>Recover previous layout</button>
-    </div>
-  {/each}
+  </fieldset>
   <div class="mapping-row">
     <label>New vJoy slot<select bind:value={createSlot} disabled={!status.provisioningQualified || busy}>{#each Array.from({ length: 16 }, (_, i) => i + 1) as slot}<option value={slot} disabled={virtual?.slots?.some(s => s.id === slot)}>Slot {slot}</option>{/each}</select></label>
     <button class="secondary-button" disabled={busy || !status.provisioningQualified || !status.virtualDevices?.enabled || status.provisioning?.active || status.running} title={status.provisioningQualified ? 'Create the selected persistent layout' : 'Windows layout validation is incomplete'} onclick={() => action(async () => { await request({ command: 'mapping_virtual_create', slot: createSlot, layout: { axes: createAxes.reduce((mask, index) => mask | (1 << index), 0), buttons: createButtons, hats: createHats } }); })}>Create virtual controller</button>
@@ -221,6 +221,9 @@
   </div>
 </section>
 <style>
+  fieldset { margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 6px; }
+  .axis-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 12px 0; }
+  .axis-options label { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; }
   .mapping-panel { padding: 24px; margin-bottom: 20px; }
   .mapping-panel h2 { margin: 0 0 12px; }
   .mapping-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; margin-bottom: 16px; }

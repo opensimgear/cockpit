@@ -333,3 +333,5 @@ modules exceed the 71% gate. Native driver enumeration, multi-slot physical
 button/axis/hat routing, actual game bindings, ownership contention and
 process/driver failure qualification remain open in #25. Refusal to alter
 unrecognized/FFB layouts remains a documented capability limit.
+
+Rendering follow-up: the configurable layout fieldset was initially nested in the pending-recovery loop. It now renders in the ordinary creation section, including when no recovery exists. The Windows Tauri WebView confirms the complete starter form is visible and Create, Start and Recover remain disabled. pnpm check passes with zero errors/warnings.
