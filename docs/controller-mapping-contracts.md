@@ -157,7 +157,11 @@ Before persistent mutations, journal original state, intended exact post-state,
 owned additions and mutation progress. Restore only owned deltas when current state
 still matches expected state; external changes are a conflict, not permission to
 replace the user's configuration. The pure prototype exercises conflict refusal;
-real driver mutation, crash recovery and non-allowlisted probe tests remain required.
+the live Windows prototype additionally qualifies normal-mode DirectInput/HID
+access and process-exit restoration for the selected specimen. Raw Input reports
+remain visible to the non-allowlisted observer. Never advertise universal process
+isolation from that result; qualify each supported input API. Inverse mode, reboot
+recovery and full supervisor termination remain unqualified.
 
 Linux EVIOCGRAB and macOS seizure are input-suppression capabilities, not guaranteed
 enumeration hiding. Linux process isolation applies only to a qualified controlled

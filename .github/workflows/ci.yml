@@ -106,3 +106,17 @@ jobs:
         run: |
           & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:.research\controller-mapping-m0\RawInputProbe.exe .research\controller-mapping-m0\RawInputProbe.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile and check Windows recovery experiment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:.research\controller-mapping-m0\HidHideSessionProbe.exe .research\controller-mapping-m0\HidHideSessionProbe.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.research\controller-mapping-m0\HidHideSessionProbe.exe selftest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem .research/controller-mapping-m0 -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }

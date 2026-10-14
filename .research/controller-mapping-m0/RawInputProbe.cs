@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 class RawInputProbe {
     const uint RID_INPUT = 0x10000003, RIDI_DEVICENAME = 0x20000007, RIDI_DEVICEINFO = 0x2000000b;
@@ -35,6 +36,8 @@ class RawInputProbe {
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr window);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
     static Dictionary<IntPtr,string> names = new Dictionary<IntPtr,string>();
     static Dictionary<string,int> reports = new Dictionary<string,int>();
     static HashSet<string> changes = new HashSet<string>();
@@ -72,6 +75,49 @@ class RawInputProbe {
         return DefWindowProc(hwnd, message, wParam, lParam);
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct DirectInputInstance {
+        public uint size;
+        public Guid instance, product;
+        public uint deviceType;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=260)] public string instanceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=260)] public string productName;
+        public Guid forceFeedback;
+        public ushort page, usage;
+    }
+    [DllImport("dinput8.dll", CallingConvention=CallingConvention.StdCall)]
+    static extern int DirectInput8Create(IntPtr instance, uint version, ref Guid id, out IntPtr api, IntPtr outer);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+    static extern IntPtr GetModuleHandle(string name);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    delegate int DeviceCallback(IntPtr device, IntPtr context);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    delegate int EnumDirectDevices(IntPtr api, uint kind, DeviceCallback callback, IntPtr context, uint flags);
+    static List<object> DirectInputDevices() {
+        Guid id=new Guid("BF798031-483A-4DA2-AA99-5D64ED369700");
+        IntPtr api;
+        int result=DirectInput8Create(GetModuleHandle(null),0x800,ref id,out api,IntPtr.Zero);
+        if(result < 0) Marshal.ThrowExceptionForHR(result);
+        try {
+            var devices=new List<object>();
+            var enumerate=(EnumDirectDevices)Marshal.GetDelegateForFunctionPointer(
+                Marshal.ReadIntPtr(Marshal.ReadIntPtr(api),4*IntPtr.Size),typeof(EnumDirectDevices));
+            DeviceCallback callback=delegate(IntPtr data, IntPtr context) {
+                if (devices.Count >= 256) return 0;
+                var device=(DirectInputInstance)Marshal.PtrToStructure(data,typeof(DirectInputInstance));
+                byte[] product=device.product.ToByteArray();
+                devices.Add(new { id=Hash(device.instance.ToByteArray()), vendor=BitConverter.ToUInt16(product,0),
+                    product=BitConverter.ToUInt16(product,2), usage=device.usage });
+                return 1;
+            };
+            result=enumerate(api,4,callback,IntPtr.Zero,1); // Game controllers; attached only.
+            GC.KeepAlive(callback);
+            if(result < 0) Marshal.ThrowExceptionForHR(result);
+            return devices;
+        } finally { Marshal.Release(api); }
+    }
+
+
     static int Main() {
         var devices = new List<object>();
         uint count = 0;
@@ -98,7 +144,14 @@ class RawInputProbe {
                 uint vendor=(uint)Marshal.ReadInt32(info,8), product=(uint)Marshal.ReadInt32(info,12);
                 names[list[i].handle] = id;
                 reports[id] = 0;
+                bool readable;
+                int openError;
+                using(var file=CreateFile(path.ToString(),0x80000000,3,IntPtr.Zero,3,0x40000000,IntPtr.Zero)) {
+                    readable=!file.IsInvalid;
+                    openError=readable ? 0 : Marshal.GetLastWin32Error();
+                }
                 devices.Add(new { id=id, vendor=vendor, product=product, usage=usage,
+                    readHandleOpened=readable, readHandleError=openError,
                     virtualVjoy=(vendor == 0x1234 && product == 0xbead) });
             } finally { Marshal.FreeHGlobal(info); }
         }
@@ -124,7 +177,7 @@ class RawInputProbe {
                 Thread.Sleep(1);
             }
             Console.WriteLine(new JavaScriptSerializer().Serialize(new {
-                devices=devices, reports=reports, distinctReportHashes=changes.Count,
+                devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,
                 backgroundRegistration=true, foregroundProcess=foreground, durationMs=clock.ElapsedMilliseconds
             }));
         } finally {

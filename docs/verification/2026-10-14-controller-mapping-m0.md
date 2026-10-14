@@ -62,8 +62,8 @@ research crate's Cargo.lock.
 | Foreground-game capture | Passed basic background read: after the user foregrounded Assetto Corsa Rally, the probe recorded foreground process acr and received 62 reports from each VID 231D collection in 5,006 ms. No user-control transition, mapping, latency or game-binding claim. |
 | vJoy report ABI/readback | FREE slot 1 acquired; existing complete report resubmitted unchanged through UpdateVJD; every declared field matched GetPosition readback; slot relinquished in finally. No generated button pulses/game-binding test. |
 | Update configuration backup | Service parameters and OEM force-feedback registration exported locally before installation. No explicit custom slot descriptors were present. OEM force-feedback registration is byte-for-byte unchanged afterward. |
-| Live slot provisioning | Pending. The installer update and a report roundtrip do not establish safe create/edit/delete or implicit-default preservation by vJoyConfig. |
-| HidHide visibility/session lifecycle | Pending. Current policy was read only. No physical source was hidden or global settings changed by these probes. |
+| Live slot provisioning | Passed for the observed implicit default: materialize slot 1, add/report/delete slot 2, restore implicit slot 1, and verify unchanged OEM FFB registration. General custom/FFB layouts and failure recovery remain pending; see additional checks below. |
+| HidHide visibility/session lifecycle | Normal-mode DirectInput/HID access and normal/error/forced-exit restoration passed on the selected MOZA source. Raw Input remains visible. Inverse mode, reboot recovery and other APIs are pending; see additional checks below. |
 | Linux readiness | No /dev/input/event nodes; ordinary-user /dev/uinput open denied with EACCES. A disposable user/mount namespace could be entered; this is not controlled game-launch isolation. |
 | macOS | Unavailable: no native Mac, signing authorization or helper deployment was tested. |
 
@@ -78,7 +78,7 @@ registry exports and full machine logs are not checked in.
   error values, including an unavailable axis. Treat only 1 as success and report
   negative results separately; ordinary nonzero-to-bool conversion falsely advertises
   controls. The read-only probe was corrected before recording final capabilities.
-- The observed post-update slot has eight buttons, no POVs and usages 0x30–0x38.
+- The corrected post-update query finds 16 axes, eight buttons and no POVs. The initial query omitted seven simulation usages outside 0x30–0x38.
   The pre-update library did not provide a trustworthy capability snapshot while the
   slot was owned; do not claim that all default layouts were proven unchanged.
 - HidHide's released Logic.c handles persistent GET/SET whitelist, blacklist,
@@ -102,9 +102,9 @@ registry exports and full machine logs are not checked in.
 ## Remaining M0 gates
 
 1. Extend the passed foreground-game background-read check with controlled physical transitions and exact model/firmware records before broader capture qualification.
-2. Prove provisioning preserves explicit and implicit layouts plus FFB registration;
+2. Extend the passed implicit-default provisioning/FFB-registration check to general explicit and FFB-capable layouts;
    exercise cancellation/failure restoration without taking over a BUSY slot.
-3. Qualify normal/inverse HidHide visibility with capture and non-allowlisted
+3. Extend the passed normal-mode HidHide DirectInput/access check to inverse mode and additional APIs with capture and non-allowlisted
    processes, executable-path behavior, external-change conflicts and actual cleanup.
 4. Complete Windows setup/restart detection and physical Linux/macOS qualification
    on available native systems. Record unsupported modes as unavailable.
@@ -114,3 +114,66 @@ registry exports and full machine logs are not checked in.
 The research sources are deliberately separated from application code. No production
 module changed, so this slice does not claim a new-production coverage percentage.
 Later implementation milestones must enforce the plan's 71% measurable coverage gates.
+
+## Additional Windows checks after the first checkpoint
+
+The first checkpoint, 0fcd00ceb4fb068cb45dc9895f4ce9c9e16ed5c0, passed all jobs in
+[GitHub CI run 38602518148](https://github.com/opensimgear/cockpit/actions/runs/38602518148):
+frontend, native, and the three operating-system prototype jobs.
+
+The user selected the MOZA VID 231D / PID 0200 collection and closed the game.
+The installed device stack includes HidHide, hidgamepad and HidUsb. The native
+visibility experiment retained the existing active normal mode and all four
+application exceptions and three hidden-device entries. It briefly added one
+capture-executable exception and the selected HID instance; global mode flags
+were not changed. This explicitly authorized capture exception could also read
+other previously hidden devices during the bounded experiment.
+
+| Phase | DirectInput enumerated selected controller | HID read handle | Raw Input reports / 5 s |
+| --- | --- | --- | --- |
+| Observer before changes | Yes | Opened | 62 |
+| Allowlisted capture while hidden | Yes | Opened | 63 |
+| Same binary at non-allowlisted observer path | No | Access denied, error 5 | 62 |
+| Observer after restoration | Yes | Opened | 63 |
+
+This qualifies normal-mode DirectInput visibility and direct HID access for this
+specimen. It **does not** establish universal invisibility: the observer continued
+receiving Raw Input reports. Path-specific behavior was observed using identical
+binaries at different canonical local paths. Other path aliases, game input APIs
+and inverse mode still need qualification.
+
+The driver configuration matched its original CLI snapshot exactly after normal
+completion, an injected exception, and a forced exit with code 86 that bypassed
+finally. The independent guardian restored the forced-exit case. Eight native
+self-test assertions cover recognized intermediate states, external-change
+conflicts and duplicate selection handling. External edits were tested with
+fixtures, not by modifying another application's live settings. Reboot recovery
+and total supervisor termination are not established.
+
+The earlier vJoy axis probe covered only generic usages 0x30..0x38. The corrected
+probe includes the seven additional release-defined usages. The actual observed
+default is **16 axes**, all ranging 0..32767, eight buttons, no POVs and no device
+FFB support. The old nine-axis observation was an incomplete query, not a layout
+change.
+
+After Windows administrator authorization, the provisioning experiment passed:
+the exact release default descriptor was materialized for slot 1 before adding
+slot 2. Both published slots retained all 16 axes, eight buttons and no POVs/FFB.
+A full 124-byte report roundtrip passed on the newly created slot 2. Cleanup removed
+only the two newly created descriptor keys, restarted vJoy, and confirmed the
+original implicit slot 1 with slot 2 absent. Existing vJoy OEM registrations under
+HKLM/HKCU were fingerprinted and unchanged. Two device restarts succeeded; no OS
+reboot was requested or performed. The guardian confirmed normal restoration.
+
+The descriptor has 123 bytes and SHA-256
+3ccc044ec270e74cb588c56b1b49c7e9aba74eb878666efca43855d6b1ea1e93. It was generated
+from the exact release source with the default feature flags. This qualifies
+creation/report/deletion for the observed implicit layout. General custom-layout
+edits, an existing FFB-capable layout, live provisioning failure/crash cleanup,
+concurrent configurators and reboot recovery remain unqualified.
+
+These checks advance #21 but do not close it or its dependent issues. Inverse
+HidHide mode cannot be tested here without changing the policy of externally
+hidden devices. Native Linux/macOS device and setup qualification is unavailable
+on this Windows/WSL environment. Optional capabilities must remain unavailable
+until their exact supported behavior is established.
