@@ -361,6 +361,7 @@ fn acr_record(runtime: &GameIntegrationSetup, game: &Value, qualified: bool) -> 
         crate::acr_setup::fingerprint(Path::new(game["executable"].as_str().unwrap())).unwrap();
     let record = json!({"connection":{"source":"shared-memory","freshnessMs":1700},"configuredFingerprint":identity,"verifiedFingerprint":if qualified {identity.clone()} else {Value::Null}});
     runtime.inner.saved.lock().unwrap()["games"]["assetto-corsa-rally"] = record;
+    runtime.refresh(&[game.clone()]);
     identity
 }
 #[test]
@@ -471,4 +472,99 @@ fn synthetic_data_cannot_verify_native_setup_and_shutdown_cannot_admit_another_p
         .unwrap_err()
         .contains("closed"));
     assert!(!scratch.0.join("setup.json").exists());
+}
+#[test]
+fn dcs_setup_rejects_game_installation_descendants_before_download_or_file_changes() {
+    let scratch = Scratch::new();
+    let installation = scratch.0.join("DCSWorld");
+    let target = installation.join("Scripts");
+    fs::create_dir_all(&target).unwrap();
+    let mut game = game();
+    game["installPath"] = json!(installation);
+    let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
+    assert!(runtime
+        .request(
+            &json!({"command":"game_integration_setup","userFolder":target}),
+            &game,
+            Arc::new(FakePlatform(false)),
+            &panel(false)
+        )
+        .unwrap_err()
+        .contains("outside the game installation"));
+    assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+    assert!(!runtime.busy());
+    let sibling = scratch.0.join("DCSWorldUserData");
+    fs::create_dir(&sibling).unwrap();
+    reject_game_install_folder(&sibling, &game).unwrap();
+}
+
+struct DcsStartsDuringSetup {
+    queries: std::sync::atomic::AtomicUsize,
+}
+impl Platform for DcsStartsDuringSetup {
+    fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+        vec![]
+    }
+    fn validate(&self, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> {
+        panic!("Setup must not launch DCS")
+    }
+    fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> {
+        let query = self.queries.fetch_add(1, Ordering::AcqRel);
+        Ok((query > 0).then(|| ProcessIdentity {
+            pid: 42,
+            path: "DCS.exe".into(),
+            epoch: 1,
+        }))
+    }
+    fn alive(&self, _: &ProcessIdentity) -> Result<bool, String> {
+        Ok(true)
+    }
+}
+#[test]
+fn dcs_started_after_async_admission_blocks_worker_before_game_files_change() {
+    let scratch = Scratch::new();
+    let target = scratch.0.join("DCS");
+    fs::create_dir(&target).unwrap();
+    crate::dcs_setup::fixture_module(&target);
+    let export = target.join("Scripts/Export.lua");
+    let original = b"-- Keep the existing third-party export\n";
+    fs::write(&export, original).unwrap();
+    let runtime_file = target.join("Scripts/DCS-BIOS/BIOS.lua");
+    let original_runtime = fs::read(&runtime_file).unwrap();
+    let path = scratch.0.join("setup.json");
+    let runtime = GameIntegrationSetup::new(path.clone(), true);
+    let platform = Arc::new(DcsStartsDuringSetup {
+        queries: std::sync::atomic::AtomicUsize::new(0),
+    });
+    runtime
+        .request(
+            &json!({"command":"game_integration_setup","userFolder":target}),
+            &game(),
+            platform.clone(),
+            &panel(false),
+        )
+        .unwrap();
+    wait_setup(&runtime);
+    assert_eq!(platform.queries.load(Ordering::Acquire), 2);
+    assert_eq!(fs::read(export).unwrap(), original);
+    assert_eq!(fs::read(runtime_file).unwrap(), original_runtime);
+    assert!(
+        !path.exists(),
+        "Failed setup must not persist prepared settings"
+    );
+    assert!(
+        !runtime.pending(),
+        "No owned changes should remain after restoration"
+    );
+    let mut catalogue = vec![game()];
+    decorate(&runtime, &mut catalogue, &panel(false));
+    assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
+    assert!(catalogue[0]["integrationSetup"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Close DCS"));
+    runtime.shutdown();
 }

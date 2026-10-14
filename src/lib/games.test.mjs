@@ -224,3 +224,8 @@ test('ACR game profiles capture deferred native telemetry without inventing or r
   assert.match(gameProfileError(captured), /process ID/);
   assert.equal('processId' in value.integration.connection, false, 'The original settings remain deferred');
 });
+
+test('unknown DCS modules require manual attention before setup can change their files', () => {
+  const game = { id: 'dcs', installed: true, integrationSetup: { state: 'needs-attention', repairable: false, message: 'Restore the compatible official module or choose a clean user folder.' } };
+  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), game.integrationSetup.message);
+});

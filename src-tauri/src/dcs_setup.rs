@@ -1284,12 +1284,13 @@ pub(crate) fn recover(work: &Path) -> Result<Value, String> {
     }
     restore(work, &journal(work)?)
 }
-fn install(
+fn install_guarded(
     target: &Path,
     work: &Path,
     files: BTreeMap<String, Vec<u8>>,
     check: &impl Fn() -> bool,
     progress: &impl Fn(&str, u8),
+    write_boundary: &impl Fn() -> Result<(), String>,
 ) -> Result<Value, String> {
     let target = checked_target(target)?;
     let state = inspect(&target)?;
@@ -1340,6 +1341,7 @@ fn install(
     save_journal(work, &value)?;
     let result: Result<Value, String> = (|| {
         cancelled(check)?;
+        write_boundary()?;
         fs::create_dir_all(&scripts)
             .map_err(|e| format!("Cannot create DCS Scripts folder: {e}. Check permissions."))?;
         if install_module {
@@ -1369,6 +1371,7 @@ fn install(
             if scripts.join("DCS-BIOS").exists() {
                 return Err("A DCS-BIOS folder appeared during setup. It was preserved; recheck the user folder.".into());
             }
+            write_boundary()?;
             fs::rename(&stage, scripts.join("DCS-BIOS"))
                 .map_err(|e| format!("Cannot install DCS-BIOS module: {e}"))?;
         }
@@ -1384,6 +1387,7 @@ fn install(
             );
         }
         if current.as_ref() != Some(&after) {
+            write_boundary()?;
             replace(&export, &after)?;
         }
         progress("Verifying DCS-BIOS module and export loader", 95);
@@ -1416,6 +1420,7 @@ pub(crate) fn setup(
     work: &Path,
     check: impl Fn() -> bool,
     progress: impl Fn(&str, u8),
+    write_boundary: impl Fn() -> Result<(), String>,
 ) -> Result<Value, String> {
     if recovery_pending(work) {
         return Err("Recover the interrupted DCS setup before starting again.".into());
@@ -1433,7 +1438,7 @@ pub(crate) fn setup(
     } else {
         BTreeMap::new()
     };
-    install(target, work, files, &check, &progress)
+    install_guarded(target, work, files, &check, &progress, &write_boundary)
 }
 
 #[cfg(test)]
@@ -1490,4 +1495,16 @@ pub(crate) fn fixture_module(target: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();
     }
+}
+
+// Test-only convenience retains the same guarded production install path.
+#[cfg(test)]
+fn install(
+    target: &Path,
+    work: &Path,
+    files: BTreeMap<String, Vec<u8>>,
+    check: &impl Fn() -> bool,
+    progress: &impl Fn(&str, u8),
+) -> Result<Value, String> {
+    install_guarded(target, work, files, check, progress, &|| Ok(()))
 }

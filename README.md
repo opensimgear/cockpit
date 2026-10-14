@@ -13,6 +13,8 @@ connection settings populate new drafts; existing bindings remain explicit edits
 ACR setup prepares native shared memory and reports verification for the exact
 runtime executable. Native profiles can be saved while the game is closed; Games
 selects the actual process at launch. Synthetic data never verifies native setup.
+See the [setup verification record](docs/verification/2026-10-14-game-integration-setup.md)
+for Windows/Linux checks and qualification limits.
 
 **Games** discovers DCS World and Assetto Corsa Rally, shows found installations
 as tiles and offers a **Show all supported** switch for unavailable games. Game

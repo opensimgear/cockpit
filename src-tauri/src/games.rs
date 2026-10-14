@@ -435,6 +435,19 @@ impl GamesRuntime {
             return Ok(());
         }
         let command = request["command"].as_str().unwrap_or("");
+        // An independent telemetry verification must not delay emergency Stop.
+        if matches!(command, "integration_stop" | "dcs_stop")
+            && !self.inner.busy.load(Ordering::Acquire)
+            && self
+                .inner
+                .settings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .journal
+                .is_none()
+        {
+            return Ok(());
+        }
         if command.starts_with("game_")
             || matches!(
                 command,

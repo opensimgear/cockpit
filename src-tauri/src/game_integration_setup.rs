@@ -89,8 +89,34 @@ fn folder(value: &Value) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
+fn reject_game_install_folder(target: &Path, game: &Value) -> Result<(), String> {
+    let Some(installation) = game["installPath"].as_str() else {
+        return Ok(());
+    };
+    let target = fs::canonicalize(target).map_err(|e| e.to_string())?;
+    let installation = fs::canonicalize(installation)
+        .map_err(|e| format!("Cannot verify the game installation boundary: {e}"))?;
+    let target_parts = target.components().collect::<Vec<_>>();
+    let install_parts = installation.components().collect::<Vec<_>>();
+    let inside = target_parts.len() >= install_parts.len()
+        && target_parts.iter().zip(install_parts.iter()).all(|(a, b)| {
+            if cfg!(windows) {
+                a.as_os_str().to_string_lossy().to_lowercase()
+                    == b.as_os_str().to_string_lossy().to_lowercase()
+            } else {
+                a == b
+            }
+        });
+    if inside {
+        return Err("Choose a DCS Saved Games user folder outside the game installation. Setup never writes inside the installed game's folders.".into());
+    }
+    Ok(())
+}
 pub(crate) fn dcs_connection(path: &Path) -> Value {
-    json!({"cataloguePath":path,"freshnessMs":1500,"commandHost":"127.0.0.1","commandPort":7778,"listenAddress":"0.0.0.0","listenPort":5010,"multicastGroup":"239.255.50.10","multicastInterface":"127.0.0.1"})
+    // Match upstream's default multicast route instead of restricting membership
+    // to the loopback interface. Existing explicit interface overrides are kept.
+    // https://learn.microsoft.com/en-us/windows/win32/api/ws2ipdef/ns-ws2ipdef-ip_mreq
+    json!({"cataloguePath":path,"freshnessMs":1500,"commandHost":"127.0.0.1","commandPort":7778,"listenAddress":"0.0.0.0","listenPort":5010,"multicastGroup":"239.255.50.10","multicastInterface":"0.0.0.0"})
 }
 fn validate_connection(game: &str, value: &Value) -> Result<(), String> {
     if !value.is_object() || value.to_string().len() > 8192 {
@@ -365,6 +391,7 @@ impl GameIntegrationSetup {
         }
         let checked = self.inner.inspect(game, request.get("userFolder"));
         let target = folder(&checked["userFolder"])?;
+        reject_game_install_folder(&target, game)?;
         let saved =
             self.inner.saved.lock().unwrap_or_else(|p| p.into_inner())["games"]["dcs"].clone();
         let mut connection = dcs_connection(&target.join("Scripts/DCS-BIOS/doc/json"));
@@ -416,6 +443,13 @@ impl GameIntegrationSetup {
                     if let Some(status) = states.get_mut("dcs") {
                         status["progress"] = json!(message);
                         status["percent"] = json!(percent);
+                    }
+                },
+                || {
+                    if platform.find(&game)?.is_some() {
+                        Err("DCS started during integration setup. Close DCS, then run setup again before its export scripts are changed.".into())
+                    } else {
+                        Ok(())
                     }
                 },
             )
@@ -649,6 +683,7 @@ impl GameIntegrationSetup {
                 .ancestors()
                 .nth(4)
                 .ok_or("Set up DCS-BIOS in the selected Saved Games folder.")?;
+            reject_game_install_folder(target, game)?;
             let inspected = crate::dcs_setup::inspect(target)?;
             let expected = inspected["cataloguePath"]
                 .as_str()
@@ -796,13 +831,17 @@ impl Inner {
         let Some(chosen) = chosen else {
             return status;
         };
-        match folder(&chosen).and_then(|target| crate::dcs_setup::inspect(&target)) {
+        match folder(&chosen).and_then(|target| {
+            reject_game_install_folder(&target, game)?;
+            crate::dcs_setup::inspect(&target)
+        }) {
             Err(error) => {
                 status["message"] = json!(error);
             }
             Ok(inspected) => {
                 status["cataloguePath"] = inspected["cataloguePath"].clone();
                 status["diagnostics"] = inspected["diagnostics"].clone();
+                status["repairable"] = inspected["repairable"].clone();
                 if inspected["moduleReady"] == true && inspected["loaderReady"] == true {
                     let connection = if saved["userFolder"] == chosen
                         && saved["connection"].is_object()

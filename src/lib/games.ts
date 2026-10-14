@@ -5,7 +5,7 @@ export type GameId = 'dcs' | 'assetto-corsa-rally';
 export type GameIntegrationSetup = {
   state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
   message: string; userFolder?: string; candidates?: string[]; version?: string; cataloguePath?: string;
-  connection?: Record<string, unknown>; progress?: string; recoveryNeeded?: boolean;
+  connection?: Record<string, unknown>; progress?: string; recoveryNeeded?: boolean; repairable?: boolean;
   live?: 'waiting' | 'receiving' | 'stale'; liveMessage?: string; verified?: boolean;
   channels?: Record<string, { status: string; value?: unknown }>; optionalMaxRpm?: boolean;
   probeChannels?: Record<string, { status: 'available' | 'unknown' }>;
@@ -86,6 +86,7 @@ export function gameIntegrationSetupBlockedReason(game: Game, session: GameSessi
   if (game.integrationSetup?.state === 'unsupported-platform') return game.integrationSetup.message;
   if (game.integrationSetup?.state === 'setting-up') return 'Integration setup is in progress.';
   if (game.integrationSetup?.recoveryNeeded) return 'Recover the interrupted setup before trying again.';
+  if (game.id === 'dcs' && game.integrationSetup?.repairable === false) return game.integrationSetup.message;
   if (!['idle', 'failed'].includes(session.phase)) return 'Restore the active game profile before setting up integration.';
   if (integrationActive) return 'Stop the active integration before setting up integration.';
   return '';

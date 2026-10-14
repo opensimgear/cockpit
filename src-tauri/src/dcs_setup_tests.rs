@@ -93,9 +93,11 @@ fn utf16_exports_are_blocked_without_mutation_or_false_readiness() {
         let state = inspect(&target).unwrap();
         assert_eq!(state["ready"], false);
         assert_eq!(state["repairable"], false);
-        assert!(setup(&target, &scratch.work(), || false, |_, _| {})
-            .unwrap_err()
-            .contains("UTF-16"));
+        assert!(
+            setup(&target, &scratch.work(), || false, |_, _| {}, || Ok(()))
+                .unwrap_err()
+                .contains("UTF-16")
+        );
         assert_eq!(fs::read(export).unwrap(), before);
     }
     assert!(with_loader(&[0xff, 0xfe, 1]).is_err());
@@ -139,7 +141,7 @@ fn clean_install_is_ready_while_closed_and_repeated_setup_has_no_file_mutations(
     assert_eq!(state["version"], VERSION);
     assert!(!recovery_pending(&work));
     let before = fs::read(target.join("Scripts/Export.lua")).unwrap();
-    let ready = setup(&target, &work, || false, |_, _| {}).unwrap();
+    let ready = setup(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
     assert_eq!(ready["ready"], true);
     assert_eq!(before, fs::read(target.join("Scripts/Export.lua")).unwrap());
 }
@@ -153,7 +155,7 @@ fn compatible_existing_module_is_reused_and_only_missing_loader_repaired() {
     fs::write(target.join("Scripts/Export.lua"), original).unwrap();
     let bios = fs::read(target.join("Scripts/DCS-BIOS/BIOS.lua")).unwrap();
     assert_eq!(inspect(&target).unwrap()["repairable"], true);
-    let result = setup(&target, &work, || false, |_, _| {}).unwrap();
+    let result = setup(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
     assert_eq!(result["ready"], true);
     assert_eq!(
         bios,
@@ -171,7 +173,7 @@ fn fork_config_duplicate_loader_and_malformed_catalogue_are_preserved() {
     let config = target.join("Scripts/DCS-BIOS/BIOSConfig.lua");
     fs::write(&config, b"version = 'unknown'").unwrap();
     assert_eq!(inspect(&target).unwrap()["repairable"], false);
-    assert!(setup(&target, &s.work(), || false, |_, _| {}).is_err());
+    assert!(setup(&target, &s.work(), || false, |_, _| {}, || Ok(())).is_err());
     assert_eq!(fs::read(&config).unwrap(), b"version = 'unknown'");
     fixture_module(&target);
     fs::write(
@@ -287,7 +289,7 @@ fn external_export_change_is_preserved_and_recovery_remains_pending() {
         fs::read(target.join("Scripts/Export.lua")).unwrap(),
         b"-- external change\n"
     );
-    assert!(setup(&target, &s.work(), || false, |_, _| {})
+    assert!(setup(&target, &s.work(), || false, |_, _| {}, || Ok(()))
         .unwrap_err()
         .contains("Recover"));
 }
@@ -385,7 +387,65 @@ fn official_pinned_archive_smoke() {
     assert!(!target.join("Scripts/DCS-BIOS/Start.html").exists());
     assert!(!target.join("Scripts/Export.lua.before").exists());
     assert_eq!(
-        setup(&target, &scratch.work(), || false, |_, _| {}).unwrap()["ready"],
+        setup(&target, &scratch.work(), || false, |_, _| {}, || Ok(())).unwrap()["ready"],
         true
     );
+}
+
+#[test]
+fn running_game_at_write_boundaries_preserves_exports_and_restores_owned_staging() {
+    use std::cell::Cell;
+    for refused_boundary in [1, 2, 3] {
+        let scratch = Scratch::new();
+        let target = scratch.target();
+        let scripts = target.join("Scripts");
+        fs::create_dir(&scripts).unwrap();
+        let original = b"-- Existing Tacview export\n";
+        fs::write(scripts.join("Export.lua"), original).unwrap();
+        let boundaries = Cell::new(0);
+        let staged = Cell::new(false);
+        let error = install_guarded(
+            &target,
+            &scratch.work(),
+            fixture_files(),
+            &|| false,
+            &|message, _| {
+                if message == "Staging DCS-BIOS module" {
+                    staged.set(true);
+                }
+            },
+            &|| {
+                boundaries.set(boundaries.get() + 1);
+                if boundaries.get() == refused_boundary {
+                    if refused_boundary >= 2 {
+                        assert!(staged.get(), "Guard must recheck after staging");
+                    }
+                    if refused_boundary == 2 {
+                        assert!(!scripts.join("DCS-BIOS").exists());
+                    }
+                    if refused_boundary == 3 {
+                        assert!(scripts.join("DCS-BIOS").exists());
+                    }
+                    Err(
+                        "DCS started during setup. Close DCS before changing export scripts."
+                            .into(),
+                    )
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(boundaries.get(), refused_boundary);
+        assert!(error.contains("Close DCS"), "{error}");
+        assert!(error.contains("Previous files were restored"), "{error}");
+        assert_eq!(fs::read(scripts.join("Export.lua")).unwrap(), original);
+        assert!(!scripts.join("DCS-BIOS").exists());
+        assert!(!recovery_pending(&scratch.work()));
+        let remaining = fs::read_dir(&scripts)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(remaining, vec![std::ffi::OsString::from("Export.lua")]);
+    }
 }
