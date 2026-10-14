@@ -25,8 +25,8 @@ impl Fixture {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../simulation/dcs-bios/catalogue");
         for file in [
             "A-10C.json",
-            "MetaDataStart.json",
-            "MetaDataEnd.json",
+            "MetadataStart.json",
+            "MetadataEnd.json",
             "AircraftAliases.json",
         ] {
             fs::copy(catalogue.join(file), path.join(file)).unwrap();
