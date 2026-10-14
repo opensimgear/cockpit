@@ -22,3 +22,9 @@ test('adding an axis after reordering preserves existing mappings and chooses un
   const existing=config();resizeMappings(existing,'axes',2);assert.deepEqual(existing.axes[0],[1,49,10,4000,32768,1,1000]);
   assert.deepEqual(JSON.parse(JSON.stringify(existing.axes[1])),[0,48,0,4095,0,0,0]);assert.equal(configurationError(existing),'');
 });
+
+
+test('output-only configuration permits zero mapped inputs without a fabricated control',()=>{
+  const value=config();for(const key of ['buttons','axes','hats','encoders','selectors'])value[key]=[];
+  assert.equal(configurationError(value),'');value.name='';assert.notEqual(configurationError(value),'');
+});

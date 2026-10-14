@@ -1,3 +1,4 @@
+import { supportsDeviceContracts } from './gateway-capabilities';
 import type { GatewayBackend, GatewayPort, GatewayState } from './gateway';
 
 export function candidateBackend(port: GatewayPort): GatewayBackend | undefined {
@@ -40,7 +41,7 @@ export function automaticGatewayAction(
     if (!candidate) return { reason: 'Automatic connection failed. Check the error and retry discovery, or unplug and reconnect the Pico.' };
     return { command: 'connect', port: candidate.path, backend: candidate.backend, reason: 'Connecting to your OpenSimGear gateway…' };
   }
-  if (state.backend === 'stm32') return { reason: state.lifecycle === 'automatic'
+  if (supportsDeviceContracts(state)) return { reason: state.lifecycle === 'automatic'
     ? state.layoutPending ? 'The gateway is updating its USB controllers automatically.' : 'Connected devices enable automatically. Offline controllers remain until disabled or removed.'
     : state.needsReconnect ? 'This older gateway uses manual registration and layout Apply.' : 'CAN discovery is active. This older gateway uses manual controller registration.' };
   if (state.running) return { reason: 'Connected automatically. USB HID inputs are ready.' };
@@ -51,7 +52,7 @@ export function automaticGatewayAction(
 
 /** Hydrate one device's normal configuration per inventory poll. */
 export function nextConfigurationRead(state: GatewayState | null, setupActive: boolean): string | undefined {
-  if (!state?.connected || state.backend !== 'stm32' || state.reconnecting || state.layoutPending || setupActive) return;
+  if (!state?.connected || !supportsDeviceContracts(state) || state.reconnecting || state.layoutPending || setupActive) return;
   return state.modules.find(module => module.online && module.canConfigure && !module.directUsb &&
     !state.moduleConfigs?.[module.id])?.id;
 }

@@ -50,7 +50,7 @@ impl Provider for NativeProvider {
     }
 }
 
-fn canonical_id(backend: &str, serial: &str) -> Option<String> {
+pub(crate) fn canonical_id(backend: &str, serial: &str) -> Option<String> {
     match backend {
         "pico"
             if serial
@@ -100,7 +100,9 @@ pub struct GatewayManager {
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
     closed: AtomicBool,
+    integration_gate: Mutex<()>,
     dcs: crate::dcs_runtime::DcsRuntime,
+    integration: crate::integration_runtime::IntegrationRuntime,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -131,7 +133,15 @@ impl GatewayManager {
             sessions,
             inventory: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
-            dcs: crate::dcs_runtime::DcsRuntime::new(panel, crate::dcs_runtime::config_path()),
+            integration_gate: Mutex::new(()),
+            dcs: crate::dcs_runtime::DcsRuntime::new(
+                panel.clone(),
+                crate::dcs_runtime::config_path(),
+            ),
+            integration: crate::integration_runtime::IntegrationRuntime::new(
+                panel,
+                crate::dcs_runtime::config_path().with_file_name("integration.json"),
+            ),
         }
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
@@ -170,6 +180,7 @@ impl GatewayManager {
             response["state"]["backend"] = json!(id.split_once(':').unwrap().0);
         }
         response["state"]["dcsBios"] = self.dcs.status();
+        response["state"]["integration"] = self.integration.status();
         response
     }
     fn error(&self, message: &str, id: Option<&str>) -> Value {
@@ -194,7 +205,32 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        let _integration_guard =
+            if command.starts_with("integration_") || command.starts_with("dcs_") {
+                Some(
+                    self.integration_gate
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()),
+                )
+            } else {
+                None
+            };
+        if command.starts_with("integration_") {
+            if command == "integration_start" && self.dcs.status()["running"] == true {
+                return self.error("Stop DCS-BIOS before starting another integration.", None);
+            }
+            return match self.integration.request(&request) {
+                Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
+                Err(error) => self.error(&error, None),
+            };
+        }
         if command.starts_with("dcs_") {
+            if command == "dcs_start" && self.integration.running() {
+                return self.error(
+                    "Stop the active integration before starting DCS-BIOS.",
+                    None,
+                );
+            }
             return match self.dcs.request(&request) {
                 Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
                 Err(error) => self.error(&error, None),
@@ -307,7 +343,8 @@ impl GatewayManager {
         });
         if bound_led {
             response["ok"] = json!(false);
-            response["error"] = json!("Stop DCS-BIOS before manually controlling its bound output.");
+            response["error"] =
+                json!("Stop DCS-BIOS before manually controlling its bound output.");
         }
         if response["state"]["connected"] == true {
             let backend = id.split_once(':').unwrap().0;
@@ -333,6 +370,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.integration.stop(true);
         self.dcs.shutdown();
         let sessions =
             std::mem::take(&mut *self.sessions.lock().unwrap_or_else(|p| p.into_inner()));

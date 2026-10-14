@@ -15,7 +15,6 @@ export function configurationError(config:RuntimeConfig):string {
   if (!config.name.trim() || new TextEncoder().encode(config.name).length>63 || /[\u0000-\u001f\u007f]/.test(config.name)) return 'Choose a device name of 1–63 UTF-8 bytes without control characters.';
   const logical=config.buttons.length+2*config.encoders.length+3*config.selectors.length;
   if (logical>128) return 'Buttons, encoders and selectors together may expose at most 128 buttons.';
-  if (!logical && !config.axes.length && !config.hats.length) return 'Add at least one input control.';
   const used=new Set<number>();
   for (const kind of Object.keys(mappingFields) as MappingKind[]) {
     if (config[kind].length>mappingLimits[kind]) return `Too many ${kind}.`;

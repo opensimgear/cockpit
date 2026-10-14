@@ -56,7 +56,9 @@ mod unix {
     }
 
     fn identity(value: &str) -> bool {
-        value.len() == 24
+        let pico = value.strip_prefix("OSG-PICO-");
+        let value = pico.unwrap_or(value);
+        value.len() == if pico.is_some() { 16 } else { 24 }
             && value
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -123,7 +125,9 @@ mod unix {
             return None;
         }
         let value: Value = serde_json::from_slice(&bytes).ok()?;
+        let pico = serial.starts_with("OSG-PICO-");
         if !matches!(value["protocol"].as_u64(), Some(2 | 3))
+            || (pico && (value["protocol"] != 3 || value["gatewayType"] != "pico-debug-gateway"))
             || value["role"] != "gateway"
             || value["serialNumber"] != serial
             || value["manufacturer"] != "OpenSimGear"
@@ -158,8 +162,8 @@ mod unix {
             serial_number: Some(serial.into()),
             manufacturer: Some("OpenSimGear".into()),
             friendly_name: Some(name.into()),
-            vendor_id: None,
-            product_id: None,
+            vendor_id: pico.then(|| "cafe".into()),
+            product_id: pico.then(|| "4010".into()),
         })
     }
 
@@ -369,6 +373,9 @@ mod unix {
                 root.display()
             )));
             assert!(allowed_path(&format!("tcp:127.0.0.1:32123/{SERIAL}")));
+            assert!(allowed_path(
+                "tcp:127.0.0.1:32123/OSG-PICO-0123456789abcdef"
+            ));
             for path in [
                 format!("unix:/tmp/{SERIAL}.sock"),
                 format!("unix:{root:?}/../{SERIAL}.sock"),
@@ -383,9 +390,57 @@ mod unix {
                 format!("tcp:192.0.2.1:32123/{SERIAL}"),
                 "tcp:127.0.0.1:32123".into(),
                 format!("tcp:127.0.0.1:32123/{SERIAL}/extra"),
+                "tcp:127.0.0.1:32123/OSG-PICO-0000000000000000".into(),
+                "tcp:127.0.0.1:32123/OSG-PICO-0123456789ABCDEf".into(),
+                "tcp:127.0.0.1:32123/OSG-PICO-0123456789abcdef/extra".into(),
             ] {
                 assert!(!allowed_path(&path));
             }
+        }
+
+        #[test]
+        fn pico_debug_advertisements_require_specific_role_and_keep_endpoint_checks() {
+            let fixture = Fixture::new();
+            let serial = "OSG-PICO-0123456789abcdef";
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let ad = fixture.directory.join(format!("{serial}.json"));
+            let value = json!({"protocol":3,"role":"gateway","gatewayType":"pico-debug-gateway","serialNumber":serial,
+                "manufacturer":"OpenSimGear","friendlyName":"Pico debug gateway","endpoint":format!("{serial}.sock"),
+                "pid":std::process::id(),"tcpPort":listener.local_addr().unwrap().port()});
+            fs::write(&ad, value.to_string()).unwrap();
+            let port = discover_in(&fixture.directory).pop().unwrap();
+            assert_eq!(port.serial_number.as_deref(), Some(serial));
+            assert_eq!(port.vendor_id.as_deref(), Some("cafe"));
+            assert_eq!(port.product_id.as_deref(), Some("4010"));
+            assert!(crate::pico::candidate(&port));
+            let mut client = open_in(&fixture.directory, &port, Duration::from_millis(20)).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            client.write_all(b"hello\n").unwrap();
+            let mut data = [0; 6];
+            server.read_exact(&mut data).unwrap();
+            assert_eq!(&data, b"hello\n");
+            for (field, invalid) in [
+                ("protocol", json!(2)),
+                ("gatewayType", json!("stm32-can-gateway")),
+                ("role", json!("module")),
+                ("serialNumber", json!("OSG-PICO-1123456789abcdef")),
+                ("endpoint", json!("../outside.sock")),
+                ("manufacturer", json!("Other")),
+                ("pid", json!(2147483647)),
+                ("tcpPort", json!(0)),
+            ] {
+                let mut changed = value.clone();
+                changed[field] = invalid;
+                fs::write(&ad, changed.to_string()).unwrap();
+                assert!(
+                    discover_in(&fixture.directory).is_empty(),
+                    "accepted {field}"
+                );
+                assert!(open_in(&fixture.directory, &port, Duration::from_millis(20)).is_err());
+            }
+            fs::write(&ad, value.to_string()).unwrap();
+            fs::set_permissions(&ad, fs::Permissions::from_mode(0o666)).unwrap();
+            assert!(discover_in(&fixture.directory).is_empty());
         }
 
         #[test]

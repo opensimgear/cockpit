@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
+const capabilities = {};
+vm.runInNewContext(ts.transpileModule(await readFile(new URL('./gateway-capabilities.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: capabilities });
+const require = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
 const exported = {};
 vm.runInNewContext(ts.transpileModule(await readFile(new URL('./dcs-profile.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports: exported, TextEncoder }, { filename: new URL('./dcs-profile.ts', import.meta.url).pathname });
+}).outputText, { exports: exported, TextEncoder, require }, { filename: new URL('./dcs-profile.ts', import.meta.url).pathname });
 const { newDcsProfile, dcsProfileEqual, boundDcsTargets, dcsTargetKey, dcsProfileError, physicalDcsControls,
   dcsInputInterfaces, dcsOutputIndex, dcsBindingStatusLabel, dcsBindingState, dcsOutputActions, dcsEndpointLabel, dcsProfileStartError, managedDcsActions, dcsBindingValue } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -22,7 +27,7 @@ const led = { id: output.actionId, readable: true, semantics: 'setter', paramete
 const display = { id: 'display.radio.set_text', readable: true, semantics: 'setter', parameters: [{ type: 'string', maxBytes: 16 }], display: { columns: 16, rows: 1, encoding: 'ascii' } };
 const actions = { boot: 7, status: 'ready', actions: [led,display] };
 const module = { id: moduleId, online: true, boot: 7, buttonCount: 8, enabled: false, published: false, directUsb: false };
-const target = { gatewayId, module, label: 'Radio panel', state: { connected: true, moduleActions: { [moduleId]: actions }, moduleEvents: { [moduleId]: events } } };
+const target = { gatewayId, module, label: 'Radio panel', state: { backend: 'stm32', connected: true, moduleActions: { [moduleId]: actions }, moduleEvents: { [moduleId]: events } } };
 
 test('legacy master caution upgrades to two named bindings without changing saved data', () => {
   const migrated = plain(newDcsProfile(legacy));
@@ -52,7 +57,7 @@ test('module targets stay scoped to gateway identity and are deduplicated indepe
 });
 test('form accepts defaults but rejects malformed networks, identities and bounded binding counts', () => {
   assert.equal(dcsProfileError(profile), '');
-  for (const change of [{ schemaVersion: 1 }, { aircraftModule: 'F-16' }, { cataloguePath: '' }, { cataloguePath: '/bad\npath' },
+  for (const change of [{ schemaVersion: 1 }, { aircraftModule: '../F-16' }, { cataloguePath: '' }, { cataloguePath: '/bad\npath' },
     { inputs: [], outputs: [] }, { inputs: Array(17).fill(button) }, { outputs: Array(17).fill(output) },
     { commandPort: 0 }, { listenPort: 65536 }, { freshnessMs: 99 }, { freshnessMs: 10001 },
     { commandHost: '' }, { listenAddress: 'bad address' }, { multicastInterface: ' ' }, { multicastGroup: ' bad' }]) assert.ok(dcsProfileError({ ...profile, ...change }), JSON.stringify(change));

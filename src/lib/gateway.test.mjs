@@ -180,6 +180,21 @@ test('browser forwards the same scoped contract and unload uses keepalive', asyn
   assert.equal(api.calls.at(-1).options.keepalive, true);
 });
 
+test('debug input and exit neutral carry the exact gateway, device and boot with browser keepalive', async () => {
+  const gatewayId = 'pico:OSG-PICO-0123456789ABCDEF';
+  for (const desktop of [true,false]) {
+    const api = transport({ desktop });
+    const press = { command: 'debug_invoke', gatewayId, moduleId: 'panel', boot: 9, debugOperation: 'contact', debugArgs: [2,1] };
+    await api.gatewayRequest(press);
+    api.resetDebugOnExit('panel', 9, gatewayId); await tick();
+    assert.deepEqual(api.calls.map(call => desktop ? call.args.request : JSON.parse(call.options.body)), [
+      { ...press, clientId: 'test-client-uuid' },
+      { command: 'debug_invoke', gatewayId, moduleId: 'panel', boot: 9, debugOperation: 'neutral', debugArgs: [], clientId: 'test-client-uuid' },
+    ]);
+    if (!desktop) assert.ok(api.calls.every(call => call.options.keepalive));
+  }
+});
+
 test('browser rejects a missing gateway bridge without treating HTML as state', async () => {
   const api = transport({ desktop: false, contentType: 'text/html' });
   await assert.rejects(api.gatewayRequest({ command: 'ports' }), /pnpm web:dev/);

@@ -42,7 +42,8 @@ def main():
     profile = output / 'coverage.profdata'
     command([str(llvm / 'llvm-profdata'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
-    sources = [root / 'src-tauri/src/actions.rs', root / 'src-tauri/src/stm32.rs']
+    sources = [root / 'src-tauri/src/actions.rs', root / 'src-tauri/src/stm32.rs',
+               root / 'src-tauri/src/pico.rs', root / 'src-tauri/src/local_gateway.rs']
     annotated = command([str(llvm / 'llvm-cov'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
     (output / 'lines.txt').write_text(annotated)
@@ -54,10 +55,16 @@ def main():
             counts.setdefault(current, {})[int(match[1])] = int(match[2])
     actions = sources[0].read_text().splitlines()
     adapter = sources[1].read_text().splitlines()
+    pico = sources[2].read_text().splitlines()
+    local = sources[3].read_text().splitlines()
     find = lambda lines, marker: next(i + 1 for i, line in enumerate(lines) if marker in line)
     ranges = {'actions.rs': [(1, find(actions, '#[cfg(test)]') - 1)],
               'stm32.rs': [(find(adapter, 'fn action_route('), find(adapter, 'struct Gateway {') - 1),
-                           (find(adapter, '    fn action_command('), find(adapter, '    /// An autonomous arrival') - 1)]}
+                           (find(adapter, '    fn action_command('), find(adapter, '    /// An autonomous arrival') - 1),
+                           (find(adapter, 'enum Role {'), find(adapter, 'fn number(') - 1),
+                           (find(adapter, '    fn debug_command('), find(adapter, '    fn handle(') - 1)],
+              'pico.rs': [(1, find(pico, '#[cfg(test)]') - 1)],
+              'local_gateway.rs': [(1, find(local, '    #[cfg(test)]') - 1)]}
     report = {}
     for name, intervals in ranges.items():
         measured = {line: count for line, count in counts[name].items()

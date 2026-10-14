@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { dcsTestPreset, dcsTestPresetQueries, type DcsTestPreset } from './dcs-test-presets';
   import DcsInputBinding from './DcsInputBinding.svelte';
   import DcsOutputBinding from './DcsOutputBinding.svelte';
   import { dcsStatusLabel, dcsFeedbackLabel, type DcsBiosStatus } from './dcs-bios';
-  import { newDcsProfile, dcsProfileEqual, dcsProfileError, dcsProfileStartError, boundDcsTargets, dcsTargetKey, dcsOutputActions, physicalDcsControls, dcsBindingState, type DcsProfileConfig, type DcsCataloguePage, type DcsCatalogueControl, type DcsTarget } from './dcs-profile';
+  import { newDcsProfile, dcsProfileEqual, dcsProfileError, dcsProfileStartError, boundDcsTargets, dcsTargetKey, dcsOutputActions, dcsBindingState, type DcsProfileConfig, type DcsCataloguePage, type DcsCatalogueControl, type DcsTarget } from './dcs-profile';
   import type { GatewayRequest, GatewayState } from './gateway';
   let { draft = $bindable(null), selectedTarget = $bindable(''), status, targets, busy, request, requestGateway, disableController, canDisable }: {
     draft: DcsProfileConfig | null; selectedTarget: string; status?: DcsBiosStatus; targets: DcsTarget[]; busy: boolean;
@@ -42,7 +43,7 @@
     pending = true; notice = '';
     if (!offset) { catalogue = []; page = undefined; }
     try {
-      const response = await request({ command: 'dcs_catalogue', cataloguePath: draft.cataloguePath, aircraftModule: 'A-10C', kind: 'all', query, offset, limit: 32 });
+      const response = await request({ command: 'dcs_catalogue', cataloguePath: draft.cataloguePath, aircraftModule: draft?.aircraftModule ?? 'A-10C', kind: 'all', query, offset, limit: 32 });
       const next = response && response.dcsBios?.catalogue;
       if (next) { catalogue = offset ? [...new Map([...catalogue, ...next.controls].map(control => [control.id, control])).values()] : next.controls; page = next; }
       else notice = 'The catalogue could not be loaded. Check the installed doc/json folder.';
@@ -63,12 +64,28 @@
     draft.outputs.push({ id: nextId('output'), gatewayId: selected?.gatewayId ?? '', moduleId: selected?.module.id ?? '', control: '', output: 0, actionId: '', format: { kind: 'text', overflow: 'truncate' } });
     if (selected) void refresh(selected.gatewayId, selected.module.id);
   }
-  function masterCaution() {
-    if (!draft || !selected || readOnly || draft.inputs.length >= 16 || draft.outputs.length >= 16) return;
-    const events = selected.state?.moduleEvents?.[selected.module.id], led = dcsOutputActions('boolean', selected.state?.moduleActions?.[selected.module.id])[0];
-    draft.inputs.push({ id: nextId('master-caution-button'), gatewayId: selected.gatewayId, moduleId: selected.module.id, kind: 'button', control: physicalDcsControls('button', events)[0]?.value ?? 0, command: 'UFC_MASTER_CAUTION', interface: 'set_state', pressedValue: 1, releasedValue: 0 });
-    draft.outputs.push({ id: nextId('master-caution-led'), gatewayId: selected.gatewayId, moduleId: selected.module.id, control: 'MASTER_CAUTION', output: 0, actionId: led?.id ?? '', format: { kind: 'boolean' } });
-    void refresh(selected.gatewayId, selected.module.id);
+  async function addPreset(kind: DcsTestPreset) {
+    if (!draft || !selected || readOnly) return;
+    if (!draft.cataloguePath.trim()) { notice = 'Choose the installed DCS-BIOS catalogue folder before adding a preset.'; return; }
+    const target = selected, cataloguePath = draft.cataloguePath;
+    pending = true; notice = '';
+    try {
+      await refresh(target.gatewayId, target.module.id);
+      const definitions: DcsCatalogueControl[] = [];
+      for (const query of dcsTestPresetQueries[kind]) {
+        const response = await request({ command: 'dcs_catalogue', cataloguePath, aircraftModule: draft?.aircraftModule ?? 'A-10C', kind: 'all', query, limit: 32 });
+        if (!response || !response.dcsBios?.catalogue) { notice = 'The preset catalogue could not be loaded. Check the installed doc/json folder.'; return; }
+        definitions.push(...response.dcsBios.catalogue.controls.filter(control => control.id === query));
+      }
+      const current = targets.find(item => item.gatewayId === target.gatewayId && item.module.id === target.module.id);
+      if (!current || !draft || draft.cataloguePath !== cataloguePath) { notice = 'The device or catalogue changed. Try adding the preset again.'; return; }
+      const preset = dcsTestPreset(draft, current, kind, definitions);
+      if (preset.error) { notice = preset.error; return; }
+      draft.inputs.push(...preset.inputs); draft.outputs.push(...preset.outputs);
+      catalogue = [...new Map([...catalogue, ...definitions].map(control => [control.id, control])).values()];
+      page = { cataloguePath, aircraftModule: draft?.aircraftModule ?? 'A-10C', query: '', kind: 'all', offset: 0, total: catalogue.length, controls: catalogue };
+      notice = 'Preset added from the installed catalogue. Review bindings, disable this panel’s HID, then save and start explicitly.';
+    } finally { pending = false; }
   }
   async function send(command: 'dcs_configure' | 'dcs_start' | 'dcs_stop') {
     if (busy || !draft || command !== 'dcs_stop' && pending || command !== 'dcs_stop' && status?.running) return;
@@ -82,23 +99,24 @@
 </script>
 
 <section aria-label="DCS-BIOS profile editor">
-  <header class="profile-heading"><div><h2>A-10C panel profile</h2><p>Map physical controls to named DCS-BIOS commands and feedback to device outputs.</p></div><span class="status" role="status">{dcsStatusLabel(status)}</span></header>
+  <header class="profile-heading"><div><h2>DCS panel profile</h2><p>Map physical controls to named DCS-BIOS commands and feedback to device outputs.</p></div><span class="status" role="status">{dcsStatusLabel(status)}</span></header>
   {#if draft}
+    <label>Installed aircraft module<input bind:value={draft.aircraftModule} disabled={readOnly} maxlength="63" placeholder="A-10C" /></label>
     {#if status?.config?.schemaVersion === 1}<p class="notice">Your saved master-caution settings are shown as two bindings. Saving upgrades this profile; saving or restarting Cockpit does not start it.</p>{/if}
     <fieldset disabled={readOnly}><legend>Installed catalogue and connection</legend>
       <label for="dcs-catalogue">Installed DCS-BIOS catalogue folder<input id="dcs-catalogue" type="text" bind:value={draft.cataloguePath} placeholder="…/DCS-BIOS/doc/json" spellcheck="false" /></label><p>Use the catalogue installed with DCS. Select controls by name; Cockpit resolves their addresses.</p>
       <details><summary>UDP connection settings</summary><div class="fields"><label for="dcs-command-host">DCS command host<input id="dcs-command-host" type="text" bind:value={draft.commandHost} spellcheck="false" /></label><label for="dcs-command-port">Command port<input id="dcs-command-port" type="number" min="1" max="65535" step="1" bind:value={draft.commandPort} /></label><label for="dcs-listen-address">Feedback listen address<input id="dcs-listen-address" type="text" bind:value={draft.listenAddress} spellcheck="false" /></label><label for="dcs-listen-port">Feedback port<input id="dcs-listen-port" type="number" min="1" max="65535" step="1" bind:value={draft.listenPort} /></label><label for="dcs-multicast-group">Multicast group (optional)<input id="dcs-multicast-group" type="text" bind:value={draft.multicastGroup} spellcheck="false" /></label><label for="dcs-multicast-interface">Multicast interface<input id="dcs-multicast-interface" type="text" bind:value={draft.multicastInterface} spellcheck="false" /></label><label for="dcs-freshness">Feedback freshness (ms)<input id="dcs-freshness" type="number" min="100" max="10000" step="1" bind:value={draft.freshnessMs} /></label></div><p>Use IPv4 addresses. Leave the multicast group empty for unicast feedback.</p></details>
     </fieldset>
     <div class="catalogue-search"><label for="dcs-control-search">Find catalogue controls<input id="dcs-control-search" type="search" bind:value={query} placeholder="Radio, frequency, master caution…" /></label><button disabled={busy || pending || !draft.cataloguePath.trim()} onclick={() => loadCatalogue()}>Search catalogue</button>{#if page?.cataloguePath === draft.cataloguePath}<span>{catalogue.length} of {page.total} matching controls</span>{#if page.offset + page.controls.length < page.total}<button disabled={busy || pending || page.query !== query} onclick={() => loadCatalogue(page!.offset + page!.controls.length)}>Load more controls</button>{/if}{/if}</div>
-    <div class="binding-tools"><label for="dcs-new-target">Device for new bindings<select id="dcs-new-target" bind:value={selectedTarget} disabled={readOnly}><option value="">First available device</option>{#each targets as target (`${target.gatewayId}/${target.module.id}`)}<option value={`${target.gatewayId}/${target.module.id}`}>{target.label} · {target.gatewayId.slice(6)}</option>{/each}</select></label><button disabled={readOnly || !selected || draft.inputs.length >= 16 || draft.outputs.length >= 16} onclick={masterCaution}>Add master-caution preset</button><button disabled={busy || pending || !bound.length} onclick={refreshBound}>Refresh bound devices</button></div>
-    <div class="bound-devices">{#each bound as item (dcsTargetKey(item))}{@const target = targets.find(target => target.gatewayId === item.gatewayId && target.module.id === item.moduleId)}{@const needsInput = draft.inputs.some(binding => dcsTargetKey(binding) === dcsTargetKey(item))}<div><strong>{target?.label ?? item.moduleId}</strong><span>{target?.module.online ? needsInput ? target.module.directUsb ? 'Direct USB active' : target.module.enabled === false && target.module.published === false ? 'HID disabled · CAN inputs' : 'Disable HID before starting' : 'Output device · HID unchanged' : 'Offline'}</span>{#if needsInput && (target?.module.enabled !== false || target?.module.published !== false)}<button disabled={readOnly || !canDisable(item.gatewayId, item.moduleId)} onclick={() => disableController(item.gatewayId, item.moduleId)}>Disable controller</button>{/if}</div>{/each}</div>
+    <div class="binding-tools"><label for="dcs-new-target">Device for new bindings<select id="dcs-new-target" bind:value={selectedTarget} disabled={readOnly}><option value="">First available device</option>{#each targets as target (`${target.gatewayId}/${target.module.id}`)}<option value={`${target.gatewayId}/${target.module.id}`}>{target.label} · {target.gatewayId.replace(/^[^:]+:/, '')}</option>{/each}</select></label><button disabled={readOnly || !selected || draft.inputs.length >= 16 || draft.outputs.length >= 16} onclick={() => addPreset('master-caution')}>Add master-caution preset</button><button disabled={readOnly || !selected || draft.inputs.length > 11 || draft.outputs.length > 12} onclick={() => addPreset('radio')}>Add radio test preset</button><button disabled={busy || pending || !bound.length} onclick={refreshBound}>Refresh bound devices</button></div>
+    <div class="bound-devices">{#each bound as item (dcsTargetKey(item))}{@const target = targets.find(target => target.gatewayId === item.gatewayId && target.module.id === item.moduleId)}{@const needsInput = draft.inputs.some(binding => dcsTargetKey(binding) === dcsTargetKey(item))}<div><strong>{target?.label ?? item.moduleId}</strong><span>{target?.module.online ? needsInput ? target.module.directUsb ? 'Direct USB active' : target.module.enabled === false && target.module.published === false ? 'HID disabled · device events' : 'Disable HID before starting' : 'Output device · HID unchanged' : 'Offline'}</span>{#if needsInput && (target?.module.enabled !== false || target?.module.published !== false)}<button disabled={readOnly || !canDisable(item.gatewayId, item.moduleId)} onclick={() => disableController(item.gatewayId, item.moduleId)}>Disable controller</button>{/if}</div>{/each}</div>
     <p>Input devices require disabled gateway HID and inactive direct USB to avoid duplicate bindings. Disable uses the existing reconnect confirmation. Output-only devices can retain their USB controllers.</p>
     <div class="binding-columns"><section aria-label="DCS-BIOS input bindings"><div class="list-heading"><h3>Inputs</h3><button disabled={readOnly || draft.inputs.length >= 16} onclick={addInput}>Add input</button></div>{#each draft.inputs as binding, index (binding.id)}<DcsInputBinding bind:binding={draft.inputs[index]} {targets} catalogue={controls} disabled={readOnly} status={dcsBindingState(status, 'input', binding.id)} remove={() => draft!.inputs.splice(index, 1)} {refresh} />{/each}{#if !draft.inputs.length}<p>Add a button, maintained switch, encoder or calibrated axis.</p>{/if}</section><section aria-label="DCS-BIOS output bindings"><div class="list-heading"><h3>Outputs</h3><button disabled={readOnly || draft.outputs.length >= 16} onclick={addOutput}>Add output</button></div>{#each draft.outputs as binding, index (binding.id)}<DcsOutputBinding bind:binding={draft.outputs[index]} {targets} catalogue={controls} disabled={readOnly} status={dcsBindingState(status, 'output', binding.id)} remove={() => draft!.outputs.splice(index, 1)} {refresh} />{/each}{#if !draft.outputs.length}<p>Add an LED or bounded display feedback binding.</p>{/if}</section></div>
     {#if notice}<p class="notice" role="status">{notice}</p>{/if}{#if status?.error}<p class="error" role="alert">{status.error}</p>{/if}{#if !status?.running && (configError || startError)}<p>{configError || startError}</p>{/if}
     <div class="toolbar"><button disabled={readOnly || !!configError || saved && status?.config?.schemaVersion !== 1} onclick={() => send('dcs_configure')}>Save settings</button><button class="start" disabled={busy || pending || !!status?.running || !saved || !!startError} onclick={() => send('dcs_start')}>Start DCS-BIOS</button><button disabled={busy || !status?.running} onclick={() => send('dcs_stop')}>Stop DCS-BIOS</button><button disabled={readOnly} onclick={restore}>Restore saved</button></div><p>{status?.running ? 'Stop before editing this profile. Runtime processing continues independently of this view.' : saved ? status?.config?.schemaVersion === 1 ? 'Your unchanged master-caution profile can start as saved. Save settings to upgrade it explicitly.' : 'Profile saved. Start is explicit after every application restart.' : 'Save this profile before starting.'}</p>
   {:else}<p>Loading the saved profile…</p>{/if}
   <dl aria-label="DCS-BIOS connection status"><div><dt>Aircraft</dt><dd>{status?.aircraft || 'Unknown'}</dd></div><div><dt>Feedback</dt><dd>{dcsFeedbackLabel(status)}</dd></div><div><dt>Commands sent</dt><dd>{status?.commandsSent ?? 0}</dd></div><div><dt>Retained event overwrites</dt><dd>{status?.eventOverflow ?? 0}</dd></div><div><dt>Recovered event gaps</dt><dd>{status?.eventGaps ?? 0}</dd></div></dl>
-  {#if status?.gateways?.length}<section class="traffic" aria-label="DCS-BIOS gateway traffic"><h3>Gateway traffic</h3><p>Observed software traffic and latency for this running profile.</p><div class="table-scroll"><table><thead><tr><th>Gateway</th><th>Queue / peak</th><th>Writes / second</th><th>Coalesced</th><th>Mean / p95 / max write ms</th><th>Max input poll ms</th><th>Events</th></tr></thead><tbody>{#each status.gateways as metric (metric.gatewayId)}<tr><td>{metric.gatewayId.slice(6)}</td><td>{metric.queueDepth ?? 0} / {metric.queueHighWater ?? 0}</td><td>{metric.actionWrites ?? 0} / {metric.throughputPerSecond?.toFixed(1) ?? '—'}</td><td>{metric.coalesced ?? 0}</td><td>{metric.latencyMeanMs?.toFixed(1) ?? '—'} / {metric.latencyP95Ms?.toFixed(1) ?? '—'} / {metric.latencyMaxMs?.toFixed(1) ?? '—'}</td><td>{metric.inputPollMaxIntervalMs?.toFixed(1) ?? '—'}</td><td>{metric.eventsProcessed ?? 0}</td></tr>{/each}</tbody></table></div></section>{/if}
+  {#if status?.gateways?.length}<section class="traffic" aria-label="DCS-BIOS gateway traffic"><h3>Gateway traffic</h3><p>Observed software traffic and latency for this running profile.</p><div class="table-scroll"><table><thead><tr><th>Gateway</th><th>Queue / peak</th><th>Writes / second</th><th>Coalesced</th><th>Mean / p95 / max write ms</th><th>Max input poll ms</th><th>Events</th></tr></thead><tbody>{#each status.gateways as metric (metric.gatewayId)}<tr><td>{metric.gatewayId.replace(/^[^:]+:/, '')}</td><td>{metric.queueDepth ?? 0} / {metric.queueHighWater ?? 0}</td><td>{metric.actionWrites ?? 0} / {metric.throughputPerSecond?.toFixed(1) ?? '—'}</td><td>{metric.coalesced ?? 0}</td><td>{metric.latencyMeanMs?.toFixed(1) ?? '—'} / {metric.latencyP95Ms?.toFixed(1) ?? '—'} / {metric.latencyMaxMs?.toFixed(1) ?? '—'}</td><td>{metric.inputPollMaxIntervalMs?.toFixed(1) ?? '—'}</td><td>{metric.eventsProcessed ?? 0}</td></tr>{/each}</tbody></table></div></section>{/if}
 </section>
 
 <style>

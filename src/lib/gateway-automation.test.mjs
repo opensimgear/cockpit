@@ -4,12 +4,23 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 const source = await readFile(new URL('./gateway-automation.ts', import.meta.url), 'utf8');
+const capabilities = {};
+vm.runInNewContext(ts.transpileModule(await readFile(new URL('./gateway-capabilities.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: capabilities });
+const require = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
 const exported = {};
-vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exported });
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exported, require });
 const { gatewayCandidates, automaticGatewayAction: action, nextConfigurationRead } = exported;
 const port = { path: '/dev/cu.usbmodemOSG', vendorId: 'cafe', productId: '4010', serialNumber: 'OSG-PICO-0123456789ABCDEF' };
 const state = { connected: false, running: false, modules: [{ online: true, registered: true }], ports: [port] };
 const options = { paused: false, setupActive: false, failedPorts: new Set() };
+test('Pico device-contract firmware owns startup and supports runtime configuration hydration', () => {
+  const pico = { ...state, backend: 'pico', protocolVersion: 3, canProtocol: 3, lifecycle: 'automatic', connected: true, modules: [{ id: 'panel', online: true, canConfigure: true }] };
+  assert.equal(action(pico, options).command, undefined);
+  assert.equal(nextConfigurationRead(pico, false), 'panel');
+  assert.equal(nextConfigurationRead({ ...pico, protocolVersion: 1 }, false), undefined);
+});
 test('discovery requires VID, PID, and serial prefix; names alone do not match', () => {
   assert.equal(gatewayCandidates([port]).length, 1);
   for (const changed of [{vendorId:'1209'}, {productId:'0000'}, {serialNumber:'unrelated'}])

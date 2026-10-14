@@ -4,10 +4,15 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 
+const capabilities = {};
+vm.runInNewContext(ts.transpileModule(await readFile(new URL('./gateway-capabilities.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: capabilities });
+const require = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
 const exported = {};
 vm.runInNewContext(ts.transpileModule(await readFile(new URL('./dcs-bios.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports: exported }, { filename: new URL('./dcs-bios.ts', import.meta.url).pathname });
+}).outputText, { exports: exported, require }, { filename: new URL('./dcs-bios.ts', import.meta.url).pathname });
 const { cautionLedActions, defaultDcsConfig, dcsConfigEqual, dcsConfigError, dcsStartError, dcsStatusLabel, dcsFeedbackLabel } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
 const gatewayId = 'stm32:00112233445566778899aabb';
@@ -19,6 +24,12 @@ const state = { gatewayId, connected: true, backend: 'stm32', modules: [module],
 const config = { ...defaultDcsConfig(gatewayId, module.id, null, [boolean]), cataloguePath: '/DCS-BIOS/doc/json' };
 const stopped = { configured: true, running: false, config, aircraft: null, missionActive: false, feedbackFresh: false,
   feedbackAgeMs: null, status: 'stopped', error: null, commandsSent: 0, eventOverflow: 0, ledValue: null };
+
+test('master-caution accepts Pico device contracts while preserving old firmware restrictions', () => {
+  const pico = { ...state, backend: 'pico', protocolVersion: 3, canProtocol: 3 };
+  assert.equal(dcsStartError(pico, module, config), '');
+  assert.match(dcsStartError({ ...pico, protocolVersion: 1 }, module, config), /Reconnect/);
+});
 
 test('LED choices include only readable boolean setters and the current board mode setter', () => {
   assert.deepEqual(plain(cautionLedActions(snapshot)).map(action => action.id), [boolean.id, board.id]);

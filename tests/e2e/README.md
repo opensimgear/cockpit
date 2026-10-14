@@ -112,3 +112,9 @@ Native simulations execute the production configuration, flash journal, Cyphal
 transport, registry and descriptor code. Loopback TCP carries CDC bytes and UDP
 carries CAN frames. These tests validate protocol/report behavior; native streams
 do not enumerate OS USB/HID devices. Physical USB/CAN acceptance remains separate.
+
+## Milestone 4 integration acceptance
+
+`integration-acceptance.mjs` adds a provider-neutral portable Rally profile over two real gateway processes and three production simulated output-only devices. It checks no HID publication, identical identities on different gateways, RGB/boolean/current-board status actions, USB versus CAN ownership contention, typed rev formatting, temporary override expiry/resumption, missing maximum RPM, paused/frozen source fallback, reboot/current-route reacquisition, host-crash lease expiry and persistent configuration without automatic Start. Authored byte prefixes go through the same parser as Windows shared memory. The evidence records software simulation; live ACR/DCS and electrical hardware qualification remain deferred.
+
+The portable DCS Master Caution scenario also runs the generic service against production nodes and the independent DCS peer. It verifies claim-before-input, advertised board enum feedback, disabled HID, competing clients, short press/release ordering, held startup/recovery and one-time Stop neutral/fallback/release.

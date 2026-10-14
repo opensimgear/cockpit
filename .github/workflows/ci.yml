@@ -26,6 +26,8 @@ jobs:
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage
       - run: pnpm dcs-profile:coverage
+      - run: pnpm debug:coverage
+      - run: pnpm integration:coverage
       - run: pnpm ui:build
 
   native:
@@ -56,6 +58,7 @@ jobs:
           rustup component add llvm-tools-preview
           python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
           python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
+          python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"
       - name: Bootstrap behavior tests
         run: python3 -m unittest discover -s tests/e2e -p 'test_*.py'
       - name: Independent gateway and device acceptance
@@ -74,4 +77,7 @@ jobs:
             .research/dcs-bios-coverage/dcs-bios-summary.json
             .research/dcs-bios-coverage/native-tests.log
             .research/dcs-bios-coverage/lines.txt
+            .research/integration-coverage/integration-summary.json
+            .research/integration-coverage/native-tests.log
+            .research/integration-coverage/lines.txt
           if-no-files-found: ignore

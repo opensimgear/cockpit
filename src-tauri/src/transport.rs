@@ -68,6 +68,9 @@ pub(crate) trait Factory: Send {
 }
 
 pub(crate) struct NativeFactory;
+fn local_only(value: Option<&std::ffi::OsStr>) -> bool {
+    cfg!(debug_assertions) && value == Some(std::ffi::OsStr::new("1"))
+}
 struct NativeConnection(Box<dyn serialport::SerialPort>);
 
 impl Read for NativeConnection {
@@ -96,6 +99,9 @@ impl Connection for NativeConnection {
 impl Factory for NativeFactory {
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
         let mut local = crate::local_gateway::ports();
+        if local_only(std::env::var_os("OSG_LOCAL_GATEWAYS_ONLY").as_deref()) {
+            return Ok(local);
+        }
         match serialport::available_ports() {
             Ok(ports) => {
                 local.extend(
@@ -166,5 +172,18 @@ mod tests {
         ] {
             assert!(!allowed_path(path));
         }
+    }
+}
+#[test]
+fn local_only_fixture_discovery_is_explicit_and_debug_build_only() {
+    use std::ffi::OsStr;
+    assert_eq!(local_only(Some(OsStr::new("1"))), cfg!(debug_assertions));
+    for value in [
+        None,
+        Some(OsStr::new("0")),
+        Some(OsStr::new("true")),
+        Some(OsStr::new("")),
+    ] {
+        assert!(!local_only(value));
     }
 }

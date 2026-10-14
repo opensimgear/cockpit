@@ -1,10 +1,28 @@
 # Integration profiles
 
-Cockpit saves one A-10C DCS-BIOS profile in its native application settings.
-Milestone 3 supports up to 16 typed input and 16 output bindings across eight
-known modules on four gateways. Portable profile packages, wider aircraft
-coverage and ownership workflows remain [Milestone 4](https://github.com/opensimgear/cockpit/issues/16).
-This directory does not contain importable profile packages.
+Open **Integrations** for Milestone 4 portable profiles. Exported JSON contains
+the provider, logical device roles and named input/output bindings. Assign roles
+to local gateway/device identities separately, refresh capabilities, then
+Validate, Save and explicitly Start. Import previews never start a profile or
+assign devices. The native service persists local settings without autostart.
+
+DCS-BIOS uses an installed aircraft catalogue. Assetto Corsa Rally starts with
+RPM, gear, speed, maximum RPM and derived rev-ratio telemetry, numeric thresholds
+and RGB rev-light bands. The synthetic source uses the same byte parser and
+device contracts as the Windows shared-memory starter. Portable profiles require
+device-enforced endpoint leases; temporary overrides retain those claims and
+Resume applies the latest fresh telemetry. Output-only devices need no HID
+controller. See [the simulator integration guide](../docs/simulator-integrations.md)
+for schema limits, ownership, fallback and recovery. This directory does not
+contain bundled profile packages.
+
+## Existing DCS settings
+
+The **DCS-BIOS** editor retains older saved master-caution and typed profiles.
+Its local output guard is a compatibility path; use Integrations for endpoint
+leases and portable role assignments. It supports up to 16 typed input and
+16 output bindings across eight known modules on four gateways. Aircraft
+catalogues and advertised device capabilities determine supported bindings.
 
 Open **DCS-BIOS** in the sidebar, enter the installed DCS-BIOS `doc/json`
 directory and search its named controls. Choose a gateway-scoped device for each
@@ -13,10 +31,17 @@ maintained switches, encoder ordinals, calibrated axes, LEDs or bounded string
 displays. Supported command interfaces and output types come from the installed
 catalogue; binary feedback addresses are resolved by the native service.
 
+The Pico debug gateway's master-caution and radio presets use the same editor,
+with catalogue-validated test bindings and LED/display readback. Add the virtual
+panel on its gateway card, refresh its advertised capabilities, then choose its
+A-10C test preset. Use the installed DCS-BIOS catalogue for a live aircraft; the
+authored development peer's addresses are synthetic.
+
 Input devices require disabled gateway HID, inactive direct USB and finished
 setup sessions. **Disable controller** uses the visible USB reconnect warning;
-wait for the update to finish. Output-only targets can retain their enabled USB
-controllers. Buttons and switches send explicit states, encoders send ordered
+wait for the update to finish. Devices used only for feedback may retain unrelated
+enabled USB inputs. Devices advertising no inputs have no HID controller.
+Buttons and switches send explicit states, encoders send ordered
 steps, and axes scale independently calibrated samples into the command range
 with a threshold in target units. Selector positions are not offered as switches.
 

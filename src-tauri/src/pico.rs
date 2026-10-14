@@ -21,6 +21,244 @@ const NO_CONNECTION: &str = "Connect the flashed Pico gateway first.";
 const COMMAND_TIMEOUT: &str =
     "Pico did not respond. Its connection and setup sessions were closed; reconnect the board.";
 
+pub(crate) fn candidate(port: &PortInfo) -> bool {
+    crate::transport::allowed_path(&port.path)
+        && port.serial_number.as_deref().is_some_and(|serial| {
+            serial
+                .strip_prefix("OSG-PICO-")
+                .is_some_and(|id| identifier(id, 4, 64))
+        })
+        && port
+            .vendor_id
+            .as_deref()
+            .is_some_and(|id| id.trim_start_matches("0x").eq_ignore_ascii_case("cafe"))
+        && port
+            .product_id
+            .as_deref()
+            .is_some_and(|id| id.trim_start_matches("0x").eq_ignore_ascii_case("4010"))
+}
+
+#[derive(Clone)]
+struct SharedFactory(Arc<Mutex<Box<dyn Factory>>>);
+impl Factory for SharedFactory {
+    fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).ports()
+    }
+    fn open(&mut self, port: &PortInfo, timeout: Duration) -> Result<Box<dyn Connection>, String> {
+        self.0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .open(port, timeout)
+    }
+}
+enum Selected {
+    Legacy(LegacyPicoService),
+    Debug(crate::stm32::Stm32Service),
+}
+impl Selected {
+    fn request(&self, value: Value) -> Value {
+        match self {
+            Self::Legacy(service) => service.request(value),
+            Self::Debug(service) => service.request(value),
+        }
+    }
+    fn shutdown(&self) {
+        match self {
+            Self::Legacy(service) => service.shutdown(),
+            Self::Debug(service) => service.shutdown(),
+        }
+    }
+}
+
+/// Select the protocol only after an explicit Connect. Discovery remains
+/// metadata-only; modern Pico firmware shares the production CDC3 adapter.
+pub struct PicoService {
+    factory: SharedFactory,
+    selected: Mutex<Option<Selected>>,
+    closed: AtomicBool,
+}
+impl Default for PicoService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl PicoService {
+    pub fn new() -> Self {
+        Self::with_factory(Box::new(NativeFactory))
+    }
+    fn with_factory(factory: Box<dyn Factory>) -> Self {
+        Self {
+            factory: SharedFactory(Arc::new(Mutex::new(factory))),
+            selected: Mutex::new(None),
+            closed: AtomicBool::new(false),
+        }
+    }
+    fn probe(&self, request: &Value) -> Result<bool, String> {
+        let mut factory = self.factory.clone();
+        let port = factory
+            .ports()?
+            .into_iter()
+            .find(|port| candidate(port) && request["port"] == port.path)
+            .ok_or("Select an available flashed Pico gateway port.")?;
+        let serial = port.serial_number.as_deref().unwrap();
+        if request["gatewayId"]
+            .as_str()
+            .is_some_and(|id| id != format!("pico:{serial}"))
+        {
+            return Err("Gateway identity does not match the selected port.".into());
+        }
+        let mut connection = factory.open(&port, Duration::from_millis(50))?;
+        let result = (|| {
+            connection.set_control_lines(true, false)?;
+            connection
+                .write_all(b"hello\n")
+                .map_err(|error| error.to_string())?;
+            connection.flush().map_err(|error| error.to_string())?;
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let mut buffer = Vec::new();
+            while Instant::now() < deadline {
+                if self.closed.load(Ordering::Acquire) {
+                    return Err(CLOSED.into());
+                }
+                while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+                    let line: Vec<_> = buffer.drain(..=newline).collect();
+                    let line = std::str::from_utf8(&line)
+                        .map_err(|_| "Pico sent malformed handshake data.")?
+                        .trim();
+                    if line.starts_with("gatewayType=") {
+                        let fields: HashMap<_, _> = line
+                            .split_whitespace()
+                            .filter_map(|field| field.split_once('='))
+                            .collect();
+                        let uid = format!(
+                            "00000000{}",
+                            serial
+                                .strip_prefix("OSG-PICO-")
+                                .unwrap()
+                                .to_ascii_lowercase()
+                        );
+                        if fields.get("gatewayType") == Some(&"pico-debug-gateway")
+                            && fields.get("protocol") == Some(&"3")
+                            && fields.get("canProtocol") == Some(&"3")
+                            && fields.get("serial") == Some(&serial)
+                            && fields
+                                .get("identity")
+                                .is_some_and(|identity| identity.eq_ignore_ascii_case(&uid))
+                            && fields.get("debug") == Some(&"1")
+                            && fields.get("maxVirtual") == Some(&"8")
+                        {
+                            return Ok(true);
+                        }
+                        return Err(
+                            "Unsupported Pico gateway handshake; check its debug firmware.".into(),
+                        );
+                    }
+                    if line.starts_with('{') {
+                        let reply: Value = serde_json::from_str(line)
+                            .map_err(|_| "Pico sent malformed handshake data.")?;
+                        validate_state(&reply["state"], Some(serial))?;
+                        return Ok(false);
+                    }
+                }
+                let mut bytes = [0; 4096];
+                match connection.read(&mut bytes) {
+                    Ok(0) => return Err("Pico was unplugged during its handshake.".into()),
+                    Ok(count) if buffer.len() + count <= RESPONSE_LIMIT => {
+                        buffer.extend_from_slice(&bytes[..count])
+                    }
+                    Ok(_) => return Err("Pico handshake exceeds its frame limit.".into()),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::TimedOut
+                                | io::ErrorKind::WouldBlock
+                                | io::ErrorKind::Interrupted
+                        ) => {}
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+            Err("Pico did not return a supported firmware handshake.".into())
+        })();
+        let _ = connection.set_control_lines(false, false);
+        result
+    }
+    pub fn request(&self, request: Value) -> Value {
+        let mut selected = self.selected.lock().unwrap_or_else(|p| p.into_inner());
+        let error = |message: String| json!({"ok":false,"error":message,"state":empty_state()});
+        if self.closed.load(Ordering::Acquire) {
+            return error(CLOSED.into());
+        }
+        if !request.is_object()
+            || !request["clientId"]
+                .as_str()
+                .is_some_and(|id| identifier(id, 16, 80))
+        {
+            return error("Missing Cockpit client identity. Reload Cockpit.".into());
+        }
+        if request["command"] == "connect" {
+            if let Some(service) = selected.as_ref() {
+                return service.request(request);
+            }
+            match self.probe(&request) {
+                Ok(true) => {
+                    *selected = Some(Selected::Debug(crate::stm32::Stm32Service::pico_debug(
+                        Box::new(self.factory.clone()),
+                    )))
+                }
+                Ok(false) => {
+                    *selected = Some(Selected::Legacy(LegacyPicoService::with_factory(
+                        Box::new(self.factory.clone()),
+                        Timing::default(),
+                        true,
+                    )))
+                }
+                Err(message) => return error(message),
+            }
+        }
+        if let Some(service) = selected.as_ref() {
+            let disconnect = request["command"] == "disconnect";
+            let response = service.request(request);
+            if disconnect && response["ok"] == true {
+                if let Some(service) = selected.take() {
+                    service.shutdown();
+                }
+            }
+            return response;
+        }
+        if matches!(request["command"].as_str(), Some("ports" | "status")) {
+            return match self.factory.clone().ports() {
+                Ok(ports) => {
+                    let mut state = empty_state();
+                    state["ports"] = json!(ports
+                        .iter()
+                        .filter(|port| candidate(port))
+                        .map(PortInfo::value)
+                        .collect::<Vec<_>>());
+                    json!({"ok":true,"state":state})
+                }
+                Err(message) => error(message),
+            };
+        }
+        error(NO_CONNECTION.into())
+    }
+    pub fn shutdown(&self) {
+        self.closed.store(true, Ordering::Release);
+        if let Some(service) = self
+            .selected
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            service.shutdown();
+        }
+    }
+}
+impl Drop for PicoService {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 #[derive(Clone)]
 struct Timing {
     command: Duration,
@@ -66,19 +304,19 @@ fn empty_state() -> Value {
 }
 
 /// All hardware access is explicit. Construction and port enumeration do not open CDC.
-pub struct PicoService {
+pub struct LegacyPicoService {
     sender: mpsc::SyncSender<Message>,
     closed: Arc<AtomicBool>,
     queued: Arc<AtomicUsize>,
     snapshot: Arc<Mutex<Snapshot>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
-impl Default for PicoService {
+impl Default for LegacyPicoService {
     fn default() -> Self {
         Self::new()
     }
 }
-impl PicoService {
+impl LegacyPicoService {
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory), Timing::default(), true)
     }
@@ -193,7 +431,7 @@ impl PicoService {
         }
     }
 }
-impl Drop for PicoService {
+impl Drop for LegacyPicoService {
     fn drop(&mut self) {
         self.shutdown();
     }
@@ -930,6 +1168,11 @@ mod tests {
     }
     impl Write for MockConnection {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes == b"hello\n" {
+                let context = self.context.lock().unwrap();
+                self.data.extend(format!("{}\n", json!({"id":"","ok":false,"error":"Invalid JSON request.","state":context.state})).as_bytes());
+                return Ok(bytes.len());
+            }
             let request: Value = serde_json::from_slice(bytes).unwrap();
             let mut context = self.context.lock().unwrap();
             context.writes.push(request.clone());
@@ -1098,6 +1341,96 @@ mod tests {
             false
         );
         assert_eq!(context.lock().unwrap().lines.last(), Some(&(false, false)));
+    }
+
+    #[test]
+    fn automatic_service_discovers_without_opening_and_preserves_legacy_rejection() {
+        let (_, context) = harness();
+        let service = PicoService::with_factory(Box::new(MockFactory(context.clone())));
+        let request = |command: &str| json!({"command":command,"clientId":CLIENT_A,"port":PATH});
+        assert_eq!(service.request(request("ports"))["ok"], true);
+        assert!(context.lock().unwrap().opened.is_empty());
+        assert_eq!(
+            service.request(request("connect"))["state"]["protocolVersion"],
+            1
+        );
+        assert_eq!(context.lock().unwrap().opened.len(), 2);
+        let before = context.lock().unwrap().writes.len();
+        assert_eq!(service.request(json!({"command":"debug_invoke","debugOperation":"neutral","moduleId":MODULE,"clientId":CLIENT_A}))["ok"], false);
+        assert_eq!(context.lock().unwrap().writes.len(), before);
+        assert_eq!(service.request(request("disconnect"))["ok"], true);
+        service.shutdown();
+        assert_eq!(service.request(request("status"))["ok"], false);
+    }
+
+    struct ProbeFactory {
+        response: Vec<u8>,
+    }
+    struct ProbeConnection {
+        response: std::collections::VecDeque<u8>,
+    }
+    impl Factory for ProbeFactory {
+        fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
+            let mut port = info(PATH);
+            port.serial_number = Some("OSG-PICO-0123456789abcdef".into());
+            Ok(vec![port])
+        }
+        fn open(&mut self, _: &PortInfo, _: Duration) -> Result<Box<dyn Connection>, String> {
+            Ok(Box::new(ProbeConnection {
+                response: self.response.iter().copied().collect(),
+            }))
+        }
+    }
+    impl Read for ProbeConnection {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            let count = bytes.len().min(self.response.len()).min(11);
+            for byte in &mut bytes[..count] {
+                *byte = self.response.pop_front().unwrap();
+            }
+            Ok(count)
+        }
+    }
+    impl Write for ProbeConnection {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            assert_eq!(bytes, b"hello\n");
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Connection for ProbeConnection {
+        fn set_control_lines(&mut self, _: bool, _: bool) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn modern_probe_checks_role_version_and_serial_identity_before_selection() {
+        let banner = "gatewayType=pico-debug-gateway protocol=3 canProtocol=3 firmware=0.1.0 board=pico_w identity=000000000123456789abcdef serial=OSG-PICO-0123456789abcdef epoch=1 maxModules=32 debug=1 maxVirtual=8\r\n";
+        for (response, accepted) in [
+            (banner.to_owned(), true),
+            (banner.replace("protocol=3 ", "protocol=2 "), false),
+            (
+                banner.replace("pico-debug-gateway", "stm32-can-gateway"),
+                false,
+            ),
+            (
+                banner.replace(
+                    "identity=000000000123456789abcdef",
+                    "identity=00000000123456789abcdef0",
+                ),
+                false,
+            ),
+            (banner.replace("maxVirtual=8", "maxVirtual=9"), false),
+            ("{broken-json\n".into(), false),
+            ("unsupported\n".into(), false),
+        ] {
+            let service = PicoService::with_factory(Box::new(ProbeFactory {
+                response: response.into_bytes(),
+            }));
+            let request = json!({"port":PATH,"gatewayId":"pico:OSG-PICO-0123456789abcdef"});
+            assert_eq!(service.probe(&request).ok(), accepted.then_some(true));
+        }
     }
 
     #[test]
@@ -1374,7 +1707,7 @@ mod tests {
         let mut long = timing();
         long.command = Duration::from_secs(3);
         long.heartbeat = Duration::from_secs(1);
-        let service = Arc::new(PicoService::with_factory(
+        let service = Arc::new(LegacyPicoService::with_factory(
             Box::new(MockFactory(context.clone())),
             long,
             false,
@@ -1442,7 +1775,7 @@ mod tests {
         let mut durations = timing();
         durations.command = Duration::from_secs(3);
         durations.heartbeat = Duration::from_secs(1);
-        let service = Arc::new(PicoService::with_factory(
+        let service = Arc::new(LegacyPicoService::with_factory(
             Box::new(MockFactory(context.clone())),
             durations,
             false,

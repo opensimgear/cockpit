@@ -47,10 +47,10 @@ pub(crate) fn commands(config: &Value, owner: u32) -> Result<Vec<String>, String
     let hats = tuples(config, "hats", 4, &[151, 151, 151, 151])?;
     let encoders = tuples(config, "encoders", 8, &[23, 23])?;
     let selectors = tuples(config, "selectors", 8, &[151, 151])?;
-    if buttons.len() + 2 * encoders.len() + 3 * selectors.len() > 128
-        || buttons.len() + axes.len() + hats.len() + encoders.len() + selectors.len() == 0
-    {
-        return Err("Choose at least one control and at most 128 logical buttons including encoder and selector buttons.".into());
+    if buttons.len() + 2 * encoders.len() + 3 * selectors.len() > 128 {
+        return Err(
+            "Choose at most 128 logical buttons including encoder and selector buttons.".into(),
+        );
     }
     for axis in axes {
         let axis = axis.as_array().unwrap();
@@ -148,5 +148,16 @@ mod tests {
         invalid = config;
         invalid["buttons"][0][0] = json!(152);
         assert!(commands(&invalid, 12).is_err());
+    }
+    #[test]
+    fn output_only_configuration_encodes_zero_counts_and_remains_a_valid_snapshot() {
+        let config = json!({"name":"Rev lights","expanderMask":0,"buttons":[],"axes":[],"hats":[],"encoders":[],"selectors":[]});
+        let encoded = commands(&config, 9).unwrap();
+        assert_eq!(encoded[1], "counts 9 0 0 0 0 0 0");
+        assert_eq!(encoded.len(), 3);
+        let mut snapshot = json!({"generation":1,"savedGeneration":1,"owner":0,"dirty":false,"pendingApply":false,"view":"active","valid":true,"config":config});
+        assert!(validate(&snapshot).is_ok());
+        snapshot["config"]["axes"] = Value::Null;
+        assert!(validate(&snapshot).is_err());
     }
 }

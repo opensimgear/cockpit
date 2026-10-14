@@ -1,11 +1,16 @@
+mod acr_windows;
 mod actions;
 pub mod dcs_bios;
 mod dcs_profile;
 mod dcs_profile_runtime;
 mod dcs_runtime;
+mod game_telemetry;
 pub mod gateways;
 mod hid_names;
+mod integration_profile;
+mod integration_runtime;
 mod local_gateway;
+mod output_leases;
 mod panel_events;
 pub mod pico;
 mod protocol;

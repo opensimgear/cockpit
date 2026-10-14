@@ -15,7 +15,90 @@ use std::{
     time::{Duration, Instant},
 };
 
-type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
+pub(crate) type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
+pub(crate) type Feed = Box<dyn FnMut(u64) -> ExportSnapshot + Send>;
+#[derive(Default)]
+pub(crate) struct Controls {
+    pub formats: BTreeMap<String, Value>,
+    pub overrides: Mutex<BTreeMap<String, (Value, Instant)>>,
+    pub require_ownership: bool,
+}
+#[derive(Clone)]
+struct Lease {
+    secret: String,
+    id: u64,
+    renewed: Instant,
+}
+impl Controls {
+    fn format(
+        &self,
+        binding: &Output,
+        value: Option<&Value>,
+        fresh: bool,
+        action: &Value,
+    ) -> Result<Value, String> {
+        match self.formats.get(&binding.id) {
+            Some(output) => crate::integration_profile::format_output(output, value, fresh, action),
+            None => format_output(binding, value, fresh, action),
+        }
+    }
+    fn desired(&self, id: &str, provider: Value, fresh: bool) -> Value {
+        let mut overrides = self.overrides.lock().unwrap_or_else(|p| p.into_inner());
+        if !fresh {
+            overrides.remove(id);
+        }
+        if let Some((value, until)) = overrides.get(id) {
+            if Instant::now() < *until {
+                return value.clone();
+            }
+            overrides.remove(id);
+        }
+        provider
+    }
+}
+fn claim(
+    panel: &Panel,
+    prepared: &Prepared,
+    binding: &Output,
+    fallback: Value,
+) -> Result<Lease, String> {
+    let secret = uuid::Uuid::new_v4().to_string();
+    let state = call(
+        panel,
+        &prepared.target,
+        "action_claim",
+        json!({"boot":prepared.route[3],"catalogueRevision":prepared.revision,
+        "actionId":binding.action_id,"ownershipToken":secret,"ttlMs":crate::output_leases::TTL,"values":fallback}),
+    )?;
+    let m = module(&state, &prepared.target, prepared.input)?;
+    let actions = &state["moduleActions"][&prepared.target.module_id];
+    if token(&state, &m) != prepared.route || actions["route"] != prepared.route {
+        return Err("Output route changed while claiming.".into());
+    }
+    let id = actions["lastLease"]["leaseId"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .ok_or("Device did not acknowledge output ownership.")?;
+    Ok(Lease {
+        secret,
+        id,
+        renewed: Instant::now(),
+    })
+}
+fn lease_request(
+    panel: &Panel,
+    prepared: &Prepared,
+    lease: &Lease,
+    command: &str,
+) -> Result<(), String> {
+    call(
+        panel,
+        &prepared.target,
+        command,
+        json!({"boot":prepared.route[3],"ownershipToken":lease.secret,"leaseId":lease.id,"ttlMs":crate::output_leases::TTL}),
+    )?;
+    Ok(())
+}
 const CLIENT: &str = "cockpit-dcs-bios-integration";
 const POLL: Duration = Duration::from_millis(50);
 
@@ -99,6 +182,14 @@ fn prepare_one(
     panel: &Panel,
     target: &Target,
 ) -> Result<Prepared, String> {
+    prepare_controlled(profile, panel, target, &Controls::default())
+}
+fn prepare_controlled(
+    profile: &CompiledProfile,
+    panel: &Panel,
+    target: &Target,
+    controls: &Controls,
+) -> Result<Prepared, String> {
     let input = profile.inputs.iter().any(|i| i.binding.target == *target);
     let snapshot = call(panel, target, "status", json!({}))?;
     let m = module(&snapshot, target, input)?;
@@ -120,6 +211,11 @@ fn prepare_one(
         {
             return Err("The panel action route changed while starting; retry Start.".into());
         }
+        if controls.require_ownership {
+            crate::output_leases::capability(&catalogue["ownership"]).map_err(|_| {
+                "Update this device firmware to support endpoint output ownership.".to_owned()
+            })?;
+        }
         revision = catalogue["catalogueRevision"]
             .as_u64()
             .filter(|n| *n > 0 && *n <= u32::MAX as u64)
@@ -132,11 +228,20 @@ fn prepare_one(
                 .ok_or("The bound output action is no longer advertised.")?
                 .clone();
             crate::actions::descriptor(&action)?;
+            if controls
+                .formats
+                .get(&output.binding.id)
+                .is_some_and(|b| b["endpoint"] != action["endpoint"])
+            {
+                return Err(
+                    "The advertised output endpoint no longer matches the portable binding.".into(),
+                );
+            }
             if !endpoints.insert(action["endpoint"].as_str().unwrap().to_owned()) {
                 return Err("Bind each physical output endpoint only once.".into());
             }
-            format_output(&output.binding, None, true, &action)?;
-            format_output(&output.binding, None, false, &action)?;
+            controls.format(&output.binding, None, true, &action)?;
+            controls.format(&output.binding, None, false, &action)?;
             actions.insert(output.binding.id.clone(), action);
         }
     }
@@ -210,8 +315,11 @@ struct OutputState {
     status: String,
     error: Option<String>,
     format_error: Option<String>,
+    lease: Option<Lease>,
+    lease_retry: Instant,
 }
 struct Shared {
+    require_ownership: bool,
     export: ExportSnapshot,
     updated: Instant,
     inputs: BTreeMap<String, Value>,
@@ -220,19 +328,31 @@ struct Shared {
     gaps: u64,
     overflow: u64,
 }
-fn sync_desired(shared: &mut Shared, snapshot: ExportSnapshot, now: Instant) {
+fn sync_desired_controlled(
+    shared: &mut Shared,
+    snapshot: ExportSnapshot,
+    now: Instant,
+    controls: &Controls,
+) {
     shared.export = snapshot;
     shared.updated = now;
     for output in shared.outputs.values_mut() {
         let known = shared.export.values.get(&output.binding.id);
-        let result = format_output(&output.binding, known, shared.export.fresh, &output.action);
+        let result = controls.format(&output.binding, known, shared.export.fresh, &output.action);
         let (desired, error) = match result {
             Ok(value) => (value, None),
             Err(error) => (
-                format_output(&output.binding, None, false, &output.action).unwrap_or(json!([])),
+                controls
+                    .format(&output.binding, None, false, &output.action)
+                    .unwrap_or(json!([])),
                 Some(error),
             ),
         };
+        let desired = controls.desired(
+            &output.binding.id,
+            desired,
+            shared.export.fresh && known.is_some() && error.is_none(),
+        );
         output.status = if error.is_some() {
             "error"
         } else if !shared.export.fresh {
@@ -272,7 +392,7 @@ fn snapshot(shared: &Shared, elapsed: Duration, running: bool) -> Value {
     let export = &shared.export;
     let outputs:Vec<_>=shared.outputs.values().map(|o|json!({"id":o.binding.id,"gatewayId":o.binding.target.gateway_id,"moduleId":o.binding.target.module_id,
         "actionId":o.binding.action_id,"status":if o.error.is_some()||o.format_error.is_some(){"error"}else{&o.status},"ready":o.status=="ready"&&!o.pending&&o.error.is_none()&&o.format_error.is_none(),
-        "desired":o.desired,"applied":o.applied,"pending":o.pending,"error":o.format_error.as_ref().or(o.error.as_ref())})).collect();
+        "desired":o.desired,"applied":o.applied,"pending":o.pending,"owned":o.lease.is_some(),"error":o.format_error.as_ref().or(o.error.as_ref())})).collect();
     let gateways: Vec<_> = shared
         .meters
         .iter()
@@ -521,9 +641,11 @@ struct Device {
     available: bool,
 }
 impl Device {
-    fn release(&mut self, transport: &Transport, meter: &mut Meter) {
-        for input in &mut self.inputs {
-            input.release(transport, meter);
+    fn release(&mut self, transport: Option<&Transport>, meter: &mut Meter) {
+        if let Some(transport) = transport {
+            for input in &mut self.inputs {
+                input.release(transport, meter);
+            }
         }
         self.cursor = None;
         self.available = false;
@@ -533,12 +655,13 @@ impl Device {
         &mut self,
         profile: &CompiledProfile,
         panel: &Panel,
-        transport: &Transport,
+        transport: Option<&Transport>,
         export: &ExportSnapshot,
         fresh: bool,
         meter: &mut Meter,
         shared: &Arc<Mutex<Shared>>,
         cancel: &AtomicBool,
+        controls: &Controls,
     ) -> Result<(bool, u64), String> {
         let target = &self.prepared.target;
         let state = call(panel, target, "status", json!({}))?;
@@ -549,12 +672,17 @@ impl Device {
         let m = module(&state, target, self.prepared.input)?;
         if token(&state, &m) != self.prepared.route {
             self.release(transport, meter);
-            self.prepared = prepare_one(profile, panel, &self.prepared.target)?;
+            self.prepared = prepare_controlled(profile, panel, &self.prepared.target, controls)?;
+            if controls.require_ownership {
+                return Ok((false, 0));
+            }
         }
         if !self.prepared.input {
             self.available = true;
             return Ok((false, 0));
         }
+        let transport =
+            transport.ok_or("This telemetry provider does not accept panel commands.")?;
         if self.cursor.is_none() || self.epoch != export.epoch || fresh != self.was_fresh || !fresh
         {
             let state = call(
@@ -577,9 +705,10 @@ impl Device {
                     export.epoch,
                     profile.profile.network.freshness_ms,
                     cancel,
+                    Some(&self.prepared.target),
                 )
             {
-                self.release(transport, meter);
+                self.release(Some(transport), meter);
                 return Ok((false, events["overflow"].as_u64().unwrap()));
             }
             for input in &mut self.inputs {
@@ -589,9 +718,10 @@ impl Device {
                         export.epoch,
                         profile.profile.network.freshness_ms,
                         cancel,
+                        Some(&self.prepared.target),
                     )
                 {
-                    self.release(transport, meter);
+                    self.release(Some(transport), meter);
                     return Ok((false, events["overflow"].as_u64().unwrap()));
                 }
                 input.baseline(events, fresh, transport, meter)?;
@@ -630,8 +760,9 @@ impl Device {
                     export.epoch,
                     profile.profile.network.freshness_ms,
                     cancel,
+                    Some(&self.prepared.target),
                 ) {
-                    self.release(transport, meter);
+                    self.release(Some(transport), meter);
                     return Ok((false, events["overflow"].as_u64().unwrap()));
                 }
                 meter.events += 1;
@@ -641,8 +772,9 @@ impl Device {
                         export.epoch,
                         profile.profile.network.freshness_ms,
                         cancel,
+                        Some(&self.prepared.target),
                     ) {
-                        self.release(transport, meter);
+                        self.release(Some(transport), meter);
                         return Ok((false, events["overflow"].as_u64().unwrap()));
                     }
                     input.event(
@@ -659,8 +791,9 @@ impl Device {
                 export.epoch,
                 profile.profile.network.freshness_ms,
                 cancel,
+                Some(&self.prepared.target),
             ) {
-                self.release(transport, meter);
+                self.release(Some(transport), meter);
                 return Ok((false, events["overflow"].as_u64().unwrap()));
             }
             for input in &mut self.inputs {
@@ -669,8 +802,9 @@ impl Device {
                     export.epoch,
                     profile.profile.network.freshness_ms,
                     cancel,
+                    Some(&self.prepared.target),
                 ) {
-                    self.release(transport, meter);
+                    self.release(Some(transport), meter);
                     return Ok((false, events["overflow"].as_u64().unwrap()));
                 }
                 input.axis(events, transport, meter)?;
@@ -691,12 +825,26 @@ fn still_fresh(
     epoch: u64,
     freshness: u64,
     cancel: &AtomicBool,
+    target: Option<&Target>,
 ) -> bool {
     if cancel.load(Ordering::Acquire) {
         return false;
     }
     let shared = shared.lock().unwrap_or_else(|p| p.into_inner());
-    shared.export.epoch == epoch
+    let ownership_ready = !shared.require_ownership
+        || target.is_some_and(|target| {
+            shared
+                .outputs
+                .values()
+                .filter(|o| o.binding.target == *target)
+                .all(|o| {
+                    o.lease
+                        .as_ref()
+                        .is_some_and(|lease| lease.renewed.elapsed() < Duration::from_millis(4500))
+                })
+        });
+    ownership_ready
+        && shared.export.epoch == epoch
         && shared.export.fresh
         && shared
             .export
@@ -705,6 +853,7 @@ fn still_fresh(
             .saturating_add(shared.updated.elapsed().as_millis() as u64)
             <= freshness
 }
+#[allow(dead_code)]
 fn apply_output(
     panel: &Panel,
     prepared: &Prepared,
@@ -712,6 +861,17 @@ fn apply_output(
     desired: &Value,
     latest: Option<&dyn Fn() -> Value>,
     cancel: Option<&AtomicBool>,
+) -> Result<(bool, Value), String> {
+    apply_output_owned(panel, prepared, binding, desired, latest, cancel, None)
+}
+fn apply_output_owned(
+    panel: &Panel,
+    prepared: &Prepared,
+    binding: &Output,
+    desired: &Value,
+    latest: Option<&dyn Fn() -> Value>,
+    cancel: Option<&AtomicBool>,
+    lease: Option<&Lease>,
 ) -> Result<(bool, Value), String> {
     let state = call(panel, &prepared.target, "action_describe", json!({}))?;
     let m = module(&state, &prepared.target, prepared.input)?;
@@ -746,8 +906,13 @@ fn apply_output(
     let state = call(
         panel,
         &prepared.target,
-        "action_invoke",
-        json!({"boot":prepared.route[3],"catalogueRevision":prepared.revision,"actionId":binding.action_id,"values":desired}),
+        if lease.is_some() {
+            "action_invoke_owned"
+        } else {
+            "action_invoke"
+        },
+        json!({"boot":prepared.route[3],"catalogueRevision":prepared.revision,"actionId":binding.action_id,"values":desired,
+            "ownershipToken":lease.map(|l|&l.secret),"leaseId":lease.map(|l|l.id)}),
     )?;
     let m = module(&state, &prepared.target, prepared.input)?;
     let actions = &state["moduleActions"][&prepared.target.module_id];
@@ -768,11 +933,12 @@ fn apply_output(
 fn gateway_worker(
     profile: Arc<CompiledProfile>,
     panel: Panel,
-    transport: Arc<Transport>,
+    transport: Option<Arc<Transport>>,
     shared: Arc<Mutex<Shared>>,
     cancel: Arc<AtomicBool>,
     mut devices: Vec<Device>,
     gateway: String,
+    controls: Arc<Controls>,
 ) {
     let mut meter = Meter::default();
     let mut next_poll = Instant::now();
@@ -800,7 +966,18 @@ fn gateway_worker(
                 let (export, fresh) = {
                     let shared = shared.lock().unwrap_or_else(|p| p.into_inner());
                     let e = shared.export.clone();
+                    let ownership_ready = !controls.require_ownership
+                        || shared
+                            .outputs
+                            .values()
+                            .filter(|o| o.binding.target == device.prepared.target)
+                            .all(|o| {
+                                o.lease.as_ref().is_some_and(|l| {
+                                    l.renewed.elapsed() < Duration::from_millis(4500)
+                                })
+                            });
                     let fresh = e.fresh
+                        && ownership_ready
                         && e.age_ms
                             .unwrap_or(u64::MAX)
                             .saturating_add(shared.updated.elapsed().as_millis() as u64)
@@ -809,7 +986,15 @@ fn gateway_worker(
                 };
                 let previous = device.prepared.route.clone();
                 let result = device.poll(
-                    &profile, &panel, &transport, &export, fresh, &mut meter, &shared, &cancel,
+                    &profile,
+                    &panel,
+                    transport.as_deref(),
+                    &export,
+                    fresh,
+                    &mut meter,
+                    &shared,
+                    &cancel,
+                    &controls,
                 );
                 let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
                 if previous != device.prepared.route {
@@ -821,6 +1006,7 @@ fn gateway_worker(
                         output.action = device.prepared.actions[&output.binding.id].clone();
                         output.applied = None;
                         output.pending = true;
+                        output.lease = None;
                         output.error = None;
                     }
                 }
@@ -839,7 +1025,7 @@ fn gateway_worker(
                             state.gaps += 1;
                         }
                         drop(state);
-                        device.release(&transport, &mut meter);
+                        device.release(transport.as_deref(), &mut meter);
                         for input in &mut device.inputs {
                             if !input.uncertain {
                                 input.error = Some(error.clone());
@@ -868,6 +1054,61 @@ fn gateway_worker(
         if cancel.load(Ordering::Acquire) {
             break;
         }
+        if controls.require_ownership {
+            for id in &output_ids {
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
+                let retry =
+                    shared.lock().unwrap_or_else(|p| p.into_inner()).outputs[id].lease_retry;
+                if Instant::now() < retry {
+                    continue;
+                }
+                let (binding, action, lease) = {
+                    let state = shared.lock().unwrap_or_else(|p| p.into_inner());
+                    let output = &state.outputs[id];
+                    (
+                        output.binding.clone(),
+                        output.action.clone(),
+                        output.lease.clone(),
+                    )
+                };
+                let prepared = &devices
+                    .iter()
+                    .find(|d| d.prepared.target == binding.target)
+                    .unwrap()
+                    .prepared;
+                let result = match lease {
+                    None => controls
+                        .format(&binding, None, false, &action)
+                        .and_then(|fallback| claim(&panel, prepared, &binding, fallback)),
+                    Some(mut lease) if lease.renewed.elapsed() >= Duration::from_millis(1000) => {
+                        lease_request(&panel, prepared, &lease, "action_renew").map(|_| {
+                            lease.renewed = Instant::now();
+                            lease
+                        })
+                    }
+                    Some(lease) => Ok(lease),
+                };
+                let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
+                let output = state.outputs.get_mut(id).unwrap();
+                match result {
+                    Ok(lease) => output.lease = Some(lease),
+                    Err(error) => {
+                        output.lease = None;
+                        output.lease_retry = Instant::now() + Duration::from_millis(500);
+                        output.error = Some(error);
+                        output.applied = None;
+                        output.pending = true;
+                        controls
+                            .overrides
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(id);
+                    }
+                }
+            }
+        }
         // Drain ordered inputs first. At most one blocking output is in flight
         // on this gateway; every other gateway has its own independent worker.
         if backlog {
@@ -879,7 +1120,7 @@ fn gateway_worker(
                 for offset in 0..output_ids.len() {
                     let index = (round_robin + offset) % output_ids.len();
                     let o = &state.outputs[&output_ids[index]];
-                    if o.pending {
+                    if o.pending && (!controls.require_ownership || o.lease.is_some()) {
                         job = Some((index, o.binding.clone(), o.desired.clone()));
                         break;
                     }
@@ -898,15 +1139,43 @@ fn gateway_worker(
                         .clone()
                 };
                 let started = Instant::now();
-                let result = apply_output(
+                let lease = shared.lock().unwrap_or_else(|p| p.into_inner()).outputs[&binding.id]
+                    .lease
+                    .clone();
+                let result = apply_output_owned(
                     &panel,
                     prepared,
                     &binding,
                     &desired,
                     Some(&latest),
                     Some(&cancel),
+                    lease.as_ref(),
                 );
                 meter.latency(started.elapsed().as_secs_f64() * 1000.0);
+                let ownership_lost = controls.require_ownership
+                    && result.as_ref().is_err_and(|error| {
+                        [
+                            "outputNotOwned",
+                            "staleOutputLease",
+                            "outputBusy",
+                            "output route/catalogue changed",
+                            "output descriptor changed",
+                        ]
+                        .iter()
+                        .any(|code| error.contains(code))
+                    });
+                if ownership_lost {
+                    let device = devices
+                        .iter_mut()
+                        .find(|d| d.prepared.target == binding.target)
+                        .unwrap();
+                    device.release(transport.as_deref(), &mut meter);
+                    controls
+                        .overrides
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .remove(&binding.id);
+                }
                 let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
                 let output = state.outputs.get_mut(&binding.id).unwrap();
                 match result {
@@ -921,6 +1190,10 @@ fn gateway_worker(
                         output.error = None;
                     }
                     Err(error) => {
+                        if ownership_lost {
+                            output.lease = None;
+                            output.lease_retry = Instant::now() + Duration::from_millis(500);
+                        }
                         output.applied = None;
                         output.pending = true;
                         output.error = Some(error);
@@ -948,7 +1221,7 @@ fn gateway_worker(
         thread::sleep(Duration::from_millis(5));
     }
     for device in &mut devices {
-        device.release(&transport, &mut meter);
+        device.release(transport.as_deref(), &mut meter);
     }
     for binding in profile
         .outputs
@@ -962,11 +1235,33 @@ fn gateway_worker(
             .unwrap()
             .prepared;
         let action = prepared.actions.get(&binding.id).unwrap();
-        let result = format_output(binding, None, false, action).and_then(|value| {
-            apply_output(&panel, prepared, binding, &value, None, None).map(|(_, applied)| applied)
-        });
+        let lease = shared.lock().unwrap_or_else(|p| p.into_inner()).outputs[&binding.id]
+            .lease
+            .clone();
+        let result = if controls.require_ownership && lease.is_none() {
+            Err("Output ownership was lost; device lease expiry supplies fallback and readback remains unknown.".into())
+        } else {
+            controls
+                .format(binding, None, false, action)
+                .and_then(|value| {
+                    apply_output_owned(
+                        &panel,
+                        prepared,
+                        binding,
+                        &value,
+                        None,
+                        None,
+                        lease.as_ref(),
+                    )
+                    .map(|(_, applied)| applied)
+                })
+        };
+        if let Some(lease) = &lease {
+            let _ = lease_request(&panel, prepared, lease, "action_release");
+        }
         let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
         let output = state.outputs.get_mut(&binding.id).unwrap();
+        output.lease = None;
         match result {
             Ok(value) => {
                 output.applied = Some(value.clone());
@@ -993,11 +1288,47 @@ fn gateway_worker(
     existing.commands = meter.commands;
 }
 
+pub(crate) fn validate_targets(
+    profile: &CompiledProfile,
+    panel: &Panel,
+    controls: &Controls,
+) -> Result<Value, String> {
+    let targets: BTreeSet<_> = profile
+        .inputs
+        .iter()
+        .map(|i| i.binding.target.clone())
+        .chain(profile.outputs.iter().map(|o| o.binding.target.clone()))
+        .collect();
+    let mut result = Vec::new();
+    for target in targets {
+        let p = prepare_controlled(profile, panel, &target, controls)?;
+        result.push(json!({"gatewayId":p.target.gateway_id,"moduleId":p.target.module_id,"route":p.route,"catalogueRevision":p.revision,"actions":p.actions}));
+    }
+    Ok(json!(result))
+}
+
 pub(crate) fn start(
     profile: CompiledProfile,
     panel: Panel,
     state: Arc<Mutex<Value>>,
     cancel: Arc<AtomicBool>,
+) -> Result<JoinHandle<()>, String> {
+    start_source(
+        profile,
+        panel,
+        state,
+        cancel,
+        Arc::new(Controls::default()),
+        None,
+    )
+}
+pub(crate) fn start_source(
+    profile: CompiledProfile,
+    panel: Panel,
+    state: Arc<Mutex<Value>>,
+    cancel: Arc<AtomicBool>,
+    controls: Arc<Controls>,
+    mut feed: Option<Feed>,
 ) -> Result<JoinHandle<()>, String> {
     let targets: BTreeSet<_> = profile
         .inputs
@@ -1007,11 +1338,16 @@ pub(crate) fn start(
         .collect();
     let mut prepared = Vec::new();
     for target in &targets {
-        prepared.push(prepare_one(&profile, &panel, target)?);
+        prepared.push(prepare_controlled(&profile, &panel, target, &controls)?);
     }
-    let transport = Arc::new(Transport::open_network(&profile.profile.network)?);
+    let transport = if feed.is_none() {
+        Some(Arc::new(Transport::open_network(&profile.profile.network)?))
+    } else {
+        None
+    };
     let mut session = ExportSession::new(&profile);
     let mut shared = Shared {
+        require_ownership: controls.require_ownership,
         export: session.snapshot(0),
         updated: Instant::now(),
         inputs: BTreeMap::new(),
@@ -1030,7 +1366,31 @@ pub(crate) fn start(
             .unwrap()
             .actions[&output.binding.id]
             .clone();
-        let desired = format_output(&output.binding, None, false, &action)?;
+        let desired = controls.format(&output.binding, None, false, &action)?;
+        let lease = if controls.require_ownership {
+            let prepared_one = prepared
+                .iter()
+                .find(|p| p.target == output.binding.target)
+                .unwrap();
+            match claim(&panel, prepared_one, &output.binding, desired.clone()) {
+                Ok(lease) => Some(lease),
+                Err(error) => {
+                    for (id, existing) in &shared.outputs {
+                        if let Some(lease) = &existing.lease {
+                            let route = prepared
+                                .iter()
+                                .find(|p| p.target == existing.binding.target)
+                                .unwrap();
+                            let _ = lease_request(&panel, route, lease, "action_release");
+                        }
+                        let _ = id;
+                    }
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         shared.outputs.insert(
             output.binding.id.clone(),
             OutputState {
@@ -1042,6 +1402,8 @@ pub(crate) fn start(
                 status: "unknown".into(),
                 error: None,
                 format_error: None,
+                lease,
+                lease_retry: Instant::now(),
             },
         );
     }
@@ -1081,25 +1443,35 @@ pub(crate) fn start(
                 cancel.clone(),
                 profile.clone(),
             );
+            let control = controls.clone();
             workers.push(thread::spawn(move || {
-                gateway_worker(profile, p, t, s, c, devices, gateway)
+                gateway_worker(profile, p, t, s, c, devices, gateway, control)
             }));
         }
         while !cancel.load(Ordering::Acquire) {
-            for _ in 0..128 {
-                match transport.receive() {
-                    Ok(Some(bytes)) => session.feed(&bytes, started.elapsed().as_millis() as u64),
-                    Ok(None) => break,
-                    Err(_) => {
-                        session.reset_stream(started.elapsed().as_millis() as u64);
-                        break;
+            if let Some(transport) = &transport {
+                for _ in 0..128 {
+                    match transport.receive() {
+                        Ok(Some(bytes)) => {
+                            session.feed(&bytes, started.elapsed().as_millis() as u64)
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            session.reset_stream(started.elapsed().as_millis() as u64);
+                            break;
+                        }
                     }
                 }
             }
             let now = started.elapsed().as_millis() as u64;
             session.tick(now);
+            let source_snapshot = if let Some(feed) = &mut feed {
+                feed(now)
+            } else {
+                session.snapshot(now)
+            };
             let mut shared = shared.lock().unwrap_or_else(|p| p.into_inner());
-            sync_desired(&mut shared, session.snapshot(now), Instant::now());
+            sync_desired_controlled(&mut shared, source_snapshot, Instant::now(), &controls);
             *state.lock().unwrap_or_else(|p| p.into_inner()) =
                 snapshot(&shared, started.elapsed(), true);
             drop(shared);

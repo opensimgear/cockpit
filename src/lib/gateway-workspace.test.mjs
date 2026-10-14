@@ -7,14 +7,18 @@ import ts from 'typescript';
 const compile = async name => ts.transpileModule(await readFile(new URL(name, import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const capabilities = {};
+vm.runInNewContext(await compile('./gateway-capabilities.ts'), { exports: capabilities });
+const requireCapabilities = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
 const actions = {};
-vm.runInNewContext(await compile('./device-actions.ts'), { exports: actions });
+vm.runInNewContext(await compile('./device-actions.ts'), { exports: actions, require: requireCapabilities });
 const automation = {};
-vm.runInNewContext(await compile('./gateway-automation.ts'), { exports: automation });
+vm.runInNewContext(await compile('./gateway-automation.ts'), { exports: automation, require: requireCapabilities });
 class GatewayError extends Error { constructor(message, state) { super(message); this.state = state; } }
 const exported = {};
 vm.runInNewContext(await compile('./gateway-workspace.ts'), {
   exports: exported, require(name) {
+    if (name === './gateway-capabilities') return capabilities;
     if (name === './gateway-automation') return automation;
     if (name === './device-actions') return actions;
     if (name === './gateway') return { GatewayError, gatewayRequest: () => { throw new Error('A fake transport is required.'); } };
@@ -52,6 +56,31 @@ function fixture() {
   f.entry = id => f.workspace.entries.find(entry => entry.id === id);
   return f;
 }
+
+test('background test readbacks remain gateway-ordered without blocking the setup UI with busy state', async () => {
+  const f = fixture(); await f.workspace.refresh();
+  const waiting = deferred();
+  f.intercept = request => request.command === 'events_state' ? waiting.promise : undefined;
+  const read = f.workspace.request(first, { command: 'events_state', moduleId: module.id }, true);
+  await tick();
+  assert.equal(f.entry(first).busy, false);
+  const action = f.workspace.request(first, { command: 'debug_invoke', moduleId: module.id, debugOperation: 'axis', debugArgs: [0,4095] });
+  assert.equal(f.entry(first).busy, true);
+  assert.equal(f.calls.at(-1).command, 'events_state');
+  waiting.resolve(f.states.get(first)); await Promise.all([read,action]); await tick();
+  assert.equal(f.calls.at(-1).command, 'debug_invoke'); assert.equal(f.entry(first).busy, false);
+});
+
+test('Pico device-contract firmware receives runtime hydration without legacy start', async () => {
+  const f = fixture(), serialNumber = 'OSG-PICO-0123456789ABCDEF';
+  const port = { path: '/dev/cu.usbmodemDebug', serialNumber, backend: 'pico', vendorId: 'cafe', productId: '4010' };
+  const id = gatewayIdentity(port);
+  f.ports = [port];
+  f.states.set(id, { ...state(port), protocolVersion: 3, canProtocol: 3, lifecycle: 'automatic', modules: [{ ...module, canConfigure: true }] });
+  await f.workspace.refresh();
+  assert.ok(f.calls.some(request => request.gatewayId === id && request.command === 'config_read'));
+  assert.ok(!f.calls.some(request => request.command === 'start'));
+});
 
 test('two same-backend gateways both connect and retain separate instances of the same module ID', async () => {
   const f = fixture();
