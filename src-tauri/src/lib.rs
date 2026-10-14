@@ -5,6 +5,8 @@ mod dcs_profile;
 mod dcs_profile_runtime;
 mod dcs_runtime;
 mod game_discovery;
+mod dcs_setup;
+mod game_integration_setup;
 mod game_telemetry;
 mod games;
 pub mod gateways;

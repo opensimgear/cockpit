@@ -6,6 +6,11 @@ Cockpit connects to gateways through its normal USB serial and local stream tran
 
 ## Current behavior
 
+**Games** reports integration setup separately from live telemetry. On Windows,
+DCS setup installs a checksum-pinned DCS-BIOS module into the selected Saved Games
+user folder, preserves existing exports and offers cancellation/recovery. Prepared
+connection settings populate new drafts; existing bindings remain explicit edits.
+
 **Games** discovers DCS World and Assetto Corsa Rally, shows found installations
 as tiles and offers a **Show all supported** switch for unavailable games. Game
 details manage custom installation paths and named profiles with peripheral

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { loadModules } from './test-module-loader.mjs';
 
 const modules = await loadModules(['./runtime-config', './integration-profile', './games']);
-const { visibleGames, defaultGameProfile, newGameProfile, cloneGameProfile, gameProfileEqual, gameDeviceKey, profileChangesBindings, gameProfileError, gameSessionLabel } = modules.get('./games');
+const { visibleGames, defaultGameProfile, newGameProfile, cloneGameProfile, gameProfileEqual, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationUserFolder, gameIntegrationFolderError, gameIntegrationSetupBlockedReason, profileChangesBindings, gameProfileError, gameSessionLabel } = modules.get('./games');
 const plain = value => JSON.parse(JSON.stringify(value));
 const gatewayId = 'stm32:111111111111111111111111', moduleId = '0123456789abcdef0123456789abcdef';
 const configuration = () => ({ name: 'Pedals', expanderMask: 0, buttons: [[0, 0, 0]], axes: [[0, 48, 0, 4095, 32768, 0, 100]], hats: [], encoders: [], selectors: [] });
@@ -102,4 +102,55 @@ test('every session phase has a user-facing description, including launch and re
   for (const phase of phases) assert.ok(gameSessionLabel({ phase }).length > 5);
   assert.match(gameSessionLabel({ phase: 'recovery-needed' }), /Recovery/);
   assert.match(gameSessionLabel({ phase: 'restoring' }), /previous setup/);
+});
+
+test('integration readiness stays independent from live telemetry and never assumes installation is ready', () => {
+  const game = { id: 'dcs', installed: true };
+  assert.equal(gameIntegrationLabel(game), 'Integration not checked');
+  const states = ['not-installed', 'setup-required', 'setting-up', 'ready', 'needs-attention', 'unsupported-platform'];
+  for (const state of states) assert.ok(gameIntegrationLabel({ ...game, integrationSetup: { state } }).length > 5);
+  game.integrationSetup = { state: 'ready', live: 'waiting' };
+  assert.equal(gameIntegrationLabel(game), 'Ready for integration');
+  assert.equal(gameIntegrationLiveLabel(game), 'Waiting for game data');
+  game.integrationSetup.live = 'receiving';
+  assert.equal(gameIntegrationLiveLabel(game), 'Receiving game data');
+  game.integrationSetup.live = 'stale';
+  assert.equal(gameIntegrationLiveLabel(game), 'Game data is stale');
+  assert.equal(gameIntegrationLabel(game), 'Ready for integration');
+  game.installed = false;
+  assert.equal(gameIntegrationLabel(game), 'Game not installed');
+  assert.equal(gameIntegrationLiveLabel({}), 'Waiting for game data');
+});
+
+test('DCS setup chooses a single detected folder but requires a choice when several exist', () => {
+  const first = String.raw`C:\Users\Pilot\Saved Games\DCS`, second = String.raw`D:\Profiles\DCS.openbeta`;
+  assert.equal(gameIntegrationUserFolder({}), '');
+  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [] } }), '');
+  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [first] } }), first);
+  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [first, second] } }), '');
+  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [first, second], userFolder: second } }), second);
+});
+
+test('DCS setup requires an absolute target and rejects control characters before requesting a write', () => {
+  for (const path of ['', ' ', 'DCS', '..\\DCS', 'C:DCS', String.raw`\Saved Games\DCS`]) assert.ok(gameIntegrationFolderError(path));
+  for (const path of [String.raw`C:\Users\Pilot\Saved Games\DCS`, 'D:/Profiles/DCS', String.raw`\\server\Profiles\DCS`, '/home/pilot/Saved Games/DCS', '  /home/pilot/DCS  ']) assert.equal(gameIntegrationFolderError(path), '');
+  assert.match(gameIntegrationFolderError('C:/Users/pilot/\nDCS'), /control/);
+  assert.match(gameIntegrationFolderError('C:/Users/pilot/\u0000DCS'), /control/);
+});
+
+test('setup writes are blocked while a game profile, integration, setup or recovery owns the files', () => {
+  const game = { id: 'dcs', installed: true, integrationSetup: { state: 'setup-required', message: 'Setup required.' } };
+  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), '');
+  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'failed' }, false), '');
+  for (const phase of ['validating', 'applying', 'launching', 'waiting', 'running', 'restoring', 'recovery-needed']) assert.match(gameIntegrationSetupBlockedReason(game, { phase }, false), /game profile/);
+  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, true), /active integration/);
+  assert.match(gameIntegrationSetupBlockedReason({ ...game, installed: false }, { phase: 'idle' }, false), /Install the game/);
+  game.integrationSetup.state = 'unsupported-platform';
+  game.integrationSetup.message = 'Setup requires Windows.';
+  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), 'Setup requires Windows.');
+  game.integrationSetup.state = 'setting-up';
+  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), /in progress/);
+  game.integrationSetup.state = 'needs-attention';
+  game.integrationSetup.recoveryNeeded = true;
+  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), /Recover/);
 });

@@ -8,6 +8,11 @@ is independent of later edits in Integrations. On exit or deactivation, the game
 coordinator restores the previous peripheral and integration setup; interrupted
 sessions use explicit recovery. See [Games and hardware profiles](games.md).
 
+Games provides DCS-BIOS installation and readiness checks on Windows; see
+[Integration setup and readiness](games.md#integration-setup-and-readiness). Setup
+prepares local connection defaults without changing portable bindings or starting
+a runtime. Existing drafts opt in to copying the prepared settings.
+
 ## Portable and local settings
 
 A portable JSON document contains `schemaVersion:1`, `id`, `name`, `provider`, `context`, logical `roles`, and `inputs`/`outputs`. Bindings reference a role, named simulator control/channel and an advertised physical input or endpoint/action. DCS output ordinals retain their original catalogue indexes. Local `connection` settings and explicit role assignments to `(gatewayId,moduleId)` stay outside the exported document. Identical module identities on separate gateways remain distinct targets.

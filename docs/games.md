@@ -16,6 +16,31 @@ executable path for a custom installation, or clear the override to return to
 automatic discovery. Finding an executable does not establish telemetry readiness.
 Only DCS World and Assetto Corsa Rally are in the supported registry.
 
+## Integration setup and readiness
+
+Game details and tiles report integration setup independently from installation
+availability and live telemetry. **Ready for integration** can be shown while the
+game is closed. Receiving/stale/waiting game data is a separate runtime indicator.
+
+For DCS on Windows, choose its Saved Games user folder and **Set up integration**.
+Cockpit installs checksum-pinned DCS-Skunkworks DCS-BIOS 0.11.7, preserves existing
+Export.lua scripts and adds its loader once. It checks the actual module runtime,
+JSON catalogue, loader and compatible UDP settings before reporting Ready. Close
+DCS before setup or recovery; installation does not start bindings or alter hardware.
+
+Setup keeps backups and a journal beside local integration setup settings. Cancelled
+or failed operations restore matching owned files. **Recover integration setup**
+preserves external edits and reports conflicts instead of overwriting them. Unknown
+forks, changed module/configuration files and ambiguous loaders need attention.
+**Recheck readiness** observes the current files; **Rescan** also rechecks setup.
+
+Prepared connection settings populate new integration drafts. Existing drafts can
+explicitly copy them with **Use prepared connection settings**, then Validate and
+Save. Captured game-profile integrations remain independent snapshots. User UDP
+overrides are preserved; settings that do not match the installed module remain
+Needs attention. Native setup is unavailable on Linux/macOS, where profile editing
+and authored synthetic sources remain available.
+
 ## Profiles
 
 Each game has a default hardware profile. Create additional named profiles and

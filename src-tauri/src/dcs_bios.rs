@@ -438,7 +438,7 @@ impl Catalogue {
             .ok_or(CATALOGUE_ERROR)?;
         let mut aircraft_names = HashSet::new();
         for (name, modules) in aliases {
-            if bounded_text(&json!(name), 63).is_none() {
+            if !name.is_empty() && bounded_text(&json!(name), 63).is_none() {
                 return Err(CATALOGUE_ERROR.into());
             }
             let modules = modules
@@ -448,7 +448,9 @@ impl Catalogue {
             if !modules.iter().all(|m| bounded_text(m, 63).is_some()) {
                 return Err(CATALOGUE_ERROR.into());
             }
-            if modules.iter().any(|m| m == module) {
+            // Upstream includes an empty no-aircraft alias for common modules.
+            // Validate it, but never treat an empty export as an active aircraft.
+            if !name.is_empty() && modules.iter().any(|m| m == module) {
                 aircraft_names.insert(name.clone());
             }
         }
@@ -1090,6 +1092,18 @@ mod tests {
             "AircraftAliases.json",
         ]
         .map(|name| read_json(&fixtures().join(name), MAX_DOCUMENT).unwrap())
+    }
+    #[test]
+    fn upstream_empty_common_module_alias_is_valid_but_never_an_active_aircraft() {
+        let mut docs = documents();
+        docs[3][""] = json!(["CommonData", "FC3", "NS430"]);
+        let catalogue = Catalogue::from_documents(&docs[0], &docs[1], &docs[2], &docs[3]).unwrap();
+        assert!(!catalogue.aircraft_names.contains(""));
+        assert!(catalogue.aircraft_names.contains("A-10C"));
+        docs[3][""] = json!([""]);
+        assert!(Catalogue::from_documents(&docs[0], &docs[1], &docs[2], &docs[3]).is_err());
+        docs[3][""] = json!("CommonData");
+        assert!(Catalogue::from_documents(&docs[0], &docs[1], &docs[2], &docs[3]).is_err());
     }
     fn catalogue(documents: &[Value; 4]) -> Result<Catalogue, String> {
         Catalogue::from_documents(&documents[0], &documents[1], &documents[2], &documents[3])

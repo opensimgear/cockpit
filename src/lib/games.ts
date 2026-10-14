@@ -2,14 +2,20 @@ import { configurationError, type RuntimeConfig } from './runtime-config';
 import { integrationError, type IntegrationConfig, type IntegrationProvider } from './integration-profile';
 
 export type GameId = 'dcs' | 'assetto-corsa-rally';
-export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null };
+export type GameIntegrationSetup = {
+  state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
+  message: string; userFolder?: string; candidates?: string[]; version?: string; cataloguePath?: string;
+  connection?: Record<string, unknown>; progress?: string; recoveryNeeded?: boolean;
+  live?: 'waiting' | 'receiving' | 'stale'; liveMessage?: string; verified?: boolean;
+};
+export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup };
 export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
 export type GameProfile = { schemaVersion: 1; id: string; gameId: GameId; name: string; devices: GameDevice[]; integration?: IntegrationConfig | null };
 export type GameSession = { phase: 'idle' | 'validating' | 'applying' | 'launching' | 'waiting' | 'running' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; profileId?: string | null; pid?: number | null; error?: string | null; steps?: string[]; bindingWarning?: boolean | string | null };
 export type GamesState = { catalogue: Game[]; profiles: GameProfile[]; defaultProfiles: Record<string, string>; session: GameSession; error?: string | null };
-export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_profile_save' | 'game_profile_delete' | 'game_profile_default' | 'game_launch' | 'game_activate' | 'game_deactivate' | 'game_recover' | 'game_abandon';
+export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_profile_save' | 'game_profile_delete' | 'game_profile_default' | 'game_launch' | 'game_activate' | 'game_deactivate' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; gameProfile?: GameProfile; profileId?: string; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean };
+export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; gameProfile?: GameProfile; profileId?: string; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown> };
 
 export const supportedGames: Game[] = [
   { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },
@@ -18,6 +24,45 @@ export const supportedGames: Game[] = [
 
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
   return catalogue.filter(game => showAll || game.installed);
+}
+
+export function gameIntegrationLabel(game: Game): string {
+  if (!game.installed) return 'Game not installed';
+  if (!game.integrationSetup) return 'Integration not checked';
+  const labels: Record<GameIntegrationSetup['state'], string> = {
+    'not-installed': 'Game not installed', 'setup-required': 'Integration setup required',
+    'setting-up': 'Setting up integration', ready: 'Ready for integration',
+    'needs-attention': 'Integration needs attention', 'unsupported-platform': 'Setup unavailable on this platform',
+  };
+  return labels[game.integrationSetup.state];
+}
+
+export function gameIntegrationLiveLabel(game: Game): string {
+  return game.integrationSetup?.live === 'receiving' ? 'Receiving game data'
+    : game.integrationSetup?.live === 'stale' ? 'Game data is stale' : 'Waiting for game data';
+}
+
+export function gameIntegrationUserFolder(game: Game): string {
+  const setup = game.integrationSetup;
+  return setup?.userFolder ?? (setup?.candidates?.length === 1 ? setup.candidates[0] : '');
+}
+
+export function gameIntegrationFolderError(folder: string): string {
+  const path = folder.trim();
+  if (!path) return 'Choose the DCS Saved Games folder.';
+  if (/[\u0000-\u001f\u007f]/.test(path)) return 'The folder path must not contain control characters.';
+  if (!/^(?:[a-zA-Z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/.test(path)) return 'Enter an absolute folder path.';
+  return '';
+}
+
+export function gameIntegrationSetupBlockedReason(game: Game, session: GameSession, integrationActive: boolean): string {
+  if (!game.installed) return 'Install the game or select its executable first.';
+  if (game.integrationSetup?.state === 'unsupported-platform') return game.integrationSetup.message;
+  if (game.integrationSetup?.state === 'setting-up') return 'Integration setup is in progress.';
+  if (game.integrationSetup?.recoveryNeeded) return 'Recover the interrupted setup before trying again.';
+  if (!['idle', 'failed'].includes(session.phase)) return 'Restore the active game profile before setting up integration.';
+  if (integrationActive) return 'Stop the active integration before setting up integration.';
+  return '';
 }
 
 export function defaultGameProfile(state: Pick<GamesState, 'profiles' | 'defaultProfiles'>, gameId: GameId): GameProfile | undefined {

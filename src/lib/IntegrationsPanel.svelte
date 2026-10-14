@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import type { Game } from './games';
   import IntegrationInputRow from './IntegrationInputRow.svelte';
   import IntegrationOutputRow from './IntegrationOutputRow.svelte';
   import { assignIntegrationRole, renameIntegrationRole, exportIntegrationDocument, importIntegrationDocument, integrationEqual, integrationError, integrationFingerprint, integrationStartError, newIntegrationConfig, nextIntegrationId, revLightOutput, roleTarget, syntheticTelemetryFrame,
     type IntegrationConfig, type IntegrationState, type IntegrationRequest, type IntegrationProvider, type IntegrationTarget, type IntegrationCatalogue } from './integration-profile';
-  let { draft = $bindable(null), status, targets, busy, request, refresh }: {
-    draft?: IntegrationConfig | null; status?: IntegrationState; targets: IntegrationTarget[]; busy: boolean;
+  let { draft = $bindable(null), status, targets, busy, request, refresh, setups = [] }: {
+    setups?: Game[]; draft?: IntegrationConfig | null; status?: IntegrationState; targets: IntegrationTarget[]; busy: boolean;
     request: (request: IntegrationRequest) => Promise<IntegrationState | false>;
     refresh: (gatewayId: string,moduleId: string) => Promise<unknown>;
   } = $props();
@@ -21,13 +22,26 @@
   const validated = $derived(!!draft && validationKey === integrationFingerprint(draft) && validationRevision === status?.revision && validationCatalogue === status?.validation?.catalogueRevision && !!status?.validation?.valid);
   const diagnostics = $derived(status?.validation?.diagnostics ?? status?.diagnostics ?? []);
   function resetValidation() { validationKey='';validationRevision=undefined;validationCatalogue=undefined; }
-  function restore() { draft=status?.config ? structuredClone($state.snapshot(status.config)) : newIntegrationConfig();resetValidation();notice=''; }
-  function providerChanged(provider: IntegrationProvider) { draft=newIntegrationConfig(provider);catalogue=undefined;resetValidation();notice='Choose local connection settings and device roles for this provider.'; }
+  function prepared(provider: IntegrationProvider = 'dcs-bios') {
+    const config = newIntegrationConfig(provider);
+    const setup = setups.find(game => game.provider === provider)?.integrationSetup;
+    if (setup?.state === 'ready' && setup.connection) config.connection = { ...config.connection, ...setup.connection };
+    return config;
+  }
+  function useSetup() {
+    if (!draft) return;
+    const setup = setups.find(game => game.provider === draft?.document.provider)?.integrationSetup;
+    if (!setup?.connection || setup.state !== 'ready') return;
+    draft.connection = { ...draft.connection, ...setup.connection }; resetValidation();
+    notice = 'Prepared connection settings copied into this draft. Validate and save explicitly.';
+  }
+  function restore() { draft=status?.config ? structuredClone($state.snapshot(status.config)) : prepared();resetValidation();notice=''; }
+  function providerChanged(provider: IntegrationProvider) { draft=prepared(provider);catalogue=undefined;resetValidation();notice='Choose local connection settings and device roles for this provider.'; }
   onMount(() => {
     let active=true, sending=false;
     void request({command:'integration_get_state'}).then(async result => {
       if(!active) return;
-      if(!draft) draft=result && result.config ? structuredClone(result.config) : newIntegrationConfig();
+      if(!draft) draft=result && result.config ? structuredClone(result.config) : prepared();
       if(result && result.catalogue && draft && (result.catalogue.provider === draft.document.provider || result.catalogue.aircraftModule === draft.document.context.aircraftModule && result.catalogue.cataloguePath === draft.connection.cataloguePath)) catalogue=result.catalogue;
       await tick();if(active && draft?.assignments.length) void refreshAssigned();
     });
@@ -100,6 +114,7 @@
 <section aria-label="Simulator integrations">
   <header><div><h2>Simulator integrations</h2><p>Portable profiles bind logical device roles to named commands and telemetry.</p></div><span role="status">{status?.running ? 'Running' : status?.configured ? 'Saved · stopped' : 'Stopped'}</span></header>
   {#if draft}
+    {#if setups.find(game => game.provider === draft?.document.provider)?.integrationSetup?.state === 'ready'}<p>Game integration setup is ready. <button disabled={readOnly} onclick={useSetup}>Use prepared connection settings</button></p>{/if}
     <fieldset disabled={readOnly}><legend>Profile and provider</legend><div class="fields">
       <label>Provider<select value={draft.document.provider} onchange={event => providerChanged(event.currentTarget.value as IntegrationProvider)}><option value="dcs-bios">DCS-BIOS</option><option value="assetto-corsa-rally">Assetto Corsa Rally</option></select></label>
       <label>Profile name<input bind:value={draft.document.name} maxlength="63" /></label><label>Profile identifier<input bind:value={draft.document.id} maxlength="31" spellcheck="false" /></label>
