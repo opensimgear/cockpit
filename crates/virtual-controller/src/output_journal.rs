@@ -96,6 +96,14 @@ pub struct Store {
     expected: Option<Vec<u8>>,
     record: Option<Record>,
 }
+impl Drop for Store {
+    fn drop(&mut self) {
+        // A concurrently spawned Unix child can briefly inherit the open file
+        // description until exec. Closing only our descriptor leaves its flock
+        // held; explicitly release ownership before closing the local handle.
+        let _ = self._lock.unlock();
+    }
+}
 impl Store {
     pub fn open(path: PathBuf) -> Result<Self, String> {
         let parent = path

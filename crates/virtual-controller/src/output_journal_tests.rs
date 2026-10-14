@@ -122,3 +122,18 @@ fn recovery_never_follows_symlink_records_or_lock_files() {
     assert!(Store::open(path).is_err());
     assert_eq!(std::fs::read(target).unwrap(), b"external");
 }
+
+#[test]
+fn releasing_owner_unlocks_even_while_a_duplicated_descriptor_is_alive() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let store = Store::open(path.clone()).unwrap();
+    let inherited = store._lock.try_clone().unwrap();
+    assert!(Store::open(path.clone()).is_err());
+    drop(store);
+    let next = Store::open(path.clone()).unwrap();
+    drop(inherited);
+    assert!(Store::open(path.clone()).is_err());
+    drop(next);
+    Store::open(path).unwrap();
+}
