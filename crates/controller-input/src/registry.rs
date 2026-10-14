@@ -1,4 +1,5 @@
 //! A bounded host-controller inventory. OS paths are observations, never portable IDs.
+use crate::stream::{Event, Journal, Page, Reason, Snapshot, SourceSnapshot};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -174,6 +175,26 @@ struct Source {
     diagnostics: Vec<String>,
 }
 impl Source {
+    fn ready(&self) -> bool {
+        self.online
+            && self.controls.iter().any(|c| c.kind != Kind::Diagnostic)
+            && self
+                .controls
+                .iter()
+                .filter(|c| c.kind != Kind::Diagnostic)
+                .all(|c| self.values.contains_key(&c.id))
+    }
+    fn event(&self, reason: Reason) -> Event {
+        Event {
+            cursor: 0,
+            source: self.saved.id.clone(),
+            generation: self.generation,
+            sequence: self.sequence.max(1),
+            captured_us: 0,
+            reason,
+            values: self.values.clone(),
+        }
+    }
     fn summary(&self) -> Value {
         json!({"id":self.saved.id,"name":self.saved.name,"role":self.saved.role,
             "origin":"host-controller","backend":self.saved.identity.backend,
@@ -187,6 +208,7 @@ impl Source {
 }
 pub struct Registry {
     sources: BTreeMap<String, Source>,
+    journal: Journal,
     pub backend_status: String,
     pub diagnostic: String,
     pub session: String,
@@ -196,6 +218,7 @@ impl Default for Registry {
     fn default() -> Self {
         Self {
             sources: BTreeMap::new(),
+            journal: Journal::default(),
             backend_status: "starting".into(),
             diagnostic: String::new(),
             session: uuid::Uuid::new_v4().to_string(),
@@ -329,15 +352,17 @@ impl Registry {
         Ok(id)
     }
     pub fn disconnect(&mut self, id: &str) {
-        if let Some(s) = self.sources.get_mut(id) {
+        if let Some(s) = self.sources.get_mut(id).filter(|s| s.online) {
             s.online = false;
             s.values.clear();
+            s.sequence = s.sequence.saturating_add(1);
+            self.journal.publish(s.event(Reason::Disconnect));
         }
     }
     pub fn disconnect_all(&mut self) {
-        for s in self.sources.values_mut() {
-            s.online = false;
-            s.values.clear();
+        let ids: Vec<_> = self.sources.keys().cloned().collect();
+        for id in ids {
+            self.disconnect(&id);
         }
     }
     pub fn fault(&mut self, id: &str, message: &str) {
@@ -346,6 +371,7 @@ impl Registry {
             s.sequence = 0;
             s.values.clear();
             s.diagnostics = vec![message.chars().take(256).collect()];
+            self.journal.publish(s.event(Reason::Gap));
         }
     }
     /// Commit a whole report under one registry lock, including implicit button releases.
@@ -372,6 +398,7 @@ impl Registry {
         if !s.online {
             return Err("Controller is offline.".into());
         }
+        let was_ready = s.ready();
         let mut update = BTreeMap::new();
         for control in s.controls.iter().filter(|c| c.report_id == report) {
             let value = data
@@ -383,7 +410,17 @@ impl Registry {
             }
         }
         s.values.extend(update);
-        s.sequence += 1;
+        s.sequence = s
+            .sequence
+            .checked_add(1)
+            .ok_or("Controller sequence exhausted.")?;
+        if s.ready() {
+            self.journal.publish(s.event(if was_ready {
+                Reason::Change
+            } else {
+                Reason::Baseline
+            }));
+        }
         Ok(())
     }
     pub fn list(&self, offset: usize) -> Value {
@@ -443,10 +480,48 @@ impl Registry {
         replacement.generation = previous.generation + 1;
         replacement.sequence = 0;
         replacement.values.clear();
+        self.disconnect(observed);
         self.sources.remove(observed);
         self.sources.insert(remembered.into(), replacement);
         self.dirty = true;
         Ok(())
+    }
+    /// Captures selected current baselines and the cursor under the same lock.
+    pub fn stream_snapshot(&self, ids: &[String]) -> Result<Snapshot, String> {
+        if ids.is_empty()
+            || ids.len() > 16
+            || ids.iter().collect::<BTreeSet<_>>().len() != ids.len()
+        {
+            return Err("Select 1 to 16 distinct physical controllers.".into());
+        }
+        let at = self.journal.now();
+        let sources = ids
+            .iter()
+            .map(|id| {
+                let source = self
+                    .sources
+                    .get(id)
+                    .filter(|s| s.ready())
+                    .ok_or("Selected controller needs a complete current baseline.")?;
+                let mut baseline = source.event(Reason::Baseline);
+                baseline.captured_us = at;
+                baseline.cursor = self.journal.cursor();
+                Ok(SourceSnapshot {
+                    id: id.clone(),
+                    controls: source.controls.clone(),
+                    baseline,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Snapshot {
+            session: self.session.clone(),
+            cursor: self.journal.cursor(),
+            captured_us: at,
+            sources,
+        })
+    }
+    pub fn stream_page(&self, session: &str, after: u64) -> Page {
+        self.journal.page(&self.session, session, after)
     }
     pub fn id_for_path(&self, path: &str) -> Option<String> {
         self.sources

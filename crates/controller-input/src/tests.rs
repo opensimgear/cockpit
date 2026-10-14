@@ -2,7 +2,7 @@ use super::*;
 use crate::registry::*;
 use serde_json::json;
 use std::collections::BTreeMap;
-fn fixture(path: &str, serial: Option<&str>) -> Definition {
+pub(crate) fn fixture(path: &str, serial: Option<&str>) -> Definition {
     let mut axis = Control::new(1, 0x30, 1, 0, 1);
     axis.bits = 16;
     axis.min = -32768;

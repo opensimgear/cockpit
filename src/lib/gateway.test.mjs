@@ -224,3 +224,17 @@ test('host controller reads bypass a blocked gateway and inventory queue', async
   assert.equal(controllers.controllers.total, 0);
   blocked.resolve(); await inventory;
 });
+test('mapping stop and driver inspection cannot wait behind an uploading profile', async () => {
+  const upload = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'mapping_import_chunk') await upload.promise;
+    return { ok: true, state: { mappings: { running: false } } };
+  } });
+  const blocked = api.gatewayRequest({ command: 'mapping_import_chunk', uploadId: 'u', offset: 0, bytes: [1] });
+  await tick();
+  await api.gatewayRequest({ command: 'mapping_stop' });
+  await api.gatewayRequest({ command: 'mapping_virtual_inspect' });
+  assert.deepEqual(api.calls.map(c => c.args.request.command), ['mapping_import_chunk', 'mapping_stop', 'mapping_virtual_inspect']);
+  upload.resolve();
+  await blocked;
+});

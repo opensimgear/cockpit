@@ -42,6 +42,7 @@ def main():
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/windows.rs')
     sources.append(root / 'crates/controller-input/src/capture.rs')
+    sources.append(root / 'crates/controller-input/src/stream.rs')
     if sys.platform.startswith('linux'):
         sources.append(root / 'crates/controller-input/src/linux.rs')
     if sys.platform == 'darwin':

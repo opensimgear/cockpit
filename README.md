@@ -234,7 +234,7 @@ Open **Integrations** for portable profile import/export, explicit local device 
 
 See [the integration guide](docs/simulator-integrations.md) for setup, lease/fallback behavior, source provenance and validation limits, and [the software verification record](docs/verification/2026-10-14-simulator-integrations.md) for tests and measured coverage. Hardware and live-game validation are deferred.
 
-Planned third-party controller discovery, custom input logic and optional virtual devices/device hiding on Windows, Linux and macOS are described in the [controller mapping implementation plan](docs/controller-mapping-plan.md). Windows uses vJoy/HidHide; Linux and macOS use native backends with documented visibility and deployment limits. Both features are disabled by default and require user-installed dependencies or platform permission/setup before activation; these features are not implemented yet.
+The experimental **Mappings** workspace saves/imports direct profiles, assigns native or synthetic inputs, runs ordered recording previews, and inspects the installed vJoy layout. Local optional-feature preferences and target-slot assignments persist separately from portable profiles. Live virtual output, provisioning and hiding remain gated while their implementation and platform qualification continue. See the [mapping preview guide](docs/mapping-preview.md), [host controller guide](docs/host-controllers.md), and [controller mapping implementation plan](docs/controller-mapping-plan.md).
 
 ## Related repositories
 

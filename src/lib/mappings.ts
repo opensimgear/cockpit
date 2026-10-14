@@ -1,0 +1,59 @@
+import type { ControllerControl } from './controllers';
+export type MappingCommand = 'mapping_profiles' | 'mapping_export' | 'mapping_import_begin' | 'mapping_import_chunk' | 'mapping_import_commit' | 'mapping_import_abort' | 'mapping_validate_commit' | 'mapping_status' | 'mapping_preview_start' | 'mapping_stop' | 'mapping_recording' | 'mapping_simulate' | 'mapping_assignments_save' | 'mapping_assignments_get' | 'mapping_virtual_inspect' | 'mapping_virtual_start' | 'mapping_virtual_create' | 'mapping_virtual_recover' | 'mapping_virtual_enable' | 'mapping_targets_save' | 'mapping_targets_get';
+export type MappingKind = { kind: 'button' } | { kind: 'hat' } | { kind: 'axis'; range: 'bipolar' | 'unipolar' };
+export type MappingValue = { kind: 'button'; value: boolean } | { kind: 'hat'; value: number | null } | { kind: 'axis'; value: number };
+export type MappingSource = { origin: 'host-controller' | 'synthetic' | 'osg-panel-events'; id: string };
+export type MappingAssignment = { role: string; source: MappingSource; controls: { control: string; sourceControl: string }[] };
+export type MappingToken = { session: string; generation: string };
+export type MappingProfile = { schema: 1; id: string; name: string; roles: { id: string; name: string; origin: MappingSource['origin']; controls: { id: string; kind: MappingKind }[] }[]; targets: { id: string; name: string; layout: { buttons: number; axes: { range: 'bipolar' | 'unipolar'; fallback: number }[]; hats: number } }[]; nodes: unknown[]; arbitration: unknown[]; requirements: { virtualDevices: boolean; deviceHiding: boolean; visibility: unknown[] } };
+export type VirtualBinding = { target: string; slot: number; axes: number[]; layout: MappingProfile['targets'][number]['layout'] };
+export type RecordedMapping = { cursor: string; report: { target: string; sequence: string; atUs: string; reason: string; state: { buttons: boolean[]; axes: number[]; hats: (number | null)[] } } };
+export type VirtualSlot = { id: number; status: string; ownerPid: number | null; buttons: number; axes: { usage: number; min: number; max: number }[]; continuousHats: number; discreteHats: number; forceFeedback: boolean };
+export type MappingResult = { bindings?: VirtualBinding[] | null; storageError?: string; document?: MappingProfile; ids?: string[]; next?: number | string | null; uploadId?: string; offset?: number; total?: number; controls?: MappingAssignment['controls']; source?: MappingSource; roles?: { role: string; source: MappingSource; controlCount: number }[]; running?: boolean; ready?: boolean; token?: MappingToken | null; profileId?: string; fault?: string | null; recordingCursor?: string; records?: RecordedMapping[]; gap?: boolean; dropped?: string; slots?: VirtualSlot[]; reason?: string; state?: string; virtualDevices?: { enabled: boolean; qualified: boolean; state: string; reason: string } };
+export type MappingRequest = { enabled?: boolean; bindings?: VirtualBinding[]; command: MappingCommand; profileId?: string; offset?: number; role?: string; after?: string; uploadId?: string; size?: number; bytes?: number[]; assignments?: MappingAssignment[]; source?: MappingSource; token?: MappingToken; changes?: { control: string; value: MappingValue }[] };
+export type MappingSend = (request: MappingRequest) => Promise<MappingResult>;
+export function capturedKind(control: ControllerControl): MappingKind | null {
+  const c = control.capability;
+  if (c.kind === 'button' || c.kind === 'hat') return { kind: c.kind };
+  return c.kind === 'axis' ? { kind: 'axis', range: c.min < 0 ? 'bipolar' : 'unipolar' } : null;
+}
+export function compatibleControl(kind: MappingKind, control: ControllerControl): boolean {
+  const native = capturedKind(control);
+  return native?.kind === kind.kind && (native.kind !== 'axis' || (kind.kind === 'axis' && native.range === kind.range));
+}
+export function directProfile(name: string, kind: MappingKind, source: MappingSource, sourceControl: string): { profile: MappingProfile; assignments: MappingAssignment[] } {
+  if (!name.trim() || name.trim().length > 80 || !source.id || !sourceControl || source.origin === 'osg-panel-events') throw new Error('Choose a name, source and supported control.');
+  const profile: MappingProfile = { schema: 1, id: crypto.randomUUID(), name: name.trim(), roles: [{ id: 'input', name: 'Input controller', origin: source.origin, controls: [{ id: 'control', kind }] }], targets: [{ id: 'output', name: 'Mapped controller', layout: { buttons: kind.kind === 'button' ? 1 : 0, axes: kind.kind === 'axis' ? [{ range: kind.range, fallback: 0 }] : [], hats: kind.kind === 'hat' ? 1 : 0 } }], nodes: [{ id: 'direct', inputs: [{ kind: 'source', role: 'input', control: 'control' }], output: { target: 'output', control: { kind: kind.kind, index: 0 } }, operation: { kind: 'direct', activation: kind.kind === 'button' ? 'momentary' : 'level' } }], arbitration: [], requirements: { virtualDevices: false, deviceHiding: false, visibility: [] } };
+  return { profile, assignments: [{ role: 'input', source, controls: [{ control: 'control', sourceControl }] }] };
+}
+export async function importMapping(text: string, send: MappingSend): Promise<MappingProfile> {
+  const bytes = new TextEncoder().encode(text);
+  if (!bytes.length || bytes.length > 65536) throw new Error('Mapping files must contain 1–65536 UTF-8 bytes.');
+  const start = await send({ command: 'mapping_import_begin', size: bytes.length });
+  if (!start.uploadId) throw new Error('The mapping upload did not start.');
+  try {
+    for (let offset = 0; offset < bytes.length; offset += 8192) await send({ command: 'mapping_import_chunk', uploadId: start.uploadId, offset, bytes: Array.from(bytes.subarray(offset, offset + 8192)) });
+    const result = await send({ command: 'mapping_import_commit', uploadId: start.uploadId });
+    if (!result.document) throw new Error('The imported mapping document is missing.');
+    return result.document;
+  } catch (error) {
+    await send({ command: 'mapping_import_abort', uploadId: start.uploadId }).catch(() => {});
+    throw error;
+  }
+}
+export async function savedAssignments(profileId: string, send: MappingSend): Promise<MappingAssignment[]> {
+  const result = await send({ command: 'mapping_assignments_get', profileId });
+  const assignments: MappingAssignment[] = [];
+  if (!result.roles || result.roles.length > 16) throw new Error('Invalid saved mapping assignments.');
+  for (const role of result.roles) {
+    if (role.controlCount < 1 || role.controlCount > 256) throw new Error('Invalid assigned control count.');
+    const controls: MappingAssignment['controls'] = [];
+    for (let offset = 0; offset < role.controlCount; offset += 32) {
+      const page = await send({ command: 'mapping_assignments_get', profileId, role: role.role, offset });
+      if (!page.controls || page.controls.length !== Math.min(32, role.controlCount - offset)) throw new Error('Incomplete saved control assignments.');
+      controls.push(...page.controls);
+    }
+    assignments.push({ role: role.role, source: role.source, controls });
+  }
+  return assignments;
+}
