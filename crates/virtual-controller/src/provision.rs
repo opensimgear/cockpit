@@ -143,19 +143,31 @@ pub fn create(backend: &mut impl Backend, target: u8) -> Result<Journal, String>
     execute(backend, journal)
 }
 /// Execute a validated plan with the operation ID shared by the helper and guardian.
-pub fn execute(backend: &mut impl Backend, mut journal: Journal) -> Result<Journal, String> {
+pub fn execute(backend: &mut impl Backend, journal: Journal) -> Result<Journal, String> {
+    execute_controlled(backend, journal, || Ok(()))
+}
+/// Cancellation is cooperative: finish an in-flight refresh before considering
+/// rollback, and never cancel recovery itself after configuration was changed.
+pub fn execute_controlled(
+    backend: &mut impl Backend,
+    mut journal: Journal,
+    mut check: impl FnMut() -> Result<(), String>,
+) -> Result<Journal, String> {
     validate_journal(&journal)?;
+    check()?;
     if journal.committed || !journal.written.is_empty() {
         return Err("Provisioning requires a fresh uncommitted plan.".into());
     }
     backend.journal(&journal)?;
     let result = (|| {
+        check()?;
         let current = backend.snapshot()?;
         qualified(&current)?;
         if !same_config(&current, &journal.before) {
             return Err("vJoy changed after preflight; no overwrite performed.".into());
         }
         for (slot, entry) in &journal.owned {
+            check()?;
             match backend.create(*slot, entry) {
                 Ok(()) => {
                     journal.written.insert(*slot);
@@ -170,7 +182,9 @@ pub fn execute(backend: &mut impl Backend, mut journal: Journal) -> Result<Journ
             }
             backend.journal(&journal)?;
         }
+        check()?;
         backend.refresh()?;
+        check()?;
         let actual = backend.snapshot()?;
         qualified(&actual)?;
         let mut expected = journal.before.entries.clone();
@@ -180,6 +194,7 @@ pub fn execute(backend: &mut impl Backend, mut journal: Journal) -> Result<Journ
         {
             return Err("Provisioned layout readback or OEM preservation failed.".into());
         }
+        check()?;
         journal.committed = true;
         backend.journal(&journal)?;
         Ok(())
@@ -276,6 +291,9 @@ pub fn restore(backend: &mut impl Backend, journal: &Journal) -> Result<(), Stri
     {
         return Err("A pre-existing descriptor changed; preserving current settings.".into());
     }
+    if journal.written.is_empty() && same_config(&actual, &journal.before) {
+        return Ok(()); // A cancelled preflight must not restart unrelated slots.
+    }
     for slot in journal.written.iter().rev() {
         // Retire durable ownership even when an external tool already removed the key.
         backend.remove(*slot)?;
@@ -290,4 +308,4 @@ pub fn restore(backend: &mut impl Backend, journal: &Journal) -> Result<(), Stri
 }
 #[cfg(test)]
 #[path = "provision_tests.rs"]
-mod tests;
+pub(crate) mod tests;

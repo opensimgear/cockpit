@@ -5,6 +5,7 @@ use crate::{
     registry::{tree, Key, Transaction},
     vjoy::Slot,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use windows_sys::Win32::System::Registry::*;
@@ -14,6 +15,20 @@ const OEM: &str =
     "SYSTEM\\CurrentControlSet\\Control\\MediaProperties\\PrivateProperties\\Joystick\\OEM";
 pub type Inspector = Box<dyn FnMut() -> Result<Vec<Slot>, String>>;
 pub type Refresher = Box<dyn FnMut() -> Result<(), crate::windows_refresh::Failure>>;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Outcome {
+    pub success: bool,
+    pub message: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Pending {
+    pub operation: String,
+    pub target: u8,
+    pub refresh_uncertain: bool,
+    pub written: Vec<u8>,
+}
 pub struct NativeBackend {
     hive: HKEY,
     parameters: String,
@@ -116,6 +131,97 @@ impl NativeBackend {
         let mut plan = crate::provision::plan(self.snapshot()?, target)?;
         plan.id = self.operation.clone();
         crate::provision::execute(self, plan)
+    }
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+    /// Called under the process-wide provisioning mutex. A dead helper's
+    /// uncommitted ownership or uncertain refresh blocks new mutations.
+    pub fn ensure_no_other_pending(&self) -> Result<(), String> {
+        if let Some(pending) = self
+            .pending()?
+            .iter()
+            .find(|p| p.operation != self.operation)
+        {
+            return Err(format!(
+                "Provisioning operation {} requires recovery before another operation.",
+                pending.operation
+            ));
+        }
+        Ok(())
+    }
+    /// Read-only, bounded recovery inventory. No SDK or helper is started.
+    pub fn pending(&self) -> Result<Vec<Pending>, String> {
+        let Some(root) = Key::open(self.hive, &self.journals, KEY_READ, None)? else {
+            return Ok(vec![]);
+        };
+        if self.protected {
+            crate::journal_security::verify_protected(&root)?;
+        }
+        let mut pending = Vec::new();
+        for id in root.names(true)? {
+            operation_id(&id)?;
+            let key = Key::open(root.0, &id, KEY_READ, None)?
+                .ok_or("Operation changed during inspection.")?;
+            if self.protected {
+                crate::journal_security::verify_protected(&key)?;
+            }
+            let record = Self::read_record(&key)?;
+            crate::provision::validate_journal(&record)?;
+            if record.id != id {
+                return Err("Provisioning journal identity does not match its key.".into());
+            }
+            let refresh_uncertain = Self::settled(&key).is_err();
+            if refresh_uncertain || (!record.committed && !record.written.is_empty()) {
+                if pending.len() >= 16 {
+                    return Err("More than 16 provisioning operations require inspection.".into());
+                }
+                pending.push(Pending {
+                    operation: id,
+                    target: record.target,
+                    refresh_uncertain,
+                    written: record.written.into_iter().collect(),
+                });
+            }
+        }
+        Ok(pending)
+    }
+    pub fn finish(&self, outcome: &Outcome) -> Result<(), String> {
+        if outcome.message.chars().count() > 512 {
+            return Err("Provisioning outcome exceeds its bounds.".into());
+        }
+        let key = Key::open(self.hive, &self.journal_path(), KEY_READ | KEY_WRITE, None)?
+            .ok_or("Provisioning journal is missing.")?;
+        self.checked_record(&key)?;
+        if outcome.success {
+            Self::settled(&key)?;
+        }
+        key.write(
+            "Outcome",
+            REG_BINARY,
+            &serde_json::to_vec(outcome).map_err(|e| e.to_string())?,
+        )?;
+        key.flush()
+    }
+    pub fn outcome(&self) -> Result<Option<Outcome>, String> {
+        let Some(key) = Key::open(self.hive, &self.journal_path(), KEY_READ, None)? else {
+            return Ok(None);
+        };
+        self.checked_record(&key)?;
+        let Some(value) = key.value("Outcome")? else {
+            return Ok(None);
+        };
+        if value.kind != REG_BINARY {
+            return Err("Invalid provisioning outcome type.".into());
+        }
+        let outcome: Outcome = serde_json::from_slice(&value.data).map_err(|e| e.to_string())?;
+        if outcome.message.chars().count() > 512 {
+            return Err("Provisioning outcome exceeds its bounds.".into());
+        }
+        if outcome.success {
+            Self::settled(&key)?;
+        }
+        Ok(Some(outcome))
     }
     fn parameters(&self) -> Result<Key, String> {
         Key::open(self.hive, &self.parameters, KEY_READ, None)?

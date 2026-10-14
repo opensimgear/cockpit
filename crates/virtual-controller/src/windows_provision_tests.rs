@@ -443,3 +443,88 @@ fn durable_refresh_fence_survives_failure_and_blocks_every_recovery_mutation() {
     f.backend.refresh().unwrap();
     f.backend.safe_to_restore().unwrap();
 }
+
+#[test]
+fn abandoned_operations_block_new_plans_and_outcomes_remain_bounded_and_protected() {
+    let mut f = Fixture::new();
+    f.backend.ensure_no_other_pending().unwrap();
+    assert!(f.backend.outcome().unwrap().is_none());
+    let mut record = f.plan();
+    f.backend.journal(&record).unwrap();
+    assert!(f.backend.outcome().unwrap().is_none());
+    let outcome = Outcome {
+        success: false,
+        message: "requires inspection".into(),
+    };
+    f.backend.finish(&outcome).unwrap();
+    assert_eq!(
+        f.backend.outcome().unwrap().unwrap().message,
+        outcome.message
+    );
+    assert!(f
+        .backend
+        .finish(&Outcome {
+            success: false,
+            message: "x".repeat(513)
+        })
+        .is_err());
+    let key = Key::open(
+        f.backend.hive,
+        &f.backend.journal_path(),
+        KEY_READ | KEY_WRITE,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    key.write("Outcome", REG_SZ, b"bad").unwrap();
+    assert!(f.backend.outcome().is_err());
+    key.write("Outcome", REG_BINARY, b"bad").unwrap();
+    assert!(f.backend.outcome().is_err());
+    key.write(
+        "Outcome",
+        REG_BINARY,
+        &serde_json::to_vec(&Outcome {
+            success: false,
+            message: "x".repeat(513),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(f.backend.outcome().is_err());
+    f.backend
+        .finish(&Outcome {
+            success: true,
+            message: "verified".into(),
+        })
+        .unwrap();
+    key.write("RefreshPending", REG_DWORD, &1u32.to_le_bytes())
+        .unwrap();
+    assert!(f.backend.outcome().is_err());
+    assert_eq!(f.backend.pending().unwrap().len(), 1);
+    assert!(f.backend.pending().unwrap()[0].refresh_uncertain);
+    assert!(f
+        .backend
+        .finish(&Outcome {
+            success: true,
+            message: "not verified".into()
+        })
+        .is_err());
+    f.backend.operation = uuid::Uuid::new_v4().to_string();
+    assert!(f
+        .backend
+        .ensure_no_other_pending()
+        .unwrap_err()
+        .contains("requires recovery"));
+    key.write("RefreshPending", REG_DWORD, &0u32.to_le_bytes())
+        .unwrap();
+    record.written.insert(1);
+    NativeBackend::write_record(&key, &record).unwrap();
+    assert!(f.backend.ensure_no_other_pending().is_err());
+    record.written = record.owned.keys().copied().collect();
+    record.committed = true;
+    NativeBackend::write_record(&key, &record).unwrap();
+    f.backend.ensure_no_other_pending().unwrap();
+    record.id = uuid::Uuid::new_v4().to_string();
+    NativeBackend::write_record(&key, &record).unwrap();
+    assert!(f.backend.ensure_no_other_pending().is_err());
+}

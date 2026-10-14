@@ -253,3 +253,54 @@ service 98.12%; every measured module exceeds 71%. Actual driver/process-loss,
 game-binding and loaded timing qualification remains open. Elevated provisioning
 launch, cancellation/guardian integration and its physical qualification still
 remain to be completed. Create/live output/recovery stay disabled.
+## Explicit provisioning integration, 15 October
+
+The private Windows entry now dispatches the protected provisioning transaction
+after checking elevation, exact same-user parent identity and an operation-scoped
+cancellation event. A machine-wide helper mutex serializes layout operations.
+Read-only preflight precedes protected journal preparation, and another abandoned
+operation blocks new changes. Cooperative cancellation is checked between bounded
+steps and after refresh; rollback itself is never cancelled. A pending/uncertain
+refresh remains fenced for explicit inspection.
+
+The parent now runs provisioning asynchronously, including the Windows
+authorization request. Cancellation is registered before elevation starts, so
+cancelling while authorization is pending cannot silently become an authorized
+layout change later. The helper monitors parent exit and a 60-second operation
+deadline. The parent reports unconfirmed completion after its own bound instead
+of killing a helper during registry/driver work. This transient helper owns
+cleanup; no persistent system guardian is installed. Killing every process still
+requires explicit recovery and never implies universal automatic cleanup.
+
+Create/Recover/Cancel IPC and the UI are connected. Create requires explicit
+virtual-device enablement and stopped mapping. Live output and game activation
+are blocked while provisioning is active; cancellation remains available.
+A bounded read-only machine-journal inventory exposes interrupted operations
+after restart. Outcomes require protected journal readback plus observed helper
+completion. Custom layouts and FFB provisioning remain unavailable; the narrow
+provisioner still supports only the M0 default descriptor.
+
+The native entry and launcher have their own false qualification gate, in
+addition to the mapping-service gate. The real built service executable returned
+exit 78 for a valid private provisioning request, before elevation or mutation.
+Read-only WebView inspection confirmed the running Windows app's Mappings UI,
+empty recovery inventory, and disabled Create/Start/Recover controls. No UAC
+prompt, driver refresh, layout mutation, hiding or virtual output was performed.
+
+All 61 Windows virtual-controller and 31 Linux virtual-controller tests passed,
+along with 15 native mapping-host tests on each platform and frontend type checks.
+The full local Windows desktop regression and framing test passed again; the
+same three external game/driver checks remain intentionally ignored. Native
+launcher tests use a harmless hidden Python child without elevation. Registry
+tests remain disposable fixtures, not production driver qualification.
+
+Windows production-line coverage: coordination 93.14%, launcher 79.43%,
+provisioning entry 76.92%, asynchronous jobs 81.25%, provisioning storage 81.17%,
+mapping service 87.50%. Every measured module exceeds 71%. Actual UAC behavior,
+driver refresh/cancellation, killed-helper/total-termination recovery, physical
+two-slot/button-axis-hat routing, game binding/restart retention and loaded
+timing still require qualification before enabling these controls.
+
+Windows API references used for the launcher and synchronization behavior:
+https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecuteexw
+https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexw

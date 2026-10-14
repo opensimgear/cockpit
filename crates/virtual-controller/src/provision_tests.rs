@@ -27,16 +27,16 @@ fn initial() -> Snapshot {
         unexpected_parameters: false,
     }
 }
-struct Fake {
+pub(crate) struct Fake {
     current: Snapshot,
-    journals: Vec<Journal>,
+    pub(crate) journals: Vec<Journal>,
     fail: &'static str,
     refreshes: usize,
     attempts: usize,
     removed: Vec<u8>,
 }
 impl Fake {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             current: initial(),
             journals: vec![],
@@ -214,4 +214,37 @@ fn uncertain_refresh_never_rolls_back_or_starts_a_second_refresh() {
     assert_eq!(backend.refreshes, 1);
     assert_eq!(backend.current.entries.len(), 2);
     assert!(!backend.journals.last().unwrap().committed);
+}
+
+#[test]
+fn cancellation_at_each_checkpoint_restores_owned_changes_without_cancelling_cleanup() {
+    for stop_at in 0..7 {
+        let mut backend = Fake::new();
+        let journal = plan(initial(), 2).unwrap();
+        let mut checks = 0;
+        let result = execute_controlled(&mut backend, journal, || {
+            let cancelled = checks == stop_at;
+            checks += 1;
+            if cancelled {
+                Err("operation cancelled".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(
+            same_config(&backend.current, &initial()),
+            "checkpoint {stop_at}"
+        );
+        if stop_at < 3 {
+            assert_eq!(backend.refreshes, 0);
+        }
+    }
+    let mut backend = Fake::new();
+    let journal = plan(initial(), 2).unwrap();
+    assert!(
+        execute_controlled(&mut backend, journal, || Ok(()))
+            .unwrap()
+            .committed
+    );
 }

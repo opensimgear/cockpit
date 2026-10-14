@@ -21,6 +21,8 @@ use std::{
 pub const QUALIFICATION: &str = "Live vJoy output and layout changes remain disabled until Windows validation is complete. You can use recording previews and inspect installed devices.";
 pub type Inspector = Arc<dyn Fn() -> Result<Vec<Slot>, String> + Send + Sync>;
 pub struct Service {
+    #[cfg(windows)]
+    provisioning: Mutex<osg_virtual_controller::windows_jobs::Manager>,
     router: Arc<Mutex<Router>>,
     capture: Arc<ControllerService>,
     root: Option<PathBuf>,
@@ -85,6 +87,8 @@ impl Service {
         let settings =
             crate::settings::Settings::open(root.as_ref().map(|p| p.join("local-settings.json")));
         Self {
+            #[cfg(windows)]
+            provisioning: Mutex::new(osg_virtual_controller::windows_jobs::Manager::default()),
             settings: Mutex::new(settings),
             router,
             capture,
@@ -105,6 +109,32 @@ impl Service {
             .as_ref()
             .map(|root| root.join("output-recovery.json"))
             .ok_or("Local storage is required for live output recovery.".into())
+    }
+    pub fn provisioning_active(&self) -> bool {
+        #[cfg(windows)]
+        {
+            return self
+                .provisioning
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .status()
+                .is_some_and(|s| s.active);
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+    #[cfg(windows)]
+    fn provisioning_recovery(&self) -> Value {
+        match osg_virtual_controller::windows_provision::NativeBackend::native(
+            "00000000-0000-0000-0000-000000000000",
+        )
+        .and_then(|backend| backend.pending())
+        {
+            Ok(pending) => json!({"pending":pending}),
+            Err(error) => json!({"pending":[],"error":error.chars().take(512).collect::<String>()}),
+        }
     }
     fn recovery_status(&self) -> Value {
         match self
@@ -133,6 +163,8 @@ impl Service {
                 | "mapping_virtual_create"
                 | "mapping_virtual_recover"
                 | "mapping_virtual_acknowledge"
+                | "mapping_provision_cancel"
+                | "mapping_provision_recover"
                 | "mapping_virtual_enable"
                 | "mapping_targets_save"
                 | "mapping_targets_get"
@@ -169,6 +201,18 @@ impl Service {
                 let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
                 status["storageError"] = json!(settings.error);
                 status["outputRecovery"] = self.recovery_status();
+                #[cfg(windows)]
+                {
+                    status["provisioning"] = json!(self
+                        .provisioning
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .status());
+                    status["provisioningRecovery"] = self.provisioning_recovery();
+                    status["provisioningQualified"] = json!(
+                        self.qualified && osg_virtual_controller::windows_launcher::QUALIFIED
+                    );
+                }
                 status["virtualDevices"] = json!({"enabled":settings.value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION});
                 status["deviceHiding"] = json!({"enabled":settings.value.device_hiding});
                 Ok(status)
@@ -251,6 +295,12 @@ impl Service {
             }
             "mapping_preview_start" | "mapping_virtual_start" => {
                 let live = command == "mapping_virtual_start";
+                if live && self.provisioning_active() {
+                    return Err(
+                        "Wait for provisioning and verified cleanup before starting live output."
+                            .into(),
+                    );
+                }
                 if live && !self.qualified {
                     return Err(QUALIFICATION.into());
                 }
@@ -357,7 +407,84 @@ impl Service {
                     json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"unsupported","qualified":self.qualified,"reason":error.chars().take(512).collect::<String>(),"slots":[]}),
                 ),
             },
-            "mapping_virtual_create" => Err(QUALIFICATION.into()),
+            "mapping_virtual_create" | "mapping_provision_recover" => {
+                if !self.qualified {
+                    return Err(QUALIFICATION.into());
+                }
+                #[cfg(windows)]
+                {
+                    use osg_virtual_controller::windows_launcher::{Action, QUALIFIED};
+                    if !QUALIFIED {
+                        return Err(QUALIFICATION.into());
+                    }
+                    if command == "mapping_virtual_create"
+                        && !self
+                            .settings
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .value
+                            .virtual_devices
+                    {
+                        return Err("Enable virtual devices explicitly before Create.".into());
+                    }
+                    let router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+                    if router.runtime.token().is_ok() || router.live() {
+                        return Err("Stop mapping before changing controller layouts.".into());
+                    }
+                    if osg_virtual_controller::output_journal::inspect(&self.recovery_path()?)?
+                        .is_some_and(|r| r.pending())
+                    {
+                        return Err(
+                            "Resolve interrupted virtual output before changing layouts.".into(),
+                        );
+                    }
+                    let (action, operation) = if command == "mapping_virtual_create" {
+                        let slot = request["slot"]
+                            .as_u64()
+                            .and_then(|n| u8::try_from(n).ok())
+                            .ok_or("Choose an unused vJoy slot.")?;
+                        (Action::Create(slot), None)
+                    } else {
+                        (
+                            Action::Recover,
+                            Some(
+                                request["operation"]
+                                    .as_str()
+                                    .ok_or("Choose the recorded provisioning operation.")?
+                                    .to_owned(),
+                            ),
+                        )
+                    };
+                    let status = self
+                        .provisioning
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .start(action, operation)?;
+                    Ok(json!({"provisioning":status}))
+                }
+                #[cfg(not(windows))]
+                {
+                    Err("vJoy provisioning requires Windows.".into())
+                }
+            }
+            "mapping_provision_cancel" => {
+                #[cfg(windows)]
+                {
+                    let id = request["jobId"]
+                        .as_str()
+                        .ok_or("A current provisioning job ID is required.")?;
+                    let status = self
+                        .provisioning
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .cancel(id)?;
+                    Ok(json!({"provisioning":status}))
+                }
+                #[cfg(not(windows))]
+                {
+                    Err("vJoy provisioning requires Windows.".into())
+                }
+            }
             "mapping_virtual_acknowledge" => {
                 if !self.qualified {
                     return Err(QUALIFICATION.into());
@@ -389,6 +516,11 @@ impl Service {
         }
     }
     pub fn shutdown(&self) {
+        #[cfg(windows)]
+        self.provisioning
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .shutdown();
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();

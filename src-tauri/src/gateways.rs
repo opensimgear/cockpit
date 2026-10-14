@@ -294,6 +294,11 @@ impl GatewayManager {
             return self.error("Missing gateway command.", None);
         };
         if command.starts_with("game_") {
+            if matches!(command.as_str(), "game_activate" | "game_launch")
+                && self.mapping_host.provisioning_active()
+            {
+                return self.error("Wait for virtual-controller provisioning and verified cleanup before activating a game.", None);
+            }
             let mut response = match self.games.request(&request) {
                 Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
                 Err(error) => self.error(&error, None),
@@ -305,7 +310,9 @@ impl GatewayManager {
             return response;
         }
         if let Err(error) = self.games.guard_request(&request) {
-            return self.error(&error, None);
+            if command != "mapping_provision_cancel" {
+                return self.error(&error, None);
+            }
         }
         if command.starts_with("mapping_") {
             // Document responses can use the full profile limit. Keep unrelated

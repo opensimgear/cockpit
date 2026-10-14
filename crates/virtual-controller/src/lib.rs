@@ -26,3 +26,15 @@ pub mod windows_refresh;
 pub mod windows_process;
 
 pub mod output_journal;
+
+#[cfg(windows)]
+pub mod windows_coordination;
+
+#[cfg(windows)]
+pub mod windows_launcher;
+
+#[cfg(windows)]
+pub mod windows_provision_entry;
+
+#[cfg(windows)]
+pub mod windows_jobs;
