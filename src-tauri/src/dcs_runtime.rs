@@ -13,9 +13,42 @@ use std::{
 
 const CLIENT: &str = "cockpit-dcs-bios-integration";
 type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
+enum SavedProfile {
+    Legacy(Config),
+    Panels(crate::dcs_profile::Profile),
+}
+impl SavedProfile {
+    fn parse(value: &Value) -> Result<Self, String> {
+        match value["schemaVersion"].as_u64() {
+            Some(1) => Config::parse(value).map(Self::Legacy),
+            Some(2) => crate::dcs_profile::Profile::parse(value).map(Self::Panels),
+            _ => Err("Unsupported DCS-BIOS profile version.".into()),
+        }
+    }
+    fn value(&self) -> Value {
+        match self {
+            Self::Legacy(c) => c.value(),
+            Self::Panels(c) => c.value(),
+        }
+    }
+    fn load(path: &std::path::Path) -> Result<Option<Self>, String> {
+        match std::fs::metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.to_string()),
+            Ok(_) => Self::parse(&crate::dcs_bios::read_json(path, 65_536)?).map(Some),
+        }
+    }
+    fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        match self {
+            Self::Legacy(c) => c.save(path),
+            Self::Panels(c) => c.save(path),
+        }
+    }
+}
 struct Settings {
     closed: bool,
-    config: Option<Config>,
+    config: Option<SavedProfile>,
+    catalogue: Option<Value>,
     worker: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
 }
@@ -133,7 +166,7 @@ fn prepare(panel: &Panel, config: &Config) -> Result<Route, String> {
 
 impl DcsRuntime {
     pub fn new(panel: Panel, path: PathBuf) -> Self {
-        let (config, error) = match Config::load(&path) {
+        let (config, error) = match SavedProfile::load(&path) {
             Ok(config) => (config, None),
             Err(error) => (None, Some(error)),
         };
@@ -141,6 +174,7 @@ impl DcsRuntime {
             settings: Mutex::new(Settings {
                 closed: false,
                 config,
+                catalogue: None,
                 worker: None,
                 cancel: Arc::new(AtomicBool::new(false)),
             }),
@@ -156,13 +190,22 @@ impl DcsRuntime {
         value["config"] = settings
             .config
             .as_ref()
-            .map(Config::value)
+            .map(SavedProfile::value)
             .unwrap_or(Value::Null);
+        value["catalogue"] = settings.catalogue.clone().unwrap_or(Value::Null);
         value
     }
     pub fn request(&self, request: &Value) -> Result<(), String> {
         match request["command"].as_str() {
             Some("dcs_status") => Ok(()),
+            Some("dcs_catalogue") => {
+                let mut settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+                if settings.closed {
+                    return Err("The DCS-BIOS runtime has closed.".into());
+                }
+                settings.catalogue = Some(crate::dcs_profile::query_catalogue(request)?);
+                Ok(())
+            }
             Some("dcs_stop") => {
                 self.stop();
                 Ok(())
@@ -179,8 +222,7 @@ impl DcsRuntime {
                 {
                     return Err("Stop DCS-BIOS before changing its profile.".into());
                 }
-                let config = Config::parse(&request["dcsConfig"])?;
-                Catalogue::load(&PathBuf::from(&config.catalogue_path))?;
+                let config = SavedProfile::parse(&request["dcsConfig"])?;
                 config.save(&self.path)?;
                 settings.config = Some(config);
                 *self.state.lock().unwrap_or_else(|p| p.into_inner()) = stopped(None);
@@ -203,8 +245,25 @@ impl DcsRuntime {
                 }
                 let config = settings
                     .config
-                    .clone()
+                    .as_ref()
                     .ok_or("Save a DCS-BIOS profile before starting.")?;
+                if let SavedProfile::Panels(profile) = config {
+                    let compiled = crate::dcs_profile::CompiledProfile::load(profile.clone())?;
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    let worker = crate::dcs_profile_runtime::start(
+                        compiled,
+                        self.panel.clone(),
+                        self.state.clone(),
+                        cancel.clone(),
+                    )?;
+                    settings.cancel = cancel;
+                    settings.worker = Some(worker);
+                    return Ok(());
+                }
+                let SavedProfile::Legacy(config) = config else {
+                    unreachable!()
+                };
+                let config = config.clone();
                 let catalogue = Catalogue::load(&PathBuf::from(&config.catalogue_path))?;
                 let route = prepare(&self.panel, &config)?;
                 let transport = Transport::open(&config)?;
@@ -227,10 +286,17 @@ impl DcsRuntime {
     pub fn bound_led(&self, request: &Value) -> bool {
         let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
         settings.worker.as_ref().is_some_and(|w| !w.is_finished())
-            && settings.config.as_ref().is_some_and(|c| {
-                request["gatewayId"] == c.gateway_id
-                    && request["moduleId"] == c.module_id
-                    && request["actionId"] == c.led_action_id
+            && settings.config.as_ref().is_some_and(|c| match c {
+                SavedProfile::Legacy(c) => {
+                    request["gatewayId"] == c.gateway_id
+                        && request["moduleId"] == c.module_id
+                        && request["actionId"] == c.led_action_id
+                }
+                SavedProfile::Panels(c) => c.outputs.iter().any(|o| {
+                    request["gatewayId"] == o.target.gateway_id
+                        && request["moduleId"] == o.target.module_id
+                        && request["actionId"] == o.action_id
+                }),
             })
     }
     pub fn stop(&self) {
@@ -631,6 +697,60 @@ mod tests {
             .join("../../.research/milestone2/runtime-tests")
             .join(uuid::Uuid::new_v4().to_string())
             .join("profile.json")
+    }
+    #[test]
+    fn saved_versions_catalogue_queries_and_all_output_guards_are_gateway_scoped() {
+        let legacy = config(7778, 5010);
+        let (panel, _) = mock(&legacy);
+        let path = path();
+        let service = DcsRuntime::new(panel, path.clone());
+        service
+            .request(&json!({"command":"dcs_configure","dcsConfig":legacy.value()}))
+            .unwrap();
+        assert_eq!(
+            SavedProfile::load(&path).unwrap().unwrap().value()["schemaVersion"],
+            1
+        );
+        let profile = json!({"schemaVersion":2,"aircraftModule":"A-10C","cataloguePath":legacy.catalogue_path,
+            "commandHost":"127.0.0.1","commandPort":7778,"listenAddress":"127.0.0.1","listenPort":5010,
+            "multicastGroup":"","multicastInterface":"127.0.0.1","freshnessMs":150,"inputs":[],"outputs":[
+                {"id":"frequency","gatewayId":legacy.gateway_id,"moduleId":legacy.module_id,"control":"UHF_FREQUENCY","actionId":"display.frequency","format":{"kind":"text"}},
+                {"id":"lamp","gatewayId":"stm32:ffeeddccbbaa998877665544","moduleId":legacy.module_id,"control":"MASTER_CAUTION","actionId":"led.boolean","format":{"kind":"boolean"}}]});
+        service
+            .request(&json!({"command":"dcs_configure","dcsConfig":profile}))
+            .unwrap();
+        assert_eq!(service.status()["config"]["schemaVersion"], 2);
+        assert_eq!(
+            SavedProfile::load(&path).unwrap().unwrap().value()["outputs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(service.status()["running"], false);
+        service.request(&json!({"command":"dcs_catalogue","cataloguePath":legacy.catalogue_path,"aircraftModule":"A-10C","kind":"output","query":"UHF_FREQUENCY"})).unwrap();
+        assert_eq!(
+            service.status()["catalogue"]["controls"][0]["id"],
+            "UHF_FREQUENCY"
+        );
+        {
+            let mut settings = service.settings.lock().unwrap();
+            let cancel = settings.cancel.clone();
+            settings.worker = Some(thread::spawn(move || {
+                while !cancel.load(Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }));
+        }
+        assert!(service.bound_led(&json!({"gatewayId":legacy.gateway_id,"moduleId":legacy.module_id,"actionId":"display.frequency"})));
+        assert!(service.bound_led(&json!({"gatewayId":"stm32:ffeeddccbbaa998877665544","moduleId":legacy.module_id,"actionId":"led.boolean"})));
+        assert!(!service.bound_led(&json!({"gatewayId":legacy.gateway_id,"moduleId":legacy.module_id,"actionId":"led.boolean"})));
+        service.shutdown();
+        assert!(service
+            .request(&json!({"command":"dcs_catalogue","cataloguePath":legacy.catalogue_path}))
+            .is_err());
+        assert!(SavedProfile::parse(&json!({"schemaVersion":3})).is_err());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
     #[test]
     fn readiness_rejects_duplicate_hid_routes_and_accepts_only_online_disabled_panels() {

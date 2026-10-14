@@ -1,6 +1,6 @@
 # OpenSimGear Cockpit
 
-Work-in-progress desktop application for discovering OpenSimGear gateways, configuring devices, managing automatically enabled USB controllers, viewing live inputs and connecting a master-caution button and LED to DCS-BIOS. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
+Work-in-progress desktop application for discovering OpenSimGear gateways, configuring devices, managing automatically enabled USB controllers, viewing live inputs and connecting panel controls, LEDs and displays to DCS-BIOS. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
 
 Cockpit connects to gateways through its normal USB serial and local stream transports. Gateway and device simulations are maintained independently in [device-gateway/simulation](https://github.com/opensimgear/device-gateway/tree/main/simulation) and [device-template/simulation](https://github.com/opensimgear/device-template/tree/main/simulation). Cockpit neither creates simulated devices nor manages their processes.
 
@@ -37,6 +37,7 @@ The desktop uses Rust IPC and its own frontend assets. Development serves the UI
 pnpm check
 pnpm transport:test
 pnpm dcs:coverage
+pnpm dcs-profile:coverage
 pnpm native:test
 pnpm build
 ```
@@ -116,75 +117,96 @@ actions:coverage` enforces the frontend action helper's coverage threshold. CI
 also runs `scripts/action-coverage.py` to gate Rust production action coverage
 above 70%.
 
-## DCS-BIOS master caution
+## DCS-BIOS panel profiles
 
-Milestone 2 implements one saved A-10C master-caution profile. A mapped momentary
-button sends `UFC_MASTER_CAUTION 1` on a fresh press and `UFC_MASTER_CAUTION 0` on
-release through the DCS-BIOS UDP command socket. Exported `MASTER_CAUTION`
-feedback drives a readable boolean LED action or the current board's
-`led.status.set_mode` action with `on`/`off` values. The production native device
-simulation's master-caution profile uses the same logical button 0, ordered
-events and board-status LED contract as current-board firmware.
+Milestone 3 extends the saved A-10C master-caution path into one configurable
+profile with up to 16 input bindings and 16 output bindings, covering eight known
+modules on four gateways. Each binding retains its gateway and module identity;
+the same module identity on another gateway is a separate target. The original
+master-caution preset remains available. An unchanged saved Milestone 2 profile
+can start as before; **Save settings** explicitly upgrades its two displayed
+bindings to the new profile format. Loading the view does not rewrite settings.
 
-The catalogue path must point to the installed DCS-BIOS `doc/json` directory.
-Cockpit resolves the named controls, aircraft aliases, aircraft-name metadata and
-update counter from those files; it does not hard-code a feedback address. UDP
-defaults are command `127.0.0.1:7778`, export listen `0.0.0.0:5010`, multicast
-`239.255.50.10` on interface `127.0.0.1`, and feedback freshness 1500 ms. An empty
-multicast group selects unicast export reception.
+Select named controls from the installed DCS-BIOS `doc/json` catalogue. Cockpit
+queries supported command interfaces and feedback types from those files and
+resolves their binary addresses in the native service. The UI does not accept
+arbitrary command text or hard-coded feedback addresses. UDP defaults remain
+command `127.0.0.1:7778`, export listen `0.0.0.0:5010`, multicast `239.255.50.10`
+on interface `127.0.0.1`, and feedback freshness 1500 ms. An empty multicast group
+selects unicast reception.
 
-1. Select an online CAN device and open **DCS-BIOS** in its workspace.
-2. Use **Disable controller** and accept the existing USB reconnect/binding
-   warning. Wait for the gateway layout to settle and disconnect any active
-   direct USB input session. The integration requires both routes to be inactive
-   to avoid duplicate game bindings.
-3. Enter the installed catalogue directory, zero-based momentary button index
-   and advertised LED action; adjust UDP settings if necessary.
-4. **Save settings**, then **Start DCS-BIOS**. Saving persists one profile in
-   Cockpit's application settings and does not start it. Restarting Cockpit also
-   requires an explicit Start. Stop the running binding before changing settings.
+1. Open **DCS-BIOS** from the sidebar, a gateway card or a device workspace. Enter
+   the installed catalogue directory and use **Search catalogue** to find named
+   controls. The shared editor retains an unsaved draft when changing views.
+2. Choose a device for each binding and refresh its capabilities. Inputs offer
+   advertised momentary buttons, maintained switches, encoder ordinals and
+   calibrated axes. Selector positions are not offered as switch bindings.
+3. For input devices, use **Disable controller**, accept the existing USB
+   reconnect/binding warning and wait for publication to finish. Disconnect active
+   direct USB input and finish setup sessions before Start. Output-only targets
+   can keep their HID controller enabled.
+4. Choose a supported command interface and values. Buttons and switches send
+   `set_state`; encoders send ordered `INC`/`DEC` or signed variable steps. Axes
+   use independently calibrated 0–65535 samples, scale to the catalogue range and
+   apply the chosen change threshold in target units.
+5. Add LED or display feedback. Choose a named catalogue output and compatible
+   advertised device action. Text requires string feedback; integer and fixed
+   decimal formats convert numeric feedback into a string display value.
+6. **Save settings**, then **Start DCS-BIOS**. Saving persists one profile in
+   Cockpit's application settings and never starts it. Restarting Cockpit also
+   requires explicit Start. Stop the running profile before editing.
 
-The binding runs in a Rust background worker while Cockpit is open; UI polling
-only displays status. Device event pages preserve brief press/release pairs
-between reads and remain available with HID disabled. Startup, simulator
-recovery, route changes, reboot, mapping changes and event gaps establish a new
-current cursor instead of replaying retained presses. A button held at a new
-baseline must release before it can trigger a fresh press. Disarming sends one
-release only for a press this binding previously forwarded; it never sends a
-historical press. Encoder pulse controls are rejected for this profile. See the
-[ordered panel event contract](https://github.com/opensimgear/protocol/blob/main/serial/panel-input-events.md).
+Readable boolean setters and the current board's `led.status.set_mode` support
+on/off feedback. Displays use readable bounded string setters. Their advertised
+columns, rows, ASCII or UTF-8 encoding and byte limit determine text fit. Numeric
+formatting supports scale, decimal places, prefix and suffix; optional alignment
+pads the advertised display cells. Overflow either truncates whole characters or
+reports an error. Unknown and stale text are explicit settings, blank by default;
+unknown or stale LED feedback requests Off. The UI shows native desired and last
+applied values rather than duplicating the formatter.
 
-The workspace displays aircraft, freshness, errors, forwarded command count and
-retained event overwrites and recovered cursor gaps. The gap counter remains
-visible after recovery. Overwrites count evictions from the bounded device
-ring; they are not a count of lost simulator commands. Missing or stale export,
-an unsupported aircraft and Stop request LED `off`; an unavailable panel cannot
-confirm that output until it reconnects. Lost command sends are not replayed,
-and uncertain LED setters are reconciled through readback. The running profile
-owns its bound LED; other manual actions remain available. The Gateways view
-provides global **Stop DCS-BIOS**, including when the bound device is offline.
+The Rust background service processes complete DCS export frames atomically and
+coalesces pending absolute output writes to the newest value. Ordered button
+edges and encoder detents remain ordered commands. UI polling only displays
+status. Device events and calibrated axis samples remain available with HID
+disabled. Startup, route/boot/mapping changes, export recovery and event gaps
+establish a current baseline instead of replaying historical commands. Held
+momentary buttons must release before a fresh press; maintained switches and
+available axes synchronize their current absolute state at a fresh baseline; disarming sends one neutral release
+only for a press this profile previously forwarded. Uncertain command sends are
+never replayed. Readable output actions reconcile uncertain replies through
+readback. See the [ordered panel input contract](https://github.com/opensimgear/protocol/blob/main/serial/panel-input-events.md).
 
-For software development, [simulation/dcs-bios/peer.mjs](simulation/dcs-bios/peer.mjs)
-is a controllable local UDP peer, with an authored catalogue in
-[simulation/dcs-bios/catalogue/](simulation/dcs-bios/catalogue/). Use that sample
-only with the peer: its feedback addresses are synthetic. The gateway and device
-processes still come from their owning repositories and use normal production
-contracts. See the [simulation guide](simulation/dcs-bios/README.md) and
-[master-caution verification record](docs/verification/2026-10-13-dcs-bios-master-caution.md).
-Real DCS and assembled STM32 button/LED/USB/CAN validation remain deferred; they
-are not prerequisites for this simulated milestone.
+The shared editor displays aircraft, feedback age, per-binding readiness/errors,
+command counts, desired/applied outputs and per-gateway queue, write, coalescing,
+latency and polling metrics. Retained event overwrites count device ring evictions;
+recovered event gaps count cursor discontinuities, not lost simulator commands.
+The running profile manages only its selected output actions; other manual actions
+remain available. Global **Stop DCS-BIOS** remains available when a target is
+offline; an unreachable device cannot confirm its fallback until it reconnects.
 
-`pnpm dcs:coverage` gates the frontend profile helpers above 70% for lines,
-branches and functions. CI also runs `scripts/dcs-bios-coverage.py`, which gates
-each native DCS core, background runtime and event-validation module above 70%
-production line coverage. The verification record includes measured results.
+For development, [simulation/dcs-bios/peer.mjs](simulation/dcs-bios/peer.mjs) uses
+an authored [synthetic catalogue](simulation/dcs-bios/catalogue/) with the native
+panel simulations. These sample addresses are for that peer, not a real aircraft.
+Gateway and device processes come from their owning repositories and use normal
+production contracts. See the [simulation guide](simulation/dcs-bios/README.md),
+[master-caution verification record](docs/verification/2026-10-13-dcs-bios-master-caution.md)
+and [integration profile notes](integration-profiles/README.md). Real DCS and
+assembled STM32 inputs, displays, LED, USB and CAN qualification remain deferred.
+Simulated display endpoints do not establish physical display hardware support.
+
+`pnpm dcs:coverage` and `pnpm dcs-profile:coverage` enforce frontend helper coverage
+above 70% for lines, branches and functions. CI also runs
+`scripts/dcs-bios-coverage.py` for native DCS processing. Browser development uses
+bounded 64 KiB requests and 128 KiB replies for profiles, catalogue pages and
+status; device CDC/CAN child-command limits remain separate.
 
 The combined device-action and DCS-BIOS roadmap is tracked by these milestone stories:
 
 1. [Manual device actions](https://github.com/opensimgear/cockpit/issues/13): implemented advertised actions, gateway routing and Cockpit controls.
 2. [First DCS-BIOS button and LED path](https://github.com/opensimgear/cockpit/issues/14): implemented simulated master-caution commands, ordered button events and LED feedback.
-3. [Displays and encoders](https://github.com/opensimgear/cockpit/issues/15): future bounded text, formatting, encoder bindings and traffic measurements, building on the event stream.
-4. [Profiles and hardware qualification](https://github.com/opensimgear/cockpit/issues/16): future wider aircraft coverage, ownership, reconnects and hardware validation.
+3. [Displays and encoders](https://github.com/opensimgear/cockpit/issues/15): implemented configurable typed inputs, bounded display formatting and gateway traffic measurements; see the [simulation verification](docs/verification/2026-10-14-dcs-bios-panels.md).
+4. [Profiles and hardware qualification](https://github.com/opensimgear/cockpit/issues/16): future wider aircraft coverage, profile import/export, ownership and hardware qualification.
 
 ## Related repositories
 

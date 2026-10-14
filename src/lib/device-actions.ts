@@ -8,6 +8,7 @@ export type ActionParameter = {
 export type DeviceAction = {
   id: string; label: string; endpoint: string; semantics: 'setter' | 'oneShot';
   readable: boolean; parameters: ActionParameter[];
+  display?: { columns: number; rows: number; encoding: 'ascii' | 'utf8' };
 };
 export type DeviceActions = {
   boot: number; catalogueRevision?: number; actions: DeviceAction[];

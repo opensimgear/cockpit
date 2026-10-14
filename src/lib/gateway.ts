@@ -4,6 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import type { RuntimeSnapshot, RuntimeConfig } from './runtime-config';
 import type { DeviceActions, ActionValue } from './device-actions';
 import type { DcsBiosConfig, DcsBiosStatus } from './dcs-bios';
+import type { PanelInputState } from './dcs-profile';
 
 export type GatewayBackend = 'pico' | 'stm32';
 export type GatewayPort = { gatewayId?: string; path: string; manufacturer?: string; friendlyName?: string; serialNumber?: string; vendorId?: string; productId?: string; backend?: GatewayBackend };
@@ -48,10 +49,11 @@ export type GatewayState = {
   hidNaming?: { supported: boolean; applied: boolean; error?: string };
   moduleConfigs?: Record<string, RuntimeSnapshot>;
   moduleActions?: Record<string, DeviceActions>;
+  moduleEvents?: Record<string, PanelInputState>;
   dcsBios?: DcsBiosStatus;
 };
-export type GatewayCommand = 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'dcs_status' | 'dcs_configure' | 'dcs_start' | 'dcs_stop';
-export type GatewayRequest = { command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig };
+export type GatewayCommand = 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop';
+export type GatewayRequest = { command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number };
 
 const clientId = crypto.randomUUID();
 const browserEndpoint = '/api/gateway/';

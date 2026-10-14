@@ -1246,6 +1246,7 @@ impl Gateway {
             cached["error"] = json!(error);
             cached["states"] = json!([]);
         }
+        cached["route"] = route.clone();
         self.actions.insert(
             id.into(),
             ActionCache {
@@ -2705,6 +2706,10 @@ mod tests {
         assert_eq!(connect(&mut gateway)["ok"], true);
         let described = request(&mut gateway, "action_describe", json!({"moduleId":MODULE}));
         assert_eq!(described["ok"], true, "{described}");
+        assert_eq!(
+            described["state"]["moduleActions"][MODULE]["route"],
+            action_route(&gateway.state, MODULE).unwrap()
+        );
         assert_eq!(
             described["state"]["moduleActions"][MODULE]["states"][0]["values"],
             json!([false])

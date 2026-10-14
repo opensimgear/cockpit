@@ -89,6 +89,23 @@ test('global DCS requests stay ordered while gateway and inventory requests are 
   await Promise.all([pendingGateway, pendingInventory]);
 });
 
+test('typed multi-gateway profiles and address-free catalogue pages use the same desktop and browser API', async () => {
+  const dcsConfig = { schemaVersion: 2, aircraftModule: 'A-10C', cataloguePath: '/installed/doc/json', inputs: [
+    { id: 'tuning', gatewayId: first, moduleId: 'radio', kind: 'encoder', control: 0, command: 'VHFAM_FREQ1', interface: 'fixed_step' },
+    { id: 'volume', gatewayId: second, moduleId: 'axes', kind: 'axis', control: 0, command: 'VHFAM_VOL', interface: 'set_state', deadband: 128 },
+  ], outputs: [{ id: 'frequency', gatewayId: first, moduleId: 'radio', control: 'VHFAM_FREQ', actionId: 'display.radio.set_text', format: { kind: 'text', overflow: 'truncate' } }] };
+  const catalogue = { cataloguePath: dcsConfig.cataloguePath, aircraftModule: 'A-10C', kind: 'all', query: 'VHFAM', offset: 0, total: 1,
+    controls: [{ id: 'VHFAM_FREQ', label: 'Radio frequency', category: 'VHF AM', inputs: [], outputs: [{ type: 'string', maxLength: 7 }] }] };
+  const result = { ok: true, state: { modules: [], dcsBios: { config: dcsConfig, catalogue } } };
+  const requests = [{ command: 'dcs_configure', dcsConfig }, { command: 'dcs_catalogue', cataloguePath: dcsConfig.cataloguePath,
+    aircraftModule: 'A-10C', kind: 'all', query: 'VHFAM', offset: 0, limit: 32 }];
+  for (const desktop of [true,false]) {
+    const api = transport({ desktop, result });
+    for (const request of requests) assert.deepEqual(plain((await api.gatewayRequest(request)).dcsBios), result.state.dcsBios);
+    assert.deepEqual(api.calls.map(call => desktop ? call.args.request : JSON.parse(call.options.body)), requests.map(request => ({ ...request, clientId: 'test-client-uuid' })));
+  }
+});
+
 test('discovery is one aggregate request and never changes or disconnects either connection', async () => {
   const api = transport();
   await api.gatewayRequest({ command: 'connect', gatewayId: first, backend: 'stm32', port: 'COM1' });

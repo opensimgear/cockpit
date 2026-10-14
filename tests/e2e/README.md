@@ -96,6 +96,18 @@ fixture observes disarmed status during loss and waits for fresh active feedback
 `needsBaseline=false` and `armed=true` before injecting a valid new press, while
 continuing to assert that historical presses never replay.
 
+The radio-panel scenario adds a schema2 profile with six typed inputs and eight
+outputs on two gateways containing the same module identity. It exercises the
+production board-compatible LED and output callbacks, calibrated axes with HID
+disabled, named encoder/switch/button interfaces, full-width atomic strings,
+UTF-8 cell/byte limits, stale and unknown fallbacks, reboot/gap recovery, and
+current-state readback after a selectively lost setter acknowledgement.
+A 200 Hz export flood and simulated 40 ms display callbacks measure bounded
+pending queues, coalescing, per-gateway throughput/latency and sampled-input-to-UDP
+responsiveness. Every latest output must converge and queues finish empty. The
+standalone radio peer test also validates named commands and bounded diagnostics.
+Both tests are imported by acceptance.mjs and run in ordinary CI.
+
 Native simulations execute the production configuration, flash journal, Cyphal
 transport, registry and descriptor code. Loopback TCP carries CDC bytes and UDP
 carries CAN frames. These tests validate protocol/report behavior; native streams

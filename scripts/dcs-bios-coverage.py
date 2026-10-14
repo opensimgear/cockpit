@@ -47,7 +47,8 @@ def main():
     command([str(llvm / 'llvm-profdata'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
     sources = [root / 'src-tauri/src' / name
-               for name in ['dcs_bios.rs', 'dcs_runtime.rs', 'panel_events.rs']]
+               for name in ['dcs_bios.rs', 'dcs_runtime.rs', 'panel_events.rs',
+                            'dcs_profile.rs', 'dcs_profile_runtime.rs']]
     annotated = command([str(llvm / 'llvm-cov'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
     (output / 'lines.txt').write_text(annotated)

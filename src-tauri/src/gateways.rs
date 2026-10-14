@@ -179,7 +179,7 @@ impl GatewayManager {
         if self.closed.load(Ordering::Acquire) {
             return self.error("Cockpit gateway manager has closed.", None);
         }
-        if !request.is_object() || request.to_string().len() > 16_384 {
+        if !request.is_object() || request.to_string().len() > 65_536 {
             return self.error("Invalid gateway request.", None);
         }
         if !request["clientId"]
@@ -307,7 +307,7 @@ impl GatewayManager {
         });
         if bound_led {
             response["ok"] = json!(false);
-            response["error"] = json!("Stop DCS-BIOS before manually controlling its bound LED.");
+            response["error"] = json!("Stop DCS-BIOS before manually controlling its bound output.");
         }
         if response["state"]["connected"] == true {
             let backend = id.split_once(':').unwrap().0;
