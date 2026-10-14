@@ -18,3 +18,9 @@ pub mod windows_provision;
 
 #[cfg(windows)]
 mod journal_security;
+
+#[cfg(windows)]
+pub mod windows_refresh;
+
+#[cfg(windows)]
+pub mod windows_process;

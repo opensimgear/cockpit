@@ -165,3 +165,39 @@ storage checkpoint's Windows CI exercised real fixture transaction commits,
 rollback, collision rejection and ownership retirement, reaching 97.22% native
 provisioning-storage coverage. These fixture results do not qualify elevated
 production launch, driver refresh, guardian recovery, or physical/game behavior.
+## Bounded driver-refresh foundation
+
+The native backend factory now supplies fresh subprocess inspection and a
+dedicated refresh callback without loading an SDK or mutating anything at
+construction. Refresh resolves exactly one present root HID-class instance whose
+service is vJoy and whose device node is started without a reported problem.
+Unknown, multiple, inaccessible or mismatched devices are refused. A fresh
+inspection requires every published slot to be FREE before refresh.
+
+The callback uses the Windows system-directory PnP utility with one exact device
+argument. It has no shell expansion, inherited input, or unbounded output pipes;
+completion, failure, timeout and child reaping are bounded. Provisioning still
+requires subsequent complete layout/OEM readback. Successful utility exit is not
+treated as successful provisioning.
+
+Read-only device discovery, malformed native-property fixtures, wrong/ambiguous
+target rejection, busy-owner preflight and harmless Python child completion,
+failure and timeout tests passed. No PnP restart command was executed in these
+checks. The refresh module reached 91.41% local production-line coverage. Actual
+elevated refresh, cancellation/guardian coordination and physical recovery remain
+unqualified, and ordinary Create/live-output gates remain closed.
+## Guardian process-identity foundation
+
+Read-only Windows process tracking now uses a PID plus canonical decimal-string
+creation time, verifies the executable and same-user token, and retains the
+original kernel process handle. Reused or exited PIDs do not become the old
+process; access failures remain explicit. Tests cover current-process identity,
+stale creation times, unrelated/missing executables, invalid handles and actual
+owned-child exit observation. Process tracking never terminates the watched app.
+
+The combined virtual-controller suite passed 41 tests on Windows. The new
+process module reached 91.03% production-line coverage, alongside 91.41% refresh
+coverage. These are building blocks for the guardian; the elevated launcher,
+cancellation coordination, guardian entry and durable whole-app output recovery
+still require integration and qualification. No registry provisioning, PnP
+refresh or live virtual output was performed during these checks.

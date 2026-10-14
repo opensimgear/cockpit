@@ -261,6 +261,8 @@ fn journal_rejects_identity_forgery_claims_and_external_changes() {
     .unwrap();
     assert_eq!(native.parameters, PARAMETERS);
     assert_eq!(native.ancillary.len(), 4);
+    assert!(NativeBackend::native("invalid").is_err());
+    assert!(NativeBackend::native(&uuid::Uuid::new_v4().to_string()).is_ok());
     assert!(NativeBackend::open("invalid", Box::new(|| Ok(vec![])), Box::new(|| Ok(()))).is_err());
 }
 #[test]

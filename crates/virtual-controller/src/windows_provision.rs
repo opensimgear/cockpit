@@ -79,6 +79,14 @@ fn entries(parameters: &Key) -> Result<(BTreeMap<u8, Entry>, bool), String> {
     Ok((entries, unexpected))
 }
 impl NativeBackend {
+    /// Construct callbacks without loading the SDK, elevating, or changing a key.
+    pub fn native(operation: &str) -> Result<Self, String> {
+        Self::open(
+            operation,
+            Box::new(crate::inspection::current),
+            Box::new(crate::windows_refresh::refresh),
+        )
+    }
     /// Only the explicit elevated helper constructs this backend.
     pub fn open(operation: &str, inspect: Inspector, refresh: Refresher) -> Result<Self, String> {
         operation_id(operation)?;
