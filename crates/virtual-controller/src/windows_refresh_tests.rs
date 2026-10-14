@@ -127,6 +127,7 @@ fn real_child_completion_failure_and_deadline_are_bounded_without_pnp_commands()
         Duration::from_millis(50)
     )
     .unwrap_err()
+    .message
     .contains("deadline"));
     assert!(start.elapsed() < Duration::from_secs(3));
     let absent = tempfile::tempdir().unwrap();
@@ -136,4 +137,54 @@ fn real_child_completion_failure_and_deadline_are_bounded_without_pnp_commands()
         Duration::from_secs(1)
     )
     .is_err());
+}
+
+#[test]
+fn unconfirmed_child_exit_is_distinct_from_a_settled_failure() {
+    struct Child {
+        answers: std::collections::VecDeque<Result<Option<bool>, String>>,
+        kills: usize,
+        deny_kill: bool,
+    }
+    impl ChildControl for Child {
+        fn status(&mut self) -> Result<Option<bool>, String> {
+            self.answers.pop_front().unwrap_or(Ok(None))
+        }
+        fn terminate(&mut self) -> Result<(), String> {
+            self.kills += 1;
+            if self.deny_kill {
+                Err("access denied".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let mut child = Child {
+        answers: [Ok(None)].into(),
+        kills: 0,
+        deny_kill: true,
+    };
+    let error = await_child(&mut child, Duration::ZERO, Duration::ZERO).unwrap_err();
+    assert!(!error.quiescent);
+    assert!(error.message.contains("unconfirmed"));
+    assert!(error.message.contains("access denied"));
+    assert_eq!(child.kills, 1);
+    let mut child = Child {
+        answers: [Err("wait failed".into()), Ok(Some(false))].into(),
+        kills: 0,
+        deny_kill: false,
+    };
+    let error = await_child(&mut child, Duration::ZERO, Duration::ZERO).unwrap_err();
+    assert!(error.quiescent);
+    assert!(error.message.contains("wait failed"));
+    let mut child = Child {
+        answers: [Ok(None), Err("still cannot wait".into())].into(),
+        kills: 0,
+        deny_kill: false,
+    };
+    assert!(
+        !await_child(&mut child, Duration::ZERO, Duration::ZERO)
+            .unwrap_err()
+            .quiescent
+    );
 }

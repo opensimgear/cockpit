@@ -49,6 +49,10 @@ pub trait Backend {
     fn create(&mut self, slot: u8, entry: &Entry) -> Result<(), MutationError>;
     fn remove(&mut self, slot: u8) -> Result<(), String>;
     fn refresh(&mut self) -> Result<(), String>;
+    /// Refuse recovery while a native refresh may still be changing the stack.
+    fn safe_to_restore(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 pub fn descriptor(slot: u8) -> Result<Vec<u8>, String> {
     if !(1..=16).contains(&slot) {
@@ -229,6 +233,7 @@ pub fn restore(backend: &mut impl Backend, journal: &Journal) -> Result<(), Stri
         );
     }
     validate_journal(journal)?;
+    backend.safe_to_restore()?;
     let actual = backend.snapshot()?;
     if actual.unexpected_parameters
         || actual.ancillary_fingerprint != journal.before.ancillary_fingerprint

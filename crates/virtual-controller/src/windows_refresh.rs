@@ -135,7 +135,82 @@ fn system_program() -> Result<PathBuf, String> {
     }
     Ok(program)
 }
-fn bounded(program: &Path, args: &[String], timeout: Duration) -> Result<(), String> {
+/// Whether the exact spawned child is proven to have stopped. An unconfirmed
+/// child must leave the durable refresh guard set, including after helper death.
+#[derive(Debug)]
+pub struct Failure {
+    pub message: String,
+    pub quiescent: bool,
+}
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            quiescent: true,
+        }
+    }
+}
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+trait ChildControl {
+    fn status(&mut self) -> Result<Option<bool>, String>;
+    fn terminate(&mut self) -> Result<(), String>;
+}
+impl ChildControl for std::process::Child {
+    fn status(&mut self) -> Result<Option<bool>, String> {
+        self.try_wait()
+            .map(|s| s.map(|s| s.success()))
+            .map_err(|e| e.to_string())
+    }
+    fn terminate(&mut self) -> Result<(), String> {
+        self.kill().map_err(|e| e.to_string())
+    }
+}
+fn await_child(
+    child: &mut impl ChildControl,
+    timeout: Duration,
+    reap_timeout: Duration,
+) -> Result<(), Failure> {
+    let started = Instant::now();
+    let reason = loop {
+        match child.status() {
+            Ok(Some(true)) => return Ok(()),
+            Ok(Some(false)) => {
+                return Err("Driver refresh exited unsuccessfully; verify the driver state.".into())
+            }
+            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(5)),
+            Err(error) => break format!("Driver refresh wait failed: {error}"),
+            _ => break "Driver refresh deadline expired.".to_owned(),
+        }
+    };
+    let termination = child.terminate().err();
+    let reap = Instant::now();
+    loop {
+        if child.status().ok().flatten().is_some() {
+            return Err(Failure {
+                message: reason,
+                quiescent: true,
+            });
+        }
+        if reap.elapsed() >= reap_timeout {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    Err(Failure {
+        message: format!(
+            "{reason} Child exit is unconfirmed; preserve configuration for recovery.{}",
+            termination
+                .map(|e| format!(" Termination failed: {e}"))
+                .unwrap_or_default()
+        ),
+        quiescent: false,
+    })
+}
+fn bounded(program: &Path, args: &[String], timeout: Duration) -> Result<(), Failure> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -143,42 +218,14 @@ fn bounded(program: &Path, args: &[String], timeout: Duration) -> Result<(), Str
         .stderr(Stdio::null())
         .creation_flags(0x08000000)
         .spawn()
-        .map_err(|e| format!("Unable to launch driver refresh: {e}"))?;
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "Driver refresh exited with {status}; verify the driver state."
-                    ))
-                }
-            }
-            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(5)),
-            outcome => {
-                let _ = child.kill(); // Only this exact child process is owned here.
-                let reap = Instant::now();
-                while reap.elapsed() < Duration::from_millis(500) {
-                    if child.try_wait().ok().flatten().is_some() {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                return Err(match outcome {
-                    Err(error) => format!("Driver refresh wait failed: {error}"),
-                    _ => "Driver refresh deadline expired; recovery requires inspection.".into(),
-                });
-            }
-        }
-    }
+        .map_err(|e| Failure::from(format!("Unable to launch driver refresh: {e}")))?;
+    await_child(&mut child, timeout, Duration::from_millis(500))
 }
 fn refresh_with(
     slots: Vec<Slot>,
     resolve: impl FnOnce() -> Result<String, String>,
-    run: impl FnOnce(&str) -> Result<(), String>,
-) -> Result<(), String> {
+    run: impl FnOnce(&str) -> Result<(), Failure>,
+) -> Result<(), Failure> {
     if slots.is_empty() || slots.len() > 16 || slots.iter().any(|s| s.status != Status::Free) {
         return Err("Close all vJoy feeders before refreshing the driver.".into());
     }
@@ -190,7 +237,7 @@ fn refresh_with(
 }
 /// Requires explicit elevation/operation ownership; layout readback follows in
 /// the provisioning transaction. A successful utility exit alone proves nothing.
-pub fn refresh() -> Result<(), String> {
+pub fn refresh() -> Result<(), Failure> {
     refresh_with(crate::inspection::current()?, device, |id| {
         bounded(
             &system_program()?,

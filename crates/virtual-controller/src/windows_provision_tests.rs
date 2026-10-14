@@ -129,6 +129,8 @@ impl Drop for Fixture {
 fn snapshot_preserves_raw_unknown_fields_and_fingerprints_ancillary_settings() {
     let mut f = Fixture::new();
     let initial = f.backend.snapshot().unwrap();
+    let plan = f.plan();
+    f.backend.journal(&plan).unwrap();
     assert!(initial.entries.is_empty());
     assert!(!initial.unexpected_parameters);
     assert_eq!(initial.published.len(), 1);
@@ -392,4 +394,52 @@ fn protected_journals_use_admin_ownership_when_the_test_token_can_assign_it() {
         f.backend.remove(1).unwrap();
         assert!(f.backend.read_journal().unwrap().written.is_empty());
     }
+}
+
+#[test]
+fn durable_refresh_fence_survives_failure_and_blocks_every_recovery_mutation() {
+    let mut f = Fixture::new();
+    assert!(f.backend.refresh().is_err()); // No journal, no launch.
+    let record = f.plan();
+    f.backend.journal(&record).unwrap();
+    f.backend.refresh = Box::new(|| {
+        Err(crate::windows_refresh::Failure {
+            message: "child exit unknown".into(),
+            quiescent: false,
+        })
+    });
+    assert!(f.backend.refresh().unwrap_err().contains("unknown"));
+    let stored = Key::open(
+        f.backend.hive,
+        &f.backend.journal_path(),
+        KEY_READ | KEY_WRITE,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        stored.value("RefreshPending").unwrap().unwrap().data,
+        1u32.to_le_bytes()
+    );
+    f.backend.refresh = Box::new(|| panic!("uncertain operation must not launch another child"));
+    assert!(f.backend.safe_to_restore().is_err());
+    assert!(provision::restore(&mut f.backend, &record)
+        .unwrap_err()
+        .contains("uncertain"));
+    assert!(f.backend.refresh().is_err());
+    assert!(f.backend.journal(&record).is_err());
+    assert!(f.backend.snapshot().unwrap().entries.is_empty());
+    // Corrupt guards also refuse recovery. Only this isolated fixture writes them.
+    stored.write("RefreshPending", REG_BINARY, &[0]).unwrap();
+    assert!(f.backend.safe_to_restore().is_err());
+    stored
+        .write("RefreshPending", REG_DWORD, &0u32.to_le_bytes())
+        .unwrap();
+    f.backend.safe_to_restore().unwrap();
+    f.backend.refresh = Box::new(|| Err("confirmed child failure".into()));
+    assert!(f.backend.refresh().unwrap_err().contains("confirmed"));
+    f.backend.safe_to_restore().unwrap();
+    f.backend.refresh = Box::new(|| Ok(()));
+    f.backend.refresh().unwrap();
+    f.backend.safe_to_restore().unwrap();
 }

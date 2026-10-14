@@ -48,6 +48,13 @@ impl Fake {
     }
 }
 impl Backend for Fake {
+    fn safe_to_restore(&mut self) -> Result<(), String> {
+        if self.fail == "uncertain" {
+            Err("refresh child exit unconfirmed".into())
+        } else {
+            Ok(())
+        }
+    }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
         Ok(self.current.clone())
     }
@@ -90,7 +97,7 @@ impl Backend for Fake {
     }
     fn refresh(&mut self) -> Result<(), String> {
         self.refreshes += 1;
-        if self.fail == "refresh" && self.refreshes == 1 {
+        if ["refresh", "uncertain"].contains(&self.fail) && self.refreshes == 1 {
             return Err("refresh failure".into());
         }
         self.current.published = if self.current.entries.is_empty() {
@@ -195,4 +202,16 @@ fn missing_owned_keys_retire_ownership_and_stale_plans_cannot_restart() {
     journal.committed = false;
     journal.id = id.to_uppercase();
     assert!(validate_journal(&journal).is_err());
+}
+
+#[test]
+fn uncertain_refresh_never_rolls_back_or_starts_a_second_refresh() {
+    let mut backend = Fake::new();
+    backend.fail = "uncertain";
+    let error = create(&mut backend, 2).unwrap_err();
+    assert!(error.contains("unconfirmed"));
+    assert!(backend.removed.is_empty());
+    assert_eq!(backend.refreshes, 1);
+    assert_eq!(backend.current.entries.len(), 2);
+    assert!(!backend.journals.last().unwrap().committed);
 }

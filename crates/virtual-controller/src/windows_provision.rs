@@ -13,7 +13,7 @@ const JOURNALS: &str = "SYSTEM\\CurrentControlSet\\Control\\OpenSimGearVJoyProvi
 const OEM: &str =
     "SYSTEM\\CurrentControlSet\\Control\\MediaProperties\\PrivateProperties\\Joystick\\OEM";
 pub type Inspector = Box<dyn FnMut() -> Result<Vec<Slot>, String>>;
-pub type Refresher = Box<dyn FnMut() -> Result<(), String>>;
+pub type Refresher = Box<dyn FnMut() -> Result<(), crate::windows_refresh::Failure>>;
 pub struct NativeBackend {
     hive: HKEY,
     parameters: String,
@@ -140,6 +140,20 @@ impl NativeBackend {
         }
         Ok(record)
     }
+    fn settled(key: &Key) -> Result<(), String> {
+        match key.value("RefreshPending")? {
+            None => Ok(()), // Older journals never launched the new refresh helper.
+            Some(value) if value.kind == REG_DWORD && value.data == 0u32.to_le_bytes() => Ok(()),
+            Some(_) => Err("Driver refresh is pending or uncertain; preserve configuration for explicit inspection.".into()),
+        }
+    }
+    fn refresh_guard(&self) -> Result<Key, String> {
+        let key = Key::open(self.hive, &self.journal_path(), KEY_READ | KEY_WRITE, None)?
+            .ok_or("Provisioning journal is missing.")?;
+        self.checked_record(&key)?;
+        Self::settled(&key)?;
+        Ok(key)
+    }
     fn read_record(key: &Key) -> Result<Journal, String> {
         let record = key
             .value("Journal")?
@@ -187,6 +201,7 @@ impl NativeBackend {
         )?
         .ok_or("Provisioning journal is missing.")?;
         let mut record = self.checked_record(&journal)?;
+        Self::settled(&journal)?;
         if record.committed
             || record.owned.get(&slot) != Some(value)
             || record.before.entries.contains_key(&slot)
@@ -244,6 +259,7 @@ impl Backend for NativeBackend {
             Key::open(self.hive, &self.journal_path(), KEY_READ | KEY_WRITE, None)?
         {
             let old = self.checked_record(&existing)?;
+            Self::settled(&existing)?;
             if old.id != record.id
                 || old.target != record.target
                 || old.owned != record.owned
@@ -296,6 +312,7 @@ impl Backend for NativeBackend {
         )?
         .ok_or("Provisioning journal is missing.")?;
         let mut record = self.checked_record(&journal)?;
+        Self::settled(&journal)?;
         if record.committed
             || !record.written.contains(&slot)
             || record.before.entries.contains_key(&slot)
@@ -325,7 +342,19 @@ impl Backend for NativeBackend {
         tx.commit()
     }
     fn refresh(&mut self) -> Result<(), String> {
-        (self.refresh)()
+        let key = self.refresh_guard()?;
+        // Flush before spawning: crashes between spawn and return remain fenced.
+        key.write("RefreshPending", REG_DWORD, &1u32.to_le_bytes())?;
+        key.flush()?;
+        let result = (self.refresh)();
+        if result.as_ref().err().is_none_or(|e| e.quiescent) {
+            key.write("RefreshPending", REG_DWORD, &0u32.to_le_bytes())?;
+            key.flush()?;
+        }
+        result.map_err(|e| e.message)
+    }
+    fn safe_to_restore(&mut self) -> Result<(), String> {
+        self.refresh_guard().map(|_| ())
     }
 }
 #[cfg(test)]
