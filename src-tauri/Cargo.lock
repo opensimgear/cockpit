@@ -2566,6 +2566,8 @@ version = "0.1.0"
 dependencies = [
  "osg-controller-input",
  "osg-mapping",
+ "osg-mapping-host",
+ "osg-virtual-controller",
  "serde_json",
  "serialport",
  "sha2",
@@ -2602,6 +2604,32 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "osg-mapping-host"
+version = "0.1.0"
+dependencies = [
+ "osg-controller-input",
+ "osg-mapping",
+ "osg-virtual-controller",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "osg-virtual-controller"
+version = "0.1.0"
+dependencies = [
+ "osg-mapping",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

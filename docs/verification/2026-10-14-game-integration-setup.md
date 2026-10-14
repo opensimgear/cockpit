@@ -48,11 +48,11 @@ port and changed no real game files.
 ## Automated checks
 
 - Svelte/TypeScript check: zero errors and warnings.
-- Frontend and transport regression suite: 140 passing tests.
+- Frontend and transport regression suite: 145 passing tests.
 - Game/integration/configuration helper coverage: 39 passing tests; aggregate
   85.65% lines, 96.04% branches and 96.00% functions. Games helpers measure 86.25%
   lines; integration profile helpers measure 87.88%.
-- Vite production UI build: passes, 158 modules.
+- Vite production UI build: passes, 161 modules.
 - Linux and Windows native desktop/service suites: pass. Exact final test counts
   and setup production coverage are recorded below.
 

@@ -52,6 +52,9 @@ fn emit(output: &Mutex<io::Stdout>, response: Value) {
     let _ = output.flush();
 }
 fn main() {
+    if let Some(code) = osg_virtual_controller::inspection::helper_main() {
+        std::process::exit(code);
+    }
     if !cfg!(debug_assertions) {
         eprintln!("The browser gateway service requires a debug build.");
         std::process::exit(2);

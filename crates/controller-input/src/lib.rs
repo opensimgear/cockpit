@@ -6,6 +6,7 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 pub mod registry;
+pub mod stream;
 #[cfg(windows)]
 mod windows;
 use registry::{Registry, SavedSource};
@@ -200,6 +201,21 @@ impl ControllerService {
             }
         }
         Ok(result)
+    }
+    pub fn stream_snapshot(&self, ids: &[String]) -> Result<stream::Snapshot, String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Controller capture has stopped.".into());
+        }
+        self.registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .stream_snapshot(ids)
+    }
+    pub fn stream_page(&self, session: &str, after: u64) -> stream::Page {
+        self.registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .stream_page(session, after)
     }
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Release);

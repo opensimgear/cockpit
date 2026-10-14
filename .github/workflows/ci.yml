@@ -24,6 +24,7 @@ jobs:
       - run: pnpm check
       - run: pnpm transport:test
       - run: pnpm controllers:coverage
+      - run: pnpm mappings:coverage
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage
       - run: pnpm dcs-profile:coverage
@@ -55,6 +56,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Native tests and desktop compile
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Native mapping acceptance without optional drivers
+        run: |
+          cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
+          python3 scripts/mapping-acceptance.py --service .e2e/build/cockpit/debug/osg-gateway-service --output .research/mapping-m3/native-acceptance.json
       - name: Device action coverage above 70 percent
         run: |
           rustup component add llvm-tools-preview
@@ -154,11 +159,19 @@ jobs:
       - name: Linux controller development dependency
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --no-install-recommends libudev-dev
-      - name: Native controller tests and per-module coverage
-        run: python scripts/controller-coverage.py
+      - name: Native controller and virtual-output tests with per-module coverage
+        run: |
+          python scripts/controller-coverage.py
+          python scripts/virtual-coverage.py
+          python scripts/mapping-host-coverage.py
       - name: Windows desktop compilation and regression tests
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Windows native mapping acceptance
+        if: runner.os == 'Windows'
+        run: |
+          cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
+          python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --output .research/mapping-m3/native-acceptance.json
       - name: Upload controller coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -168,6 +181,13 @@ jobs:
             .research/controller-coverage/summary.json
             .research/controller-coverage/*-lines.txt
             .research/controller-coverage/tests.log
+            .research/virtual-coverage/summary.json
+            .research/virtual-coverage/*-lines.txt
+            .research/virtual-coverage/tests.log
+            .research/mapping-host-coverage/summary.json
+            .research/mapping-host-coverage/*-lines.txt
+            .research/mapping-host-coverage/tests.log
+            .research/mapping-m3/native-acceptance.json
 
   mapping:
     name: Portable mapping (${{ matrix.os }})

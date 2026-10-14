@@ -105,7 +105,8 @@ pub struct GatewayManager {
     integration: Arc<crate::integration_runtime::IntegrationRuntime>,
     games: crate::games::GamesRuntime,
     game_admission: RwLock<()>,
-    controllers: osg_controller_input::ControllerService,
+    controllers: Arc<osg_controller_input::ControllerService>,
+    mapping_host: osg_mapping_host::service::Service,
     mapping_documents: osg_mapping::documents::Documents,
 }
 impl Default for GatewayManager {
@@ -119,9 +120,14 @@ impl GatewayManager {
         manager.mapping_documents = osg_mapping::documents::Documents::new(Some(
             crate::dcs_runtime::config_path().with_file_name("mappings"),
         ));
-        manager.controllers = osg_controller_input::ControllerService::new(
+        manager.controllers = Arc::new(osg_controller_input::ControllerService::new(
             Some(crate::dcs_runtime::config_path().with_file_name("controllers.json")),
             true,
+        ));
+        manager.mapping_host = osg_mapping_host::service::Service::new(
+            manager.controllers.clone(),
+            Some(crate::dcs_runtime::config_path().with_file_name("mappings")),
+            Arc::new(osg_virtual_controller::inspection::current),
         );
         manager
     }
@@ -184,6 +190,12 @@ impl GatewayManager {
                 .unwrap_or_else(|| crate::dcs_runtime::config_path().with_file_name("games.json")),
             Arc::new(crate::game_discovery::NativePlatform),
         );
+        let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
+        let mapping_host = osg_mapping_host::service::Service::new(
+            controllers.clone(),
+            None,
+            Arc::new(|| Err("Native virtual inspection is unavailable in this service.".into())),
+        );
         Self {
             provider,
             sessions,
@@ -194,7 +206,8 @@ impl GatewayManager {
             integration,
             games,
             game_admission: RwLock::new(()),
-            controllers: osg_controller_input::ControllerService::new(None, false),
+            controllers,
+            mapping_host,
             mapping_documents: osg_mapping::documents::Documents::new(None),
         }
     }
@@ -297,7 +310,12 @@ impl GatewayManager {
         if command.starts_with("mapping_") {
             // Document responses can use the full profile limit. Keep unrelated
             // gateway inventory out of this separately bounded response.
-            return match self.mapping_documents.request(&request) {
+            let result = if osg_mapping_host::service::Service::handles(&command) {
+                self.mapping_host.request(&request)
+            } else {
+                self.mapping_documents.request(&request)
+            };
+            return match result {
                 Ok(state) => json!({"ok":true,"state":{"mappings":state}}),
                 Err(error) => {
                     json!({"ok":false,"error":error.chars().take(256).collect::<String>()})
@@ -481,6 +499,7 @@ impl GatewayManager {
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
         self.games.shutdown();
+        self.mapping_host.shutdown();
         self.controllers.shutdown();
         self.mapping_documents.clear();
         self.integration.stop(true);
