@@ -1,18 +1,11 @@
 //! Private subprocess entry point. The application qualification gate is checked
 //! before constructing a live session; ordinary startup never loads the SDK.
+use crate::session::Factory;
 #[cfg(any(windows, target_os = "linux", test))]
 use crate::vjoy::Driver;
-use crate::{
-    session::{Channel, Factory},
-    supervisor::Worker,
-};
+use std::io::{self, Write};
 #[cfg(any(windows, target_os = "linux", test))]
 use std::io::{BufRead, BufReader};
-use std::{
-    io::{self, Write},
-    sync::Arc,
-    time::Duration,
-};
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const ARGUMENT: &str = "--osg-vjoy-feeder";
 #[cfg(target_os = "linux")]
@@ -26,10 +19,17 @@ pub const BACKEND: &str = if cfg!(target_os = "linux") {
 } else {
     "vjoy"
 };
+#[cfg(not(target_os = "macos"))]
+use {
+    crate::{session::Channel, supervisor::Worker},
+    std::{sync::Arc, time::Duration},
+};
 pub fn factory() -> Factory {
-    if cfg!(target_os = "macos") {
-        return crate::apple_helper::factory();
+    #[cfg(target_os = "macos")]
+    {
+        crate::apple_helper::factory()
     }
+    #[cfg(not(target_os = "macos"))]
     Arc::new(|| {
         let mut worker = Worker::spawn(
             &std::env::current_exe().map_err(|e| e.to_string())?,
@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn entry_keeps_ordinary_startup_inert_and_reports_worker_failures() {
         assert!(helper_main().is_none());
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         assert_eq!(run(), 1);
         // A test harness is not a feeder; reject it before any reports.
         assert!(factory()().is_err());

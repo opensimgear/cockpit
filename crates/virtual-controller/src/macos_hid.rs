@@ -14,8 +14,6 @@ type Ref = *const c_void;
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(value: Ref);
-    #[cfg(test)]
-    fn CFRetain(value: Ref) -> Ref;
     fn CFStringCreateWithCString(allocator: Ref, value: *const i8, encoding: u32) -> Ref;
     fn CFDataCreate(allocator: Ref, bytes: *const u8, length: isize) -> Ref;
     fn CFNumberCreate(allocator: Ref, kind: isize, value: *const c_void) -> Ref;
@@ -219,6 +217,9 @@ impl Backend for Native {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern "C" {
+        fn CFRetain(value: Ref) -> Ref;
+    }
     use crate::uinput::tests::binding;
     unsafe extern "C" fn create(_: Ref, properties: Ref) -> Ref {
         CFRetain(properties)
