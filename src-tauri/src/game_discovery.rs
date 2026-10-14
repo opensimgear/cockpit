@@ -11,6 +11,9 @@ use std::{
 };
 
 pub(crate) trait Platform: Send + Sync {
+    fn integration_setup_supported(&self) -> bool {
+        false
+    }
     fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<Value>;
     fn validate(&self, game_id: &str, executable: &str) -> Result<(), String>;
     fn launch(&self, game: &Value) -> Result<ProcessIdentity, String>;
@@ -472,6 +475,9 @@ fn wait_for_process(
     }
 }
 impl Platform for NativePlatform {
+    fn integration_setup_supported(&self) -> bool {
+        cfg!(windows)
+    }
     fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<Value> {
         discover(&native::roots(), manual)
     }

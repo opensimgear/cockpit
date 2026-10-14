@@ -5,17 +5,17 @@
   import type { DcsTarget } from './dcs-profile';
   import type { IntegrationConfig } from './integration-profile';
   import type { RuntimeConfig } from './runtime-config';
-  import { cloneGameProfile, defaultGameProfile, gameDeviceKey, gameProfileEqual, gameProfileError, gameSessionLabel, newGameProfile, profileChangesBindings, supportedGames, visibleGames, type Game, type GameId, type GameProfile, type GameRequest, type GamesState } from './games';
+  import { cloneGameProfile, defaultGameProfile, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationSetupBlockedReason, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationVerificationLabel, gameIntegrationUserFolder, gameProfileEqual, gameProfileError, gameSessionLabel, newGameProfile, profileChangesBindings, supportedGames, visibleGames, type Game, type GameId, type GameProfile, type GameRequest, type GamesState } from './games';
 
-  let { status, busy, request, targets, integration = null, readConfig, openIntegrations }: {
+  let { status, busy, request, targets, integration = null, integrationActive = false, readConfig, openIntegrations }: {
     status?: GamesState; busy: boolean; request: (request: GameRequest) => Promise<GamesState | false>;
-    targets: DcsTarget[]; integration?: IntegrationConfig | null;
+    targets: DcsTarget[]; integration?: IntegrationConfig | null; integrationActive?: boolean;
     readConfig: (gatewayId: string, moduleId: string) => Promise<RuntimeConfig | null>; openIntegrations: () => void;
   } = $props();
   let response = $state<GamesState>();
   let showAll = $state(false), selectedGameId = $state<GameId | ''>(''), draft = $state<GameProfile | null>(null);
   let pending = $state(false), notice = $state(''), executablePath = $state(''), addTargetKey = $state(''), acceptBindings = $state(false);
-  let deleting = $state(false);
+  let deleting = $state(false), integrationFolder = $state(''), integrationFolderEdited = $state(false);
   let launchDialog: HTMLDialogElement | undefined;
   let recoveryDialog: HTMLDialogElement | undefined;
   let reviewProfile = $state<GameProfile | null>(null);
@@ -30,7 +30,12 @@
   const error = $derived(draft ? gameProfileError(draft) : '');
   const changesBindings = $derived(!!draft && profileChangesBindings(draft));
   const occupied = $derived(!['idle', 'failed'].includes(gameState.session.phase));
-  const locked = $derived(busy || pending || occupied);
+  const setupRunning = $derived(gameState.catalogue.some(game => game.integrationSetup?.state === 'setting-up'));
+  const locked = $derived(busy || pending || occupied || setupRunning);
+  const setupBlocked = $derived(selected ? gameIntegrationSetupBlockedReason(selected, gameState.session, integrationActive) : '');
+  const folderError = $derived(selected ? gameIntegrationTargetError(selected, integrationFolder) : '');
+  const setupDisabled = $derived(locked || !!setupBlocked || !!folderError);
+  $effect(() => { if (selected && !integrationFolderEdited) integrationFolder = gameIntegrationUserFolder(selected); });
   const compatibleIntegration = $derived(!!selected && integration?.document.provider === selected.provider);
   const availableTargets = $derived(targets.filter(target => !draft?.devices.some(device => gameDeviceKey(device) === gameDeviceKey({ gatewayId: target.gatewayId, moduleId: target.module.id }))));
   const canActivate = $derived(!!selected?.installed && !!draft && !!saved && !dirty && !error && !locked && (!changesBindings || acceptBindings));
@@ -50,8 +55,13 @@
   }
   function chooseProfile(profile: GameProfile) { draft = cloneGameProfile(profile); acceptBindings = false; deleting = false; notice = ''; }
   function chooseGame(game: Game) {
-    selectedGameId = game.id; executablePath = game.executable ?? ''; addTargetKey = '';
+    selectedGameId = game.id; integrationFolderEdited = false; integrationFolder = gameIntegrationUserFolder(game); executablePath = game.executable ?? ''; addTargetKey = '';
     chooseProfile(defaultGameProfile(gameState, game.id) ?? newGameProfile(game.id, gameState.profiles));
+  }
+  async function integrationCommand(command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover') {
+    if (!selected) return;
+    if (command === 'game_integration_setup' && setupDisabled) return;
+    await send(gameIntegrationSetupRequest(selected, command, integrationFolder));
   }
   function createProfile() { if (selected) chooseProfile(newGameProfile(selected.id, gameState.profiles)); }
   async function saveProfile(): Promise<boolean> {
@@ -190,6 +200,44 @@
           {#if selected.executable}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still prepare and activate profiles.{/if}</p>{/if}
         </section>
+        <section class="panel setup-panel" aria-label="Game integration setup">
+          <div class="sidebar-title"><Icon name="link" size={17} /><h3>Integration setup</h3></div>
+          <div class={['setup-readiness', { ready: gameIntegrationReady(selected), attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={gameIntegrationReady(selected) ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={15} /><strong>{gameIntegrationLabel(selected)}</strong></div>
+          <p class="field-help">{selected.id === 'assetto-corsa-rally' && selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry does not verify the native game connection.' : selected.integrationSetup?.message ?? 'Check whether this game is ready to send data to your hardware.'}</p>
+          {#if selected.id === 'dcs'}
+            <p class="setup-version">DCS-BIOS <strong>{selected.integrationSetup?.version ?? '0.11.7'}</strong></p>
+            {#if selected.integrationSetup?.candidates?.length}
+              <label class="editor-label">Detected Saved Games folders<select aria-label="Detected DCS Saved Games folders" value={selected.integrationSetup.candidates.includes(integrationFolder) ? integrationFolder : ''} disabled={locked || integrationActive} onchange={event => { integrationFolder = event.currentTarget.value; integrationFolderEdited = true; }}><option value="">Choose a folder or enter a path below</option>{#each selected.integrationSetup.candidates as folder (folder)}<option value={folder}>{folder}</option>{/each}</select></label>
+            {/if}
+            <label class="editor-label">DCS Saved Games folder<input class="text-input" aria-label="DCS Saved Games folder" bind:value={integrationFolder} disabled={locked || integrationActive} oninput={() => { integrationFolderEdited = true; }} placeholder="C:\Users\…\Saved Games\DCS" /></label>
+            <p class="field-help">Set up installs DCS-BIOS and connects its export script here. Existing scripts are backed up.</p>
+            {#if folderError && (integrationFolder || (selected.integrationSetup?.candidates?.length ?? 0) > 1)}<p class="setup-warning">{folderError}</p>{/if}
+          {:else}
+            <p class="setup-version">{selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry' : 'Native shared memory'}{#if selected.integrationSetup?.version && selected.integrationSetup.connection?.source !== 'synthetic'} · Build <strong>{selected.integrationSetup.version}</strong>{/if}</p>
+            <p class="field-help">Set up configures Cockpit to read the running game's telemetry. Cockpit connects automatically when you launch a game profile.</p>
+            <div class={['native-verification', { verified: gameIntegrationNativeVerified(selected) }]}><Icon name={gameIntegrationNativeVerified(selected) ? 'check' : 'info'} size={13} /><span>{gameIntegrationVerificationLabel(selected)}</span></div>
+            {#if !gameIntegrationNativeVerified(selected)}<p class="field-help">Start ACR and enter a driving session, then recheck to verify compatible native telemetry.</p>{/if}
+            {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.probeChannels && Object.keys(selected.integrationSetup.probeChannels).length}
+              <details class="telemetry-channel-details"><summary>Last native check</summary><p>Channel availability from the last compatibility check. Live values appear separately when telemetry is receiving.</p><dl>{#each Object.entries(selected.integrationSetup.probeChannels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}</dd></div>{/each}</dl></details>
+            {/if}
+            {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.channels && Object.keys(selected.integrationSetup.channels).length}
+              <details class="telemetry-channel-details"><summary>Telemetry channels</summary><dl>{#each Object.entries(selected.integrationSetup.channels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}{#if typeof value.value === 'number'} · {Number.isInteger(value.value) ? value.value : value.value.toFixed(1)}{:else if typeof value.value === 'string'} · {value.value}{/if}</dd></div>{/each}</dl></details>
+            {/if}
+            {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
+          {/if}
+          {#if selected.integrationSetup?.state === 'setting-up'}
+            <div class="setup-progress" role="status" aria-live="polite"><Icon name="refresh" size={14} /><span>{selected.integrationSetup.progress ?? 'Preparing integration…'}</span></div>
+            <button class="secondary-button setup-main-action" disabled={busy || pending} onclick={() => integrationCommand('game_integration_cancel')}>Cancel setup</button>
+          {:else if selected.integrationSetup?.recoveryNeeded}
+            <p class="setup-warning">Recover the interrupted setup before trying again.</p>
+            <button class="secondary-button setup-main-action" disabled={locked || integrationActive} onclick={() => integrationCommand('game_integration_recover')}><Icon name="refresh" size={14} /> Recover integration setup</button>
+          {:else}
+            <button class="primary-button setup-main-action" disabled={setupDisabled} onclick={() => integrationCommand('game_integration_setup')}><Icon name={selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'refresh' : selected.id === 'dcs' ? 'download' : 'link'} size={14} /> {selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'Repair integration' : selected.id === 'dcs' ? 'Set up integration' : 'Set up telemetry'}</button>
+            {#if setupBlocked}<p class="field-help">{setupBlocked}</p>{/if}
+          {/if}
+          <button class="text-button setup-recheck" disabled={busy || pending || setupRunning || (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={12} /> Recheck readiness</button>
+          <div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{gameIntegrationLiveLabel(selected)}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>
+        </section>
         <section class="session-explainer"><Icon name="zap" size={20} /><h3>One click, your setup</h3><p>Launching activates the selected profile, starts its integration and opens the game.</p><p>When the game exits, Cockpit restores the previous peripheral and integration setup.</p><p>Keep Cockpit open while the game profile is active.</p></section>
       </aside>
     </div>
@@ -206,7 +254,7 @@
               {:else}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="m0 107 65-67 48 45 64-65 90 72 39-33 34 35" stroke="currentColor" opacity=".2"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="36" opacity=".08"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="1.2" stroke-dasharray="8 7" opacity=".3"/><path d="m139 92 13-19h38l14 19 4 28h-74z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><path d="m151 91 7-12h26l8 12zM139 105h12M192 105h11M150 118h43" stroke="currentColor" stroke-width="1.5"/><path d="M140 122v8h10v-8M192 122v8h10v-8" stroke="currentColor" stroke-width="3"/></svg>{/if}
               <div class="game-wordmark">{game.id === 'dcs' ? 'DCS' : 'ACR'}<span>{game.id === 'dcs' ? 'WORLD' : 'RALLY'}</span></div>
             </div>
-            <div class="tile-copy"><div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div><p>{game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p><div class="tile-footer"><span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span><span>{profile?.name ?? 'Set up a profile'}</span></div></div>
+            <div class="tile-copy"><div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div><p>{game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p><div class="tile-footer"><span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span><span>{profile?.name ?? 'Set up a profile'}</span></div><div class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></div>{#if game.id === 'assetto-corsa-rally' && game.installed}<div class={['tile-verification', { verified: gameIntegrationNativeVerified(game) }]}>{gameIntegrationVerificationLabel(game)}</div>{/if}{#if game.installed}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{gameIntegrationLiveLabel(game)}</div>{/if}</div>
           </button>
           {#if game.installed}<button class="primary-button tile-launch" disabled={locked || !game.launchSupported} aria-label={`Launch ${game.name}`} onclick={() => launchTile(game)}><Icon name="play" size={14} /> Launch</button>{/if}
         </article>
@@ -285,6 +333,15 @@
   .tile-footer > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tile-status { display: flex; align-items: center; gap: 6px; color: var(--accent); }
   .tile-status span, .installation-status span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .tile-integration, .tile-live { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); margin-top: 11px; }
+  .tile-integration.ready { color: var(--accent); }
+  .tile-integration.attention { color: #c5a26e; }
+  .tile-live { margin-top: 8px; }
+  .tile-verification { color: var(--muted); font-size: 9px; margin-top: 8px; }
+  .tile-verification.verified { color: var(--accent); }
+  .live-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: var(--muted); }
+  .live-dot.receiving { background: var(--accent); }
+  .live-dot.stale { background: #c5a26e; }
   .tile-launch { position: absolute; right: 18px; top: 169px; opacity: 0; transform: translateY(3px); transition: opacity .15s, transform .15s; pointer-events: none; }
   .game-tile:hover .tile-launch, .game-tile:focus-within .tile-launch { opacity: 1; transform: none; pointer-events: auto; }
   .unavailable .game-art { opacity: .42; filter: grayscale(1); }
@@ -360,6 +417,30 @@
   .installation-actions button, .automatic-discovery { font-size: 9px; }
   .automatic-discovery { padding-left: 0; margin-top: 15px; }
   .platform-note { color: #c5a26e; font-size: 10px; line-height: 1.8; margin-top: 17px; }
+  .setup-panel { margin-top: 20px; padding: 21px; }
+  .setup-readiness { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; margin-top: 19px; line-height: 1.5; }
+  .setup-readiness.ready { color: var(--accent); }
+  .setup-readiness.attention, .setup-warning { color: #c5a26e; }
+  .setup-version { font-size: 9px; color: var(--muted); margin-top: 16px; }
+  .setup-version strong { color: var(--soft); }
+  .setup-panel input, .setup-panel select { font-family: ui-monospace, monospace; font-size: 9px; }
+  .native-verification { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #c5a26e; margin-top: 15px; }
+  .native-verification.verified { color: var(--accent); }
+  .telemetry-channel-details { font-size: 9px; color: var(--muted); margin-top: 15px; }
+  .telemetry-channel-details p { font-size: 9px; line-height: 1.8; margin-top: 10px; }
+  .telemetry-channel-details summary { cursor: pointer; color: var(--soft); }
+  .telemetry-channel-details dl { margin-top: 10px; }
+  .telemetry-channel-details dl > div { display: flex; justify-content: space-between; gap: 10px; line-height: 1.8; padding: 4px 0; }
+  .telemetry-channel-details dt { text-transform: capitalize; }
+  .telemetry-channel-details dd { text-align: right; margin: 0; }
+  .setup-main-action { width: 100%; margin-top: 17px; font-size: 10px; }
+  .setup-warning { font-size: 10px; line-height: 1.8; margin-top: 12px; }
+  .setup-recheck { padding-left: 0; font-size: 9px; margin-top: 13px; }
+  .setup-progress { display: flex; align-items: center; gap: 8px; color: var(--accent); font-size: 10px; line-height: 1.8; margin-top: 15px; }
+  .setup-live { border-top: 1px solid var(--line); padding-top: 17px; margin-top: 15px; display: flex; align-items: start; gap: 8px; }
+  .setup-live .live-dot { margin-top: 4px; }
+  .setup-live strong { font-size: 10px; font-weight: 500; color: var(--soft); }
+  .setup-live p { font-size: 9px; color: var(--muted); line-height: 1.8; margin-top: 7px; }
   .session-explainer { padding: 24px 4px; color: var(--muted); }
   .session-explainer :global(svg) { color: var(--accent); }
   .session-explainer h3 { color: var(--soft); margin-top: 12px; }
@@ -376,7 +457,7 @@
   .session-warning { background: #b18b550a; border-color: #b18b5560; }
   .session-warning .session-icon { color: #c5a26e; }
   @media (hover: none) { .tile-launch { opacity: 1; transform: none; pointer-events: auto; } }
-  @media (max-width: 1050px) { .games-detail-layout { grid-template-columns: minmax(0, 1fr); } .game-sidebar { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; } .session-explainer { padding: 20px 4px; } }
+  @media (max-width: 1050px) { .games-detail-layout { grid-template-columns: minmax(0, 1fr); } .game-sidebar { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; } .setup-panel { margin-top: 0; } .session-explainer { padding: 20px 4px; } }
   @media (max-width: 600px) { .games-toolbar { align-items: start; } .toolbar-controls { align-items: end; flex-direction: column-reverse; gap: 12px; } .game-grid { grid-template-columns: 1fr; } .game-details-heading { flex-wrap: wrap; } .game-details-heading h2 { font-size: 19px; } .game-detail-mark { width: 50px; height: 50px; } .detail-launch { margin-left: 0; width: 100%; } .game-sidebar { grid-template-columns: 1fr; } .profile-picker, .peripheral-controls { flex-wrap: wrap; } .profile-picker label, .peripheral-controls label { flex-basis: 100%; } .editor-heading, .editor-body { padding: 16px; } .editor-footer { flex-wrap: wrap; } .editor-footer > button:first-child { flex-basis: 100%; justify-content: start; } .session-banner { flex-wrap: wrap; } .session-banner > button { margin-left: 33px; } }
   @media (prefers-reduced-motion: reduce) { .game-tile, .tile-launch, .switch-track, .switch-track::after { transition: none; } }
 </style>

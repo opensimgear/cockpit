@@ -410,10 +410,10 @@
         {:else if view === 'mappings'}
           <MappingsPanel />
         {:else if view === 'games'}
-          <GamesPanel status={games} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => { view = 'integrations'; }} />
+          <GamesPanel status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => { view = 'integrations'; }} />
         {:else if view === 'integrations'}
           <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO YOUR GAMES</div><h1>Integrations</h1><p>Reusable profiles, device assignments and telemetry outputs.</p></div></div>
-          <section class="panel dcs-profile-panel"><IntegrationsPanel bind:draft={integrationDraft} status={integration} targets={dcsTargets} busy={integrationBusy} request={sendIntegration} refresh={refreshIntegrationTarget} /></section>
+          <section class="panel dcs-profile-panel"><IntegrationsPanel setups={games?.catalogue} bind:draft={integrationDraft} status={integration} targets={dcsTargets} busy={integrationBusy} request={sendIntegration} refresh={refreshIntegrationTarget} /></section>
         {:else if view === 'dcs-bios'}
           <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO DCS</div><h1>DCS-BIOS</h1><p>One saved aircraft profile across your connected devices.</p></div></div>
           <section class="panel dcs-profile-panel"><DcsBiosPanel bind:draft={dcsDraft} bind:selectedTarget={dcsSelectedTarget} status={dcsBios} targets={dcsTargets} busy={dcsBusy} request={sendDcs} requestGateway={sendGateway} disableController={disableDcsController} canDisable={canDisableDcs} /></section>

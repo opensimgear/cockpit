@@ -8,6 +8,11 @@ is independent of later edits in Integrations. On exit or deactivation, the game
 coordinator restores the previous peripheral and integration setup; interrupted
 sessions use explicit recovery. See [Games and hardware profiles](games.md).
 
+Games provides DCS-BIOS installation and readiness checks on Windows; see
+[Integration setup and readiness](games.md#integration-setup-and-readiness). Setup
+prepares local connection defaults without changing portable bindings or starting
+a runtime. Existing drafts opt in to copying the prepared settings.
+
 ## Portable and local settings
 
 A portable JSON document contains `schemaVersion:1`, `id`, `name`, `provider`, `context`, logical `roles`, and `inputs`/`outputs`. Bindings reference a role, named simulator control/channel and an advertised physical input or endpoint/action. DCS output ordinals retain their original catalogue indexes. Local `connection` settings and explicit role assignments to `(gatewayId,moduleId)` stay outside the exported document. Identical module identities on separate gateways remain distinct targets.
@@ -33,6 +38,11 @@ A device may advertise a valid revision with zero buttons, axes and hats. It joi
 Formats include boolean/on-off enum LEDs, text/numeric displays with bounded encoding/cell/byte fit, numeric thresholds and up to eight ordered RGB bands. A Rally rev-light preset uses the derived `rev_ratio`, changing green/yellow/red at configured thresholds; a boolean or status LED uses a configured threshold. Bind several separate advertised endpoints for several lights. These are Cockpit rules over numeric channels, not an assumed native game rev-light command. Missing maximum RPM leaves `rev_ratio` unknown and drives fallback; an explicit `rpm` binding can use a chosen absolute threshold.
 
 ## Assetto Corsa Rally starter
+
+Games can prepare the native connection and verify its exact executable against
+a live telemetry session. Saving a native profile may defer the process ID until
+Games launches it; direct manual Start still needs a running process. Setup never
+installs a plugin or changes game files.
 
 The native source is **Windows shared memory**, selected with the Rally process ID. It opens existing `Local\acpmf_physics`, `Local\acpmf_graphics` and `Local\acpmf_static` mappings read-only. The researched executable basename is `acr.exe`; the implementation verifies the selected process identity/creation epoch and checks its lifetime. Shared mapping names are reused by other Assetto games and alone do not establish the producer. Run only the selected game when using these mappings. The source closes old mapping handles on exit/reset and uses bounded stable-copy retries.
 

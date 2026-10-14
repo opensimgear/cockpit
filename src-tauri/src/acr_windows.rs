@@ -241,6 +241,7 @@ mod platform {
         process: Option<Process>,
         pages: Option<Pages>,
         last_packet: Option<u32>,
+        producer_checked_at: Option<std::time::Instant>,
     }
     impl WindowsSource {
         pub fn new(process_id: u32) -> Result<Self, String> {
@@ -250,6 +251,7 @@ mod platform {
             if process_id == 0 {
                 return Err("Select a nonzero ACR process ID.".into());
             }
+            crate::acr_setup::ensure_single_producer(process_id)?;
             let process = Process::open(process_id)?;
             selected_image_matches(&process.image, expected_image)?;
             Ok(Self {
@@ -258,6 +260,7 @@ mod platform {
                 process: Some(process),
                 pages: None,
                 last_packet: None,
+                producer_checked_at: Some(std::time::Instant::now()),
             })
         }
         pub fn process_image(&self) -> Option<&str> {
@@ -293,6 +296,16 @@ mod platform {
     unsafe impl Send for WindowsSource {}
     impl Source for WindowsSource {
         fn poll(&mut self) -> Result<Option<RawSample>, String> {
+            if self
+                .producer_checked_at
+                .is_none_or(|last| last.elapsed() >= std::time::Duration::from_millis(250))
+            {
+                if let Err(error) = crate::acr_setup::ensure_single_producer(self.pid) {
+                    self.close();
+                    return Err(error);
+                }
+                self.producer_checked_at = Some(std::time::Instant::now());
+            }
             match self.read() {
                 Ok(sample) => {
                     let packet = parse(&sample)?.packet_id;
@@ -314,6 +327,7 @@ mod platform {
             self.pages = None;
             self.process = None;
             self.last_packet = None;
+            self.producer_checked_at = None;
         }
     }
     impl Drop for WindowsSource {

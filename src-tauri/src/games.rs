@@ -341,6 +341,7 @@ struct Inner {
     platform: Arc<dyn Platform>,
     path: PathBuf,
     journal_path: PathBuf,
+    setup: crate::game_integration_setup::GameIntegrationSetup,
     settings: Mutex<Settings>,
     state: Mutex<Value>,
     busy: AtomicBool,
@@ -378,6 +379,10 @@ impl GamesRuntime {
         let catalogue = platform.catalogue(&saved.manual);
         Self {
             inner: Arc::new(Inner {
+                setup: crate::game_integration_setup::GameIntegrationSetup::new(
+                    path.with_extension("integration-setup.json"),
+                    platform.integration_setup_supported(),
+                ),
                 panel,
                 platform,
                 path,
@@ -398,16 +403,25 @@ impl GamesRuntime {
         }
     }
     pub(crate) fn status(&self) -> Value {
+        self.status_with_telemetry(&Value::Null, &Value::Null)
+    }
+    pub(crate) fn status_with_telemetry(&self, integration: &Value, dcs: &Value) -> Value {
         let s = self
             .inner
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        json!({"catalogue":s.catalogue,"profiles":s.saved.profiles.values().collect::<Vec<_>>(),"defaultProfiles":s.saved.defaults,
+        let mut catalogue = s.catalogue.clone();
+        self.inner
+            .setup
+            .auto_check(&catalogue, self.inner.platform.clone(), integration);
+        self.inner.setup.decorate(&mut catalogue, integration, dcs);
+        json!({"catalogue":catalogue,"profiles":s.saved.profiles.values().collect::<Vec<_>>(),"defaultProfiles":s.saved.defaults,
             "manualInstallations":s.saved.manual,"session":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":s.error})
     }
     pub(crate) fn active(&self) -> bool {
         self.inner.busy.load(Ordering::Acquire)
+            || self.inner.setup.busy()
             || self
                 .inner
                 .settings
@@ -421,6 +435,19 @@ impl GamesRuntime {
             return Ok(());
         }
         let command = request["command"].as_str().unwrap_or("");
+        // An independent telemetry verification must not delay emergency Stop.
+        if matches!(command, "integration_stop" | "dcs_stop")
+            && !self.inner.busy.load(Ordering::Acquire)
+            && self
+                .inner
+                .settings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .journal
+                .is_none()
+        {
+            return Ok(());
+        }
         if command.starts_with("game_")
             || matches!(
                 command,
@@ -465,6 +492,40 @@ impl GamesRuntime {
         let command = request["command"].as_str().ok_or("Missing game command.")?;
         if command == "game_get_state" {
             return Ok(());
+        }
+        if command.starts_with("game_integration_") {
+            let game_id = game_id(&request["gameId"])?;
+            let settings = self
+                .inner
+                .settings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            let game = settings
+                .catalogue
+                .iter()
+                .find(|g| g["id"] == game_id)
+                .cloned()
+                .ok_or("Choose a supported game.")?;
+            let session_active =
+                self.inner.busy.load(Ordering::Acquire) || settings.journal.is_some();
+            drop(settings);
+            if session_active
+                && !matches!(
+                    command,
+                    "game_integration_check" | "game_integration_cancel"
+                )
+            {
+                return Err(
+                    "Deactivate or recover the current game session before integration setup."
+                        .into(),
+                );
+            }
+            return self.inner.setup.request(
+                request,
+                &game,
+                self.inner.platform.clone(),
+                &self.inner.panel,
+            );
         }
         if command == "game_deactivate" {
             if self.inner.busy.load(Ordering::Acquire) {
@@ -536,6 +597,7 @@ impl GamesRuntime {
             if command == "game_launch" && installation["launchSupported"] != true {
                 return Err("Game launching is unavailable on this platform.".into());
             }
+            self.inner.setup.preflight(&profile, &installation)?;
             drop(s);
             self.inner.cancel.store(false, Ordering::Release);
             self.inner.busy.store(true, Ordering::Release);
@@ -563,6 +625,7 @@ impl GamesRuntime {
         match command {
             "game_scan" => {
                 s.catalogue = self.inner.platform.catalogue(&s.saved.manual);
+                self.inner.setup.refresh(&s.catalogue);
                 return Ok(());
             }
             "game_installation" => {
@@ -619,6 +682,7 @@ impl GamesRuntime {
         }
         persist(&self.inner.path, &draft.value())?;
         s.catalogue = self.inner.platform.catalogue(&draft.manual);
+        self.inner.setup.refresh(&s.catalogue);
         s.saved = draft;
         s.error = None;
         Ok(())
@@ -659,6 +723,7 @@ impl GamesRuntime {
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
+        self.inner.setup.shutdown();
         self.inner.cancel.store(true, Ordering::Release);
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
@@ -1041,6 +1106,7 @@ impl Inner {
                     .ok_or("No executable was found.")?,
             )?;
             self.cancelled()?;
+            self.setup.preflight(&profile, &installation)?;
             let snapshot = self.snapshot(&profile, accepted)?;
             self.checkpoint(&snapshot)?;
             journal = Some(snapshot);

@@ -298,7 +298,10 @@ impl GatewayManager {
                 Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
                 Err(error) => self.error(&error, None),
             };
-            response["state"]["games"] = self.games.status();
+            response["state"]["games"] = self.games.status_with_telemetry(
+                &response["state"]["integration"],
+                &response["state"]["dcsBios"],
+            );
             return response;
         }
         if let Err(error) = self.games.guard_request(&request) {

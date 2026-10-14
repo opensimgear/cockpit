@@ -1290,3 +1290,19 @@ fn late_dcs_event_page_cannot_forward_commands_after_output_lease_expiry() {
     drop(feed);
     assert_eq!(f.mock.plain_invocations(), 0);
 }
+#[test]
+fn deferred_native_acr_profile_can_save_but_manual_start_requires_a_live_process_before_claims() {
+    let f = Fixture::new();
+    let mut c = config();
+    c["connection"] = json!({"source":"shared-memory","freshnessMs":1500});
+    f.save(c);
+    f.mock.fake.lock().unwrap().calls.clear();
+    assert!(f
+        .request("integration_start", json!({}))
+        .unwrap_err()
+        .contains("Launch this integration from Games"));
+    let fake = f.mock.fake.lock().unwrap();
+    assert!(fake.calls.is_empty());
+    assert!(fake.devices.values().all(|d| d.leases.is_empty()));
+    assert_eq!(f.runtime.status()["running"], false);
+}
