@@ -105,6 +105,7 @@ pub struct GatewayManager {
     integration: Arc<crate::integration_runtime::IntegrationRuntime>,
     games: crate::games::GamesRuntime,
     game_admission: RwLock<()>,
+    controllers: osg_controller_input::ControllerService,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -113,7 +114,12 @@ impl Default for GatewayManager {
 }
 impl GatewayManager {
     pub fn new() -> Self {
-        Self::with_provider(Arc::new(NativeProvider))
+        let mut manager = Self::with_provider(Arc::new(NativeProvider));
+        manager.controllers = osg_controller_input::ControllerService::new(
+            Some(crate::dcs_runtime::config_path().with_file_name("controllers.json")),
+            true,
+        );
+        manager
     }
     fn with_provider(provider: Arc<dyn Provider>) -> Self {
         let sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>> =
@@ -184,6 +190,7 @@ impl GatewayManager {
             integration,
             games,
             game_admission: RwLock::new(()),
+            controllers: osg_controller_input::ControllerService::new(None, false),
         }
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
@@ -278,6 +285,17 @@ impl GatewayManager {
         }
         if let Err(error) = self.games.guard_request(&request) {
             return self.error(&error, None);
+        }
+        if command.starts_with("controller_") {
+            return match self.controllers.request(&request) {
+                Ok(state) => {
+                    let mut response =
+                        self.decorate(json!({"ok":true,"state":empty_state()}), None);
+                    response["state"]["controllers"] = state;
+                    response
+                }
+                Err(error) => self.error(&error, None),
+            };
         }
         let _integration_guard =
             if command.starts_with("integration_") || command.starts_with("dcs_") {
@@ -445,6 +463,7 @@ impl GatewayManager {
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
         self.games.shutdown();
+        self.controllers.shutdown();
         self.integration.stop(true);
         self.dcs.shutdown();
         let sessions =
@@ -568,6 +587,34 @@ mod tests {
             request[key] = value.clone();
         }
         manager.request(request)
+    }
+    #[test]
+    fn controller_status_is_independent_of_gateway_inventory_and_rejects_invalid_edits() {
+        let (manager, provider) = setup();
+        let response = request(&manager, "controller_list", None, json!({}));
+        assert_eq!(response["ok"], true);
+        assert_eq!(
+            response["state"]["controllers"]["backendStatus"],
+            "unavailable"
+        );
+        assert_eq!(response["state"]["controllers"]["total"], 0);
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        let bad = request(
+            &manager,
+            "controller_inspect",
+            None,
+            json!({"sourceId":"missing"}),
+        );
+        assert_eq!(bad["ok"], false);
+        assert!(bad["error"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown controller"));
+        manager.shutdown();
+        assert_eq!(
+            request(&manager, "controller_list", None, json!({}))["ok"],
+            false
+        );
     }
     #[test]
     fn discovery_is_complete_deduplicated_and_never_opens_or_disconnects() {

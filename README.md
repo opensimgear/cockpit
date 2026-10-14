@@ -26,6 +26,12 @@ The Pico USB adapter discovers both legacy protocol-1 images and the current pro
 
 STM32 discovery verifies manufacturer/product metadata, a 24-hex UID and bounded CDC protocol-3 automatic-lifecycle snapshots. Explicit report IDs and descriptor positions are validated independently. Capacity and admission failures remain visible. Configuration uses the production Cyphal/CAN contract (`canProtocol=3`) with identity, boot, writer, request and epoch validation. After Apply, readback follows the device's renewed lease with bounded read retries; a device reboot stops reconciliation, and writes are never replayed. CDC-v2 gateways remain readable with their older manual registration/layout Apply controls; those adapters do not claim automatic Enable/Disable/Remove support. Local gateways receive the same handshake checks as USB serial gateways; on macOS/Linux they advertise in the current user's private `/tmp/opensimgear-<user-id>/gateways/` directory. Local streams do not create OS USB/HID controllers.
 
+## Host controller discovery (experimental)
+
+On Windows, Devices and Topology also show joystick, gamepad and multi-axis HID collections, including published OpenSimGear HID inputs. Background Raw Input capture provides paged live buttons, axes, hats and capability diagnostics independently of gateway setup sessions. Names and roles are local metadata. Serial/collection evidence can follow a controller across ports; ambiguous devices require explicit reassignment. Unplugging clears values, while stationary controls retain their last valid report. vJoy is excluded from physical input discovery.
+
+This discovery slice does not activate virtual outputs or hiding. Linux/macOS capture remains unavailable until its adapter and qualification are delivered. Device/game qualification gaps remain open; see the [controller guide](docs/host-controllers.md) and [M1 verification record](docs/verification/2026-10-14-controller-discovery-m1.md).
+
 ## Controller workflow
 
 The automatic controller workflow is recorded in the [USB HID architecture](https://github.com/opensimgear/opensimgear.github.io/blob/main/src/content/docs/gear/architecture/usb-hid.md) and [Cockpit #5](https://github.com/opensimgear/cockpit/issues/5). Enabled devices have dynamic collections. Offline ghosts retain them temporarily; Disable or Remove deletes them. A replacement identity appends independently and keeps its own module settings/calibration. This implementation does not provide permanent empty collections or transfer another device’s calibration.

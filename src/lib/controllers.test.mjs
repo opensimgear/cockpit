@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { controlLabel, inputLabel, controllerRoles } from './controllers.ts';
+const control = (kind, value = null, usagePage = 1, usage = 48) => ({ capability: { kind, usagePage, usage }, value });
+test('physical inputs show actual state, null hats, and unknown usage diagnostics', () => {
+  assert.equal(inputLabel(control('button')), 'Waiting for report');
+  assert.equal(inputLabel(control('button', { native: 1, normalized: 1 })), 'Pressed');
+  assert.equal(inputLabel(control('button', { native: 0, normalized: 0 })), 'Released');
+  assert.equal(inputLabel(control('hat', { native: 0, normalized: null })), 'Neutral');
+  assert.equal(inputLabel(control('hat', { native: 2, normalized: 1 })), 'NE');
+  assert.equal(inputLabel(control('hat', { native: 99, normalized: 99 })), 'Unknown');
+  assert.equal(inputLabel(control('axis', { native: -1, normalized: -20 })), '-20');
+  assert.equal(inputLabel(control('diagnostic', { native: 7, normalized: null })), 'Raw 7');
+  assert.equal(controlLabel(control('button', null, 9, 4)), 'Button 4');
+  assert.equal(controlLabel(control('hat')), 'Hat');
+  assert.equal(controlLabel(control('axis')), 'X');
+  assert.equal(controlLabel(control('diagnostic', null, 0xff01, 7)), 'Usage ff01:7');
+  assert.equal(controlLabel(control('axis', null, 1, 99)), 'Usage 1:63');
+  assert.ok(controllerRoles.includes('pedals'));
+});

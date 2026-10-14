@@ -212,3 +212,15 @@ test('desktop documentation links open externally; browser links retain browser 
   assert.equal(prevented, 1);
   assert.deepEqual(browser.calls, []);
 });
+
+test('host controller reads bypass a blocked gateway and inventory queue', async () => {
+  const blocked = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'ports') await blocked.promise;
+    return { ok: true, state: { ...state, controllers: { sources: [], total: 0 } } };
+  } });
+  const inventory = api.gatewayRequest({ command: 'ports' });
+  const controllers = await api.gatewayRequest({ command: 'controller_list' });
+  assert.equal(controllers.controllers.total, 0);
+  blocked.resolve(); await inventory;
+});

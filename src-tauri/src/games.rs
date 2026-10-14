@@ -435,6 +435,8 @@ impl GamesRuntime {
                     | "integration_get_state"
                     | "integration_catalogue"
                     | "dcs_status"
+                    | "controller_list"
+                    | "controller_inspect"
                     | "dcs_catalogue"
                     | "integration_override"
                     | "integration_simulate"

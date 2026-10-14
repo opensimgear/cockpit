@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import HostControllers from './lib/HostControllers.svelte';
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';
@@ -488,10 +489,12 @@
                     </button>
                   {:else}<div class="empty-state"><Icon name="search" size={26} /><strong>{devices.length ? 'No matching devices' : 'No devices yet'}</strong><p>{devices.length ? 'Try another name or show all devices.' : 'Plug in your gateway to discover devices automatically.'}</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; }}>Clear filters</button></div>{/each}
                 </div>
+          <HostControllers />
         {:else if view === 'topology'}
           <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Topology</h1><p>All gateways connect to your computer, each with its own device chain.</p></div></div>
           <section class="panel rig-map" aria-label="Computer and gateways">
             <div class="map-host"><Icon name="monitor" size={28} /><strong>Your computer</strong><small>HID host · {connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</small></div>
+            <HostControllers topology />
             {#if entries.length}
               <ul class="gateway-branches" aria-label="Gateways connected to this computer">
                 {#each entries as entry (entry.id)}

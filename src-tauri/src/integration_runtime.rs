@@ -65,7 +65,7 @@ fn compile(config: &Config) -> Result<CompiledProfile, String> {
             output["control"] = output["channel"].clone();
             outputs.push(output);
         }
-        json!({"schemaVersion":2,"aircraftModule":"Synthetic","cataloguePath":"/synthetic","inputs":[],"outputs":outputs,"freshnessMs":config.connection["freshnessMs"].as_u64().unwrap_or(1500)})
+        json!({"schemaVersion":2,"aircraftModule":"Synthetic","cataloguePath":std::env::temp_dir().join("opensimgear-synthetic-catalogue"),"inputs":[],"outputs":outputs,"freshnessMs":config.connection["freshnessMs"].as_u64().unwrap_or(1500)})
     };
     // Source decoding only needs the numeric/text kind. Actual formatting is
     // authoritative in the portable document and validated against the device.

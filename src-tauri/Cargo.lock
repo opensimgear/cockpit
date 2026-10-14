@@ -2419,6 +2419,7 @@ dependencies = [
 name = "osg-cockpit"
 version = "0.1.0"
 dependencies = [
+ "osg-controller-input",
  "serde_json",
  "serialport",
  "socket2",
@@ -2426,6 +2427,18 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "uuid",
+]
+
+[[package]]
+name = "osg-controller-input"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

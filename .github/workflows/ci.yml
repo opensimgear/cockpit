@@ -23,6 +23,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm transport:test
+      - run: pnpm controllers:coverage
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage
       - run: pnpm dcs-profile:coverage
@@ -120,3 +121,33 @@ jobs:
             [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count) { throw ($errors | Out-String) }
           }
+
+  controllers:
+    name: Native controllers (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned native coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Native controller tests and per-module coverage
+        run: python scripts/controller-coverage.py
+      - name: Windows desktop compilation and regression tests
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Upload controller coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-coverage-${{ matrix.os }}
+          path: |
+            .research/controller-coverage/summary.json
+            .research/controller-coverage/*-lines.txt
+            .research/controller-coverage/tests.log

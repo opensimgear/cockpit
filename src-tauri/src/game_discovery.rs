@@ -876,13 +876,16 @@ mod tests {
         assert!(read_vdf(&scratch.0.join("missing")).is_none());
         assert!(read_vdf(&scratch.write("large.vdf", &"x".repeat(1_048_577))).is_none());
     }
+    fn vdf_path(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "\\\\")
+    }
     #[test]
     fn discovers_steam_from_root_and_secondary_library_manifests() {
         let scratch = Scratch::new();
         let steam = scratch.0.join("Steam");
         let secondary = scratch.0.join("Rally library");
         scratch.write("Steam/steam.exe", "");
-        scratch.write("Steam/steamapps/libraryfolders.vdf",&format!("\"libraryfolders\" {{ \"0\" {{ \"path\" \"{}\" }} \"1\" {{ \"path\" \"{}\" }} \"metadata\" \"ignore\" \"2\" {{\"path\" \"relative\"}} }}",steam.display(),secondary.display()));
+        scratch.write("Steam/steamapps/libraryfolders.vdf",&format!("\"libraryfolders\" {{ \"0\" {{ \"path\" \"{}\" }} \"1\" {{ \"path\" \"{}\" }} \"metadata\" \"ignore\" \"2\" {{\"path\" \"relative\"}} }}",vdf_path(&steam),vdf_path(&secondary)));
         scratch.write(
             "Steam/steamapps/appmanifest_223750.acf",
             "\"AppState\" {\"appid\" \"223750\" \"installdir\" \"DCSWorld\"}",
@@ -922,7 +925,7 @@ mod tests {
         assert_eq!(process_paths(&games[0]).unwrap().len(), 2);
         let rally_paths = process_paths(&games[1]).unwrap();
         assert_eq!(rally_paths.len(), 1);
-        assert!(rally_paths[0].ends_with("acr/Binaries/Win64/acr.exe"));
+        assert!(Path::new(&rally_paths[0]).ends_with("acr/Binaries/Win64/acr.exe"));
         let manual = BTreeMap::from([(
             "dcs".into(),
             games[0]["executable"].as_str().unwrap().into(),
@@ -943,8 +946,8 @@ mod tests {
             "Steam/config/libraryfolders.vdf",
             &format!(
                 "LibraryFolders {{ 0 \"{}\" 1 \"{}\" 3 relative }}",
-                library.display(),
-                library.display()
+                vdf_path(&library),
+                vdf_path(&library)
             ),
         );
         assert_eq!(library_paths(&steam), vec![steam.clone(), library.clone()]);
