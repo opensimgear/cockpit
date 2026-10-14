@@ -304,3 +304,32 @@ timing still require qualification before enabling these controls.
 Windows API references used for the launcher and synchronization behavior:
 https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecuteexw
 https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexw
+
+## Configurable layout implementation, 15 October
+
+The creation form now captures an explicit layout (up to 16 selected axes, 128
+buttons and four continuous POVs), initially eight conventional axes, 32 buttons
+and one POV. A bounded canonical request carries it into the elevated helper.
+The helper emits only the recognized non-FFB grammar from the pinned
+[vJoy source](https://github.com/BrunnerInnovation/vJoy/blob/bd268d1fa5934a900a79e76e519d4aa804e0ee3d/apps/vJoyConf/vJoyConfig/vJoyConfig.cpp).
+It preserves the implicit default slot when introducing the first explicit slot,
+checks every published capability against its descriptor, and refuses unknown,
+FFB or discrete-POV configurations. This extends implementation coverage, not
+native hardware qualification. All production provisioning/live/recovery gates
+remain false; no driver layout was changed during these tests.
+
+An independent HID short-item reader verifies axis/button/hat bit positions and
+the fixed 768-bit report payload across sparse and maximum layouts. The release
+default descriptor retains its recorded SHA-256. Tests cover byte corruption,
+truncation, capability disagreement, custom-layout rollback, legacy journals,
+canonical helper arguments and attempts to claim pre-existing implicit slots.
+
+Validation: 68 Windows virtual-controller tests and 36 Linux portable tests pass;
+15 Windows mapping-host tests pass; pnpm check reports zero errors/warnings.
+Windows instrumented production coverage is 100% for descriptor.rs, 96.03% for
+provision.rs, 81.88% for windows_launcher.rs and 78.35% for
+windows_provision_entry.rs. All measured virtual-controller and mapping-host
+modules exceed the 71% gate. Native driver enumeration, multi-slot physical
+button/axis/hat routing, actual game bindings, ownership contention and
+process/driver failure qualification remain open in #25. Refusal to alter
+unrecognized/FFB layouts remains a documented capability limit.

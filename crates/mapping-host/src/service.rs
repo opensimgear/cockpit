@@ -443,7 +443,11 @@ impl Service {
                             .as_u64()
                             .and_then(|n| u8::try_from(n).ok())
                             .ok_or("Choose an unused vJoy slot.")?;
-                        (Action::Create(slot), None)
+                        let layout: osg_virtual_controller::descriptor::Layout =
+                            serde_json::from_value(request["layout"].clone())
+                                .map_err(|_| "Choose a bounded vJoy layout.")?;
+                        layout.validate()?;
+                        (Action::CreateLayout { slot, layout }, None)
                     } else {
                         (
                             Action::Recover,

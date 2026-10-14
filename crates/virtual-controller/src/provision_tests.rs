@@ -1,5 +1,5 @@
 use super::*;
-use crate::vjoy::Axis;
+use crate::vjoy::{Axis, AXIS_USAGES};
 fn slot(id: u8) -> Slot {
     Slot {
         id,
@@ -103,7 +103,25 @@ impl Backend for Fake {
         self.current.published = if self.current.entries.is_empty() {
             vec![slot(1)]
         } else {
-            self.current.entries.keys().map(|id| slot(*id)).collect()
+            self.current
+                .entries
+                .iter()
+                .map(|(id, entry)| {
+                    let shape =
+                        Layout::from_descriptor(*id, entry.descriptor.as_deref().unwrap()).unwrap();
+                    let mut device = slot(*id);
+                    device.buttons = shape.buttons.into();
+                    device.continuous_hats = shape.hats;
+                    device.axes = device
+                        .axes
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(i, _)| shape.axes & (1 << i) != 0)
+                        .map(|(_, axis)| axis)
+                        .collect();
+                    device
+                })
+                .collect()
         };
         Ok(())
     }
@@ -247,4 +265,66 @@ fn cancellation_at_each_checkpoint_restores_owned_changes_without_cancelling_cle
             .unwrap()
             .committed
     );
+}
+
+#[test]
+fn starter_custom_layout_retention_and_cancelled_custom_creation() {
+    let mut backend = Fake::new();
+    let original = backend.current.clone();
+    let planned = plan_layout(original, 2, Layout::STARTER).unwrap();
+    execute(&mut backend, planned).unwrap();
+    let starter = backend.current.clone();
+    assert_eq!(starter.published[1].buttons, 32);
+    assert_eq!(starter.published[1].axes.len(), 8);
+    assert_eq!(starter.published[1].continuous_hats, 1);
+    assert_eq!(starter.entries[&1], entry(1).unwrap());
+    let custom = Layout {
+        axes: 0x8101,
+        buttons: 128,
+        hats: 4,
+    };
+    let planned = plan_layout(starter.clone(), 3, custom).unwrap();
+    let mut checks = 0;
+    assert!(execute_controlled(&mut backend, planned, || {
+        checks += 1;
+        if checks == 5 {
+            Err("cancel after refresh".into())
+        } else {
+            Ok(())
+        }
+    })
+    .is_err());
+    assert!(same_config(&backend.current, &starter));
+    let planned = plan_layout(starter, 3, custom).unwrap();
+    let done = execute(&mut backend, planned).unwrap();
+    validate_journal(&done).unwrap();
+    let mut altered = done;
+    altered
+        .owned
+        .get_mut(&3)
+        .unwrap()
+        .descriptor
+        .as_mut()
+        .unwrap()[0] ^= 1;
+    assert!(validate_journal(&altered).is_err());
+    backend.current.published[2].buttons -= 1;
+    assert!(plan(backend.current.clone(), 4).is_err());
+}
+
+#[test]
+fn journals_cannot_claim_existing_implicit_slots_or_skip_default_preservation() {
+    let mut journal = plan(initial(), 2).unwrap();
+    journal.target = 1;
+    assert!(validate_journal(&journal).is_err());
+    let mut journal = plan(initial(), 2).unwrap();
+    journal.owned.remove(&1);
+    assert!(validate_journal(&journal).is_err());
+    let mut journal = plan(initial(), 2).unwrap();
+    journal
+        .owned
+        .insert(1, entry_layout(1, Layout::STARTER).unwrap());
+    assert!(validate_journal(&journal).is_err());
+    let mut duplicate = initial();
+    duplicate.published.push(slot(1));
+    assert!(plan(duplicate, 2).is_err());
 }

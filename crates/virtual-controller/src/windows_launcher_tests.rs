@@ -95,3 +95,36 @@ fn shell_handle_observes_harmless_child_completion_without_elevation_or_driver_c
     assert!(execute(&python, "invalid\0argument", "open").is_err());
     assert!(Child(ptr::null_mut()).poll().is_err());
 }
+
+#[test]
+fn custom_layout_request_roundtrips_and_refuses_noncanonical_or_overbound_input() {
+    let mut req = request();
+    req.action = Action::CreateLayout {
+        slot: 16,
+        layout: crate::descriptor::Layout::STARTER,
+    };
+    let args: Vec<String> = req
+        .arguments()
+        .unwrap()
+        .split(' ')
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(Request::parse(&args).unwrap().action, req.action);
+    for bad in [
+        "16:255:32:1:0",
+        "016:255:32:1",
+        "16:65536:32:1",
+        "16:0:0:0",
+        "16:255:129:1",
+        "16:255:32:5",
+        "17:255:32:1",
+        "16:x:32:1",
+        "16:255:x:1",
+        "16:255:32:x",
+        "x:255:32:1",
+    ] {
+        let mut changed = args.clone();
+        changed[4] = bad.into();
+        assert!(Request::parse(&changed).is_err(), "{bad}");
+    }
+}

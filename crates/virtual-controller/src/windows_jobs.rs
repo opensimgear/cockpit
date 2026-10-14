@@ -76,7 +76,7 @@ impl Manager {
         }
         if matches!(
             (&action, &operation),
-            (Action::Create(_), Some(_)) | (Action::Recover, None)
+            (Action::Create(_) | Action::CreateLayout { .. }, Some(_)) | (Action::Recover, None)
         ) {
             return Err(
                 "Creation requires a fresh operation; recovery requires its recorded identity."

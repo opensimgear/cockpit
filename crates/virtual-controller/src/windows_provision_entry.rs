@@ -42,11 +42,18 @@ fn dispatch(
             journal.id = backend.id();
             journal
         }
+        Action::CreateLayout { slot, layout } => {
+            let mut journal = provision::plan_layout(backend.snapshot()?, slot, layout)?;
+            journal.id = backend.id();
+            journal
+        }
         Action::Recover => backend.prior()?,
     };
     backend.prepare()?;
     let result = match action {
-        Action::Create(_) => provision::execute_controlled(backend, prepared, check).map(|_| ()),
+        Action::Create(_) | Action::CreateLayout { .. } => {
+            provision::execute_controlled(backend, prepared, check).map(|_| ())
+        }
         Action::Recover => {
             check()?; // Once restoration starts, complete it without cancellation.
             provision::restore(backend, &prepared)

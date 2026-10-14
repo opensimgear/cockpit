@@ -38,3 +38,5 @@ pub mod windows_provision_entry;
 
 #[cfg(windows)]
 pub mod windows_jobs;
+
+pub mod descriptor;

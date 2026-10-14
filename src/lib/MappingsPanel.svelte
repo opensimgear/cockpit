@@ -4,6 +4,10 @@
   import { controlLabel, type ControllerControl, type HostController } from './controllers';
   import { capturedKind, compatibleControl, directProfile, importMapping, savedAssignments, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
   let createSlot = $state(2);
+  let createButtons = $state(32);
+  let createHats = $state(1);
+  let createAxes = $state<number[]>([0, 1, 2, 3, 4, 5, 6, 7]);
+  const axisNames = ['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz', 'Slider', 'Dial', 'Wheel', 'Accelerator', 'Brake', 'Clutch', 'Steering', 'Aileron', 'Rudder', 'Throttle'];
   let slotAssignments = $state<Record<string, number>>({});
   let profiles = $state<MappingProfile[]>([]);
   let selected = $state('');
@@ -196,12 +200,19 @@
   {#each status.provisioningRecovery?.pending ?? [] as operation}
     <div class="notice" role="status"><strong>Interrupted layout change for slot {operation.target}</strong>
       <p>{operation.refreshUncertain ? 'Driver refresh completion is uncertain. Inspect the driver before attempting recovery.' : 'The previous layout change needs verified recovery before creating another controller.'}</p>
-      <button class="secondary-button" disabled={busy || !status.provisioningQualified || operation.refreshUncertain || status.provisioning?.active} onclick={() => action(async () => { await request({ command: 'mapping_provision_recover', operation: operation.operation }); })}>Recover previous layout</button>
+      <fieldset disabled={busy || !status.provisioningQualified || status.provisioning?.active}>
+      <legend>New controller layout</legend>
+      <label>Buttons <input type="number" min="0" max="128" step="1" bind:value={createButtons} /></label>
+      <label>Continuous hats <input type="number" min="0" max="4" step="1" bind:value={createHats} /></label>
+      <div class="axis-options">{#each axisNames as axis, index}<label><input type="checkbox" bind:group={createAxes} value={index} />{axis}</label>{/each}</div>
+      <small>Starter: eight axes, 32 buttons and one hat. Created layouts persist across mapping changes. Force feedback is unavailable.</small>
+    </fieldset>
+    <button class="secondary-button" disabled={busy || !status.provisioningQualified || operation.refreshUncertain || status.provisioning?.active} onclick={() => action(async () => { await request({ command: 'mapping_provision_recover', operation: operation.operation }); })}>Recover previous layout</button>
     </div>
   {/each}
   <div class="mapping-row">
     <label>New vJoy slot<select bind:value={createSlot} disabled={!status.provisioningQualified || busy}>{#each Array.from({ length: 16 }, (_, i) => i + 1) as slot}<option value={slot} disabled={virtual?.slots?.some(s => s.id === slot)}>Slot {slot}</option>{/each}</select></label>
-    <button class="secondary-button" disabled={busy || !status.provisioningQualified || !status.virtualDevices?.enabled || status.provisioning?.active || status.running} title={status.provisioningQualified ? 'Create the default layout: 16 axes, 8 buttons, no hats' : 'Windows layout validation is incomplete'} onclick={() => action(async () => { await request({ command: 'mapping_virtual_create', slot: createSlot }); })}>Create virtual controller</button>
+    <button class="secondary-button" disabled={busy || !status.provisioningQualified || !status.virtualDevices?.enabled || status.provisioning?.active || status.running} title={status.provisioningQualified ? 'Create the selected persistent layout' : 'Windows layout validation is incomplete'} onclick={() => action(async () => { await request({ command: 'mapping_virtual_create', slot: createSlot, layout: { axes: createAxes.reduce((mask, index) => mask | (1 << index), 0), buttons: createButtons, hats: createHats } }); })}>Create virtual controller</button>
     <button class="secondary-button" disabled={busy || !profile || !status.virtualDevices?.qualified || status.provisioning?.active || status.outputRecovery?.required} title="Requires qualified Windows output" onclick={() => action(async () => { if (profile) await request({ command: 'mapping_virtual_start', profileId: profile.id }); })}>Start live output</button>
     <button class="secondary-button" disabled={busy || !status.virtualDevices?.qualified || status.running || !(status.outputRecovery?.required || status.recoveryRequired)} onclick={() => action(async () => { await request({ command: 'mapping_virtual_recover' }); })}>Recover virtual output</button>
     {#if status.outputRecovery?.token && (status.outputRecovery.phase === 'intent' || status.outputRecovery.phase === 'releasing')}

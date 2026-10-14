@@ -15,6 +15,10 @@ pub const QUALIFIED: bool = false;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Create(u8),
+    CreateLayout {
+        slot: u8,
+        layout: crate::descriptor::Layout,
+    },
     Recover,
 }
 #[derive(Clone, Debug)]
@@ -26,6 +30,9 @@ pub struct Request {
 impl Request {
     fn validate(&self) -> Result<(), String> {
         self.owner.validate()?;
+        if let Action::CreateLayout { slot, layout } = self.action {
+            layout.descriptor(slot)?;
+        }
         if uuid::Uuid::parse_str(&self.operation)
             .ok()
             .map(|u| u.to_string())
@@ -41,6 +48,9 @@ impl Request {
         self.validate()?;
         let action = match self.action {
             Action::Create(id) => id.to_string(),
+            Action::CreateLayout { slot, layout } => {
+                format!("{slot}:{}:{}:{}", layout.axes, layout.buttons, layout.hats)
+            }
             Action::Recover => "recover".into(),
         };
         Ok(format!(
@@ -58,6 +68,21 @@ impl Request {
         }
         let action = if args[4] == "recover" {
             Action::Recover
+        } else if args[4].contains(':') {
+            let parts: Vec<_> = args[4].split(':').collect();
+            if parts.len() != 4 {
+                return Err("Invalid layout request.".into());
+            }
+            let slot = parts[0].parse::<u8>().map_err(|_| "Invalid slot.")?;
+            let layout = crate::descriptor::Layout {
+                axes: parts[1].parse::<u16>().map_err(|_| "Invalid axes.")?,
+                buttons: parts[2].parse::<u8>().map_err(|_| "Invalid buttons.")?,
+                hats: parts[3].parse::<u8>().map_err(|_| "Invalid hats.")?,
+            };
+            if format!("{slot}:{}:{}:{}", layout.axes, layout.buttons, layout.hats) != args[4] {
+                return Err("Layout request is not canonical.".into());
+            }
+            Action::CreateLayout { slot, layout }
         } else {
             let target = args[4].parse::<u8>().map_err(|_| "Invalid target slot.")?;
             if target.to_string() != args[4] {

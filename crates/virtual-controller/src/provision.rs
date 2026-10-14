@@ -1,18 +1,11 @@
-//! Narrow provisioning transaction for the only M0-qualified descriptor.
-//! Custom/FFB layouts stay unavailable. The journal precedes all registry mutations.
-use crate::vjoy::{Slot, Status, AXIS_USAGES};
+//! Bounded provisioning transactions. Native activation remains qualification-gated.
+//! Unknown/FFB layouts are preserved. The journal precedes registry mutations.
+use crate::{
+    descriptor::Layout,
+    vjoy::{Slot, Status},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-const DEFAULT_DESCRIPTOR: &[u8] = &[
-    0x05, 0x01, 0x15, 0x00, 0x09, 0x04, 0xa1, 0x01, 0x05, 0x01, 0x85, 0x01, 0x09, 0x01, 0x15, 0x00,
-    0x26, 0xff, 0x7f, 0x75, 0x20, 0x95, 0x01, 0xa1, 0x00, 0x09, 0x30, 0x81, 0x02, 0x09, 0x31, 0x81,
-    0x02, 0x09, 0x32, 0x81, 0x02, 0x09, 0x33, 0x81, 0x02, 0x09, 0x34, 0x81, 0x02, 0x09, 0x35, 0x81,
-    0x02, 0x09, 0x36, 0x81, 0x02, 0x09, 0x37, 0x81, 0x02, 0x09, 0x38, 0x81, 0x02, 0x09, 0xc4, 0x81,
-    0x02, 0x09, 0xc5, 0x81, 0x02, 0x09, 0xc6, 0x81, 0x02, 0x09, 0xc8, 0x81, 0x02, 0x09, 0xb0, 0x81,
-    0x02, 0x09, 0xba, 0x81, 0x02, 0x09, 0xbb, 0x81, 0x02, 0xc0, 0x75, 0x20, 0x95, 0x04, 0x81, 0x01,
-    0x05, 0x09, 0x15, 0x00, 0x25, 0x01, 0x55, 0x00, 0x65, 0x00, 0x19, 0x01, 0x29, 0x08, 0x75, 0x01,
-    0x95, 0x08, 0x81, 0x02, 0x75, 0x78, 0x95, 0x01, 0x81, 0x01, 0xc0,
-];
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Entry {
@@ -55,20 +48,25 @@ pub trait Backend {
     }
 }
 pub fn descriptor(slot: u8) -> Result<Vec<u8>, String> {
-    if !(1..=16).contains(&slot) {
-        return Err("vJoy slot must be 1–16.".into());
-    }
-    let mut bytes = DEFAULT_DESCRIPTOR.to_vec();
-    bytes[11] = slot;
-    Ok(bytes)
+    Layout::LEGACY.descriptor(slot)
 }
 fn entry(slot: u8) -> Result<Entry, String> {
-    let bytes = descriptor(slot)?;
+    entry_layout(slot, Layout::LEGACY)
+}
+fn entry_layout(slot: u8, layout: Layout) -> Result<Entry, String> {
+    let bytes = layout.descriptor(slot)?;
     Ok(Entry {
         size: Some(bytes.len() as u32),
         descriptor: Some(bytes),
         unknown: false,
     })
+}
+fn entry_shape(slot: u8, value: &Entry) -> Result<Layout, String> {
+    let bytes = value.descriptor.as_deref().ok_or("Missing descriptor.")?;
+    if value.unknown || value.size != Some(bytes.len() as u32) {
+        return Err("Unknown or incomplete descriptor.".into());
+    }
+    Layout::from_descriptor(slot, bytes)
 }
 fn qualified(snapshot: &Snapshot) -> Result<(), String> {
     if snapshot.unexpected_parameters
@@ -82,36 +80,40 @@ fn qualified(snapshot: &Snapshot) -> Result<(), String> {
         if slot.status != Status::Free {
             return Err("Close all vJoy feeders before changing driver layouts.".into());
         }
-        if slot.buttons != 8
-            || slot.continuous_hats != 0
-            || slot.discrete_hats != 0
-            || slot.force_feedback
-            || slot.axes.len() != 16
-            || slot.axes.iter().any(|a| a.min != 0 || a.max != 32767)
-            || AXIS_USAGES
-                .iter()
-                .any(|u| !slot.axes.iter().any(|a| a.usage == *u))
-        {
-            return Err("Preserve existing custom/FFB layouts: this configuration is not qualified for provisioning.".into());
-        }
+        Layout::from_slot(slot)?;
+    }
+    let ids: BTreeSet<_> = snapshot.published.iter().map(|s| s.id).collect();
+    if ids.len() != snapshot.published.len() || ids.iter().any(|id| !(1..=16).contains(id)) {
+        return Err("Invalid or duplicate published slot IDs.".into());
     }
     if snapshot.entries.is_empty() {
-        if snapshot.published.len() != 1 || snapshot.published[0].id != 1 {
+        if snapshot.published.len() != 1
+            || snapshot.published[0].id != 1
+            || Layout::from_slot(&snapshot.published[0])? != Layout::LEGACY
+        {
             return Err("Unexpected implicit vJoy slots.".into());
         }
     } else {
         if snapshot.entries.len() != snapshot.published.len() {
             return Err("Registry and published slots do not agree.".into());
         }
-        for (slot, value) in &snapshot.entries {
-            if value != &entry(*slot)? || !snapshot.published.iter().any(|s| s.id == *slot) {
-                return Err("Existing descriptors are not the qualified default layout.".into());
+        for published in &snapshot.published {
+            let value = snapshot
+                .entries
+                .get(&published.id)
+                .ok_or("Missing published descriptor.")?;
+            if entry_shape(published.id, value)? != Layout::from_slot(published)? {
+                return Err("Registry descriptor and published layout differ.".into());
             }
         }
     }
     Ok(())
 }
 pub fn plan(snapshot: Snapshot, target: u8) -> Result<Journal, String> {
+    plan_layout(snapshot, target, Layout::LEGACY)
+}
+pub fn plan_layout(snapshot: Snapshot, target: u8, layout: Layout) -> Result<Journal, String> {
+    layout.validate()?;
     qualified(&snapshot)?;
     if snapshot.published.iter().any(|s| s.id == target) || snapshot.entries.contains_key(&target) {
         return Err("Choose an unused vJoy slot; existing slots are never overwritten.".into());
@@ -120,7 +122,7 @@ pub fn plan(snapshot: Snapshot, target: u8) -> Result<Journal, String> {
     if snapshot.entries.is_empty() {
         owned.insert(1, entry(1)?);
     }
-    owned.insert(target, entry(target)?);
+    owned.insert(target, entry_layout(target, layout)?);
     Ok(Journal {
         schema: 1,
         id: uuid::Uuid::new_v4().to_string(),
@@ -233,8 +235,26 @@ pub fn validate_journal(journal: &Journal) -> Result<(), String> {
         return Err("Invalid provisioning recovery journal.".into());
     }
     qualified(&journal.before)?;
+    if journal
+        .before
+        .published
+        .iter()
+        .any(|s| s.id == journal.target)
+        || journal.owned.len()
+            != if journal.before.entries.is_empty() {
+                2
+            } else {
+                1
+            }
+        || (journal.before.entries.is_empty() && journal.owned.get(&1) != Some(&entry(1)?))
+    {
+        return Err("Journal does not match a fresh, non-overwriting creation plan.".into());
+    }
     for (slot, value) in &journal.owned {
-        if value != &entry(*slot)? || journal.before.entries.contains_key(slot) {
+        entry_shape(*slot, value)?;
+        if (*slot != journal.target && value != &entry(*slot)?)
+            || journal.before.entries.contains_key(slot)
+        {
             return Err("Journal cannot overwrite pre-existing descriptors.".into());
         }
     }

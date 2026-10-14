@@ -124,3 +124,42 @@ fn private_entry_is_bounded_gated_and_never_falls_through_to_the_app() {
     stale.owner.created = "1".into();
     assert!(native(stale).is_err()); // Fails on token or parent identity, before any machine writes.
 }
+
+#[test]
+fn elevated_dispatch_validates_requested_starter_layout_and_legacy_recovery() {
+    let mut fixture = Fixture::new();
+    dispatch(
+        &mut fixture,
+        Action::CreateLayout {
+            slot: 2,
+            layout: crate::descriptor::Layout::STARTER,
+        },
+        || Ok(()),
+    )
+    .unwrap();
+    assert!(fixture.outcomes.last().unwrap().success);
+    let journal = fixture.backend.journals.last().unwrap();
+    assert_eq!(
+        crate::descriptor::Layout::from_descriptor(
+            2,
+            journal.owned[&2].descriptor.as_deref().unwrap()
+        )
+        .unwrap(),
+        crate::descriptor::Layout::STARTER
+    );
+    let mut fixture = Fixture::new();
+    assert!(dispatch(
+        &mut fixture,
+        Action::CreateLayout {
+            slot: 2,
+            layout: crate::descriptor::Layout {
+                axes: 0,
+                buttons: 0,
+                hats: 0
+            }
+        },
+        || Ok(())
+    )
+    .is_err());
+    assert!(fixture.backend.journals.is_empty());
+}
