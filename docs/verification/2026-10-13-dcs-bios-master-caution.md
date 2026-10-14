@@ -57,14 +57,14 @@ queued from slow gateway requests.
 
 ## Native and production-process verification
 
-The native suite passed 111 tests, including 25 DCS core tests, four background
+The native suite passed 113 tests, including 25 DCS core tests, five background
 runtime cases, and event validation/routing coverage. Coverage measured with the
 native instrumented test suite:
 
 | Changed production area | Covered / measured lines | Line coverage |
 | --- | --- | --- |
 | DCS-BIOS core | 672 / 691 | 97.25% |
-| Background DCS runtime | 406 / 465 | 87.31% |
+| Background DCS runtime | 420 / 479 | 87.68% |
 | Panel event validator | 55 / 55 | 100% |
 | Native action validation | — | 97.75% |
 | Native action/event routing | — | 93.82% |
@@ -124,3 +124,24 @@ aircraft behavior. Physical button wiring, STM32 LED/USB/CAN, Windows game
 bindings and simulator installation/reconnect qualification remain deferred and
 do not block the simulated milestone. Displays, encoder simulator bindings,
 wider aircraft profiles and their hardware acceptance belong to Milestones 3–4.
+
+## Review corrections — 2026-10-14
+
+Independent review found a lock-order inversion between gateway selection error
+responses and DCS startup. Selection failures could retain the fleet lock while
+waiting for DCS settings, as startup held settings while waiting for the fleet.
+Error responses now release the fleet lock before reading DCS status, including
+the mismatched-handshake path. A concurrent-start/ambiguous-request regression
+reproduces the former timeout and completes with the correction.
+
+Review also found that a Start request admitted before application shutdown
+could create a worker after shutdown had stopped the previous worker. Terminal
+shutdown now closes the runtime under the same settings lock used by Start and
+Save, rejects delayed requests and joins the worker before removing gateway
+sessions. Ordinary Stop still permits a later Start. A regression reproduces
+the former delayed start and verifies rejection, restart after ordinary Stop
+and unchanged saved settings after terminal shutdown.
+
+All 113 native tests pass after these corrections. Repeated production coverage
+measures 97.25% for the DCS core, 87.68% for the runtime and 100% for event
+validation. Hardware and live-DCS validation remain deferred.

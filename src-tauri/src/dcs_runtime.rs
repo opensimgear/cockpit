@@ -14,6 +14,7 @@ use std::{
 const CLIENT: &str = "cockpit-dcs-bios-integration";
 type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
 struct Settings {
+    closed: bool,
     config: Option<Config>,
     worker: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
@@ -138,6 +139,7 @@ impl DcsRuntime {
         };
         Self {
             settings: Mutex::new(Settings {
+                closed: false,
                 config,
                 worker: None,
                 cancel: Arc::new(AtomicBool::new(false)),
@@ -167,6 +169,9 @@ impl DcsRuntime {
             }
             Some("dcs_configure") => {
                 let mut settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+                if settings.closed {
+                    return Err("The DCS-BIOS runtime has closed.".into());
+                }
                 if settings
                     .worker
                     .as_ref()
@@ -183,6 +188,9 @@ impl DcsRuntime {
             }
             Some("dcs_start") => {
                 let mut settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+                if settings.closed {
+                    return Err("The DCS-BIOS runtime has closed.".into());
+                }
                 if settings
                     .worker
                     .as_ref()
@@ -226,7 +234,16 @@ impl DcsRuntime {
             })
     }
     pub fn stop(&self) {
+        self.stop_with(false);
+    }
+    pub fn shutdown(&self) {
+        self.stop_with(true);
+    }
+    fn stop_with(&self, terminal: bool) {
         let mut settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        // Startup, profile replacement and terminal close share this guard.
+        // A request admitted by the manager before close cannot restart later.
+        settings.closed |= terminal;
         settings.cancel.store(true, Ordering::Release);
         if let Some(worker) = settings.worker.take() {
             let _ = worker.join();
@@ -239,7 +256,7 @@ impl DcsRuntime {
 }
 impl Drop for DcsRuntime {
     fn drop(&mut self) {
-        self.stop();
+        self.shutdown();
     }
 }
 
@@ -677,6 +694,55 @@ mod tests {
             DcsRuntime::new(Arc::new(|_| Value::Null), path).status()["status"],
             "error"
         );
+    }
+    #[test]
+    fn terminal_shutdown_rejects_delayed_start_and_configure_but_stop_allows_restart() {
+        let command = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let config = config(
+            command.local_addr().unwrap().port(),
+            reserve.local_addr().unwrap().port(),
+        );
+        drop(reserve);
+        let (panel, _) = mock(&config);
+        let path = path();
+        let service = Arc::new(DcsRuntime::new(panel, path.clone()));
+        service
+            .request(&json!({"command":"dcs_configure","dcsConfig":config.value()}))
+            .unwrap();
+        for _ in 0..2 {
+            service.request(&json!({"command":"dcs_start"})).unwrap();
+            assert_eq!(service.status()["running"], true);
+            service.stop();
+            assert_eq!(service.status()["running"], false);
+        }
+        let saved = std::fs::read(&path).unwrap();
+        let (resume, paused) = std::sync::mpsc::channel();
+        let pending = service.clone();
+        let request = std::thread::spawn(move || {
+            // This request has already passed the manager's initial closed
+            // check, but reaches the runtime only after terminal shutdown.
+            paused.recv().unwrap();
+            pending.request(&json!({"command":"dcs_start"}))
+        });
+        service.shutdown();
+        resume.send(()).unwrap();
+        let result = request.join().unwrap();
+        // Keep the old failing implementation's worker from outliving the test.
+        service.stop();
+        assert!(
+            result.is_err(),
+            "A delayed start created a worker after shutdown"
+        );
+        let mut changed = config.clone();
+        changed.button = 1;
+        assert!(service
+            .request(&json!({"command":"dcs_configure","dcsConfig":changed.value()}))
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+        assert_eq!(service.status()["running"], false);
+        service.shutdown();
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
     #[test]
     fn output_reconciliation_reads_before_writing_and_does_not_repeat_confirmed_setters() {
