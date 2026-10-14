@@ -11,7 +11,12 @@ import tempfile
 
 
 def run(args, root, env=None):
-    return subprocess.check_output([str(arg) for arg in args], cwd=root, env=env, text=True, encoding="utf-8")
+    try:
+        return subprocess.check_output([str(arg) for arg in args], cwd=root, env=env, text=True, encoding="utf-8")
+    except subprocess.CalledProcessError as error:
+        # Keep the test failure visible in CI instead of discarding captured stdout.
+        print(error.output or '', file=sys.stderr, end='')
+        raise
 
 
 def main():
