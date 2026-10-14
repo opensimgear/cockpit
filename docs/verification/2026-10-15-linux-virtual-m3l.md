@@ -62,6 +62,13 @@ suite: 72 passing tests; Windows and Linux host coverage each exceed 71% per
 module. Frontend check passes without errors/warnings, and the Windows Tauri UI
 still renders vJoy controls with creation, Start and recovery disabled.
 
+The real Linux native service acceptance probe passes synthetic routing, ordered
+edges, restart persistence and refusal of live activation. Explicit inspection
+reports this WSL system's `/dev/uinput` permission denial, while preview continues.
+Its private feeder entry exits without activation. The pinned Rust 1.90 Windows
+application regression also passes 288 tests with three hardware/archive tests
+explicitly ignored.
+
 Still open: two real controllers driven from physical inputs, Stop/process-crash
 removal, explicit recreation, descriptor enumeration, native game binding
 retention, a qualified Steam/Proton case, and distribution/session permission
