@@ -23,7 +23,7 @@ impl Template {
         if binding.layout.buttons > MAX_BUTTONS
             || binding.axes.iter().any(|a| !(0x30..=0x37).contains(a))
         {
-            return Err("uinput supports eight standard axes, 32 buttons and four hats; unsupported layouts are never truncated.".into());
+            return Err("This virtual backend supports eight standard axes, 32 buttons and four hats; unsupported layouts are never truncated.".into());
         }
         Ok(Self {
             name: format!("OpenSimGear Cockpit {}", binding.slot),

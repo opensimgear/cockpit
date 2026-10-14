@@ -171,15 +171,15 @@
   <div class="recording"><table><thead><tr><th>Report</th><th>Target</th><th>Reason</th><th>Pressed buttons</th><th>Axes</th><th>Hats</th></tr></thead><tbody>{#each records.slice().reverse() as item (item.cursor)}<tr><td>{item.report.sequence}</td><td>{item.report.target}</td><td>{item.report.reason}</td><td>{item.report.state.buttons.flatMap((pressed, i) => pressed ? [i + 1] : []).join(', ') || '—'}</td><td>{item.report.state.axes.join(', ') || '—'}</td><td>{item.report.state.hats.map(h => h === null ? 'neutral' : String(h)).join(', ') || '—'}</td></tr>{:else}<tr><td colspan="6">Start a preview and move an assigned control.</td></tr>{/each}</tbody></table></div>
 </section>
 <section class="panel mapping-panel" aria-label="Virtual controllers">
-  <div class="mapping-row"><h2>Virtual controllers</h2><button class="secondary-button" disabled={busy} onclick={() => action(async () => { virtual = await request({ command: 'mapping_virtual_inspect' }); })}>Inspect {status.virtualDevices?.backend === 'uinput' ? 'Linux output' : 'vJoy'}</button></div>
-  <label class="enable-option"><input type="checkbox" checked={status.virtualDevices?.enabled ?? false} disabled={busy} onchange={event => action(async () => { await request({ command: 'mapping_virtual_enable', enabled: event.currentTarget.checked }); })} />Enable {status.virtualDevices?.backend === 'uinput' ? 'Linux virtual devices' : 'installed vJoy'} for this computer</label>
+  <div class="mapping-row"><h2>Virtual controllers</h2><button class="secondary-button" disabled={busy} onclick={() => action(async () => { virtual = await request({ command: 'mapping_virtual_inspect' }); })}>Inspect {status.virtualDevices?.backend === 'uinput' ? 'Linux output' : status.virtualDevices?.backend === 'macos-hid' ? 'macOS helper' : 'vJoy'}</button></div>
+  <label class="enable-option"><input type="checkbox" checked={status.virtualDevices?.enabled ?? false} disabled={busy} onchange={event => action(async () => { await request({ command: 'mapping_virtual_enable', enabled: event.currentTarget.checked }); })} />Enable {status.virtualDevices?.backend === 'uinput' ? 'Linux virtual devices' : status.virtualDevices?.backend === 'macos-hid' ? 'macOS virtual devices' : 'installed vJoy'} for this computer</label>
   <p>{virtual?.reason ?? status.virtualDevices?.reason ?? 'Virtual output is optional and disabled by default.'}</p>
   {#each virtual?.slots ?? [] as slot}<div class="virtual-slot"><strong>vJoy slot {slot.id} · {slot.status}</strong><span>{slot.buttons} buttons · {slot.axes.length} axes · {slot.continuousHats} continuous hats · {slot.discreteHats} discrete hats{slot.forceFeedback ? ' · force feedback' : ''}{slot.ownerPid ? ' · owner PID ' + slot.ownerPid : ''}</span></div>{/each}
-  {#if profile && status.virtualDevices?.backend === 'uinput'}
-    <h3>Linux device templates</h3>
+  {#if profile && ['uinput','macos-hid'].includes(status.virtualDevices?.backend ?? '')}
+    <h3>{status.virtualDevices?.backend === 'uinput' ? 'Linux' : 'macOS'} device templates</h3>
     <p>Up to eight axes, 32 buttons and four hats per device. Templates are saved locally. Devices exist only during an explicitly started live session; game bindings after recreation still need qualification.</p>
     <div class="mapping-row">{#each profile.targets as target}<label>{target.name}<select bind:value={slotAssignments[target.id]}><option value={undefined}>Choose a local identity</option>{#each Array.from({length:16},(_,i)=>i+1) as slot}<option value={slot}>Controller {slot}</option>{/each}</select></label>{/each}
-    <button class="secondary-button" disabled={busy || status.running || profile.targets.some(t => !slotAssignments[t.id] || t.layout.buttons > 32 || t.layout.axes.length > 8)} onclick={() => action(async () => { if (!profile) return; const bindings = profile.targets.map(target => ({target: target.id, slot: slotAssignments[target.id], axes: target.layout.axes.map((_,i)=>0x30+i), layout:target.layout})); await request({command:'mapping_targets_save',profileId:profile.id,bindings}); notice='Linux templates saved. No device was created.'; })}>Save Linux templates</button></div>
+    <button class="secondary-button" disabled={busy || status.running || profile.targets.some(t => !slotAssignments[t.id] || t.layout.buttons > 32 || t.layout.axes.length > 8)} onclick={() => action(async () => { if (!profile) return; const bindings = profile.targets.map(target => ({target: target.id, slot: slotAssignments[target.id], axes: target.layout.axes.map((_,i)=>0x30+i), layout:target.layout})); await request({command:'mapping_targets_save',profileId:profile.id,bindings}); notice='Device templates saved. No device was created.'; })}>Save device templates</button></div>
   {:else if profile && virtual}
     <h3>Local target slots</h3>
     <div class="mapping-row">{#each profile.targets as target}<label>{target.name}<select bind:value={slotAssignments[target.id]}><option value={undefined}>Choose a matching slot</option>{#each virtual.slots ?? [] as slot}<option value={slot.id} disabled={slot.buttons !== target.layout.buttons || slot.axes.length !== target.layout.axes.length || slot.continuousHats !== target.layout.hats || slot.discreteHats !== 0 || slot.forceFeedback}>Slot {slot.id} · {slot.buttons} buttons, {slot.axes.length} axes, {slot.continuousHats} hats</option>{/each}</select></label>{/each}
@@ -208,7 +208,7 @@
     <button class="secondary-button" disabled={busy || !status.provisioningQualified || operation.refreshUncertain || status.provisioning?.active} onclick={() => action(async () => { await request({ command: 'mapping_provision_recover', operation: operation.operation }); })}>Recover previous layout</button>
     </div>
   {/each}
-  {#if status.virtualDevices?.backend !== 'uinput'}
+  {#if !['uinput','macos-hid'].includes(status.virtualDevices?.backend ?? '')}
   <fieldset disabled={busy || !status.provisioningQualified || status.provisioning?.active}>
       <legend>New controller layout</legend>
       <label>Buttons <input type="number" min="0" max="128" step="1" bind:value={createButtons} /></label>
@@ -218,7 +218,7 @@
   </fieldset>
   {/if}
   <div class="mapping-row">
-    {#if status.virtualDevices?.backend !== 'uinput'}
+    {#if !['uinput','macos-hid'].includes(status.virtualDevices?.backend ?? '')}
     <label>New vJoy slot<select bind:value={createSlot} disabled={!status.provisioningQualified || busy}>{#each Array.from({ length: 16 }, (_, i) => i + 1) as slot}<option value={slot} disabled={virtual?.slots?.some(s => s.id === slot)}>Slot {slot}</option>{/each}</select></label>
     <button class="secondary-button" disabled={busy || !status.provisioningQualified || !status.virtualDevices?.enabled || status.provisioning?.active || status.running} title={status.provisioningQualified ? 'Create the selected persistent layout' : 'Windows layout validation is incomplete'} onclick={() => action(async () => { await request({ command: 'mapping_virtual_create', slot: createSlot, layout: { axes: createAxes.reduce((mask, index) => mask | (1 << index), 0), buttons: createButtons, hats: createHats } }); })}>Create virtual controller</button>
     {/if}

@@ -18,17 +18,23 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const QUALIFICATION: &str = "Live vJoy output and layout changes remain disabled until Windows validation is complete. You can use recording previews and inspect installed devices.";
 #[cfg(target_os = "linux")]
 pub const QUALIFICATION: &str = osg_virtual_controller::uinput::REASON;
+#[cfg(target_os = "macos")]
+pub const QUALIFICATION: &str = osg_virtual_controller::apple_helper::REASON;
 pub const BACKEND: &str = osg_virtual_controller::entry::BACKEND;
-fn linux_readiness() -> Value {
+fn native_readiness() -> Value {
     #[cfg(target_os = "linux")]
     {
         osg_virtual_controller::linux_uinput::readiness()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        osg_virtual_controller::apple_helper::readiness()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         json!({})
     }
@@ -236,7 +242,7 @@ impl Service {
                     .as_bool()
                     .ok_or("Enablement must be an explicit boolean.")?;
                 let stop_error = if enabled {
-                    if !cfg!(target_os = "linux") {
+                    if !cfg!(any(target_os = "linux", target_os = "macos")) {
                         (self.inspector)()?;
                     }
                     None
@@ -262,7 +268,7 @@ impl Service {
                 let bindings: Vec<osg_virtual_controller::vjoy::Binding> =
                     serde_json::from_value(request["bindings"].clone())
                         .map_err(|e| e.to_string())?;
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 for binding in &bindings {
                     osg_virtual_controller::uinput::Template::new(binding.clone())?;
                 }
@@ -421,8 +427,8 @@ impl Service {
                 Ok(r.status())
             }
             "mapping_virtual_inspect" => {
-                if cfg!(target_os = "linux") {
-                    let mut readiness = linux_readiness();
+                if cfg!(any(target_os = "linux", target_os = "macos")) {
+                    let mut readiness = native_readiness();
                     readiness["backend"] = json!(BACKEND);
                     readiness["enabled"] = json!(
                         self.settings

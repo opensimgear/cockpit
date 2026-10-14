@@ -164,6 +164,11 @@ jobs:
           python scripts/controller-coverage.py
           python scripts/virtual-coverage.py
           python scripts/mapping-host-coverage.py
+      - name: Build unavailable Apple helper and inspect without activation
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --locked --manifest-path crates/virtual-controller/Cargo.toml --bin osg-macos-hid-helper
+          crates/virtual-controller/target/debug/osg-macos-hid-helper --inspect
       - name: Windows desktop compilation and regression tests
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml

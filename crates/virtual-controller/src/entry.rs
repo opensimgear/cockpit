@@ -13,16 +13,23 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const ARGUMENT: &str = "--osg-vjoy-feeder";
 #[cfg(target_os = "linux")]
 pub const ARGUMENT: &str = "--osg-uinput-feeder";
+#[cfg(target_os = "macos")]
+pub const ARGUMENT: &str = crate::apple_helper::ARGUMENT;
 pub const BACKEND: &str = if cfg!(target_os = "linux") {
     "uinput"
+} else if cfg!(target_os = "macos") {
+    "macos-hid"
 } else {
     "vjoy"
 };
 pub fn factory() -> Factory {
+    if cfg!(target_os = "macos") {
+        return crate::apple_helper::factory();
+    }
     Arc::new(|| {
         let mut worker = Worker::spawn(
             &std::env::current_exe().map_err(|e| e.to_string())?,
@@ -74,7 +81,7 @@ fn run() -> i32 {
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        failure(io::stdout().lock(), "vJoy requires Windows.")
+        failure(io::stdout().lock(), crate::apple_helper::REASON)
     }
 }
 #[cfg(test)]

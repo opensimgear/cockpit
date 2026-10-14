@@ -91,7 +91,7 @@ def main():
     # Exercise the private production feeder entry with an invalid empty target
     # set. It cannot acquire a slot or send a virtual report.
     rejected = dict(command='start', token=dict(session=str(uuid.uuid4()), generation='1'), bindings=[])
-    backend = 'uinput' if sys.platform == 'linux' else 'vjoy'
+    backend = 'uinput' if sys.platform == 'linux' else 'macos-hid' if sys.platform == 'darwin' else 'vjoy'
     probe = subprocess.run([str(args.service.resolve()), f'--osg-{backend}-feeder'],
                            input=(json.dumps(rejected) + '\n').encode(), stdout=subprocess.PIPE,
                            stderr=subprocess.DEVNULL, timeout=8,

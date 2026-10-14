@@ -93,8 +93,8 @@ fn stored_preview_runs_without_optional_drivers_and_keeps_edges() {
         .request(&json!({"command":"mapping_virtual_inspect"}))
         .unwrap();
     assert_eq!(inspected["qualified"], false);
-    if cfg!(target_os = "linux") {
-        assert_eq!(inspected["backend"], "uinput");
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert_eq!(inspected["backend"], BACKEND);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     } else {
         assert_eq!(inspected["state"], "unsupported");
@@ -192,10 +192,13 @@ fn malformed_requests_and_unavailable_sources_do_not_replace_preview() {
 fn enabling_requires_explicit_inspection_and_target_settings_do_not_activate() {
     let (service, _root, profile, _, calls) = setup();
     let enabled = service.request(&json!({"command":"mapping_virtual_enable","enabled":true}));
-    assert_eq!(enabled.is_ok(), cfg!(target_os = "linux"));
+    assert_eq!(
+        enabled.is_ok(),
+        cfg!(any(target_os = "linux", target_os = "macos"))
+    );
     assert_eq!(
         calls.load(Ordering::Relaxed),
-        usize::from(!cfg!(target_os = "linux"))
+        usize::from(!cfg!(any(target_os = "linux", target_os = "macos")))
     );
     assert!(service
         .request(&json!({"command":"mapping_virtual_enable","enabled":"yes"}))
