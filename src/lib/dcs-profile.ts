@@ -34,7 +34,7 @@ export type DcsCataloguePage = {
 };
 export type PanelInputState = {
   boot: number; stream: number; head: number; buttonCount: number; contactButtonCount?: number;
-  held: boolean[]; encoderButtons: number[]; maintainedButtons?: number[]; selectorButtons?: number[];
+  held: boolean[]; encoderButtons: number[]; maintainedButtons?: number[]; selectorButtons?: number[][];
   axisCount?: number; axes?: number[]; axisAvailable?: boolean[]; axisNeutral?: number[];
   axisUsage?: number[]; sampledAtMs?: number;
 };
