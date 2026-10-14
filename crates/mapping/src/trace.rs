@@ -51,7 +51,7 @@ impl Trace {
         if self.schema != 1 || self.steps.len() > 4096 {
             return Err("Unsupported trace schema or step count.".into());
         }
-        let mut runtime = Runtime::default();
+        let mut runtime = Runtime::replay_session();
         runtime.start(self.profile.clone(), self.assignments.clone())?;
         let mut cursor = Counter(0);
         let mut result = Vec::new();
@@ -89,7 +89,7 @@ fn drain(
     result: &mut Vec<Recorded>,
 ) -> Result<(), String> {
     loop {
-        let page = runtime.recording.page(*cursor, 64)?;
+        let page = runtime.recording.page(*cursor, 32)?;
         if page.gap {
             return Err("Recording overflow during replay.".into());
         }

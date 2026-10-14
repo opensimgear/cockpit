@@ -38,7 +38,7 @@ pub fn frame(
         },
         generation: Counter(generation),
         sequence: Counter(sequence),
-        captured_us: Counter(at),
+        captured_us: Counter(at.max(1)),
         reason,
         changes: changes
             .into_iter()
@@ -62,5 +62,18 @@ pub fn baseline(source: &str, generation: u64, pressed: bool) -> Frame {
     frame(source, generation, 1, 0, Reason::Baseline, changes)
 }
 pub fn engine() -> Engine {
-    Engine::new(profile(), assignments(), Counter(1)).unwrap()
+    create(profile(), assignments(), Counter(1)).unwrap()
+}
+
+pub fn create(
+    profile: Profile,
+    assignments: Vec<Assignment>,
+    generation: Counter,
+) -> Result<Engine, String> {
+    Engine::new(
+        profile,
+        assignments,
+        generation,
+        "a78d48b8-3958-4de5-a8b3-d3b52b1e24e7".into(),
+    )
 }

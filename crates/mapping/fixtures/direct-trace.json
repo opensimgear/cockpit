@@ -231,7 +231,7 @@
           "origin": "synthetic"
         },
         "generation": "1",
-        "capturedUs": "0"
+        "capturedUs": "1"
       },
       "kind": "input"
     },
@@ -253,7 +253,7 @@
           "origin": "synthetic"
         },
         "generation": "1",
-        "capturedUs": "0"
+        "capturedUs": "1"
       },
       "kind": "input"
     },

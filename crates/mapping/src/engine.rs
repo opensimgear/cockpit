@@ -4,7 +4,7 @@ use crate::profile::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-pub const MAX_TIMERS: usize = 1024;
+pub const MAX_TIMERS: usize = 256;
 pub const MAX_REPORTS: usize = 4096;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Counter(pub u64);
@@ -94,6 +94,7 @@ pub enum ReportReason {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Report {
+    pub session: String,
     pub run_generation: Counter,
     pub sequence: Counter,
     pub at_us: Counter,
@@ -110,6 +111,7 @@ pub struct SourceGeneration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProducerToken {
+    pub session: String,
     pub run_generation: Counter,
     pub node: String,
     pub sources: Vec<SourceGeneration>,
@@ -127,7 +129,14 @@ struct Timer {
     token: ProducerToken,
     value: Value,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunToken {
+    pub session: String,
+    pub generation: Counter,
+}
 pub struct Engine {
+    session: String,
     compiled: Compiled,
     assignments: BTreeMap<String, Assignment>,
     expected: BTreeMap<Source, BTreeMap<String, Kind>>,
@@ -223,7 +232,16 @@ impl Engine {
         profile: Profile,
         assignments: Vec<Assignment>,
         generation: Counter,
+        session: String,
     ) -> Result<Self, String> {
+        if uuid::Uuid::parse_str(&session)
+            .map(|id| id.to_string())
+            .ok()
+            .as_deref()
+            != Some(session.as_str())
+        {
+            return Err("A canonical worker session UUID is required.".into());
+        }
         let compiled = profile.compile()?;
         if generation.0 == 0 {
             return Err("Run generation must be nonzero.".into());
@@ -235,12 +253,13 @@ impl Engine {
             .map(|source| (source, SourceState::default()))
             .collect();
         let mut engine = Self {
+            session,
             compiled,
             assignments: assigned,
             expected,
             sources,
             generation: generation.0,
-            clock: 0,
+            clock: 1,
             sequence: 0,
             active: true,
             fault: None,
@@ -251,7 +270,7 @@ impl Engine {
             reports: VecDeque::new(),
             last: BTreeMap::new(),
         };
-        engine.publish(ReportReason::Start, 0, true);
+        engine.publish(ReportReason::Start, 1, true);
         Ok(engine)
     }
     pub fn profile(&self) -> &Profile {
@@ -259,6 +278,12 @@ impl Engine {
     }
     pub fn active(&self) -> bool {
         self.active
+    }
+    pub fn run_token(&self) -> RunToken {
+        RunToken {
+            session: self.session.clone(),
+            generation: Counter(self.generation),
+        }
     }
     pub fn generation(&self) -> Counter {
         Counter(self.generation)
@@ -358,7 +383,8 @@ impl Engine {
             .get(&frame.source)
             .ok_or("Unassigned input source.")?;
         let previous = &self.sources[&frame.source];
-        if frame.generation.0 == 0
+        if frame.captured_us.0 == 0
+            || frame.generation.0 == 0
             || frame.sequence.0 == 0
             || frame.generation.0 < previous.generation
             || frame.captured_us.0 < previous.captured_us
@@ -476,6 +502,7 @@ impl Engine {
             sources.insert(source.clone(), Counter(state.generation));
         }
         Ok(ProducerToken {
+            session: self.session.clone(),
             run_generation: Counter(self.generation),
             node: node.into(),
             sources: sources
@@ -631,6 +658,7 @@ impl Engine {
             self.sequence = self.sequence.saturating_add(1);
             self.last.insert(target.clone(), state.clone());
             self.reports.push_back(Report {
+                session: self.session.clone(),
                 run_generation: Counter(self.generation),
                 sequence: Counter(self.sequence),
                 at_us: Counter(at),

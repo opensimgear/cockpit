@@ -97,6 +97,47 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
         .iter()
         .any(|p| p["id"] == "service-dcs"));
 
+    // A maximum document uses bounded byte chunks, retaining native correlation.
+    let mut document = include_bytes!("../../crates/mapping/fixtures/direct-profile.json").to_vec();
+    document.resize(65_536, b' ');
+    let begin = exchange(
+        "mapping-begin",
+        json!({"command":"mapping_import_begin",
+        "clientId":"cockpit-service-boundary-test","size":document.len()}),
+    );
+    assert_eq!(begin["ok"], true);
+    let upload = begin["state"]["mappings"]["uploadId"].clone();
+    for (index, chunk) in document.chunks(8192).enumerate() {
+        let response = exchange(
+            &format!("mapping-chunk-{index}"),
+            json!({
+                "command":"mapping_import_chunk","clientId":"cockpit-service-boundary-test",
+                "uploadId":upload,"offset":index * 8192,"bytes":chunk
+            }),
+        );
+        assert_eq!(response["ok"], true);
+    }
+    let committed = exchange(
+        "mapping-commit",
+        json!({"command":"mapping_import_commit",
+        "clientId":"cockpit-service-boundary-test","uploadId":upload}),
+    );
+    assert_eq!(committed["ok"], true, "{committed}");
+    let profile = &committed["state"]["mappings"]["document"];
+    assert!(profile.is_object());
+    assert!(scratch
+        .join("mappings")
+        .join(format!("{}.json", profile["id"].as_str().unwrap()))
+        .exists());
+    assert!(committed.to_string().len() < 66_560);
+    assert_eq!(
+        exchange(
+            "mapping-oversize",
+            json!({"command":"mapping_import_begin",
+        "clientId":"cockpit-service-boundary-test","size":65_537})
+        )["ok"],
+        false
+    );
     drop(exchange);
     drop(input);
     assert!(service.wait().unwrap().success());

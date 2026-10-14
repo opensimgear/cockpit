@@ -15,6 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+osg-mapping = { path = "../crates/mapping" }
 osg-controller-input = { path = "../crates/controller-input" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

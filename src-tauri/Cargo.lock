@@ -2534,6 +2534,7 @@ name = "osg-cockpit"
 version = "0.1.0"
 dependencies = [
  "osg-controller-input",
+ "osg-mapping",
  "serde_json",
  "serialport",
  "socket2",
@@ -2557,6 +2558,16 @@ dependencies = [
  "udev",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "osg-mapping"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
 ]
 
 [[package]]

@@ -11,7 +11,10 @@ fn saving_and_failed_replacement_do_not_activate_or_disrupt_a_run() {
     assert!(runtime.engine().is_none());
     let saved = store.import(&profile().export().unwrap()).unwrap();
     assert!(runtime.engine().is_none());
-    assert_eq!(runtime.start(saved, assignments()).unwrap(), Counter(1));
+    assert_eq!(
+        runtime.start(saved, assignments()).unwrap().generation,
+        Counter(1)
+    );
     runtime.accept(baseline("left", 1, false)).unwrap();
     runtime.accept(baseline("right", 1, true)).unwrap();
     let token = runtime.engine().unwrap().token("left-trigger").unwrap();
@@ -25,7 +28,7 @@ fn saving_and_failed_replacement_do_not_activate_or_disrupt_a_run() {
     assert_eq!(runtime.recording.cursor(), cursor);
     assert!(runtime.engine().unwrap().ready());
     runtime.start(profile(), assignments()).unwrap();
-    let page = runtime.recording.page(cursor, 64).unwrap();
+    let page = runtime.recording.page(cursor, 32).unwrap();
     assert_eq!(page.records.len(), 4);
     assert_eq!(page.records[0].report.reason, ReportReason::Stop);
     assert_eq!(page.records[2].report.run_generation, Counter(2));
@@ -60,7 +63,7 @@ fn recording_pages_are_bounded_and_mark_lost_history() {
     assert_eq!(first.dropped, Counter(2));
     assert_eq!(first.records.len(), 32);
     assert_eq!(first.next, Counter(34));
-    let page = sink.page(first.next, 64).unwrap();
+    let page = sink.page(first.next, 32).unwrap();
     assert!(!page.gap);
     assert_eq!(page.records[0].cursor, Counter(35));
     assert!(sink.page(sink.cursor(), 1).unwrap().records.is_empty());
@@ -69,4 +72,51 @@ fn recording_pages_are_bounded_and_mark_lost_history() {
     assert!(runtime.accept(baseline("left", 1, false)).is_err());
     runtime.generation = u64::MAX;
     assert!(runtime.start(profile(), assignments()).is_err());
+}
+#[test]
+fn workers_and_timers_cannot_cross_session_or_run_boundaries() {
+    let mut old = Runtime::default();
+    let old_run = old.start(profile(), assignments()).unwrap();
+    old.accept_for(&old_run, baseline("left", 1, false))
+        .unwrap();
+    old.accept_for(&old_run, baseline("right", 1, false))
+        .unwrap();
+    let old_producer = old.engine().unwrap().token("left-trigger").unwrap();
+    let mut current = Runtime::default();
+    let current_run = current.start(profile(), assignments()).unwrap();
+    assert_eq!(old_run.generation, current_run.generation);
+    assert_ne!(old_run.session, current_run.session);
+    current
+        .accept_for(&current_run, baseline("left", 1, false))
+        .unwrap();
+    current
+        .accept_for(&current_run, baseline("right", 1, false))
+        .unwrap();
+    assert!(current
+        .accept_for(&old_run, baseline("left", 2, false))
+        .is_err());
+    assert!(current.advance_for(&old_run, Counter(10)).is_err());
+    assert!(current
+        .schedule(
+            old_producer,
+            "late".into(),
+            Counter(10),
+            Value::Button(true)
+        )
+        .is_err());
+    let next = current.start(profile(), assignments()).unwrap();
+    assert_eq!(next.session, current_run.session);
+    assert_ne!(next.generation, current_run.generation);
+    assert!(current
+        .accept_for(&current_run, baseline("left", 2, false))
+        .is_err());
+    current.advance_for(&next, Counter(20)).unwrap();
+    let mut zero_time = baseline("left", 1, false);
+    zero_time.captured_us = Counter(0);
+    assert!(current.accept_for(&next, zero_time).is_err());
+    current.stop();
+    assert!(current.token().is_err());
+    assert!(current
+        .accept_for(&next, baseline("left", 1, false))
+        .is_err());
 }

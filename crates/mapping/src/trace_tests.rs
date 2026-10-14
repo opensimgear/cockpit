@@ -22,8 +22,8 @@ fn authored_trace_preserves_edges_and_replays_identically() {
     assert_eq!(
         main,
         vec![
-            (0, false, -123, None, ReportReason::Start),
-            (0, false, 10, Some(1), ReportReason::Baseline),
+            (1, false, -123, None, ReportReason::Start),
+            (1, false, 10, Some(1), ReportReason::Baseline),
             (10, true, 10, Some(1), ReportReason::Change),
             (20, false, 10, Some(1), ReportReason::Change),
             (30_000, true, 10, Some(1), ReportReason::Timer),

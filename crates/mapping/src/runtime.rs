@@ -1,5 +1,5 @@
 use crate::{
-    engine::{Assignment, Counter, Engine, Frame, ProducerToken, Report},
+    engine::{Assignment, Counter, Engine, Frame, ProducerToken, Report, RunToken},
     profile::{Profile, Value},
 };
 use serde::Serialize;
@@ -40,7 +40,7 @@ impl RecordingSink {
         }
     }
     pub fn page(&self, after: Counter, limit: usize) -> Result<RecordingPage, String> {
-        if limit == 0 || limit > 64 || after.0 > self.cursor {
+        if limit == 0 || limit > 32 || after.0 > self.cursor {
             return Err("Invalid recording cursor or page size.".into());
         }
         let gap = self
@@ -67,13 +67,50 @@ impl RecordingSink {
     }
 }
 /// Explicit lifecycle around the pure reducer. Import/save are separate operations.
-#[derive(Default)]
 pub struct Runtime {
+    session: String,
     engine: Option<Engine>,
     generation: u64,
     pub recording: RecordingSink,
 }
+impl Default for Runtime {
+    fn default() -> Self {
+        Self {
+            session: uuid::Uuid::new_v4().to_string(),
+            engine: None,
+            generation: 0,
+            recording: RecordingSink::default(),
+        }
+    }
+}
 impl Runtime {
+    pub(crate) fn replay_session() -> Self {
+        let mut runtime = Self::default();
+        runtime.session = "a78d48b8-3958-4de5-a8b3-d3b52b1e24e7".into();
+        runtime
+    }
+    pub fn token(&self) -> Result<RunToken, String> {
+        self.engine
+            .as_ref()
+            .filter(|e| e.active())
+            .map(Engine::run_token)
+            .ok_or_else(|| "No active mapping run.".into())
+    }
+    fn check_run(&self, token: &RunToken) -> Result<(), String> {
+        if self.token()? != *token {
+            Err("Stale mapping worker session or run generation.".into())
+        } else {
+            Ok(())
+        }
+    }
+    pub fn accept_for(&mut self, token: &RunToken, frame: Frame) -> Result<(), String> {
+        self.check_run(token)?;
+        self.accept(frame)
+    }
+    pub fn advance_for(&mut self, token: &RunToken, now: Counter) -> Result<(), String> {
+        self.check_run(token)?;
+        self.advance(now)
+    }
     pub fn engine(&self) -> Option<&Engine> {
         self.engine.as_ref()
     }
@@ -81,30 +118,35 @@ impl Runtime {
         &mut self,
         profile: Profile,
         assignments: Vec<Assignment>,
-    ) -> Result<Counter, String> {
+    ) -> Result<RunToken, String> {
         let generation = self
             .generation
             .checked_add(1)
             .ok_or("Run generation exhausted.")?;
         // Fully validate the candidate before disturbing a currently active run.
-        let next = Engine::new(profile, assignments, Counter(generation))?;
+        let next = Engine::new(
+            profile,
+            assignments,
+            Counter(generation),
+            self.session.clone(),
+        )?;
         self.stop();
         self.generation = generation;
         self.engine = Some(next);
         self.flush();
-        Ok(Counter(generation))
+        self.token()
     }
     fn flush(&mut self) {
         if let Some(engine) = &mut self.engine {
             self.recording.record(engine.drain());
         }
     }
-    pub fn accept(&mut self, frame: Frame) -> Result<(), String> {
+    pub(crate) fn accept(&mut self, frame: Frame) -> Result<(), String> {
         let result = self.engine.as_mut().ok_or("No mapping run.")?.accept(frame);
         self.flush();
         result
     }
-    pub fn advance(&mut self, now: Counter) -> Result<(), String> {
+    pub(crate) fn advance(&mut self, now: Counter) -> Result<(), String> {
         let result = self.engine.as_mut().ok_or("No mapping run.")?.advance(now);
         self.flush();
         result

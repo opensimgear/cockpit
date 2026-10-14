@@ -106,6 +106,7 @@ pub struct GatewayManager {
     games: crate::games::GamesRuntime,
     game_admission: RwLock<()>,
     controllers: osg_controller_input::ControllerService,
+    mapping_documents: osg_mapping::documents::Documents,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -115,6 +116,9 @@ impl Default for GatewayManager {
 impl GatewayManager {
     pub fn new() -> Self {
         let mut manager = Self::with_provider(Arc::new(NativeProvider));
+        manager.mapping_documents = osg_mapping::documents::Documents::new(Some(
+            crate::dcs_runtime::config_path().with_file_name("mappings"),
+        ));
         manager.controllers = osg_controller_input::ControllerService::new(
             Some(crate::dcs_runtime::config_path().with_file_name("controllers.json")),
             true,
@@ -191,6 +195,7 @@ impl GatewayManager {
             games,
             game_admission: RwLock::new(()),
             controllers: osg_controller_input::ControllerService::new(None, false),
+            mapping_documents: osg_mapping::documents::Documents::new(None),
         }
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
@@ -285,6 +290,16 @@ impl GatewayManager {
         }
         if let Err(error) = self.games.guard_request(&request) {
             return self.error(&error, None);
+        }
+        if command.starts_with("mapping_") {
+            // Document responses can use the full profile limit. Keep unrelated
+            // gateway inventory out of this separately bounded response.
+            return match self.mapping_documents.request(&request) {
+                Ok(state) => json!({"ok":true,"state":{"mappings":state}}),
+                Err(error) => {
+                    json!({"ok":false,"error":error.chars().take(256).collect::<String>()})
+                }
+            };
         }
         if command.starts_with("controller_") {
             return match self.controllers.request(&request) {
@@ -464,6 +479,7 @@ impl GatewayManager {
         self.closed.store(true, Ordering::Release);
         self.games.shutdown();
         self.controllers.shutdown();
+        self.mapping_documents.clear();
         self.integration.stop(true);
         self.dcs.shutdown();
         let sessions =
@@ -861,6 +877,68 @@ mod tests {
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
+    #[test]
+    fn full_size_mapping_document_uses_bounded_upload_and_no_device_adapter() {
+        let (mut manager, provider) = setup();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../.research/mapping-transport-tests")
+            .join(uuid::Uuid::new_v4().to_string());
+        Arc::get_mut(&mut manager).unwrap().mapping_documents =
+            osg_mapping::documents::Documents::new(Some(path.clone()));
+        let mut bytes =
+            include_bytes!("../../crates/mapping/fixtures/direct-profile.json").to_vec();
+        bytes.resize(65_536, b' ');
+        let begin = request(
+            &manager,
+            "mapping_import_begin",
+            None,
+            json!({"size":bytes.len()}),
+        );
+        assert_eq!(begin["ok"], true);
+        let id = begin["state"]["mappings"]["uploadId"].clone();
+        for (index, chunk) in bytes.chunks(8192).enumerate() {
+            let payload = json!({"uploadId":id,"offset":index * 8192,"bytes":chunk});
+            assert!(payload.to_string().len() < 65_000);
+            assert_eq!(
+                request(&manager, "mapping_import_chunk", None, payload)["ok"],
+                true
+            );
+        }
+        let committed = request(
+            &manager,
+            "mapping_import_commit",
+            None,
+            json!({"uploadId":id}),
+        );
+        assert_eq!(committed["ok"], true, "{committed}");
+        assert!(committed.to_string().len() < 66_560);
+        let document = &committed["state"]["mappings"]["document"];
+        assert!(document.is_object());
+        let exported = request(
+            &manager,
+            "mapping_export",
+            None,
+            json!({"profileId":document["id"]}),
+        );
+        assert_eq!(&exported["state"]["mappings"]["document"], document);
+        assert_eq!(
+            request(
+                &manager,
+                "mapping_import_begin",
+                None,
+                json!({"size":65_537})
+            )["ok"],
+            false
+        );
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        assert!(manager.sessions.lock().unwrap().is_empty());
+        manager.shutdown();
+        assert_eq!(
+            request(&manager, "mapping_profiles", None, json!({"offset":0}))["ok"],
+            false
+        );
+        std::fs::remove_dir_all(path).unwrap();
+    }
     #[test]
     fn shutdown_during_discovery_cannot_create_a_late_adapter() {
         struct SuspendedDiscovery {

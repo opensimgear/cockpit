@@ -375,7 +375,7 @@ fn explicit_priority_and_report_backpressure() {
         output: p.nodes[2].output.clone().unwrap(),
         priority: vec!["second-axis".into(), "left-x".into()],
     });
-    let mut e = Engine::new(p, assignments(), Counter(1)).unwrap();
+    let mut e = create(p, assignments(), Counter(1)).unwrap();
     e.accept(baseline("left", 1, false)).unwrap();
     let token = e.token("second-axis").unwrap();
     e.schedule(token, "override".into(), Counter(1), Value::Axis(300))
@@ -405,27 +405,27 @@ fn explicit_priority_and_report_backpressure() {
 }
 #[test]
 fn assignments_are_explicit_and_cannot_select_virtual_sources() {
-    assert!(Engine::new(profile(), assignments(), Counter(0)).is_err());
-    assert!(Engine::new(profile(), vec![], Counter(1)).is_err());
+    assert!(create(profile(), assignments(), Counter(0)).is_err());
+    assert!(create(profile(), vec![], Counter(1)).is_err());
     let valid = assignments();
     let mut bad = valid.clone();
     bad[0].role = "unknown".into();
-    assert!(Engine::new(profile(), bad, Counter(1)).is_err());
+    assert!(create(profile(), bad, Counter(1)).is_err());
     let mut bad = valid.clone();
     bad[0].source.id = "opensimgear-virtual:a".into();
-    assert!(Engine::new(profile(), bad, Counter(1)).is_err());
+    assert!(create(profile(), bad, Counter(1)).is_err());
     let mut bad = valid.clone();
     bad[0].source.origin = Origin::HostController;
-    assert!(Engine::new(profile(), bad, Counter(1)).is_err());
+    assert!(create(profile(), bad, Counter(1)).is_err());
     let mut bad = valid.clone();
     bad[0].controls[0].control = "unknown".into();
-    assert!(Engine::new(profile(), bad, Counter(1)).is_err());
+    assert!(create(profile(), bad, Counter(1)).is_err());
     let mut bad = valid.clone();
     bad[0].controls[1] = bad[0].controls[0].clone();
-    assert!(Engine::new(profile(), bad, Counter(1)).is_err());
+    assert!(create(profile(), bad, Counter(1)).is_err());
     let mut bad = valid.clone();
     bad[0].controls[1].source_control = bad[0].controls[0].source_control.clone();
-    assert!(Engine::new(profile(), bad, Counter(1)).is_err());
+    assert!(create(profile(), bad, Counter(1)).is_err());
     let mut p = profile();
     p.roles[1].controls[0].kind = Kind::Axis {
         range: profile::AxisRange::Bipolar,
@@ -437,7 +437,7 @@ fn assignments_are_explicit_and_cannot_select_virtual_sources() {
     });
     let mut bad = valid;
     bad[1].source = bad[0].source.clone();
-    assert!(Engine::new(p, bad, Counter(1)).is_err());
+    assert!(create(p, bad, Counter(1)).is_err());
 }
 
 #[test]
@@ -450,7 +450,7 @@ fn timer_limit_stale_tokens_and_hat_priority_are_bounded() {
         output: p.nodes[3].output.clone().unwrap(),
         priority: vec!["priority-hat".into(), "left-hat".into()],
     });
-    let mut e = Engine::new(p, assignments(), Counter(1)).unwrap();
+    let mut e = create(p, assignments(), Counter(1)).unwrap();
     e.accept(baseline("left", 1, false)).unwrap();
     e.drain();
     let token = e.token("priority-hat").unwrap();
@@ -499,6 +499,7 @@ fn timer_limit_stale_tokens_and_hat_priority_are_bounded() {
     assert!(!e.last["main"].buttons[0]);
     e.reports = vec![
         Report {
+            session: "a78d48b8-3958-4de5-a8b3-d3b52b1e24e7".into(),
             run_generation: Counter(1),
             sequence: Counter(1),
             at_us: Counter(3),
@@ -533,7 +534,7 @@ fn a_native_source_cannot_exceed_its_control_bound_across_roles() {
         }
     }
     bindings[1].source = bindings[0].source.clone();
-    assert!(Engine::new(p, bindings, Counter(1))
+    assert!(create(p, bindings, Counter(1))
         .err()
         .unwrap()
         .contains("256 controls"));
