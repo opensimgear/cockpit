@@ -19,6 +19,7 @@ pub struct NativeBackend {
     parameters: String,
     journals: String,
     operation: String,
+    protected: bool,
     ancillary: Vec<(HKEY, String)>,
     inspect: Inspector,
     refresh: Refresher,
@@ -92,10 +93,15 @@ impl NativeBackend {
             parameters: PARAMETERS.into(),
             journals: JOURNALS.into(),
             operation: operation.into(),
+            protected: true,
             ancillary,
             inspect,
             refresh,
         })
+    }
+    /// Called explicitly by the elevated helper before writing its first journal.
+    pub fn prepare_journals(&self) -> Result<(), String> {
+        crate::journal_security::protected(self.hive, &self.journals).map(|_| ())
     }
     /// Stage only the qualified default layout, retaining this operation's identity.
     pub fn provision(&mut self, target: u8) -> Result<Journal, String> {
@@ -116,6 +122,9 @@ impl NativeBackend {
         self.checked_record(&key)
     }
     fn checked_record(&self, key: &Key) -> Result<Journal, String> {
+        if self.protected {
+            crate::journal_security::verify_protected(key)?;
+        }
         let record = Self::read_record(key)?;
         crate::provision::validate_journal(&record)?;
         if record.id != self.operation {
@@ -247,7 +256,12 @@ impl Backend for NativeBackend {
             // write ACL before entering provisioning; no user-supplied file path.
             let parent = Key::open(self.hive, &self.journals, KEY_READ | KEY_WRITE, None)?
                 .ok_or("Protected provisioning journal directory is missing.")?;
-            let (key, created) = Key::create(parent.0, &self.operation, None)?;
+            let (key, created) = if self.protected {
+                crate::journal_security::verify_protected(&parent)?;
+                crate::journal_security::protected(parent.0, &self.operation)?
+            } else {
+                Key::create(parent.0, &self.operation, None)?
+            };
             if !created {
                 return Err("Provisioning operation already exists.".into());
             }

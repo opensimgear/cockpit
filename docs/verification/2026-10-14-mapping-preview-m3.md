@@ -141,3 +141,27 @@ Windows production-line coverage was 96.74% for registry access, 76.19% for nati
 provisioning storage and 96.62% for the portable transaction core. Every measured
 module still passes the 71% gate. The Windows Tauri development app rebuilt and
 read-only WebView inspection confirmed the visible gateway UI at port 1420.
+## Protected provisioning journals
+
+The explicit helper preparation path now creates a journal directory with
+Administrators ownership/group, protected access rules granting System and
+Administrators full access, and Users read access. Each operation record receives
+the same explicit owner and access policy. Every existing journal must match the
+expected policy before it is trusted or updated; unexpected permissions are
+preserved and reported, never silently repaired. This code is still not invoked
+by ordinary startup or an enabled Create action.
+
+Disposable HKCU fixtures verify native security-descriptor conversion, exact
+policy comparison, refusal of an existing incompatible key and unchanged contents
+after refusal. The local token cannot assign the Administrators owner (Windows
+error 1307); the test records that qualification gap and confirms no key was
+created. An appropriately authorized test runner also checks creation and
+transactional use of protected fixture journals. No machine journal or driver
+configuration was created by these local tests.
+
+All 36 Windows virtual-controller tests passed; journal-security production-line
+coverage is 95.45%, and every measured module remains above 71%. The earlier
+storage checkpoint's Windows CI exercised real fixture transaction commits,
+rollback, collision rejection and ownership retirement, reaching 97.22% native
+provisioning-storage coverage. These fixture results do not qualify elevated
+production launch, driver refresh, guardian recovery, or physical/game behavior.

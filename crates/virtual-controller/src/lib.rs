@@ -15,3 +15,6 @@ mod registry;
 
 #[cfg(windows)]
 pub mod windows_provision;
+
+#[cfg(windows)]
+mod journal_security;

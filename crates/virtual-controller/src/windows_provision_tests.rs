@@ -52,6 +52,7 @@ impl Fixture {
             parameters,
             journals,
             operation: uuid::Uuid::new_v4().to_string(),
+            protected: false,
             ancillary: vec![(HKEY_CURRENT_USER, format!("{root}\\OEM"))],
             inspect: Box::new(move || {
                 let key = Key::open(HKEY_CURRENT_USER, &inspect_path, KEY_READ, None)?.unwrap();
@@ -333,6 +334,60 @@ fn production_plan_keeps_the_helper_operation_identity_and_fails_closed_without_
         let error = f.backend.provision(2).unwrap_err();
         assert!(error.contains("6801"));
         assert!(f.backend.snapshot().unwrap().entries.is_empty());
+        assert!(f.backend.read_journal().unwrap().written.is_empty());
+    }
+}
+
+#[test]
+fn native_backend_refuses_unprotected_existing_journal_roots_and_records() {
+    let mut f = Fixture::new();
+    let record = f.plan();
+    f.backend.protected = true;
+    assert!(f.backend.prepare_journals().is_err());
+    assert!(f.backend.journal(&record).is_err());
+    assert!(
+        Key::open(f.backend.hive, &f.backend.journal_path(), KEY_READ, None)
+            .unwrap()
+            .is_none()
+    );
+    f.backend.protected = false;
+    f.backend.journal(&record).unwrap();
+    f.backend.protected = true;
+    assert!(f.backend.read_journal().is_err());
+    assert!(f.backend.journal(&record).is_err());
+    assert!(f.backend.snapshot().unwrap().entries.is_empty());
+}
+
+#[test]
+fn protected_journals_use_admin_ownership_when_the_test_token_can_assign_it() {
+    let mut f = Fixture::new();
+    let protected_path = format!("{}\\Protected", f.root);
+    match crate::journal_security::protected(f.backend.hive, &protected_path) {
+        Ok((key, created)) => {
+            assert!(created);
+            crate::journal_security::verify_protected(&key).unwrap();
+        }
+        Err(error) if error.contains("Windows error 5") || error.contains("Windows error 1307") => {
+            eprintln!("UNQUALIFIED: this test token cannot assign the admin owner: {error}");
+            assert!(Key::open(f.backend.hive, &protected_path, KEY_READ, None)
+                .unwrap()
+                .is_none());
+            return;
+        }
+        Err(error) => panic!("{error}"),
+    }
+    f.backend.journals = protected_path;
+    f.backend.protected = true;
+    f.backend.prepare_journals().unwrap();
+    let record = f.plan();
+    f.backend.journal(&record).unwrap();
+    assert_eq!(f.backend.read_journal().unwrap().id, record.id);
+    f.backend.journal(&record).unwrap();
+    if f.transactions() {
+        f.backend
+            .create(1, &expected(1))
+            .unwrap_or_else(|e| panic!("{}", e.message));
+        f.backend.remove(1).unwrap();
         assert!(f.backend.read_journal().unwrap().written.is_empty());
     }
 }
