@@ -3,11 +3,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { createSocket } from 'node:dgram';
 import { createInterface } from 'node:readline';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const isolatedEnvironment = () => ({ ...process.env, OSG_SIMULATION_NAMESPACE: `cockpit-e2e-${randomBytes(8).toString('hex')}` });
+
+async function udpPort() {
+  const socket=createSocket('udp4');
+  await new Promise(resolve=>socket.bind(0,'127.0.0.1',resolve));
+  const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));return port;
+}
 
 function processClient(executable, args = [], env = process.env) {
   const child = spawn(executable, args, { stdio: ['pipe', 'pipe', 'pipe'], env });
@@ -113,6 +120,27 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
   const startDevice = (index = 0) => processClient(launch.python, [resolve(launch.deviceRepository, 'simulation/run.py'),
     '--config', definitions[index].path, '--gateway', uid, '--state-dir', resolve(stateDirectory, `device-${index}`),
     '--output-dir', launch.deviceBuild, '--no-build'], environment);
+  const releaseBeforePress = async () => {
+    // USB publication precedes the renewed CAN assignment/acquisition baseline.
+    // A momentary contact closed during that interval is held-at-start and must
+    // release before a fresh press; a published neutral report alone cannot arm it.
+    await wait(() => ok('status'), state => {
+      const module = state.modules.find(module => module.id === moduleId);
+      return !state.layoutPending && module?.online && module.enabled && module.published &&
+        module.profileMatch && module.active && module.hasInput;
+    }, 'The published controller acquires fresh inputs before the fixture presses contacts');
+    // Each simulator contact command advances acquisition by 30 ms, so these
+    // releases exceed the 10 ms rearm debounce after active input is established.
+    for (const contact of [0, 1, 2]) await admin(device, `contact ${contact} 0`);
+    await wait(() => ok('status'), state => {
+      const module = state.modules.find(module => module.id === moduleId);
+      // Selector center (logical button 7) and a neutral hat confirm that the
+      // routed report reflects current acquisition, alongside released buttons.
+      return !state.layoutPending && module?.online && module.enabled && module.published &&
+        module.profileMatch && module.active && module.hasInput && module.buttons.includes(7) &&
+        !module.buttons.includes(1) && !module.buttons.includes(2) && module.hats[0] === 8;
+    }, 'Released contacts reach a debounced current input baseline before a fresh press');
+  };
   try {
     let state = await ok('ports');
     assert.ok(!state.ports.some(port => port.serialNumber === uid), 'Cockpit never fabricates a gateway before its process starts');
@@ -160,6 +188,7 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     assert.equal(state.modules.find(module => module.id === moduleId).reportId, 1);
     assert.equal(state.modules.filter(module => module.enabled && module.published && module.profileMatch).length, 3);
 
+    await releaseBeforePress();
     await admin(device, 'contact 0 1');
     await admin(device, 'axis 0 100');
     await admin(device, 'axis 1 4095');
@@ -270,6 +299,7 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     state = await ok('config_read', { moduleId });
     assert.deepEqual(state.moduleConfigs[moduleId].config, config, 'Forgetting a gateway record does not erase the module configuration');
 
+    await releaseBeforePress();
     await admin(device, 'contact 0 1');
     await admin(device, 'axis 0 100');
     await admin(device, 'axis 1 4095');
@@ -642,4 +672,97 @@ test('Cockpit discovers advertised LED actions and routes manual outputs indepen
   } finally {
     await Promise.allSettled([...devices, ...gateways, service].map(process => process.stop()));
   }
+});
+
+test('simulated master-caution uses production button events and board LED actions through DCS-BIOS', { timeout: 120_000 }, async()=>{
+  const launch=JSON.parse(await readFile(process.env.OSG_E2E_MANIFEST,'utf8'));
+  await mkdir(launch.artifacts,{recursive:true});const directory=await mkdtemp(resolve(launch.artifacts,'dcs-master-caution-'));
+  const environment={...isolatedEnvironment(),OSG_DCS_BIOS_CONFIG:resolve(directory,'profile.json')};
+  const uids=[randomBytes(12).toString('hex'),randomBytes(12).toString('hex')],ids=uids.map(uid=>`stm32:${uid}`);
+  const definition=JSON.parse(await readFile(resolve(launch.deviceRepository,'simulation/configs/master-caution.json'),'utf8'));
+  const moduleId=definition.identity;const definitionPath=resolve(directory,'panel.json');await writeFile(definitionPath,JSON.stringify(definition));
+  const commandPort=await udpPort(),exportPort=await udpPort();
+  let service=processClient(launch.serviceBinary,[],environment);const gateways=[],devices=[];let peer,adminId=0;
+  const request=(command,index=0,extra={})=>service.request({command,gatewayId:ids[index],clientId:'dcs-master-caution-acceptance',...extra});
+  const ok=async(command,index=0,extra={})=>{const reply=await request(command,index,extra);assert.equal(reply.ok,true,`${command}: ${reply.error}`);return reply.state;};
+  const admin=async(process,command)=>{const reply=await process.line(`sim ${++adminId} ${command}`);assert.equal(reply.ok,true,reply.error);return reply.simulation;};
+  const wait=async(operation,accepts,label)=>{let result;for(let i=0;i<90;i++){result=await operation();if(accepts(result))return result;await sleep(50);}assert.fail(`${label}: ${JSON.stringify(result)}`);};
+  const mode=async(index=0)=>(await admin(devices[index],'inspect')).actions.states.find(s=>s.id==='led.status.set_mode').values[0];
+  const count=async()=>(await admin(peer,'inspect')).commands.length;
+  const inputDisarmed=async(label,aircraft)=>wait(()=>ok('dcs_status'),state=>{
+    const integration=state.dcsBios;
+    // Observe native invalidation before restoring export: a physical LED change
+    // can become visible before this worker publishes its updated diagnostics.
+    return integration?.running && integration.feedbackFresh===false && integration.armed===false &&
+      (aircraft===undefined || (integration.aircraft===aircraft && integration.missionActive===false));
+  },label);
+  const inputReady=async(label,aircraft)=>wait(()=>ok('dcs_status'),state=>{
+    const integration=state.dcsBios;
+    // Fresh export can apply the LED before the next panel baseline read.
+    // New presses are valid only after that cursor is established and armed.
+    return integration?.running && integration.feedbackFresh && integration.missionActive &&
+      integration.needsBaseline===false && integration.armed===true &&
+      !integration.error && !integration.commandUncertain &&
+      (aircraft===undefined || integration.aircraft===aircraft);
+  },label);
+  try{
+    for(const[index,uid]of uids.entries()){
+      gateways.push(processClient(launch.gatewayBinary,['--identity',uid,'--state-dir',resolve(directory,`gateway-${index}`)],environment));
+      const inventory=await wait(()=>ok('ports',index),s=>s.ports.some(p=>p.serialNumber===uid),'Gateway advertises');
+      await ok('connect',index,{backend:'stm32',port:inventory.ports.find(p=>p.serialNumber===uid).path});
+      devices.push(processClient(launch.python,[resolve(launch.deviceRepository,'simulation/run.py'),'--config',definitionPath,'--gateway',uid,'--state-dir',resolve(directory,`device-${index}`),'--output-dir',launch.deviceBuild,'--no-build'],environment));
+      await wait(()=>ok('status',index),s=>s.modules.some(m=>m.id===moduleId&&m.online)&&!s.layoutPending,'Panel route');
+    }
+    peer=processClient(process.execPath,[resolve(launch.root,'simulation/dcs-bios/peer.mjs'),'--command-port',String(commandPort),'--export-port',String(exportPort)],environment);
+    await admin(peer,'warning 1');
+    const config={schemaVersion:1,cataloguePath:resolve(launch.root,'simulation/dcs-bios/catalogue'),gatewayId:ids[0],moduleId,button:0,ledActionId:'led.status.set_mode',commandHost:'127.0.0.1',commandPort,listenAddress:'127.0.0.1',listenPort:exportPort,multicastGroup:'',multicastInterface:'127.0.0.1',freshnessMs:200};
+    await ok('dcs_configure',0,{dcsConfig:config});
+    let reply=await request('dcs_start');assert.equal(reply.ok,false);assert.match(reply.error,/Disable/);
+    await ok('disable',0,{moduleId});
+    await admin(devices[0],'direct 1');await wait(()=>ok('status'),s=>s.modules[0].directUsb,'Direct USB route');
+    reply=await request('dcs_start');assert.equal(reply.ok,false);assert.match(reply.error,/direct USB/);
+    await admin(devices[0],'direct 0');await wait(()=>ok('status'),s=>!s.modules[0].directUsb,'CAN only route');
+    // Old transitions and a button held at start must never become aircraft commands.
+    await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await admin(devices[0],'contact 0 1');
+    await ok('dcs_start');await wait(()=>mode(),v=>v==='on','Warning reaches the board-compatible LED');
+    assert.equal(await count(),0,'No startup replay');await admin(devices[0],'contact 0 0');await inputReady('Held startup release arms the established baseline');assert.equal(await count(),0,'Held startup release arms without a synthetic command');
+    await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');
+    await wait(()=>count(),n=>n===2,'Short press/release reaches DCS');
+    assert.deepEqual((await admin(peer,'inspect')).commands.map(c=>c.line),['UFC_MASTER_CAUTION 1','UFC_MASTER_CAUTION 0']);
+    await wait(()=>mode(),v=>v==='off','Acknowledgement clears LED');
+    assert.equal(await mode(1),'auto','Same module identity on another gateway stays isolated');
+    await admin(devices[1],'contact 0 1');await admin(devices[1],'contact 0 0');await sleep(150);assert.equal(await count(),2,'Unbound gateway never sends commands');
+    const before=await admin(devices[0],'inspect');
+    const state=await ok('status');reply=await request('action_invoke',0,{moduleId,boot:state.modules[0].boot,catalogueRevision:1,actionId:'led.status.set_mode',values:['on']});
+    assert.equal(reply.ok,false);assert.match(reply.error,/Stop DCS-BIOS/);assert.equal(reply.state.connected,true,'Manual LED guard retains inventory');
+    await admin(peer,'warning 1');await wait(()=>mode(),v=>v==='on','Fresh warning');
+    await admin(peer,'pause 1');await wait(()=>mode(),v=>v==='off','Feedback loss fallback');
+    await inputDisarmed('Feedback loss disarms input before stale contacts are pressed');
+    await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await sleep(150);assert.equal(await count(),2,'Stale input not sent');
+    await admin(peer,'pause 0');await wait(()=>mode(),v=>v==='on','Fresh export restores LED');await inputReady('Fresh export establishes a new armed input baseline');assert.equal(await count(),2,'Historical stale input not replayed');
+    await admin(peer,'freeze 1');await wait(()=>mode(),v=>v==='off','Duplicate counters do not establish freshness');
+    await inputDisarmed('Duplicate counters disarm input before export resumes');
+    await admin(peer,'freeze 0');await wait(()=>mode(),v=>v==='on','Counter advances restore freshness');
+    await inputReady('Advancing counters re-establish an armed input baseline');
+    await admin(peer,'aircraft F-16C_50');await wait(()=>mode(),v=>v==='off','Wrong aircraft fallback');
+    await inputDisarmed('Unsupported aircraft disarms the binding','F-16C_50');
+    await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await sleep(150);assert.equal(await count(),2,'Wrong aircraft input ignored');
+    await admin(peer,'aircraft A-10C_2');await wait(()=>mode(),v=>v==='on','Installed aircraft alias resolved');
+    await inputReady('Supported aircraft alias re-establishes an armed input baseline','A-10C_2');
+    await admin(peer,'fragment 1');await sleep(150);await ok('dcs_status');
+    await admin(devices[0],'reboot');await wait(()=>ok('status'),s=>s.modules[0].boot!==state.modules[0].boot,'Panel reboot visible');
+    await wait(()=>mode(),v=>v==='on','Reboot refreshes feedback without replay');await inputReady('Panel reboot establishes its new armed event baseline');assert.equal(await count(),2);
+    await admin(peer,'aircraft NONE');await wait(()=>mode(),v=>v==='off','Mission end clears LED');
+    await inputDisarmed('Mission end disarms input before restarting',null);
+    await admin(peer,'aircraft A-10C');await wait(()=>mode(),v=>v==='on','Mission restart');
+    await inputReady('Mission restart establishes an armed current event baseline','A-10C');
+    assert.equal(await count(),2,'Mission recovery does not replay historical presses');
+    await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await wait(()=>count(),n=>n===4,'New press works after rebaseline');
+    const after=await admin(devices[0],'inspect');assert.equal(after.module.generation,before.module.generation);assert.equal(after.module.owner,0,'No configuration writer claim');
+    await admin(devices[0],'contact 0 1');await wait(()=>count(),n=>n===5,'Forwarded held press before Stop');
+    await ok('dcs_stop');await wait(()=>count(),n=>n===6,'Stop sends one neutral release');
+    assert.equal((await admin(peer,'inspect')).commands.at(-1).line,'UFC_MASTER_CAUTION 0');assert.equal(await mode(),'off','Explicit stop leaves LED off');
+    await service.stop();service=processClient(launch.serviceBinary,[],environment);const restarted=await ok('dcs_status');assert.equal(restarted.dcsBios.configured,true);assert.equal(restarted.dcsBios.running,false,'Saved profiles never automatically start');
+    await writeFile(resolve(directory,'dcs-master-caution-acceptance.json'),JSON.stringify({passed:true,config,commands:(await admin(peer,'inspect')).commands,scenarios:['board-compatible actions','HID/direct USB exclusion','short press and release','held startup','gateway isolation','feedback staleness','duplicate counters','aircraft aliases','mission changes','fragmented exports','panel reboot','no historical replay','persistence without autostart']},null,2));
+  }finally{await Promise.allSettled([...devices,...gateways,service,...(peer?[peer]:[])].map(p=>p.stop()));}
 });

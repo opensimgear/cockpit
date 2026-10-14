@@ -97,9 +97,10 @@ fn empty_state() -> Value {
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 pub struct GatewayManager {
     provider: Arc<dyn Provider>,
-    sessions: Mutex<BTreeMap<String, Arc<dyn Adapter>>>,
+    sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
     closed: AtomicBool,
+    dcs: crate::dcs_runtime::DcsRuntime,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -111,11 +112,26 @@ impl GatewayManager {
         Self::with_provider(Arc::new(NativeProvider))
     }
     fn with_provider(provider: Arc<dyn Provider>) -> Self {
+        let sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        let targets = sessions.clone();
+        let panel = Arc::new(move |request: Value| {
+            let adapter = targets
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(request["gatewayId"].as_str().unwrap_or(""))
+                .cloned();
+            adapter.map_or_else(
+                || json!({"ok":false,"error":"Connect the bound gateway first."}),
+                |adapter| adapter.request(request),
+            )
+        });
         Self {
             provider,
-            sessions: Mutex::new(BTreeMap::new()),
+            sessions,
             inventory: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
+            dcs: crate::dcs_runtime::DcsRuntime::new(panel, crate::dcs_runtime::config_path()),
         }
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
@@ -153,6 +169,7 @@ impl GatewayManager {
             response["state"]["gatewayId"] = json!(id);
             response["state"]["backend"] = json!(id.split_once(':').unwrap().0);
         }
+        response["state"]["dcsBios"] = self.dcs.status();
         response
     }
     fn error(&self, message: &str, id: Option<&str>) -> Value {
@@ -177,6 +194,12 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if command.starts_with("dcs_") {
+            return match self.dcs.request(&request) {
+                Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
+                Err(error) => self.error(&error, None),
+            };
+        }
         let backend = match request.get("backend") {
             Some(Value::String(s)) if s == "pico" || s == "stm32" => Some(s.clone()),
             Some(_) => return self.error("Unknown gateway backend.", None),
@@ -231,6 +254,7 @@ impl GatewayManager {
         let (id, adapter) = {
             let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
             if self.closed.load(Ordering::Acquire) {
+                drop(sessions);
                 return self.error("Cockpit gateway manager has closed.", id.as_deref());
             }
             let id = match id {
@@ -244,14 +268,16 @@ impl GatewayManager {
                     };
                 }
                 None => {
+                    drop(sessions);
                     return self.error(
                         "Specify gatewayId when more than one gateway session exists.",
                         None,
-                    )
+                    );
                 }
             };
             let gateway_backend = id.split_once(':').unwrap().0;
             if backend.as_ref().is_some_and(|b| b != gateway_backend) {
+                drop(sessions);
                 return self.error("Gateway identity and backend do not match.", Some(&id));
             }
             let adapter = if command == "connect" {
@@ -261,6 +287,7 @@ impl GatewayManager {
                     .clone()
             } else {
                 let Some(adapter) = sessions.get(&id) else {
+                    drop(sessions);
                     return self.error(
                         "Unknown gateway session; connect this gateway first.",
                         Some(&id),
@@ -272,7 +299,16 @@ impl GatewayManager {
         };
         request["gatewayId"] = json!(id);
         request.as_object_mut().unwrap().remove("backend");
-        let response = adapter.request(request);
+        let bound_led = command == "action_invoke" && self.dcs.bound_led(&request);
+        let mut response = adapter.request(if bound_led {
+            json!({"command":"status","clientId":request["clientId"],"gatewayId":id})
+        } else {
+            request
+        });
+        if bound_led {
+            response["ok"] = json!(false);
+            response["error"] = json!("Stop DCS-BIOS before manually controlling its bound LED.");
+        }
         if response["state"]["connected"] == true {
             let backend = id.split_once(':').unwrap().0;
             if response["state"]["gatewaySerial"]
@@ -286,6 +322,7 @@ impl GatewayManager {
                 if sessions.get(&id).is_some_and(|a| Arc::ptr_eq(a, &adapter)) {
                     sessions.remove(&id);
                 }
+                drop(sessions);
                 return self.error(
                     "Gateway handshake did not match the requested identity.",
                     Some(&id),
@@ -296,6 +333,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.dcs.shutdown();
         let sessions =
             std::mem::take(&mut *self.sessions.lock().unwrap_or_else(|p| p.into_inner()));
         // Cancellation/release happens concurrently, bounded by each adapter's own deadlines.
@@ -315,7 +353,7 @@ impl Drop for GatewayManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{sync::mpsc, time::Duration};
+    use std::{path::PathBuf, sync::mpsc, time::Duration};
     const CLIENT: &str = "cockpit-fleet-test-client";
     const FIRST: &str = "stm32:00112233445566778899aabb";
     const SECOND: &str = "stm32:112233445566778899aabbcc";
@@ -591,6 +629,76 @@ mod tests {
         );
         manager.shutdown();
         slow.join().unwrap();
+    }
+
+    #[test]
+    fn rejected_gateway_selection_does_not_deadlock_a_starting_dcs_profile() {
+        let (mut manager, _) = setup();
+        let sessions = manager.sessions.clone();
+        let entered = Arc::new(AtomicBool::new(false));
+        let released = Arc::new(AtomicBool::new(false));
+        let (worker_entered, worker_released) = (entered.clone(), released.clone());
+        let panel = Arc::new(move |request: Value| {
+            // Starting DCS holds its settings lock while preparing the panel.
+            // Pause before its fleet lookup so a rejected request can decorate
+            // its response concurrently with this lookup.
+            worker_entered.store(true, Ordering::Release);
+            while !worker_released.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            let adapter = sessions.lock().unwrap().get(FIRST).cloned().unwrap();
+            adapter.request(request)
+        });
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.research/milestone2/gateway-lock-tests")
+            .join(uuid::Uuid::new_v4().to_string())
+            .join("profile.json");
+        Arc::get_mut(&mut manager).unwrap().dcs =
+            crate::dcs_runtime::DcsRuntime::new(panel, path.clone());
+        for id in [FIRST, SECOND] {
+            assert_eq!(
+                request(&manager, "connect", Some(id), json!({}))["ok"],
+                true
+            );
+        }
+        let config = json!({"schemaVersion":1,"cataloguePath":PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios"),"gatewayId":FIRST,"moduleId":"00112233445566778899aabbccddeeff","button":0,"ledActionId":"led.boolean"});
+        assert_eq!(
+            request(&manager, "dcs_configure", None, json!({"dcsConfig":config}))["ok"],
+            true
+        );
+        let (sender, receiver) = mpsc::channel();
+        let pending_manager = manager.clone();
+        let started = sender.clone();
+        let start = std::thread::spawn(move || {
+            started
+                .send(request(&pending_manager, "dcs_start", None, json!({})))
+                .unwrap();
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !entered.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(entered.load(Ordering::Acquire));
+        let pending_manager = manager.clone();
+        let rejected = std::thread::spawn(move || {
+            sender
+                .send(request(&pending_manager, "status", None, json!({})))
+                .unwrap();
+        });
+        // The rejected request must wait for DCS status, but must not retain the
+        // fleet lock that DCS preparation needs. Both finish once it resumes.
+        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+        released.store(true, Ordering::Release);
+        for _ in 0..2 {
+            assert_eq!(
+                receiver.recv_timeout(Duration::from_secs(1)).unwrap()["ok"],
+                false
+            );
+        }
+        start.join().unwrap();
+        rejected.join().unwrap();
+        manager.shutdown();
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+  "Metadata": {
+    "_ACFT_NAME": {
+      "identifier": "_ACFT_NAME", "category": "Metadata", "control_type": "display",
+      "description": "Aircraft Name (or NONE), null-terminated", "inputs": [],
+      "outputs": [{ "type": "string", "address": 0, "max_length": 24, "suffix": "", "description": "Aircraft name" }]
+    }
+  }
+}

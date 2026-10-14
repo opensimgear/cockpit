@@ -437,6 +437,8 @@ struct Gateway {
     active_configs: HashMap<String, (u64, Option<u64>, Value)>,
     actions: HashMap<String, ActionCache>,
     action_reply: Option<Value>,
+    events: HashMap<String, ActionCache>,
+    events_reply: Option<Value>,
 }
 impl Gateway {
     fn new(factory: Box<dyn Factory>, timing: Timing, cancel: Arc<AtomicBool>) -> Self {
@@ -456,6 +458,8 @@ impl Gateway {
             active_configs: HashMap::new(),
             actions: HashMap::new(),
             action_reply: None,
+            events: HashMap::new(),
+            events_reply: None,
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
@@ -542,6 +546,8 @@ impl Gateway {
         state["port"] = self.state["port"].clone();
         self.actions
             .retain(|id, cache| action_route(&state, id).as_ref() == Some(&cache.route));
+        self.events
+            .retain(|id, cache| action_route(&state, id).as_ref() == Some(&cache.route));
         self.configs.retain(|id, _| {
             state["modules"].as_array().unwrap().iter().any(|m| {
                 m["id"] == *id
@@ -570,6 +576,7 @@ impl Gateway {
     }
     fn exchange(&mut self, command: &str, timeout: Duration) -> Result<(), String> {
         self.action_reply = None;
+        self.events_reply = None;
         if self.connection.is_none() {
             return Err(NO_CONNECTION.into());
         }
@@ -653,6 +660,9 @@ impl Gateway {
                 }
                 if command.starts_with("action ") && !value["targetAction"].is_null() {
                     self.action_reply = Some(value["targetAction"].clone());
+                }
+                if command.starts_with("events ") && !value["targetEvents"].is_null() {
+                    self.events_reply = Some(value["targetEvents"].clone());
                 }
                 if command.starts_with("config ") && !value["targetConfig"].is_null() {
                     if let Err(error) = crate::runtime::validate(&value["targetConfig"]) {
@@ -1246,6 +1256,77 @@ impl Gateway {
         result
     }
 
+    fn events_request(&mut self, id: &str, command: &str, request: &Value) -> Result<(), String> {
+        if !hex_identity(id, 32) {
+            return Err("Module identity must be 32 hexadecimal digits.".into());
+        }
+        let route = action_route(&self.state, id)
+            .ok_or("Reconnect the device before reading input events.")?;
+        if request.get("boot").is_some_and(|boot| *boot != route[3]) {
+            return Err("The device restarted. Establish a new input event baseline.".into());
+        }
+        let read = if command == "events_read" {
+            let bounded = |key: &str| {
+                request[key]
+                    .as_u64()
+                    .filter(|n| *n <= u32::MAX as u64)
+                    .map(|n| n as u32)
+            };
+            Some((
+                bounded("stream")
+                    .filter(|n| *n > 0)
+                    .ok_or("Invalid event stream.")?,
+                bounded("after").ok_or("Invalid event cursor.")?,
+            ))
+        } else {
+            None
+        };
+        let child = read.map_or_else(
+            || "state".into(),
+            |(stream, after)| format!("read {stream} {after}"),
+        );
+        self.exchange(
+            &format!("events {id} {} {child}", route[3]),
+            self.timing.command,
+        )?;
+        if action_route(&self.state, id).as_ref() != Some(&route) {
+            return Err("The device input event route changed. Establish a new baseline.".into());
+        }
+        let mut reply = self
+            .events_reply
+            .take()
+            .ok_or(crate::panel_events::INVALID)?;
+        if reply["ok"] == false {
+            return Err(format!(
+                "The device rejected the input event read: {}",
+                reply["error"]
+                    .as_str()
+                    .filter(|s| printable(s, 128))
+                    .ok_or(crate::panel_events::INVALID)?
+            ));
+        }
+        crate::panel_events::validate(&reply, read)?;
+        let module = self.state["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|module| module["id"] == id)
+            .ok_or(crate::panel_events::INVALID)?;
+        if reply["buttonCount"] != module["buttonCount"] {
+            return Err("The input event layout does not match the device's current profile. Establish a new baseline.".into());
+        }
+        reply["boot"] = route[3].clone();
+        reply["route"] = route.clone();
+        self.events.insert(
+            id.into(),
+            ActionCache {
+                route,
+                value: reply,
+            },
+        );
+        Ok(())
+    }
+
     /// An autonomous arrival can disconnect CDC during a configuration read.
     /// Retry only this read after rediscovering the same board and module boot.
     fn read_active(&mut self, id: &str, boot: Option<&Value>) -> Result<(), String> {
@@ -1411,6 +1492,11 @@ impl Gateway {
             .iter()
             .map(|(id, cache)| (id.clone(), cache.value.clone()))
             .collect::<HashMap<_, _>>());
+        state["moduleEvents"] = json!(self
+            .events
+            .iter()
+            .map(|(id, cache)| (id.clone(), cache.value.clone()))
+            .collect::<HashMap<_, _>>());
         for module in state["modules"].as_array_mut().into_iter().flatten() {
             if let Some(config) = module["id"].as_str().and_then(|id| configs.get(id)) {
                 if config["view"] == "active" || config["dirty"] == false {
@@ -1459,6 +1545,7 @@ impl Gateway {
             return Err("End setup sessions before changing the CAN gateway layout.".into());
         }
         match command {
+            "events_state" | "events_read" => self.events_request(&module_id, command, request),
             "action_describe" | "action_state" | "action_invoke" => {
                 self.action_request(&module_id, command, request)
             }
@@ -2257,6 +2344,7 @@ mod tests {
             let mut error = None;
             let mut target_config = Value::Null;
             let mut target_action = Value::Null;
+            let mut target_events = Value::Null;
             if context.restart_on_register && command == "register" {
                 context.state["epoch"] = json!(131072);
             }
@@ -2266,6 +2354,27 @@ mod tests {
                 error = Some("stale_epoch");
             } else {
                 match command {
+                    "events" => {
+                        assert_eq!(tokens[4], MODULE);
+                        assert_eq!(tokens[5], "100");
+                        if context.config_restart {
+                            context.state["modules"][0]["boot"] = json!(101);
+                        }
+                        target_events = if let Some(reply) = context.action_replies.pop_front() {
+                            reply
+                        } else if let Some(error) = context.action_error {
+                            json!({"ok":false,"error":error})
+                        } else {
+                            let mut reply = json!({"ok":true,"schemaVersion":1,"stream":1,"head":2,"oldest":1,"overflow":0,"buttonCount":9,"held":vec![false;9],"encoderButtons":[]});
+                            if tokens[6] == "read" {
+                                reply["after"] = json!(0);
+                                reply["next"] = json!(2);
+                                reply["more"] = json!(false);
+                                reply["events"] = json!([{"sequence":1,"control":0,"pressed":true},{"sequence":2,"control":0,"pressed":false}]);
+                            }
+                            reply
+                        };
+                    }
                     "action" => {
                         assert_eq!(tokens[4], MODULE);
                         assert_eq!(tokens[5], "100");
@@ -2419,7 +2528,7 @@ mod tests {
             self.data.extend(
                 format!(
                     "{}\n",
-                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack,"targetConfig":target_config,"targetAction":target_action})
+                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack,"targetConfig":target_config,"targetAction":target_action,"targetEvents":target_events})
                 )
                 .bytes(),
             );
@@ -2484,6 +2593,96 @@ mod tests {
         let (gateway, context) = harness();
         context.lock().unwrap().state = automatic_state();
         (gateway, context)
+    }
+
+    #[test]
+    fn routed_input_events_keep_short_press_order_without_hid_ownership() {
+        let (mut gateway, context) = automatic_harness();
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(100);
+        assert_eq!(
+            request(&mut gateway, "connect", json!({"port":PATH}))["ok"],
+            true
+        );
+        assert_eq!(
+            request(&mut gateway, "disable", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        let baseline = request(
+            &mut gateway,
+            "events_state",
+            json!({"moduleId":MODULE,"boot":100}),
+        );
+        assert_eq!(baseline["ok"], true, "{baseline}");
+        assert_eq!(baseline["state"]["moduleEvents"][MODULE]["head"], 2);
+        let read = request(
+            &mut gateway,
+            "events_read",
+            json!({"moduleId":MODULE,"boot":100,"stream":1,"after":0}),
+        );
+        assert_eq!(read["ok"], true, "{read}");
+        assert_eq!(
+            read["state"]["moduleEvents"][MODULE]["events"][0]["pressed"],
+            true
+        );
+        assert_eq!(
+            read["state"]["moduleEvents"][MODULE]["events"][1]["pressed"],
+            false
+        );
+        assert!(!context
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .any(|line| line.contains("action ") || line.contains("config ")));
+    }
+    #[test]
+    fn invalid_event_context_cursor_or_reply_never_becomes_a_panel_baseline() {
+        let (mut gateway, context) = automatic_harness();
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(100);
+        request(&mut gateway, "connect", json!({"port":PATH}));
+        for (command, extra) in [
+            ("events_state", json!({"moduleId":"bad"})),
+            ("events_state", json!({"moduleId":MODULE,"boot":101})),
+            (
+                "events_read",
+                json!({"moduleId":MODULE,"stream":0,"after":0}),
+            ),
+            (
+                "events_read",
+                json!({"moduleId":MODULE,"stream":1,"after":-1}),
+            ),
+        ] {
+            assert_eq!(request(&mut gateway, command, extra)["ok"], false);
+        }
+        context.lock().unwrap().action_error = Some("eventGap");
+        assert!(request(
+            &mut gateway,
+            "events_read",
+            json!({"moduleId":MODULE,"stream":1,"after":0})
+        )["error"]
+            .as_str()
+            .unwrap()
+            .contains("eventGap"));
+        context.lock().unwrap().action_error = None;
+        for reply in [
+            Value::Null,
+            json!({"ok":false,"error":5}),
+            json!({"ok":true,"schemaVersion":99}),
+            json!({"ok":true,"schemaVersion":1,"stream":1,"head":0,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"encoderButtons":[]}),
+        ] {
+            context.lock().unwrap().action_replies.push_back(reply);
+            assert_eq!(
+                request(&mut gateway, "events_state", json!({"moduleId":MODULE}))["ok"],
+                false
+            );
+        }
+        context.lock().unwrap().config_restart = true;
+        assert!(
+            request(&mut gateway, "events_state", json!({"moduleId":MODULE}))["error"]
+                .as_str()
+                .unwrap()
+                .contains("route changed")
+        );
     }
 
     fn action_harness() -> (Gateway, Context) {

@@ -1,6 +1,6 @@
 # OpenSimGear Cockpit
 
-Work-in-progress desktop application for discovering OpenSimGear gateways, configuring devices, managing automatically enabled USB controllers and viewing live inputs. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
+Work-in-progress desktop application for discovering OpenSimGear gateways, configuring devices, managing automatically enabled USB controllers, viewing live inputs and connecting a master-caution button and LED to DCS-BIOS. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
 
 Cockpit connects to gateways through its normal USB serial and local stream transports. Gateway and device simulations are maintained independently in [device-gateway/simulation](https://github.com/opensimgear/device-gateway/tree/main/simulation) and [device-template/simulation](https://github.com/opensimgear/device-template/tree/main/simulation). Cockpit neither creates simulated devices nor manages their processes.
 
@@ -36,6 +36,7 @@ The desktop uses Rust IPC and its own frontend assets. Development serves the UI
 ```sh
 pnpm check
 pnpm transport:test
+pnpm dcs:coverage
 pnpm native:test
 pnpm build
 ```
@@ -107,20 +108,83 @@ catalogue changes require **Discover again**. See the
 tests cover discovery, stale revisions/boots, unsupported firmware, read retries
 and uncertain replies. `pnpm e2e` also exercises actual production firmware
 processes for RGB/boolean outputs, disabled HID, direct USB, same-identity devices
-on separate gateways and lost-reply recovery. DCS-BIOS bindings are subsequent
-milestones; manual actions establish their reusable output interface.
+on separate gateways and lost-reply recovery. The master-caution binding below
+uses this same output interface.
 The [device actions acceptance record](docs/verification/2026-10-13-device-actions.md)
 documents the production process checks and measured coverage; `pnpm
 actions:coverage` enforces the frontend action helper's coverage threshold. CI
 also runs `scripts/action-coverage.py` to gate Rust production action coverage
 above 70%.
 
+## DCS-BIOS master caution
+
+Milestone 2 implements one saved A-10C master-caution profile. A mapped momentary
+button sends `UFC_MASTER_CAUTION 1` on a fresh press and `UFC_MASTER_CAUTION 0` on
+release through the DCS-BIOS UDP command socket. Exported `MASTER_CAUTION`
+feedback drives a readable boolean LED action or the current board's
+`led.status.set_mode` action with `on`/`off` values. The production native device
+simulation's master-caution profile uses the same logical button 0, ordered
+events and board-status LED contract as current-board firmware.
+
+The catalogue path must point to the installed DCS-BIOS `doc/json` directory.
+Cockpit resolves the named controls, aircraft aliases, aircraft-name metadata and
+update counter from those files; it does not hard-code a feedback address. UDP
+defaults are command `127.0.0.1:7778`, export listen `0.0.0.0:5010`, multicast
+`239.255.50.10` on interface `127.0.0.1`, and feedback freshness 1500 ms. An empty
+multicast group selects unicast export reception.
+
+1. Select an online CAN device and open **DCS-BIOS** in its workspace.
+2. Use **Disable controller** and accept the existing USB reconnect/binding
+   warning. Wait for the gateway layout to settle and disconnect any active
+   direct USB input session. The integration requires both routes to be inactive
+   to avoid duplicate game bindings.
+3. Enter the installed catalogue directory, zero-based momentary button index
+   and advertised LED action; adjust UDP settings if necessary.
+4. **Save settings**, then **Start DCS-BIOS**. Saving persists one profile in
+   Cockpit's application settings and does not start it. Restarting Cockpit also
+   requires an explicit Start. Stop the running binding before changing settings.
+
+The binding runs in a Rust background worker while Cockpit is open; UI polling
+only displays status. Device event pages preserve brief press/release pairs
+between reads and remain available with HID disabled. Startup, simulator
+recovery, route changes, reboot, mapping changes and event gaps establish a new
+current cursor instead of replaying retained presses. A button held at a new
+baseline must release before it can trigger a fresh press. Disarming sends one
+release only for a press this binding previously forwarded; it never sends a
+historical press. Encoder pulse controls are rejected for this profile. See the
+[ordered panel event contract](https://github.com/opensimgear/protocol/blob/main/serial/panel-input-events.md).
+
+The workspace displays aircraft, freshness, errors, forwarded command count and
+retained event overwrites and recovered cursor gaps. The gap counter remains
+visible after recovery. Overwrites count evictions from the bounded device
+ring; they are not a count of lost simulator commands. Missing or stale export,
+an unsupported aircraft and Stop request LED `off`; an unavailable panel cannot
+confirm that output until it reconnects. Lost command sends are not replayed,
+and uncertain LED setters are reconciled through readback. The running profile
+owns its bound LED; other manual actions remain available. The Gateways view
+provides global **Stop DCS-BIOS**, including when the bound device is offline.
+
+For software development, [simulation/dcs-bios/peer.mjs](simulation/dcs-bios/peer.mjs)
+is a controllable local UDP peer, with an authored catalogue in
+[simulation/dcs-bios/catalogue/](simulation/dcs-bios/catalogue/). Use that sample
+only with the peer: its feedback addresses are synthetic. The gateway and device
+processes still come from their owning repositories and use normal production
+contracts. See the [simulation guide](simulation/dcs-bios/README.md) and
+[master-caution verification record](docs/verification/2026-10-13-dcs-bios-master-caution.md).
+Real DCS and assembled STM32 button/LED/USB/CAN validation remain deferred; they
+are not prerequisites for this simulated milestone.
+
+`pnpm dcs:coverage` gates the frontend profile helpers above 70% for lines,
+branches and functions. CI also runs `scripts/dcs-bios-coverage.py`, which gates
+each native DCS core, background runtime and event-validation module above 70%
+production line coverage. The verification record includes measured results.
+
 The combined device-action and DCS-BIOS roadmap is tracked by these milestone stories:
 
-1. [Manual device actions](https://github.com/opensimgear/cockpit/issues/13): advertised actions, gateway routing and Cockpit controls.
-2. [First DCS-BIOS button and LED path](https://github.com/opensimgear/cockpit/issues/14): master-caution commands and feedback bindings.
-3. [Displays and encoders](https://github.com/opensimgear/cockpit/issues/15): bounded text, formatting, ordered input events and traffic measurements.
-4. [Profiles and hardware qualification](https://github.com/opensimgear/cockpit/issues/16): wider aircraft coverage, ownership, reconnects and hardware validation.
+1. [Manual device actions](https://github.com/opensimgear/cockpit/issues/13): implemented advertised actions, gateway routing and Cockpit controls.
+2. [First DCS-BIOS button and LED path](https://github.com/opensimgear/cockpit/issues/14): implemented simulated master-caution commands, ordered button events and LED feedback.
+3. [Displays and encoders](https://github.com/opensimgear/cockpit/issues/15): future bounded text, formatting, encoder bindings and traffic measurements, building on the event stream.
+4. [Profiles and hardware qualification](https://github.com/opensimgear/cockpit/issues/16): future wider aircraft coverage, ownership, reconnects and hardware validation.
 
 ## Related repositories
 

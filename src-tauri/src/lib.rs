@@ -1,7 +1,10 @@
 mod actions;
+pub mod dcs_bios;
+mod dcs_runtime;
 pub mod gateways;
 mod hid_names;
 mod local_gateway;
+mod panel_events;
 pub mod pico;
 mod protocol;
 mod runtime;

@@ -1,0 +1,15 @@
+{
+  "UFC": {
+    "UFC_MASTER_CAUTION": {
+      "identifier": "UFC_MASTER_CAUTION", "category": "UFC", "control_type": "selector",
+      "description": "Master Caution Reset", "api_variant": "momentary_last_position",
+      "inputs": [{ "interface": "set_state", "max_value": 1, "description": "Set switch position" }],
+      "outputs": [{ "type": "integer", "address": 4662, "mask": 1, "shift_by": 0, "max_value": 1, "suffix": "", "description": "Button state" }]
+    },
+    "MASTER_CAUTION": {
+      "identifier": "MASTER_CAUTION", "category": "UFC", "control_type": "led",
+      "description": "Master Caution Light (yellow)", "inputs": [],
+      "outputs": [{ "type": "integer", "address": 4660, "mask": 64, "shift_by": 6, "max_value": 1, "suffix": "", "description": "0 if light is off, 1 if light is on" }]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "UFC": {
+    "UFC_MASTER_CAUTION": {"identifier":"UFC_MASTER_CAUTION","inputs":[{"interface":"set_state","max_value":1}],"outputs":[]},
+    "MASTER_CAUTION": {"identifier":"MASTER_CAUTION","inputs":[],"outputs":[{"type":"integer","address":4672,"mask":4,"shift_by":2,"max_value":1}]}
+  }
+}
