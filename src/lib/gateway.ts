@@ -4,7 +4,9 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import type { RuntimeSnapshot, RuntimeConfig } from './runtime-config';
 import type { DeviceActions, ActionValue } from './device-actions';
 import type { DcsBiosConfig, DcsBiosStatus } from './dcs-bios';
+import type { DebugGateway, DebugOperation } from './debug-inputs';
 import type { PanelInputState } from './dcs-profile';
+import type { IntegrationConfig, IntegrationState, IntegrationCommandName, TelemetryFrame } from './integration-profile';
 
 export type GatewayBackend = 'pico' | 'stm32';
 export type GatewayPort = { gatewayId?: string; path: string; manufacturer?: string; friendlyName?: string; serialNumber?: string; vendorId?: string; productId?: string; backend?: GatewayBackend };
@@ -16,6 +18,7 @@ export type GatewayModule = {
   registered: boolean;
   active: boolean;
   enabled?: boolean;
+  outputOnly?: boolean;
   published?: boolean;
   descriptorIndex?: number;
   buttonCount: number;
@@ -51,9 +54,11 @@ export type GatewayState = {
   moduleActions?: Record<string, DeviceActions>;
   moduleEvents?: Record<string, PanelInputState>;
   dcsBios?: DcsBiosStatus;
+  debug?: DebugGateway;
+  integration?: IntegrationState;
 };
-export type GatewayCommand = 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop';
-export type GatewayRequest = { command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number };
+export type GatewayCommand = IntegrationCommandName | 'action_claim' | 'action_renew' | 'action_release' | 'action_ownership' | 'action_invoke_owned' | 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop' | 'debug_describe' | 'debug_invoke';
+export type GatewayRequest = { integrationConfig?: IntegrationConfig; bindingId?: string; durationMs?: number; resume?: boolean; revision?: number; telemetryFrame?: TelemetryFrame; ownershipToken?: string; leaseId?: number; ttlMs?: number; command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number; debugOperation?: DebugOperation; debugArgs?: number[]; preset?: string };
 
 const clientId = crypto.randomUUID();
 const browserEndpoint = '/api/gateway/';
@@ -62,7 +67,7 @@ type GatewayResult = { ok: boolean; state?: GatewayState; error?: string };
 // hold up discovery or requests for another gateway, including the same backend.
 const requestQueues = new Map<string, Promise<unknown>>();
 function queuedRequest(request: GatewayRequest, operation: () => Promise<GatewayState>): Promise<GatewayState> {
-  const key = request.command.startsWith('dcs_') ? 'dcs-bios' : request.gatewayId ?? 'inventory';
+  const key = request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
   const previous = requestQueues.get(key) ?? Promise.resolve();
   const pending = previous.catch(() => {}).then(operation);
   const settled = pending.then(() => {}, () => {});
@@ -92,6 +97,7 @@ export function gatewayRequest(request: GatewayRequest): Promise<GatewayState> {
     const response = await fetch(browserEndpoint, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSG-Client': '1' },
       body: JSON.stringify({ ...request, clientId }), signal: AbortSignal.timeout(135_000),
+      keepalive: request.command === 'debug_invoke',
     });
     if (!response.headers.get('content-type')?.includes('application/json')) throw new GatewayError('Start the browser development app with pnpm web:dev to enable its gateway bridge.');
     const result: GatewayResult = await response.json();
@@ -100,8 +106,7 @@ export function gatewayRequest(request: GatewayRequest): Promise<GatewayState> {
   });
 }
 
-export function releaseOnExit(moduleId: string, gatewayId: string) {
-  const request: GatewayRequest = { command: 'release', moduleId, gatewayId };
+function requestOnExit(request: GatewayRequest) {
   if (isTauri()) {
     void gatewayRequest(request).catch(() => {});
     return;
@@ -110,6 +115,16 @@ export function releaseOnExit(moduleId: string, gatewayId: string) {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSG-Client': '1' },
     body: JSON.stringify({ ...request, clientId }), keepalive: true,
   }).catch(() => {});
+}
+
+export function releaseOnExit(moduleId: string, gatewayId: string) {
+  requestOnExit({ command: 'release', moduleId, gatewayId });
+}
+
+/** Neutralize raw debug controls even when the browser unloads before its
+ * normal command queue can finish. The live boot guards replacement devices. */
+export function resetDebugOnExit(moduleId: string, boot: number, gatewayId: string) {
+  requestOnExit({ command: 'debug_invoke', moduleId, boot, gatewayId, debugOperation: 'neutral', debugArgs: [] });
 }
 
 export function openCockpitLink(event: MouseEvent): Promise<void> | undefined {

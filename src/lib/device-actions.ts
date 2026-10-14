@@ -1,3 +1,4 @@
+import { supportsDeviceContracts } from './gateway-capabilities';
 import type { GatewayModule, GatewayState } from './gateway';
 
 export type ActionValue = boolean | number | string;
@@ -18,7 +19,7 @@ export type DeviceActions = {
 
 /** Actions use the online device route independently of HID input ownership. */
 export function actionReady(state: GatewayState | null, module?: GatewayModule): boolean {
-  return !!state?.connected && state.backend === 'stm32' && !state.reconnecting && !state.layoutPending &&
+  return !!state?.connected && supportsDeviceContracts(state) && !state.reconnecting && !state.layoutPending &&
     !!module?.online && !!module.boot;
 }
 

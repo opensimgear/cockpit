@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
+const capabilities = {};
+vm.runInNewContext(ts.transpileModule(await readFile(new URL('./gateway-capabilities.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: capabilities });
+const require = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
 const exported = {};
 vm.runInNewContext(ts.transpileModule(await readFile(new URL('./device-actions.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports: exported, TextEncoder }, { filename: new URL('./device-actions.ts', import.meta.url).pathname });
+}).outputText, { exports: exported, TextEncoder, require }, { filename: new URL('./device-actions.ts', import.meta.url).pathname });
 const { actionReady, nextActionRead, initialValues, integerInputValue, actionError, outputSummary } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
 const module = { id: 'device', online: true, boot: 100, active: false, enabled: false, directUsb: true };
@@ -15,6 +20,12 @@ const action = { id: 'led.set', label: 'LED', endpoint: 'led', semantics: 'sette
   parameters: [{ id: 'enabled', label: 'Enabled', type: 'boolean' }, { id: 'level', label: 'Level', type: 'integer', minimum: -1, maximum: 10 },
     { id: 'mode', label: 'Mode', type: 'enum', options: ['auto', 'off'] }, { id: 'color', label: 'Color', type: 'rgb' }] };
 const ready = { boot: 100, catalogueRevision: 1, status: 'ready', actions: [action], states: [{ id: action.id, values: [true, 5, 'off', 'abcdef'] }] };
+
+test('Pico debug device actions are gated by negotiated device contracts', () => {
+  const pico = { ...state, backend: 'pico', protocolVersion: 3, canProtocol: 3 };
+  assert.equal(actionReady(pico, module), true); assert.equal(nextActionRead(pico), 'device');
+  assert.equal(actionReady({ ...pico, canProtocol: 2 }, module), false);
+});
 
 test('action routing remains available for disabled HID and direct USB input ownership', () => {
   assert.equal(actionReady(state, module), true);

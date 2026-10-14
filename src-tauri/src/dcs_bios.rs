@@ -349,6 +349,35 @@ impl Catalogue {
             &read_json(&path.join("AircraftAliases.json"), MAX_DOCUMENT)?,
         )
     }
+    pub(crate) fn load_module(path: &Path, module: &str) -> Result<Self, String> {
+        if module.is_empty()
+            || module.len() > 63
+            || !module
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
+            return Err(CATALOGUE_ERROR.into());
+        }
+        read_json(&path.join(format!("{module}.json")), MAX_DOCUMENT)?;
+        let metadata = |canonical: &str, legacy: &str| {
+            let canonical = path.join(canonical);
+            read_json(
+                &if canonical.exists() {
+                    canonical
+                } else {
+                    path.join(legacy)
+                },
+                MAX_DOCUMENT,
+            )
+        };
+        Self::from_metadata(
+            module,
+            &metadata("MetadataStart.json", "MetaDataStart.json")?,
+            &metadata("MetadataEnd.json", "MetaDataEnd.json")?,
+            &read_json(&path.join("AircraftAliases.json"), MAX_DOCUMENT)?,
+            None,
+        )
+    }
     pub fn from_documents(
         aircraft: &Value,
         start: &Value,
@@ -364,10 +393,20 @@ impl Catalogue {
             return Err("UFC_MASTER_CAUTION must advertise the 0/1 set_state interface.".into());
         }
         let feedback = IntegerOutput::parse(sole_output(control(aircraft, FEEDBACK)?)?)?;
+        if feedback.maximum != 1 || feedback.mask >> feedback.shift != 1 {
+            return Err(CATALOGUE_ERROR.into());
+        }
+        Self::from_metadata("A-10C", start, end, aliases, Some(feedback))
+    }
+    fn from_metadata(
+        module: &str,
+        start: &Value,
+        end: &Value,
+        aliases: &Value,
+        feedback: Option<IntegerOutput>,
+    ) -> Result<Self, String> {
         let counter = IntegerOutput::parse(sole_output(control(end, "_UPDATE_COUNTER")?)?)?;
-        if feedback.maximum != 1
-            || feedback.mask >> feedback.shift != 1
-            || counter.maximum != 255
+        if counter.maximum != 255
             || counter.address != 0xfffe
             || counter.mask != 255
             || counter.shift != 0
@@ -385,9 +424,11 @@ impl Catalogue {
             .ok_or(CATALOGUE_ERROR)? as usize;
         if name["type"] != "string"
             || aircraft_address as usize + aircraft_length > counter.address as usize
-            || feedback.address == counter.address
-            || ((feedback.address as usize) < aircraft_address as usize + aircraft_length
-                && feedback.address as usize + 2 > aircraft_address as usize)
+            || feedback.as_ref().is_some_and(|f| {
+                f.address == counter.address
+                    || ((f.address as usize) < aircraft_address as usize + aircraft_length
+                        && f.address as usize + 2 > aircraft_address as usize)
+            })
         {
             return Err(CATALOGUE_ERROR.into());
         }
@@ -407,20 +448,44 @@ impl Catalogue {
             if !modules.iter().all(|m| bounded_text(m, 63).is_some()) {
                 return Err(CATALOGUE_ERROR.into());
             }
-            if modules.iter().any(|m| m == "A-10C") {
+            if modules.iter().any(|m| m == module) {
                 aircraft_names.insert(name.clone());
             }
         }
-        if !aircraft_names.contains("A-10C") {
+        if !aircraft_names.contains(module) {
             return Err(CATALOGUE_ERROR.into());
         }
         Ok(Self {
             aircraft_names,
             aircraft_address,
             aircraft_length,
-            feedback,
+            feedback: feedback.unwrap_or(IntegerOutput {
+                address: 0,
+                mask: 1,
+                shift: 0,
+                maximum: 1,
+            }),
             counter,
         })
+    }
+    pub(crate) fn output_only() -> Self {
+        Self {
+            aircraft_names: HashSet::new(),
+            aircraft_address: 0,
+            aircraft_length: 2,
+            feedback: IntegerOutput {
+                address: 2,
+                mask: 1,
+                shift: 0,
+                maximum: 1,
+            },
+            counter: IntegerOutput {
+                address: 65534,
+                mask: 255,
+                shift: 0,
+                maximum: 255,
+            },
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 # OpenSimGear Cockpit
 
-Work-in-progress desktop application for discovering OpenSimGear gateways, configuring devices, managing automatically enabled USB controllers, viewing live inputs and connecting panel controls, LEDs and displays to DCS-BIOS. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
+Work-in-progress desktop application for discovering OpenSimGear gateways, configuring devices, managing automatically enabled USB controllers, viewing live inputs and connecting panel controls, LEDs and displays to DCS-BIOS and game telemetry, starting with Assetto Corsa Rally. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
 
 Cockpit connects to gateways through its normal USB serial and local stream transports. Gateway and device simulations are maintained independently in [device-gateway/simulation](https://github.com/opensimgear/device-gateway/tree/main/simulation) and [device-template/simulation](https://github.com/opensimgear/device-template/tree/main/simulation). Cockpit neither creates simulated devices nor manages their processes.
 
@@ -12,7 +12,7 @@ The current STM32 CAN gateway remembers up to 32 devices, each with up to 128 bu
 
 A setup session edits module names, expansion banks, buttons, hats, encoders, selectors and calibrated axes. Apply activates a validated draft; Apply & save journals it on the device. Existing USB control profiles remain frozen across descriptor additions. A changed enabled profile stays neutral until an explicit Update profile, with a reconnect/binding warning. The firmware batches, persists and publishes controller changes itself; Cockpit observes and reconnects by gateway UID without replaying an ambiguous mutation. USB descriptor changes can still affect Windows/game identity or require a game restart; actual binding retention remains hardware qualification work.
 
-The Pico USB adapter retains normal discovery, setup claims, settings and USB reconnection. Settings remain in board RAM until reset. On macOS, Rust applies individual controller names through IOKit. Its firmware and input-generation tools live in the [gateway repository's Pico directory](https://github.com/opensimgear/device-gateway/tree/main/simulation/pico).
+The Pico USB adapter discovers both legacy protocol-1 images and the current protocol-3 debug gateway. The debug firmware hosts eight virtual devices with production configuration/calibration, automatic controller lifecycle, ordered events, LED/display actions and persistent journals. Cockpit's gateway card adds presets and manages virtual online/reboot state; device Inputs/Setup views provide raw axes, held buttons, switches, encoders, selectors, hats, reset, direct-USB and expansion-bank controls. The DCS-BIOS editor offers catalogue-validated A-10C master-caution/radio test presets and output readback. Older images retain RAM-only settings and their existing USB reconnection/name helper. See the [Pico guide](https://github.com/opensimgear/device-gateway/tree/main/simulation/pico) for build, flash, host fixture and cross-process DCS acceptance. Upgrading the older multi-interface fixture changes USB descriptors and may require game rebinding.
 
 STM32 discovery verifies manufacturer/product metadata, a 24-hex UID and bounded CDC protocol-3 automatic-lifecycle snapshots. Explicit report IDs and descriptor positions are validated independently. Capacity and admission failures remain visible. Configuration uses the production Cyphal/CAN contract (`canProtocol=3`) with identity, boot, writer, request and epoch validation. After Apply, readback follows the device's renewed lease with bounded read retries; a device reboot stops reconciliation, and writes are never replayed. CDC-v2 gateways remain readable with their older manual registration/layout Apply controls; those adapters do not claim automatic Enable/Disable/Remove support. Local gateways receive the same handshake checks as USB serial gateways; on macOS/Linux they advertise in the current user's private `/tmp/opensimgear-<user-id>/gateways/` directory. Local streams do not create OS USB/HID controllers.
 
@@ -38,6 +38,7 @@ pnpm check
 pnpm transport:test
 pnpm dcs:coverage
 pnpm dcs-profile:coverage
+pnpm integration:coverage
 pnpm native:test
 pnpm build
 ```
@@ -83,7 +84,7 @@ Implementation and qualification work is tracked in the [GitHub project](https:/
 
 ## Manual device actions
 
-Each online CAN device can advertise a bounded action catalogue independently of
+Each online compatible device can advertise a bounded action catalogue independently of
 its HID controls. Cockpit discovers the catalogue once per current route, then
 renders manual controls for booleans, enums, bounded integers, RGB colors, bounded
 UTF-8 strings and actions without arguments. The device workspace's **Device
@@ -206,7 +207,13 @@ The combined device-action and DCS-BIOS roadmap is tracked by these milestone st
 1. [Manual device actions](https://github.com/opensimgear/cockpit/issues/13): implemented advertised actions, gateway routing and Cockpit controls.
 2. [First DCS-BIOS button and LED path](https://github.com/opensimgear/cockpit/issues/14): implemented simulated master-caution commands, ordered button events and LED feedback.
 3. [Displays and encoders](https://github.com/opensimgear/cockpit/issues/15): implemented configurable typed inputs, bounded display formatting and gateway traffic measurements; see the [simulation verification](docs/verification/2026-10-14-dcs-bios-panels.md).
-4. [Profiles and hardware qualification](https://github.com/opensimgear/cockpit/issues/16): future wider aircraft coverage, profile import/export, ownership and hardware qualification.
+4. [Simulator profiles, output ownership and recovery](https://github.com/opensimgear/cockpit/issues/16): portable roles, broader installed DCS catalogues, endpoint leases, output-only devices and Rally telemetry; live game/hardware qualification deferred.
+
+## Simulator integrations
+
+Open **Integrations** for portable profile import/export, explicit local device assignments, catalogue migration diagnostics and device-enforced output ownership. DCS-BIOS uses installed aircraft modules and named supported controls. The Assetto Corsa Rally starter reads Windows shared memory and offers a synthetic byte-snapshot source on every platform. Bind RPM/rev-ratio thresholds or RGB bands to advertised LEDs, including the current board status LED, and speed/gear values to bounded displays. Temporary overrides retain ownership and resume the latest fresh telemetry. Output-only modules enroll without HID input profiles.
+
+See [the integration guide](docs/simulator-integrations.md) for setup, lease/fallback behavior, source provenance and validation limits, and [the software verification record](docs/verification/2026-10-14-simulator-integrations.md) for tests and measured coverage. Hardware and live-game validation are deferred.
 
 ## Related repositories
 

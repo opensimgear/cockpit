@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { supportsDeviceContracts } from './gateway-capabilities';
   import ActionControl from './ActionControl.svelte';
   import { actionReady, type ActionValue, type DeviceAction } from './device-actions';
   import type { GatewayModule, GatewayRequest, GatewayState } from './gateway';
@@ -9,7 +10,10 @@
   } = $props();
   const ready = $derived(actionReady(state, module));
   const snapshot = $derived(module ? state?.moduleActions?.[module.id] : undefined);
-  const supported = $derived(state?.backend === 'stm32' && !!module?.boot);
+  const supported = $derived(supportsDeviceContracts(state) && !!module?.boot);
+  function managed(action: DeviceAction) {
+    return managedActionIds.includes(action.id) || !!snapshot?.actions.some(bound => managedActionIds.includes(bound.id) && bound.endpoint === action.endpoint);
+  }
   async function invoke(action: DeviceAction, values: ActionValue[]) {
     return request({ command: 'action_invoke', moduleId: module?.id, boot: module?.boot,
       catalogueRevision: snapshot?.catalogueRevision, actionId: action.id, values });
@@ -26,8 +30,8 @@
     {:else if snapshot?.status === 'ready' && !snapshot.actions.length}<p class="help">The device advertises no manual actions.</p>{/if}
     {#if snapshot?.status === 'uncertain'}<p class="help">The last command may have applied. Refresh state before another action.</p>{/if}
     {#each snapshot?.actions ?? [] as action (`${module?.boot}/${snapshot?.catalogueRevision}/${action.id}`)}
-      {#if managedActionIds.includes(action.id)}<p class="help">{action.label} is managed by the running DCS-BIOS profile. Stop DCS-BIOS to control it manually.</p>{/if}
-      <ActionControl {action} snapshot={snapshot!} ready={ready && !managedActionIds.includes(action.id)} {busy} {invoke} />
+      {#if managed(action)}<p class="help">{action.label} is managed by the running profile. {#if state?.integration?.running}Open Integrations for a temporary override, or Stop to control it manually.{:else}Stop DCS-BIOS to control it manually.{/if}</p>{/if}
+      <ActionControl {action} snapshot={snapshot!} ready={ready && !managed(action)} {busy} {invoke} />
     {/each}
     <div class="toolbar"><button disabled={!ready || busy} onclick={() => request({ command: 'action_describe', moduleId: module?.id })}>{snapshot?.actions.length ? 'Discover again' : 'Discover actions'}</button><button disabled={!ready || busy || !snapshot?.catalogueRevision} onclick={() => request({ command: 'action_state', moduleId: module?.id })}>Refresh state</button></div>
     <p class="help">Actions work while this device’s USB controller is disabled or its direct USB owns the inputs. Applied state is device readback; physical output verification is separate.</p>

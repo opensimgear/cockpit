@@ -37,8 +37,8 @@ pub(crate) struct Target {
     pub module_id: String,
 }
 impl Target {
-    fn parse(value: &Value) -> Result<Self, String> {
-        let gateway = text(&value["gatewayId"], 30, false).ok_or(INVALID)?;
+    pub(crate) fn parse(value: &Value) -> Result<Self, String> {
+        let gateway = text(&value["gatewayId"], 78, false).ok_or(INVALID)?;
         let module = text(&value["moduleId"], 32, false).ok_or(INVALID)?;
         let valid = |s: &str, length| {
             s.len() == length
@@ -46,11 +46,26 @@ impl Target {
                 && s.bytes().any(|b| b != b'0')
                 && s.bytes().any(|b| b != b'f' && b != b'F')
         };
-        if !gateway.strip_prefix("stm32:").is_some_and(|s| valid(s, 24)) || !valid(module, 32) {
+        let gateway = gateway
+            .split_once(':')
+            .and_then(|(backend, serial)| {
+                let supported = backend == "stm32"
+                    || backend == "pico"
+                        && serial.strip_prefix("OSG-PICO-").is_some_and(|id| {
+                            id.len() == 16
+                                && id.bytes().all(|b| b.is_ascii_hexdigit())
+                                && id.bytes().any(|b| b != b'0')
+                        });
+                supported
+                    .then(|| crate::gateways::canonical_id(backend, serial))
+                    .flatten()
+            })
+            .ok_or(INVALID)?;
+        if !valid(module, 32) {
             return Err(INVALID.into());
         }
         Ok(Self {
-            gateway_id: gateway.to_ascii_lowercase(),
+            gateway_id: gateway,
             module_id: module.to_ascii_lowercase(),
         })
     }
@@ -156,6 +171,7 @@ pub(crate) struct Output {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Profile {
+    pub aircraft_module: String,
     pub catalogue_path: PathBuf,
     pub network: Network,
     pub inputs: Vec<Input>,
@@ -166,7 +182,12 @@ impl Profile {
         if !value.is_object()
             || value.to_string().len() > 65536
             || value["schemaVersion"] != 2
-            || value["aircraftModule"] != "A-10C"
+            || !value["aircraftModule"].as_str().is_some_and(|s| {
+                !s.is_empty()
+                    && s.len() <= 63
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+            })
         {
             return Err(INVALID.into());
         }
@@ -295,6 +316,7 @@ impl Profile {
             return Err(INVALID.into());
         }
         Ok(Self {
+            aircraft_module: value["aircraftModule"].as_str().unwrap().into(),
             catalogue_path: path.into(),
             network: Network::parse(value)?,
             inputs,
@@ -304,7 +326,7 @@ impl Profile {
     pub fn value(&self) -> Value {
         let mut value = self.network.value();
         value["schemaVersion"] = json!(2);
-        value["aircraftModule"] = json!("A-10C");
+        value["aircraftModule"] = json!(self.aircraft_module);
         value["cataloguePath"] = json!(self.catalogue_path);
         value["inputs"]=json!(self.inputs.iter().map(|i|json!({"id":i.id,"gatewayId":i.target.gateway_id,"moduleId":i.target.module_id,"kind":i.kind.name(),"control":i.control,"command":i.command,"interface":i.interface,"pressedValue":i.pressed_value,"releasedValue":i.released_value,"step":i.step,"deadband":i.deadband})).collect::<Vec<_>>());
         value["outputs"]=json!(self.outputs.iter().map(|o|json!({"id":o.id,"gatewayId":o.target.gateway_id,"moduleId":o.target.module_id,"control":o.control,"output":o.output,"actionId":o.action_id,"format":o.format.value()})).collect::<Vec<_>>());
@@ -412,9 +434,11 @@ fn input_interface(value: &Value) -> Option<(&str, Option<u16>, Option<u16>)> {
 }
 impl CompiledProfile {
     pub fn load(profile: Profile) -> Result<Self, String> {
-        let catalogue = Catalogue::load(&profile.catalogue_path)?;
+        let catalogue = Catalogue::load_module(&profile.catalogue_path, &profile.aircraft_module)?;
         let document = dcs_bios::read_json(
-            &profile.catalogue_path.join("A-10C.json"),
+            &profile
+                .catalogue_path
+                .join(format!("{}.json", profile.aircraft_module)),
             dcs_bios::MAX_DOCUMENT,
         )?;
         let mut inputs = Vec::new();
@@ -507,9 +531,12 @@ pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
     let path = text(&request["cataloguePath"], 4096, false)
         .filter(|p| Path::new(p).is_absolute())
         .ok_or(INVALID)?;
-    if request["aircraftModule"] != "A-10C" {
-        return Err(INVALID.into());
-    }
+    let aircraft_module = text(&request["aircraftModule"], 63, false)
+        .filter(|s| {
+            s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        })
+        .ok_or(INVALID)?;
     let query = request
         .get("query")
         .map_or(Some(""), |v| text(v, 128, true))
@@ -530,9 +557,11 @@ pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
         .map_or(Some(32), Value::as_u64)
         .filter(|n| (1..=64).contains(n))
         .ok_or(INVALID)? as usize;
-    let document =
-        dcs_bios::read_json(&Path::new(path).join("A-10C.json"), dcs_bios::MAX_DOCUMENT)?;
-    let metadata = Catalogue::load(Path::new(path))?;
+    let document = dcs_bios::read_json(
+        &Path::new(path).join(format!("{aircraft_module}.json")),
+        dcs_bios::MAX_DOCUMENT,
+    )?;
+    let metadata = Catalogue::load_module(Path::new(path), aircraft_module)?;
     let categories = document.as_object().ok_or(CATALOGUE_ERROR)?;
     let mut controls = Vec::new();
     let mut seen = HashSet::new();
@@ -624,7 +653,7 @@ pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
     if offset > total {
         return Err(INVALID.into());
     }
-    let reply = json!({"cataloguePath":path,"aircraftModule":"A-10C","query":query,"kind":kind,"offset":offset,"total":total,"controls":controls.into_iter().skip(offset).take(limit).collect::<Vec<_>>()});
+    let reply = json!({"cataloguePath":path,"aircraftModule":aircraft_module,"query":query,"kind":kind,"offset":offset,"total":total,"controls":controls.into_iter().skip(offset).take(limit).collect::<Vec<_>>()});
     if reply.to_string().len() > 65536 {
         return Err("The catalogue page exceeds the response budget; reduce its limit.".into());
     }
@@ -1077,7 +1106,7 @@ mod tests {
         let fixture = Fixture::new();
         for (pointer, value) in [
             ("/schemaVersion", json!(1)),
-            ("/aircraftModule", json!("Other")),
+            ("/aircraftModule", json!("../Other")),
             ("/cataloguePath", json!("relative")),
             ("/cataloguePath", json!("/bad\npath")),
             ("/inputs/0/id", json!("bad id")),
@@ -1131,6 +1160,27 @@ mod tests {
             .remove("control");
         assert!(Profile::parse(&config).is_err());
         assert!(Profile::parse(&Value::Null).is_err());
+    }
+
+    #[test]
+    fn pico_debug_targets_round_trip_without_changing_legacy_can_identity() {
+        let fixture = Fixture::new();
+        let mut config = fixture.config();
+        let pico = "pico:OSG-PICO-0123456789abcdef";
+        config["inputs"][0]["gatewayId"] = json!(pico);
+        config["outputs"][0]["gatewayId"] = json!(pico);
+        let parsed = Profile::parse(&config).unwrap();
+        assert_eq!(parsed.inputs[0].target.gateway_id, pico);
+        assert_eq!(parsed.value()["outputs"][0]["gatewayId"], pico);
+        for invalid in [
+            "pico:OSG-PICO-nothex",
+            "pico:OSG-PICO-0000000000000000",
+            "pico:WRONG-0123456789abcdef",
+            "other:0123456789abcdef",
+        ] {
+            config["inputs"][0]["gatewayId"] = json!(invalid);
+            assert!(Profile::parse(&config).is_err(), "accepted {invalid}");
+        }
     }
     #[test]
     fn duplicate_sources_commands_ids_and_target_limits_do_not_create_competing_bindings() {
@@ -1624,5 +1674,39 @@ mod tests {
             data: vec![31, 0],
         }]);
         assert_eq!(bounded.read(&memory), None);
+    }
+    #[test]
+    fn other_installed_aircraft_use_supported_metadata_without_master_caution_controls() {
+        let fixture = Fixture::new();
+        let doc = json!({"Test":{"TEST_ACK":{"identifier":"TEST_ACK","description":"Acknowledgement","inputs":[{"interface":"set_state","max_value":1}],"outputs":[]},
+            "TEST_LAMP":{"identifier":"TEST_LAMP","description":"Lamp","inputs":[],"outputs":[{"type":"integer","address":512,"mask":1,"shift_by":0,"max_value":1}]}}});
+        fs::write(fixture.0.join("SyntheticJet.json"), doc.to_string()).unwrap();
+        fs::write(
+            fixture.0.join("AircraftAliases.json"),
+            json!({"SyntheticJet":["SyntheticJet"],"SyntheticJet_2":["SyntheticJet"]}).to_string(),
+        )
+        .unwrap();
+        let mut config = fixture.config();
+        config["aircraftModule"] = json!("SyntheticJet");
+        config["inputs"] = json!([config["inputs"][0]]);
+        config["inputs"][0]["command"] = json!("TEST_ACK");
+        config["outputs"] = json!([config["outputs"][0]]);
+        config["outputs"][0]["control"] = json!("TEST_LAMP");
+        let profile = Profile::parse(&config).unwrap();
+        assert_eq!(profile.value()["aircraftModule"], "SyntheticJet");
+        let compiled = CompiledProfile::load(profile).unwrap();
+        assert!(compiled.catalogue.aircraft_names.contains("SyntheticJet_2"));
+        assert!(matches!(
+            compiled.outputs[0].source,
+            OutputSource::Integer(_)
+        ));
+        let page =
+            query_catalogue(&json!({"cataloguePath":fixture.0,"aircraftModule":"SyntheticJet"}))
+                .unwrap();
+        assert_eq!(page["aircraftModule"], "SyntheticJet");
+        assert_eq!(page["total"], 2);
+        config["aircraftModule"] = json!("MissingJet");
+        assert!(CompiledProfile::load(Profile::parse(&config).unwrap()).is_err());
+        assert!(Catalogue::load_module(&fixture.0, "../SyntheticJet").is_err());
     }
 }

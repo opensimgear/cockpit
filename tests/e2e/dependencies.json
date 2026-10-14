@@ -1,14 +1,14 @@
 {
   "device-gateway": {
     "url": "https://github.com/opensimgear/device-gateway.git",
-    "ref": "a888234c66b46db3a1569e7f174a1613c1c601b3"
+    "ref": "bec8ad26955b46ce0333496a6a2bee9db93a4917"
   },
   "device-template": {
     "url": "https://github.com/opensimgear/device-template.git",
-    "ref": "cc5d006945033e6fc1f36d80c2d22f9201585614"
+    "ref": "53b0c19c76bbb091bd09a325642030611a41bfc4"
   },
   "firmware-common": {
     "url": "https://github.com/opensimgear/firmware-common.git",
-    "ref": "de8bcd138ffd1db5bf761c73b3274a2811d37cea"
+    "ref": "6ba8ad0c3c0a35fce2c9f0e256503ebba3957976"
   }
 }

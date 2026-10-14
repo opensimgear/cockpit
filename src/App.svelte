@@ -3,8 +3,13 @@
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';
+  import DebugControls from './lib/DebugControls.svelte';
+  import DebugDevices from './lib/DebugDevices.svelte';
+  import { supportsDeviceContracts } from './lib/gateway-capabilities';
   import ManualActions from './lib/ManualActions.svelte';
   import DcsBiosPanel from './lib/DcsBiosPanel.svelte';
+  import IntegrationsPanel from './lib/IntegrationsPanel.svelte';
+  import type { IntegrationConfig, IntegrationRequest, IntegrationState } from './lib/integration-profile';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { gatewayRequest, GatewayError, releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
@@ -13,11 +18,12 @@
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
+  type View = 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
     { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
+    { id: 'integrations', label: 'Integrations', icon: 'play' },
     { id: 'dcs-bios', label: 'DCS-BIOS', icon: 'play' },
     { id: 'topology', label: 'Topology', icon: 'network' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
@@ -35,10 +41,14 @@
   }
   const deviceKey = (gatewayId: string, moduleId: string) => `${gatewayId}/${moduleId}`;
   const nameForGateway = (backend?: string) => backend === 'stm32' ? 'OpenSimGear CAN gateway' : 'Pico W USB gateway';
-  const inputSummary = (module: GatewayModule) => [module.buttonCount ? `${module.buttonCount} buttons` : '', module.hatCount ? `${module.hatCount} hats` : '', module.axisCount ? `${module.axisCount} axes` : ''].filter(Boolean).join(' · ');
+  const inputSummary = (module: GatewayModule) => module.outputOnly ? 'Output device' : [module.buttonCount ? `${module.buttonCount} buttons` : '', module.hatCount ? `${module.hatCount} hats` : '', module.axisCount ? `${module.axisCount} axes` : ''].filter(Boolean).join(' · ');
   let light = $state(stored<boolean>('osg-light', false));
   let view = $state<View>('gateways');
   let entries = $state<GatewayEntry[]>([]);
+  let integration = $state<IntegrationState>();
+  let integrationDraft = $state<IntegrationConfig | null>(null);
+  let integrationBusy = $state(false);
+  let integrationPolling = false;
   let dcsBios = $state<DcsBiosStatus>();
   let dcsDraft = $state<DcsProfileConfig | null>(null);
   let dcsSelectedTarget = $state('');
@@ -68,7 +78,7 @@
     name: module.name, kind: module.kind, settings: module.settings,
     online: !!entry.state?.connected && module.online,
     ghost: automaticControllers(entry.state) && !!module.enabled && !module.online,
-    disabled: automaticControllers(entry.state) && module.enabled === false && module.published === false,
+    disabled: !module.outputOnly && automaticControllers(entry.state) && module.enabled === false && module.published === false,
     disablePending: automaticControllers(entry.state) && module.enabled === false && module.published === true,
     subtitle: entry.port.backend === 'stm32' ? 'Discovered on your CAN chain.' : 'Your controls, within reach.',
     route: `${entry.port.serialNumber ?? entry.id} · ${module.directUsb ? 'direct USB owns inputs' : entry.port.backend === 'stm32' ? 'CAN FD' : 'USB gateway'}`,
@@ -82,11 +92,11 @@
   const gatewayBusy = $derived(!!selectedEntry?.busy);
   const gatewayError = $derived(selectedEntry?.error ?? '');
   const gatewayConnected = $derived(!!gateway?.connected);
-  const physicalGateway = $derived(gateway?.backend === 'stm32');
+  const physicalGateway = $derived(supportsDeviceContracts(gateway));
   const gatewayName = $derived(nameForGateway(gateway?.backend));
   const needsReconnect = $derived(!!gateway?.needsReconnect);
   const sessionDevice = $derived(devices.find(device => device.key === sessionId));
-  const dcsTargets = $derived(entries.flatMap(entry => entry.state?.backend === 'stm32' ? entry.state.modules.map((module): DcsTarget => ({ gatewayId: entry.id, module, state: entry.state, busy: entry.busy, label: module.settings.label || module.name })) : []));
+  const dcsTargets = $derived(entries.flatMap(entry => supportsDeviceContracts(entry.state) && entry.state ? entry.state.modules.map((module): DcsTarget => ({ gatewayId: entry.id, module, state: entry.state, busy: entry.busy, label: module.settings.label || module.name })) : []));
   const removeEntry = $derived(entries.find(entry => entry.id === removeTarget.gatewayId));
   const canRemove = $derived(!!removeEntry?.state?.connected && !removeEntry.busy && !removeEntry.state.reconnecting && !removeEntry.state.claimedModules?.length && !!removeEntry.state.modules.find(module => module.id === removeTarget.id)?.registered);
   const controllerEntry = $derived(entries.find(entry => entry.id === controllerTarget.gatewayId));
@@ -112,7 +122,8 @@
     const ids: string[] = [];
     for (const entry of next) {
       const before = entries.find(previous => previous.id === entry.id)?.state;
-      if (entry.state?.dcsBios && entry.state.dcsBios !== before?.dcsBios) dcsBios = entry.state.dcsBios;
+      if (entry.state?.dcsBios) dcsBios = entry.state.dcsBios;
+      if (entry.state?.integration) integration = entry.state.integration;
       for (const module of entry.state?.modules ?? []) {
         const key = deviceKey(entry.id, module.id);
         ids.push(key);
@@ -136,12 +147,15 @@
   async function sendGateway(gatewayId: string, request: GatewayRequest, quiet = false) {
     try {
       if (!workspace) return false;
-      await workspace.request(gatewayId, request);
+      await workspace.request(gatewayId, request, quiet);
       return true;
     } catch (error) {
       if (!quiet) notify(error instanceof Error ? error.message : 'Gateway connection failed.');
       return false;
     }
+  }
+  function scopedGatewayRequest(gatewayId: string, quiet = false) {
+    return (request: GatewayRequest) => sendGateway(gatewayId, request, quiet);
   }
   async function sendDcs(request: GatewayRequest, quiet = false) {
     if (dcsBusy || (quiet && dcsPolling)) return false;
@@ -155,6 +169,34 @@
       if (!quiet) notify(error instanceof Error ? error.message : 'DCS-BIOS request failed.');
       return false;
     } finally { if (quiet) dcsPolling = false; else dcsBusy = false; }
+  }
+  async function sendIntegration(request: IntegrationRequest, quiet = request.command === 'integration_simulate'): Promise<IntegrationState | false> {
+    if (integrationBusy || quiet && integrationPolling) return false;
+    if (quiet) integrationPolling = true; else integrationBusy = true;
+    try {
+      const result = await gatewayRequest(request);
+      if (!disposed && result.integration) integration = result.integration;
+      if (!disposed && result.dcsBios) dcsBios = result.dcsBios;
+      return result.integration ?? false;
+    } catch (error) {
+      if (!disposed && error instanceof GatewayError && error.state?.integration) integration = error.state.integration;
+      if (!quiet) notify(error instanceof Error ? error.message : 'Integration request failed.');
+      return false;
+    } finally { if (quiet) integrationPolling = false; else integrationBusy = false; }
+  }
+  async function refreshIntegrationTarget(gatewayId: string, moduleId: string) {
+    const actions = await sendGateway(gatewayId, { command: 'action_describe', moduleId });
+    const module = entries.find(entry => entry.id === gatewayId)?.state?.modules.find(module => module.id === moduleId);
+    if (!actions || !module || module.outputOnly || module.buttonCount + module.axisCount + (module.hatCount ?? 0) === 0) return actions;
+    return sendGateway(gatewayId, { command: 'events_state', moduleId, boot: module.boot });
+  }
+  function managedOutputs(gatewayId: string, moduleId: string) {
+    const actions = managedDcsActions(dcsBios, gatewayId, moduleId);
+    if (integration?.running && integration.config) {
+      const roles = integration.config.assignments.filter(a => a.gatewayId === gatewayId && a.moduleId === moduleId).map(a => a.role);
+      actions.push(...integration.config.document.outputs.filter(o => roles.includes(o.role)).map(o => o.actionId));
+    }
+    return actions;
   }
   function openDcsProfile(gatewayId?: string, moduleId?: string) {
     if (gatewayId && moduleId) dcsSelectedTarget = deviceKey(gatewayId, moduleId);
@@ -206,11 +248,13 @@
     workspace = new GatewayWorkspace({ onChange: syncWorkspace });
     void workspace.refresh();
     void sendDcs({ command: 'dcs_status' }, true);
+    void sendIntegration({ command: 'integration_get_state' }, true);
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
+    const integrationTimer = setInterval(() => { void sendIntegration({ command: 'integration_get_state' }, true); }, 1000);
     const dcsTimer = setInterval(() => { void sendDcs({ command: 'dcs_status' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     window.addEventListener('pagehide', release);
-    return () => { release(); disposed = true; clearTimeout(toastTimer); clearInterval(timer); clearInterval(dcsTimer); window.removeEventListener('pagehide', release); workspace?.dispose(); };
+    return () => { release(); disposed = true; clearTimeout(toastTimer); clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); window.removeEventListener('pagehide', release); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
@@ -233,7 +277,7 @@
     if (!device) return;
     selectedId = key; tab = 'setup'; view = 'device';
     const state = entries.find(entry => entry.id === device.gatewayId)?.state;
-    if (state?.backend === 'stm32' && state.connected && device.online && state.modules.find(module => module.id === device.id)?.canConfigure) await sendGateway(device.gatewayId, { command: 'config_read', moduleId: device.id });
+    if (supportsDeviceContracts(state) && state?.connected && device.online && state.modules.find(module => module.id === device.id)?.canConfigure) await sendGateway(device.gatewayId, { command: 'config_read', moduleId: device.id });
   }
   async function toggleSession() {
     if (sessionTransition) return;
@@ -327,15 +371,18 @@
         {:else if view === 'preferences'}
           <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Preferences</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
           <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
+        {:else if view === 'integrations'}
+          <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO YOUR GAMES</div><h1>Integrations</h1><p>Reusable profiles, device assignments and telemetry outputs.</p></div></div>
+          <section class="panel dcs-profile-panel"><IntegrationsPanel bind:draft={integrationDraft} status={integration} targets={dcsTargets} busy={integrationBusy} request={sendIntegration} refresh={refreshIntegrationTarget} /></section>
         {:else if view === 'dcs-bios'}
-          <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO DCS</div><h1>DCS-BIOS</h1><p>One saved A-10C profile across your connected CAN devices.</p></div></div>
+          <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO DCS</div><h1>DCS-BIOS</h1><p>One saved aircraft profile across your connected devices.</p></div></div>
           <section class="panel dcs-profile-panel"><DcsBiosPanel bind:draft={dcsDraft} bind:selectedTarget={dcsSelectedTarget} status={dcsBios} targets={dcsTargets} busy={dcsBusy} request={sendDcs} requestGateway={sendGateway} disableController={disableDcsController} canDisable={canDisableDcs} /></section>
         {:else if view === 'gateways'}
           <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Gateways</h1><p>All your gateways stay connected and run independently.</p></div><span class="quiet-tag">{connectedGateways.length} connected</span></div>
           {#if inventoryError}<div class="notice amber-notice" role="alert"><p>{inventoryError}</p><button class="text-button" onclick={rescan}>Retry discovery</button></div>{/if}
           {#if dcsBios?.configured || dcsBios?.error}
             <section class="panel preferences-panel" aria-label="DCS-BIOS integration">
-              <div class="panel-heading"><h2>DCS-BIOS · A-10C panel profile</h2><span class="quiet-tag">{dcsStatusLabel(dcsBios)}</span></div>
+              <div class="panel-heading"><h2>DCS-BIOS · panel profile</h2><span class="quiet-tag">{dcsStatusLabel(dcsBios)}</span></div>
               <div class="preference-row"><div><strong>{dcsBios.config?.schemaVersion === 2 ? `${dcsBios.config.inputs.length} inputs · ${dcsBios.config.outputs.length} outputs` : 'Master-caution profile'}</strong><p>{dcsBios.running ? `Running · ${dcsBios.aircraft ?? 'waiting for aircraft'}` : 'Open the profile to review bindings and start.'}</p>{#if dcsBios.error}<p class="gateway-error" role="alert">{dcsBios.error}</p>{/if}</div>
                 <button class="secondary-button" onclick={() => openDcsProfile()}>Open DCS-BIOS settings</button>
                 <button class="secondary-button" disabled={dcsBusy || !dcsBios.running} onclick={() => sendDcs({ command: 'dcs_stop' })}>Stop DCS-BIOS</button>
@@ -345,7 +392,7 @@
           <section class="gateway-list" aria-label="Gateways">
             {#each entries as entry (entry.id)}
               {@const state = entry.state}
-              {@const canGateway = entry.port.backend === 'stm32'}
+              {@const canGateway = supportsDeviceContracts(state)}
               {@const gatewayDevices = devices.filter(device => device.gatewayId === entry.id)}
               {@const setupActive = !!state?.claimedModules?.length}
               {@const automatic = automaticControllers(state)}
@@ -355,7 +402,7 @@
                   <div class="gateway-copy">
                     <strong>{nameForGateway(entry.port.backend)} <span class="quiet-tag"><span class="status-dot" class:offline={!state?.connected}></span>{gatewayStatus(entry)}</span></strong>
                     <p>{entry.port.serialNumber} · {state?.port ?? entry.port.path}</p>
-                    {#if state?.connected}<p class="automation-status">{automatic ? 'New CAN devices enable automatically. Disabled devices stay remembered.' : canGateway ? 'This older gateway uses manual controller registration.' : 'Connected devices report their inputs independently.'}</p>
+                    {#if state?.connected}<p class="automation-status">{automatic ? 'Connected devices enable automatically. Disabled devices stay remembered.' : canGateway ? 'This older gateway uses manual controller registration.' : 'Connected devices report their inputs independently.'}</p>
                     {:else}<p class="automation-status">{entry.present ? 'Opening this gateway’s connection.' : 'Waiting for this gateway to return. Remembered devices are retained.'}</p>{/if}
                     {#if entry.error}<p class="gateway-error" role="alert">{entry.error}</p>{/if}
                     {#if state?.hidNaming?.error}<p class="gateway-error" role="alert">Controller names could not be updated: {state.hidNaming.error}</p>{/if}
@@ -364,6 +411,7 @@
                 </div>
                 {#if automatic && state?.layoutError}<div class="notice amber-notice" role="alert"><Icon name="alert" size={17} /><p>The gateway could not update its USB controllers ({state.layoutError}). Review the device state before retrying a change.</p></div>{/if}
                 {#if automatic && state?.admissionFailure}<div class="notice amber-notice" role="alert"><Icon name="alert" size={17} /><p>Device {state.admissionFailure.identity} could not be enabled ({state.admissionFailure.error}). Limits: {state.maxModules} discovered, {state.maxRemembered ?? state.maxModules} remembered and {state.maxControllers ?? state.maxModules} enabled devices. Remove an offline remembered device to free inventory capacity.</p></div>{/if}
+                {#if state?.debug}<DebugDevices {state} busy={entry.busy} request={request => sendGateway(entry.id, request)} />{/if}
                 <div class="gateway-modules">
                   <div class="gateway-modules-heading"><h3>Devices <span>{gatewayDevices.length}</span></h3>{#if canGateway && state}<span class="quiet-tag">{automatic ? `${state.modules.filter(module => module.enabled).length} enabled · ${state.modules.length} / ${state.maxRemembered ?? state.maxModules} remembered` : `${state.modules.filter(module => module.registered).length} / ${state.maxModules ?? 10} registrations`}</span>{/if}</div>
                   <ul class="gateway-device-list">
@@ -372,8 +420,8 @@
                       <li class:ghost={device.ghost} class:device-disabled={device.disabled}>
                         <button class="gateway-device-link" onclick={() => selectDevice(device.key)}><span class="status-dot" class:offline={!device.online}></span><span><strong>{device.settings.label}</strong><small>{device.inputs} · {module?.directUsb ? 'Direct USB' : device.online ? 'Online' : 'Offline'}{#if automatic} · {controllerStatus(module)}{:else if canGateway} · {module?.registered ? module.pendingProfileMatch === false ? 'Profile changed' : module.activeSlot === module.pendingSlot ? 'Registered' : 'Pending apply' : (module?.activeSlot ?? -1) >= 0 ? 'Removal pending' : 'Discovered'}{/if}</small></span><Icon name="chevron" size={13} /></button>
                         {#if automatic}
-                          {#if module?.enabled}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'disable')} onclick={() => confirmController(device, 'disable')}>Disable</button>
-                          {:else}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'enable')} onclick={() => changeController(device, 'enable')}>Enable</button>{/if}
+                          {#if !module?.outputOnly}{#if module?.enabled}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'disable')} onclick={() => confirmController(device, 'disable')}>Disable</button>
+                          {:else}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'enable')} onclick={() => changeController(device, 'enable')}>Enable</button>{/if}{/if}
                           {#if module?.enabled && module.profileMatch === false && device.online}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'update-profile')} onclick={() => confirmController(device, 'update-profile')}>Update profile</button>{/if}
                           {#if !device.online}<button class="icon-button delete-device" aria-label={`Remove offline ${device.settings.label} from ${entry.port.serialNumber}`} title={`Remove offline ${device.settings.label}`} disabled={entry.busy || !canChangeController(state, module, 'forget')} onclick={() => confirmController(device, 'forget')}><Icon name="trash" size={15} /></button>{/if}
                         {:else}
@@ -445,8 +493,9 @@
           <div class="device-workspace">
             <div>
                 <section class="panel device-stage"><div class="stage-title"><div><span class="eyebrow">DEVICE WORKSPACE</span><h2>{selected.name}</h2><p>{selected.subtitle}</p></div><span class="connection-badge"><span class="status-dot" class:offline={!selected.online}></span>{selected.online ? 'Connected' : 'Offline'}</span></div><div class="large-device"><DeviceIllustration kind={selected.kind} /></div><div class="stage-metadata"><div><small>STABLE IDENTITY</small><strong>{selected.id}</strong></div><div><small>ACTIVE ROUTE</small><strong>{selected.route}</strong></div><div><small>CAPABILITIES</small><strong>{selected.inputs}</strong></div></div></section>
-                <section class="panel device-inputs"><div class="panel-heading"><h2>Live inputs</h2><span class="quiet-tag">{controlsReady ? 'Live HID output' : 'Device inputs'}</span></div>{@render inputTester()}</section>
-                {#key selected.key}<ManualActions state={gateway} module={hidModule} busy={gatewayBusy} request={request => sendGateway(selected.gatewayId, request)} managedActionIds={managedDcsActions(dcsBios, selected.gatewayId, selected.id)} />{/key}
+                {#if !hidModule?.outputOnly}<section class="panel device-inputs"><div class="panel-heading"><h2>Live inputs</h2><span class="quiet-tag">{controlsReady ? 'Live HID output' : 'Device inputs'}</span></div>{@render inputTester()}</section>{/if}
+                {#if gateway?.debug && hidModule}{#key `${selected.key}/${gateway.debug.devices.find(device => device.id === selected.id)?.boot ?? hidModule.boot}`}<DebugControls state={gateway} module={hidModule} request={scopedGatewayRequest(selected.gatewayId)} read={scopedGatewayRequest(selected.gatewayId, true)} />{/key}{/if}
+                {#key selected.key}<ManualActions state={gateway} module={hidModule} busy={gatewayBusy} request={request => sendGateway(selected.gatewayId, request)} managedActionIds={managedOutputs(selected.gatewayId, selected.id)} />{/key}
             </div>
             <section class="panel inspector" aria-label="Selected device settings">
               <div class="inspector-heading"><div><span class="eyebrow">CONFIGURATION</span><h2>{selected.settings.label}</h2></div><span class="model-badge">{selected.kind === 'shifter' ? 'SQ' : selected.kind === 'pedals' ? 'PD' : selected.kind === 'panel' ? 'BP' : selected.kind === 'wheel' ? 'WH' : 'HB'}</span></div>
@@ -454,12 +503,12 @@
               <div class="inspector-body">
                 {#if !selected.online}<div class="notice offline-notice"><Icon name="alert" size={17} /><div><strong>Device is offline</strong><p>Reconnect this module to configure it. Its saved identity and settings are preserved.</p></div></div>{/if}
                 {#if physicalGateway && tab === 'dcs-bios'}
-                  <div class="notice"><p>Bind this device’s buttons, switches, encoders, calibrated axes and outputs in the shared A-10C profile. Draft bindings remain available when you switch devices.</p><button class="secondary-button" onclick={() => openDcsProfile(selected.gatewayId, selected.id)}>Open DCS-BIOS profile</button></div>
+                  <div class="notice"><p>Bind this device’s buttons, switches, encoders, calibrated axes and outputs in the shared aircraft profile. Draft bindings remain available when you switch devices.</p><button class="secondary-button" onclick={() => openDcsProfile(selected.gatewayId, selected.id)}>Open DCS-BIOS profile</button></div>
                 {:else if physicalGateway && tab === 'setup'}
                   {#if runtimeSnapshot&&runtimeDrafts[selectedId]}<RuntimeEditor bind:config={runtimeDrafts[selectedId]} snapshot={runtimeSnapshot} {editing} busy={gatewayBusy} request={runtimeRequest} automatic={lifecycle} controllerEnabled={hidModule?.enabled !== false} />
                   {:else}<div class="notice"><Icon name="info" size={17} /><p>{hidModule?.canConfigure ? 'Read module configuration by opening a setup session.' : 'This module firmware does not expose runtime configuration. Inputs remain available.'}</p></div>{/if}
                   <dl class="device-details"><div><dt>{lifecycle ? 'USB controller' : 'Controller registration'}</dt><dd>{lifecycle ? controllerStatus(hidModule) : hidModule?.registered ? 'Registered' : 'Discovered'}</dd></div><div><dt>USB report ID</dt><dd>{hidModule?.reportId ?? (lifecycle && !hidModule?.enabled ? 'None' : 'Pending')}</dd></div><div><dt>Input owner</dt><dd>{hidModule?.directUsb ? 'Device USB' : 'Gateway'}</dd></div></dl>
-                  {#if lifecycle}
+                  {#if lifecycle && !hidModule?.outputOnly}
                     <div class="controller-actions">{#if hidModule?.enabled}<button class="secondary-button" disabled={gatewayBusy || !canChangeController(gateway, hidModule, 'disable')} onclick={() => confirmController(selected, 'disable')}>Disable controller</button>{:else}<button class="secondary-button" disabled={gatewayBusy || !canChangeController(gateway, hidModule, 'enable')} onclick={() => changeController(selected, 'enable')}>Enable controller</button>{/if}
                     {#if !selected.online}<button class="secondary-button" disabled={gatewayBusy || !canChangeController(gateway, hidModule, 'forget')} onclick={() => confirmController(selected, 'forget')}>Remove offline device</button>{/if}</div>
                     {#if hidModule?.enabled && hidModule.profileMatch === false && selected.online}<div class="notice amber-notice"><Icon name="alert" size={17} /><div><p>The device controls changed. The previous USB layout remains neutral until you update its profile.</p><button class="secondary-button" disabled={gatewayBusy || !canChangeController(gateway, hidModule, 'update-profile')} onclick={() => confirmController(selected, 'update-profile')}>Update controller profile</button></div></div>{/if}

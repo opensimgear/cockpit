@@ -1,3 +1,4 @@
+import { supportsDeviceContracts } from './gateway-capabilities';
 import type { DeviceAction, DeviceActions } from './device-actions';
 import type { GatewayModule, GatewayState } from './gateway';
 import type { DcsProfileConfig, DcsCataloguePage, DcsBindingStatus, DcsGatewayMetrics } from './dcs-profile';
@@ -60,7 +61,7 @@ export function dcsConfigError(config: DcsBiosLegacyConfig): string {
 
 /** Recheck current ownership and catalogue immediately before enabling the bridge. */
 export function dcsStartError(state: GatewayState | null, module: GatewayModule | undefined, config: DcsBiosLegacyConfig): string {
-  if (!state?.connected || state.backend !== 'stm32' || !module?.online || !module.boot) return 'Reconnect this CAN device before starting DCS-BIOS.';
+  if (!state?.connected || !supportsDeviceContracts(state) || !module?.online || !module.boot) return 'Reconnect this device before starting DCS-BIOS.';
   if (state.gatewayId !== config.gatewayId || module.id !== config.moduleId) return 'These settings belong to a different device.';
   if (state.reconnecting || state.layoutPending) return 'Wait for the gateway to finish updating its USB controllers.';
   if (module.directUsb) return 'Disconnect the device’s direct USB input connection before starting DCS-BIOS.';

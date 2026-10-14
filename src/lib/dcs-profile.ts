@@ -1,3 +1,4 @@
+import { supportsDeviceContracts } from './gateway-capabilities';
 import type { DcsBiosLegacyConfig, DcsBiosStatus } from './dcs-bios';
 import type { DeviceAction, DeviceActions, ActionValue } from './device-actions';
 import type { GatewayModule, GatewayState } from './gateway';
@@ -18,7 +19,7 @@ export type DcsOutputBinding = {
   actionId: string; format: DcsOutputFormat;
 };
 export type DcsProfileConfig = {
-  schemaVersion: 2; aircraftModule: 'A-10C'; cataloguePath: string;
+  schemaVersion: 2; aircraftModule: string; cataloguePath: string;
   commandHost: string; commandPort: number; listenAddress: string; listenPort: number;
   multicastGroup: string; multicastInterface: string; freshnessMs: number;
   inputs: DcsInputBinding[]; outputs: DcsOutputBinding[];
@@ -69,6 +70,7 @@ export function newDcsProfile(saved?: DcsBiosLegacyConfig | DcsProfileConfig | n
     Object.assign(profile, { [key]: saved[key] });
   }
   if (saved.schemaVersion === 2) {
+    profile.aircraftModule = saved.aircraftModule;
     profile.inputs = saved.inputs.map(binding => ({ ...binding }));
     profile.outputs = saved.outputs.map(binding => ({ ...binding, format: { ...binding.format } }));
   } else {
@@ -94,7 +96,7 @@ export function boundDcsTargets(profile: DcsProfileConfig): { gatewayId: string;
 
 /** Form checks improve feedback; native catalogue/route validation remains authoritative. */
 export function dcsProfileError(profile: DcsProfileConfig): string {
-  if (profile.schemaVersion !== 2 || profile.aircraftModule !== 'A-10C') return 'Choose the supported A-10C profile.';
+  if (profile.schemaVersion !== 2 || !/^[A-Za-z0-9_-]{1,63}$/.test(profile.aircraftModule)) return 'Choose an installed aircraft module.';
   if (!profile.cataloguePath.trim() || !plainText(profile.cataloguePath, 4096)) return 'Choose the installed DCS-BIOS doc/json folder.';
   if (profile.inputs.length > 16 || profile.outputs.length > 16 || !profile.inputs.length && !profile.outputs.length) return 'Add up to 16 input and 16 output bindings.';
   for (const port of [profile.commandPort, profile.listenPort]) if (!integer(port, 1, 65535)) return 'UDP ports must be whole numbers from 1 to 65535.';
@@ -105,7 +107,7 @@ export function dcsProfileError(profile: DcsProfileConfig): string {
   for (const binding of [...profile.inputs, ...profile.outputs]) {
     if (!/^[a-zA-Z0-9_.-]{1,31}$/.test(binding.id) || ids.has(binding.id)) return 'Every binding needs a unique identifier of up to 31 letters, digits, dots, underscores or hyphens.';
     ids.add(binding.id);
-    if (!/^stm32:[0-9a-f]{24}$/.test(binding.gatewayId) || !/^[0-9a-f]{32}$/.test(binding.moduleId)) return 'Choose a CAN gateway and module for every binding.';
+    if (!/^(?:stm32:[0-9a-f]{24}|pico:OSG-PICO-[0-9a-fA-F]{16})$/.test(binding.gatewayId) || !/^[0-9a-f]{32}$/.test(binding.moduleId)) return 'Choose a supported gateway and module for every binding.';
   }
   const targets = boundDcsTargets(profile);
   if (targets.length > 8 || new Set(targets.map(target => target.gatewayId)).size > 4) return 'One profile supports up to eight modules on four gateways.';
@@ -183,7 +185,7 @@ export function dcsProfileStartError(profile: DcsProfileConfig, targets: DcsTarg
   if (error) return error;
   for (const bound of boundDcsTargets(profile)) {
     const target = targets.find(target => target.gatewayId === bound.gatewayId && target.module.id === bound.moduleId);
-    if (!target?.state?.connected || !target.module.online || !target.module.boot) return 'Reconnect every bound CAN module before starting.';
+    if (!target?.state?.connected || !supportsDeviceContracts(target.state) || !target.module.online || !target.module.boot) return 'Reconnect every bound device before starting.';
     if (target.busy || target.state.reconnecting || target.state.layoutPending) return 'Wait for gateway updates to finish.';
     const inputTarget = profile.inputs.some(binding => dcsTargetKey(binding) === dcsTargetKey(bound));
     if (inputTarget && target.module.directUsb) return `Disconnect ${target.label} from its direct USB input host.`;

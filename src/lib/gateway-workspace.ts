@@ -1,5 +1,6 @@
 import { GatewayError, gatewayRequest, type GatewayPort, type GatewayRequest, type GatewayState } from './gateway';
 import { candidateBackend, gatewayCandidates, nextConfigurationRead } from './gateway-automation';
+import { supportsDeviceContracts } from './gateway-capabilities';
 import { nextActionRead } from './device-actions';
 
 export type GatewayEntry = {
@@ -163,7 +164,7 @@ export class GatewayWorkspace {
     if (!state?.connected || state.reconnecting) return;
     // Claims on one gateway never suspend polling or configuration on another.
     const claimed = !!state.claimedModules?.length;
-    if (state.backend === 'pico' && !claimed && !state.running && !state.needsReconnect &&
+    if (state.backend === 'pico' && !supportsDeviceContracts(state) && !claimed && !state.running && !state.needsReconnect &&
         !entry.autoStartFailed && state.modules.some(module => module.online && module.registered)) {
       entry.busy = true; this.changed();
       try { await this.send(entry, { command: 'start' }); }
@@ -176,11 +177,11 @@ export class GatewayWorkspace {
     if (actionUnread) await this.send(entry, { command: 'action_describe', moduleId: actionUnread });
   }
 
-  request(gatewayId: string, request: GatewayRequest): Promise<GatewayState> {
+  request(gatewayId: string, request: GatewayRequest, background = false): Promise<GatewayState> {
     const entry = this.gateways.get(gatewayId);
     if (!entry) return Promise.reject(new GatewayError('This gateway is no longer available.'));
     if (request.gatewayId && request.gatewayId !== gatewayId) return Promise.reject(new GatewayError('The request targets a different gateway.'));
-    return this.schedule(entry, () => this.send(entry, request), true);
+    return this.schedule(entry, () => this.send(entry, request), !background);
   }
 
   async retry(gatewayId: string): Promise<void> {

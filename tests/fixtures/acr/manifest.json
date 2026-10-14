@@ -1,0 +1,68 @@
+{
+  "synthetic": true,
+  "proof": "developer-derived prefix, not live game validation",
+  "byteOrder": "little-endian",
+  "packing": 4,
+  "offsets": {
+    "physics": {
+      "packetId": 0,
+      "gas": 4,
+      "brake": 8,
+      "fuel": 12,
+      "gear": 16,
+      "rpms": 20,
+      "steerAngle": 24,
+      "speedKmh": 28
+    },
+    "static": {
+      "smVersion": 0,
+      "acVersion": 30,
+      "carModel": 68,
+      "track": 134,
+      "maxRpm": 412
+    },
+    "graphics": {
+      "packetId": 0,
+      "status": 4,
+      "sessionType": 8
+    }
+  },
+  "minimumSizes": {
+    "physics": 32,
+    "graphics": 8,
+    "static": 416
+  },
+  "expectedLive": {
+    "rpm": 6300,
+    "rawGear": 5,
+    "normalizedGear": 4,
+    "speed_kmh": 124.25,
+    "max_rpm": 7500,
+    "rev_ratio": 0.84
+  },
+  "notes": [
+    "Gear normalization is developer-derived raw-1; verify live before qualification.",
+    "A duplicate physics ID must not renew freshness, even after expiry.",
+    "Paused/replay/off and invalid status disarm independently of physics advancement.",
+    "Source process/mapping/session epoch must accompany these pages in the adapter.",
+    "Static UTF-16 metadata and physics fields are separate unsynchronized pages."
+  ],
+  "files": {
+    "live.physics.bin": 32,
+    "advancing.physics.bin": 32,
+    "reverse.physics.bin": 32,
+    "neutral.physics.bin": 32,
+    "frozen.physics.bin": 32,
+    "reset.physics.bin": 32,
+    "invalid-nan.physics.bin": 32,
+    "invalid-negative-rpm.physics.bin": 32,
+    "short.physics.bin": 31,
+    "live.graphics.bin": 12,
+    "paused.graphics.bin": 12,
+    "replay.graphics.bin": 12,
+    "off.graphics.bin": 12,
+    "invalid-status.graphics.bin": 12,
+    "live.static.bin": 416,
+    "unknown-max.static.bin": 416
+  }
+}

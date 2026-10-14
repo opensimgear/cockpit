@@ -56,6 +56,121 @@ fn hex_identity(value: &str, digits: usize) -> bool {
         && value.bytes().any(|byte| byte != b'0')
         && value.bytes().any(|byte| byte != b'f' && byte != b'F')
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Can,
+    PicoDebug,
+}
+impl Role {
+    fn candidate(self, port: &PortInfo) -> bool {
+        match self {
+            Self::Can => candidate(port),
+            Self::PicoDebug => crate::pico::candidate(port),
+        }
+    }
+    fn identity(self, serial: &str) -> Option<String> {
+        match self {
+            Self::Can => hex_identity(serial, 24).then(|| serial.to_ascii_lowercase()),
+            Self::PicoDebug => serial
+                .strip_prefix("OSG-PICO-")
+                .filter(|id| id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+                .map(|id| format!("00000000{}", id.to_ascii_lowercase()))
+                .filter(|id| hex_identity(id, 24)),
+        }
+    }
+    fn serial(self, identity: &str) -> String {
+        match self {
+            Self::Can => identity.into(),
+            Self::PicoDebug => format!("OSG-PICO-{}", &identity[8..]),
+        }
+    }
+}
+
+fn debug_snapshot(value: &Value) -> Result<Value, String> {
+    let bad = || "Unsupported or malformed Pico debug capabilities.".to_owned();
+    if value["maxDevices"] != 8 {
+        return Err(bad());
+    }
+    let presets = value["presets"].as_array().ok_or_else(bad)?;
+    let devices = value["devices"].as_array().ok_or_else(bad)?;
+    let mut names = HashSet::new();
+    if presets.is_empty() || presets.len() > 16 || devices.len() > 8 {
+        return Err(bad());
+    }
+    for preset in presets {
+        let name = preset
+            .as_str()
+            .filter(|s| crate::protocol::identifier(s, 1, 31))
+            .ok_or_else(bad)?;
+        if !names.insert(name) {
+            return Err(bad());
+        }
+    }
+    let mut ids = HashSet::new();
+    for device in devices {
+        let id = device["id"]
+            .as_str()
+            .filter(|s| hex_identity(s, 32))
+            .ok_or_else(bad)?;
+        if !ids.insert(id.to_ascii_lowercase())
+            || !device["preset"].as_str().is_some_and(|s| names.contains(s))
+            || !device["online"].is_boolean()
+            || !device["directUsb"].is_boolean()
+            || number(&device["boot"], u32::MAX as u64)
+                .filter(|v| *v > 0)
+                .is_none()
+            || number(&device["expansionMask"], 255).is_none()
+        {
+            return Err(bad());
+        }
+        let contacts = device["contacts"].as_array().ok_or_else(bad)?;
+        let axes = device["axes"].as_array().ok_or_else(bad)?;
+        if contacts.len() > 152
+            || axes.len() != 8
+            || contacts.iter().any(|v| number(v, 151).is_none())
+            || contacts
+                .iter()
+                .filter_map(Value::as_u64)
+                .collect::<HashSet<_>>()
+                .len()
+                != contacts.len()
+            || axes.iter().any(|v| number(v, 4095).is_none())
+        {
+            return Err(bad());
+        }
+        crate::runtime::commands(&device["definition"], 1).map_err(|_| bad())?;
+    }
+    Ok(value.clone())
+}
+
+fn role_snapshot(wire: &Value, expected: Option<&str>, role: Role) -> Result<Value, String> {
+    if role == Role::Can {
+        return snapshot(wire, expected);
+    }
+    let uid = wire["identity"].as_str().ok_or(INVALID)?;
+    let serial = wire["serial"].as_str().ok_or(INVALID)?;
+    if wire["gatewayType"] != "pico-debug-gateway"
+        || wire["protocol"] != 3
+        || wire["debug"] != 1
+        || wire["maxVirtual"] != 8
+        || !role
+            .identity(serial)
+            .is_some_and(|identity| identity.eq_ignore_ascii_case(uid))
+    {
+        return Err("Unsupported or malformed Pico debug gateway snapshot (protocol 3).".into());
+    }
+    let mut normalized = wire.clone();
+    normalized["gatewayType"] = json!("stm32-can-gateway");
+    let mut state = snapshot(&normalized, expected)?;
+    state["backend"] = json!("pico");
+    state["gatewayType"] = json!("pico-debug-gateway");
+    state["gatewaySerial"] = json!(serial);
+    for module in state["modules"].as_array_mut().unwrap() {
+        module["usbSerialNumber"] = json!(serial);
+    }
+    Ok(state)
+}
 fn number(value: &Value, maximum: u64) -> Option<u64> {
     value.as_u64().filter(|number| *number <= maximum)
 }
@@ -98,10 +213,9 @@ fn profile(value: &Value) -> Result<Profile, String> {
     let buttons = number(&value["buttons"], 128).ok_or_else(bad)? as usize;
     let axes = number(&value["axes"], 8).ok_or_else(bad)? as usize;
     let hats = number(&value["hats"], 4).ok_or_else(bad)? as usize;
-    if buttons + axes + hats == 0
-        || number(&value["revision"], 65_535)
-            .filter(|revision| *revision > 0)
-            .is_none()
+    if number(&value["revision"], 65_535)
+        .filter(|revision| *revision > 0)
+        .is_none()
     {
         return Err(bad());
     }
@@ -317,6 +431,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
             "published":if automatic {module["published"].clone()} else {Value::Null},
             "descriptorIndex":if automatic {json!(active)} else {Value::Null},
             "reportId":if report_id >= 0 {json!(report_id)} else {Value::Null},
+            "outputOnly":discovered.buttons + discovered.axes + discovered.hats == 0,
             "buttonCount":discovered.buttons,"axisCount":discovered.axes,"hatCount":discovered.hats,
             "buttons":buttons,"axes":axes,"hats":hats,"axisUsage":discovered.usages,
             "neutral":discovered.neutral,"profile":discovered.value,
@@ -424,6 +539,7 @@ fn action_route(state: &Value, id: &str) -> Option<Value> {
         })
 }
 struct Gateway {
+    role: Role,
     factory: Box<dyn Factory>,
     connection: Option<Box<dyn Connection>>,
     board: Option<Board>,
@@ -441,8 +557,18 @@ struct Gateway {
     events_reply: Option<Value>,
 }
 impl Gateway {
+    #[cfg(test)]
     fn new(factory: Box<dyn Factory>, timing: Timing, cancel: Arc<AtomicBool>) -> Self {
+        Self::with_role(factory, timing, cancel, Role::Can)
+    }
+    fn with_role(
+        factory: Box<dyn Factory>,
+        timing: Timing,
+        cancel: Arc<AtomicBool>,
+        role: Role,
+    ) -> Self {
         Self {
+            role,
             factory,
             connection: None,
             board: None,
@@ -467,7 +593,7 @@ impl Gateway {
             .factory
             .ports()?
             .into_iter()
-            .filter(candidate)
+            .filter(|port| self.role.candidate(port))
             .collect();
         // macOS exposes call-in and call-out aliases for one CDC interface.
         let mut by_path: HashMap<String, PortInfo> = HashMap::new();
@@ -528,7 +654,11 @@ impl Gateway {
         }
     }
     fn accept(&mut self, wire: &Value) -> Result<(), String> {
-        let mut state = snapshot(wire, self.board.as_ref().map(|board| board.uid.as_str()))?;
+        let mut state = role_snapshot(
+            wire,
+            self.board.as_ref().map(|board| board.uid.as_str()),
+            self.role,
+        )?;
         if self.state["epoch"].is_number() && self.state["epoch"] != state["epoch"] {
             self.claims.clear();
         }
@@ -582,7 +712,10 @@ impl Gateway {
         }
         self.request_id = self.request_id.wrapping_add(1).max(1);
         let id = self.request_id;
-        let wire = if command == "snapshot" {
+        let wire = if let Some(debug) = command.strip_prefix("debug ") {
+            let epoch = number(&self.state["epoch"], u32::MAX as u64).ok_or(NO_CONNECTION)?;
+            format!("debug {id} {epoch} {debug}\n")
+        } else if command == "snapshot" {
             format!("cockpit {id} snapshot\n")
         } else {
             let epoch = number(&self.state["epoch"], u32::MAX as u64).ok_or(NO_CONNECTION)?;
@@ -657,6 +790,35 @@ impl Gateway {
                 if let Err(error) = self.accept(&value["state"]) {
                     self.close();
                     return Err(error);
+                }
+                if self.role == Role::PicoDebug {
+                    match debug_snapshot(&value["debug"]) {
+                        Ok(debug) => {
+                            for module in self.state["modules"].as_array_mut().unwrap() {
+                                if let Some(device) = debug["devices"]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .find(|device| device["id"] == module["id"])
+                                {
+                                    module["name"] = device["definition"]["name"].clone();
+                                    module["settings"]["label"] =
+                                        device["definition"]["name"].clone();
+                                    module["kind"] = json!(match device["preset"].as_str() {
+                                        Some("shifter") => "shifter",
+                                        Some("pedals") => "pedals",
+                                        Some("handbrake") => "handbrake",
+                                        _ => "panel",
+                                    });
+                                }
+                            }
+                            self.state["debug"] = debug;
+                        }
+                        Err(error) => {
+                            self.close();
+                            return Err(error);
+                        }
+                    }
                 }
                 if command.starts_with("action ") && !value["targetAction"].is_null() {
                     self.action_reply = Some(value["targetAction"].clone());
@@ -742,11 +904,12 @@ impl Gateway {
         deadline: Instant,
     ) -> Result<(), String> {
         self.close();
-        if !candidate(&info) {
+        if !self.role.candidate(&info) {
             return Err("Select an OpenSimGear CAN gateway serial port.".into());
         }
-        let expected =
-            expected.unwrap_or_else(|| info.serial_number.as_ref().unwrap().to_ascii_lowercase());
+        let expected = expected
+            .or_else(|| self.role.identity(info.serial_number.as_ref().unwrap()))
+            .ok_or(INVALID)?;
         if self
             .board
             .as_ref()
@@ -834,7 +997,7 @@ impl Gateway {
             let found = self.ports()?.into_iter().find(|port| {
                 port.serial_number
                     .as_deref()
-                    .is_some_and(|uid| uid.eq_ignore_ascii_case(&expected))
+                    .is_some_and(|uid| uid.eq_ignore_ascii_case(&self.role.serial(&expected)))
                     && port.vendor_id == previous_vendor
                     && port.product_id == previous_product
             });
@@ -889,7 +1052,7 @@ impl Gateway {
             if let Some(port) = self.ports()?.into_iter().find(|port| {
                 port.serial_number
                     .as_deref()
-                    .is_some_and(|serial| serial.eq_ignore_ascii_case(&uid))
+                    .is_some_and(|serial| serial.eq_ignore_ascii_case(&self.role.serial(&uid)))
                     && port.vendor_id == vendor
                     && port.product_id == product
             }) {
@@ -1059,7 +1222,9 @@ impl Gateway {
                 &format!("action {id} {} {child}", route[3]),
                 self.timing.command,
             );
-            if !child.starts_with("invoke ")
+            if (child.starts_with("describe ")
+                || child == "state"
+                || child.starts_with("ownership "))
                 && result.as_ref().is_err_and(|error| {
                     error == CONFIG_ROUTE_NOT_READY || error == CONFIG_ROUTE_CHANGED
                 })
@@ -1134,7 +1299,11 @@ impl Gateway {
         }
         let mut route = action_route(&self.state, id)
             .ok_or("Reconnect the device before using its actions.")?;
-        if command == "action_invoke" && request["boot"] != route[3] {
+        if !matches!(
+            command,
+            "action_describe" | "action_state" | "action_ownership"
+        ) && request["boot"] != route[3]
+        {
             return Err("The device restarted. Discover its actions again.".into());
         }
         let mut cached = self
@@ -1151,11 +1320,21 @@ impl Gateway {
                 let mut offset = 0;
                 let mut catalogue_revision = None;
                 let mut catalogue_total = None;
+                let mut ownership = Value::Null;
                 let mut ids = HashSet::new();
                 loop {
                     let reply =
                         self.action_command(id, &mut route, &format!("describe {offset}"))?;
                     let (revision, total, next, page) = crate::actions::page(&reply, offset)?;
+                    let capability = reply
+                        .get("ownership")
+                        .map(crate::output_leases::capability)
+                        .transpose()?
+                        .unwrap_or(Value::Null);
+                    if catalogue_revision.is_some() && capability != ownership {
+                        return Err(crate::actions::INVALID.into());
+                    }
+                    ownership = capability;
                     if catalogue_revision.is_some_and(|expected| expected != revision)
                         || catalogue_total.is_some_and(|expected| expected != total)
                     {
@@ -1175,7 +1354,7 @@ impl Gateway {
                         break;
                     }
                 }
-                cached = json!({"boot":route[3],"catalogueRevision":catalogue_revision,"actions":descriptors,"states":[],"status":"ready","error":null});
+                cached = json!({"boot":route[3],"catalogueRevision":catalogue_revision,"actions":descriptors,"states":[],"status":"ready","error":null,"ownership":ownership});
             }
             let revision = cached["catalogueRevision"]
                 .as_u64()
@@ -1184,8 +1363,49 @@ impl Gateway {
                 .as_array()
                 .ok_or(crate::actions::INVALID)?
                 .clone();
-            let invocation = command == "action_invoke";
-            let child = if invocation {
+            if matches!(
+                command,
+                "action_claim" | "action_renew" | "action_release" | "action_ownership"
+            ) {
+                if command != "action_ownership" && cached["ownership"].is_null() {
+                    return Err(
+                        "This firmware does not advertise endpoint output ownership.".into(),
+                    );
+                }
+                let child = crate::output_leases::child(command, request, revision, &descriptors)?;
+                let reply = self.action_command(id, &mut route, &child)?;
+                if command == "action_ownership" {
+                    cached["ownershipPage"] = crate::output_leases::ownership_page(
+                        &reply,
+                        revision,
+                        request["offset"].as_u64().unwrap_or(0) as usize,
+                    )?;
+                } else {
+                    crate::output_leases::acknowledgement(&reply, revision, request, command)?;
+                    if command == "action_claim"
+                        && descriptors
+                            .iter()
+                            .find(|a| a["id"] == request["actionId"])
+                            .is_none_or(|a| a["endpoint"] != reply["endpoint"])
+                    {
+                        return Err(crate::actions::INVALID.into());
+                    }
+                    cached["lastLease"] = json!({"leaseId":reply["leaseId"],"endpoint":reply["endpoint"],"remainingMs":reply["remainingMs"],"released":reply["released"]});
+                }
+                return Ok(());
+            }
+            let invocation = matches!(command, "action_invoke" | "action_invoke_owned");
+            let child = if command == "action_invoke_owned" {
+                if cached["ownership"].is_null() {
+                    return Err(
+                        "This firmware does not advertise endpoint output ownership.".into(),
+                    );
+                }
+                if cached["status"] != "ready" {
+                    return Err("Refresh the output state before invoking another action.".into());
+                }
+                crate::output_leases::child(command, request, revision, &descriptors)?
+            } else if invocation {
                 if cached["status"] != "ready" {
                     return Err("Refresh the output state before invoking another action.".into());
                 }
@@ -1212,6 +1432,9 @@ impl Gateway {
                 "state".into()
             };
             let reply = self.action_command(id, &mut route, &child)?;
+            if let Some(capability) = reply.get("ownership") {
+                cached["ownership"] = crate::output_leases::capability(capability)?;
+            }
             if invocation && reply["id"] != request["actionId"] {
                 return Err(crate::actions::INVALID.into());
             }
@@ -1508,6 +1731,103 @@ impl Gateway {
         }
         state
     }
+    fn debug_command(&mut self, request: &Value, client: &str) -> Result<(), String> {
+        if self.role != Role::PicoDebug || self.state["protocolVersion"] != 3 {
+            return Err("This gateway does not advertise Pico debug controls. Update the Pico debug firmware.".into());
+        }
+        let operation = if request["command"] == "debug_describe" {
+            "describe"
+        } else {
+            request["debugOperation"]
+                .as_str()
+                .ok_or("Choose a Pico debug operation.")?
+        };
+        let args = request.get("debugArgs").map_or(Ok(Vec::new()), |value| {
+            value
+                .as_array()
+                .filter(|args| args.len() <= 2)
+                .ok_or("Invalid Pico debug arguments.")?
+                .iter()
+                .map(|arg| arg.as_i64().ok_or("Pico debug arguments must be integers."))
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        let bounded_pair = |first: i64, second_min: i64, second_max: i64| {
+            args.len() == 2
+                && (0..=first).contains(&args[0])
+                && (second_min..=second_max).contains(&args[1])
+        };
+        let valid = match operation {
+            "describe" | "neutral" | "reboot" | "add" => args.is_empty(),
+            "contact" => bounded_pair(151, 0, 1),
+            "axis" => bounded_pair(7, 0, 4095),
+            "turn" => bounded_pair(7, -32, 32) && args[1] != 0,
+            "hat" => bounded_pair(3, -1, 7),
+            "selector" => bounded_pair(7, 0, 2),
+            "expansion" => bounded_pair(7, 0, 1),
+            "online" | "direct" => args.len() == 1 && (0..=1).contains(&args[0]),
+            _ => false,
+        };
+        if !valid {
+            return Err("Invalid Pico debug operation or arguments.".into());
+        }
+        let (module, boot, suffix) = if operation == "add" {
+            if !self.claims.is_empty() {
+                return Err("End setup sessions before adding a debug device.".into());
+            }
+            let preset = request["preset"]
+                .as_str()
+                .filter(|s| crate::protocol::identifier(s, 1, 31))
+                .ok_or("Choose an advertised Pico debug preset.")?;
+            if !self.state["debug"]["presets"]
+                .as_array()
+                .is_some_and(|presets| presets.contains(&json!(preset)))
+            {
+                return Err("Choose an advertised Pico debug preset.".into());
+            }
+            ("-".to_owned(), 0, format!(" {preset}"))
+        } else if operation == "describe" {
+            ("-".to_owned(), 0, String::new())
+        } else {
+            let id = request["moduleId"]
+                .as_str()
+                .filter(|s| hex_identity(s, 32))
+                .ok_or("Choose an available Pico debug device.")?
+                .to_ascii_lowercase();
+            if self
+                .claims
+                .get(&id)
+                .is_some_and(|claim| claim.client != client)
+            {
+                return Err("Another Cockpit session owns this module.".into());
+            }
+            let device = self.state["debug"]["devices"]
+                .as_array()
+                .and_then(|devices| devices.iter().find(|device| device["id"] == id))
+                .ok_or("Refresh the Pico debug inventory before using this device.")?;
+            let boot = device["boot"].as_u64().ok_or(INVALID)?;
+            if request
+                .get("boot")
+                .or_else(|| request.get("moduleBoot"))
+                .is_some_and(|expected| expected.as_u64() != Some(boot))
+            {
+                return Err(
+                    "The Pico debug device restarted. Refresh its state before retrying.".into(),
+                );
+            }
+            (
+                id,
+                boot,
+                args.iter().map(|arg| format!(" {arg}")).collect::<String>(),
+            )
+        };
+        // A mutation is sent once. The shared exchange path validates epoch,
+        // authoritative inventory and the bounded debug state in its reply.
+        self.exchange(
+            &format!("debug {module} {boot} {operation}{suffix}"),
+            self.timing.command,
+        )
+    }
+
     fn handle(&mut self, request: &Value) -> Result<(), String> {
         if self.cancel.load(Ordering::Acquire) {
             return Err(CLOSED.into());
@@ -1546,10 +1866,16 @@ impl Gateway {
             return Err("End setup sessions before changing the CAN gateway layout.".into());
         }
         match command {
+            "debug_describe" | "debug_invoke" => self.debug_command(request, client),
             "events_state" | "events_read" => self.events_request(&module_id, command, request),
-            "action_describe" | "action_state" | "action_invoke" => {
-                self.action_request(&module_id, command, request)
-            }
+            "action_describe"
+            | "action_state"
+            | "action_invoke"
+            | "action_claim"
+            | "action_renew"
+            | "action_release"
+            | "action_ownership"
+            | "action_invoke_owned" => self.action_request(&module_id, command, request),
             "ports" => {
                 self.ports()?;
                 Ok(())
@@ -1594,14 +1920,19 @@ impl Gateway {
                     .into_iter()
                     .find(|p| request["port"] == p.path)
                     .ok_or("Select an available OpenSimGear CAN gateway port.")?;
+                let prefix = if self.role == Role::Can {
+                    "stm32:"
+                } else {
+                    "pico:"
+                };
                 let expected = request["gatewayId"]
                     .as_str()
-                    .and_then(|id| id.strip_prefix("stm32:"))
-                    .map(str::to_owned);
+                    .and_then(|id| id.strip_prefix(prefix))
+                    .and_then(|serial| self.role.identity(serial));
                 if expected.as_ref().is_some_and(|id| {
                     port.serial_number
                         .as_ref()
-                        .is_none_or(|serial| !serial.eq_ignore_ascii_case(id))
+                        .is_none_or(|serial| !serial.eq_ignore_ascii_case(&self.role.serial(id)))
                 }) {
                     return Err("Gateway identity does not match the selected port.".into());
                 }
@@ -1808,15 +2139,25 @@ impl Stm32Service {
         Self::with_factory(Box::new(NativeFactory), Timing::default())
     }
     fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
+        Self::with_role(factory, timing, Role::Can)
+    }
+    pub(crate) fn pico_debug(factory: Box<dyn Factory>) -> Self {
+        Self::with_role(factory, Timing::default(), Role::PicoDebug)
+    }
+    fn with_role(factory: Box<dyn Factory>, timing: Timing, role: Role) -> Self {
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
         let cancel = closed.clone();
-        let state = Arc::new(Mutex::new(empty_state()));
+        let mut initial = empty_state();
+        if role == Role::PicoDebug {
+            initial["backend"] = json!("pico");
+        }
+        let state = Arc::new(Mutex::new(initial));
         let latest = state.clone();
         let worker = thread::Builder::new()
             .name("osg-stm32-cdc".into())
             .spawn(move || {
-                let mut gateway = Gateway::new(factory, timing, cancel.clone());
+                let mut gateway = Gateway::with_role(factory, timing, cancel.clone(), role);
                 let mut seen = Instant::now();
                 let mut heartbeat = Instant::now() + gateway.timing.heartbeat;
                 while !cancel.load(Ordering::Acquire) {
@@ -1921,6 +2262,87 @@ mod tests {
         module["descriptorIndex"] = json!(0);
         module["reportId"] = json!(17);
         wire
+    }
+
+    fn pico_state() -> Value {
+        let mut wire = automatic_state();
+        wire["gatewayType"] = json!("pico-debug-gateway");
+        wire["identity"] = json!("000000000123456789abcdef");
+        wire["serial"] = json!("OSG-PICO-0123456789abcdef");
+        wire["debug"] = json!(1);
+        wire["maxVirtual"] = json!(8);
+        wire["modules"][0]["boot"] = json!(100);
+        wire
+    }
+    fn debug_state() -> Value {
+        json!({"maxDevices":8,"presets":["radio-panel","master-caution"],"devices":[{
+            "id":MODULE,"preset":"radio-panel","online":true,"boot":100,"directUsb":false,
+            "contacts":[],"axes":[0,0,0,0,0,0,0,0],"expansionMask":0,
+            "definition":{"name":"Radio panel","expanderMask":0,"buttons":[[0,0,10]],"axes":[],"hats":[],"encoders":[],"selectors":[]}
+        }]})
+    }
+    #[test]
+    fn pico_role_checks_metadata_and_reuses_production_snapshot_validation() {
+        let wire = pico_state();
+        let state =
+            role_snapshot(&wire, Some("000000000123456789abcdef"), Role::PicoDebug).unwrap();
+        assert_eq!(state["backend"], "pico");
+        assert_eq!(state["gatewaySerial"], "OSG-PICO-0123456789abcdef");
+        assert_eq!(
+            state["modules"][0]["usbSerialNumber"],
+            "OSG-PICO-0123456789abcdef"
+        );
+        assert_eq!(state["lifecycle"], "automatic");
+        assert_eq!(state["modules"][0]["reportId"], 17);
+        let mut uppercase = wire.clone();
+        uppercase["serial"] = json!("OSG-PICO-0123456789ABCDEF");
+        uppercase["identity"] = json!("000000000123456789ABCDEF");
+        assert_eq!(
+            role_snapshot(
+                &uppercase,
+                Some("000000000123456789abcdef"),
+                Role::PicoDebug
+            )
+            .unwrap()["gatewaySerial"],
+            "OSG-PICO-0123456789ABCDEF"
+        );
+        assert!(role_snapshot(&wire, None, Role::Can).is_err());
+        for (field, invalid) in [
+            ("serial", json!("OSG-PICO-1123456789abcdef")),
+            ("debug", json!(false)),
+            ("maxVirtual", json!(9)),
+            ("protocol", json!(2)),
+        ] {
+            let mut changed = wire.clone();
+            changed[field] = invalid;
+            assert!(role_snapshot(&changed, None, Role::PicoDebug).is_err());
+        }
+        let mut changed = wire.clone();
+        changed["modules"][0]["report"] = json!("ff");
+        assert!(role_snapshot(&changed, None, Role::PicoDebug).is_err());
+    }
+    #[test]
+    fn malformed_debug_devices_and_definitions_are_rejected() {
+        assert!(debug_snapshot(&debug_state()).is_ok());
+        for (path, value) in [
+            ("/maxDevices", json!(9)),
+            ("/presets", json!(["radio-panel", "radio-panel"])),
+            ("/devices/0/id", json!("bad")),
+            ("/devices/0/preset", json!("unadvertised")),
+            ("/devices/0/boot", json!(0)),
+            ("/devices/0/online", json!(0)),
+            ("/devices/0/directUsb", json!(0)),
+            ("/devices/0/expansionMask", json!(256)),
+            ("/devices/0/contacts", json!([0, 0])),
+            ("/devices/0/contacts", json!([152])),
+            ("/devices/0/axes", json!([0])),
+            ("/devices/0/axes/0", json!(4096)),
+            ("/devices/0/definition/buttons", json!([[999, 0, 0]])),
+        ] {
+            let mut changed = debug_state();
+            *changed.pointer_mut(path).unwrap() = value;
+            assert!(debug_snapshot(&changed).is_err(), "accepted {path}");
+        }
     }
     #[test]
     fn automatic_snapshot_preserves_explicit_report_ids_and_validates_32_ordered_devices() {
@@ -2297,6 +2719,13 @@ mod tests {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             let text = std::str::from_utf8(bytes).unwrap();
             let tokens: Vec<_> = text.split_whitespace().collect();
+            if tokens[0] == "debug" {
+                let mut context = self.context.lock().unwrap();
+                context.writes.push(text.into());
+                let debug = debug_state();
+                self.data.extend(format!("{}\n", json!({"id":tokens[1].parse::<u32>().unwrap(),"ok":true,"state":context.state,"debug":debug})).as_bytes());
+                return Ok(bytes.len());
+            }
             assert_eq!(tokens[0], "cockpit");
             let id: u32 = tokens[1].parse().unwrap();
             let mut context = self.context.lock().unwrap();
@@ -2390,7 +2819,7 @@ mod tests {
                         } else {
                             target_action = match tokens[6] {
                                 "describe" => {
-                                    json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"total":1,"next":null,"actions":[{"id":"led.set_enabled","label":"LED","endpoint":"led","semantics":"setter","readable":true,"parameters":[{"id":"enabled","label":"Enabled","type":"boolean"}]}]})
+                                    json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":{"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000},"total":1,"next":null,"actions":[{"id":"led.set_enabled","label":"LED","endpoint":"led","semantics":"setter","readable":true,"parameters":[{"id":"enabled","label":"Enabled","type":"boolean"}]}]})
                                 }
                                 "state" => {
                                     json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"states":[{"id":"led.set_enabled","values":[context.action_enabled]}]})
@@ -2529,7 +2958,7 @@ mod tests {
             self.data.extend(
                 format!(
                     "{}\n",
-                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack,"targetConfig":target_config,"targetAction":target_action,"targetEvents":target_events})
+                    json!({"id":id,"ok":error.is_none(),"error":error,"state":ack,"targetConfig":target_config,"targetAction":target_action,"targetEvents":target_events,"debug":debug_state()})
                 )
                 .bytes(),
             );
@@ -2594,6 +3023,120 @@ mod tests {
         let (gateway, context) = harness();
         context.lock().unwrap().state = automatic_state();
         (gateway, context)
+    }
+
+    #[test]
+    fn pico_debug_requests_are_bounded_correlated_and_share_events_and_actions() {
+        let (mut gateway, context) = harness();
+        gateway.role = Role::PicoDebug;
+        {
+            let mut mock = context.lock().unwrap();
+            mock.state = pico_state();
+            mock.ports[0].serial_number = Some("OSG-PICO-0123456789abcdef".into());
+            mock.ports[0].vendor_id = Some("cafe".into());
+            mock.ports[0].product_id = Some("4010".into());
+        }
+        let connected = request(
+            &mut gateway,
+            "connect",
+            json!({"port":PATH,"gatewayId":"pico:OSG-PICO-0123456789abcdef"}),
+        );
+        assert_eq!(connected["ok"], true, "{connected}");
+        assert_eq!(connected["state"]["debug"]["devices"][0]["id"], MODULE);
+        assert_eq!(connected["state"]["modules"][0]["name"], "Radio panel");
+        assert_eq!(
+            connected["state"]["modules"][0]["settings"]["label"],
+            "Radio panel"
+        );
+        assert_eq!(connected["state"]["modules"][0]["kind"], "panel");
+        assert_eq!(
+            request(&mut gateway, "debug_describe", json!({}))["ok"],
+            true
+        );
+        assert_eq!(
+            request(&mut gateway, "debug_describe", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        for (operation, args) in [
+            ("contact", json!([151, 1])),
+            ("axis", json!([7, 4095])),
+            ("turn", json!([7, -32])),
+            ("hat", json!([3, -1])),
+            ("selector", json!([7, 2])),
+            ("online", json!([0])),
+            ("direct", json!([1])),
+            ("expansion", json!([7, 1])),
+            ("neutral", json!([])),
+            ("reboot", json!([])),
+        ] {
+            let reply = request(
+                &mut gateway,
+                "debug_invoke",
+                json!({"moduleId":MODULE,"boot":100,"debugOperation":operation,"debugArgs":args}),
+            );
+            assert_eq!(reply["ok"], true, "{operation}: {reply}");
+        }
+        assert_eq!(
+            request(
+                &mut gateway,
+                "debug_invoke",
+                json!({"debugOperation":"add","preset":"master-caution"})
+            )["ok"],
+            true
+        );
+        let writes = context.lock().unwrap().writes.len();
+        for invalid in [
+            json!({"moduleId":MODULE,"debugOperation":"contact","debugArgs":[152,1]}),
+            json!({"moduleId":MODULE,"debugOperation":"axis","debugArgs":[0,4096]}),
+            json!({"moduleId":MODULE,"debugOperation":"turn","debugArgs":[0,33]}),
+            json!({"moduleId":MODULE,"debugOperation":"turn","debugArgs":[0,0]}),
+            json!({"moduleId":MODULE,"debugOperation":"hat","debugArgs":[0,8]}),
+            json!({"moduleId":MODULE,"debugOperation":"selector","debugArgs":[0,3]}),
+            json!({"moduleId":MODULE,"debugOperation":"online","debugArgs":[2]}),
+            json!({"moduleId":MODULE,"debugOperation":"neutral\nreboot"}),
+            json!({"moduleId":MODULE,"debugOperation":"neutral","debugArgs":[0]}),
+            json!({"moduleId":MODULE,"debugOperation":"axis","debugArgs":[0,0.5]}),
+            json!({"moduleId":MODULE,"boot":101,"debugOperation":"neutral"}),
+            json!({"moduleId":"bad","debugOperation":"neutral"}),
+            json!({"debugOperation":"add","preset":"unknown"}),
+        ] {
+            assert_eq!(request(&mut gateway, "debug_invoke", invalid)["ok"], false);
+        }
+        assert_eq!(context.lock().unwrap().writes.len(), writes);
+        assert_eq!(
+            request(
+                &mut gateway,
+                "events_state",
+                json!({"moduleId":MODULE,"boot":100})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            request(&mut gateway, "action_describe", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        let action = request(
+            &mut gateway,
+            "action_invoke",
+            json!({"moduleId":MODULE,"boot":100,"catalogueRevision":1,"actionId":"led.set_enabled","values":[true]}),
+        );
+        assert_eq!(action["ok"], true, "{action}");
+        let writes = context.lock().unwrap().writes.clone();
+        assert!(writes
+            .iter()
+            .any(|line| line.contains(&format!("65536 {MODULE} 100 contact 151 1"))));
+        assert!(writes
+            .iter()
+            .any(|line| line.contains("- 0 add master-caution")));
+        assert!(writes.iter().any(|line| line.contains(" events ")));
+        assert!(writes.iter().any(|line| line.contains(" action ")));
+        gateway.close();
+        assert!(!context
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .any(|line| line.contains(" stop")));
     }
 
     #[test]
@@ -3596,5 +4139,81 @@ mod tests {
             service.request(json!({"command":"status","clientId":CLIENT}))["ok"],
             false
         );
+    }
+    #[test]
+    fn endpoint_lease_commands_are_boot_guarded_secret_and_never_retry_mutations() {
+        let (mut gateway, context) = action_harness();
+        connect(&mut gateway);
+        assert_eq!(
+            request(&mut gateway, "action_describe", json!({"moduleId":MODULE}))["ok"],
+            true
+        );
+        let secret = "00112233-4455-6677-8899-aabbccddeeff";
+        let base = json!({"moduleId":MODULE,"boot":100,"catalogueRevision":1,"actionId":"led.set_enabled","values":[false],"ownershipToken":secret,"leaseId":7,"ttlMs":5000});
+        for command in ["action_claim", "action_renew", "action_release"] {
+            context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"leaseId":7,"endpoint":"led","remainingMs":5000,"released":true}));
+            let result = request(&mut gateway, command, base.clone());
+            assert_eq!(result["ok"], true, "{result}");
+            assert!(!result.to_string().contains(secret));
+        }
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"id":"led.set_enabled","values":[true]}));
+        let mut owned = base.clone();
+        owned["values"] = json!([true]);
+        assert_eq!(
+            request(&mut gateway, "action_invoke_owned", owned)["ok"],
+            true
+        );
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"total":1,"next":null,"ownership":[{"endpoint":"led","actionId":"led.set_enabled","owned":true,"leaseId":7,"remainingMs":4999,"fallback":[false],"fallbackStatus":"none","token":secret}]}));
+        let status = request(&mut gateway, "action_ownership", json!({"moduleId":MODULE}));
+        assert_eq!(status["ok"], true);
+        assert!(!status.to_string().contains(secret));
+        let before = context.lock().unwrap().writes.len();
+        let mut invalid = base.clone();
+        invalid["ownershipToken"] = json!("bad");
+        assert_eq!(request(&mut gateway, "action_claim", invalid)["ok"], false);
+        assert_eq!(context.lock().unwrap().writes.len(), before);
+        context.lock().unwrap().action_outer_error = Some("configuration_route_not_ready");
+        context
+            .lock()
+            .unwrap()
+            .action_replies
+            .push_back(json!({"ok":false,"error":"routeNotReady"}));
+        assert_eq!(
+            request(&mut gateway, "action_claim", base.clone())["ok"],
+            false
+        );
+        assert_eq!(
+            context.lock().unwrap().writes.len(),
+            before + 1,
+            "claim is never replayed even for route-not-ready"
+        );
+        let before = context.lock().unwrap().writes.len();
+        let mut stale = base;
+        stale["boot"] = json!(101);
+        assert_eq!(request(&mut gateway, "action_renew", stale)["ok"], false);
+        assert_eq!(context.lock().unwrap().writes.len(), before);
+    }
+    #[test]
+    fn zero_input_inventory_remains_routable_without_a_controller() {
+        let mut wire = automatic_state();
+        let module = &mut wire["modules"][0];
+        module["profile"] =
+            json!({"buttons":0,"axes":0,"hats":0,"revision":1,"neutral":[],"axisUsage":[]});
+        module["report"] = json!("");
+        module["enabled"] = json!(false);
+        module["published"] = json!(false);
+        module["descriptorIndex"] = json!(-1);
+        module["reportId"] = Value::Null;
+        module["profileMatch"] = json!(false);
+        module["hasInput"] = json!(false);
+        let mut state = snapshot(&wire, None).unwrap();
+        state["connected"] = json!(true);
+        state["modules"][0]["boot"] = json!(100);
+        assert_eq!(state["modules"][0]["outputOnly"], true);
+        assert!(state["modules"][0]["reportId"].is_null());
+        assert_eq!(state["modules"][0]["buttonCount"], 0);
+        assert!(action_route(&state, MODULE).is_some());
+        wire["modules"][0]["profile"]["revision"] = json!(0);
+        assert!(snapshot(&wire, None).is_err());
     }
 }

@@ -1,6 +1,7 @@
 // Ordinary Rust discovery/serial protocol, independently running production C nodes.
 import test from 'node:test';
 import './dcs-panel-acceptance.mjs';
+import './integration-acceptance.mjs';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';

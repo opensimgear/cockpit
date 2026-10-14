@@ -4,12 +4,24 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
+const capabilities = {};
+vm.runInNewContext(ts.transpileModule(await readFile(new URL('./gateway-capabilities.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: capabilities });
+const require = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
 const exported = {};
 const source = await readFile(new URL('./controller-lifecycle.ts', import.meta.url), 'utf8');
-vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exported });
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exported, require });
 const { automaticControllers, canChangeController, controllerWarning, controllerStatus, orderedModules } = exported;
 const module = { id: 'pedals', enabled: true, published: true, descriptorIndex: 0, online: true, profileMatch: true };
 const state = { backend: 'stm32', protocolVersion: 3, lifecycle: 'automatic', connected: true, modules: [module] };
+
+test('Pico protocol-3 debug gateways support the same automatic controller lifecycle', () => {
+  const pico = { ...state, backend: 'pico', canProtocol: 3 };
+  assert.equal(automaticControllers(pico), true);
+  assert.equal(canChangeController(pico, module, 'disable'), true);
+  assert.equal(canChangeController({ ...pico, canProtocol: 2 }, module, 'disable'), false);
+});
 
 test('enable, disable and offline removal remain independent of CAN presence', () => {
   assert.equal(canChangeController(state, module, 'disable'), true);
@@ -76,4 +88,12 @@ test('older STM32 and Pico adapters do not advertise automatic lifecycle control
     assert.equal(canChangeController(legacy, module, 'disable'), false);
     assert.equal(orderedModules(legacy), legacy.modules);
   }
+});
+
+
+test('output-only inventory supports offline forgetting without empty controller controls', () => {
+  const output={...module,enabled:false,published:false,outputOnly:true};
+  for(const action of ['enable','disable','update-profile']) assert.equal(canChangeController(state,output,action),false);
+  assert.equal(controllerStatus(output),'Output device · no controller');
+  assert.equal(canChangeController(state,{...output,online:false},'forget'),true);
 });
