@@ -87,6 +87,15 @@ HID and direct USB ownership, and isolation of identical device IDs on two
 gateways. Dropping the action acknowledgement establishes uncertain state and
 recovery through reconnect/readback without replaying the action.
 
+The master-caution scenario connects the production event/action routes to the
+independent DCS-BIOS UDP peer. It covers HID/direct USB exclusion, held startup,
+short presses, gateway isolation, feedback loss, counter and aircraft changes,
+fragmented exports, reboot, mission restart and one-time Stop release. Recovery
+can update the LED before the worker establishes its new input baseline. The
+fixture observes disarmed status during loss and waits for fresh active feedback,
+`needsBaseline=false` and `armed=true` before injecting a valid new press, while
+continuing to assert that historical presses never replay.
+
 Native simulations execute the production configuration, flash journal, Cyphal
 transport, registry and descriptor code. Loopback TCP carries CDC bytes and UDP
 carries CAN frames. These tests validate protocol/report behavior; native streams

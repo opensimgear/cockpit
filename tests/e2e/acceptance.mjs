@@ -689,6 +689,22 @@ test('simulated master-caution uses production button events and board LED actio
   const wait=async(operation,accepts,label)=>{let result;for(let i=0;i<90;i++){result=await operation();if(accepts(result))return result;await sleep(50);}assert.fail(`${label}: ${JSON.stringify(result)}`);};
   const mode=async(index=0)=>(await admin(devices[index],'inspect')).actions.states.find(s=>s.id==='led.status.set_mode').values[0];
   const count=async()=>(await admin(peer,'inspect')).commands.length;
+  const inputDisarmed=async(label,aircraft)=>wait(()=>ok('dcs_status'),state=>{
+    const integration=state.dcsBios;
+    // Observe native invalidation before restoring export: a physical LED change
+    // can become visible before this worker publishes its updated diagnostics.
+    return integration?.running && integration.feedbackFresh===false && integration.armed===false &&
+      (aircraft===undefined || (integration.aircraft===aircraft && integration.missionActive===false));
+  },label);
+  const inputReady=async(label,aircraft)=>wait(()=>ok('dcs_status'),state=>{
+    const integration=state.dcsBios;
+    // Fresh export can apply the LED before the next panel baseline read.
+    // New presses are valid only after that cursor is established and armed.
+    return integration?.running && integration.feedbackFresh && integration.missionActive &&
+      integration.needsBaseline===false && integration.armed===true &&
+      !integration.error && !integration.commandUncertain &&
+      (aircraft===undefined || integration.aircraft===aircraft);
+  },label);
   try{
     for(const[index,uid]of uids.entries()){
       gateways.push(processClient(launch.gatewayBinary,['--identity',uid,'--state-dir',resolve(directory,`gateway-${index}`)],environment));
@@ -709,7 +725,7 @@ test('simulated master-caution uses production button events and board LED actio
     // Old transitions and a button held at start must never become aircraft commands.
     await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await admin(devices[0],'contact 0 1');
     await ok('dcs_start');await wait(()=>mode(),v=>v==='on','Warning reaches the board-compatible LED');
-    assert.equal(await count(),0,'No startup replay');await admin(devices[0],'contact 0 0');await sleep(150);assert.equal(await count(),0,'Held startup release arms without a synthetic command');
+    assert.equal(await count(),0,'No startup replay');await admin(devices[0],'contact 0 0');await inputReady('Held startup release arms the established baseline');assert.equal(await count(),0,'Held startup release arms without a synthetic command');
     await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');
     await wait(()=>count(),n=>n===2,'Short press/release reaches DCS');
     assert.deepEqual((await admin(peer,'inspect')).commands.map(c=>c.line),['UFC_MASTER_CAUTION 1','UFC_MASTER_CAUTION 0']);
@@ -721,18 +737,26 @@ test('simulated master-caution uses production button events and board LED actio
     assert.equal(reply.ok,false);assert.match(reply.error,/Stop DCS-BIOS/);assert.equal(reply.state.connected,true,'Manual LED guard retains inventory');
     await admin(peer,'warning 1');await wait(()=>mode(),v=>v==='on','Fresh warning');
     await admin(peer,'pause 1');await wait(()=>mode(),v=>v==='off','Feedback loss fallback');
+    await inputDisarmed('Feedback loss disarms input before stale contacts are pressed');
     await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await sleep(150);assert.equal(await count(),2,'Stale input not sent');
-    await admin(peer,'pause 0');await wait(()=>mode(),v=>v==='on','Fresh export restores LED');await sleep(100);assert.equal(await count(),2,'Historical stale input not replayed');
+    await admin(peer,'pause 0');await wait(()=>mode(),v=>v==='on','Fresh export restores LED');await inputReady('Fresh export establishes a new armed input baseline');assert.equal(await count(),2,'Historical stale input not replayed');
     await admin(peer,'freeze 1');await wait(()=>mode(),v=>v==='off','Duplicate counters do not establish freshness');
+    await inputDisarmed('Duplicate counters disarm input before export resumes');
     await admin(peer,'freeze 0');await wait(()=>mode(),v=>v==='on','Counter advances restore freshness');
+    await inputReady('Advancing counters re-establish an armed input baseline');
     await admin(peer,'aircraft F-16C_50');await wait(()=>mode(),v=>v==='off','Wrong aircraft fallback');
+    await inputDisarmed('Unsupported aircraft disarms the binding','F-16C_50');
     await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await sleep(150);assert.equal(await count(),2,'Wrong aircraft input ignored');
     await admin(peer,'aircraft A-10C_2');await wait(()=>mode(),v=>v==='on','Installed aircraft alias resolved');
+    await inputReady('Supported aircraft alias re-establishes an armed input baseline','A-10C_2');
     await admin(peer,'fragment 1');await sleep(150);await ok('dcs_status');
     await admin(devices[0],'reboot');await wait(()=>ok('status'),s=>s.modules[0].boot!==state.modules[0].boot,'Panel reboot visible');
-    await wait(()=>mode(),v=>v==='on','Reboot refreshes feedback without replay');assert.equal(await count(),2);
+    await wait(()=>mode(),v=>v==='on','Reboot refreshes feedback without replay');await inputReady('Panel reboot establishes its new armed event baseline');assert.equal(await count(),2);
     await admin(peer,'aircraft NONE');await wait(()=>mode(),v=>v==='off','Mission end clears LED');
+    await inputDisarmed('Mission end disarms input before restarting',null);
     await admin(peer,'aircraft A-10C');await wait(()=>mode(),v=>v==='on','Mission restart');
+    await inputReady('Mission restart establishes an armed current event baseline','A-10C');
+    assert.equal(await count(),2,'Mission recovery does not replay historical presses');
     await admin(devices[0],'contact 0 1');await admin(devices[0],'contact 0 0');await wait(()=>count(),n=>n===4,'New press works after rebaseline');
     const after=await admin(devices[0],'inspect');assert.equal(after.module.generation,before.module.generation);assert.equal(after.module.owner,0,'No configuration writer claim');
     await admin(devices[0],'contact 0 1');await wait(()=>count(),n=>n===5,'Forwarded held press before Stop');

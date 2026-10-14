@@ -154,6 +154,21 @@ acceptance scenarios then pass in 49.25 seconds, with two further lifecycle runs
 passing in 24.01 and 22.45 seconds. Evidence is
 under `.research/milestone2/review-fixture-race/` in the parent workspace.
 
+The duplicate Linux run exposed a second fixture readiness assumption at mission
+recovery. Fresh export can apply LED `on` before the next panel event baseline
+read; a press in that interval intentionally belongs to the discarded history.
+A probe using the production Session reproduces fresh LED feedback with
+`needsBaseline=true` and `armed=false`, an ignored pre-baseline press/release and
+a successful subsequent pair. The fixture now observes disarmed diagnostics
+during loss and waits for an established, armed baseline before fresh presses
+after startup and recovery. LED readback and exact no-replay/command-count
+assertions remain separate. Probe evidence is under
+`.research/milestone2/recovery-probe/` in the parent workspace. The readiness
+helper passes the four-scenario suite in 48.55 seconds; the final refinement
+that observes both loss and recovery passes the master-caution scenario in
+6.61 seconds. Process evidence is under
+`.research/milestone2/review-dcs-readiness/`.
+
 All 113 native tests pass after these corrections. Repeated production coverage
 measures 97.25% for the DCS core, 87.68% for the runtime and 100% for event
 validation. Hardware and live-DCS validation remain deferred.
