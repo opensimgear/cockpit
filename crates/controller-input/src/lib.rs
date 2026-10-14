@@ -7,6 +7,7 @@ mod linux;
 mod macos;
 pub mod registry;
 pub mod stream;
+pub mod visibility;
 #[cfg(windows)]
 mod windows;
 use registry::{Registry, SavedSource};

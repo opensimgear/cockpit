@@ -47,11 +47,14 @@ def main():
         sources.append(root / 'crates/controller-input/src/linux.rs')
     if sys.platform == 'darwin':
         sources.append(root / 'crates/controller-input/src/macos.rs')
+    sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['policy', 'journal', 'wire'])
+    if os.name == 'nt':
+        sources.append(root / 'crates/controller-input/src/visibility/windows.rs')
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', source], root)
-        (output / f'{source.stem}-lines.txt').write_text(annotated, encoding='utf-8')
+        (output / f'{source.parent.name}-{source.stem}-lines.txt').write_text(annotated, encoding='utf-8')
         lines = source.read_text(encoding='utf-8').splitlines()
         end = next((i + 1 for i, line in enumerate(lines) if line.strip() == '#[cfg(test)]'), len(lines) + 1)
         counts = {int(match[1]): int(match[2]) for line in annotated.splitlines()
@@ -60,7 +63,7 @@ def main():
             raise RuntimeError(f'No instrumented production lines for {source.name}.')
         covered = sum(count > 0 for count in counts.values())
         percent = 100 * covered / len(counts)
-        summary[source.name] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
+        summary[str(source.relative_to(root / "crates/controller-input/src"))] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
         print(f'{source.name}: {covered}/{len(counts)} production lines ({percent:.2f}%)', flush=True)
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] < 71 for item in summary.values()):
