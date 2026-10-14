@@ -217,3 +217,60 @@ fn lease_expiry_releases_outputs_even_when_both_pipes_are_stalled() {
     drop(calls);
     task.join().unwrap();
 }
+
+#[test]
+fn negative_acknowledgement_is_written_only_after_fallback_and_release() {
+    struct CheckedOutput {
+        driver: DriverFixture,
+        buffer: Vec<u8>,
+        rejected: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl Write for CheckedOutput {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            for byte in bytes {
+                if *byte == b'\n' {
+                    let response: serde_json::Value = serde_json::from_slice(&self.buffer).unwrap();
+                    if response["ok"] == false {
+                        assert_eq!(self.driver.0.lock().unwrap().last().unwrap(), "release");
+                        assert_eq!(response["active"], false);
+                        self.rejected
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    self.buffer.clear();
+                } else {
+                    self.buffer.push(*byte);
+                }
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let data = messages();
+    let first = data.iter().position(|b| *b == b'\n').unwrap() + 1;
+    let mut bytes = data[..first].to_vec();
+    let bad = Message::Renew {
+        token: RunToken {
+            session: uuid::Uuid::new_v4().to_string(),
+            generation: Counter(1),
+        },
+        sequence: Counter(1),
+    };
+    bytes.extend(serde_json::to_vec(&bad).unwrap());
+    bytes.push(b'\n');
+    let driver = DriverFixture::default();
+    let rejected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    assert!(serve(
+        driver.clone(),
+        io::Cursor::new(bytes),
+        CheckedOutput {
+            driver,
+            buffer: vec![],
+            rejected: rejected.clone()
+        },
+        "fixture"
+    )
+    .is_err());
+    assert!(rejected.load(std::sync::atomic::Ordering::Acquire));
+}

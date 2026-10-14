@@ -64,8 +64,8 @@ are research artifacts, not a cross-platform packaging claim.
 
 ## Open implementation and qualification
 
-The production elevated registry/refresh helper, durable provisioning guardian,
-and parent live-output/recovery integration still require implementation. The
+The production elevated registry/refresh helper and durable provisioning guardian
+still require implementation. The
 transaction tests do not substitute for those components. Ambiguous ownership
 between key creation and journal flush is preserved as a conflict, never deleted
 by guessing.
@@ -77,3 +77,37 @@ supervisor/feeder death, lease timing under load, and total-process termination.
 Existing M0/M1 inverse-HidHide and native Linux/macOS gaps remain open. Optional
 integrations stay independent and off by default. Unqualified capabilities remain
 disabled.
+
+## Supervised output follow-up
+
+The parent lifecycle is now connected behind the unchanged application gate.
+Fixture qualification uses the real native capture/router/feeder reducers with
+injected driver calls. It checks explicit enablement, exact saved layout revalidation,
+ordered short edges, quiet renewal beyond 250 ms without UI polling, unavailable
+slots, device-hiding requirement rejection, helper death, recovery conflicts and
+disable persistence after cleanup failure. A live Start requires an explicit Stop
+first; a rejected replacement preserves the current run.
+
+The helper protocol adds fresh-token recovery that rechecks FREE ownership and
+exact shape. Parent report consumption is bounded to 128 records and an 8 ms work
+budget per turn, with 100 ms reply deadlines and a separate 3 s launch handshake.
+These bounds are implementation limits, not measured real-driver latency claims.
+Error acknowledgements follow attempted fallback/release; even shutdown output
+drain is bounded to 50 ms. Lost initial Start acknowledgements remain ambiguous:
+the parent reports inspection required instead of guessing acquired ownership.
+
+The real-service acceptance also invokes the production private feeder entry
+with an empty target set. Installed vJoy is inspected in that child, but the empty
+set is rejected before acquisition. Missing drivers exit with dependency guidance.
+No virtual reports or layout mutations are part of this check.
+
+Whole-app crash recovery journaling and elevated provisioning remain open, as do
+the physical-device, two-slot, game-binding and loaded timing qualifications above.
+The application still refuses live Start/Create/Recover.
+
+Follow-up validation passed on Windows and Linux: all native regressions (230 /
+240 library tests plus framing and process integration), 13 host lifecycle tests,
+23 / 21 virtual-controller tests, and the production-service acceptance. Windows
+coverage reached 98.49% router, 98.60% service, 97.62% settings, 93.67% parent
+session, 95.92% worker, 98.10% feeder and 76.32% private entry; every module still
+exceeds 71%. No physical output or layout mutation was performed.

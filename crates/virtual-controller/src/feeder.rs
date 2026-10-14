@@ -23,6 +23,10 @@ pub enum Message {
     Stop {
         token: RunToken,
     },
+    Recover {
+        token: RunToken,
+        bindings: Vec<Binding>,
+    },
 }
 impl Message {
     pub fn token(&self) -> &RunToken {
@@ -30,7 +34,8 @@ impl Message {
             Self::Start { token, .. }
             | Self::Renew { token, .. }
             | Self::Report { token, .. }
-            | Self::Stop { token } => token,
+            | Self::Stop { token }
+            | Self::Recover { token, .. } => token,
         }
     }
 }
@@ -74,6 +79,22 @@ impl<D: Driver> Feeder<D> {
         self.tick(now)?;
         match message {
             Message::Start { token, bindings } => self.start(token, bindings, now),
+            Message::Recover { token, bindings } => {
+                if self.active()
+                    || token.generation.0 == 0
+                    || uuid::Uuid::parse_str(&token.session)
+                        .ok()
+                        .map(|id| id.to_string())
+                        .as_deref()
+                        != Some(&token.session)
+                    || self.retired.contains(&token.session)
+                    || self.retired.len() >= 128
+                {
+                    return Err("Recovery requires a fresh session and no active feeder.".into());
+                }
+                self.retired.insert(token.session);
+                self.recover(&bindings)
+            }
             Message::Renew { token, sequence } => {
                 self.same(&token)?;
                 if sequence.0 == 0 || sequence.0 <= self.renewal {
@@ -213,8 +234,16 @@ impl<D: Driver> Feeder<D> {
     }
     /// Supervisor-only recovery of previously recorded targets. No BUSY takeover.
     pub fn recover(&mut self, bindings: &[Binding]) -> Result<(), String> {
-        if self.active() || bindings.len() > 8 {
+        if self.active() || bindings.is_empty() || bindings.len() > 8 {
             return Err("Stop mapping before recovery.".into());
+        }
+        let mut targets = BTreeSet::new();
+        let mut slots = BTreeSet::new();
+        for binding in bindings {
+            binding.validate()?;
+            if !targets.insert(&binding.target) || !slots.insert(binding.slot) {
+                return Err("Recovery targets and slots must be unique.".into());
+            }
         }
         self.driver.check()?;
         let mut errors = Vec::new();

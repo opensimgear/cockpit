@@ -103,28 +103,38 @@ impl Settings {
         profile: &Profile,
         bindings: Vec<Binding>,
     ) -> Result<(), String> {
-        profile.compile()?;
-        if bindings.len() != profile.targets.len() {
-            return Err("Assign exactly one local slot to each logical target.".into());
-        }
-        for binding in &bindings {
-            let target = profile
-                .targets
-                .iter()
-                .find(|t| t.id == binding.target)
-                .ok_or("Unknown logical target.")?;
-            if serde_json::to_value(&target.layout).unwrap()
-                != serde_json::to_value(&binding.layout).unwrap()
-            {
-                return Err(
-                    "Slot assignment must preserve the profile's exact layout and fallback.".into(),
-                );
-            }
-        }
+        validate_bindings(profile, &bindings)?;
         let mut next = self.value.clone();
         next.targets.insert(profile.id.clone(), bindings);
         self.save(next)
     }
+}
+pub fn validate_bindings(profile: &Profile, bindings: &[Binding]) -> Result<(), String> {
+    profile.compile()?;
+    if bindings.len() != profile.targets.len() {
+        return Err("Assign exactly one local slot to each logical target.".into());
+    }
+    let mut targets = BTreeSet::new();
+    let mut slots = BTreeSet::new();
+    for binding in bindings {
+        binding.validate()?;
+        if !targets.insert(&binding.target) || !slots.insert(binding.slot) {
+            return Err("Targets and vJoy slots must be unique.".into());
+        }
+        let target = profile
+            .targets
+            .iter()
+            .find(|t| t.id == binding.target)
+            .ok_or("Unknown logical target.")?;
+        if serde_json::to_value(&target.layout).unwrap()
+            != serde_json::to_value(&binding.layout).unwrap()
+        {
+            return Err(
+                "Slot assignment must preserve the profile's exact layout and fallback.".into(),
+            );
+        }
+    }
+    Ok(())
 }
 fn validate(value: &Preferences) -> Result<(), String> {
     if value.schema != 1 || value.targets.len() > 128 {

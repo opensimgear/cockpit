@@ -25,6 +25,8 @@ pub struct Service {
     capture: Arc<ControllerService>,
     root: Option<PathBuf>,
     inspector: Inspector,
+    output_factory: osg_virtual_controller::session::Factory,
+    qualified: bool,
     stop: Arc<AtomicBool>,
     lifecycle: AtomicU64,
     #[cfg(test)]
@@ -38,6 +40,21 @@ impl Service {
         capture: Arc<ControllerService>,
         root: Option<PathBuf>,
         inspector: Inspector,
+    ) -> Self {
+        Self::with_output(
+            capture,
+            root,
+            inspector,
+            osg_virtual_controller::entry::factory(),
+            false,
+        )
+    }
+    fn with_output(
+        capture: Arc<ControllerService>,
+        root: Option<PathBuf>,
+        inspector: Inspector,
+        output_factory: osg_virtual_controller::session::Factory,
+        qualified: bool,
     ) -> Self {
         let router = Arc::new(Mutex::new(Router::default()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -55,6 +72,7 @@ impl Service {
                             let page = input.stream_page(session, cursor);
                             let _ = router.pump(page);
                         }
+                        let _ = router.flush_output();
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }
@@ -72,6 +90,8 @@ impl Service {
             capture,
             root,
             inspector,
+            output_factory,
+            qualified,
             stop,
             lifecycle: AtomicU64::new(0),
             #[cfg(test)]
@@ -129,7 +149,7 @@ impl Service {
                     .status();
                 let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
                 status["storageError"] = json!(settings.error);
-                status["virtualDevices"] = json!({"enabled":settings.value.virtual_devices,"state":"setup-required","qualified":false,"reason":QUALIFICATION});
+                status["virtualDevices"] = json!({"enabled":settings.value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION});
                 status["deviceHiding"] = json!({"enabled":settings.value.device_hiding});
                 Ok(status)
             }
@@ -137,14 +157,25 @@ impl Service {
                 let enabled = request["enabled"]
                     .as_bool()
                     .ok_or("Enablement must be an explicit boolean.")?;
-                if enabled {
+                let stop_error = if enabled {
                     (self.inspector)()?;
-                }
+                    None
+                } else {
+                    let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+                    if router.live() {
+                        router.stop_result().err()
+                    } else {
+                        None
+                    }
+                };
                 self.settings
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .enable_virtual(enabled)?;
-                Ok(json!({"enabled":enabled,"qualified":false,"reason":QUALIFICATION}))
+                if let Some(error) = stop_error {
+                    return Err(error);
+                }
+                Ok(json!({"enabled":enabled,"qualified":self.qualified,"reason":QUALIFICATION}))
             }
             "mapping_targets_save" => {
                 let profile = self.store()?.load(profile_id()?)?;
@@ -198,7 +229,11 @@ impl Service {
                     )
                 }
             }
-            "mapping_preview_start" => {
+            "mapping_preview_start" | "mapping_virtual_start" => {
+                let live = command == "mapping_virtual_start";
+                if live && !self.qualified {
+                    return Err(QUALIFICATION.into());
+                }
                 let epoch = self
                     .lifecycle
                     .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(1))
@@ -236,7 +271,28 @@ impl Service {
                 if self.lifecycle.load(Ordering::Acquire) != epoch {
                     return Err("Preview start was superseded by a newer start or stop.".into());
                 }
-                let token = router.start(profile, assignments, snapshot)?;
+                let token = if live {
+                    let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+                    if !settings.value.virtual_devices {
+                        return Err("Enable virtual devices explicitly before Start.".into());
+                    }
+                    let bindings = settings
+                        .value
+                        .targets
+                        .get(&profile.id)
+                        .cloned()
+                        .ok_or("Assign a local slot to every target before Start.")?;
+                    drop(settings);
+                    router.start_live(
+                        profile,
+                        assignments,
+                        snapshot,
+                        bindings,
+                        self.output_factory.clone(),
+                    )?
+                } else {
+                    router.start(profile, assignments, snapshot)?
+                };
                 Ok(json!({"token":token,"preview":router.status()}))
             }
             "mapping_stop" => {
@@ -248,7 +304,7 @@ impl Service {
                     self.stop.store(true, Ordering::Release);
                 }
                 let mut r = self.router.lock().unwrap_or_else(|p| p.into_inner());
-                r.stop();
+                r.stop_result()?;
                 Ok(r.status())
             }
             "mapping_recording" => {
@@ -274,14 +330,20 @@ impl Service {
             }
             "mapping_virtual_inspect" => match (self.inspector)() {
                 Ok(slots) => Ok(
-                    json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"setup-required","qualified":false,"reason":QUALIFICATION,"slots":slots}),
+                    json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"setup-required","qualified":self.qualified,"reason":QUALIFICATION,"slots":slots}),
                 ),
                 Err(error) => Ok(
-                    json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"unsupported","qualified":false,"reason":error.chars().take(512).collect::<String>(),"slots":[]}),
+                    json!({"backend":"vjoy","enabled":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value.virtual_devices,"state":"unsupported","qualified":self.qualified,"reason":error.chars().take(512).collect::<String>(),"slots":[]}),
                 ),
             },
-            "mapping_virtual_start" | "mapping_virtual_create" | "mapping_virtual_recover" => {
-                Err(QUALIFICATION.into())
+            "mapping_virtual_create" => Err(QUALIFICATION.into()),
+            "mapping_virtual_recover" => {
+                if !self.qualified {
+                    return Err(QUALIFICATION.into());
+                }
+                let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+                router.recover()?;
+                Ok(router.status())
             }
             _ => Err("Unknown mapping host command.".into()),
         }
@@ -302,3 +364,7 @@ impl Drop for Service {
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod live_tests;

@@ -4,7 +4,7 @@ use osg_mapping::{
     profile::{Profile, Value as InputValue},
 };
 use std::sync::atomic::AtomicUsize;
-fn setup() -> (
+pub(super) fn setup() -> (
     Service,
     tempfile::TempDir,
     Profile,

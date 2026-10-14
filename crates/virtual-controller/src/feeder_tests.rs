@@ -351,3 +351,57 @@ fn failed_fallback_is_reported_instead_of_acknowledging_a_clean_stop() {
     assert!(error.contains("submit failed"));
     assert!(error.contains("Fallback could not be confirmed"));
 }
+
+#[test]
+fn recovery_protocol_rejects_stale_or_ambiguous_intent_before_touching_driver() {
+    let driver = Fake::default();
+    let mut feeder = Feeder::new(driver.clone());
+    let run = token();
+    let binding = vjoy::tests::binding();
+    let request = Message::Recover {
+        token: run.clone(),
+        bindings: vec![binding.clone()],
+    };
+    feeder.receive(request.clone(), 1).unwrap();
+    assert_eq!(
+        driver.0.lock().unwrap().calls,
+        ["acquire:1", "submit:1:0", "release:1"]
+    );
+    assert!(feeder.receive(request, 2).is_err());
+    for bindings in [vec![], vec![binding.clone(); 2], vec![binding.clone(); 9]] {
+        assert!(feeder
+            .receive(
+                Message::Recover {
+                    token: token(),
+                    bindings
+                },
+                3
+            )
+            .is_err());
+    }
+    let mut bad = token();
+    bad.generation = Counter(0);
+    assert!(feeder
+        .receive(
+            Message::Recover {
+                token: bad,
+                bindings: vec![binding.clone()]
+            },
+            4
+        )
+        .is_err());
+    let mut bad = binding.clone();
+    bad.slot = 0;
+    assert!(feeder.recover(&[bad]).is_err());
+    assert_eq!(driver.0.lock().unwrap().calls.len(), 3);
+    start(&mut feeder, &token());
+    assert!(feeder
+        .receive(
+            Message::Recover {
+                token: token(),
+                bindings: vec![binding]
+            },
+            5
+        )
+        .is_err());
+}

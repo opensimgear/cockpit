@@ -87,6 +87,24 @@ def main():
     assigned = assignments(profile)
     evidence = {'synthetic': False, 'restart': False, 'physical': 'not requested',
                 'virtualReportsSent': False, 'driverLayoutsChanged': False}
+    # Exercise the private production feeder entry with an invalid empty target
+    # set. It cannot acquire a slot or send a virtual report.
+    rejected = dict(command='start', token=dict(session=str(uuid.uuid4()), generation='1'), bindings=[])
+    probe = subprocess.run([str(args.service.resolve()), '--osg-vjoy-feeder'],
+                           input=(json.dumps(rejected) + '\n').encode(), stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, timeout=8,
+                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert probe.returncode == 1, probe.returncode
+    lines = probe.stdout.splitlines()
+    assert 1 <= len(lines) <= 2 and all(len(line) <= 66560 for line in lines)
+    hello = json.loads(lines[0])
+    assert hello['backend'] == 'vjoy' and hello['protocol'] == 1
+    if hello['ok']:
+        reply = json.loads(lines[1])
+        assert not reply['ok'] and reply['token'] == rejected['token'] and not reply['active']
+        evidence['feederEntry'] = 'installed driver; empty targets rejected before acquisition'
+    else:
+        evidence['feederEntry'] = 'optional dependency unavailable; process exited without activation'
     with tempfile.TemporaryDirectory(prefix='osg-mapping-acceptance-') as temporary:
         directory = Path(temporary)
         service = Service(args.service.resolve(), directory)

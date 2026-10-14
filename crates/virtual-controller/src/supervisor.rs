@@ -81,6 +81,9 @@ impl Worker {
         worker.hello = hello;
         Ok(worker)
     }
+    pub fn response_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
     pub fn handshake(&self) -> &Value {
         &self.hello
     }

@@ -57,11 +57,18 @@ discrete hats, busy slots and changed axis ranges are rejected.
 ## Remaining #25 implementation and qualification
 
 The production elevated Windows registry/refresh helper and its durable guardian
-still need integration. So does the parent-side live-output/recovery lifecycle
-that connects the router to the feeder process. These are implementation work,
-not completed hardware qualification. The application gate must remain closed.
+still need integration. The parent live-output lifecycle now connects ordered
+capture to a fresh feeder, renews quiet sessions, stops on loss, and attempts
+fallback recovery of acknowledged target ownership through a new helper. These
+paths are exercised with the production reducer and injected drivers; the
+application gate must remain closed until actual Windows qualification passes.
 
-After those paths exist, qualify cancellation, driver refresh, concurrent external
+The current live lifecycle requires an explicit Stop before another live Start.
+It does not guess ownership when the initial acquisition acknowledgement is lost,
+and it does not automatically resume a run. Interrupted in-process recovery is
+retained; persistent recovery across a whole-app crash still needs integration.
+
+After provisioning exists, qualify cancellation, driver refresh, concurrent external
 configuration, partial acquisition, supervisor/feeder death, lease timing under
 load, total-process termination, two persistent devices, real physical button/axis/
 hat routing, game binding and binding retention across restarts. A successful

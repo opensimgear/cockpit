@@ -38,7 +38,7 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
-    sources = [root / f'crates/virtual-controller/src/{module}.rs' for module in (['vjoy', 'feeder', 'worker', 'supervisor', 'provision', 'inspection'] + (['windows'] if os.name == 'nt' else []))]
+    sources = [root / f'crates/virtual-controller/src/{module}.rs' for module in (['vjoy', 'feeder', 'worker', 'supervisor', 'provision', 'inspection', 'session', 'entry'] + (['windows'] if os.name == 'nt' else []))]
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',

@@ -19,6 +19,7 @@ pub struct Router {
     expected: BTreeMap<Source, BTreeMap<String, Kind>>,
     synthetic_sequences: BTreeMap<Source, u64>,
     fault: Option<String>,
+    output: Option<osg_virtual_controller::session::Session>,
 }
 fn native_kind(control: &Control) -> Option<Kind> {
     match control.kind {
@@ -67,6 +68,13 @@ impl Router {
         assignments: Vec<Assignment>,
         snapshot: stream::Snapshot,
     ) -> Result<RunToken, String> {
+        if self
+            .output
+            .as_ref()
+            .is_some_and(|o| o.active() || o.recovery_required())
+        {
+            return Err("Stop or recover live output before replacing this mapping.".into());
+        }
         engine::validate_assignments(&profile, &assignments)?;
         if snapshot.session.is_empty() || snapshot.captured_us == 0 {
             return Err("Invalid capture session.".into());
@@ -198,7 +206,10 @@ impl Router {
             .collect()
     }
     fn fail<T>(&mut self, error: String) -> Result<T, String> {
-        self.runtime.stop();
+        let error = match self.stop_result() {
+            Ok(()) => error,
+            Err(recovery) => format!("{error}; {recovery}"),
+        };
         self.fault = Some(error.clone());
         Err(error)
     }
@@ -296,12 +307,104 @@ impl Router {
         *sequence = next;
         Ok(())
     }
-    pub fn stop(&mut self) {
+    pub fn live(&self) -> bool {
+        self.output.as_ref().is_some_and(|o| o.active())
+    }
+    pub fn start_live(
+        &mut self,
+        profile: Profile,
+        assignments: Vec<Assignment>,
+        snapshot: stream::Snapshot,
+        bindings: Vec<osg_virtual_controller::vjoy::Binding>,
+        factory: osg_virtual_controller::session::Factory,
+    ) -> Result<RunToken, String> {
+        if self.runtime.token().is_ok()
+            || self.output.as_ref().is_some_and(|o| o.recovery_required())
+        {
+            return Err(
+                "Stop the current mapping and resolve recovery before starting live output.".into(),
+            );
+        }
+        if profile.requirements.device_hiding {
+            return Err(
+                "This run requires device hiding, which is not available in the vJoy-only backend."
+                    .into(),
+            );
+        }
+        crate::settings::validate_bindings(&profile, &bindings)?;
+        let mut candidate = Router::default();
+        let token = candidate.start(profile, assignments, snapshot)?;
+        let cursor = self.runtime.recording.cursor();
+        // Acquire and confirm every target before replacing the stopped workspace.
+        let output = osg_virtual_controller::session::Session::start(
+            factory,
+            token.clone(),
+            bindings,
+            cursor,
+        )?;
+        let mut reports = Vec::new();
+        let mut after = Counter(0);
+        loop {
+            let page = candidate.runtime.recording.page(after, 32)?;
+            let count = page.records.len();
+            after = page.next;
+            reports.extend(page.records.into_iter().map(|r| r.report));
+            if count < 32 {
+                break;
+            }
+        }
+        candidate.runtime.recording = std::mem::take(&mut self.runtime.recording);
+        candidate.runtime.recording.record(reports);
+        candidate.output = Some(output);
+        *self = candidate;
+        self.flush_output()?;
+        Ok(token)
+    }
+    pub fn flush_output(&mut self) -> Result<(), String> {
+        let Some(output) = &mut self.output else {
+            return Ok(());
+        };
+        let result = if self.runtime.token().is_ok() && output.active() {
+            output.poll(&self.runtime.recording)
+        } else if output.active() {
+            output.stop()
+        } else {
+            Ok(())
+        };
+        if let Err(error) = result {
+            self.runtime.stop();
+            self.fault = Some(error.clone());
+            return Err(error);
+        }
+        Ok(())
+    }
+    pub fn recover(&mut self) -> Result<(), String> {
+        if self.runtime.token().is_ok() {
+            return Err("Stop mapping before recovery.".into());
+        }
+        let Some(output) = &mut self.output else {
+            return Err("No interrupted live run is recorded in this session.".into());
+        };
+        output.recover()?;
+        self.fault = None;
+        Ok(())
+    }
+    pub fn stop_result(&mut self) -> Result<(), String> {
         self.runtime.stop();
+        if let Some(output) = &mut self.output {
+            if let Err(error) = output.stop() {
+                self.fault = Some(error.clone());
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+    pub fn stop(&mut self) {
+        let _ = self.stop_result();
     }
     pub fn status(&self) -> serde_json::Value {
         let engine = self.runtime.engine();
-        json!({"running":engine.is_some_and(|e| e.active()),"ready":engine.is_some_and(|e| e.ready()),"mode":"recording","token":self.runtime.token().ok(),"profileId":engine.map(|e| &e.profile().id),"fault":self.fault.as_deref().or_else(|| engine.and_then(|e| e.fault())),"recordingCursor":self.runtime.recording.cursor()})
+        json!({"running":engine.is_some_and(|e| e.active()),"ready":engine.is_some_and(|e| e.ready()),"mode":if self.live() { "vjoy" } else { "recording" },"recoveryRequired":self.output.as_ref().is_some_and(|o| o.recovery_required()),"token":self.runtime.token().ok(),"profileId":engine.map(|e| &e.profile().id),"fault":self.fault.as_deref().or_else(|| engine.and_then(|e| e.fault())),"recordingCursor":self.runtime.recording.cursor()})
     }
 }
 #[cfg(test)]

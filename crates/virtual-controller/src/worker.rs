@@ -79,6 +79,7 @@ pub fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
     let (responses, writes) = mpsc::sync_channel::<serde_json::Value>(32);
     let write_failure = Arc::new(AtomicBool::new(false));
     let failed = write_failure.clone();
+    let (finished, completion) = mpsc::sync_channel(1);
     let writer = thread::spawn(move || {
         for response in writes {
             if writeln!(output, "{response}")
@@ -89,36 +90,52 @@ pub fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
                 break;
             }
         }
+        let _ = finished.send(());
     });
     responses
         .try_send(json!({"ok":true,"backend":backend,"protocol":1}))
         .map_err(|_| "Worker output queue failed.")?;
-    loop {
-        let now = u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX);
-        if overflow.load(Ordering::Acquire) || write_failure.load(Ordering::Acquire) {
-            return Err("Worker transport overflowed or closed; releasing outputs.".into());
-        }
-        feeder.tick(now)?;
-        match receiver.recv_timeout(Duration::from_millis(5)) {
-            Ok(Ok(Some(message))) => {
-                let received = u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX);
-                let token = message.token().clone();
-                let result = feeder.receive(message, received);
-                responses.try_send(json!({"token":token,"ok":result.is_ok(),"error":result.as_ref().err().map(|e| e.chars().take(256).collect::<String>()),"active":feeder.active()})).map_err(|_| "Worker output queue overflowed.")?;
-                result?;
-                // A worker owns exactly one run. It never restarts from queued old input.
-                if !feeder.active() {
-                    break;
-                }
+    let result = (|| {
+        loop {
+            let now = u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX);
+            if overflow.load(Ordering::Acquire) || write_failure.load(Ordering::Acquire) {
+                return Err("Worker transport overflowed or closed; releasing outputs.".into());
             }
-            Ok(Ok(None)) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Ok(Err(error)) => return Err(error),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            feeder.tick(now)?;
+            match receiver.recv_timeout(Duration::from_millis(5)) {
+                Ok(Ok(Some(message))) => {
+                    let received = u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX);
+                    let token = message.token().clone();
+                    let result = feeder.receive(message, received);
+                    // A negative acknowledgement must never race the parent killing us
+                    // before owned output has attempted fallback and release.
+                    if result.is_err() {
+                        feeder.stop();
+                    }
+                    responses.try_send(json!({"token":token,"ok":result.is_ok(),"error":result.as_ref().err().map(|e| e.chars().take(256).collect::<String>()),"active":feeder.active()})).map_err(|_| "Worker output queue overflowed.")?;
+                    result?;
+                    // A worker owns exactly one run. It never restarts from queued old input.
+                    if !feeder.active() {
+                        break;
+                    }
+                }
+                Ok(Ok(None)) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Ok(Err(error)) => return Err(error),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
         }
-    }
+        Ok::<(), String>(())
+    })();
     feeder.stop();
     drop(responses);
-    let _ = writer.join();
+    if completion.recv_timeout(Duration::from_millis(50)).is_ok() {
+        let _ = writer.join();
+    } else {
+        return Err(result
+            .err()
+            .unwrap_or_else(|| "Worker output pipe exceeded its shutdown deadline.".into()));
+    }
+    result?;
     if write_failure.load(Ordering::Acquire) {
         return Err("Worker output pipe failed.".into());
     }
