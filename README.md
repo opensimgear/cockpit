@@ -88,6 +88,8 @@ It clones `device-gateway` and `device-template`, initializes their dependencies
 
 The [automatic lifecycle acceptance record](docs/verification/2026-10-13-automatic-controller-lifecycle.md) covers current enrollment, ghosts, Disable/Enable/Remove, zero controllers, reconnect recovery and UI warnings. The [simultaneous gateway acceptance record](docs/verification/2026-10-13-multiple-gateways.md) covers concurrent connections, same-identity device isolation and four gateways in the native UI. The [repository-owned acceptance record](docs/verification/2026-10-13-repository-owned-simulation.md) documents the earlier automated and visible native UI checks. The native gateway/device path exercises production configuration, persistence, descriptors and CAN handlers. Physical STM32 USB/HID enumeration and hardware CAN electrical behavior remain separate hardware acceptance work.
 
+The experimental [portable mapping runtime](docs/mapping-profiles.md) validates and stores profiles, resolves explicit local source roles, and replays deterministic synthetic input into recording targets. Direct buttons, axes and hats support per-producer ownership, source generations, timers and fallback output. The desktop mapping editor and game-visible virtual output remain later milestones; saving or importing a mapping never activates output.
+
 ## Repository layout
 
 - `src/`: Svelte/TypeScript interface and frontend tests.

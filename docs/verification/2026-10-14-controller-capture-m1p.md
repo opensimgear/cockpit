@@ -31,3 +31,7 @@ No native Linux/macOS physical controller or foreground game was tested. Permiss
 IOHID input-value callbacks currently preserve individual element order; coherent native report grouping and baseline behavior on real devices still require qualification before this adapter can feed an enabled routing session. Neither transport labels nor authored fixtures prove arbitrary third-party virtual devices are physical. The release gate stays closed until the supported device paths, source exclusion policy and native report/baseline behavior are qualified.
 
 Optional Linux/macOS output and hiding remain separate later milestones. No signing, entitlement, helper availability or visibility policy is claimed by this change.
+
+## CI result for the issue commit
+
+Commit b7060cd02d39a18e13da34234d0a0f9d9670cbb0 passed [all CI jobs](https://github.com/opensimgear/cockpit/actions/runs/38616526349), including frontend, full Windows desktop regression, Linux integration acceptance and native controller coverage on Windows/Linux/macOS. The macOS job linked the native frameworks/Swift bridges and passed 18 tests with 71.88% adapter production-line coverage. The Linux controller suite passed 19 tests. These results leave the hardware qualification gaps above open.

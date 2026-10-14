@@ -1,0 +1,368 @@
+{
+  "schema": 1,
+  "profile": {
+    "schema": 1,
+    "id": "667891ca-e20a-459e-9d3c-c0e1c30a2bb0",
+    "name": "Two source preview",
+    "roles": [
+      {
+        "id": "left",
+        "name": "Left controller",
+        "origin": "synthetic",
+        "controls": [
+          {
+            "id": "trigger",
+            "kind": {
+              "kind": "button"
+            }
+          },
+          {
+            "id": "x",
+            "kind": {
+              "kind": "axis",
+              "range": "bipolar"
+            }
+          },
+          {
+            "id": "hat",
+            "kind": {
+              "kind": "hat"
+            }
+          }
+        ]
+      },
+      {
+        "id": "right",
+        "name": "Right controller",
+        "origin": "synthetic",
+        "controls": [
+          {
+            "id": "trigger",
+            "kind": {
+              "kind": "button"
+            }
+          }
+        ]
+      }
+    ],
+    "targets": [
+      {
+        "id": "main",
+        "name": "Combined controls",
+        "layout": {
+          "buttons": 2,
+          "axes": [
+            {
+              "range": "bipolar",
+              "fallback": -123
+            }
+          ],
+          "hats": 1
+        }
+      },
+      {
+        "id": "aux",
+        "name": "Auxiliary",
+        "layout": {
+          "buttons": 1,
+          "axes": [],
+          "hats": 0
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "id": "left-trigger",
+        "inputs": [
+          {
+            "kind": "source",
+            "role": "left",
+            "control": "trigger"
+          }
+        ],
+        "output": {
+          "target": "main",
+          "control": {
+            "kind": "button",
+            "index": 0
+          }
+        },
+        "operation": {
+          "kind": "direct",
+          "activation": "momentary"
+        }
+      },
+      {
+        "id": "right-trigger",
+        "inputs": [
+          {
+            "kind": "source",
+            "role": "right",
+            "control": "trigger"
+          }
+        ],
+        "output": {
+          "target": "main",
+          "control": {
+            "kind": "button",
+            "index": 0
+          }
+        },
+        "operation": {
+          "kind": "direct",
+          "activation": "level"
+        }
+      },
+      {
+        "id": "left-x",
+        "inputs": [
+          {
+            "kind": "source",
+            "role": "left",
+            "control": "x"
+          }
+        ],
+        "output": {
+          "target": "main",
+          "control": {
+            "kind": "axis",
+            "index": 0
+          }
+        },
+        "operation": {
+          "kind": "direct",
+          "activation": "level"
+        }
+      },
+      {
+        "id": "left-hat",
+        "inputs": [
+          {
+            "kind": "source",
+            "role": "left",
+            "control": "hat"
+          }
+        ],
+        "output": {
+          "target": "main",
+          "control": {
+            "kind": "hat",
+            "index": 0
+          }
+        },
+        "operation": {
+          "kind": "direct",
+          "activation": "level"
+        }
+      },
+      {
+        "id": "level-copy",
+        "inputs": [
+          {
+            "kind": "source",
+            "role": "left",
+            "control": "trigger"
+          }
+        ],
+        "output": null,
+        "operation": {
+          "kind": "direct",
+          "activation": "level"
+        }
+      },
+      {
+        "id": "aux-trigger",
+        "inputs": [
+          {
+            "kind": "node",
+            "node": "level-copy"
+          }
+        ],
+        "output": {
+          "target": "aux",
+          "control": {
+            "kind": "button",
+            "index": 0
+          }
+        },
+        "operation": {
+          "kind": "direct",
+          "activation": "level"
+        }
+      }
+    ],
+    "arbitration": [],
+    "requirements": {
+      "virtualDevices": false,
+      "deviceHiding": false,
+      "visibility": []
+    }
+  },
+  "steps": [
+    {
+      "frame": {
+        "changes": [
+          {
+            "control": "native-trigger",
+            "value": {
+              "value": false,
+              "kind": "button"
+            }
+          },
+          {
+            "control": "native-x",
+            "value": {
+              "value": 10,
+              "kind": "axis"
+            }
+          },
+          {
+            "control": "native-hat",
+            "value": {
+              "value": 1,
+              "kind": "hat"
+            }
+          }
+        ],
+        "reason": "baseline",
+        "sequence": "1",
+        "source": {
+          "id": "left",
+          "origin": "synthetic"
+        },
+        "generation": "1",
+        "capturedUs": "0"
+      },
+      "kind": "input"
+    },
+    {
+      "frame": {
+        "changes": [
+          {
+            "control": "native-trigger",
+            "value": {
+              "value": false,
+              "kind": "button"
+            }
+          }
+        ],
+        "reason": "baseline",
+        "sequence": "1",
+        "source": {
+          "id": "right",
+          "origin": "synthetic"
+        },
+        "generation": "1",
+        "capturedUs": "0"
+      },
+      "kind": "input"
+    },
+    {
+      "frame": {
+        "changes": [
+          {
+            "control": "native-trigger",
+            "value": {
+              "value": true,
+              "kind": "button"
+            }
+          }
+        ],
+        "reason": "change",
+        "sequence": "2",
+        "source": {
+          "id": "left",
+          "origin": "synthetic"
+        },
+        "generation": "1",
+        "capturedUs": "10"
+      },
+      "kind": "input"
+    },
+    {
+      "frame": {
+        "changes": [
+          {
+            "control": "native-trigger",
+            "value": {
+              "value": false,
+              "kind": "button"
+            }
+          }
+        ],
+        "reason": "change",
+        "sequence": "3",
+        "source": {
+          "id": "left",
+          "origin": "synthetic"
+        },
+        "generation": "1",
+        "capturedUs": "20"
+      },
+      "kind": "input"
+    },
+    {
+      "kind": "timer",
+      "node": "left-trigger",
+      "at": "30000",
+      "id": "pulse-start",
+      "value": {
+        "value": true,
+        "kind": "button"
+      }
+    },
+    {
+      "kind": "timer",
+      "node": "left-trigger",
+      "at": "60000",
+      "id": "pulse-end",
+      "value": {
+        "value": false,
+        "kind": "button"
+      }
+    },
+    {
+      "at": "100000",
+      "kind": "advance"
+    },
+    {
+      "kind": "stop"
+    }
+  ],
+  "assignments": [
+    {
+      "controls": [
+        {
+          "control": "trigger",
+          "sourceControl": "native-trigger"
+        },
+        {
+          "control": "x",
+          "sourceControl": "native-x"
+        },
+        {
+          "control": "hat",
+          "sourceControl": "native-hat"
+        }
+      ],
+      "source": {
+        "id": "left",
+        "origin": "synthetic"
+      },
+      "role": "left"
+    },
+    {
+      "controls": [
+        {
+          "control": "trigger",
+          "sourceControl": "native-trigger"
+        }
+      ],
+      "source": {
+        "id": "right",
+        "origin": "synthetic"
+      },
+      "role": "right"
+    }
+  ]
+}

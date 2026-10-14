@@ -1,10 +1,12 @@
 # Third party devices and controller mapping implementation plan
 
-Status: M0 qualification gaps remain open; M1 Windows discovery is implemented experimentally. Full controller mapping is not delivered. Date: 14 October 2026.
+Status: M0 qualification gaps remain open; M1 Windows discovery is implemented experimentally; M1P capture is gated; M2 portable profiles and the preview runtime are implemented. Full controller mapping is not delivered. Date: 14 October 2026.
 
 See the [M0 contract candidate](controller-mapping-contracts.md) and [qualification record](verification/2026-10-14-controller-mapping-m0.md) for executed checks and remaining gates.
 
 M1P Linux/macOS capture adapters are implemented behind a disabled qualification gate; see [implementation evidence and remaining checks](verification/2026-10-14-controller-capture-m1p.md).
+
+See [portable profiles and preview usage](mapping-profiles.md) and [M2 acceptance evidence](verification/2026-10-14-mapping-runtime-m2.md).
 
 Implementation continues with unqualified capabilities disabled, as authorized on 14 October 2026. Platform/device qualification remains separate from software implementation; unresolved M0 gates are not treated as passed.
 
