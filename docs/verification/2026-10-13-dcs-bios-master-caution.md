@@ -142,6 +142,18 @@ sessions. Ordinary Stop still permits a later Start. A regression reproduces
 the former delayed start and verifies rejection, restart after ordinary Stop
 and unchanged saved settings after terminal shutdown.
 
+Linux CI also exposed a lifecycle acceptance-fixture race: the test pressed a
+momentary contact immediately after publication, before the input route's
+release-to-rearm boundary. The fixture now waits for active acquisition and
+explicitly releases contacts with their normal 30 ms simulation advance before
+confirming the released baseline and pressing. A deterministic held-at-start
+reproduction fails the old fixture with only selector-center button 7 reported
+and passes the corrected fixture in 22.53 seconds. Existing held-input,
+offline-recovery and Disable-neutrality assertions remain intact. All four
+acceptance scenarios then pass in 49.25 seconds, with two further lifecycle runs
+passing in 24.01 and 22.45 seconds. Evidence is
+under `.research/milestone2/review-fixture-race/` in the parent workspace.
+
 All 113 native tests pass after these corrections. Repeated production coverage
 measures 97.25% for the DCS core, 87.68% for the runtime and 100% for event
 validation. Hardware and live-DCS validation remain deferred.

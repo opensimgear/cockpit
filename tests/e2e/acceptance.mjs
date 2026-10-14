@@ -120,6 +120,27 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
   const startDevice = (index = 0) => processClient(launch.python, [resolve(launch.deviceRepository, 'simulation/run.py'),
     '--config', definitions[index].path, '--gateway', uid, '--state-dir', resolve(stateDirectory, `device-${index}`),
     '--output-dir', launch.deviceBuild, '--no-build'], environment);
+  const releaseBeforePress = async () => {
+    // USB publication precedes the renewed CAN assignment/acquisition baseline.
+    // A momentary contact closed during that interval is held-at-start and must
+    // release before a fresh press; a published neutral report alone cannot arm it.
+    await wait(() => ok('status'), state => {
+      const module = state.modules.find(module => module.id === moduleId);
+      return !state.layoutPending && module?.online && module.enabled && module.published &&
+        module.profileMatch && module.active && module.hasInput;
+    }, 'The published controller acquires fresh inputs before the fixture presses contacts');
+    // Each simulator contact command advances acquisition by 30 ms, so these
+    // releases exceed the 10 ms rearm debounce after active input is established.
+    for (const contact of [0, 1, 2]) await admin(device, `contact ${contact} 0`);
+    await wait(() => ok('status'), state => {
+      const module = state.modules.find(module => module.id === moduleId);
+      // Selector center (logical button 7) and a neutral hat confirm that the
+      // routed report reflects current acquisition, alongside released buttons.
+      return !state.layoutPending && module?.online && module.enabled && module.published &&
+        module.profileMatch && module.active && module.hasInput && module.buttons.includes(7) &&
+        !module.buttons.includes(1) && !module.buttons.includes(2) && module.hats[0] === 8;
+    }, 'Released contacts reach a debounced current input baseline before a fresh press');
+  };
   try {
     let state = await ok('ports');
     assert.ok(!state.ports.some(port => port.serialNumber === uid), 'Cockpit never fabricates a gateway before its process starts');
@@ -167,6 +188,7 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     assert.equal(state.modules.find(module => module.id === moduleId).reportId, 1);
     assert.equal(state.modules.filter(module => module.enabled && module.published && module.profileMatch).length, 3);
 
+    await releaseBeforePress();
     await admin(device, 'contact 0 1');
     await admin(device, 'axis 0 100');
     await admin(device, 'axis 1 4095');
@@ -277,6 +299,7 @@ test('Cockpit starts first, discovers three JSON devices and recovers saved conf
     state = await ok('config_read', { moduleId });
     assert.deepEqual(state.moduleConfigs[moduleId].config, config, 'Forgetting a gateway record does not erase the module configuration');
 
+    await releaseBeforePress();
     await admin(device, 'contact 0 1');
     await admin(device, 'axis 0 100');
     await admin(device, 'axis 1 4095');
