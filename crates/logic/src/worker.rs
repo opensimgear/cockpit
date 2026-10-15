@@ -26,6 +26,10 @@ impl Worker {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        // Darwin nano malloc reserves more virtual data space than the helper budget.
+        // Select its standard allocator before process initialization; keep the same hard cap.
+        #[cfg(target_os = "macos")]
+        command.env("MallocNanoZone", "0");
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
