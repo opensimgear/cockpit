@@ -65,7 +65,7 @@ test('valid profiles support different configurations and keep a copied integrat
 });
 
 test('profile validation explains invalid version, IDs and bounded UTF-8 names', () => {
-  for (const value of [null, [], false, 1, 'profile', {}, { ...profile(), schemaVersion: 2 }, { ...profile(), gameId: 'unknown' }]) assert.match(gameProfileError(value), /supported game/);
+  for (const value of [null, [], false, 1, 'profile', {}, { ...profile(), schemaVersion: 3 }, { ...profile(), gameId: 'unknown' }]) assert.match(gameProfileError(value), /supported game/);
   for (const id of ['', '../profile', 'space here', 'a'.repeat(65), 5, undefined]) assert.match(gameProfileError({ ...profile(), id }), /profile ID/);
   for (const name of ['', '  ', 'a'.repeat(81), 'é'.repeat(41), 'one\ntwo', '\u0080', 5, undefined]) assert.match(gameProfileError({ ...profile(), name }), /profile name/);
   assert.equal(gameProfileError({ ...profile(), name: 'é'.repeat(40), id: 'A-_.1' }), '');
@@ -229,3 +229,5 @@ test('unknown DCS modules require manual attention before setup can change their
   const game = { id: 'dcs', installed: true, integrationSetup: { state: 'needs-attention', repairable: false, message: 'Restore the compatible official module or choose a clean user folder.' } };
   assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), game.integrationSetup.message);
 });
+
+test('mapping capture requires explicit schema migration and survives cloning',()=>{const legacy=profile();assert.match(gameProfileError({...legacy,mapping:null}),/upgrade/);const captured={profile:{name:'Frozen'},assignments:[],targets:[],visibility:null};const next={...legacy,schemaVersion:2,mapping:captured};assert.equal(gameProfileError(next),'');const copy=cloneGameProfile(next);copy.mapping.profile.name='Later';assert.equal(next.mapping.profile.name,'Frozen');assert.match(gameProfileError({...next,mapping:{}}),/complete/);assert.equal(gameProfileError({...next,mapping:null}),'');});

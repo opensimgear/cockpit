@@ -283,3 +283,69 @@ fn invalid_replacements_preserve_the_active_run_and_synthetic_is_explicit() {
         .unwrap(); // unassigned physical ignored
     assert!(r.simulate(&token, &source, vec![]).is_err());
 }
+
+#[test]
+fn panel_subscription_preserves_edges_and_overflow_releases_only_its_source() {
+    let (mut p, mut a, snapshot) = fixture(true);
+    p.roles[0].origin = Origin::OsgPanelEvents;
+    a[0].source.origin = Origin::OsgPanelEvents;
+    let mut router = Router::default();
+    assert!(router
+        .start(
+            p.clone(),
+            a.clone(),
+            stream::Snapshot {
+                session: snapshot.session.clone(),
+                cursor: snapshot.cursor,
+                captured_us: snapshot.captured_us,
+                sources: snapshot.sources.clone()
+            }
+        )
+        .is_err());
+    let (feed, sender) = crate::panels::Feed::channel();
+    let overflow = feed.overflow.clone();
+    let stop = feed.stop.clone();
+    router
+        .start_with_panels(p, a.clone(), snapshot, BTreeMap::new(), Some(feed))
+        .unwrap();
+    for (sequence, pressed) in [(2, true), (3, false), (4, true)] {
+        sender
+            .send(Frame {
+                source: a[0].source.clone(),
+                generation: Counter(1),
+                sequence: Counter(sequence),
+                captured_us: Counter(110 + sequence),
+                reason: engine::Reason::Change,
+                changes: vec![
+                    Change {
+                        control: "trigger".into(),
+                        value: Value::Button(pressed),
+                    },
+                    Change {
+                        control: "x".into(),
+                        value: Value::Axis(0),
+                    },
+                    Change {
+                        control: "hat".into(),
+                        value: Value::Hat(None),
+                    },
+                ],
+            })
+            .unwrap();
+    }
+    router.pump(page(vec![])).unwrap();
+    assert!(router
+        .runtime
+        .recording
+        .page(Counter(0), 32)
+        .unwrap()
+        .records
+        .iter()
+        .any(|r| r.report.state.buttons[0]));
+    overflow.store(true, std::sync::atomic::Ordering::Release);
+    router.pump(page(vec![])).unwrap();
+    assert_eq!(router.status()["running"], true);
+    assert_eq!(router.status()["ready"], false);
+    assert!(stop.load(std::sync::atomic::Ordering::Acquire));
+    router.stop();
+}

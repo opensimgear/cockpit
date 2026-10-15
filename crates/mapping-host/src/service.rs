@@ -45,6 +45,7 @@ pub struct Service {
     provisioning: Mutex<osg_virtual_controller::windows_jobs::Manager>,
     router: Arc<Mutex<Router>>,
     capture: Arc<ControllerService>,
+    panels: Mutex<Option<Arc<dyn crate::panels::Provider>>>,
     root: Option<PathBuf>,
     inspector: Inspector,
     output_factory: osg_virtual_controller::session::Factory,
@@ -56,6 +57,7 @@ pub struct Service {
     worker: Mutex<Option<JoinHandle<()>>>,
     persistence: Mutex<()>,
     compilation: Mutex<()>,
+    game_lease: Mutex<Option<game::Lease>>,
     settings: Mutex<crate::settings::Settings>,
 }
 impl Service {
@@ -114,6 +116,7 @@ impl Service {
         Self {
             #[cfg(windows)]
             provisioning: Mutex::new(osg_virtual_controller::windows_jobs::Manager::default()),
+            panels: Mutex::new(None),
             settings: Mutex::new(settings),
             router,
             capture,
@@ -128,7 +131,18 @@ impl Service {
             worker: Mutex::new(worker),
             persistence: Mutex::new(()),
             compilation: Mutex::new(()),
+            game_lease: Mutex::new(None),
         }
+    }
+    pub fn set_panel_provider(&self, provider: Arc<dyn crate::panels::Provider>) {
+        *self.panels.lock().unwrap_or_else(|p| p.into_inner()) = Some(provider);
+    }
+    fn panel_provider(&self) -> Result<Arc<dyn crate::panels::Provider>, String> {
+        self.panels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .ok_or("Panel event capture is unavailable.".into())
     }
     fn recovery_path(&self) -> Result<PathBuf, String> {
         self.root
@@ -177,7 +191,10 @@ impl Service {
     pub fn handles(command: &str) -> bool {
         matches!(
             command,
-            "mapping_script_validate"
+            "mapping_capture"
+                | "mapping_panel_sources"
+                | "mapping_panel_inspect"
+                | "mapping_script_validate"
                 | "mapping_trace_export"
                 | "mapping_status"
                 | "mapping_learn_start"
@@ -221,6 +238,18 @@ impl Service {
                 .ok_or_else(|| "Select a saved mapping profile.".to_string())
         };
         match command {
+            "mapping_capture" => self
+                .capture_saved(
+                    profile_id()?,
+                    request.get("visibility").filter(|v| !v.is_null()).cloned(),
+                )
+                .map(|capture| json!({"capture":capture})),
+            "mapping_panel_sources" => self.panel_provider()?.list(),
+            "mapping_panel_inspect" => self.panel_provider()?.inspect(
+                request["sourceId"]
+                    .as_str()
+                    .ok_or("Choose a panel event source.")?,
+            ),
             "mapping_script_validate" => {
                 let _compile = self
                     .compilation
@@ -484,7 +513,7 @@ impl Service {
                     .collect::<BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                let snapshot = if ids.is_empty() {
+                let mut snapshot = if ids.is_empty() {
                     let page = self.capture.stream_page("", 0);
                     stream::Snapshot {
                         session: page.session,
@@ -494,6 +523,17 @@ impl Service {
                     }
                 } else {
                     self.capture.stream_snapshot(&ids)?
+                };
+                let panels = if assignments
+                    .iter()
+                    .any(|a| a.source.origin == Origin::OsgPanelEvents)
+                {
+                    let prepared = self.panel_provider()?.prepare(&profile, &assignments)?;
+                    snapshot.sources.extend(prepared.snapshots);
+                    snapshot.captured_us = self.capture.stream_page("", 0).captured_us;
+                    Some(prepared.feed)
+                } else {
+                    None
                 };
                 let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
                 if self.stop.load(Ordering::Acquire) {
@@ -523,7 +563,7 @@ impl Service {
                         Some(self.recovery_path()?),
                     )?
                 } else {
-                    router.start_prepared(profile, assignments, snapshot, workers)?
+                    router.start_with_panels(profile, assignments, snapshot, workers, panels)?
                 };
                 Ok(json!({"token":token,"preview":router.status()}))
             }
@@ -534,6 +574,14 @@ impl Service {
                     .is_err()
                 {
                     self.stop.store(true, Ordering::Release);
+                }
+                if let Some(lease) = self
+                    .game_lease
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .as_mut()
+                {
+                    lease.emergency = true;
                 }
                 let mut r = self.router.lock().unwrap_or_else(|p| p.into_inner());
                 r.stop_result()?;
@@ -721,3 +769,6 @@ mod tests;
 #[cfg(test)]
 #[path = "live_tests.rs"]
 mod live_tests;
+
+#[path = "game.rs"]
+pub mod game;

@@ -15,7 +15,7 @@ test('direct mappings retain provenance and never request optional integrations'
     assert.equal(profile.targets[0].layout.axes.length, kind.kind === 'axis' ? 1 : 0);
   }
   assert.throws(() => directProfile('', { kind: 'button' }, { origin: 'synthetic', id: 's' }, 'c'));
-  assert.throws(() => directProfile('x', { kind: 'button' }, { origin: 'osg-panel-events', id: 's' }, 'c'));
+  assert.throws(() => directProfile('x', { kind: 'hat' }, { origin: 'osg-panel-events', id: 's' }, 'c'));
   assert.deepEqual(capturedKind(native('button')), { kind: 'button' });
   assert.deepEqual(capturedKind(native('hat')), { kind: 'hat' });
   assert.deepEqual(capturedKind(native('axis', -100)), { kind: 'axis', range: 'bipolar' });
@@ -93,3 +93,5 @@ test('draft validation performs no profile write or run activation',async()=>{
  assert.deepEqual(await importMapping('{}',async r=>{calls.push(r.command);return r.command==='mapping_import_begin'?{uploadId:'u'}:r.command==='mapping_validate_commit'?{document}:{};},true),document);
  assert.equal(calls.at(-1),'mapping_validate_commit');assert.ok(!calls.includes('mapping_import_commit'));
 });
+
+test('panel mappings retain explicit provenance and exclude hats',()=>{const source={origin:'osg-panel-events',id:'panel-events:gateway/module'};for(const kind of [{kind:'button'},{kind:'axis',range:'unipolar'}]){const result=directProfile('Panel',kind,source,'button:0');assert.equal(result.profile.roles[0].origin,source.origin);assert.deepEqual(result.assignments[0].source,source);}});

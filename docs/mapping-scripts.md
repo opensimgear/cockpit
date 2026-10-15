@@ -24,7 +24,7 @@ Buttons combine all producer contributions with OR. Axes and hats with multiple 
 
 Code is limited to 16 KiB within a 64 KiB profile. Each callback permits 100,000 operations, call depth 16, a 5 ms evaluation deadline, 16 KiB state, 128 output intents, 64 timers and four log lines. The run shares 256 timers and 32 queued/in-flight callbacks. Logs are limited to 256 bytes each and 16 messages per second. IPC frames are at most 32 KiB. Parent supervision stops an unresponsive callback after 100 ms, separately from the interpreter's 5 ms evaluation budget. Compilation has a two-second process deadline. Deadlines are failure bounds, not latency guarantees.
 
-Windows workers are assigned to an owned Job Object before code is sent, with a 256 MiB process memory cap, one process and kill-on-close. Unix workers set a 256 MiB data limit and a 32-descriptor limit before accepting code. These controls complement interpreter limits; they are not an OS permission sandbox, and their native release qualification remains open. Live script output stays disabled.
+Windows workers are assigned to an owned Job Object before code is sent, with a 256 MiB process memory cap, one process and kill-on-close. Linux workers set a 256 MiB data limit and a 32-descriptor limit before accepting code. macOS bounds requested Rust heap allocations at 256 MiB and limits descriptors to 32; native-library allocations and total RSS remain outside that heap budget. These controls complement interpreter limits; they are not an OS permission sandbox, and their native release qualification remains open. Live script output stays disabled.
 
 ## Recording and replay
 

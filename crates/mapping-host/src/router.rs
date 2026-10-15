@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 
 #[derive(Default)]
 pub struct Router {
+    panels: Option<crate::panels::Feed>,
+    panel_sequences: BTreeMap<Source, (Counter, Counter)>,
     scripts: BTreeMap<String, osg_logic::worker::Worker>,
     pub learner: Option<crate::learn::Learn>,
     pub runtime: Runtime,
@@ -79,6 +81,16 @@ impl Router {
         snapshot: stream::Snapshot,
         workers: BTreeMap<String, osg_logic::worker::Worker>,
     ) -> Result<RunToken, String> {
+        self.start_with_panels(profile, assignments, snapshot, workers, None)
+    }
+    pub fn start_with_panels(
+        &mut self,
+        profile: Profile,
+        assignments: Vec<Assignment>,
+        snapshot: stream::Snapshot,
+        workers: BTreeMap<String, osg_logic::worker::Worker>,
+        panels: Option<crate::panels::Feed>,
+    ) -> Result<RunToken, String> {
         if workers.len() != profile.scripts.len()
             || profile.scripts.iter().any(|script| {
                 workers.get(&script.id).is_none_or(|worker| {
@@ -109,11 +121,8 @@ impl Router {
                 .iter()
                 .find(|r| r.id == assignment.role)
                 .ok_or("Unknown role.")?;
-            if assignment.source.origin == Origin::OsgPanelEvents {
-                return Err(
-                    "Panel-event mapping is not available until game integration qualification."
-                        .into(),
-                );
+            if assignment.source.origin == Origin::OsgPanelEvents && panels.is_none() {
+                return Err("Panel-event mapping requires an owned capture subscription.".into());
             }
             for binding in &assignment.controls {
                 let control = role
@@ -121,7 +130,7 @@ impl Router {
                     .iter()
                     .find(|c| c.id == binding.control)
                     .ok_or("Unknown role control.")?;
-                if assignment.source.origin == Origin::HostController {
+                if assignment.source.origin != Origin::Synthetic {
                     let source = snapshot
                         .sources
                         .iter()
@@ -189,7 +198,17 @@ impl Router {
                 source: source.clone(),
                 generation: Counter(generation),
                 sequence: Counter(sequence),
-                captured_us: Counter(snapshot.captured_us),
+                captured_us: Counter(if source.origin == Origin::OsgPanelEvents {
+                    snapshot
+                        .sources
+                        .iter()
+                        .find(|s| s.id == source.id)
+                        .unwrap()
+                        .baseline
+                        .captured_us
+                } else {
+                    snapshot.captured_us
+                }),
                 reason: engine::Reason::Baseline,
                 changes,
             });
@@ -198,6 +217,12 @@ impl Router {
         if let Some(trace) = self.runtime.trace.trace.as_mut() {
             trace.metadata["nativeCapabilities"]=serde_json::json!(snapshot.sources.iter().map(|source|serde_json::json!({"id":source.id,"controls":source.controls,"generation":source.baseline.generation.to_string()})).collect::<Vec<_>>());
         }
+        self.panels = panels;
+        self.panel_sequences = baselines
+            .iter()
+            .filter(|f| f.source.origin == Origin::OsgPanelEvents)
+            .map(|f| (f.source.clone(), (f.generation, f.sequence)))
+            .collect();
         self.scripts = workers;
         self.learner = None;
         self.expected = expected;
@@ -260,6 +285,7 @@ impl Router {
                         .into(),
                 );
             }
+            self.poll_panels(&token, page.captured_us)?;
             for event in page.events {
                 let source = Source {
                     origin: Origin::HostController,
@@ -296,9 +322,9 @@ impl Router {
                 )?;
             }
             self.runtime
-                .advance_for(&token, Counter(page.captured_us))?;
+                .advance_for(&token, Counter(page.captured_us.max(self.now)))?;
             self.cursor = page.cursor;
-            self.now = page.captured_us;
+            self.now = self.now.max(page.captured_us);
             Ok(())
         })();
         self.poll_scripts();
@@ -306,6 +332,42 @@ impl Router {
             Ok(()) => Ok(()),
             Err(error) => self.fail(error),
         }
+    }
+    fn poll_panels(&mut self, token: &RunToken, now: u64) -> Result<(), String> {
+        let Some(feed) = self.panels.as_mut() else {
+            return Ok(());
+        };
+        let frames = match feed.drain() {
+            Ok(frames) => frames,
+            Err(error) => {
+                self.panels = None;
+                self.fault = Some(error);
+                self.panel_sequences
+                    .iter()
+                    .map(|(source, (generation, sequence))| Frame {
+                        source: source.clone(),
+                        generation: *generation,
+                        sequence: Counter(sequence.0.saturating_add(1)),
+                        captured_us: Counter(now),
+                        reason: engine::Reason::Gap,
+                        changes: vec![],
+                    })
+                    .collect()
+            }
+        };
+        for frame in frames {
+            if frame.source.origin != Origin::OsgPanelEvents
+                || !self.expected.contains_key(&frame.source)
+            {
+                return Err("Unexpected panel source on capture subscription.".into());
+            }
+            self.now = self.now.max(frame.captured_us.0);
+            let key = frame.source.clone();
+            let sequence = (frame.generation, frame.sequence);
+            self.runtime.accept_for(token, frame)?;
+            self.panel_sequences.insert(key, sequence);
+        }
+        Ok(())
     }
     pub fn simulate(
         &mut self,
@@ -501,6 +563,7 @@ impl Router {
     }
     pub fn stop_result(&mut self) -> Result<(), String> {
         self.learner = None;
+        self.panels = None;
         self.runtime.stop();
         self.scripts.clear();
         if let Some(output) = &mut self.output {

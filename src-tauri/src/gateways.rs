@@ -106,7 +106,7 @@ pub struct GatewayManager {
     games: crate::games::GamesRuntime,
     game_admission: RwLock<()>,
     controllers: Arc<osg_controller_input::ControllerService>,
-    mapping_host: osg_mapping_host::service::Service,
+    mapping_host: Arc<osg_mapping_host::service::Service>,
     mapping_documents: osg_mapping::documents::Documents,
 }
 impl Default for GatewayManager {
@@ -116,22 +116,23 @@ impl Default for GatewayManager {
 }
 impl GatewayManager {
     pub fn new() -> Self {
-        let mut manager = Self::with_provider(Arc::new(NativeProvider));
-        manager.mapping_documents = osg_mapping::documents::Documents::new(Some(
-            crate::dcs_runtime::config_path().with_file_name("mappings"),
-        ));
-        manager.controllers = Arc::new(osg_controller_input::ControllerService::new(
-            Some(crate::dcs_runtime::config_path().with_file_name("controllers.json")),
-            true,
-        ));
-        manager.mapping_host = osg_mapping_host::service::Service::new(
-            manager.controllers.clone(),
-            Some(crate::dcs_runtime::config_path().with_file_name("mappings")),
-            Arc::new(osg_virtual_controller::inspection::current),
-        );
-        manager
+        Self::with_options(Arc::new(NativeProvider), true)
     }
     fn with_provider(provider: Arc<dyn Provider>) -> Self {
+        Self::with_options(provider, false)
+    }
+    fn with_options(provider: Arc<dyn Provider>, native: bool) -> Self {
+        let controllers = Arc::new(osg_controller_input::ControllerService::new(
+            native.then(|| crate::dcs_runtime::config_path().with_file_name("controllers.json")),
+            native,
+        ));
+        let root = native.then(|| crate::dcs_runtime::config_path().with_file_name("mappings"));
+        let mapping_documents = osg_mapping::documents::Documents::new(root.clone());
+        let mapping_host = Arc::new(osg_mapping_host::service::Service::new(
+            controllers.clone(),
+            root,
+            Arc::new(osg_virtual_controller::inspection::current),
+        ));
         let sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let targets = sessions.clone();
@@ -158,9 +159,30 @@ impl GatewayManager {
         let game_dcs = dcs.clone();
         let game_integration = integration.clone();
         let game_gate = integration_gate.clone();
+        let game_mapping = mapping_host.clone();
         let game_panel = Arc::new(move |request: Value| {
             let command = request["command"].as_str().unwrap_or("");
-            if command.starts_with("integration_") || command.starts_with("dcs_") {
+            if command.starts_with("_game_mapping_") {
+                let journal = &request["mapping"];
+                let result = match command {
+                    "_game_mapping_snapshot" => game_mapping.game_snapshot(&request["capture"]),
+                    "_game_mapping_take" => game_mapping.game_take(journal).map(|_| json!({})),
+                    "_game_mapping_arm" => game_mapping.game_arm(journal).map(|_| json!({})),
+                    "_game_mapping_stop" => game_mapping.game_stop(journal).map(|_| json!({})),
+                    "_game_mapping_abandon" => {
+                        game_mapping.game_abandon(journal);
+                        Ok(json!({}))
+                    }
+                    "_game_mapping_resume" => game_mapping
+                        .game_resume(journal, request["recovery"] == true)
+                        .map(|_| json!({})),
+                    _ => Err("Unknown game mapping operation.".into()),
+                };
+                match result {
+                    Ok(state) => json!({"ok":true,"state":state}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                }
+            } else if command.starts_with("integration_") || command.starts_with("dcs_") {
                 let _guard = game_gate.lock().unwrap_or_else(|p| p.into_inner());
                 let result = if command.starts_with("integration_") {
                     if command == "integration_start" && game_dcs.status()["running"] == true {
@@ -190,13 +212,7 @@ impl GatewayManager {
                 .unwrap_or_else(|| crate::dcs_runtime::config_path().with_file_name("games.json")),
             Arc::new(crate::game_discovery::NativePlatform),
         );
-        let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
-        let mapping_host = osg_mapping_host::service::Service::new(
-            controllers.clone(),
-            None,
-            Arc::new(|| Err("Native virtual inspection is unavailable in this service.".into())),
-        );
-        Self {
+        let manager = Self {
             provider,
             sessions,
             inventory: Mutex::new(Vec::new()),
@@ -208,8 +224,37 @@ impl GatewayManager {
             game_admission: RwLock::new(()),
             controllers,
             mapping_host,
-            mapping_documents: osg_mapping::documents::Documents::new(None),
-        }
+            mapping_documents,
+        };
+        manager.attach_panel_capture();
+        manager
+    }
+    fn attach_panel_capture(&self) {
+        let sessions = self.sessions.clone();
+        let inventory = sessions.clone();
+        self.mapping_host
+            .set_panel_provider(Arc::new(crate::mapping_panels::Provider {
+                panel: Arc::new(move |request: Value| {
+                    let adapter = sessions
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(request["gatewayId"].as_str().unwrap_or(""))
+                        .cloned();
+                    adapter.map_or_else(
+                        || json!({"ok":false,"error":"Connect the assigned gateway first."}),
+                        |adapter| adapter.request(request),
+                    )
+                }),
+                gateways: Arc::new(move || {
+                    inventory
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .keys()
+                        .cloned()
+                        .collect()
+                }),
+                clock: self.controllers.clone(),
+            }));
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
         let mut ports = BTreeMap::<String, Value>::new();

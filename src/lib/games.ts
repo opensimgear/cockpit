@@ -1,3 +1,4 @@
+import type { CapturedMapping } from './mappings';
 import { configurationError, type RuntimeConfig } from './runtime-config';
 import { integrationError, type IntegrationConfig, type IntegrationProvider } from './integration-profile';
 
@@ -12,7 +13,7 @@ export type GameIntegrationSetup = {
 };
 export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup };
 export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
-export type GameProfile = { schemaVersion: 1; id: string; gameId: GameId; name: string; devices: GameDevice[]; integration?: IntegrationConfig | null };
+export type GameProfile = { schemaVersion: 1 | 2; id: string; gameId: GameId; name: string; devices: GameDevice[]; integration?: IntegrationConfig | null; mapping?: CapturedMapping | null };
 export type GameSession = { phase: 'idle' | 'validating' | 'applying' | 'launching' | 'waiting' | 'running' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; profileId?: string | null; pid?: number | null; error?: string | null; steps?: string[]; bindingWarning?: boolean | string | null };
 export type GamesState = { catalogue: Game[]; profiles: GameProfile[]; defaultProfiles: Record<string, string>; session: GameSession; error?: string | null };
 export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_profile_save' | 'game_profile_delete' | 'game_profile_default' | 'game_launch' | 'game_activate' | 'game_deactivate' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover';
@@ -129,7 +130,9 @@ const text = (value: unknown, limit: number): value is string => typeof value ==
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 export function gameProfileError(value: unknown): string {
-  if (!object(value) || value.schemaVersion !== 1 || !['dcs', 'assetto-corsa-rally'].includes(String(value.gameId))) return 'Choose a supported game and profile schema version 1.';
+  if (!object(value) || ![1,2].includes(value.schemaVersion as number) || !['dcs', 'assetto-corsa-rally'].includes(String(value.gameId))) return 'Choose a supported game and profile schema version 1 or 2.';
+  if (value.schemaVersion === 1 && 'mapping' in value) return 'Capture mapping through an explicit upgrade to schema 2.';
+  if (value.mapping != null && (!object(value.mapping) || !object(value.mapping.profile) || !Array.isArray(value.mapping.assignments) || !Array.isArray(value.mapping.targets))) return 'Capture a complete mapping snapshot.';
   if (typeof value.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(value.id)) return 'Choose a profile ID of 1–64 letters, numbers, dots, underscores or hyphens.';
   if (!text(value.name, 80)) return 'Choose a profile name of 1–80 UTF-8 bytes without control characters.';
   if (!Array.isArray(value.devices) || value.devices.length > 32) return 'A game profile supports up to 32 peripherals.';

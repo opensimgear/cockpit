@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { gatewayRequest } from './gateway';
+  import { savedAssignments, type MappingResult, type MappingProfile } from './mappings';
   import Icon from './Icon.svelte';
   import GameConfigEditor from './GameConfigEditor.svelte';
   import type { DcsTarget } from './dcs-profile';
@@ -7,6 +9,9 @@
   import type { RuntimeConfig } from './runtime-config';
   import { cloneGameProfile, defaultGameProfile, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationSetupBlockedReason, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationVerificationLabel, gameIntegrationUserFolder, gameProfileEqual, gameProfileError, gameSessionLabel, newGameProfile, profileChangesBindings, supportedGames, visibleGames, type Game, type GameId, type GameProfile, type GameRequest, type GamesState } from './games';
 
+  let mappingChoices = $state<MappingProfile[]>([]);
+  let mappingChoice = $state('');
+  let visibilityMode = $state('hidhide-session');
   let { status, busy, request, targets, integration = null, integrationActive = false, readConfig, openIntegrations }: {
     status?: GamesState; busy: boolean; request: (request: GameRequest) => Promise<GamesState | false>;
     targets: DcsTarget[]; integration?: IntegrationConfig | null; integrationActive?: boolean;
@@ -124,6 +129,22 @@
   function copyIntegration() {
     if (draft && integration && compatibleIntegration) { draft.integration = JSON.parse(JSON.stringify(integration)); notice = 'Integration copied into this profile. Save to keep this snapshot.'; }
   }
+  async function loadMappings() {
+    pending=true;notice='';
+    try { const list:MappingProfile[]=[];let offset:number|null=0;while(offset!==null){const result:MappingResult|undefined=(await gatewayRequest({command:'mapping_profiles',offset})).mappings;for(const id of result?.ids ?? []){const profile=(await gatewayRequest({command:'mapping_export',profileId:id})).mappings?.document;if(profile)list.push(profile);}offset=typeof result?.next==='number'?result.next:null;}mappingChoices=list; }
+    catch(error){notice=String(error);}finally{pending=false;}
+  }
+  async function captureMapping() {
+    if(!draft || !mappingChoice)return;pending=true;notice='';const id=draft.id;
+    try {
+      const profile=mappingChoices.find(p=>p.id===mappingChoice);if(!profile)throw new Error('Choose a saved mapping.');
+      const assignments=await savedAssignments(profile.id,async value=>(await gatewayRequest(value)).mappings ?? {});
+      const visibility=profile.requirements.deviceHiding ? {mode:visibilityMode,sourceIds:[...new Set(assignments.filter(a=>a.source.origin==='host-controller').map(a=>a.source.id))]} : null;
+      const capture=(await gatewayRequest({command:'mapping_capture',profileId:mappingChoice,visibility})).mappings?.capture;
+      if(!capture)throw new Error('Mapping capture is unavailable.');
+      if(draft?.id===id){draft.schemaVersion=2;draft.mapping=capture;notice='Mapping captured in schema 2. Save this profile to keep the snapshot.';}
+    }catch(error){notice=String(error);}finally{pending=false;}
+  }
   async function configureIntegration() { if (!dirty || await saveProfile()) openIntegrations(); }
 </script>
 
@@ -182,6 +203,14 @@
             {:else}<p class="section-empty">No integration selected. HID controllers still work with the selected peripheral settings.</p>{/if}
             <div class="integration-actions"><button class="secondary-button" disabled={locked || !compatibleIntegration} onclick={copyIntegration}><Icon name="copy" size={13} /> {draft.integration ? 'Update from saved integration' : 'Use saved integration'}</button><button class="text-button" disabled={locked || (!!error && dirty)} onclick={configureIntegration}>{dirty ? 'Save and open integrations' : 'Open integrations'} <Icon name="arrow" size={12} /></button></div>
             {#if !compatibleIntegration}<p class="field-help">Configure and save a {selected.provider === 'dcs-bios' ? 'DCS-BIOS' : 'Rally telemetry'} integration, then return here to attach it.</p>{/if}
+
+            <section class="captured-mapping"><h3>Captured mapping</h3>
+            <p class="field-help">Capture upgrades this profile to schema 2. Later mapping edits do not change this snapshot. Virtual devices and hiding are requested independently and must pass qualification before activation.</p>
+            {#if draft.mapping}<p>{draft.mapping.profile.name} · {draft.mapping.profile.requirements.virtualDevices ? 'Virtual output required' : 'Recording output'} · {draft.mapping.profile.requirements.deviceHiding ? 'Hiding required' : 'No hiding'}</p><button class="text-button" disabled={locked} onclick={()=>{if(draft)draft.mapping=null;}}>Remove captured mapping</button>{/if}
+            <button class="secondary-button" disabled={locked} onclick={loadMappings}>Load saved mappings</button>
+            <label class="editor-label">Mapping<select bind:value={mappingChoice} disabled={locked}><option value="">Choose mapping</option>{#each mappingChoices as mapping}<option value={mapping.id}>{mapping.name}</option>{/each}</select></label>
+            {#if mappingChoices.find(p=>p.id===mappingChoice)?.requirements.deviceHiding}<label class="editor-label">Requested visibility<select bind:value={visibilityMode} disabled={locked}><option value="hidhide-session">Windows HidHide session</option><option value="linux-grab">Linux input suppression</option><option value="macos-seize">macOS input suppression</option><option value="controlled-launch">Isolated launch</option></select></label>{/if}
+            <button class="secondary-button" disabled={locked || !mappingChoice} onclick={captureMapping}>Capture mapping and upgrade profile</button></section>
 
             {#if changesBindings}<label class="binding-warning"><input type="checkbox" bind:checked={acceptBindings} disabled={locked} /><span>Controller and configuration changes can reconnect USB and affect game bindings. I have reviewed these changes.</span></label>{/if}
             {#if error}<p class="profile-error" role="alert">{error}</p>{/if}
@@ -286,6 +315,9 @@
 </dialog>
 
 <style>
+  .captured-mapping {margin-top:24px;padding-top:24px;border-top:1px solid var(--border);display:grid;gap:12px;}
+  .captured-mapping h3 {font-size:14px;}
+  .captured-mapping .field-help {margin:0;line-height:1.6;}
   .launch-review { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; width: 430px; max-width: calc(100% - 32px); padding: 28px; box-shadow: 0 20px 80px #0005; }
   .launch-review::backdrop { background: #0008; }
   .review-icon { color: var(--accent); background: var(--accent-bg); display: grid; place-items: center; width: 46px; height: 46px; border-radius: 11px; margin-bottom: 19px; }

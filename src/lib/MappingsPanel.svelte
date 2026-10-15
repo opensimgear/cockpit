@@ -3,7 +3,7 @@
   import MappingEditor from './MappingEditor.svelte';
   import { gatewayRequest } from './gateway';
   import { controlLabel, type ControllerControl, type HostController } from './controllers';
-  import { capturedKind, compatibleControl, directProfile, oneToOneProfile, importMapping, savedAssignments, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
+  import { capturedKind, compatibleControl, directProfile, oneToOneProfile, importMapping, savedAssignments, type PanelMappingSource, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
   let createSlot = $state(2);
   let createButtons = $state(32);
   let createHats = $state(1);
@@ -16,6 +16,8 @@
   let learning = $state(false);
   let selected = $state('');
   let sources = $state<HostController[]>([]);
+  let panels = $state<PanelMappingSource[]>([]);
+  const sourceOrigin = (id: string) => id.startsWith('panel-events:') ? 'osg-panel-events' as const : 'host-controller' as const;
   let controls = $state<Record<string, ControllerControl[]>>({});
   let assignments = $state<MappingAssignment[]>([]);
   let status = $state<MappingResult>({});
@@ -41,6 +43,7 @@
   async function exportTrace(){try{const bytes:number[]=[];let offset=0;for(;;){const page=await request({command:'mapping_trace_export',offset});if(!page.bytes || typeof page.next!=='number' || page.next<offset || page.next>4194304)throw new Error('Invalid trace chunk');bytes.push(...page.bytes);offset=page.next;if(offset===page.total)break;}const url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='cockpit-mapping-trace.json';link.click();URL.revokeObjectURL(url);}catch(e){error=String(e);}}
   async function loadControls(id: string) {
     if (controls[id]) return;
+    if (sourceOrigin(id) === 'osg-panel-events') {const detail=await request({command:'mapping_panel_inspect',sourceId:id});if(!detail.panelControls)throw new Error('Panel controls are unavailable.');controls={...controls,[id]:detail.panelControls};return;}
     const all: ControllerControl[] = [];
     for (let offset = 0; offset < 256; offset += 32) {
       const detail = (await gatewayRequest({ command: 'controller_inspect', sourceId: id, offset })).controllers;
@@ -59,6 +62,7 @@
       if (offset + 32 >= result.total) break;
     }
     sources = all;
+    panels = (await request({command:'mapping_panel_sources'})).panelSources ?? [];
   }
   async function loadProfiles() {
     const all: MappingProfile[] = [];
@@ -82,7 +86,7 @@
     catch { assignments = item.roles.map(r => ({ role: r.id, source: { origin: r.origin, id: r.origin === 'synthetic' ? r.id : '' }, controls: r.controls.map(c => ({ control: c.id, sourceControl: r.origin === 'synthetic' ? c.id : '' })) })); notice = 'Assign each source and control, then save the local assignments.'; }
     const targets = await request({ command: 'mapping_targets_get', profileId: id });
     slotAssignments = Object.fromEntries((targets.bindings ?? []).map(binding => [binding.target, binding.slot]));
-    for (const assignment of assignments) if (assignment.source.origin === 'host-controller' && assignment.source.id) await loadControls(assignment.source.id);
+    for (const assignment of assignments) if (assignment.source.origin !== 'synthetic' && assignment.source.id) await loadControls(assignment.source.id);
   }
   async function action(operation: () => Promise<void>) {
     busy = true; error = ''; notice = '';
@@ -119,7 +123,7 @@
     const native = creatorControls.find(c => c.capability.id === newControl);
     const kind: MappingKind | null = newSource === 'synthetic' ? syntheticKind === 'axis' ? { kind: 'axis', range: 'bipolar' } : { kind: syntheticKind } : native ? capturedKind(native) : null;
     if (!kind) throw new Error('Choose an input control.');
-    const result = directProfile(name, kind, { origin: newSource === 'synthetic' ? 'synthetic' : 'host-controller', id: newSource === 'synthetic' ? 'preview-input' : newSource }, newSource === 'synthetic' ? 'control' : newControl);
+    const result = directProfile(name, kind, { origin: newSource === 'synthetic' ? 'synthetic' : sourceOrigin(newSource), id: newSource === 'synthetic' ? 'preview-input' : newSource }, newSource === 'synthetic' ? 'control' : newControl);
     const saved = await importMapping(JSON.stringify(result.profile), request);
     await request({ command: 'mapping_assignments_save', profileId: saved.id, assignments: result.assignments });
     await loadProfiles(); await selectProfile(saved.id); notice = 'Profile and local assignment saved. Start a recording preview when ready.';
@@ -131,7 +135,7 @@
     learnTarget=target;learning=true;notice='Move one control deliberately. Learning runs for up to 30 seconds and sends no output.';
   }
   async function createPreset() {
-    const result=oneToOneProfile(name,{origin:'host-controller',id:newSource},controls[newSource]??[]);
+    const result=oneToOneProfile(name,{origin:sourceOrigin(newSource),id:newSource},controls[newSource]??[]);
     const saved=await importMapping(JSON.stringify(result.profile),request);
     await request({command:'mapping_assignments_save',profileId:saved.id,assignments:result.assignments});
     await loadProfiles();await selectProfile(saved.id);
@@ -161,12 +165,12 @@
   <h2>New direct mapping</h2>
   <div class="mapping-row">
     <label>Name<input class="text-input" bind:value={name} maxlength="80" /></label>
-    <label>Input source<select bind:value={newSource} onchange={() => action(async () => { newControl = ''; if (newSource !== 'synthetic') await loadControls(newSource); })}><option value="synthetic">Synthetic preview input</option>{#each sources.filter(s => s.online) as source}<option value={source.id}>{source.name}</option>{/each}</select></label>
+    <label>Input source<select bind:value={newSource} onchange={() => action(async () => { newControl = ''; if (newSource !== 'synthetic') await loadControls(newSource); })}><option value="synthetic">Synthetic preview input</option>{#each sources.filter(s => s.online) as source}<option value={source.id}>{source.name}</option>{/each}{#each panels as panel}<option value={panel.id}>{panel.name ?? panel.moduleId} · panel events</option>{/each}</select></label>
     {#if newSource === 'synthetic'}<label>Control<select bind:value={syntheticKind}><option value="button">Button</option><option value="axis">Bipolar axis</option><option value="hat">Hat</option></select></label>
     {:else}<label>Control<select bind:value={newControl}><option value="">Choose a control</option>{#each creatorControls as control}<option value={control.capability.id}>{controlLabel(control)} · {control.capability.reportId}:{control.capability.dataIndex}</option>{/each}</select></label>{/if}
     <button class="primary-button" disabled={busy || !name.trim() || (newSource !== 'synthetic' && !newControl)} onclick={() => action(create)}>Save direct mapping</button>
     <button class="secondary-button" disabled={busy} onclick={() => action(loadSources)}>Refresh sources</button>
-    {#if newSource!=='synthetic'}<button class="secondary-button" disabled={busy || learning} onclick={()=>action(()=>learn(newSource))}>Learn input without output</button><button class="secondary-button" disabled={busy} onclick={()=>action(createPreset)}>Save one-to-one preset</button>{/if}
+    {#if newSource!=='synthetic'}<button class="secondary-button" disabled={busy || learning || sourceOrigin(newSource) !== 'host-controller'} onclick={()=>action(()=>learn(newSource))}>Learn input without output</button><button class="secondary-button" disabled={busy} onclick={()=>action(createPreset)}>Save one-to-one preset</button>{/if}
   </div>
   <label class="import-file">Import profile JSON<input type="file" accept=".json,application/json" disabled={busy} onchange={event => { const file = event.currentTarget.files?.[0]; if (file) void action(async () => { if (file.size > 65536) throw new Error('Mapping files are limited to 65536 bytes.'); const saved = await importMapping(await file.text(), request); await loadProfiles(); await selectProfile(saved.id); }); event.currentTarget.value = ''; }} /></label>
   <p class="muted">Saving and importing never start a mapping, change controller layouts, or hide devices.</p>
@@ -178,10 +182,10 @@
     {#each profile.roles as role, index}
       {@const assigned = assignments[index]}
       {#if assigned}<fieldset><legend>{role.name} · {role.origin}</legend>
-        {#if role.origin === 'host-controller'}<label>Local controller<select value={assigned.source.id} disabled={busy} onchange={event => action(() => chooseSource(index, event.currentTarget.value))}><option value="">Choose a controller</option>{#each sources as source}<option value={source.id}>{source.name}{source.online ? '' : ' (offline)'}</option>{/each}</select></label>
-        {:else}<p>{role.origin === 'synthetic' ? 'Synthetic inputs are controlled below during a recording preview.' : 'Panel-event sources await game-integration qualification.'}</p>{/if}
+        {#if role.origin !== 'synthetic'}<label>Local source<select value={assigned.source.id} disabled={busy} onchange={event => action(() => chooseSource(index, event.currentTarget.value))}><option value="">Choose a controller</option>{#each (role.origin === 'osg-panel-events' ? panels.map(p=>({id:p.id,name:p.name ?? p.moduleId,online:true})) : sources) as source}<option value={source.id}>{source.name}{source.online ? '' : ' (offline)'}</option>{/each}</select></label>
+        {:else}<p>Synthetic inputs are controlled below during a recording preview.</p>{/if}
         <div class="assignment-controls">{#each role.controls as control, controlIndex}
-          {#if role.origin === 'host-controller'}<label>{control.id}<select aria-label={'Source control for ' + role.name + ' ' + control.id} bind:value={assignments[index].controls[controlIndex].sourceControl} disabled={busy}><option value="">Choose matching control</option>{#each (controls[assigned.source.id] ?? []).filter(c => compatibleControl(control.kind, c)) as native}<option value={native.capability.id}>{controlLabel(native)} · {native.capability.reportId}:{native.capability.dataIndex}</option>{/each}</select></label><button class="secondary-button" disabled={busy || learning || !assigned.source.id} onclick={()=>action(()=>learn(assigned.source.id,{roleIndex:index,controlIndex}))}>Learn {control.id}</button>
+          {#if role.origin !== 'synthetic'}<label>{control.id}<select aria-label={'Source control for ' + role.name + ' ' + control.id} bind:value={assignments[index].controls[controlIndex].sourceControl} disabled={busy}><option value="">Choose matching control</option>{#each (controls[assigned.source.id] ?? []).filter(c => compatibleControl(control.kind, c)) as native}<option value={native.capability.id}>{controlLabel(native)} · {native.capability.reportId}:{native.capability.dataIndex}</option>{/each}</select></label><button class="secondary-button" disabled={busy || learning || !assigned.source.id || role.origin !== 'host-controller'} onclick={()=>action(()=>learn(assigned.source.id,{roleIndex:index,controlIndex}))}>Learn {control.id}</button>
           {:else if role.origin === 'synthetic' && status.running && status.profileId === profile.id}
             <div class="synthetic-control"><span>{control.id}</span>{#if control.kind.kind === 'button'}<button class="secondary-button" disabled={busy} onclick={() => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'button', value: true }))}>Press</button><button class="secondary-button" disabled={busy} onclick={() => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'button', value: false }))}>Release</button>
             {:else if control.kind.kind === 'axis'}<input aria-label={'Synthetic ' + control.id} type="range" min={control.kind.range === 'bipolar' ? -32768 : 0} max="32767" value="0" onchange={event => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'axis', value: Number(event.currentTarget.value) }))} />
@@ -209,6 +213,7 @@
 <section class="panel mapping-panel" aria-label="Recording preview">
   <div class="mapping-row"><h2>Recording preview</h2><span class="quiet-tag">{status.running ? status.ready ? 'Running' : 'Waiting for baseline' : 'Stopped'}</span><button class="secondary-button" disabled={!status.running && !learning} onclick={() => { void request({ command: 'mapping_stop' }).then(() => refresh()).catch(e => { error = String(e); }); }}>Stop mapping</button></div>
   {#if status.fault}<p class="notice amber-notice">{status.fault}</p>{/if}
+  <p class="muted">Panel events provide ordered button input and current axes. Hats are unavailable on this route.</p>
   <p class="muted">Preview reports do not send controls to games. The original controllers remain visible.</p>
   <div class="recording"><table><thead><tr><th>Report</th><th>Target</th><th>Reason</th><th>Pressed buttons</th><th>Axes</th><th>Hats</th></tr></thead><tbody>{#each records.slice().reverse() as item (item.cursor)}<tr><td>{item.report.sequence}</td><td>{item.report.target}</td><td>{item.report.reason}</td><td>{item.report.state.buttons.flatMap((pressed, i) => pressed ? [i + 1] : []).join(', ') || '—'}</td><td>{item.report.state.axes.join(', ') || '—'}</td><td>{item.report.state.hats.map(h => h === null ? 'neutral' : String(h)).join(', ') || '—'}</td></tr>{:else}<tr><td colspan="6">Start a preview and move an assigned control.</td></tr>{/each}</tbody></table></div>
 </section>

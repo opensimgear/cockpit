@@ -17,6 +17,8 @@ mod integration_runtime;
 mod local_gateway;
 mod output_leases;
 mod panel_events;
+mod mapping_panels;
+mod game_mapping;
 pub mod pico;
 mod protocol;
 mod runtime;

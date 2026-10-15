@@ -136,12 +136,14 @@ fn profile(value: &Value) -> Result<Value, String> {
                 "name",
                 "devices",
                 "integration",
+                "mapping",
             ],
         )
-        || value["schemaVersion"] != 1
+        || !matches!(value["schemaVersion"].as_u64(), Some(1 | 2))
     {
         return Err("Invalid game profile document.".into());
     }
+    crate::game_mapping::validate(value)?;
     identifier(&value["id"], 64)?;
     let game = game_id(&value["gameId"])?;
     value["name"]
@@ -464,6 +466,15 @@ impl GamesRuntime {
                     | "dcs_status"
                     | "controller_list"
                     | "controller_inspect"
+                    | "mapping_panel_sources"
+                    | "mapping_panel_inspect"
+                    | "mapping_capture"
+                    | "mapping_virtual_inspect"
+                    | "mapping_trace_export"
+                    | "controller_visibility_status"
+                    | "controller_visibility_restore"
+                    | "controller_visibility_inspect"
+                    | "controller_visibility_processes"
                     | "mapping_status"
                     | "mapping_recording"
                     | "mapping_stop"
@@ -557,9 +568,15 @@ impl GamesRuntime {
                 .journal_path
                 .with_file_name(format!("games.abandoned-{}.json", uuid::Uuid::new_v4()));
             fs::rename(&self.inner.journal_path, &archive).map_err(|e| e.to_string())?;
-            settings.journal = None;
+            let abandoned = settings.journal.take();
             settings.error = None;
             drop(settings);
+            if let Some(journal) = abandoned.filter(|j| !j["mapping"].is_null()) {
+                self.inner.call(
+                    "_game_mapping_abandon",
+                    json!({"mapping":journal["mapping"]}),
+                )?;
+            }
             self.inner.phase("idle", None);
             self.inner.step("Recovery journal archived. The current hardware and integration setup was kept; the previous setup was not restored.");
             self.inner.state.lock().unwrap_or_else(|p| p.into_inner())["recoveryArchive"] =
@@ -737,9 +754,10 @@ impl Drop for GamesRuntime {
 }
 
 fn validate_journal(value: Value) -> Result<Value, String> {
-    if value["schemaVersion"] != 1 {
+    if !matches!(value["schemaVersion"].as_u64(), Some(1 | 2)) {
         return Err("Unsupported recovery journal.".into());
     }
+    crate::game_mapping::journal(&value)?;
     game_id(&value["gameId"])?;
     identifier(&value["profileId"], 64)?;
     let rows = value["devices"]
@@ -881,6 +899,15 @@ impl Inner {
         }
     }
     fn snapshot(&self, profile: &Value, accepted: bool) -> Result<Value, String> {
+        crate::game_mapping::overlap(profile)?;
+        let mapping = if profile["mapping"].is_null() {
+            Value::Null
+        } else {
+            self.call(
+                "_game_mapping_snapshot",
+                json!({"capture":profile["mapping"]}),
+            )?
+        };
         let integration = self.call("integration_get_state", json!({}))?["integration"].clone();
         let dcs = self.call("dcs_status", json!({}))?["dcsBios"].clone();
         if !integration.is_object() || !dcs.is_object() {
@@ -935,7 +962,7 @@ impl Inner {
             return Err(BINDING_WARNING.into());
         }
         Ok(
-            json!({"schemaVersion":1,"gameId":profile["gameId"],"profileId":profile["id"],"devices":devices,
+            json!({"schemaVersion":profile["schemaVersion"],"mapping":mapping,"gameId":profile["gameId"],"profileId":profile["id"],"devices":devices,
             "baselineIntegration":integration["config"],"baselineIntegrationRunning":integration["running"]==true,
             "baselineDcs":dcs["config"],"baselineDcsRunning":dcs["running"]==true,"desiredIntegration":profile["integration"],
             "integrationTaken":false,"integrationChanged":false}),
@@ -1024,6 +1051,11 @@ impl Inner {
     }
     fn apply(&self, journal: &mut Value) -> Result<(), String> {
         self.phase("applying", None);
+        if !journal["mapping"].is_null() {
+            journal["mapping"]["taken"] = json!(true);
+            self.checkpoint(journal)?;
+            self.call("_game_mapping_take", json!({"mapping":journal["mapping"]}))?;
+        }
         journal["integrationTaken"] = json!(true);
         self.checkpoint(journal)?;
         self.call("integration_stop", json!({}))?;
@@ -1112,6 +1144,13 @@ impl Inner {
             journal = Some(snapshot);
             let j = journal.as_mut().unwrap();
             self.apply(j)?;
+            if !j["mapping"].is_null() {
+                self.cancelled()?;
+                j["mapping"]["armed"] = json!(true);
+                self.checkpoint(j)?;
+                self.call("_game_mapping_arm", json!({"mapping":j["mapping"]}))?;
+                self.step("Captured mapping armed with fresh input baselines.");
+            }
             let delayed = j["desiredIntegration"]["document"]["provider"] == "assetto-corsa-rally"
                 && j["desiredIntegration"]["connection"]["source"] == "shared-memory";
             if !delayed {
@@ -1162,12 +1201,22 @@ impl Inner {
             Ok(())
         })();
         let activation_error = result.err();
-        let recovery = journal.map(|j| self.restore(j)).unwrap_or(Ok(()));
+        let recovery = journal
+            .map(|j| self.restore_with_context(j, false))
+            .unwrap_or(Ok(()));
         self.finish(recovery, activation_error);
     }
-    fn restore(&self, mut journal: Value) -> Result<(), String> {
+    fn restore(&self, journal: Value) -> Result<(), String> {
+        self.restore_with_context(journal, true)
+    }
+    fn restore_with_context(&self, mut journal: Value, recovery: bool) -> Result<(), String> {
         self.phase("restoring", None);
         self.step("Restoring the previous peripheral and integration setup.");
+        if journal["mapping"]["taken"] == true {
+            self.call("_game_mapping_stop", json!({"mapping":journal["mapping"]}))?;
+            journal["mapping"]["stopped"] = json!(true);
+            self.checkpoint(&journal)?;
+        }
         if journal["integrationTaken"] == true {
             let current = self.call("integration_get_state", json!({}))?["integration"].clone();
             let expected = if journal["integrationChanged"] == true {
@@ -1278,6 +1327,18 @@ impl Inner {
             journal["integrationTaken"] = json!(false);
             journal["integrationChanged"] = json!(false);
             self.checkpoint(&journal)?;
+        }
+        if journal["mapping"]["taken"] == true && journal["mapping"]["resumed"] != true {
+            self.checkpoint(&journal)?;
+            self.call(
+                "_game_mapping_resume",
+                json!({"mapping":journal["mapping"],"recovery":recovery}),
+            )?;
+            journal["mapping"]["resumed"] = json!(true);
+            self.checkpoint(&journal)?;
+            if recovery {
+                self.step("Mapping stayed stopped after recovery; start it explicitly when ready.");
+            }
         }
         fs::remove_file(&self.journal_path).map_err(|e| e.to_string())?;
         self.settings
