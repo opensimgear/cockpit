@@ -540,3 +540,220 @@ fn a_native_source_cannot_exceed_its_control_bound_across_roles() {
         .contains("256 controls"));
     assert!(!native_id("cockpit-virtual:one"));
 }
+
+#[test]
+fn transformation_chains_layers_and_overlapping_pulses_stop_cleanly() {
+    use crate::rules::Rule;
+    let mut p = profile();
+    p.nodes
+        .iter_mut()
+        .filter(|n| n.id == "left-trigger" || n.id == "right-trigger")
+        .for_each(|n| {
+            n.operation = Operation::Transform {
+                rule: Rule::Pulse {
+                    duration_us: 1000,
+                    repeat_us: 0,
+                },
+            }
+        });
+    let mut e = create(p, assignments(), Counter(1)).unwrap();
+    e.accept(baseline("left", 1, false)).unwrap();
+    e.accept(baseline("right", 1, false)).unwrap();
+    e.accept(frame(
+        "left",
+        1,
+        2,
+        100,
+        Reason::Change,
+        vec![("trigger", Value::Button(true))],
+    ))
+    .unwrap();
+    e.accept(frame(
+        "right",
+        1,
+        2,
+        500,
+        Reason::Change,
+        vec![("trigger", Value::Button(true))],
+    ))
+    .unwrap();
+    e.advance(Counter(1100)).unwrap();
+    assert!(e.last["main"].buttons[0]);
+    e.advance(Counter(1500)).unwrap();
+    assert!(!e.last["main"].buttons[0]);
+    assert!(e.inspect(0)["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n["id"] == "left-trigger"));
+    let mut p = profile();
+    let node = p.nodes.iter_mut().find(|n| n.id == "left-trigger").unwrap();
+    node.inputs.push(Input::Source {
+        role: "right".into(),
+        control: "trigger".into(),
+    });
+    node.operation = Operation::Transform { rule: Rule::Gate };
+    let mut tail = node.clone();
+    tail.id = "tail".into();
+    tail.operation = Operation::Direct {
+        activation: Activation::Momentary,
+    };
+    tail.inputs = vec![Input::Node {
+        node: "left-trigger".into(),
+    }];
+    node.output = None;
+    p.nodes.push(tail);
+    // Remove the other producer so the output reflects only the gated chain.
+    p.nodes.retain(|n| n.id != "right-trigger");
+    let mut e = create(p, assignments(), Counter(1)).unwrap();
+    e.accept(baseline("left", 1, true)).unwrap();
+    e.accept(baseline("right", 1, true)).unwrap();
+    assert!(!e.last["main"].buttons[0]);
+    for (seq, pressed) in [(2, false), (3, true)] {
+        e.accept(frame(
+            "left",
+            1,
+            seq,
+            seq,
+            Reason::Change,
+            vec![("trigger", Value::Button(pressed))],
+        ))
+        .unwrap();
+    }
+    assert!(e.last["main"].buttons[0]);
+    e.accept(frame(
+        "right",
+        1,
+        2,
+        4,
+        Reason::Change,
+        vec![("trigger", Value::Button(false))],
+    ))
+    .unwrap();
+    assert!(!e.last["main"].buttons[0]);
+    e.accept(frame(
+        "right",
+        1,
+        3,
+        5,
+        Reason::Change,
+        vec![("trigger", Value::Button(true))],
+    ))
+    .unwrap();
+    assert!(!e.last["main"].buttons[0]);
+    e.stop();
+    assert!(e.rule_states.is_empty());
+}
+#[test]
+fn stop_during_macro_and_source_gap_cancel_temporal_owners() {
+    use crate::rules::{Rule, Step};
+    let mut p = profile();
+    p.nodes[0].operation = Operation::Transform {
+        rule: Rule::Macro {
+            steps: vec![
+                Step {
+                    after_us: 0,
+                    pressed: true,
+                },
+                Step {
+                    after_us: 1000,
+                    pressed: false,
+                },
+                Step {
+                    after_us: 2000,
+                    pressed: true,
+                },
+                Step {
+                    after_us: 3000,
+                    pressed: false,
+                },
+            ],
+        },
+    };
+    let mut e = create(p, assignments(), Counter(1)).unwrap();
+    e.accept(baseline("left", 1, false)).unwrap();
+    e.accept(baseline("right", 1, false)).unwrap();
+    e.accept(frame(
+        "left",
+        1,
+        2,
+        10,
+        Reason::Change,
+        vec![("trigger", Value::Button(true))],
+    ))
+    .unwrap();
+    e.stop();
+    assert!(e.rule_states.is_empty());
+    assert!(e.last.values().all(|s| s.buttons.iter().all(|b| !*b)));
+}
+
+#[test]
+fn source_loss_cancels_macro_deadlines_before_advancing_the_clock() {
+    use crate::rules::{Rule, Step};
+    let mut p = profile();
+    p.nodes[0].operation = Operation::Transform {
+        rule: Rule::Macro {
+            steps: vec![
+                Step {
+                    after_us: 0,
+                    pressed: true,
+                },
+                Step {
+                    after_us: 1000,
+                    pressed: false,
+                },
+                Step {
+                    after_us: 2000,
+                    pressed: true,
+                },
+                Step {
+                    after_us: 3000,
+                    pressed: false,
+                },
+            ],
+        },
+    };
+    let mut e = create(p, assignments(), Counter(1)).unwrap();
+    e.accept(baseline("left", 1, false)).unwrap();
+    e.accept(baseline("right", 1, false)).unwrap();
+    e.accept(frame(
+        "left",
+        1,
+        2,
+        10,
+        Reason::Change,
+        vec![("trigger", Value::Button(true))],
+    ))
+    .unwrap();
+    e.drain();
+    e.accept(frame("left", 1, 3, 10000, Reason::Gap, vec![]))
+        .unwrap();
+    assert!(e.drain().iter().all(|r| r.reason != ReportReason::Timer));
+    assert!(e.rule_states.is_empty());
+}
+#[test]
+fn long_repeat_catchup_is_bounded_even_when_output_reports_are_unchanged() {
+    use crate::rules::Rule;
+    let mut p = profile();
+    p.nodes[0].output = None;
+    p.nodes[0].operation = Operation::Transform {
+        rule: Rule::Pulse {
+            duration_us: 1000,
+            repeat_us: 2000,
+        },
+    };
+    let mut e = create(p, assignments(), Counter(1)).unwrap();
+    e.accept(baseline("left", 1, false)).unwrap();
+    e.accept(frame(
+        "left",
+        1,
+        2,
+        10,
+        Reason::Change,
+        vec![("trigger", Value::Button(true))],
+    ))
+    .unwrap();
+    assert!(e.advance(Counter(100_000_000)).is_err());
+    assert!(!e.active());
+    assert!(e.fault().unwrap().contains("timer work"));
+}

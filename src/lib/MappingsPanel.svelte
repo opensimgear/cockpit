@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import MappingEditor from './MappingEditor.svelte';
   import { gatewayRequest } from './gateway';
   import { controlLabel, type ControllerControl, type HostController } from './controllers';
-  import { capturedKind, compatibleControl, directProfile, importMapping, savedAssignments, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
+  import { capturedKind, compatibleControl, directProfile, oneToOneProfile, importMapping, savedAssignments, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
   let createSlot = $state(2);
   let createButtons = $state(32);
   let createHats = $state(1);
@@ -10,6 +11,9 @@
   const axisNames = ['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz', 'Slider', 'Dial', 'Wheel', 'Accelerator', 'Brake', 'Clutch', 'Steering', 'Aileron', 'Rudder', 'Throttle'];
   let slotAssignments = $state<Record<string, number>>({});
   let profiles = $state<MappingProfile[]>([]);
+  let inspectOffset = $state(0);
+  let learnTarget = $state<{roleIndex: number; controlIndex: number} | null>(null);
+  let learning = $state(false);
   let selected = $state('');
   let sources = $state<HostController[]>([]);
   let controls = $state<Record<string, ControllerControl[]>>({});
@@ -69,6 +73,7 @@
     profiles = all;
   }
   async function selectProfile(id: string) {
+    if(learning){await request({command:'mapping_stop'});learning=false;learnTarget=null;}
     selected = id; assignments = []; notice = '';
     const item = profiles.find(p => p.id === id);
     if (!item) return;
@@ -88,7 +93,16 @@
     if (disposed || polling || busy) return;
     polling = true;
     try {
-      status = await request({ command: 'mapping_status' });
+      status = await request({ command: 'mapping_status', inspect: true, offset: inspectOffset });
+      if(learning && !status.learning) learning=false;
+      if (learning && status.learning && status.learning.phase !== 'listening') {
+        learning=false;notice=status.learning.reason;
+        if(status.learning.candidates.length===1){
+          const learned=status.learning.candidates[0];
+          if(learnTarget && profile){const {roleIndex,controlIndex}=learnTarget;const native=controls[status.learning.sourceId]?.find(c=>c.capability.id===learned);if(native && compatibleControl(profile.roles[roleIndex].controls[controlIndex].kind,native)){assignments[roleIndex].controls[controlIndex].sourceControl=learned;}else notice='The learned control has a different kind. Choose a compatible control.';}
+          else newControl=learned;
+        }
+      }
       for (let page = 0; page < 8; page++) {
         const result = await request({ command: 'mapping_recording', after: cursor });
         if (result.gap) notice = 'Older preview reports expired. This display is only a recording viewer.';
@@ -109,7 +123,20 @@
     await request({ command: 'mapping_assignments_save', profileId: saved.id, assignments: result.assignments });
     await loadProfiles(); await selectProfile(saved.id); notice = 'Profile and local assignment saved. Start a recording preview when ready.';
   }
+  async function learn(id: string, target: {roleIndex:number;controlIndex:number} | null = null) {
+    await request({command:'mapping_stop'});
+    await loadControls(id);
+    await request({command:'mapping_learn_start',sourceId:id});
+    learnTarget=target;learning=true;notice='Move one control deliberately. Learning runs for up to 30 seconds and sends no output.';
+  }
+  async function createPreset() {
+    const result=oneToOneProfile(name,{origin:'host-controller',id:newSource},controls[newSource]??[]);
+    const saved=await importMapping(JSON.stringify(result.profile),request);
+    await request({command:'mapping_assignments_save',profileId:saved.id,assignments:result.assignments});
+    await loadProfiles();await selectProfile(saved.id);
+  }
   async function chooseSource(index: number, id: string) {
+    if(learning){await request({command:'mapping_stop'});learning=false;learnTarget=null;}
     const item = assignments[index];
     assignments[index] = { ...item, source: { ...item.source, id }, controls: item.controls.map(c => ({ ...c, sourceControl: '' })) };
     if (id) await loadControls(id);
@@ -138,6 +165,7 @@
     {:else}<label>Control<select bind:value={newControl}><option value="">Choose a control</option>{#each creatorControls as control}<option value={control.capability.id}>{controlLabel(control)} · {control.capability.reportId}:{control.capability.dataIndex}</option>{/each}</select></label>{/if}
     <button class="primary-button" disabled={busy || !name.trim() || (newSource !== 'synthetic' && !newControl)} onclick={() => action(create)}>Save direct mapping</button>
     <button class="secondary-button" disabled={busy} onclick={() => action(loadSources)}>Refresh sources</button>
+    {#if newSource!=='synthetic'}<button class="secondary-button" disabled={busy || learning} onclick={()=>action(()=>learn(newSource))}>Learn input without output</button><button class="secondary-button" disabled={busy} onclick={()=>action(createPreset)}>Save one-to-one preset</button>{/if}
   </div>
   <label class="import-file">Import profile JSON<input type="file" accept=".json,application/json" disabled={busy} onchange={event => { const file = event.currentTarget.files?.[0]; if (file) void action(async () => { if (file.size > 65536) throw new Error('Mapping files are limited to 65536 bytes.'); const saved = await importMapping(await file.text(), request); await loadProfiles(); await selectProfile(saved.id); }); event.currentTarget.value = ''; }} /></label>
   <p class="muted">Saving and importing never start a mapping, change controller layouts, or hide devices.</p>
@@ -152,7 +180,7 @@
         {#if role.origin === 'host-controller'}<label>Local controller<select value={assigned.source.id} disabled={busy} onchange={event => action(() => chooseSource(index, event.currentTarget.value))}><option value="">Choose a controller</option>{#each sources as source}<option value={source.id}>{source.name}{source.online ? '' : ' (offline)'}</option>{/each}</select></label>
         {:else}<p>{role.origin === 'synthetic' ? 'Synthetic inputs are controlled below during a recording preview.' : 'Panel-event sources await game-integration qualification.'}</p>{/if}
         <div class="assignment-controls">{#each role.controls as control, controlIndex}
-          {#if role.origin === 'host-controller'}<label>{control.id}<select aria-label={'Source control for ' + role.name + ' ' + control.id} bind:value={assignments[index].controls[controlIndex].sourceControl} disabled={busy}><option value="">Choose matching control</option>{#each (controls[assigned.source.id] ?? []).filter(c => compatibleControl(control.kind, c)) as native}<option value={native.capability.id}>{controlLabel(native)} · {native.capability.reportId}:{native.capability.dataIndex}</option>{/each}</select></label>
+          {#if role.origin === 'host-controller'}<label>{control.id}<select aria-label={'Source control for ' + role.name + ' ' + control.id} bind:value={assignments[index].controls[controlIndex].sourceControl} disabled={busy}><option value="">Choose matching control</option>{#each (controls[assigned.source.id] ?? []).filter(c => compatibleControl(control.kind, c)) as native}<option value={native.capability.id}>{controlLabel(native)} · {native.capability.reportId}:{native.capability.dataIndex}</option>{/each}</select></label><button class="secondary-button" disabled={busy || learning || !assigned.source.id} onclick={()=>action(()=>learn(assigned.source.id,{roleIndex:index,controlIndex}))}>Learn {control.id}</button>
           {:else if role.origin === 'synthetic' && status.running && status.profileId === profile.id}
             <div class="synthetic-control"><span>{control.id}</span>{#if control.kind.kind === 'button'}<button class="secondary-button" disabled={busy} onclick={() => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'button', value: true }))}>Press</button><button class="secondary-button" disabled={busy} onclick={() => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'button', value: false }))}>Release</button>
             {:else if control.kind.kind === 'axis'}<input aria-label={'Synthetic ' + control.id} type="range" min={control.kind.range === 'bipolar' ? -32768 : 0} max="32767" value="0" onchange={event => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'axis', value: Number(event.currentTarget.value) }))} />
@@ -164,8 +192,18 @@
     <div class="mapping-row"><button class="secondary-button" disabled={busy} onclick={() => action(async () => { await request({ command: 'mapping_assignments_save', profileId: profile.id, assignments }); notice = 'Local assignments saved.'; })}>Save assignments</button><button class="primary-button" disabled={busy} onclick={() => action(async () => { cursor = status.recordingCursor ?? '0'; records = []; await request({ command: 'mapping_preview_start', profileId: profile.id }); })}>Start recording preview</button></div>
   {:else}<p>Create or import a mapping profile to assign its inputs.</p>{/if}
 </section>
+{#if profile}{#key profile.id}<MappingEditor {profile} validate={text=>importMapping(text,request,true)} save={async draft=>{const saved=await importMapping(JSON.stringify(draft),request);await loadProfiles();notice='Draft saved. The running profile is unchanged until an explicit restart.';selected=saved.id;}}/>{/key}{/if}
+<section class="panel mapping-panel" aria-label="Live mapping inspector">
+  <h2>Raw, transformed and output inspector</h2>
+  <p>Display refreshes four times per second. Native input, timing and output continue independently. Buttons combine with OR; the first available axis/hat writer in the listed priority wins.</p>
+  {#if status.learning}<p role="status">Input learning: {status.learning.phase}. {status.learning.reason}</p>{#if status.learning.candidates.length>1}<p>Candidates: {status.learning.candidates.join(', ')}. Choose the intended control in its assignment.</p>{/if}{/if}
+  {#if status.inspector}
+    <div class="recording"><table><thead><tr><th>Rule</th><th>Raw / upstream</th><th>Transformed</th><th>Output</th><th>Contribution</th><th>Writer priority / OR</th><th>Next time (µs)</th></tr></thead><tbody>{#each status.inspector.nodes as node}<tr><td>{node.id}</td><td>{node.inputs.map(i=>i.raw ? 'raw '+i.raw.native+' / '+JSON.stringify(i.value) : JSON.stringify(i.value)).join(' · ')}</td><td>{JSON.stringify(node.value)}</td><td>{JSON.stringify(node.output)}</td><td>{JSON.stringify(node.contribution)}</td><td>{node.writers?.join(' → ')??'Intermediate'}</td><td>{node.nextUs??'—'}</td></tr>{/each}</tbody></table></div>
+    <div class="mapping-row"><button class="secondary-button" disabled={inspectOffset===0} onclick={()=>{inspectOffset=Math.max(0,inspectOffset-32);void refresh();}}>Previous rules</button><span>{inspectOffset+1}–{Math.min(inspectOffset+32,status.inspector.total)} of {status.inspector.total}</span><button class="secondary-button" disabled={inspectOffset+32>=status.inspector.total} onclick={()=>{inspectOffset+=32;void refresh();}}>Next rules</button></div>
+  {:else}<p>Start a recording preview to inspect rule ownership.</p>{/if}
+</section>
 <section class="panel mapping-panel" aria-label="Recording preview">
-  <div class="mapping-row"><h2>Recording preview</h2><span class="quiet-tag">{status.running ? status.ready ? 'Running' : 'Waiting for baseline' : 'Stopped'}</span><button class="secondary-button" disabled={!status.running} onclick={() => { void request({ command: 'mapping_stop' }).then(() => refresh()).catch(e => { error = String(e); }); }}>Stop mapping</button></div>
+  <div class="mapping-row"><h2>Recording preview</h2><span class="quiet-tag">{status.running ? status.ready ? 'Running' : 'Waiting for baseline' : 'Stopped'}</span><button class="secondary-button" disabled={!status.running && !learning} onclick={() => { void request({ command: 'mapping_stop' }).then(() => refresh()).catch(e => { error = String(e); }); }}>Stop mapping</button></div>
   {#if status.fault}<p class="notice amber-notice">{status.fault}</p>{/if}
   <p class="muted">Preview reports do not send controls to games. The original controllers remain visible.</p>
   <div class="recording"><table><thead><tr><th>Report</th><th>Target</th><th>Reason</th><th>Pressed buttons</th><th>Axes</th><th>Hats</th></tr></thead><tbody>{#each records.slice().reverse() as item (item.cursor)}<tr><td>{item.report.sequence}</td><td>{item.report.target}</td><td>{item.report.reason}</td><td>{item.report.state.buttons.flatMap((pressed, i) => pressed ? [i + 1] : []).join(', ') || '—'}</td><td>{item.report.state.axes.join(', ') || '—'}</td><td>{item.report.state.hats.map(h => h === null ? 'neutral' : String(h)).join(', ') || '—'}</td></tr>{:else}<tr><td colspan="6">Start a preview and move an assigned control.</td></tr>{/each}</tbody></table></div>

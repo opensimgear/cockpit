@@ -147,6 +147,7 @@ pub enum Activation {
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Operation {
     Direct { activation: Activation },
+    Transform { rule: crate::rules::Rule },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -195,6 +196,7 @@ pub struct Profile {
 }
 #[derive(Clone, Debug)]
 pub struct Compiled {
+    pub timer_reserve: usize,
     pub profile: Profile,
     pub order: Vec<usize>,
     pub kinds: BTreeMap<String, Kind>,
@@ -279,9 +281,10 @@ impl Profile {
         for (index, node) in self.nodes.iter().enumerate() {
             if !identifier(&node.id)
                 || nodes.insert(node.id.clone(), index).is_some()
-                || node.inputs.len() != 1
+                || node.inputs.is_empty()
+                || node.inputs.len() > 8
             {
-                return Err("Direct nodes require a unique ID and exactly one input.".into());
+                return Err("Nodes require a unique ID and one to eight inputs.".into());
             }
         }
         fn visit(
@@ -323,24 +326,35 @@ impl Profile {
         let mut writers: BTreeMap<Output, Vec<String>> = BTreeMap::new();
         for &index in &order {
             let node = &self.nodes[index];
-            let (kind, deps) = match &node.inputs[0] {
-                Input::Source { role, control } => {
-                    let role_definition = roles.get(role).ok_or("Unknown source role.")?;
-                    let kind = role_definition
-                        .controls
-                        .iter()
-                        .find(|c| c.id == *control)
-                        .ok_or("Unknown logical input control.")?
-                        .kind;
-                    (kind, BTreeSet::from([role.clone()]))
-                }
-                Input::Node { node } => (
-                    *kinds.get(node).ok_or("Unresolved input type.")?,
-                    dependencies
-                        .get(node)
-                        .ok_or("Unresolved input dependency.")?
-                        .clone(),
-                ),
+            let mut input_kinds = Vec::new();
+            let mut deps = BTreeSet::new();
+            for input in &node.inputs {
+                let (kind, input_deps) = match input {
+                    Input::Source { role, control } => {
+                        let role_definition = roles.get(role).ok_or("Unknown source role.")?;
+                        let kind = role_definition
+                            .controls
+                            .iter()
+                            .find(|c| c.id == *control)
+                            .ok_or("Unknown logical input control.")?
+                            .kind;
+                        (kind, BTreeSet::from([role.clone()]))
+                    }
+                    Input::Node { node } => (
+                        *kinds.get(node).ok_or("Unresolved input type.")?,
+                        dependencies
+                            .get(node)
+                            .ok_or("Unresolved input dependency.")?
+                            .clone(),
+                    ),
+                };
+                input_kinds.push(kind);
+                deps.extend(input_deps);
+            }
+            let kind = match &node.operation {
+                Operation::Direct { .. } if input_kinds.len() == 1 => input_kinds[0],
+                Operation::Direct { .. } => return Err("Direct mapping requires one input.".into()),
+                Operation::Transform { rule } => rule.validate(&input_kinds)?,
             };
             if let Some(output) = &node.output {
                 let target = targets
@@ -359,6 +373,25 @@ impl Profile {
             }
             kinds.insert(node.id.clone(), kind);
             dependencies.insert(node.id.clone(), deps);
+        }
+        let timer_reserve = self
+            .nodes
+            .iter()
+            .map(|n| match &n.operation {
+                Operation::Transform {
+                    rule: crate::rules::Rule::Gesture { .. },
+                } => 3,
+                Operation::Transform {
+                    rule: crate::rules::Rule::Pulse { .. },
+                } => 2,
+                Operation::Transform {
+                    rule: crate::rules::Rule::Macro { steps },
+                } => steps.len(),
+                _ => 0,
+            })
+            .sum::<usize>();
+        if timer_reserve > 256 {
+            return Err("Built-in transformations exceed the shared timer budget.".into());
         }
         let mut explicit = BTreeSet::new();
         for arbitration in &self.arbitration {
@@ -415,6 +448,7 @@ impl Profile {
             }
         }
         Ok(Compiled {
+            timer_reserve,
             profile: self.clone(),
             order,
             kinds,

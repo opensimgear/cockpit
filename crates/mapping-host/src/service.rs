@@ -95,6 +95,10 @@ impl Service {
                             let _ = router.pump(page);
                         }
                         let _ = router.flush_output();
+                        if let Some(learner) = router.learner.as_mut() {
+                            let page = input.stream_page(&learner.session, learner.cursor);
+                            learner.pump(page);
+                        }
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }
@@ -172,6 +176,7 @@ impl Service {
         matches!(
             command,
             "mapping_status"
+                | "mapping_learn_start"
                 | "mapping_preview_start"
                 | "mapping_stop"
                 | "mapping_recording"
@@ -212,12 +217,80 @@ impl Service {
                 .ok_or_else(|| "Select a saved mapping profile.".to_string())
         };
         match command {
+            "mapping_learn_start" => {
+                let id = request["sourceId"]
+                    .as_str()
+                    .ok_or("Choose a physical source to learn.")?;
+                let snapshot = self.capture.stream_snapshot(&[id.into()])?;
+                let learner = crate::learn::Learn::new(snapshot)?;
+                let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+                if router.runtime.token().is_ok() || router.status()["recoveryRequired"] == true {
+                    return Err(
+                        "Stop mapping and resolve output recovery before learning input.".into(),
+                    );
+                }
+                router.learner = Some(learner);
+                Ok(json!({"learning":router.learner.as_ref().map(|l|l.status())}))
+            }
             "mapping_status" => {
                 let mut status = self
                     .router
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .status();
+                {
+                    let router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+                    status["learning"] = json!(router.learner.as_ref().map(|l| l.status()));
+                    if request["inspect"].as_bool() == Some(true) {
+                        let offset = request.get("offset").map_or(Ok(0), |v| {
+                            v.as_u64()
+                                .filter(|v| *v <= 256)
+                                .ok_or("Invalid inspector page.")
+                        })? as usize;
+                        status["inspector"] = router
+                            .runtime
+                            .engine()
+                            .map(|e| e.inspect(offset))
+                            .unwrap_or(json!(null));
+                        if let Some(nodes) = status["inspector"]["nodes"].as_array_mut() {
+                            let ids = nodes
+                                .iter()
+                                .flat_map(|n| n["inputs"].as_array().into_iter().flatten())
+                                .filter(|i| i["native"]["source"]["origin"] == "host-controller")
+                                .filter_map(|i| i["native"]["source"]["id"].as_str())
+                                .map(str::to_owned)
+                                .collect::<BTreeSet<_>>()
+                                .into_iter()
+                                .collect::<Vec<_>>();
+                            if !ids.is_empty() {
+                                if let Ok(snapshot) = self.capture.stream_snapshot(&ids) {
+                                    for node in nodes {
+                                        if let Some(inputs) = node["inputs"].as_array_mut() {
+                                            for input in inputs {
+                                                if let Some(source) =
+                                                    snapshot.sources.iter().find(|s| {
+                                                        Some(s.id.as_str())
+                                                            == input["native"]["source"]["id"]
+                                                                .as_str()
+                                                    })
+                                                {
+                                                    if let Some(value) = input["native"]["control"]
+                                                        .as_str()
+                                                        .and_then(|id| {
+                                                            source.baseline.values.get(id)
+                                                        })
+                                                    {
+                                                        input["raw"] = json!(value);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
                 status["storageError"] = json!(settings.error);
                 status["outputRecovery"] = self.recovery_status();

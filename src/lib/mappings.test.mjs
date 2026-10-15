@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { capturedKind, compatibleControl, directProfile, importMapping, savedAssignments } from './mappings.ts';
+import { oneToOneProfile, operationPreset, builtins, draftDocument, capturedKind, compatibleControl, directProfile, importMapping, savedAssignments } from './mappings.ts';
 const native = (kind, min = 0) => ({ capability: { kind, min } });
 test('direct mappings retain provenance and never request optional integrations', () => {
   for (const kind of [{ kind: 'button' }, { kind: 'hat' }, { kind: 'axis', range: 'bipolar' }, { kind: 'axis', range: 'unipolar' }]) {
@@ -71,4 +71,25 @@ test('saved local assignments are paged without truncating native control IDs', 
   await assert.rejects(savedAssignments('p', async () => ({})));
   await assert.rejects(savedAssignments('p', async () => ({ roles: [{ role: 'x', controlCount: 257 }] })));
   await assert.rejects(savedAssignments('p', async r => r.role ? {} : { roles: [{ role: 'x', source, controlCount: 1 }] }));
+});
+
+test('built-in operation presets are bounded editable copies',()=>{
+ for(const kind of builtins){const first=operationPreset(kind);assert.equal(first.kind,'transform');assert.ok(first.rule.kind);first.rule.changed=true;assert.equal(operationPreset(kind).rule.changed,undefined);}
+ assert.equal(operationPreset('direct').activation,'momentary');assert.throws(()=>operationPreset('unknown'));
+ assert.equal(operationPreset('button-axis','unipolar').rule.range,'unipolar');
+});
+test('one-to-one presets preserve every source control without truncating layouts',()=>{
+ const control=(id,kind,min=0)=>({capability:{id,kind,min}});
+ const source={origin:'host-controller',id:'physical'};
+ const controls=[control('a','button'),control('b','axis',-1),control('c','axis'),control('d','hat'),control('e','diagnostic')];
+ const {profile,assignments}=oneToOneProfile('all',source,controls);
+ assert.equal(profile.nodes.length,4);assert.deepEqual(profile.targets[0].layout,{buttons:1,axes:[{range:'bipolar',fallback:0},{range:'unipolar',fallback:0}],hats:1});assert.deepEqual(assignments[0].controls.map(c=>c.sourceControl),['a','b','c','d']);
+ assert.throws(()=>oneToOneProfile('x',source,[]));assert.throws(()=>oneToOneProfile('x',source,Array.from({length:257},(_,i)=>control(String(i),'button'))));
+ for(const [kind,count] of [['button',129],['axis',17],['hat',5]]) assert.throws(()=>oneToOneProfile('x',source,Array.from({length:count},(_,i)=>control(String(i),kind))));
+ const text=JSON.stringify(profile);assert.deepEqual(draftDocument(text,profile.id),profile);assert.throws(()=>draftDocument(text,'different'));assert.throws(()=>draftDocument('x'.repeat(65537),profile.id));assert.throws(()=>draftDocument('{}','x'));
+});
+test('draft validation performs no profile write or run activation',async()=>{
+ const calls=[];const document={id:'draft'};
+ assert.deepEqual(await importMapping('{}',async r=>{calls.push(r.command);return r.command==='mapping_import_begin'?{uploadId:'u'}:r.command==='mapping_validate_commit'?{document}:{};},true),document);
+ assert.equal(calls.at(-1),'mapping_validate_commit');assert.ok(!calls.includes('mapping_import_commit'));
 });

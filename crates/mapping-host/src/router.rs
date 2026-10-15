@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 #[derive(Default)]
 pub struct Router {
+    pub learner: Option<crate::learn::Learn>,
     pub runtime: Runtime,
     session: String,
     cursor: u64,
@@ -74,6 +75,9 @@ impl Router {
             .is_some_and(|o| o.active() || o.recovery_required())
         {
             return Err("Stop or recover live output before replacing this mapping.".into());
+        }
+        if self.learner.as_ref().is_some_and(|l| l.active()) {
+            return Err("Stop input learning before starting a mapping.".into());
         }
         engine::validate_assignments(&profile, &assignments)?;
         if snapshot.session.is_empty() || snapshot.captured_us == 0 {
@@ -172,6 +176,7 @@ impl Router {
             });
         }
         let token = self.runtime.start(profile, assignments)?;
+        self.learner = None;
         self.expected = expected;
         self.synthetic_sequences = sequences;
         self.session = snapshot.session;
@@ -422,6 +427,7 @@ impl Router {
         Ok(())
     }
     pub fn stop_result(&mut self) -> Result<(), String> {
+        self.learner = None;
         self.runtime.stop();
         if let Some(output) = &mut self.output {
             if let Err(error) = output.stop() {

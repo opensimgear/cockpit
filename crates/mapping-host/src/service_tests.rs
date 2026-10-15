@@ -343,3 +343,28 @@ fn linux_templates_persist_and_limits_are_checked_without_native_creation() {
         .is_err());
     assert_eq!(calls.load(Ordering::Relaxed), 0);
 }
+
+#[test]
+fn bounded_inspector_does_not_change_run_or_activate_learning() {
+    let (service, _root, p, assignments, _) = setup();
+    service.request(&json!({"command":"mapping_assignments_save","profileId":p.id,"assignments":assignments})).unwrap();
+    assert!(service
+        .request(&json!({"command":"mapping_learn_start"}))
+        .is_err());
+    assert!(service
+        .request(&json!({"command":"mapping_learn_start","sourceId":"missing"}))
+        .is_err());
+    let started = service
+        .request(&json!({"command":"mapping_preview_start","profileId":p.id}))
+        .unwrap();
+    let view = service
+        .request(&json!({"command":"mapping_status","inspect":true,"offset":0}))
+        .unwrap();
+    assert_eq!(view["token"], started["token"]);
+    assert!(view["inspector"]["nodes"].as_array().unwrap().len() <= 32);
+    assert!(view["learning"].is_null());
+    assert!(service
+        .request(&json!({"command":"mapping_status","inspect":true,"offset":257}))
+        .is_err());
+    service.request(&json!({"command":"mapping_stop"})).unwrap();
+}

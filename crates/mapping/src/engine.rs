@@ -148,6 +148,7 @@ pub struct Engine {
     fault: Option<String>,
     armed: BTreeSet<String>,
     node_values: BTreeMap<String, Value>,
+    rule_states: BTreeMap<String, crate::rules::State>,
     contributions: BTreeMap<String, Value>,
     timers: BTreeMap<(u64, String), Timer>,
     reports: VecDeque<Report>,
@@ -265,6 +266,7 @@ impl Engine {
             fault: None,
             armed: BTreeSet::new(),
             node_values: BTreeMap::new(),
+            rule_states: BTreeMap::new(),
             contributions: BTreeMap::new(),
             timers: BTreeMap::new(),
             reports: VecDeque::new(),
@@ -320,59 +322,92 @@ impl Engine {
             .collect();
         for node in &affected {
             self.armed.remove(node);
+            self.rule_states.remove(node);
             self.node_values.remove(node);
             self.contributions.remove(node);
         }
         self.timers
             .retain(|_, timer| !affected.contains(&timer.token.node));
     }
-    fn evaluate(&mut self, source: &Source) {
+    fn input(&self, input: &Input) -> Option<Value> {
+        match input {
+            Input::Node { node } => self.node_values.get(node).copied(),
+            Input::Source { role, control } => {
+                let assignment = &self.assignments[role];
+                let state = &self.sources[&assignment.source];
+                if !state.available {
+                    return None;
+                }
+                let native = &assignment
+                    .controls
+                    .iter()
+                    .find(|c| c.control == *control)?
+                    .source_control;
+                state.values.get(native).copied()
+            }
+        }
+    }
+    fn evaluate(&mut self, source: Option<&Source>) {
+        let mut changed = BTreeSet::new();
         for &index in &self.compiled.order {
             let node = &self.compiled.profile.nodes[index];
-            if !self.affected(&node.id, source) {
+            if !source.is_some_and(|source| self.affected(&node.id, source))
+                && !self
+                    .rule_states
+                    .get(&node.id)
+                    .and_then(|s| s.next())
+                    .is_some_and(|at| at <= self.clock)
+                && !node
+                    .inputs
+                    .iter()
+                    .any(|i| matches!(i,Input::Node{node} if changed.contains(node)))
+            {
                 continue;
             }
-            let input = match &node.inputs[0] {
-                Input::Node { node } => self.node_values.get(node).copied(),
-                Input::Source { role, control } => {
-                    let assignment = &self.assignments[role];
-                    let state = &self.sources[&assignment.source];
-                    if state.available {
-                        let native = &assignment
-                            .controls
-                            .iter()
-                            .find(|c| c.control == *control)
-                            .expect("validated control")
-                            .source_control;
-                        state.values.get(native).copied()
-                    } else {
-                        None
+            changed.insert(node.id.clone());
+            let inputs = node
+                .inputs
+                .iter()
+                .map(|input| self.input(input))
+                .collect::<Option<Vec<_>>>();
+            let value = inputs.and_then(|values| match &node.operation {
+                Operation::Transform { rule } => self
+                    .rule_states
+                    .entry(node.id.clone())
+                    .or_default()
+                    .apply(rule, &values, self.compiled.kinds[&node.id], self.clock),
+                Operation::Direct { activation } => {
+                    let mut value = values[0];
+                    if let (Activation::Momentary, Value::Button(pressed)) = (activation, value) {
+                        if !pressed {
+                            self.armed.insert(node.id.clone());
+                        }
+                        value = Value::Button(pressed && self.armed.contains(&node.id));
                     }
+                    Some(value)
                 }
-            };
-            let Some(mut value) = input else {
+            });
+            if let Some(value) = value {
+                self.node_values.insert(node.id.clone(), value);
+                if node.output.is_some() {
+                    self.contributions.insert(node.id.clone(), value);
+                }
+            } else {
                 self.node_values.remove(&node.id);
                 self.contributions.remove(&node.id);
                 self.armed.remove(&node.id);
-                continue;
-            };
-            if let (
-                Operation::Direct {
-                    activation: Activation::Momentary,
-                },
-                Value::Button(pressed),
-            ) = (&node.operation, value)
-            {
-                if !pressed {
-                    self.armed.insert(node.id.clone());
-                }
-                value = Value::Button(pressed && self.armed.contains(&node.id));
-            }
-            self.node_values.insert(node.id.clone(), value);
-            if node.output.is_some() {
-                self.contributions.insert(node.id.clone(), value);
+                self.rule_states.remove(&node.id);
             }
         }
+    }
+    pub fn inspect(&self, offset: usize) -> serde_json::Value {
+        let nodes=self.compiled.profile.nodes.iter().skip(offset).take(32).map(|node|serde_json::json!({
+            "id":node.id,"inputs":node.inputs.iter().map(|i|serde_json::json!({"input":i,"value":self.input(i),"native":match i {Input::Source{role,control}=>{let a=&self.assignments[role];serde_json::json!({"source":a.source,"control":a.controls.iter().find(|c|c.control==*control).map(|c|&c.source_control)})},_=>serde_json::Value::Null}})).collect::<Vec<_>>(),
+            "operation":node.operation,"output":node.output,"value":self.node_values.get(&node.id),"contribution":self.contributions.get(&node.id),
+            "nextUs":self.rule_states.get(&node.id).and_then(|s|s.next()).map(Counter),
+            "writers":node.output.as_ref().and_then(|o|self.compiled.writers.get(o))
+        })).collect::<Vec<_>>();
+        serde_json::json!({"nodes":nodes,"offset":offset,"total":self.compiled.profile.nodes.len(),"token":self.run_token(),"atUs":Counter(self.clock),"outputs":self.last})
     }
     pub fn accept(&mut self, frame: Frame) -> Result<(), String> {
         if !self.active {
@@ -443,6 +478,7 @@ impl Engine {
                 .collect();
             self.timers
                 .retain(|_, timer| !affected.contains(&timer.token.node));
+            self.rule_states.retain(|node, _| !affected.contains(node));
         }
         self.advance(Counter(self.clock.max(frame.captured_us.0)))?;
         if matches!(frame.reason, Reason::Gap | Reason::Disconnect) || gap {
@@ -466,7 +502,7 @@ impl Engine {
         state.captured_us = frame.captured_us.0;
         state.available = true;
         state.values.extend(changes);
-        self.evaluate(&frame.source);
+        self.evaluate(Some(&frame.source));
         self.publish(
             if frame.reason == Reason::Baseline {
                 ReportReason::Baseline
@@ -534,7 +570,7 @@ impl Engine {
         let owned = format!("{}:{id}", token.node);
         let replacing = self.timers.keys().any(|(_, key)| *key == owned);
         if !replacing
-            && (self.timers.len() >= MAX_TIMERS
+            && (self.timers.len() + self.compiled.timer_reserve >= MAX_TIMERS
                 || self
                     .timers
                     .values()
@@ -563,15 +599,35 @@ impl Engine {
         if now.0 < self.clock {
             return Err("Mapping time cannot move backwards.".into());
         }
-        while self
-            .timers
-            .first_key_value()
-            .is_some_and(|((at, _), _)| *at <= now.0)
-        {
-            let ((at, _), timer) = self.timers.pop_first().expect("due timer");
-            if self.validate_intent(&timer.token, timer.value).is_ok() {
-                self.contributions.insert(timer.token.node, timer.value);
+        let mut transitions = 0;
+        loop {
+            let external = self.timers.first_key_value().map(|((at, _), _)| *at);
+            let internal = self.rule_states.values().filter_map(|s| s.next()).min();
+            let Some(at) = external
+                .into_iter()
+                .chain(internal)
+                .min()
+                .filter(|at| *at <= now.0)
+            else {
+                break;
+            };
+            transitions += 1;
+            if transitions > MAX_REPORTS {
+                self.fault = Some("Transformation timer work exceeded its bound.".into());
+                self.stop();
+                return Err("Transformation timer work exceeded its bound.".into());
+            }
+            self.clock = at;
+            if internal == Some(at) {
+                self.evaluate(None);
                 self.publish(ReportReason::Timer, at, false);
+            }
+            if external == Some(at) {
+                let (_, timer) = self.timers.pop_first().expect("due timer");
+                if self.validate_intent(&timer.token, timer.value).is_ok() {
+                    self.contributions.insert(timer.token.node, timer.value);
+                    self.publish(ReportReason::Timer, at, false);
+                }
             }
             if !self.active {
                 return Err("Mapping report queue overflow.".into());
@@ -589,6 +645,7 @@ impl Engine {
         self.contributions.clear();
         self.node_values.clear();
         self.armed.clear();
+        self.rule_states.clear();
         for state in self.sources.values_mut() {
             state.available = false;
             state.values.clear();
@@ -643,8 +700,10 @@ impl Engine {
             self.active = false;
             self.contributions.clear();
             self.timers.clear();
+            self.rule_states.clear();
             self.node_values.clear();
             self.armed.clear();
+            self.rule_states.clear();
             for state in self.sources.values_mut() {
                 state.available = false;
                 state.values.clear();
