@@ -30,7 +30,7 @@ implementation closure of #30 without enabling live output or claiming the
 transferred check passed. Linux/macOS remain deferred separately.
 
 Local CI against a clean committed source export passes the frontend type/Svelte
-check (zero errors/warnings), transport tests, all nine frontend coverage commands
+check (zero errors/warnings), transport tests, all frontend coverage commands
 and UI production build. Portable mapping coverage passes all nine modules
 (minimum 92.72%); the rules module has 97.87%. Windows mapping-host coverage also
 passes all six modules (minimum 72.99%). These automated checks cover the delivered
