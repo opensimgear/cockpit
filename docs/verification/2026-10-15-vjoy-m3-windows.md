@@ -258,3 +258,40 @@ fixture arrival; `7f26f3f` uses a bounded full-datagram peek buffer for Windows
 WSAEMSGSIZE behavior. The owning task validated the last fix with nine provider
 tests and 100 lifecycle repetitions on Windows and Linux. These fixture failures
 must not be represented as passing overall checkpoint CI.
+
+## Source loss, Stop and stale lease
+
+The game remained closed for these checks. Independent WinMM observation recorded
+the right Gladiator and both virtual slots while the isolated production mapping
+host ran. Unplugging the held-trigger source produced source-lost recording entries
+3899/3900 and fallback on both virtual slots at observer times 62,504/62,505 ms:
+axes centred, buttons released and hats neutral. Reconnection at 82,302 ms did not
+replay the held initial state; forwarding resumed from the fresh released baseline.
+The mapping supervisor survived and reported no fault after reconnect.
+
+For normal Stop, the user held trigger and hat-up. Both virtual slots first showed
+button 1 pressed and POV up. The actual `mapping_stop` request then returned with
+running false, no fault and no pending recovery. Both slots reached fallback at
+545,541 ms while the physical controls were still held. A separate SDK inspection
+confirmed slots 1, 2 and 3 free. The user was then cued to release the controls.
+
+A separate bounded native Session probe deliberately withheld renewals after
+submitting nonneutral reports. WinMM recorded both slots nonneutral at
+843,122/843,123 ms and fallback at 843,371 ms. The feeder explicitly reported
+heartbeat expiry; the surviving supervisor recovered successfully, left a clean
+durable journal and verified both slots free. A requested seven-button layout
+against the actual eight-button slot 2 was separately rejected with identical
+before/after layouts and ownership. These probes used the unchanged production
+250 ms lease; diagnostic logging did not change timing policy or production gates.
+
+One earlier Stop attempt was deliberately not counted: before a Stop request was
+sent, another spontaneous feeder exit had already returned output to fallback.
+The host survived, but its cause remains under investigation. Scratch-only stderr
+and host-loop-gap diagnostics were added before the successful Stop retry. This
+unexplained exit and the outstanding deliberate feeder-death/whole-process and
+ownership/provisioning checks keep the issue open and production output disabled.
+
+Checkpoint `40a488591d34d211b1659332d9a4420b77c8df94` subsequently passed all
+11 jobs in [CI run 38747838000](https://github.com/opensimgear/cockpit/actions/runs/38747838000),
+including native controller jobs on Windows, Linux and macOS. The native hardware
+results above remain separate from automated CI; criteria 4–6 remain unchecked.
