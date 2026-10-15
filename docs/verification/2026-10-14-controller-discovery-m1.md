@@ -38,8 +38,50 @@ The requested Windows Tauri dev app was built and launched successfully. Because
 
 ## Qualification still open
 
-Physical unplug/replug, simultaneous identical hardware, port moves, deliberate button/axis/hat movements under a foreground game, additional racing/flight models and latency/overload measurements still need production-adapter qualification. Fixtures establish software behavior, not those hardware claims. M0's earlier foreground-game probe remains evidence for that prototype only.
+The physical background-capture, same-port reconnect and port-change checks below
+supersede those gaps for the tested Gladiator. Simultaneous identical hardware,
+signed-axis hardware and matching monitor display, additional racing/flight
+models and latency/overload measurements remain open. M0's earlier foreground-game
+probe remains evidence for that prototype only.
 
 The native UI inspection tool and browser inspection tool both failed to initialize with `windows sandbox failed: helper_unknown_error: setup refresh had errors`. Native process responsiveness, actual service IPC, Svelte validation and compilation were verified; a visual layout acceptance check was not completed.
 
 Linux/macOS capture, output and visibility capabilities remain unavailable until their separate implementation and qualification milestones. Inverse HidHide and the remaining driver/game gates from M0 stay open.
+
+## Interactive Windows checks — 15 October 2026
+
+The user explicitly performed these actions after a capture-start cue. An ignored
+probe at `.research/review-audit/capture` links the production
+`osg-controller-input` crate, starts `ControllerService::new(None, true)`, and
+records descriptors, nonconsuming stream pages, availability transitions and the
+foreground window's process ID for 75 seconds. It does not persist settings,
+emit virtual reports, acquire controllers exclusively or apply hiding.
+Production capture code is unchanged from commit `689ba6c`.
+
+The physical device reports `VKBsim Gladiator EVO R`, VID `231D`, PID `0200`.
+Its descriptor contains four unsigned axes, 128 buttons, one hat and four
+diagnostic fields. This does not qualify signed-axis hardware or MOZA devices.
+
+| Check | Observation | Acceptance implication |
+| --- | --- | --- |
+| Foreground-game capture | 5,976 reports; 5,889 with process 33284 (`acr`, window `Assetto Corsa Rally`) in the foreground. Four axes traversed their full declared ranges: X/Y 0–4095, Z/Rz 0–2047. 23 buttons changed between 0 and 1; the hat visited all eight directions and null/neutral 8. Zero stream gaps. | Production background input verified for this hardware. Criterion 2 remains unchecked because signed-axis hardware and matching live monitor display are still outstanding. |
+| Unplug / same-port reconnect | At 22.366 s, `online` and `baselineReady` became false and a disconnect event arrived. At 38.671 s, the same source ID became available with generation 2, a fresh baseline and 1,571 subsequent reports. Zero gaps. | Criterion 5, unplug clears availability, is verified. |
+| USB port change | At 20.344 s the original local-path identity went offline. At 26.370 s a different ID appeared with its own fresh baseline while the old identity stayed offline. Zero gaps. Return to the original port was not observed within the timed capture. | Port change does not silently transfer assignments. Criterion 1 remains unchecked for the simultaneous identical-controller matrix. |
+
+Private raw observations and summaries remain under `.research/review-audit`.
+SHA-256 hashes of the three JSONL records, in table order:
+
+- `9355cfdd4220341a624756e2060f53c7f41fbc1cf90db83fcc7130264a2ae0e7`
+- `fc85f868293586421a2cc5481c07d212f06579455e390f7158909d7ad9c17112`
+- `68160e96730240d5ed26539660868e52ed488f01c0b04242ef4d930d8c4e8a53`
+
+Issue #22 remains open/In review with 5/7 acceptance criteria checked. No output,
+hiding, script or platform qualification gate changes as a result of these checks.
+
+The user also connected a left-hand Gladiator. A separate production inventory
+observed both units simultaneously with different source IDs and complete
+baselines: right `231D:0200` and left `231D:3201` (`VKBsim Gladiator EVO OT L`).
+The left descriptor has six unsigned axes (X/Y 0–4095, Z/Rz 0–2047, Rx/Ry
+0–1023). These are different product identities, so this inspection does not
+complete the identical-device or signed-axis criteria. The inspection is saved
+as `.research/review-audit/windows-pair-inspect.jsonl`.
