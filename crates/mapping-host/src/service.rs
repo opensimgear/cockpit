@@ -55,6 +55,7 @@ pub struct Service {
     before_start: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     persistence: Mutex<()>,
+    compilation: Mutex<()>,
     settings: Mutex<crate::settings::Settings>,
 }
 impl Service {
@@ -126,6 +127,7 @@ impl Service {
             before_start: Mutex::new(None),
             worker: Mutex::new(worker),
             persistence: Mutex::new(()),
+            compilation: Mutex::new(()),
         }
     }
     fn recovery_path(&self) -> Result<PathBuf, String> {
@@ -175,7 +177,9 @@ impl Service {
     pub fn handles(command: &str) -> bool {
         matches!(
             command,
-            "mapping_status"
+            "mapping_script_validate"
+                | "mapping_trace_export"
+                | "mapping_status"
                 | "mapping_learn_start"
                 | "mapping_preview_start"
                 | "mapping_stop"
@@ -217,6 +221,39 @@ impl Service {
                 .ok_or_else(|| "Select a saved mapping profile.".to_string())
         };
         match command {
+            "mapping_script_validate" => {
+                let _compile = self
+                    .compilation
+                    .try_lock()
+                    .map_err(|_| "A script compilation is already running.")?;
+                let source = request["sourceCode"]
+                    .as_str()
+                    .filter(|s| !s.is_empty() && s.len() <= 16384)
+                    .ok_or("Script source must contain 1–16384 bytes.")?;
+                let worker = osg_logic::worker::Worker::spawn(
+                    &std::env::current_exe().map_err(|e| e.to_string())?,
+                    source,
+                )?;
+                Ok(json!({"compiled":true,"sourceHash":worker.source_hash}))
+            }
+
+            "mapping_trace_export" => {
+                let router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+                if router.runtime.token().is_ok() {
+                    return Err("Stop mapping before exporting its completed trace.".into());
+                }
+                let bytes = router.runtime.trace.export()?;
+                let offset = request["offset"]
+                    .as_u64()
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or("Trace offset required.")?;
+                if offset > bytes.len() {
+                    return Err("Invalid trace offset.".into());
+                }
+                let end = (offset + 8192).min(bytes.len());
+                Ok(json!({"bytes":&bytes[offset..end],"next":end,"total":bytes.len()}))
+            }
+
             "mapping_learn_start" => {
                 let id = request["sourceId"]
                     .as_str()
@@ -416,6 +453,30 @@ impl Service {
                 let store = self.store()?;
                 let profile = store.load(profile_id()?)?;
                 let assignments = store.load_assignments(profile_id()?)?;
+                // Compile outside the router/capture locks. Stop invalidates the lifecycle while this waits.
+                let _compile = self
+                    .compilation
+                    .try_lock()
+                    .map_err(|_| "A script compilation is already running.")?;
+                let mut workers = std::collections::BTreeMap::new();
+                if live && !profile.scripts.is_empty() {
+                    return Err("Live script output remains disabled pending qualification.".into());
+                }
+                for script in &profile.scripts {
+                    if self.lifecycle.load(Ordering::Acquire) != epoch {
+                        return Err(
+                            "Script compilation was superseded by Stop or a newer Start.".into(),
+                        );
+                    }
+                    workers.insert(
+                        script.id.clone(),
+                        osg_logic::worker::Worker::spawn(
+                            &std::env::current_exe().map_err(|e| e.to_string())?,
+                            &script.source,
+                        )
+                        .map_err(|error| format!("Script {}: {error}", script.id))?,
+                    );
+                }
                 let ids: Vec<String> = assignments
                     .iter()
                     .filter(|a| a.source.origin == Origin::HostController)
@@ -462,7 +523,7 @@ impl Service {
                         Some(self.recovery_path()?),
                     )?
                 } else {
-                    router.start(profile, assignments, snapshot)?
+                    router.start_prepared(profile, assignments, snapshot, workers)?
                 };
                 Ok(json!({"token":token,"preview":router.status()}))
             }

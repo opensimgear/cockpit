@@ -68,6 +68,7 @@ impl RecordingSink {
 }
 /// Explicit lifecycle around the pure reducer. Import/save are separate operations.
 pub struct Runtime {
+    pub trace: crate::trace::Capture,
     session: String,
     engine: Option<Engine>,
     generation: u64,
@@ -76,6 +77,7 @@ pub struct Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self {
+            trace: Default::default(),
             session: uuid::Uuid::new_v4().to_string(),
             engine: None,
             generation: 0,
@@ -125,12 +127,13 @@ impl Runtime {
             .ok_or("Run generation exhausted.")?;
         // Fully validate the candidate before disturbing a currently active run.
         let next = Engine::new(
-            profile,
-            assignments,
+            profile.clone(),
+            assignments.clone(),
             Counter(generation),
             self.session.clone(),
         )?;
         self.stop();
+        self.trace = crate::trace::Capture::start(profile, assignments);
         self.generation = generation;
         self.engine = Some(next);
         self.flush();
@@ -142,12 +145,74 @@ impl Runtime {
         }
     }
     pub(crate) fn accept(&mut self, frame: Frame) -> Result<(), String> {
-        let result = self.engine.as_mut().ok_or("No mapping run.")?.accept(frame);
+        let result = self
+            .engine
+            .as_mut()
+            .ok_or("No mapping run.")?
+            .accept(frame.clone());
+        if result.is_ok() {
+            self.trace.push(crate::trace::Step::Input { frame });
+        } else {
+            self.trace.error = Some("Invalid input interrupted this trace.".into());
+        }
         self.flush();
         result
     }
     pub(crate) fn advance(&mut self, now: Counter) -> Result<(), String> {
         let result = self.engine.as_mut().ok_or("No mapping run.")?.advance(now);
+        if result.is_ok() {
+            self.trace.push(crate::trace::Step::Advance { at: now });
+        }
+        self.flush();
+        result
+    }
+    pub fn script_requests(&mut self) -> Vec<(String, crate::script::Invocation)> {
+        let result = self
+            .engine
+            .as_mut()
+            .map_or_else(Vec::new, Engine::script_requests);
+        if !result.is_empty() {
+            self.trace.push(crate::trace::Step::Dispatch {
+                requests: result.clone(),
+            });
+        }
+        self.flush();
+        result
+    }
+    pub fn script_fault(&mut self, id: &str, reason: &str) {
+        self.trace.push(crate::trace::Step::ScriptFault {
+            id: id.into(),
+            reason: reason.into(),
+        });
+        if let Some(engine) = self.engine.as_mut() {
+            engine.script_fault(id, reason);
+        }
+        self.flush();
+    }
+    pub fn script_reply(
+        &mut self,
+        id: &str,
+        ticket: &crate::script::Ticket,
+        transaction: crate::script::Transaction,
+    ) -> Result<(), String> {
+        let result = self.engine.as_mut().ok_or("No mapping run.")?.script_reply(
+            id,
+            ticket,
+            transaction.clone(),
+        );
+        if result.is_ok() {
+            self.trace.push(crate::trace::Step::ScriptReply {
+                id: id.into(),
+                sequence: ticket.sequence,
+                epoch: ticket.epoch,
+                transaction,
+            });
+        } else if let Err(error) = &result {
+            self.trace.push(crate::trace::Step::ScriptFault {
+                id: id.into(),
+                reason: error.clone(),
+            });
+        }
         self.flush();
         result
     }
@@ -165,6 +230,9 @@ impl Runtime {
     }
     pub fn stop(&mut self) {
         if let Some(engine) = &mut self.engine {
+            if engine.active() {
+                self.trace.push(crate::trace::Step::Stop);
+            }
             engine.stop();
         }
         self.flush();

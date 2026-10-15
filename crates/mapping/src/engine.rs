@@ -153,6 +153,7 @@ pub struct Engine {
     timers: BTreeMap<(u64, String), Timer>,
     reports: VecDeque<Report>,
     last: BTreeMap<String, TargetState>,
+    scripts: BTreeMap<String, crate::script::Instance>,
 }
 fn native_id(id: &str) -> bool {
     !id.is_empty()
@@ -271,7 +272,11 @@ impl Engine {
             timers: BTreeMap::new(),
             reports: VecDeque::new(),
             last: BTreeMap::new(),
+            scripts: BTreeMap::new(),
         };
+        for script in &engine.compiled.profile.scripts {
+            engine.scripts.insert(script.id.clone(), Default::default());
+        }
         engine.publish(ReportReason::Start, 1, true);
         Ok(engine)
     }
@@ -308,6 +313,7 @@ impl Engine {
             .any(|role| self.assignments[role].source == *source)
     }
     fn invalidate(&mut self, source: &Source) {
+        self.invalidate_scripts(source);
         if let Some(state) = self.sources.get_mut(source) {
             state.available = false;
             state.values.clear();
@@ -468,6 +474,7 @@ impl Engine {
                 Reason::Baseline | Reason::Gap | Reason::Disconnect
             )
         {
+            self.invalidate_scripts(&frame.source);
             let affected: BTreeSet<_> = self
                 .compiled
                 .profile
@@ -503,6 +510,7 @@ impl Engine {
         state.available = true;
         state.values.extend(changes);
         self.evaluate(Some(&frame.source));
+        self.queue_scripts(Some(&frame.source), serde_json::json!({"reason":frame.reason,"source":frame.source,"sequence":frame.sequence}));
         self.publish(
             if frame.reason == Reason::Baseline {
                 ReportReason::Baseline
@@ -521,10 +529,9 @@ impl Engine {
         if !self.active
             || !self
                 .compiled
-                .profile
-                .nodes
-                .iter()
-                .any(|n| n.id == node && n.output.is_some())
+                .writers
+                .values()
+                .any(|owners| owners.iter().any(|owner| owner == node))
         {
             return Err("An active declared output producer is required.".into());
         }
@@ -561,6 +568,9 @@ impl Engine {
         value: Value,
     ) -> Result<(), String> {
         self.validate_intent(&token, value)?;
+        if token.node.contains(':') {
+            return Err("Script timers belong to validated script transactions.".into());
+        }
         if !profile::identifier(&id)
             || at.0 < self.clock
             || at.0.saturating_sub(self.clock) > 86_400_000_000
@@ -570,7 +580,10 @@ impl Engine {
         let owned = format!("{}:{id}", token.node);
         let replacing = self.timers.keys().any(|(_, key)| *key == owned);
         if !replacing
-            && (self.timers.len() + self.compiled.timer_reserve >= MAX_TIMERS
+            && (self.timers.len()
+                + self.compiled.timer_reserve
+                + self.scripts.values().map(|s| s.timers.len()).sum::<usize>()
+                >= MAX_TIMERS
                 || self
                     .timers
                     .values()
@@ -634,6 +647,7 @@ impl Engine {
             }
         }
         self.clock = now.0;
+        self.queue_script_timers();
         Ok(())
     }
     pub fn stop(&mut self) {
@@ -641,6 +655,7 @@ impl Engine {
             return;
         }
         self.active = false;
+        self.clear_scripts();
         self.timers.clear();
         self.contributions.clear();
         self.node_values.clear();
@@ -698,6 +713,7 @@ impl Engine {
         if self.reports.len() + updates.len() > MAX_REPORTS {
             self.reports.clear();
             self.active = false;
+            self.clear_scripts();
             self.contributions.clear();
             self.timers.clear();
             self.rule_states.clear();
@@ -728,6 +744,8 @@ impl Engine {
         }
     }
 }
+#[path = "script_engine.rs"]
+mod script_engine;
 #[cfg(test)]
 #[path = "engine_tests.rs"]
 mod tests;

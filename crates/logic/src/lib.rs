@@ -1,0 +1,8 @@
+//! Restricted Rhai evaluation runs only in a disposable child process.
+pub mod evaluator;
+mod resources;
+pub mod wire;
+pub mod worker;
+pub use worker::helper_main;
+
+pub mod replay;

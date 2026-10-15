@@ -9,3 +9,8 @@ pub mod store;
 pub mod trace;
 
 pub mod rules;
+
+pub mod script;
+
+#[cfg(test)]
+mod script_tests;

@@ -118,6 +118,10 @@ jobs:
           python-version: "3.12"
       - name: Portable framing, readiness, source and visibility contracts
         run: python -m unittest discover -s .research/controller-mapping-m0 -v
+      - name: Install logic coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Production script worker budgets, replay and per-module coverage
+        run: python scripts/logic-coverage.py
       - name: Bounded Rhai evaluation
         run: cargo test --locked --manifest-path .research/controller-mapping-m0/rhai/Cargo.toml
       - name: Compile Windows background-capture experiment

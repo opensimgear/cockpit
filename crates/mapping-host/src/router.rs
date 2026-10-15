@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 #[derive(Default)]
 pub struct Router {
+    scripts: BTreeMap<String, osg_logic::worker::Worker>,
     pub learner: Option<crate::learn::Learn>,
     pub runtime: Runtime,
     session: String,
@@ -69,6 +70,24 @@ impl Router {
         assignments: Vec<Assignment>,
         snapshot: stream::Snapshot,
     ) -> Result<RunToken, String> {
+        self.start_prepared(profile, assignments, snapshot, BTreeMap::new())
+    }
+    pub fn start_prepared(
+        &mut self,
+        profile: Profile,
+        assignments: Vec<Assignment>,
+        snapshot: stream::Snapshot,
+        workers: BTreeMap<String, osg_logic::worker::Worker>,
+    ) -> Result<RunToken, String> {
+        if workers.len() != profile.scripts.len()
+            || profile.scripts.iter().any(|script| {
+                workers.get(&script.id).is_none_or(|worker| {
+                    worker.source_hash != osg_logic::worker::hash(&script.source)
+                })
+            })
+        {
+            return Err("Every script must compile in its own helper before activation.".into());
+        }
         if self
             .output
             .as_ref()
@@ -176,6 +195,10 @@ impl Router {
             });
         }
         let token = self.runtime.start(profile, assignments)?;
+        if let Some(trace) = self.runtime.trace.trace.as_mut() {
+            trace.metadata["nativeCapabilities"]=serde_json::json!(snapshot.sources.iter().map(|source|serde_json::json!({"id":source.id,"controls":source.controls,"generation":source.baseline.generation.to_string()})).collect::<Vec<_>>());
+        }
+        self.scripts = workers;
         self.learner = None;
         self.expected = expected;
         self.synthetic_sequences = sequences;
@@ -188,6 +211,7 @@ impl Router {
                 return self.fail(error);
             }
         }
+        self.poll_scripts();
         Ok(token)
     }
     fn changes(
@@ -277,6 +301,7 @@ impl Router {
             self.now = page.captured_us;
             Ok(())
         })();
+        self.poll_scripts();
         match result {
             Ok(()) => Ok(()),
             Err(error) => self.fail(error),
@@ -310,7 +335,52 @@ impl Router {
             },
         )?;
         *sequence = next;
+        self.poll_scripts();
         Ok(())
+    }
+    pub fn poll_scripts(&mut self) {
+        let mut obsolete = Vec::new();
+        for (id, worker) in &mut self.scripts {
+            if self.runtime.engine().is_none_or(|e| !e.script_enabled(id)) {
+                obsolete.push(id.clone());
+                continue;
+            }
+            if worker.pending().is_some_and(|ticket| {
+                self.runtime
+                    .engine()
+                    .is_none_or(|e| !e.script_ticket_current(id, ticket))
+            }) {
+                obsolete.push(id.clone());
+                continue;
+            }
+            if let Some((ticket, result)) = worker.poll() {
+                match result {
+                    Ok(transaction) => {
+                        if self.runtime.script_reply(id, &ticket, transaction).is_err() {
+                            obsolete.push(id.clone());
+                        }
+                    }
+                    Err(error) => {
+                        self.runtime.script_fault(id, &error);
+                        obsolete.push(id.clone());
+                    }
+                }
+            }
+        }
+        for id in obsolete {
+            self.scripts.remove(&id);
+        }
+        for (id, request) in self.runtime.script_requests() {
+            let result = self
+                .scripts
+                .get_mut(&id)
+                .ok_or_else(|| "Script helper unavailable.".to_string())
+                .and_then(|worker| worker.submit(request));
+            if let Err(error) = result {
+                self.runtime.script_fault(&id, &error);
+                self.scripts.remove(&id);
+            }
+        }
     }
     pub fn live(&self) -> bool {
         self.output.as_ref().is_some_and(|o| o.active())
@@ -346,6 +416,9 @@ impl Router {
                 "This run requires device hiding, which is not available in a standalone output session."
                     .into(),
             );
+        }
+        if !profile.scripts.is_empty() {
+            return Err("Live script output remains disabled pending resource-control and driver qualification. Use recording preview.".into());
         }
         crate::settings::validate_bindings(&profile, &bindings)?;
         let mut candidate = Router::default();
@@ -429,6 +502,7 @@ impl Router {
     pub fn stop_result(&mut self) -> Result<(), String> {
         self.learner = None;
         self.runtime.stop();
+        self.scripts.clear();
         if let Some(output) = &mut self.output {
             if let Err(error) = output.stop() {
                 self.fault = Some(error.clone());
@@ -442,7 +516,7 @@ impl Router {
     }
     pub fn status(&self) -> serde_json::Value {
         let engine = self.runtime.engine();
-        json!({"running":engine.is_some_and(|e| e.active()),"ready":engine.is_some_and(|e| e.ready()),"mode":if self.live() { crate::service::BACKEND } else { "recording" },"recoveryRequired":self.output.as_ref().is_some_and(|o| o.recovery_required()),"token":self.runtime.token().ok(),"profileId":engine.map(|e| &e.profile().id),"fault":self.fault.as_deref().or_else(|| engine.and_then(|e| e.fault())),"recordingCursor":self.runtime.recording.cursor()})
+        json!({"scripts":engine.map(|e|e.script_status()),"scriptLiveQualified":false,"running":engine.is_some_and(|e| e.active()),"ready":engine.is_some_and(|e| e.ready()),"mode":if self.live() { crate::service::BACKEND } else { "recording" },"recoveryRequired":self.output.as_ref().is_some_and(|o| o.recovery_required()),"token":self.runtime.token().ok(),"profileId":engine.map(|e| &e.profile().id),"fault":self.fault.as_deref().or_else(|| engine.and_then(|e| e.fault())),"recordingCursor":self.runtime.recording.cursor()})
     }
 }
 #[cfg(test)]

@@ -38,6 +38,7 @@ fn malformed_replay_and_replacement_are_explicit() {
     assert!(Trace::parse(&vec![b' '; TRACE_LIMIT + 1]).is_err());
     assert!(Trace::parse(b"{}").is_err());
     let mut trace = Trace {
+        metadata: serde_json::Value::Null,
         schema: 1,
         profile: profile(),
         assignments: assignments(),

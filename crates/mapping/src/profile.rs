@@ -189,6 +189,8 @@ pub struct Profile {
     pub roles: Vec<Role>,
     pub targets: Vec<Target>,
     pub nodes: Vec<Node>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<crate::script::Script>,
     #[serde(default)]
     pub arbitration: Vec<Arbitration>,
     #[serde(default)]
@@ -245,8 +247,9 @@ impl Profile {
             || self.roles.len() > MAX_ROLES
             || self.targets.is_empty()
             || self.targets.len() > MAX_TARGETS
-            || self.nodes.is_empty()
-            || self.nodes.len() > MAX_NODES
+            || (self.nodes.is_empty() && self.scripts.is_empty())
+            || self.nodes.len() + self.scripts.len() > MAX_NODES
+            || self.scripts.len() > 16
         {
             return Err("A mapping needs 1–16 roles, 1–8 targets and 1–256 nodes.".into());
         }
@@ -392,6 +395,27 @@ impl Profile {
             .sum::<usize>();
         if timer_reserve > 256 {
             return Err("Built-in transformations exceed the shared timer budget.".into());
+        }
+        let mut script_ids = BTreeSet::new();
+        for script in &self.scripts {
+            if !script_ids.insert(&script.id) || nodes.contains_key(&script.id) {
+                return Err("Duplicate script or node ID.".into());
+            }
+            let deps = script.validate(self)?;
+            for output in &script.outputs {
+                let owner = script.owner(&output.id);
+                kinds.insert(
+                    owner.clone(),
+                    script
+                        .output_kind(self, &output.id)
+                        .ok_or("Unknown script output.")?,
+                );
+                dependencies.insert(owner.clone(), deps.clone());
+                writers
+                    .entry(output.output.clone())
+                    .or_default()
+                    .push(owner);
+            }
         }
         let mut explicit = BTreeSet::new();
         for arbitration in &self.arbitration {

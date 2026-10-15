@@ -1,4 +1,6 @@
 <script lang="ts">
+  import {scriptExample,scriptExamples} from './scriptExamples';
+  import {gatewayRequest} from './gateway';
   import {builtins, operationPreset, draftDocument, type MappingProfile, type RuleNode, type RuleInput} from './mappings';
   let {profile, save, validate}: {profile: MappingProfile; save: (profile: MappingProfile) => Promise<void>; validate: (text:string)=>Promise<MappingProfile>} = $props();
   let draft = $state<MappingProfile>((()=>JSON.parse(JSON.stringify(profile)))());
@@ -6,6 +8,8 @@
   let error = $state('');
   let saving = $state(false);
   let advanced = $state('');
+  let example = $state<keyof typeof scriptExamples>('Timed pulse');
+  let compileNotice = $state('');
   let dirty = $state(false);
   const nodes = $derived(draft.nodes as RuleNode[]);
   const node = $derived(nodes[selected]);
@@ -15,6 +19,7 @@
   function add(){if(nodes.length>=256)return;const id='rule-'+crypto.randomUUID().slice(0,8);draft.nodes=[...nodes,{id,inputs:[inputOptions[0]?.input],output:null,operation:operationPreset('direct')}];selected=nodes.length-1;changed();}
   async function updateJson(value:string){try{draftDocument(value,profile.id);draft=await validate(value);selected=0;changed();}catch(e){error=String(e);}}
   async function persist(){saving=true;try{await save(draft);dirty=false;error='';}catch(e){error=String(e);}finally{saving=false;}}
+  async function checkScript(source:string){compileNotice='Compiling…';try{const result=await gatewayRequest({command:'mapping_script_validate',sourceCode:source});if(!result.mappings?.compiled)throw new Error('No compiler result');compileNotice='Compiled successfully. Start preview to activate.';}catch(e){compileNotice=String(e);}}
   function resizeAxes(index:number,count:number){const layout=draft.targets[index].layout;layout.axes=Array.from({length:Math.min(16,Math.max(0,count))},(_,i)=>layout.axes[i]??{range:'bipolar',fallback:0});changed();}
 </script>
 <section class="panel editor" aria-label="Mapping draft editor">
@@ -47,6 +52,19 @@
     {/if}
     <div class="row"><label>Output<select value={node.output?.target??''} onchange={e=>{node.output=e.currentTarget.value?{target:e.currentTarget.value,control:{kind:'button',index:0}}:null;changed();}}><option value="">Intermediate rule only</option>{#each draft.targets as target}<option value={target.id}>{target.name}</option>{/each}</select></label>{#if node.output}<label>Control kind<select bind:value={node.output.control.kind} onchange={changed}><option value="button">Button</option><option value="axis">Axis</option><option value="hat">Hat</option></select></label><label>Control index (starts at 0)<input type="number" min="0" max="127" bind:value={node.output.control.index} oninput={changed}/></label>{/if}</div>
   {/if}
+  <h3>Custom Rhai logic</h3>
+  <p>Scripts run in a separate process. Each callback returns a complete replacement state, output contribution and timer set. Stop or source loss clears all three. Preview is available; live script output awaits qualification.</p>
+  <div class="row"><label>Example<select bind:value={example}>{#each Object.keys(scriptExamples) as item}<option value={item}>{item}</option>{/each}</select></label><button class="secondary-button" disabled={(draft.scripts?.length??0)>=16} onclick={()=>{try{draft.scripts=[...(draft.scripts??[]),scriptExample(draft,example)];changed();}catch(e){error=String(e);}}}>Add script example</button></div>
+  {#each draft.scripts??[] as script,index}
+    <fieldset><legend>Script {index+1}</legend><label>Script ID<input bind:value={script.id} oninput={changed}/></label>
+    <label>Rhai source<textarea aria-label={'Rhai source '+(index+1)} rows="14" bind:value={script.source} oninput={()=>{changed();compileNotice='';}}></textarea></label>
+    <div class="row"><button class="secondary-button" onclick={()=>checkScript(script.source)}>Check script syntax</button><button class="secondary-button" onclick={()=>{draft.scripts=draft.scripts?.filter((_,i)=>i!==index);changed();}}>Remove script</button></div>
+    <label>Declared source inputs JSON<textarea rows="3" value={JSON.stringify(script.inputs,null,2)} onchange={e=>{try{script.inputs=JSON.parse(e.currentTarget.value);changed();}catch(e){error=String(e);}}}></textarea></label>
+    <label>Named output bindings JSON<textarea rows="3" value={JSON.stringify(script.outputs,null,2)} onchange={e=>{try{script.outputs=JSON.parse(e.currentTarget.value);changed();}catch(e){error=String(e);}}}></textarea></label>
+    <label>Parameters JSON<textarea rows="2" value={JSON.stringify(script.parameters,null,2)} onchange={e=>{try{script.parameters=JSON.parse(e.currentTarget.value);changed();}catch(e){error=String(e);}}}></textarea></label></fieldset>
+  {/each}
+  {#if compileNotice}<p role="status">{compileNotice}</p>{/if}
+  <p>Define on_start(ctx), on_event(ctx) and on_timer(ctx). Use ctx.inputs, ctx.parameters, ctx.state and the deterministic ctx.nowUs clock. Return transaction(state, outputs, timers); outputs use button, axis or hat, and timer(id, microseconds) schedules a callback. Limits: 5 ms evaluation, 100,000 operations, depth 16, 16 KiB state, 64 timers, 128 outputs and 16 log messages per second.</p>
   <label>Axis/hat writer priority JSON<textarea rows="3" value={JSON.stringify(draft.arbitration,null,2)} onchange={e=>{try{draft.arbitration=JSON.parse(e.currentTarget.value);changed();}catch(e){error=String(e);}}}></textarea></label>
   <details><summary>Full draft JSON · roles, targets and rules</summary><button class="secondary-button" onclick={()=>advanced=JSON.stringify(draft,null,2)}>Load current draft</button><textarea aria-label="Full mapping draft JSON" rows="15" bind:value={advanced}></textarea><button class="secondary-button" onclick={()=>updateJson(advanced)}>Apply JSON to draft</button></details>
 </section>

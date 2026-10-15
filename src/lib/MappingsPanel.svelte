@@ -38,6 +38,7 @@
     if (!result) throw new Error('Restart the native Cockpit service to use controller mappings.');
     return result;
   }
+  async function exportTrace(){try{const bytes:number[]=[];let offset=0;for(;;){const page=await request({command:'mapping_trace_export',offset});if(!page.bytes || typeof page.next!=='number' || page.next<offset || page.next>4194304)throw new Error('Invalid trace chunk');bytes.push(...page.bytes);offset=page.next;if(offset===page.total)break;}const url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='cockpit-mapping-trace.json';link.click();URL.revokeObjectURL(url);}catch(e){error=String(e);}}
   async function loadControls(id: string) {
     if (controls[id]) return;
     const all: ControllerControl[] = [];
@@ -195,6 +196,9 @@
 {#if profile}{#key profile.id}<MappingEditor {profile} validate={text=>importMapping(text,request,true)} save={async draft=>{const saved=await importMapping(JSON.stringify(draft),request);await loadProfiles();notice='Draft saved. The running profile is unchanged until an explicit restart.';selected=saved.id;}}/>{/key}{/if}
 <section class="panel mapping-panel" aria-label="Live mapping inspector">
   <h2>Raw, transformed and output inspector</h2>
+  <button class="secondary-button" disabled={status.running} onclick={exportTrace}>Export completed replay trace</button>
+  <p>Stop preview before export. Replay with <code>osg-logic replay cockpit-mapping-trace.json</code> to verify script results and output timing without controllers.</p>
+  {#each status.scripts??[] as script}<p role="status"><strong>{script.id}</strong>: {script.fault??(script.inflight?'Evaluating':script.started?'Ready':'Waiting for baselines')} · {script.pending} queued · {script.timers} timers</p>{#each script.logs as log}<pre>{log}</pre>{/each}{/each}
   <p>Display refreshes four times per second. Native input, timing and output continue independently. Buttons combine with OR; the first available axis/hat writer in the listed priority wins.</p>
   {#if status.learning}<p role="status">Input learning: {status.learning.phase}. {status.learning.reason}</p>{#if status.learning.candidates.length>1}<p>Candidates: {status.learning.candidates.join(', ')}. Choose the intended control in its assignment.</p>{/if}{/if}
   {#if status.inspector}

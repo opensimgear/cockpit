@@ -40,7 +40,7 @@ STM32 discovery verifies manufacturer/product metadata, a 24-hex UID and bounded
 
 On Windows, Devices and Topology also show joystick, gamepad and multi-axis HID collections, including published OpenSimGear HID inputs. Background Raw Input capture provides paged live buttons, axes, hats and capability diagnostics independently of gateway setup sessions. Names and roles are local metadata. Serial/collection evidence can follow a controller across ports; ambiguous devices require explicit reassignment. Unplugging clears values, while stationary controls retain their last valid report. vJoy is excluded from physical input discovery.
 
-This discovery slice does not activate virtual outputs or hiding. Linux/macOS capture remains unavailable until its adapter and qualification are delivered. Device/game qualification gaps remain open; see the [controller guide](docs/host-controllers.md) and [M1 verification record](docs/verification/2026-10-14-controller-discovery-m1.md).
+This discovery slice does not activate virtual outputs or hiding. Linux/macOS capture adapters are implemented; native device qualification remains open. Device/game qualification gaps remain open; see the [controller guide](docs/host-controllers.md) and [M1 verification record](docs/verification/2026-10-14-controller-discovery-m1.md).
 
 ## Controller workflow
 
@@ -98,7 +98,7 @@ It clones `device-gateway` and `device-template`, initializes their dependencies
 
 The [automatic lifecycle acceptance record](docs/verification/2026-10-13-automatic-controller-lifecycle.md) covers current enrollment, ghosts, Disable/Enable/Remove, zero controllers, reconnect recovery and UI warnings. The [simultaneous gateway acceptance record](docs/verification/2026-10-13-multiple-gateways.md) covers concurrent connections, same-identity device isolation and four gateways in the native UI. The [repository-owned acceptance record](docs/verification/2026-10-13-repository-owned-simulation.md) documents the earlier automated and visible native UI checks. The native gateway/device path exercises production configuration, persistence, descriptors and CAN handlers. Physical STM32 USB/HID enumeration and hardware CAN electrical behavior remain separate hardware acceptance work.
 
-The experimental [portable mapping runtime](docs/mapping-profiles.md) validates and stores profiles, resolves explicit local source roles, and replays deterministic synthetic input into recording targets. Direct buttons, axes and hats support per-producer ownership, source generations, timers and fallback output. The desktop mapping editor and game-visible virtual output remain later milestones; saving or importing a mapping never activates output.
+The experimental [mapping editor](docs/mapping-profiles.md) supports drafts, explicit source assignments, input learning, built-in transformations, layers and an output inspector. [Custom Rhai logic](docs/mapping-scripts.md) runs in bounded helper processes with transactional state, outputs and timers. Recording previews export traces for deterministic replay without controllers. Saving or importing never activates a mapping. Virtual output, device visibility changes and live script output remain disabled pending their separate qualification checks.
 
 ## Repository layout
 
