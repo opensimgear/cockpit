@@ -1,6 +1,6 @@
 # Windows vJoy M3 qualification — 15 October 2026
 
-Issue #25 remains open, **1/6 acceptance criteria verified**. Windows hardware
+Issue #25 remains open, **3/6 acceptance criteria verified**. Windows hardware
 qualification resumed after verified reboot restoration. The earlier blocked
 checkpoint below is retained as history. No production qualification gate was enabled.
 
@@ -58,7 +58,7 @@ driver, feeder, refresh or hiding tests.
 
 ## Remaining acceptance
 
-Only the previously verified missing/disabled-dependency criterion is checked.
+At the initial checkpoint only the missing/disabled-dependency criterion was checked.
 The corrected production provisioning path still needs two persistent custom
 slots, physical button/axis/hat routing without HidHide, a real game binding check,
 and Cockpit restart/layout/assignment/binding retention. Real Gremlin contention,
@@ -183,3 +183,78 @@ Finalized raw evidence SHA-256:
 
 - `vjoy-winmm-routing.jsonl`: `400e7074083b0bab806060ba1230e6e4208b0c47e7a14c913e7cb77c2f9fa431`
 - `vjoy-routing-summary.json`: `18b89141d8551daf5c01dcc5ebb2230139e0642ef994b80f25ba83fcd44d2051`
+
+## Real ACR bindings and application retention verified
+
+ACR binds on movement without identifying the controller in its capture UI. To
+avoid attributing simultaneous physical/virtual movement to the wrong source, an
+explicit synthetic-source qualification profile drove **only slot 2**, with physical
+routing stopped. With ACR foreground and its binding capture armed by the user,
+three separately cued gestures were generated: X full travel and centre, button 1
+press/release, and hat-up/neutral. Each gesture returned to neutral. The user confirmed
+all three were captured and saved. The independent observer recorded those changes
+on slot 2 while the original Gladiator stayed still during the gestures. One button
+attempt refused to send because ACR was not foreground; the subsequent cued retry
+succeeded. No hiding was used to make the game select a virtual input.
+
+The isolated mapping host then stopped cleanly and restarted with the same saved
+source/slot assignments. Saved profile and setting file hashes were unchanged.
+The first physical retest failed because the feeder exited immediately after
+activation and the supervisor recovered neutral output. This was investigated and
+corrected before repeating the game test; the failed attempt is not counted as a pass.
+
+The normal Windows Tauri application was also tested separately. A clearly named
+qualification profile was imported through its production API with the real right
+Gladiator source ID and slots 2/3 assigned. After a clean normal application restart,
+the production API returned exactly the same source and target assignments. Both
+before/after evidence documents have the same SHA-256:
+`192090a71151f70bb525f256f65924bbbdbf0be1e0274979ff5c444559a25468`.
+The normal app remained stopped with virtual devices disabled/unqualified,
+provisioning/scripts unqualified and hiding disabled. Live qualification continues
+only in the separate test host; this does not claim ordinary UI live output was enabled.
+
+After the lease correction described below, the user retried the **same saved ACR
+bindings without rebinding** using physical right-Gladiator input and confirmed:
+“Steering and both other bindings work.” X was bound to steering; the other action
+names were not supplied. The independent observer again recorded mapped axis,
+button and hat changes on both virtual devices, and the host remained healthy,
+ready and fault-free (2,768 recorded mapping reports at the check). The saved HidHide
+baseline was decoded as UTF-16 MULTI_SZ and independently verified against the
+live driver: neither VID 231D/PID 0200 nor either vJoy product identity is hidden.
+The unrelated original hiding policy remains intact.
+
+This completes acceptance criteria **1 and 3**, in addition to previously completed
+criterion 2. Criteria 4–6 remain open. The user saved the bindings and closed ACR
+before further ownership/failure testing.
+
+Binding evidence SHA-256:
+
+- `vjoy-winmm-game.jsonl`: `13cafb4380ab7382ee8c1a602ec31bd368b721819602914df1ec0ebe60b8bfeb`
+- `vjoy-binding-gestures.jsonl`: `8b2c0322ae1eee265158a30b23b9d997f7e40e716fcbef76a54864d2ed471cec`
+
+## Initial lease starts after native acquisition
+
+Giving Start a separate IPC budget exposed another timing defect: the worker used
+the pre-acquisition timestamp for the first 250 ms lease. Native acquisition could
+consume that window, so a successfully acknowledged Start could expire immediately.
+The failing restart attempt's observer timeline showed both slots return to neutral
+just after activation. The surviving host persisted a clean recovered record and
+stayed stopped; subsequent physical movement was not forwarded into the game.
+
+A regression driver deliberately takes 300 ms to acquire its target. Before the
+fix, the production worker rejected its already-queued first renewal with “Mapping
+heartbeat expired; fallback submitted and ownership released.” The worker now arms
+the first lease using a fresh timestamp after successful acquisition and before
+acknowledging Start. The running lease remains 250 ms, renewal 50 ms and ordinary
+IPC response budget 100 ms. No Report can reset the lease; existing stalled-pipe
+expiry tests still pass. All **82 Windows** and **52 Linux** virtual-controller tests
+passed. The corrected native host remained healthy beyond a minute of idle time
+and through the user's successful ACR physical retest. Full CI for this correction
+is pending until the checkpoint is pushed and its run completes.
+
+The separately owned X-Plane CI test corrections are tracked independently:
+`b5c85b9` fixes the stale two-game catalogue assertion; `3bdca2c` synchronizes UDP
+fixture arrival; `7f26f3f` uses a bounded full-datagram peek buffer for Windows
+WSAEMSGSIZE behavior. The owning task validated the last fix with nine provider
+tests and 100 lifecycle repetitions on Windows and Linux. These fixture failures
+must not be represented as passing overall checkpoint CI.

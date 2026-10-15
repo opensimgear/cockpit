@@ -136,6 +136,50 @@ fn worker_uses_production_feeder_and_releases_on_eof_and_malformed_input() {
     .is_err());
 }
 #[test]
+fn slow_native_acquisition_does_not_consume_the_first_report_lease() {
+    struct SlowAcquisition(DriverFixture);
+    impl Driver for SlowAcquisition {
+        fn check(&mut self) -> Result<(), String> {
+            self.0.check()
+        }
+        fn inspect(&mut self, id: u8) -> Result<Slot, String> {
+            self.0.inspect(id)
+        }
+        fn acquire(&mut self, id: u8) -> Result<(), String> {
+            thread::sleep(Duration::from_millis(300));
+            self.0.acquire(id)
+        }
+        fn submit(&mut self, id: u8, position: &Position) -> Result<(), String> {
+            self.0.submit(id, position)
+        }
+        fn release(&mut self, id: u8) {
+            self.0.release(id);
+        }
+    }
+    let driver = DriverFixture::default();
+    let output = SharedOutput::default();
+    serve(
+        SlowAcquisition(driver.clone()),
+        io::Cursor::new(messages()),
+        output.clone(),
+        "fixture",
+    )
+    .unwrap();
+    let responses: Vec<serde_json::Value> = output
+        .0
+        .lock()
+        .unwrap()
+        .split(|b| *b == b'\n')
+        .filter(|b| !b.is_empty())
+        .map(|b| serde_json::from_slice(b).unwrap())
+        .collect();
+    assert_eq!(responses.len(), 4);
+    assert!(responses.iter().all(|r| r["ok"] == true));
+    assert_eq!(responses[3]["active"], false);
+    assert_eq!(driver.0.lock().unwrap().last().unwrap(), "release");
+}
+
+#[test]
 fn framing_bounds_precede_parse_and_truncated_frames_fail() {
     let mut at = vec![b' '; FRAME_LIMIT];
     at.push(b'\n');

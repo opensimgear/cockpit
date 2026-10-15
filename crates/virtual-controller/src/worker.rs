@@ -106,7 +106,15 @@ pub fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
                 Ok(Ok(Some(message))) => {
                     let received = u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX);
                     let token = message.token().clone();
-                    let result = feeder.receive(message, received);
+                    let starting = matches!(&message, Message::Start { .. });
+                    let result = feeder.receive(message, received).and_then(|()| {
+                        if starting {
+                            let ready =
+                                u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX);
+                            feeder.activation_ready(ready)?;
+                        }
+                        Ok(())
+                    });
                     // A negative acknowledgement must never race the parent killing us
                     // before owned output has attempted fallback and release.
                     if result.is_err() {

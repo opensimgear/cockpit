@@ -68,6 +68,15 @@ impl<D: Driver> Feeder<D> {
     pub fn fault(&self) -> Option<&str> {
         self.fault.as_deref()
     }
+    /// The worker grants the first lease after native acquisition has completed.
+    /// Slow driver calls during Start must not consume a ready run's heartbeat window.
+    pub(crate) fn activation_ready(&mut self, now: u64) -> Result<(), String> {
+        if !self.active() || self.bindings.is_empty() {
+            return Err("No acquired output is ready to arm its lease.".into());
+        }
+        self.deadline = now.checked_add(LEASE_US).ok_or("Feeder clock exhausted.")?;
+        Ok(())
+    }
     fn same(&self, token: &RunToken) -> Result<(), String> {
         if self.token.as_ref() != Some(token) {
             Err("Stale feeder session/run token.".into())
