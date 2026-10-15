@@ -24,6 +24,7 @@ pub type Observe = Arc<dyn Fn(&[String]) -> Result<Vec<Source>, String> + Send +
 #[derive(Clone)]
 pub enum Task {
     Apply {
+        expected_plan: Option<Plan>,
         preferences: Preferences,
         ids: Vec<String>,
         capture: String,
@@ -171,6 +172,7 @@ fn run(
             Ok(())
         }
         Task::Apply {
+            expected_plan,
             preferences,
             ids,
             capture,
@@ -206,6 +208,14 @@ fn run(
                 });
             }
             let plan = Plan::build(adapter.read()?, selections, image)?;
+            if expected_plan
+                .as_ref()
+                .is_some_and(|expected| *expected != plan)
+            {
+                return Err(
+                    "Visibility changed after game preflight; preserve the external policy.".into(),
+                );
+            }
             check()?;
             let initial = sources.clone();
             let mut last = sources.clone();

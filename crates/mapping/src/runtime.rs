@@ -86,6 +86,30 @@ impl Default for Runtime {
     }
 }
 impl Runtime {
+    /// A game journal reserves its owner before any optional output is acquired.
+    pub fn owned_session(owner: &str) -> Result<Self, String> {
+        if uuid::Uuid::parse_str(owner)
+            .ok()
+            .map(|id| id.to_string())
+            .as_deref()
+            != Some(owner)
+        {
+            return Err("Invalid mapping session owner.".into());
+        }
+        let mut runtime = Self::default();
+        runtime.session = owner.into();
+        Ok(runtime)
+    }
+    pub fn next_token(&self) -> Result<RunToken, String> {
+        Ok(RunToken {
+            session: self.session.clone(),
+            generation: Counter(
+                self.generation
+                    .checked_add(1)
+                    .ok_or("Run generation exhausted.")?,
+            ),
+        })
+    }
     pub(crate) fn replay_session() -> Self {
         let mut runtime = Self::default();
         runtime.session = "a78d48b8-3958-4de5-a8b3-d3b52b1e24e7".into();

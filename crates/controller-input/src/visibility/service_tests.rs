@@ -2,6 +2,8 @@ use super::super::{journal::Backend, policy::tests::state, runtime::Adapter};
 use super::*;
 use crate::registry::{Control, Definition, Identity};
 use std::collections::BTreeMap;
+#[path = "game_tests.rs"]
+mod game_tests;
 fn inventory() -> (Arc<Mutex<Registry>>, String) {
     inventory_for("windows-raw-input")
 }

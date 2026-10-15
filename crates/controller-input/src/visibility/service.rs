@@ -12,6 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 pub struct Service {
+    game_owner: Mutex<Option<game::Owner>>,
     launch: Mutex<super::launch::Worker>,
     suppression: super::suppression::Control,
     platform: super::capabilities::Platform,
@@ -42,6 +43,7 @@ impl Service {
     pub fn new(path: Option<PathBuf>, registry: Arc<Mutex<Registry>>) -> Self {
         let settings = Settings::new(path.as_ref().map(|p| p.join("controller-visibility.json")));
         Self {
+            game_owner: Mutex::new(None),
             launch: Mutex::new(super::launch::Worker::default()),
             suppression: Default::default(),
             platform: super::capabilities::current(),
@@ -61,10 +63,18 @@ impl Service {
         self
     }
     pub fn active(&self) -> bool {
-        self.launch
+        self.game_owner
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .active()
+            .is_some()
+            || self
+                .pending_games()
+                .map_or(true, |owners| !owners.is_empty())
+            || self
+                .launch
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .active()
             || self.suppression.active()
             || self
                 .worker
@@ -93,6 +103,13 @@ impl Service {
             Ok(_) => json!({"required":false}),
             Err(error) => json!({"required":true,"error":error}),
         };
+        let recovery = match self.pending_games() {
+            Ok(owners) if !owners.is_empty() => {
+                json!({"required":true,"gameOwners":owners,"error":"Recover the owning session from Games before applying another visibility policy.","standalone":recovery})
+            }
+            Err(error) => json!({"required":true,"error":error}),
+            _ => recovery,
+        };
         let snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
         let global = match &*snapshot {
             Ok(Some(s)) => {
@@ -119,6 +136,22 @@ impl Service {
             .as_str()
             .ok_or("Missing visibility command.")?;
         let id = request["sourceId"].as_str().unwrap_or("");
+        if self
+            .game_owner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
+            && !matches!(
+                command,
+                "controller_visibility_status"
+                    | "controller_visibility_processes"
+                    | "controller_visibility_restore"
+            )
+        {
+            return Err(
+                "The game session owns visibility; restore it before changing settings.".into(),
+            );
+        }
         match command {
             "controller_visibility_status" => {}
             "controller_visibility_processes" => {
@@ -354,6 +387,7 @@ impl Service {
                     .unwrap_or_else(|p| p.into_inner())
                     .start(
                         Task::Apply {
+                            expected_plan: None,
                             preferences,
                             ids,
                             capture,
@@ -385,6 +419,8 @@ impl Drop for Service {
         self.shutdown();
     }
 }
+#[path = "game.rs"]
+mod game;
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;

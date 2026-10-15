@@ -172,6 +172,19 @@ impl Session {
         self.renewed = Instant::now();
         Ok(())
     }
+    /// Keep prepared, neutral output leased while an owned visibility change
+    /// verifies fresh capture. No mapping report is submitted before arming.
+    pub fn keep_alive(&mut self) -> Result<(), String> {
+        let result = if self.worker.as_mut().is_some_and(|worker| worker.alive()) {
+            self.renew()
+        } else {
+            Err("Virtual output helper exited.".into())
+        };
+        result.map_err(|error| self.fail(error))
+    }
+    pub fn token(&self) -> &RunToken {
+        &self.token
+    }
     /// Consume at most 128 ordered reports per turn. A journal gap fails closed.
     pub fn poll(&mut self, recording: &RecordingSink) -> Result<(), String> {
         if !self.active() {

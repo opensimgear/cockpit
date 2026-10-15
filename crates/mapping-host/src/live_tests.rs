@@ -6,6 +6,8 @@ use osg_virtual_controller::{
     vjoy::{Axis, Binding, Driver, Position, Slot, Status},
 };
 use std::time::Instant;
+#[path = "live_game_tests.rs"]
+mod games;
 #[path = "live_script_tests.rs"]
 mod scripts;
 #[derive(Default)]

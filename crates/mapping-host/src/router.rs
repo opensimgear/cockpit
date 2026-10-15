@@ -24,6 +24,37 @@ pub struct Router {
     synthetic_sequences: BTreeMap<Source, u64>,
     fault: Option<String>,
     output: Option<osg_virtual_controller::session::Session>,
+    // Output drops first if the whole router is destroyed during unwinding.
+    pub(crate) visibility: Option<GameVisibility>,
+}
+pub(crate) type VisibilityCall = std::sync::Arc<
+    dyn Fn(&str, &serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync,
+>;
+pub(crate) struct GameVisibility {
+    pub owner: String,
+    pub call: VisibilityCall,
+}
+impl GameVisibility {
+    fn check(&self) -> Result<(), String> {
+        let status = (self.call)("poll", &json!({"owner":self.owner}))?;
+        if status["phase"] != "active" {
+            return Err(format!(
+                "Game visibility stopped: {}",
+                status["message"]
+                    .as_str()
+                    .unwrap_or("restore the game session")
+            ));
+        }
+        Ok(())
+    }
+    fn stop(&self) -> Result<(), String> {
+        (self.call)("stop", &json!({"owner":self.owner})).map(|_| ())
+    }
+}
+impl Drop for GameVisibility {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
 }
 fn native_kind(control: &Control) -> Option<Kind> {
     match control.kind {
@@ -275,6 +306,9 @@ impl Router {
             return Ok(());
         };
         let result = (|| {
+            if let Some(visibility) = &self.visibility {
+                visibility.check()?;
+            }
             if page.gap
                 || page.session != self.session
                 || page.cursor < self.cursor
@@ -521,6 +555,30 @@ impl Router {
             cursor,
             path,
         )?;
+        self.adopt_game(candidate, Some(output))
+    }
+    pub(crate) fn adopt_game(
+        &mut self,
+        mut candidate: Router,
+        output: Option<osg_virtual_controller::session::Session>,
+    ) -> Result<RunToken, String> {
+        if self.runtime.token().is_ok()
+            || self
+                .output
+                .as_ref()
+                .is_some_and(|o| o.active() || o.recovery_required())
+        {
+            return Err("A newer mapping or pending recovery must be preserved.".into());
+        }
+        let token = candidate.runtime.token()?;
+        if output
+            .as_ref()
+            .is_some_and(|o| o.token() != &token || o.cursor() != self.runtime.recording.cursor())
+        {
+            return Err(
+                "Prepared output ownership or recording cursor changed before arming.".into(),
+            );
+        }
         let mut reports = Vec::new();
         let mut after = Counter(0);
         loop {
@@ -534,7 +592,7 @@ impl Router {
         }
         candidate.runtime.recording = std::mem::take(&mut self.runtime.recording);
         candidate.runtime.recording.record(reports);
-        candidate.output = Some(output);
+        candidate.output = output;
         *self = candidate;
         self.flush_output()?;
         Ok(token)
@@ -554,6 +612,7 @@ impl Router {
             self.runtime.stop();
             self.scripts.clear();
             self.panels = None;
+            self.visibility = None;
             self.fault = Some(error.clone());
             return Err(error);
         }
@@ -595,13 +654,19 @@ impl Router {
         self.panels = None;
         self.runtime.stop();
         self.scripts.clear();
+        let mut failure = None;
         if let Some(output) = &mut self.output {
             if let Err(error) = output.stop() {
                 self.fault = Some(error.clone());
-                return Err(error);
+                failure = Some(error);
             }
         }
-        Ok(())
+        if let Some(visibility) = self.visibility.take() {
+            if let Err(error) = visibility.stop() {
+                failure = Some(failure.map_or(error.clone(), |prior| format!("{prior}; {error}")));
+            }
+        }
+        failure.map_or(Ok(()), Err)
     }
     pub fn stop(&mut self) {
         let _ = self.stop_result();

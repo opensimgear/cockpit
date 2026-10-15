@@ -245,6 +245,15 @@ impl ControllerService {
     pub fn visibility_active(&self) -> bool {
         self.visibility.active()
     }
+    /// Internal coordinator boundary, deliberately separate from frontend IPC.
+    pub fn game_visibility(&self, operation: &str, value: &Value) -> Result<Value, String> {
+        if self.stop.load(Ordering::Acquire)
+            && matches!(operation, "capture" | "preflight" | "start")
+        {
+            return Err("Controller capture has stopped; game visibility cannot activate.".into());
+        }
+        self.visibility.game_request(operation, value)
+    }
     pub fn shutdown(&self) {
         self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);

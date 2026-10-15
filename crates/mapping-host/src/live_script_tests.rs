@@ -4,7 +4,7 @@ use std::{
     sync::OnceLock,
 };
 
-fn helper() -> &'static Path {
+pub(super) fn helper() -> &'static Path {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
     PATH.get_or_init(|| {
         if let Some(path) = std::env::var_os("OSG_TEST_LOGIC_WORKER") {

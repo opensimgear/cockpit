@@ -13,16 +13,29 @@ pub struct Capture {
 }
 impl Capture {
     pub fn parse(value: &Value) -> Result<Self, String> {
+        Self::parse_mode(value, false)
+    }
+    /// Prior runs accepted by game_snapshot are recording previews. Profile
+    /// requirements must never turn a resumed preview into live output/hiding.
+    pub fn parse_recording(value: &Value) -> Result<Self, String> {
+        Self::parse_mode(value, true)
+    }
+    fn parse_mode(value: &Value, recording: bool) -> Result<Self, String> {
         if value.to_string().len() > 65536 {
             return Err("Captured mapping exceeds 64 KiB.".into());
         }
         let captured: Self = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
         captured.profile.compile()?;
         validate_assignments(&captured.profile, &captured.assignments)?;
-        if captured.profile.requirements.virtual_devices || !captured.targets.is_empty() {
+        if (!recording && captured.profile.requirements.virtual_devices)
+            || !captured.targets.is_empty()
+        {
             crate::settings::validate_bindings(&captured.profile, &captured.targets)?;
         }
-        if captured.profile.requirements.device_hiding != captured.visibility.is_some() {
+        if (recording && captured.visibility.is_some())
+            || (!recording
+                && captured.profile.requirements.device_hiding != captured.visibility.is_some())
+        {
             return Err(
                 "Capture explicit visibility intent only when this mapping requires hiding.".into(),
             );
@@ -57,6 +70,9 @@ pub(super) struct Lease {
 impl Service {
     pub fn capture_saved(&self, id: &str, visibility: Option<Value>) -> Result<Value, String> {
         let profile = self.store()?.load(id)?;
+        let visibility = visibility
+            .map(|value| (self.game_visibility)("capture", &value))
+            .transpose()?;
         let captured = Capture {
             assignments: self.store()?.load_assignments(id)?,
             targets: self
@@ -102,19 +118,50 @@ impl Service {
         serde_json::to_value(captured).map_err(|e| e.to_string())
     }
     pub fn game_preflight(&self, desired: &Value) -> Result<(), String> {
-        let capture = Capture::parse(desired)?;
+        self.game_prepare(desired, false).map(|_| ())
+    }
+    fn game_prepare(&self, desired: &Value, recording: bool) -> Result<Value, String> {
+        let capture = if recording {
+            Capture::parse_recording(desired)?
+        } else {
+            Capture::parse(desired)?
+        };
         if self.capture.visibility_active() || self.provisioning_active() {
             return Err(
                 "Stop standalone visibility or provisioning before game activation.".into(),
             );
         }
-        if capture.profile.requirements.virtual_devices {
-            return Err(format!(
-                "Captured virtual output is not qualified: {QUALIFICATION}"
-            ));
-        }
-        if capture.profile.requirements.device_hiding {
-            return Err("Captured device visibility is not qualified on this platform; no hiding policy was changed.".into());
+        if !recording && capture.profile.requirements.virtual_devices {
+            if !self.qualified {
+                return Err(format!(
+                    "Captured virtual output is not qualified: {QUALIFICATION}"
+                ));
+            }
+            let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+            if settings.error.is_some() || !settings.value.virtual_devices {
+                return Err("Enable optional virtual output explicitly and repair any settings error before game activation.".into());
+            }
+            if !capture.profile.scripts.is_empty() && !self.script_live_qualified {
+                return Err("Live script output remains disabled pending qualification.".into());
+            }
+            drop(settings);
+            #[cfg(windows)]
+            {
+                let inventory = (self.inspector)()?;
+                for binding in &capture.targets {
+                    let slot = inventory
+                        .iter()
+                        .find(|s| s.id == binding.slot)
+                        .ok_or("A captured virtual target is missing.")?;
+                    binding.match_slot(slot)?;
+                    if slot.status != osg_virtual_controller::vjoy::Status::Free {
+                        return Err("A captured virtual target is owned by another feeder.".into());
+                    }
+                }
+            }
+            // The helper handshake checks dependency readiness without Start/acquisition.
+            let mut probe = (self.output_factory)()?;
+            probe.terminate();
         }
         if self.recovery_status()["required"] == true {
             return Err(
@@ -127,15 +174,17 @@ impl Service {
             .try_lock()
             .map_err(|_| "A script compilation is already running.")?;
         for script in &capture.profile.scripts {
-            osg_logic::worker::Worker::spawn(
-                &std::env::current_exe().map_err(|e| e.to_string())?,
-                &script.source,
-            )?;
+            (self.script_factory)(&script.source)?;
         }
-        Ok(())
+        capture
+            .visibility
+            .as_ref()
+            .map(|intent| (self.game_visibility)("preflight", intent))
+            .transpose()
+            .map(|value| value.unwrap_or(Value::Null))
     }
     pub fn game_snapshot(&self, desired: &Value) -> Result<Value, String> {
-        self.game_preflight(desired)?;
+        let visibility = self.game_prepare(desired, false)?;
         let router = self.router.lock().unwrap_or_else(|p| p.into_inner());
         if router.live()
             || router.status()["recoveryRequired"] == true
@@ -146,7 +195,7 @@ impl Service {
             );
         }
         Ok(
-            json!({"owner":uuid::Uuid::new_v4().to_string(),"desired":desired,"baseline":self.active_capture(&router)?,"baselineToken":router.runtime.token().ok(),"settings":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value,"taken":false,"armed":false,"stopped":false,"resumed":false}),
+            json!({"owner":uuid::Uuid::new_v4().to_string(),"desired":desired,"visibilityPrepared":visibility,"baseline":self.active_capture(&router)?,"baselineToken":router.runtime.token().ok(),"settings":self.settings.lock().unwrap_or_else(|p|p.into_inner()).value,"taken":false,"armed":false,"stopped":false,"resumed":false}),
         )
     }
     pub fn game_take(&self, journal: &Value) -> Result<(), String> {
@@ -171,21 +220,10 @@ impl Service {
         });
         router.stop_result()
     }
-    fn start_capture(&self, capture: Capture, epoch: u64) -> Result<RunToken, String> {
-        let _compile = self
-            .compilation
-            .try_lock()
-            .map_err(|_| "A script compilation is already running.")?;
-        let mut workers = std::collections::BTreeMap::new();
-        for script in &capture.profile.scripts {
-            workers.insert(
-                script.id.clone(),
-                osg_logic::worker::Worker::spawn(
-                    &std::env::current_exe().map_err(|e| e.to_string())?,
-                    &script.source,
-                )?,
-            );
-        }
+    fn capture_sources(
+        &self,
+        capture: &Capture,
+    ) -> Result<(stream::Snapshot, Option<crate::panels::Feed>), String> {
         let ids = capture
             .assignments
             .iter()
@@ -219,17 +257,111 @@ impl Service {
         } else {
             None
         };
-        let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
-        if self.lifecycle.load(Ordering::Acquire) != epoch || self.stop.load(Ordering::Acquire) {
-            return Err("Game mapping start cancelled by Stop.".into());
+        Ok((snapshot, panels))
+    }
+    fn start_capture(
+        &self,
+        capture: Capture,
+        epoch: u64,
+        owner: Option<&str>,
+        visibility: &Value,
+        virtual_output: bool,
+    ) -> Result<RunToken, String> {
+        let _compile = self
+            .compilation
+            .try_lock()
+            .map_err(|_| "A script compilation is already running.")?;
+        let cancelled = || {
+            if self.lifecycle.load(Ordering::Acquire) != epoch || self.stop.load(Ordering::Acquire)
+            {
+                Err("Game mapping start cancelled by Stop.".to_owned())
+            } else {
+                Ok(())
+            }
+        };
+        let mut workers = std::collections::BTreeMap::new();
+        for script in &capture.profile.scripts {
+            cancelled()?;
+            workers.insert(script.id.clone(), (self.script_factory)(&script.source)?);
         }
-        router.start_with_panels(
+        let (mut snapshot, mut panels) = self.capture_sources(&capture)?;
+        let mut candidate = Router::default();
+        if let Some(owner) = owner {
+            candidate.runtime = osg_mapping::runtime::Runtime::owned_session(owner)?;
+        }
+        let cursor = self
+            .router
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .runtime
+            .recording
+            .cursor();
+        cancelled()?;
+        let mut output = if virtual_output {
+            Some(
+                osg_virtual_controller::session::Session::start_with_journal(
+                    self.output_factory.clone(),
+                    candidate.runtime.next_token()?,
+                    capture.targets.clone(),
+                    cursor,
+                    Some(self.recovery_path()?),
+                )?,
+            )
+        } else {
+            None
+        };
+        if !visibility.is_null() {
+            let owner = owner.ok_or("Visibility requires a journaled game owner.")?;
+            (self.game_visibility)("start", &json!({"owner":owner,"prepared":visibility}))?;
+            candidate.visibility = Some(crate::router::GameVisibility {
+                owner: owner.into(),
+                call: self.game_visibility.clone(),
+            });
+            let deadline = std::time::Instant::now() + Duration::from_secs(4);
+            loop {
+                cancelled()?;
+                if let Some(output) = &mut output {
+                    output.keep_alive()?;
+                }
+                let status = (self.game_visibility)("poll", &json!({"owner":owner}))?;
+                if status["phase"] == "active" {
+                    break;
+                }
+                if status["active"] != true || std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "Visibility did not establish fresh capture: {}",
+                        status["message"].as_str().unwrap_or("timed out")
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            drop(panels.take());
+            (snapshot, panels) = self.capture_sources(&capture)?;
+        }
+        cancelled()?;
+        candidate.start_with_panels(
             capture.profile,
             capture.assignments,
             snapshot,
             workers,
             panels,
-        )
+        )?;
+        let mut lease = self.game_lease.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(owner) = owner {
+            if !lease
+                .as_ref()
+                .is_some_and(|l| l.owner == owner && !l.emergency && l.expected.is_none())
+            {
+                return Err("Game mapping ownership changed before arming.".into());
+            }
+        }
+        let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
+        cancelled()?;
+        let token = router.adopt_game(candidate, output)?;
+        if owner.is_some() {
+            lease.as_mut().unwrap().expected = Some(token.clone());
+        }
+        Ok(token)
     }
     pub fn game_arm(&self, journal: &Value) -> Result<(), String> {
         let epoch = self.lifecycle.load(Ordering::Acquire);
@@ -244,17 +376,14 @@ impl Service {
             }
         }
         let capture = Capture::parse(&journal["desired"])?;
-        self.game_preflight(&journal["desired"])?;
-        let token = self.start_capture(capture, epoch)?;
-        let mut lease = self.game_lease.lock().unwrap_or_else(|p| p.into_inner());
-        let lease = lease
-            .as_mut()
-            .filter(|l| journal["owner"] == l.owner)
-            .ok_or("Game mapping ownership changed.")?;
-        lease.expected = Some(token);
-        if lease.emergency || self.lifecycle.load(Ordering::Acquire) != epoch {
-            return Err("Mapping was stopped during game activation.".into());
+        let visibility = self.game_prepare(&journal["desired"], false)?;
+        if visibility != journal["visibilityPrepared"] {
+            return Err(
+                "Captured visibility changed after preflight; preserve it and recapture.".into(),
+            );
         }
+        let live = capture.profile.requirements.virtual_devices;
+        self.start_capture(capture, epoch, journal["owner"].as_str(), &visibility, live)?;
         Ok(())
     }
     pub fn game_stop(&self, journal: &Value) -> Result<(), String> {
@@ -274,6 +403,38 @@ impl Service {
                     "Mapping changed outside the game session. Recovery preserved it.".into(),
                 )
             }
+        }
+        drop(router);
+        drop(lease);
+        let owner = journal["owner"]
+            .as_str()
+            .ok_or("Missing game mapping owner.")?;
+        if journal["desired"]["profile"]["requirements"]["virtualDevices"] == true {
+            let path = self.recovery_path()?;
+            if let Some(record) =
+                osg_virtual_controller::output_journal::inspect(&path)?.filter(|r| r.pending())
+            {
+                if record.token.session != owner {
+                    return Err("Another output owner changed recovery state; preserve it.".into());
+                }
+                self.router
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .recover_durable(self.output_factory.clone(), path)?;
+            }
+        }
+        if !journal["desired"]["visibility"].is_null() {
+            let request = json!({"owner":owner});
+            let mut status = (self.game_visibility)("stop", &request)?;
+            let deadline = std::time::Instant::now() + Duration::from_secs(4);
+            while status["active"] == true {
+                if std::time::Instant::now() >= deadline {
+                    return Err("Visibility restoration is still pending; retry explicit game recovery before restoring hardware.".into());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+                status = (self.game_visibility)("poll", &request)?;
+            }
+            (self.game_visibility)("stop", &request)?;
         }
         if serde_json::to_value(
             &self
@@ -297,6 +458,9 @@ impl Service {
         if lease.as_ref().is_some_and(|l| journal["owner"] == l.owner) {
             *lease = None;
         }
+        if !journal["desired"]["visibility"].is_null() {
+            let _ = (self.game_visibility)("abandon", &json!({"owner":journal["owner"]}));
+        }
     }
     pub fn game_resume(&self, journal: &Value, recovery: bool) -> Result<(), String> {
         let epoch = self.lifecycle.load(Ordering::Acquire);
@@ -312,9 +476,9 @@ impl Service {
             )
         };
         if resume {
-            let prior = Capture::parse(&journal["baseline"])?;
-            self.game_preflight(&journal["baseline"])?;
-            self.start_capture(prior, epoch)?;
+            let prior = Capture::parse_recording(&journal["baseline"])?;
+            self.game_prepare(&journal["baseline"], true)?;
+            self.start_capture(prior, epoch, None, &Value::Null, false)?;
         }
         if owned {
             *self.game_lease.lock().unwrap_or_else(|p| p.into_inner()) = None;

@@ -39,7 +39,7 @@ pub fn journal(value: &Value) -> Result<(), String> {
     }
     Capture::parse(&m["desired"])?;
     if !m["baseline"].is_null() {
-        Capture::parse(&m["baseline"])?;
+        Capture::parse_recording(&m["baseline"])?;
     }
     for key in ["taken", "armed", "stopped", "resumed"] {
         if !m[key].is_boolean() {
@@ -138,6 +138,15 @@ mod tests {
         let c = captured();
         let valid = json!({"schemaVersion":2,"mapping":{"owner":"667891ca-e20a-459e-9d3c-c0e1c30a2bb0","desired":c,"baseline":c,"baselineToken":{"session":"667891ca-e20a-459e-9d3c-c0e1c30a2bb0","generation":"1"},"settings":osg_mapping_host::settings::Preferences::default(),"taken":true,"armed":true,"stopped":false,"resumed":false}});
         assert!(journal(&valid).is_ok());
+        let mut preview_baseline = valid.clone();
+        preview_baseline["mapping"]["baseline"]["profile"]["requirements"]["virtualDevices"] =
+            json!(true);
+        preview_baseline["mapping"]["baseline"]["profile"]["requirements"]["deviceHiding"] =
+            json!(true);
+        assert!(
+            journal(&preview_baseline).is_ok(),
+            "A prior preview stays a preview even when its profile requests optional features"
+        );
         assert!(validate(&json!({"schemaVersion":2,"mapping":c})).is_ok());
         for (pointer, value) in [
             ("/schemaVersion", json!(1)),

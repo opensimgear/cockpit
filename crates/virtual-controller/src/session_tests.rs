@@ -96,6 +96,42 @@ fn recording(token: &RunToken, count: u64) -> RecordingSink {
     sink
 }
 #[test]
+fn prepared_output_renews_without_reports_and_helper_loss_releases_it() {
+    let (factory, state) = factory();
+    let token = token();
+    let mut session = Session::start(
+        factory,
+        token.clone(),
+        vec![crate::vjoy::tests::binding()],
+        Counter(0),
+    )
+    .unwrap();
+    assert_eq!(session.token(), &token);
+    session.renewed -= std::time::Duration::from_micros(RENEW_US);
+    session.keep_alive().unwrap();
+    assert!(state
+        .lock()
+        .unwrap()
+        .messages
+        .iter()
+        .any(|m| matches!(m, Message::Renew { .. })));
+    assert!(!state
+        .lock()
+        .unwrap()
+        .messages
+        .iter()
+        .any(|m| matches!(m, Message::Report { .. })));
+    state.lock().unwrap().dead = true;
+    assert!(session.keep_alive().is_err());
+    assert!(!session.active());
+    assert!(state
+        .lock()
+        .unwrap()
+        .messages
+        .iter()
+        .any(|m| matches!(m, Message::Recover { .. })));
+}
+#[test]
 fn ordered_edges_are_bounded_and_quiet_runs_renew_without_ui() {
     let (factory, state) = factory();
     let token = token();

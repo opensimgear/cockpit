@@ -4,6 +4,18 @@ use crate::{
     fixtures::*,
 };
 #[test]
+fn reserved_owner_matches_the_armed_run_without_activating_early() {
+    assert!(Runtime::owned_session("../invalid").is_err());
+    let owner = uuid::Uuid::new_v4().to_string();
+    let mut runtime = Runtime::owned_session(&owner).unwrap();
+    let reserved = runtime.next_token().unwrap();
+    assert_eq!(reserved.session, owner);
+    assert!(runtime.token().is_err());
+    assert_eq!(runtime.start(profile(), assignments()).unwrap(), reserved);
+    runtime.stop();
+    assert_ne!(runtime.next_token().unwrap(), reserved);
+}
+#[test]
 fn saving_and_failed_replacement_do_not_activate_or_disrupt_a_run() {
     let temp = tempfile::tempdir().unwrap();
     let store = crate::store::Store::new(temp.path().into());

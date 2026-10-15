@@ -53,6 +53,7 @@ pub struct Service {
     qualified: bool,
     script_live_qualified: bool,
     script_factory: Arc<dyn Fn(&str) -> Result<osg_logic::worker::Worker, String> + Send + Sync>,
+    game_visibility: crate::router::VisibilityCall,
     stop: Arc<AtomicBool>,
     lifecycle: AtomicU64,
     #[cfg(test)]
@@ -116,7 +117,11 @@ impl Service {
         }
         let settings =
             crate::settings::Settings::open(root.as_ref().map(|p| p.join("local-settings.json")));
+        let visibility_capture = capture.clone();
         Self {
+            game_visibility: Arc::new(move |operation, value| {
+                visibility_capture.game_visibility(operation, value)
+            }),
             #[cfg(windows)]
             provisioning: Mutex::new(osg_virtual_controller::windows_jobs::Manager::default()),
             panels: Mutex::new(None),

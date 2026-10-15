@@ -46,6 +46,7 @@ fn fixture() -> (Task, Factory, Observe, Arc<Mutex<State>>, Arc<AtomicBool>) {
         .devices
         .insert(source.id.clone(), Intent::HideAll);
     let task = Task::Apply {
+        expected_plan: None,
         preferences,
         ids: vec![source.id.clone()],
         capture: r"C:\Cockpit.exe".into(),
@@ -84,6 +85,36 @@ fn wait(worker: &Worker, predicate: impl Fn(&Status) -> bool) -> Status {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+#[test]
+fn game_preflight_plan_is_rechecked_in_the_mutating_worker() {
+    let (mut task, factory, observe, state, _) = fixture();
+    let before = state.lock().unwrap().clone();
+    let mut planned_before = before.clone();
+    planned_before
+        .applications
+        .push(r"\Device\Volume1\Old.exe".into());
+    let plan = Plan::build(
+        planned_before,
+        vec![Selection {
+            instance: r"HID\EXACT\CONTROLLER".into(),
+            policy: super::super::policy::Policy::HideAll,
+        }],
+        r"\Device\Volume1\Cockpit.exe".into(),
+    )
+    .unwrap();
+    if let Task::Apply { expected_plan, .. } = &mut task {
+        *expected_plan = Some(plan);
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let mut worker = Worker::default();
+    worker
+        .start(task, temp.path().join("session.json"), factory, observe)
+        .unwrap();
+    let status = wait(&worker, |status| !status.active);
+    assert!(status.message.contains("changed after game preflight"));
+    assert_eq!(*state.lock().unwrap(), before);
+    assert!(!temp.path().join("session.json").exists());
 }
 #[test]
 fn independent_worker_requires_fresh_reports_and_stops_without_ui_polling() {
