@@ -1,6 +1,6 @@
 # M6 panel-event and game-profile verification — 2026-10-15
 
-Status: software implemented for ordered panel recording and schema-2 captured game mappings, including optional output/visibility coordination. Issue #32 remains open; it is In progress during implementation and validation, then In review for physical qualification. Live virtual output and visibility coordination remain disabled, pending the platform qualifications in #25–#29 and real DCS/racing-game acceptance.
+Status: software implemented for ordered panel recording and schema-2 captured game mappings, including optional output/visibility coordination. The 16 October acceptance split below permits implementation closure of #32 while physical qualification remains open in #53. Live virtual output and visibility coordination remain disabled pending their independent qualification; no real DCS/racing-game acceptance is inferred.
 
 - Independent nonconsuming consumers preserve short presses, baseline on stream/boot loss, reject unavailable axes/hats and duplicate gateway routes, and cancel owned subscriptions on Stop. Native adapter tests use the same contract validator as DCS-BIOS, with separate mapping eligibility.
 - Real mapping-service/game-coordinator tests cover immutable capture, preflight before hardware/launch, failed-launch neutralization before restoration, fresh-baseline resume, emergency Stop, schema-2 restart with explicit recovery, external run conflicts, and explicit abandonment without stopping an external run. Existing schema-1 and integration ownership tests remain enabled.
@@ -60,3 +60,24 @@ Local validation includes Linux/Windows controller coverage (game visibility
 (92.72%), mapping-host coverage above 70% per module, 28 Linux game-coordinator
 regressions, and Svelte/type checks with zero errors or warnings. Final native
 results and exact-commit CI are recorded on issue #32 after push.
+
+## Implementation acceptance — 16 October 2026
+
+At the user's request, the three remaining original composite criteria transfer,
+unchecked, to [#53](https://github.com/opensimgear/cockpit/issues/53): real DCS/Rally
+captured activation, native failed-launch rollback, and complete native
+legacy/conflict recovery. The story also retains physical simultaneous-consumer
+and hotplug qualification. Five original criteria have software evidence; the
+transfer does not turn fixtures into native driver/game acceptance. Ordinary
+output, hiding and live-script gates remain disabled.
+
+Local CI against a clean committed export passes all 37 Windows mapping-host
+tests, including optional-feature combinations and real script subprocesses with
+an authored feeder adapter. All six host modules pass the 71% coverage threshold;
+game coordination is 88.70%. Controller-input coverage includes game visibility
+at 92.91%; virtual session coverage is 91.84%. A separate Windows desktop target
+passes 318 library tests (one existing test ignored), one service test and one
+native service integration test. Frontend type/Svelte checks, transport, coverage
+and production UI build pass. The initial attempt to reuse the running dev target
+hit its executable file lock and is not counted as passing; the isolated rerun
+passed without closing or replacing the active app.
