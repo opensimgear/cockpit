@@ -295,3 +295,44 @@ Checkpoint `40a488591d34d211b1659332d9a4420b77c8df94` subsequently passed all
 11 jobs in [CI run 38747838000](https://github.com/opensimgear/cockpit/actions/runs/38747838000),
 including native controller jobs on Windows, Linux and macOS. The native hardware
 results above remain separate from automated CI; criteria 4–6 remain unchecked.
+
+## Deliberate feeder death and total-process termination
+
+After the bounded previous host expired cleanly, a fresh diagnostic host (PID
+37828) and read-only observer were started. With the user holding the right trigger
+and hat-up, all three observed devices showed button 1 pressed and POV up. The
+exact feeder child (PID 27016, verified parent, executable, command line and creation
+time) was forcibly terminated. Its supervisor stayed alive. Both virtual devices
+returned to centred axes, released buttons and neutral hats (observer times
+88,922/89,047 ms) while the physical controls remained held. The host reported
+“Output helper exited. Fallback recovery completed; mapping remains stopped.”
+No recovery remained required; the journal was clean and an independent SDK query
+confirmed all three slots free. The user was then cued to release the controls.
+This completes the specified fallback cases in criterion 5. The separately noted
+unexplained earlier exit remains an open reliability qualification gap.
+
+Total-process termination was tested separately using a bounded native Session
+probe. With independent observation confirming both test slots at maximum axes,
+button 1 pressed and hat-up, the exact probe parent (PID 30036) and its feeder
+(PID 6616) were forcibly terminated, leaving no supervisor to clean up. **vJoy
+retained the nonneutral report after both processes exited.** The durable journal
+remained `confirmed`, rather than falsely claiming cleanup. Explicit production
+`Session::recover_stored` then restored centred axes, released buttons and neutral
+hats (observer times 145,707/145,802 ms), released both slots and marked the journal
+clean. No physical mapping or prior report was replayed. This records criterion 6;
+it does not claim immediate neutralisation after total-process termination.
+
+The probe avoids synchronous inventory inspection while maintaining a live lease:
+inspection can take longer than 250 ms, so independent WinMM capture confirms the
+live state instead. Recovery inspection runs only after output has stopped.
+Evidence is retained in `.research/review-audit/vjoy-winmm-feeder-death.jsonl`,
+`vjoy-terminated-feeder.json`, `vjoy-after-feeder-death-status.json`,
+`vjoy-after-feeder-death-sdk.json`, `vjoy-whole-termination.json`,
+`vjoy-whole-after-termination.json` and `vjoy-whole-after-recovery.json`, plus the
+separate native probe journals. Production capability gates remain false.
+
+Acceptance progress is now **5/6 criteria verified**: criterion 4's Gremlin
+contention, partial acquisition and provisioning cases are still incomplete, and
+the unexplained spontaneous feeder exit still needs investigation before closure.
+The previous documentation checkpoint `ad184ee` passed its complete CI run
+[38750392520](https://github.com/opensimgear/cockpit/actions/runs/38750392520).
