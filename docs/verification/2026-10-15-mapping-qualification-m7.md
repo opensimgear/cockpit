@@ -1,9 +1,10 @@
 # M7 qualification record — 15 October 2026
 
 The feature remains **experimental**. This record consolidates software evidence
-and outstanding deployment checks; it does not qualify a backend. #33 and the
-unfinished prerequisite milestones remain open/In review for qualification;
-only an issue undergoing implementation is In progress. Live virtual output,
+and outstanding deployment checks; it does not qualify a backend. At the user's
+request on 16 October, implementation acceptance is separated from missing checks:
+#33's remaining Windows qualification is tracked in #54, with capability-specific
+follow-ups #50–#53. Implementation closure does not pass those checks. Live virtual output,
 provisioning, visibility changes, Linux/macOS physical capture and live script
 output retain their existing false qualification gates.
 
@@ -14,16 +15,16 @@ output retain their existing false qualification gates.
 | Portable engine/profile | Native three-OS deterministic reducer/replay, validation, generation, arbitration, state-machine and migration tests; M2 closed. | Retain regression gates as platform support changes. |
 | Windows input | Authored HID fixtures; production read-only capture during foreground ACR with full four-axis ranges, 23 button transitions and all hat positions; same-port reconnect establishes a fresh baseline, and a port change preserves the prior offline identity (71f5f3a). Follow-up native monitor checks verify buttons, unipolar/signed axes and hats while unfocused. Identical 0079:0126 controllers stay distinct through independent input, reconnect and a port move. | Loaded timing and additional supported hardware/OS combinations. |
 | Linux/macOS input | Native evdev/IOHID compilation, adapter coverage and injected error/baseline/hotplug tests. | Native physical models, permission denial/regrant, background-game capture and identity/baseline checks. WSL is not a native desktop qualification system. |
-| vJoy | Pinned signed 2.2.2.0 artifacts; M0 unchanged report/readback and implicit-default slot-2 add/delete/restore; production descriptor, provisioner, ownership and failure fixtures. | Production UAC/refresh/cancel/recovery, custom layouts, two live targets, real source routing, contention, helper/whole-app failure and restart/game retention. |
+| vJoy | Pinned signed 2.2.2.0 artifacts; #25 closed with native custom layouts, two live targets, physical routing, ACR axis/button/hat bindings retained across restart, contention, failure and explicit recovery evidence. M0 post-write failure/cancellation preservation also passed. | Investigate the spontaneous feeder exit, qualify final deployment/reliability and retain the total-process failure limit and explicit neutralizing recovery; #54. |
 | Linux virtual | Native ABI/syscall-boundary tests, report/lifetime fixtures, real WSL permission-denied inspection. | Actual device creation/destruction, two physical sources, native game and qualified Proton bindings, permissions/distributions. |
 | macOS virtual | Native codec/helper/API boundary tests, unsigned staging, unavailable-helper inspection. | Authorized signing/entitlement/notarization, protected installation and upgrades, actual device/game recognition, cleanup/recreation and supported OS/architecture matrix. |
 | Optional dependencies | Production native service startup, ordered synthetic preview, restart and unavailable output rejection on all three OSes; separate opt-ins, saved settings and injected dependency failures. Linux additionally runs the service and its private feeder in a disposable device namespace with `/dev/uinput` absent. | Physical installation combinations: neither, each alone, both, installed/disabled, unsupported versions, required reboot, removal while active and user enable/disable. |
-| HidHide | M0 normal-mode DirectInput/direct-HID test plus normal/error/forced-exit restoration; production policy/journal/conflict fixtures. Raw Input remained visible. | Inverse mode, every advertised API/process scope, authorized capture access, external live conflicts, restart/whole-process failure and game binding. Existing external policy was preserved. |
+| HidHide | Production normal/inverse selected/unselected direct-HID/DirectInput checks, capture while hidden, Stop, same-port reconnect without reapply, executable relocation and explicit owner-crash recovery; external policy exactly restored. Raw Input remained visible. | Complete deployment matrix, combined game/output and remaining failure/conflict checks; resolve or bound Raw Input scope before enablement; #50. |
 | Linux/macOS visibility | Native suppression boundary and policy/cleanup fixtures; implemented Linux isolated-launch supervisor with disposable namespace, descriptor, cancellation and parent-death checks; production gates remain closed. | Alternative access paths, actual suppression/cleanup/reconnect and physical Linux controlled-launch qualification, including device-number reuse; graphical/Steam/Proton paths and macOS process mode remain unsupported. |
 | Custom logic | Real isolated workers on all three OSes, compile/runtime/budget failures, transaction rollback, deterministic timer replay, stale reply/process death tests. | Real virtual-output scripts, loaded capture/feeder responsiveness and physical source loss; macOS native-library/whole-RSS ceiling qualification (Rust heap cap alone is narrower). |
 | Existing behavior | Full application/integration regressions, output leases, game rollback, ordered panel consumers and independent gateway acceptance. | Assembled hardware and live DCS/racing acceptance. Debug Pico fixtures are not physical panel qualification. |
 | Vendor hardware | Windows reports VKBsim Gladiator EVO R (231D:0200), Gladiator EVO OT L (231D:3201), VKBSim T-Rudder (231D:011F), MOZA R5 Base (346E:0004) and an identical Controller pair (0079:0126). User-confirmed firmware/topology, R5 signed-axis capture/monitor, Gladiator R button/axis/hat monitor and identical-pair identity checks are recorded. | Full device/game matrix. T-Rudder firmware/topology and generic Controller model/firmware remain unknown. No blanket vendor claim. |
-| Games | Existing Windows profile coordinator and schema-2 immutable captures; synthetic failed-launch/recovery/ownership tests; native Tauri capture/save without activation. | Real DCS and racing game, vJoy-only originals visible and combined hiding, captured requirements, controls, restart/reconnect and rollback. |
+| Games | Windows coordinator and schema-2 immutable captures; failed-launch/recovery/ownership software tests; native Tauri capture/save; #25 ACR virtual axis/button/hat bindings and restart retention. | Real DCS and combined hiding, captured optional requirements, native rollback/reconnect and supported-control matrix; #53/#54. |
 
 The historic M0 device label "MOZA VID 231D/PID 0200" was based on the selection
 request. Later OS-reported evidence identifies it as **VKBsim Gladiator EVO R**;
@@ -258,3 +259,53 @@ recovery and migration. Existing vJoy layout and HidHide policy were not modifie
 for M7. Signing authorization, native Linux/macOS machines, missing vendor devices,
 actual game bindings and live latency remain external qualification work, not
 completed checkboxes or reasons to enable a production gate.
+
+## Implementation acceptance and local CI — 16 October 2026
+
+At the user's request, #33 accepts the implemented qualification tools and guides;
+four of its eight final-qualification criteria retain software/documentation
+evidence. The four missing composite criteria, spontaneous-feeder-exit
+investigation, final total-process recovery and production enablement move,
+unchecked, to [#54](https://github.com/opensimgear/cockpit/issues/54). Capability
+checks are separately tracked in #50–#53. Linux/macOS remain in #48/#49. No gate
+was enabled and the feature remains experimental. The committed README and live
+repository description both retain experimental/qualification limits.
+
+Local checks use a clean export of `87aae910bdad9928f2b029c90a68b7068ccb0759`,
+isolating unrelated working-tree changes. Subsequent acceptance commits change
+documentation only. Passed:
+
+- Frontend type/Svelte check: zero errors/warnings; transport tests, all eight
+  frontend coverage commands and production UI build.
+- Windows controller-input: 69 tests; all 18 measured modules pass 71% coverage,
+  including separately reported native adapters and HidHide wire at 100%.
+- Portable mapping: all nine modules pass coverage (minimum 92.72%).
+- Windows script workers: all seven modules pass coverage (minimum 77.42%).
+- Windows virtual output: all 23 modules pass coverage (minimum 76.32%).
+- Windows mapping host: 37 tests and all six modules pass coverage (minimum
+  72.99%); real restricted workers use an authored SDK adapter.
+- Windows desktop: 318 library tests, one service test and one integration test
+  pass; one existing library test is ignored. A separate build target avoids
+  replacing the executable in the running dev app. The failed dev-target attempt
+  due to its executable file lock is not passing evidence.
+- Native installed-dependency startup, synthetic ordered preview, Stop and
+  restart pass with output/visibility gates false. Empty feeder targets reject
+  before acquisition. No virtual report or layout change is sent.
+- Four latency-evidence analyzer unit tests pass; these are not measurements.
+- Development staging validates pinned signed vJoy/HidHide installer hashes and
+  signatures, private same-executable workers and notices. The desktop itself is
+  unsigned (`NotSigned`), `qualified:false`; it is not a signed release.
+
+The `--expect-unavailable` service check correctly failed on this PC because vJoy
+is installed. The installed-dependency mode then passed; local installed-driver
+results do not replace earlier disposable remote dependency-absent evidence.
+Remote CI is inspected periodically; cancelled/incomplete runs are not reported
+as successful. Native/manual/deployment qualification remains separate.
+
+Local artifacts remain in ignored research/temporary storage. SHA-256:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `native-installed-acceptance.json` | `06d6040e225d7f5f1730df94ed97919cdb76e0f1272a22db43d8e596313a15f1` |
+| staged `qualification.json` | `8c2c9e0e4ace8393692648342ce6ebc1150c5516c176140a16aacff0628ce078` |
+| staged `osg-cockpit.exe` | `c89861c09d66efea108eeeaadf3988348b87f99554acc5e0ebf0b70b55bdac13` |

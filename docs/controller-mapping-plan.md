@@ -1,6 +1,6 @@
 # Third party devices and controller mapping implementation plan
 
-Status: Windows-only delivery is active. M0 Windows contract v1 and its eight listed checks have evidence; M3 Windows acceptance (#25) is closed with its six listed criteria verified. HidHide implementation (#26) has eight verified criteria; the remaining qualification is split into #50. Production enablement and remaining Windows qualification are tracked separately from implementation. Linux and macOS support is deferred. Full controller mapping is not delivered. Updated: 16 October 2026.
+Status: Windows implementation milestones #26 and #30–#33 are accepted separately from qualification. Missing checks are explicitly retained in #50–#54; their transfer is not a pass. M0 Windows contract v1 and M3 Windows acceptance (#25) retain their recorded evidence. Production enablement remains gated. Linux and macOS support is deferred. Full qualified controller mapping is not delivered. Updated: 16 October 2026.
 
 ## Current delivery priority
 
@@ -15,8 +15,20 @@ remote CI at milestones. Minimize manual validation and reuse existing hardware
 evidence. At the user's request on 16 October, move missing qualification checks
 to explicit follow-up stories before accepting an implemented milestone. Preserve
 the unchecked wording and provenance; a transfer is not a passing check or
-permission to enable an unqualified production capability. HidHide follow-up:
-[#50](https://github.com/opensimgear/cockpit/issues/50).
+permission to enable an unqualified production capability.
+
+| Accepted implementation | Verified original criteria | Missing checks retained in Backlog |
+| --- | --- | --- |
+| HidHide sessions #26 | 8 of 11 | [#50: deployment, combined game/output, failure and API scope](https://github.com/opensimgear/cockpit/issues/50) |
+| Editor and transformations #30 | 3 of 4 | [#51: real output under UI load](https://github.com/opensimgear/cockpit/issues/51) |
+| Scripts and replay #31 | 3 of 7 | [#52: packaged workers, real output and loaded source loss](https://github.com/opensimgear/cockpit/issues/52) |
+| Panels and game profiles #32 | 5 of 8 | [#53: native activation, rollback and recovery](https://github.com/opensimgear/cockpit/issues/53) |
+| Qualification tooling and guides #33 | 4 of 8 final-qualification criteria | [#54: production qualification, reliability and enablement](https://github.com/opensimgear/cockpit/issues/54) |
+
+No missing criterion is checked merely because its original implementation issue
+closes. Follow-ups retain their original wording and software/native evidence
+boundaries. Local Windows CI, coverage, native startup/preview/restart and unsigned
+development staging support implementation acceptance, not production deployment.
 
 | Deferred work | Linux | macOS |
 | --- | --- | --- |
@@ -26,10 +38,9 @@ permission to enable an unqualified production capability. HidHide follow-up:
 | Platform qualification, setup and packaging | [#48](https://github.com/opensimgear/cockpit/issues/48) | [#49](https://github.com/opensimgear/cockpit/issues/49) |
 
 [#21](https://github.com/opensimgear/cockpit/issues/21) now covers Windows dependency
-qualification and shared contracts. Windows HidHide (#26), editor (#30), scripts
-(#31), game/panel integration (#32) and final Windows qualification (#33) retain
-their implementation dependencies. The unexplained feeder exit observed during
-#25 and production live-output enablement remain explicit follow-ups in #33.
+qualification and shared contracts. Windows implementation was accepted in the
+dependency order #26, #30, #31, #32, #33. The unexplained feeder exit observed during
+#25 and production live-output enablement remain explicit follow-ups in #54.
 The broader platform architecture below is retained for later work.
 
 See the [M0 contract candidate](controller-mapping-contracts.md) and [qualification record](verification/2026-10-14-controller-mapping-m0.md) for executed checks and remaining gates.
