@@ -1,7 +1,8 @@
 # Windows vJoy M3 qualification — 15 October 2026
 
-Issue #25 remains open, **6/6 listed acceptance criteria verified; reliability
-qualification remains incomplete**. Windows hardware
+Issue #25 is accepted for closure at the user's request, with **6/6 listed
+acceptance criteria verified**. Remaining reliability and production enablement
+qualification is carried into #33; no production qualification gate was enabled. Windows hardware
 qualification resumed after verified reboot restoration. The earlier blocked
 checkpoint below is retained as history. No production qualification gate was enabled.
 
@@ -377,10 +378,11 @@ native failure/restoration and successful custom creation/refresh evidence above
 cover those separate listed failure and driver-refresh cases.
 
 Together with native mismatch rejection, these results complete listed criterion 4.
-All six listed criteria are now checked. **The issue stays open:** the earlier
-unexplained spontaneous feeder exit remains a reliability qualification gap, and
-the issue's additional custom-logic/final-qualification scope is not declared
-complete by this hardware checklist. Ordinary output/provisioning gates stay false.
+All six listed criteria are now checked. At this checkpoint the issue was kept
+open for the unexplained spontaneous feeder exit. The user subsequently requested
+closure and merge; this reliability gap and production enablement qualification
+are carried into #33, with custom logic tracked by #31. This checklist does not
+declare those later milestones complete. Ordinary output/provisioning gates stay false.
 Checkpoint `336aaaa` passed all 11 jobs in
 [CI run 38756510846](https://github.com/opensimgear/cockpit/actions/runs/38756510846).
 
