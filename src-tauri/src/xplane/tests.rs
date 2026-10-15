@@ -1,4 +1,26 @@
 use super::*;
+
+// send_to only queues a datagram for delivery. In particular, macOS can return
+// WouldBlock when the nonblocking receiver is polled immediately afterwards.
+// Synchronize at the socket boundary so a baseline is consumed before sending
+// its advancing frame, without changing the production polling behavior.
+fn poll_after_delivery(source: &mut Source, now: Instant) -> (ExportSnapshot, Value) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut byte = [0u8; 1];
+    loop {
+        match source.socket.peek(&mut byte) {
+            Ok(_) => return source.poll(now),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "Timed out waiting for UDP fixture delivery"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => panic!("Cannot observe UDP fixture delivery: {error}"),
+        }
+    }
+}
 #[test]
 fn authored_aircraft_fixtures_decode_through_production_wire_and_channel_mapping() {
     for text in [
@@ -93,22 +115,33 @@ fn simulated_udp_session_renews_unsubscribes_and_disarms_on_errors_and_exit() {
     let (index, peer) = receive();
     let base = index["sim/version/xplane_internal_version"].0;
     let now = Instant::now();
-    server
-        .send_to(&packet(base, &frame(11, 1., "Aircraft/A.acf")), peer)
-        .unwrap();
-    assert!(!source.poll(now).0.fresh);
+    // Deliberately delay the first datagram to exercise asynchronous delivery.
+    let sender = server.try_clone().unwrap();
+    let baseline = packet(base, &frame(11, 1., "Aircraft/A.acf"));
+    let delivery = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(10));
+        sender.send_to(&baseline, peer).unwrap();
+    });
+    let (baseline, _) = poll_after_delivery(&mut source, now);
+    delivery.join().unwrap();
+    assert!(!baseline.fresh);
+    assert_eq!(baseline.aircraft.as_deref(), Some("Aircraft/A.acf"));
     server
         .send_to(&packet(base, &frame(11, 2., "Aircraft/A.acf")), peer)
         .unwrap();
-    assert_eq!(source.poll(now).0.values["speed"], 115.5);
+    assert_eq!(
+        poll_after_delivery(&mut source, now).0.values["speed"],
+        115.5
+    );
     server
         .send_to(&packet(base, &frame(11, 3., "Aircraft/A.acf")), peer)
         .unwrap();
-    source.poll(now + Duration::from_secs(3));
+    let later = now + Duration::from_secs(3);
+    poll_after_delivery(&mut source, later);
     let (renewed, _) = receive();
     assert_eq!(renewed["sim/time/paused"].1, 10);
     server.send_to(b"RREF,bad", peer).unwrap();
-    let (snapshot, status) = source.poll(now + Duration::from_secs(3));
+    let (snapshot, status) = poll_after_delivery(&mut source, later);
     assert!(!snapshot.fresh);
     assert!(snapshot.values.is_empty());
     assert!(status["status"].as_str().unwrap().contains("Malformed"));
@@ -120,18 +153,18 @@ fn simulated_udp_session_renews_unsubscribes_and_disarms_on_errors_and_exit() {
     server
         .send_to(&packet(base, &frame(11, 500., "Aircraft/A.acf")), peer)
         .unwrap();
-    assert!(!source.poll(now).0.fresh);
+    assert!(!poll_after_delivery(&mut source, later).0.fresh);
     server
         .send_to(&packet(next, &frame(11, 10., "Aircraft/B.acf")), peer)
         .unwrap();
-    assert!(!source.poll(now).0.fresh);
+    assert!(!poll_after_delivery(&mut source, later).0.fresh);
     server
         .send_to(&packet(next, &frame(11, 11., "Aircraft/B.acf")), peer)
         .unwrap();
-    assert!(source.poll(now).0.fresh);
+    assert!(poll_after_delivery(&mut source, later).0.fresh);
     alive.store(false, Ordering::Release);
-    assert!(!source.poll(now).0.fresh);
-    assert!(source.poll(now).0.values.is_empty());
+    assert!(!source.poll(later).0.fresh);
+    assert!(source.poll(later).0.values.is_empty());
 }
 fn packet(base: i32, values: &[(usize, f64)]) -> Vec<u8> {
     let mut out = b"RREF,".to_vec();
