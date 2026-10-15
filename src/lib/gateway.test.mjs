@@ -50,6 +50,17 @@ test('desktop routes the complete explicitly scoped request through one native m
   ]);
 });
 
+test('native game file selection returns the absolute path or cancellation and does not change installations', async () => {
+  const path = String.raw`D:\Games\X-Plane 12\X-Plane.exe`;
+  const api = transport({invokeResults: command => command === 'pick_game_executable' ? path : null});
+  assert.equal(await api.pickGameExecutable('x-plane-12', path), path);
+  assert.deepEqual(api.calls,[{kind:'invoke',command:'pick_game_executable',args:{gameId:'x-plane-12',currentPath:path}}]);
+  const cancelled=transport({invokeResults:()=>null});assert.equal(await cancelled.pickGameExecutable('x-plane-11'),null);
+  assert.deepEqual(cancelled.calls[0].args,{gameId:'x-plane-11',currentPath:null});
+  const browser=transport({desktop:false});await assert.rejects(browser.pickGameExecutable('x-plane-12'),/desktop app/);assert.equal(browser.calls.length,0);
+  const failed=transport({invokeError:new Error('Picker failed')});await assert.rejects(failed.pickGameExecutable('dcs'),/Picker failed/);
+});
+
 test('DCS-BIOS profile and lifecycle use the same native request in desktop and browser', async () => {
   const config = { schemaVersion: 1, cataloguePath: '/DCS-BIOS/doc/json', gatewayId: first, moduleId: 'panel',
     button: 0, ledActionId: 'led.boolean.set_enabled', commandHost: '127.0.0.1', commandPort: 7778,

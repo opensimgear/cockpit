@@ -4,6 +4,7 @@ fn main() {
             "gateway_request",
             "optional_dependencies",
             "optional_dependency_install",
+            "pick_game_executable",
         ]),
     ))
     .expect("could not build Cockpit desktop resources");

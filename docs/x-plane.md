@@ -35,11 +35,13 @@ the selected installation's `Resources/plugins/DataRefs.txt`; see the
 
 ## Set up and play
 
-1. Rescan Games or select the installation's `X-Plane.exe`. Steam libraries and
+1. Rescan Games or use **Browse…** to select the installation's `X-Plane.exe` in
+   the native desktop file picker. Steam libraries and
    the user's `x-plane_install_11.txt`/`x-plane_install_12.txt` lists are searched.
    Multiple detected copies appear in Installation. Select the desired copy,
    then **Use this path**. The installation's DataRefs header must match the tile's
-   major version. Custom copies can be selected by absolute executable path.
+   major version. The selected path is displayed read-only; cancelling the picker
+   keeps the current installation. Selection is validated before it is saved.
 2. Choose **Set up telemetry**. Cockpit persists local RREF defaults beside its
    other game setup settings. Setup is repeatable, preserves previous overrides
    and changes no simulator files; no plugin, backup or restoration is needed.

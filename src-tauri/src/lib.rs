@@ -44,6 +44,43 @@ fn local_document(url: &tauri::Url) -> bool {
 struct NativeGateway(Arc<gateways::GatewayManager>);
 
 #[tauri::command]
+async fn pick_game_executable(
+    app: tauri::AppHandle,
+    game_id: String,
+    current_path: Option<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (title, executable) = game_discovery::executable_picker(&game_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut picker = app
+            .dialog()
+            .file()
+            .set_title(title)
+            .add_filter(executable, &["exe"])
+            .set_file_name(executable);
+        if let Some(parent) = current_path
+            .as_deref()
+            .map(std::path::Path::new)
+            .and_then(|p| p.parent())
+            .filter(|p| p.is_absolute() && p.is_dir())
+        {
+            picker = picker.set_directory(parent);
+        }
+        picker
+            .blocking_pick_file()
+            .map(|file| {
+                let path = file.into_path().map_err(|e| e.to_string())?;
+                path.to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "The executable path is not valid text.".to_owned())
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn optional_dependencies() -> Value {
     optional_dependencies::list()
 }
@@ -72,6 +109,7 @@ async fn gateway_request(
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("local-navigation")
                 .on_navigation(|_, url| local_document(url))
@@ -84,7 +122,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             gateway_request,
             optional_dependencies,
-            optional_dependency_install
+            optional_dependency_install,
+            pick_game_executable
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {

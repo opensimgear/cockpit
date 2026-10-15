@@ -69,6 +69,11 @@ export type GatewayRequest = { launch?: IsolatedLaunch; visibility?: {mode: stri
 
 const clientId = crypto.randomUUID();
 const browserEndpoint = '/api/gateway/';
+
+export async function pickGameExecutable(gameId: GameId, currentPath?: string | null): Promise<string | null> {
+  if (!isTauri()) throw new Error('The native file picker is available in the Cockpit desktop app.');
+  return invoke<string | null>('pick_game_executable', { gameId, currentPath: currentPath ?? null });
+}
 type GatewayResult = { ok: boolean; state?: GatewayState; error?: string };
 // Each gateway owns its command queue. A blocked serial connection must not
 // hold up discovery or requests for another gateway, including the same backend.

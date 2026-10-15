@@ -16,7 +16,8 @@ pub(crate) fn version(executable: &Path) -> Result<u64, String> {
         .take(256)
         .read_to_string(&mut header)
         .map_err(|e| e.to_string())?;
-    // Laminar's generated catalogue starts with format and simulator version.
+    // The shipped catalogue uses a four-digit SDK revision (e.g. 1210),
+    // not the six-digit sim/version/xplane_internal_version telemetry value.
     let first = header
         .lines()
         .next()
@@ -26,7 +27,8 @@ pub(crate) fn version(executable: &Path) -> Result<u64, String> {
     let version = fields
         .get(1)
         .and_then(|v| v.parse::<u64>().ok())
-        .map(|v| v / 10000);
+        .filter(|v| (1000..10000).contains(v))
+        .map(|v| v / 100);
     if fields.first() != Some(&"2") || !matches!(version, Some(11 | 12)) {
         return Err("Cannot identify X-Plane 11/12 from its installed DataRefs.txt header. Repair the installation or start it once and rescan.".into());
     }
@@ -127,12 +129,18 @@ mod tests {
         for v in [11, 12] {
             fs::write(
                 root.join("Resources/plugins/DataRefs.txt"),
-                format!("2 {v}0050\nsim/time/paused int n bool\n"),
+                format!("2 {v}50\nsim/time/paused int n bool\n"),
             )
             .unwrap();
             assert_eq!(version(&exe).unwrap(), v);
             assert!(available(&exe).unwrap().contains("sim/time/paused"));
         }
+        fs::write(
+            root.join("Resources/plugins/DataRefs.txt"),
+            "2 1210 Wed Jun 24 15:46:43 2026\n\nsim/time/paused int n bool\n",
+        )
+        .unwrap();
+        assert_eq!(version(&exe).unwrap(), 12);
         for header in ["", "2 100000", "3 120000", "2 bad"] {
             fs::write(root.join("Resources/plugins/DataRefs.txt"), header).unwrap();
             assert!(version(&exe).is_err());

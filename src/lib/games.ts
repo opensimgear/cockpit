@@ -27,6 +27,10 @@ export const supportedGames: Game[] = [
   { id: 'x-plane-12', name: 'X-Plane 12', provider: 'x-plane', installed: false, launchSupported: false },
 ];
 
+export function gameExecutableName(gameId: GameId): string {
+  return gameId.startsWith('x-plane-') ? 'X-Plane.exe' : gameId === 'dcs' ? 'DCS.exe' : 'acr.exe';
+}
+
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
   return catalogue.filter(game => showAll || game.installed);
 }

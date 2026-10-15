@@ -9,6 +9,7 @@
     "allow-gateway-request",
     "allow-optional-dependencies",
     "allow-optional-dependency-install",
+    "allow-pick-game-executable",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

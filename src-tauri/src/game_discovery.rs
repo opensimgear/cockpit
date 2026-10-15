@@ -3,7 +3,7 @@
 //! arguments from saved profiles are executed.
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -108,6 +108,15 @@ fn supported(id: &str) -> Result<&'static SupportedGame, String> {
         .iter()
         .find(|g| g.id == id)
         .ok_or_else(|| "Choose a supported game.".into())
+}
+
+pub(crate) fn executable_picker(game_id: &str) -> Result<(String, &'static str), String> {
+    let game = supported(game_id)?;
+    let executable = game.executables[0].rsplit('/').next().unwrap();
+    Ok((
+        format!("Choose {} executable ({executable})", game.name),
+        executable,
+    ))
 }
 
 #[derive(Default)]
@@ -412,6 +421,8 @@ fn discover(roots: &Roots, manual: &BTreeMap<String, String>) -> Vec<Value> {
         // X-Plane supports direct launch, including a selected secondary copy.
         // Steam -applaunch may launch another installation, so monitor/launch the exact executable.
         let mut installations: Vec<Value> = steam_installs.iter().filter(|(id,_)|*id==game.id).map(|(_, (exe,_,root))|json!({"executable":exe,"installPath":root,"source":"steam"})).collect();
+        let mut installation_paths=BTreeSet::new();
+        installations.retain(|i|installation_paths.insert(normalized_path(i["executable"].as_str().unwrap())));
         if game.provider == "x-plane" {
             for root in crate::xplane_installation::roots() {
                 if let Some((exe,_,root))=installation(game,&root) { if !installations.iter().any(|i|i["executable"]==json!(exe)) { installations.push(json!({"executable":exe,"installPath":root,"source":"standalone"})); } }
@@ -852,6 +863,20 @@ mod native {
 mod tests {
     use super::*;
     #[test]
+    fn executable_picker_uses_the_selected_game_and_rejects_unknown_games() {
+        for (game, name, exe) in [
+            ("dcs", "DCS World", "DCS.exe"),
+            ("assetto-corsa-rally", "Assetto Corsa Rally", "acr.exe"),
+            ("x-plane-11", "X-Plane 11", "X-Plane.exe"),
+            ("x-plane-12", "X-Plane 12", "X-Plane.exe"),
+        ] {
+            let (title, filename) = executable_picker(game).unwrap();
+            assert_eq!(filename, exe);
+            assert!(title.contains(name));
+        }
+        assert!(executable_picker("unknown").is_err());
+    }
+    #[test]
     fn xplane_steam_versions_manual_copies_and_launch_use_the_selected_installation() {
         let scratch = Scratch::new();
         let steam = scratch
@@ -870,11 +895,11 @@ mod tests {
             );
             scratch.write(
                 &format!("Steam/steamapps/common/X-Plane {v}/Resources/plugins/DataRefs.txt"),
-                &format!("2 {v}0050\n"),
+                &format!("2 {v}10 Wed Jun 24 15:46:43 2026\n\n"),
             );
         }
         let roots = Roots {
-            steam: vec![steam],
+            steam: vec![steam.clone(), steam],
             launch_supported: true,
             ..Roots::default()
         };
@@ -883,6 +908,7 @@ mod tests {
             assert_eq!(game["id"], format!("x-plane-{v}"));
             assert_eq!(game["installed"], true);
             assert_eq!(game["source"], "steam");
+            assert_eq!(game["installations"].as_array().unwrap().len(), 1);
             let request = launch_request(game).unwrap();
             assert_eq!(request.executable.to_str(), game["executable"].as_str());
             assert!(request.arguments.is_empty());
@@ -894,7 +920,7 @@ mod tests {
         let copy = scratch.write("Standalone copy/X-Plane.exe", "");
         scratch.write(
             "Standalone copy/Resources/plugins/DataRefs.txt",
-            "2 120050\n",
+            "2 1210 Wed Jun 24 15:46:43 2026\n\n",
         );
         assert!(NativePlatform
             .validate("x-plane-11", copy.to_str().unwrap())

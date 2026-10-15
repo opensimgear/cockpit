@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { gatewayRequest } from './gateway';
+  import { gatewayRequest, pickGameExecutable } from './gateway';
+  import { gameExecutableName } from './games';
   import { savedAssignments, type MappingResult, type MappingProfile } from './mappings';
   import Icon from './Icon.svelte';
   import GameConfigEditor from './GameConfigEditor.svelte';
@@ -59,6 +60,19 @@
     finally { pending = false; }
   }
   function chooseProfile(profile: GameProfile) { draft = cloneGameProfile(profile); acceptBindings = false; deleting = false; notice = ''; }
+  async function browseExecutable() {
+    if (!selected || locked) return;
+    const gameId = selected.id;
+    pending = true; notice = '';
+    try {
+      const path = await pickGameExecutable(gameId, selected.executable);
+      if (path) {
+        const result = await send({ command: 'game_installation', gameId, executable: path });
+        if (result && !result.error) executablePath = path;
+      }
+    } catch (error) { notice = error instanceof Error ? error.message : String(error); }
+    finally { pending = false; }
+  }
   function chooseGame(game: Game) {
     selectedGameId = game.id; integrationFolderEdited = false; integrationFolder = gameIntegrationUserFolder(game); executablePath = game.executable ?? ''; addTargetKey = '';
     chooseProfile(defaultGameProfile(gameState, game.id) ?? newGameProfile(game.id, gameState.profiles));
@@ -226,10 +240,10 @@
           {#if selected.provider === 'x-plane' && selected.installations?.length}
             <label class="editor-label">Detected installations<select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{install.installPath} · {install.source}</option>{/each}</select></label>
           {/if}
-          <label class="editor-label">Game executable<input class="text-input" aria-label="Game executable" bind:value={executablePath} disabled={locked} placeholder={selected.id === 'dcs' ? 'C:\\…\\DCS World\\bin\\DCS.exe' : 'C:\\…\\acr.exe'} /></label>
-          <p class="field-help">Choose the executable in your installation folder for custom locations.</p>
-          <div class="installation-actions"><button class="secondary-button" disabled={locked || !executablePath.trim()} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath.trim() })}>Use this path</button><button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={12} /> Rescan</button></div>
-          {#if selected.executable}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
+          <label class="editor-label">Game executable<input class="text-input" aria-label="Game executable" value={selected.executable ?? ''} readonly placeholder={`Choose ${gameExecutableName(selected.id)}`} /></label>
+          <p class="field-help">Browse for {gameExecutableName(selected.id)} in your installation folder.</p>
+          <div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={browseExecutable}>Browse…</button>{#if executablePath && executablePath !== selected.executable}<button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}>Use this path</button>{/if}<button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={12} /> Rescan</button></div>
+          {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still prepare and activate profiles.{/if}</p>{/if}
         </section>
         <section class="panel setup-panel" aria-label="Game integration setup">
@@ -285,10 +299,10 @@
         {@const profile = defaultGameProfile(gameState, game.id)}
         <article class={['game-tile', { unavailable: !game.installed, rally: game.id === 'assetto-corsa-rally' }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
-            <div class="game-art"><div class="art-grid"></div><span class="art-category">{game.id === 'dcs' ? 'Flight' : 'Rally'}</span>
-              {#if game.id === 'dcs'}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="M0 135 340 100M0 155l340-35M30 0v160M100 0v160M170 0v160M240 0v160M310 0v160" stroke="currentColor" opacity=".1"/><circle cx="170" cy="83" r="58" stroke="currentColor" opacity=".16"/><circle cx="170" cy="83" r="38" stroke="currentColor" opacity=".16"/><path d="m170 24 12 41 82 45-2 10-77-22 7 40-22-10-22 10 7-40-77 22-2-10 82-45z" fill="currentColor" fill-opacity=".14" stroke="currentColor" stroke-width="1.4"/><path d="M170 24v104M160 78h20" stroke="currentColor" stroke-width="1.4"/></svg>
+            <div class="game-art"><div class="art-grid"></div><span class="art-category">{game.provider === 'assetto-corsa-rally' ? 'Rally' : 'Flight'}</span>
+              {#if game.provider !== 'assetto-corsa-rally'}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="M0 135 340 100M0 155l340-35M30 0v160M100 0v160M170 0v160M240 0v160M310 0v160" stroke="currentColor" opacity=".1"/><circle cx="170" cy="83" r="58" stroke="currentColor" opacity=".16"/><circle cx="170" cy="83" r="38" stroke="currentColor" opacity=".16"/><path d="m170 24 12 41 82 45-2 10-77-22 7 40-22-10-22 10 7-40-77 22-2-10 82-45z" fill="currentColor" fill-opacity=".14" stroke="currentColor" stroke-width="1.4"/><path d="M170 24v104M160 78h20" stroke="currentColor" stroke-width="1.4"/></svg>
               {:else}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="m0 107 65-67 48 45 64-65 90 72 39-33 34 35" stroke="currentColor" opacity=".2"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="36" opacity=".08"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="1.2" stroke-dasharray="8 7" opacity=".3"/><path d="m139 92 13-19h38l14 19 4 28h-74z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><path d="m151 91 7-12h26l8 12zM139 105h12M192 105h11M150 118h43" stroke="currentColor" stroke-width="1.5"/><path d="M140 122v8h10v-8M192 122v8h10v-8" stroke="currentColor" stroke-width="3"/></svg>{/if}
-              <div class="game-wordmark">{game.id === 'dcs' ? 'DCS' : 'ACR'}<span>{game.id === 'dcs' ? 'WORLD' : 'RALLY'}</span></div>
+              <div class="game-wordmark">{game.provider === 'x-plane' ? 'X-PLANE' : game.id === 'dcs' ? 'DCS' : 'ACR'}<span>{game.provider === 'x-plane' ? game.id.slice(-2) : game.id === 'dcs' ? 'WORLD' : 'RALLY'}</span></div>
             </div>
             <div class="tile-copy"><div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div><p>{game.provider === 'x-plane' ? 'Flight telemetry · Indicators & displays' : game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p><div class="tile-footer"><span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span><span>{profile?.name ?? 'Set up a profile'}</span></div><div class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></div>{#if game.id === 'assetto-corsa-rally' && game.installed}<div class={['tile-verification', { verified: gameIntegrationNativeVerified(game) }]}>{gameIntegrationVerificationLabel(game)}</div>{/if}{#if game.installed}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{gameIntegrationLiveLabel(game)}</div>{/if}</div>
           </button>

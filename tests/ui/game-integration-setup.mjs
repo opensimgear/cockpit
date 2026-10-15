@@ -18,6 +18,46 @@ const artifacts = resolve(process.env.OSG_SETUP_UI_ARTIFACTS ?? '.research/setup
 const folder = String.raw`C:\Users\Pilot\Saved Games\DCS`;
 const alternate = String.raw`D:\Profiles\Saved Games\DCS.openbeta`;
 
+test('native picker uses the selected game, preserves paths on cancellation, and keeps X-Plane tiles distinct from ACR', {timeout:30000},async()=>{
+  const browser=await chromium.launch({headless:true,...(process.env.OSG_BROWSER_CHANNEL?{channel:process.env.OSG_BROWSER_CHANNEL}:{})});
+  const page=await browser.newPage();const calls=[];let choice=null;let pickerError=false;
+  const catalogue=[{id:'dcs',name:'DCS World',provider:'dcs-bios'},{id:'assetto-corsa-rally',name:'Assetto Corsa Rally',provider:'assetto-corsa-rally'},{id:'x-plane-11',name:'X-Plane 11',provider:'x-plane'},{id:'x-plane-12',name:'X-Plane 12',provider:'x-plane'}].map(g=>({...g,installed:true,launchSupported:true,executable:null}));
+  const games={catalogue,profiles:[],defaultProfiles:{},session:{phase:'idle'}};
+  await page.exposeFunction('__osgNativeInvoke',async(command,args)=>{
+    calls.push({command,args});
+    if(command==='pick_game_executable'){if(pickerError)throw new Error('Cannot open file picker');return choice;}
+    if(command==='gateway_request'){
+      const r=args.request;
+      if(r.command==='game_installation'){const game=catalogue.find(g=>g.id===r.gameId);game.executable=r.executable;game.source=r.executable?'manual':'not-found';}
+      return {ok:true,state:{running:false,needsReconnect:false,modules:[],ports:[],games,integration:{running:false},dcsBios:{running:false}}};
+    }
+    throw new Error(`Unexpected native command: ${command}`);
+  });
+  await page.addInitScript(()=>{window.isTauri=true;window.__TAURI_INTERNALS__={invoke:(command,args)=>window.__osgNativeInvoke(command,args)};});
+  try{
+    await page.goto(endpoint);const nav=page.getByRole('navigation',{name:'Main navigation'});await nav.getByRole('button',{name:'Games',exact:true}).click();
+    for(const game of catalogue){
+      const tile=page.getByRole('button',{name:`Open ${game.name} details`,exact:true});
+      if(game.provider==='x-plane'){await expect(tile.locator('.game-wordmark')).toContainText('X-PLANE');await expect(tile.locator('.art-category')).toHaveText('Flight');}
+      await tile.click();const path=page.getByLabel('Game executable',{exact:true});await expect(path).toHaveAttribute('readonly','');
+      const filename=game.provider==='x-plane'?'X-Plane.exe':game.id==='dcs'?'DCS.exe':'acr.exe';await expect(path).toHaveAttribute('placeholder',`Choose ${filename}`);
+      choice=`D:/Games/${game.name}/${filename}`;await page.getByRole('button',{name:'Browse…',exact:true}).click();await expect(path).toHaveValue(choice);
+      const selected=calls.filter(c=>c.command==='pick_game_executable').at(-1);assert.equal(selected.args.gameId,game.id);
+      const count=calls.filter(c=>c.command==='gateway_request'&&c.args.request.command==='game_installation').length;
+      choice=null;await page.getByRole('button',{name:'Browse…',exact:true}).click();await expect(page.getByRole('button',{name:'Browse…',exact:true})).toBeEnabled();
+      assert.equal(calls.filter(c=>c.command==='gateway_request'&&c.args.request.command==='game_installation').length,count);await expect(path).toHaveValue(game.executable);
+      await page.getByRole('button',{name:'All games',exact:true}).click();
+    }
+    await page.getByRole('button',{name:'Open X-Plane 12 details',exact:true}).click();
+    catalogue[3].installed=false;catalogue[3].executable=null;catalogue[3].source='manual';
+    await expect(page.getByLabel('Game executable',{exact:true})).toHaveValue('');
+    await page.getByRole('button',{name:'Use automatic discovery',exact:true}).click();
+    assert.equal(catalogue[3].source,'not-found');await expect(page.getByRole('button',{name:'Use automatic discovery',exact:true})).toHaveCount(0);
+    pickerError=true;await page.getByRole('button',{name:'Browse…',exact:true}).click();
+    await expect(page.getByText(/Cannot open file picker/)).toBeVisible();await expect(page.getByRole('button',{name:'Browse…',exact:true})).toBeEnabled();
+  }finally{await browser.close();}
+});
+
 test('frontend X-Plane setup, version-scoped profile capture and portable indicator/display editing', {timeout:60000}, async () => {
   await mkdir(artifacts,{recursive:true});
   const browser=await chromium.launch({headless:true, ...(process.env.OSG_BROWSER_CHANNEL ? {channel:process.env.OSG_BROWSER_CHANNEL} : {})});
