@@ -76,6 +76,13 @@ explicit clock, checking the partial frame/counter before committing it, then
 advancing past the freshness boundary. No assertion is skipped and no production
 timeout is relaxed.
 
+A subsequent macOS run exposed another legacy service-test assumption: LED
+feedback followed by a fixed sleep did not prove the input baseline was armed.
+That test now observes armed/recovered/error/stale states, uses the normal
+1500 ms configured freshness window, and stops its export peer on any exit.
+It retains real UDP command delivery and asserts both ordered press/release
+datagrams, recovery and final fallback. No production behavior changed.
+
 - Windows 11 build 26200: rebuilt native service, ordered recording preview and
   persistence/restart checks passed with the installed vJoy driver. Inspection
   reported slot 1 FREE, 16 axes, eight buttons, no hats. No acquisition/report,

@@ -882,6 +882,27 @@ mod tests {
     }
     #[test]
     fn background_service_sends_short_press_pair_tracks_feedback_and_stops_without_ui_polling() {
+        fn wait_for(message: &str, condition: impl Fn() -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !condition() {
+                assert!(Instant::now() < deadline, "Timed out waiting for {message}");
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+        struct Peer(Arc<AtomicBool>, Option<JoinHandle<()>>);
+        impl Peer {
+            fn stop(&mut self) {
+                self.0.store(true, Ordering::Release);
+                if let Some(worker) = self.1.take() {
+                    worker.join().unwrap();
+                }
+            }
+        }
+        impl Drop for Peer {
+            fn drop(&mut self) {
+                self.stop();
+            }
+        }
         let command = UdpSocket::bind("127.0.0.1:0").unwrap();
         command
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -889,7 +910,10 @@ mod tests {
         let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
         let export = reserve.local_addr().unwrap();
         drop(reserve);
-        let config = config(command.local_addr().unwrap().port(), export.port());
+        let mut config = config(command.local_addr().unwrap().port(), export.port());
+        // This is a background-service test, not a 150 ms latency test. Use the
+        // normal configured freshness window and observe explicit state changes.
+        config.freshness_ms = 1500;
         let (panel, shared) = mock(&config);
         let service = DcsRuntime::new(panel, path());
         service
@@ -917,12 +941,11 @@ mod tests {
                 thread::sleep(Duration::from_millis(20));
             }
         });
-        let until = Instant::now() + Duration::from_secs(3);
-        while !shared.lock().unwrap().led && Instant::now() < until {
-            thread::sleep(Duration::from_millis(20));
-        }
+        let mut peer = Peer(stop, Some(peer));
+        wait_for("fresh feedback and an armed input baseline", || {
+            shared.lock().unwrap().led && service.status()["armed"] == true
+        });
         assert!(shared.lock().unwrap().led, "fresh export turns LED on");
-        thread::sleep(Duration::from_millis(100));
         {
             let mut m = shared.lock().unwrap();
             m.head = 2;
@@ -937,15 +960,25 @@ mod tests {
         let second = command.recv(&mut data).unwrap();
         assert_eq!(&data[..second], b"UFC_MASTER_CAUTION 0\n");
         shared.lock().unwrap().fail = true;
-        thread::sleep(Duration::from_millis(100));
+        wait_for("disconnected panel diagnostic", || {
+            service.status()["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("Disconnected"))
+        });
         assert!(service.status()["error"]
             .as_str()
             .unwrap()
             .contains("Disconnected"));
         shared.lock().unwrap().fail = false;
-        stop.store(true, Ordering::Release);
-        peer.join().unwrap();
-        thread::sleep(Duration::from_millis(300));
+        wait_for("recovered feedback and input baseline", || {
+            shared.lock().unwrap().led
+                && service.status()["armed"] == true
+                && service.status()["error"].is_null()
+        });
+        peer.stop();
+        wait_for("stale export fallback", || {
+            !shared.lock().unwrap().led && service.status()["feedbackFresh"] == false
+        });
         assert!(
             !shared.lock().unwrap().led,
             "stale export uses off fallback"
