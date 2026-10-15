@@ -314,6 +314,9 @@ impl Process {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        // Fixture failures must expose helper setup errors in the test evidence.
+        #[cfg(test)]
+        command.stderr(Stdio::inherit());
         unsafe {
             command.pre_exec(move || {
                 // Async-signal-safe only. Keep Rust's exec error pipe CLOEXEC, and prevent

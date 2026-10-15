@@ -34,7 +34,13 @@ def main():
     # Native fork/namespace probes briefly inherit process-wide advisory locks.
     # Keep independent lock fixtures out of that fork window; worker concurrency
     # and competing-owner behavior are exercised explicitly within their tests.
-    (output / 'tests.log').write_text(run([binaries[0], '--test-threads=1'], root, env), encoding='utf-8')
+    tests = subprocess.run([binaries[0], '--test-threads=1'], cwd=root, env=env,
+                           text=True, encoding='utf-8', stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+    (output / 'tests.log').write_text(tests.stdout, encoding='utf-8')
+    if tests.returncode:
+        print(tests.stdout, flush=True)
+        tests.check_returncode()
     sysroot = Path(run(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', run(['rustc', '-vV'], root), re.M).group(1)
     suffix = '.exe' if os.name == 'nt' else ''

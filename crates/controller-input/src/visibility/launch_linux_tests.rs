@@ -262,7 +262,7 @@ fn parent_death_cleans_namespace_children_without_drop() {
         ])
         .env(KEY, &file)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::inherit())
         .status()
         .unwrap();
     assert!(status.success());
