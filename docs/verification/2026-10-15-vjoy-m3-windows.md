@@ -140,3 +140,46 @@ Additional raw evidence SHA-256:
 - `post-reboot-create3.jsonl`: `0d4e6bca49f08c68c77ccaa3c30285c031e6de4c7e270a3aa48a694040d6baa4`
 - M0 `windows-followup-after.json`: `1b60ccbc02f64ed18f0c92100a3bb502e0e78b495adfdf4862ffc341bd78c595`
 - `vjoy-native-feeder-timing.json`: `f3bae43f628b36865da81e4e5c756b6e0886a2de478c37aeadb7736b2d7c5e04`
+
+## Physical X/Y, trigger and hat routing passed
+
+The user completed the cued right-Gladiator movements with games closed. The
+independent read-only Windows joystick observer recorded the original physical
+VID 231D/PID 0200 device and both virtual VID 1234/PID BEAD devices simultaneously.
+The two-axis/eight-button device identifies slot 2; the three-axis/sixteen-button
+device identifies slot 3. The untouched six-axis API view of slot 1 was also present.
+
+| Observed device | Changed samples | X range | Y range | Mapped button | POV |
+| --- | --- | --- | --- | --- | --- |
+| Physical right Gladiator | 667 | 0–65535 | 0–65535 | Press/release observed | All eight directions and neutral |
+| vJoy slot 2 | 662 | 0–65535 | 0–65535 | Button 1 press/release | All eight directions and neutral |
+| vJoy slot 3 | 661 | 0–65535 | 0–65535 | Button 1 press/release | All eight directions and neutral |
+
+These are the joystick API's scaled axis values, not Cockpit's 0–32767 normalized
+range. Every recorded API read succeeded. Slot 1 produced only its initial state;
+no subsequent observed state changed. The production host remained running and
+ready with no fault or recovery requirement after the manual phase. It had recorded
+6,288 ordered mapping reports by the status check. No device hiding was requested;
+the original HidHide policy was preserved. This observer result establishes routing,
+not real-game binding or universal API visibility.
+
+The normal Windows Tauri application's own read-only status was separately checked:
+virtual devices `enabled=false`, `qualified=false`; provisioning and scripts
+unqualified; device hiding disabled; no live mapping or output recovery active.
+The isolated qualification host's explicit live enablement is confined to its
+separate executable and local test storage.
+
+Commit `ee1811e80153f844728e30b8eb1f2eb930ea72a4` passed native virtual-controller
+tests/coverage in CI run 38741797150, but that run failed overall: the desktop
+native-service integration test expected two catalogue entries while the concurrently
+merged X-Plane integration now provides four. The owning task was notified with the
+exact Windows/macOS failure. Do not report this checkpoint's complete CI as passing.
+
+The user has been asked to bind a virtual axis, button and hat in a real game,
+explicitly checking that the binding source is vJoy and the original remains listed.
+That manual result is pending, so acceptance criterion 1 remains unchecked.
+
+Finalized raw evidence SHA-256:
+
+- `vjoy-winmm-routing.jsonl`: `400e7074083b0bab806060ba1230e6e4208b0c47e7a14c913e7cb77c2f9fa431`
+- `vjoy-routing-summary.json`: `18b89141d8551daf5c01dcc5ebb2230139e0642ef994b80f25ba83fcd44d2051`
