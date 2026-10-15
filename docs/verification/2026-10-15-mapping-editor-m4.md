@@ -20,4 +20,18 @@ Portable traces cover curve endpoints, threshold noise, chords, toggles, deferre
 
 The running Windows Tauri WebView was exercised through its UI: a synthetic recording profile was created, a pulse was edited and saved with a 5000 microsecond duration, preview started, and the UI thread was deliberately busy for 150 milliseconds. The native worker still recorded the timed release. No JavaScript exceptions occurred and live-output controls remained disabled. Evidence is under `.research/controller-mapping-m0/inspect-editor-ui.mjs` and `cockpit-m4-editor.png`.
 
-Real virtual-driver delivery under a busy UI remains conditional on #25/#27/#28 qualification; the recording proof does not qualify those backends. Keep this physical acceptance gap open.
+## Implementation acceptance — 16 October 2026
+
+The editor implementation has three original criteria verified. At the user's
+request, the remaining “Native output continues while the UI is busy” criterion
+is transferred, unchecked, to [#51](https://github.com/opensimgear/cockpit/issues/51).
+The recording proof does not qualify real virtual-driver delivery. This permits
+implementation closure of #30 without enabling live output or claiming the
+transferred check passed. Linux/macOS remain deferred separately.
+
+Local CI against a clean committed source export passes the frontend type/Svelte
+check (zero errors/warnings), transport tests, all nine frontend coverage commands
+and UI production build. Portable mapping coverage passes all nine modules
+(minimum 92.72%); the rules module has 97.87%. Windows mapping-host coverage also
+passes all six modules (minimum 72.99%). These automated checks cover the delivered
+editor, transformations, inspector, recording path and ownership boundaries.
