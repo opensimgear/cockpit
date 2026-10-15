@@ -1,4 +1,5 @@
 [package]
+license-file = "../LICENSE"
 name = "osg-cockpit"
 version = "0.1.0"
 description = "OpenSimGear Cockpit"

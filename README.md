@@ -256,4 +256,4 @@ The experimental **Mappings** workspace saves/imports profiles, assigns native, 
 
 ## Licensing
 
-No OpenSimGear license grant is implied for newly authored application or firmware code. Upstream components retain their own licenses.
+Copyright © Ivan Gregurić Ortolan. All rights reserved for original OpenSimGear material while licensing is under review. The [temporary licensing policy](LICENSE) defines the current scope. Creative external contributions are suspended during review; [CONTRIBUTING.md](CONTRIBUTING.md) explains the policy for factual bug reports and questions. Upstream components retain their own licenses and notices.

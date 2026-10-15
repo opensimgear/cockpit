@@ -18,6 +18,10 @@ def main():
     args = parser.parse_args()
     if sys.platform != 'darwin':
         parser.error('Staging requires a native macOS build host and Apple SDK.')
+    notices = [ROOT / name for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md')]
+    for notice in notices:
+        if not notice.is_file():
+            raise RuntimeError(f'Missing distribution notice: {notice}')
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, CARGO_TARGET_DIR=str(output / 'target'))
@@ -29,6 +33,8 @@ def main():
     helper = payload / 'osg-macos-hid-helper'
     shutil.copy2(output / 'target/release/osg-macos-hid-helper', helper)
     helper.chmod(0o755)
+    for notice in notices:
+        shutil.copy2(notice, payload / notice.name)
     result = subprocess.run([str(helper), '--inspect'], capture_output=True, text=True,
                             timeout=5, check=True)
     if json.loads(result.stdout)['qualified'] is not False:
