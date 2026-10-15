@@ -1,6 +1,28 @@
 # Third party devices and controller mapping implementation plan
 
-Status: M0 qualification gaps remain open; M1 Windows discovery is implemented experimentally; M1P capture is gated; M2 portable profiles and the preview runtime are implemented. Full controller mapping is not delivered. Date: 14 October 2026.
+Status: Windows-only delivery is active. M3 Windows acceptance (#25) is closed with its six listed criteria verified; production enablement and remaining Windows qualification are tracked in #33. Linux and macOS support is deferred. Full controller mapping is not delivered. Updated: 15 October 2026.
+
+## Current delivery priority
+
+At the user's request, active implementation, review and manual qualification focus
+on Windows. Linux and macOS have separate tickets in Backlog; their native hardware,
+game, permission and deployment checks do not block Windows milestones. Preserve
+existing platform code, portable contracts and cross-platform CI. Unqualified
+capture, output, provisioning, script and visibility capabilities remain disabled.
+
+| Deferred work | Linux | macOS |
+| --- | --- | --- |
+| Physical controller capture | [#23](https://github.com/opensimgear/cockpit/issues/23) | [#46](https://github.com/opensimgear/cockpit/issues/46) |
+| Virtual controllers | [#27](https://github.com/opensimgear/cockpit/issues/27) | [#28](https://github.com/opensimgear/cockpit/issues/28) |
+| Visibility and suppression | [#29](https://github.com/opensimgear/cockpit/issues/29) | [#47](https://github.com/opensimgear/cockpit/issues/47) |
+| Platform qualification, setup and packaging | [#48](https://github.com/opensimgear/cockpit/issues/48) | [#49](https://github.com/opensimgear/cockpit/issues/49) |
+
+[#21](https://github.com/opensimgear/cockpit/issues/21) now covers Windows dependency
+qualification and shared contracts. Windows HidHide (#26), editor (#30), scripts
+(#31), game/panel integration (#32) and final Windows qualification (#33) retain
+their implementation dependencies. The unexplained feeder exit observed during
+#25 and production live-output enablement remain explicit follow-ups in #33.
+The broader platform architecture below is retained for later work.
 
 See the [M0 contract candidate](controller-mapping-contracts.md) and [qualification record](verification/2026-10-14-controller-mapping-m0.md) for executed checks and remaining gates.
 
@@ -12,7 +34,7 @@ Implementation continues with unqualified capabilities disabled, as authorized o
 
 Add a native input router to Cockpit so users can discover third-party controllers, combine their controls with OpenSimGear inputs, and apply mappings and custom logic on Windows, Linux and macOS. Optional platform backends create virtual devices and control physical-device visibility. Windows uses vJoy/HidHide; Linux uses native input interfaces; macOS uses a qualified Apple HID helper. Physical controllers remain visible by default. Both features require explicit activation and the platform's dependencies, permissions and setup.
 
-Delivery covers Windows 10/11 x64, Linux and macOS through separate qualification gates. Windows is the first integration slice; Linux and macOS are included implementation milestones, with supported distributions, OS versions and architectures established in M0. Keep the engine portable and provide synthetic sources and a recording adapter everywhere. Platform support does not imply identical visibility policies, persistent OS device identities or game compatibility. This plan changes Cockpit software; existing board versions remain 0.1.0.
+The long-term platform plan covers Windows 10/11 x64, Linux and macOS through separate qualification gates. Current delivery covers Windows; Linux and macOS milestones are deferred, with their supported distributions, OS versions, architectures and deployment established in their own qualification tickets. Keep the engine portable and provide synthetic sources and a recording adapter everywhere. Platform support does not imply identical visibility policies, persistent OS device identities or game compatibility. This plan changes Cockpit software; existing board versions remain 0.1.0.
 
 Joystick Gremlin is the functional reference, particularly device merging, axis transformations, modes and scripting. Cockpit will have its own profile format and scripting API rather than promise compatibility with Gremlin profiles or Python plugins. See the [Gremlin feature overview](https://whitemagic.github.io/JoystickGremlin/introduction.html).
 
