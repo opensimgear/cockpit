@@ -1,8 +1,11 @@
 //! Resource limits complement interpreter budgets; this is not an OS permission sandbox.
 #[cfg(unix)]
 pub fn child_limits() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    crate::HELPER_HEAP.limit(256 * 1024 * 1024)?;
     // Keep memory allocation and accidental descriptor growth bounded before accepting code.
     for (resource, limit) in [
+        #[cfg(not(target_os = "macos"))]
         (libc::RLIMIT_DATA, 256 * 1024 * 1024),
         (libc::RLIMIT_NOFILE, 32),
     ] {

@@ -40,3 +40,5 @@ cargo run --locked --manifest-path crates/logic/Cargo.toml -- replay cockpit-map
 Replay evaluates recorded invocations in fresh helper processes, compares successful transactions and applies the recorded scheduling through the production reducer. It reports a stable output hash. It never opens controller or virtual-output handles. Captured helper/source failures remain explicit trace events; replay does not erase those failures because a later machine is faster.
 
 See the [M5 validation record](verification/2026-10-15-script-runtime-m5.md) for software evidence and remaining qualification gaps.
+
+On macOS, the helper uses a 256 MiB requested Rust-heap allocation budget and descriptor limit. Darwin rejects the small RLIMIT_DATA cap at startup; native-library allocations and total RSS are not covered by the heap budget. Whole-process memory qualification remains open and live scripts remain disabled.

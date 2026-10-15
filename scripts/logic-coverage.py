@@ -30,10 +30,10 @@ def main():
     host=re.search(r'^host: (.+)$',run(['rustc','-vV'],root),re.M).group(1)
     suffix='.exe' if os.name=='nt' else ''
     llvm=sysroot/'lib/rustlib'/host/'bin';profile=output/'coverage.profdata'
-    run([llvm/f'llvm-profdata{suffix}','merge','-sparse',*profiles.glob('*.profraw'),'-o',profile],root)
+    run([llvm/f'llvm-profdata{suffix}','merge','-sparse','--failure-mode=all',*profiles.glob('*.profraw'),'-o',profile],root)
     objects=[item for binary in binaries[1:] for item in ['-object',binary]]
     summary={}
-    for module in ['evaluator','wire','worker','resources','replay','main']:
+    for module in ['evaluator','wire','worker','resources','replay','main','heap']:
         source=root/f'crates/logic/src/{module}.rs'
         annotated=run([llvm/f'llvm-cov{suffix}','show',binaries[0],*objects,f'-instr-profile={profile}','-show-line-counts-or-regions',source],root)
         (output/f'{module}-lines.txt').write_text(annotated,encoding='utf-8')

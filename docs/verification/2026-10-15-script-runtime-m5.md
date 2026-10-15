@@ -13,3 +13,5 @@ Linux and Windows script modules exceed 70% production line coverage. Portable m
 ## Open qualification
 
 Real user-written script output requires a qualified virtual backend; none is enabled. Native macOS resource-control behavior, adversarial memory exhaustion under the final packaged helpers, signed packaging and physical end-to-end latency remain qualification work. The local resource-control tests do not establish an OS permission sandbox. Keep #31 open/In progress and all live script output disabled while these gaps remain.
+
+Darwin CI exposed that `RLIMIT_DATA=256 MiB` is rejected during helper startup, including with nano malloc disabled. macOS now bounds requested Rust heap allocations at 256 MiB before compilation and limits descriptors, with independent interpreter and parent deadlines. This is **not a cap on native-library allocations or total process RSS**; that qualification remains open and live script output stays disabled. Linux retains RLIMIT_DATA; Windows retains the process Job memory limit. No test is skipped for macOS.

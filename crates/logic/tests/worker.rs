@@ -230,8 +230,6 @@ fn framed_worker_exits_cleanly_on_eof_and_rejects_recompilation() {
     use std::process::{Command, Stdio};
     for recompile in [false, true] {
         let mut command = Command::new(helper());
-        #[cfg(target_os = "macos")]
-        command.env("MallocNanoZone", "0");
         let mut child = command
             .arg(osg_logic::worker::ARG)
             .stdin(Stdio::piped())
