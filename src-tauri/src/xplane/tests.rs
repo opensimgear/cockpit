@@ -6,9 +6,10 @@ use super::*;
 // its advancing frame, without changing the production polling behavior.
 fn poll_after_delivery(source: &mut Source, now: Instant) -> (ExportSnapshot, Value) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut byte = [0u8; 1];
+    // Windows rejects a short UDP peek with WSAEMSGSIZE instead of truncating.
+    let mut datagram = [0u8; MAX_PACKET + 1];
     loop {
-        match source.socket.peek(&mut byte) {
+        match source.socket.peek(&mut datagram) {
             Ok(_) => return source.poll(now),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 assert!(
