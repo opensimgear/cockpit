@@ -18,7 +18,7 @@ use std::{
 };
 
 const CLIENT: &str = "cockpit-game-session-coordinator";
-const GAMES: [&str; 2] = ["dcs", "assetto-corsa-rally"];
+const GAMES: [&str; 4] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12"];
 const MAX_FILE: usize = 2 * 1024 * 1024;
 const MAX_SAVED: usize = 48 * 1024;
 const BINDING_WARNING: &str = "Controller and input mapping changes can rebuild USB descriptors and change game bindings. Accept these changes before activating this profile.";
@@ -185,13 +185,27 @@ fn profile(value: &Value) -> Result<Value, String> {
         let config = game_integration(&value["integration"])?;
         let expected = if game == "dcs" {
             "dcs-bios"
+        } else if game.starts_with("x-plane-") {
+            "x-plane"
         } else {
             "assetto-corsa-rally"
         };
         if config.provider() != expected {
             return Err("The integration provider must match this game.".into());
         }
+        if game.starts_with("x-plane-")
+            && config.connection["version"].as_u64()
+                != game.trim_start_matches("x-plane-").parse::<u64>().ok()
+        {
+            return Err("The X-Plane connection version must match the selected game.".into());
+        }
         result["integration"] = config.value();
+        if expected == crate::xplane::PROVIDER {
+            result["integration"]["connection"]
+                .as_object_mut()
+                .unwrap()
+                .remove("processIdentity");
+        }
         if value["integration"]["connection"]["processId"].is_null()
             && result["integration"]["connection"]["source"] == "shared-memory"
         {
@@ -296,7 +310,7 @@ impl Saved {
         }
         let rows = value["profiles"]
             .as_array()
-            .filter(|v| v.len() <= 32)
+            .filter(|v| v.len() <= 64)
             .ok_or("Invalid saved game profiles.")?;
         let mut saved = Self::fresh();
         saved.profiles.clear();
@@ -308,6 +322,19 @@ impl Saved {
             }
         }
         for game in GAMES {
+            if game.starts_with("x-plane-") && value["defaultProfiles"][game].is_null() {
+                let mut default = default_profile(game);
+                let mut id = format!("{game}-default");
+                let mut suffix = 1;
+                while saved.profiles.contains_key(&id) {
+                    id = format!("{game}-default-{suffix}");
+                    suffix += 1;
+                }
+                default["id"] = json!(id);
+                saved.profiles.insert(id.clone(), default);
+                saved.defaults.insert(game.into(), id);
+                continue;
+            }
             let id = identifier(&value["defaultProfiles"][game], 64)?;
             if saved.profiles.get(id).is_none_or(|p| p["gameId"] != game) {
                 return Err("Invalid default game profile.".into());
@@ -316,7 +343,7 @@ impl Saved {
         }
         let manual = value["manualInstallations"]
             .as_object()
-            .filter(|o| o.len() <= 2)
+            .filter(|o| o.len() <= 4)
             .ok_or("Invalid manual installations.")?;
         for (game, executable) in manual {
             game_id(&json!(game))?;
@@ -670,8 +697,8 @@ impl GamesRuntime {
                 {
                     return Err("A saved profile cannot change games.".into());
                 }
-                if draft.profiles.len() >= 32 && !draft.profiles.contains_key(&id) {
-                    return Err("Choose at most 32 game profiles.".into());
+                if draft.profiles.len() >= 64 && !draft.profiles.contains_key(&id) {
+                    return Err("Choose at most 64 game profiles.".into());
                 }
                 draft.profiles.insert(id, p);
             }
@@ -1112,6 +1139,12 @@ impl Inner {
             return Ok(());
         }
         let mut config = journal["desiredIntegration"].clone();
+        if config["document"]["provider"] == crate::xplane::PROVIDER {
+            let process = process.ok_or(
+                "Start the selected X-Plane installation before activating live telemetry.",
+            )?;
+            config["connection"]["processIdentity"] = process.value();
+        }
         if config["document"]["provider"] == "assetto-corsa-rally"
             && config["connection"]["source"] == "shared-memory"
         {
@@ -1151,8 +1184,10 @@ impl Inner {
                 self.call("_game_mapping_arm", json!({"mapping":j["mapping"]}))?;
                 self.step("Captured mapping armed with fresh input baselines.");
             }
-            let delayed = j["desiredIntegration"]["document"]["provider"] == "assetto-corsa-rally"
-                && j["desiredIntegration"]["connection"]["source"] == "shared-memory";
+            let delayed = j["desiredIntegration"]["document"]["provider"]
+                == crate::xplane::PROVIDER
+                || (j["desiredIntegration"]["document"]["provider"] == "assetto-corsa-rally"
+                    && j["desiredIntegration"]["connection"]["source"] == "shared-memory");
             if !delayed {
                 self.start_integration(j, None)?;
             }

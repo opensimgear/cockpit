@@ -22,15 +22,16 @@
   const validated = $derived(!!draft && validationKey === integrationFingerprint(draft) && validationRevision === status?.revision && validationCatalogue === status?.validation?.catalogueRevision && !!status?.validation?.valid);
   const diagnostics = $derived(status?.validation?.diagnostics ?? status?.diagnostics ?? []);
   function resetValidation() { validationKey='';validationRevision=undefined;validationCatalogue=undefined; }
-  function setupFor(provider: IntegrationProvider) {
-    const setup = setups.find(game => game.provider === provider)?.integrationSetup;
+  function setupFor(provider: IntegrationProvider, version = draft?.connection.version ?? 11) {
+    const setup = setups.find(game => game.provider === provider && (provider !== 'x-plane' || game.id === `x-plane-${version}`))?.integrationSetup;
     if (!setup?.connection) return undefined;
     return provider === 'dcs-bios' ? (setup.state === 'ready' ? setup : undefined)
+      : provider === 'x-plane' ? (setup.state === 'ready' ? setup : undefined)
       : (['ready', 'needs-attention'].includes(setup.state) && setup.connection.source === 'shared-memory' ? setup : undefined);
   }
   function prepared(provider: IntegrationProvider = 'dcs-bios') {
     const config = newIntegrationConfig(provider);
-    const setup = setupFor(provider);
+    const setup = setupFor(provider, config.connection.version);
     if (setup?.connection) config.connection = { ...config.connection, ...setup.connection };
     return config;
   }
@@ -124,13 +125,17 @@
   {#if draft}
     {#if setupFor(draft.document.provider)}<p>Prepared game connection settings are available. <button disabled={readOnly} onclick={useSetup}>Use prepared connection settings</button></p>{/if}
     <fieldset disabled={readOnly}><legend>Profile and provider</legend><div class="fields">
-      <label>Provider<select value={draft.document.provider} onchange={event => providerChanged(event.currentTarget.value as IntegrationProvider)}><option value="dcs-bios">DCS-BIOS</option><option value="assetto-corsa-rally">Assetto Corsa Rally</option></select></label>
+      <label>Provider<select value={draft.document.provider} onchange={event => providerChanged(event.currentTarget.value as IntegrationProvider)}><option value="dcs-bios">DCS-BIOS</option><option value="assetto-corsa-rally">Assetto Corsa Rally</option><option value="x-plane">X-Plane 11 / 12</option></select></label>
       <label>Profile name<input bind:value={draft.document.name} maxlength="63" /></label><label>Profile identifier<input bind:value={draft.document.id} maxlength="31" spellcheck="false" /></label>
-      {#if draft.document.provider === 'dcs-bios'}<label>Installed aircraft module<input bind:value={draft.document.context.aircraftModule} placeholder="A-10C" spellcheck="false" /></label><label>Installed DCS-BIOS doc/json directory<input bind:value={draft.connection.cataloguePath} spellcheck="false" /></label>{:else}<label>Telemetry source<select bind:value={draft.connection.source}><option value="shared-memory">Windows ACR shared memory</option><option value="synthetic">Authored synthetic telemetry</option></select></label>{#if draft.connection.source === 'shared-memory'}<label>Windows game process ID<input type="number" min="1" max="4294967295" step="1" bind:value={draft.connection.processId} placeholder="Selected by Games at launch" /></label>{/if}{/if}
+      {#if draft.document.provider === 'dcs-bios'}<label>Installed aircraft module<input bind:value={draft.document.context.aircraftModule} placeholder="A-10C" spellcheck="false" /></label><label>Installed DCS-BIOS doc/json directory<input bind:value={draft.connection.cataloguePath} spellcheck="false" /></label>{:else if draft.document.provider === 'x-plane'}
+        <label>Simulator version<select bind:value={draft.connection.version}><option value={11}>X-Plane 11</option><option value={12}>X-Plane 12</option></select></label>
+        <label>Local simulator host<input bind:value={draft.connection.host} /></label><label>Simulator UDP receive port<input type="number" min="1" max="65535" bind:value={draft.connection.port} /></label>
+        <label>Cockpit reply port (0 = automatic)<input type="number" min="0" max="65535" bind:value={draft.connection.listenPort} /></label><label>Updates per second<input type="number" min="1" max="20" bind:value={draft.connection.updateHz} /></label>
+      {:else}<label>Telemetry source<select bind:value={draft.connection.source}><option value="shared-memory">Windows ACR shared memory</option><option value="synthetic">Authored synthetic telemetry</option></select></label>{#if draft.connection.source === 'shared-memory'}<label>Windows game process ID<input type="number" min="1" max="4294967295" step="1" bind:value={draft.connection.processId} placeholder="Selected by Games at launch" /></label>{/if}{/if}
       <label>Freshness timeout (ms)<input type="number" min="100" max="10000" step="1" bind:value={draft.connection.freshnessMs} /></label>
     </div>
     {#if draft.document.provider === 'assetto-corsa-rally' && draft.connection.source === 'shared-memory'}<p>Games selects its actual process when launched; manual Start needs a running PID.</p>{/if}
-    {#if draft.document.provider === 'dcs-bios'}<details><summary>Local UDP connection</summary><div class="fields"><label>Command host<input bind:value={draft.connection.commandHost} /></label><label>Command port<input type="number" min="1" max="65535" step="1" bind:value={draft.connection.commandPort} /></label><label>Feedback address<input bind:value={draft.connection.listenAddress} /></label><label>Feedback port<input type="number" min="1" max="65535" step="1" bind:value={draft.connection.listenPort} /></label><label>Multicast group (optional)<input bind:value={draft.connection.multicastGroup} /></label><label>Multicast interface<input bind:value={draft.connection.multicastInterface} /></label></div></details>{:else}<p>ACR sends telemetry to LEDs and displays. Set up the game in Games, then add device roles and output rules here.</p>{/if}
+    {#if draft.document.provider === 'dcs-bios'}<details><summary>Local UDP connection</summary><div class="fields"><label>Command host<input bind:value={draft.connection.commandHost} /></label><label>Command port<input type="number" min="1" max="65535" step="1" bind:value={draft.connection.commandPort} /></label><label>Feedback address<input bind:value={draft.connection.listenAddress} /></label><label>Feedback port<input type="number" min="1" max="65535" step="1" bind:value={draft.connection.listenPort} /></label><label>Multicast group (optional)<input bind:value={draft.connection.multicastGroup} /></label><label>Multicast interface<input bind:value={draft.connection.multicastInterface} /></label></div></details>{:else if draft.document.provider === 'x-plane'}<p>Capture this integration in the matching X-Plane game profile and launch or activate it from Games on Windows. Setup readiness is separate from live data. No live simulator qualification is recorded.</p>{:else}<p>ACR sends telemetry to LEDs and displays. Set up the game in Games, then add device roles and output rules here.</p>{/if}
     </fieldset>
     <div class="tools"><label>Find named controls<input type="search" bind:value={query} placeholder="RPM, radio, master caution…" /></label><button disabled={busy || pending} onclick={loadCatalogue}>Load provider catalogue</button><button disabled={busy || pending || !draft.assignments.length} onclick={refreshAssigned}>Refresh assigned devices</button><span>{catalogue?.total ?? catalogue?.channels?.length ?? catalogue?.controls?.length ?? 0} matching controls</span></div>
     <fieldset disabled={readOnly}><legend>Local device roles</legend><p>Choose each exact gateway/module target. Import never rebinds a role. Output devices need no HID controller; input roles require disabled HID and inactive direct USB.</p>

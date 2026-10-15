@@ -1,5 +1,8 @@
 # OpenSimGear Cockpit
 
+X-Plane 11 and 12 support is available as an unqualified RREF telemetry provider.
+See [setup, channels and qualification limits](docs/x-plane.md) before use.
+
 Work-in-progress desktop application for discovering OpenSimGear gateways and supported games, configuring devices, managing automatically enabled USB controllers, launching DCS World and Assetto Corsa Rally with hardware profiles, and connecting panel controls, LEDs and displays to DCS-BIOS and game telemetry. Built with Tauri 2, Rust, Svelte 5, TypeScript and Vite.
 
 Cockpit connects to gateways through its normal USB serial and local stream transports. Gateway and device simulations are maintained independently in [device-gateway/simulation](https://github.com/opensimgear/device-gateway/tree/main/simulation) and [device-template/simulation](https://github.com/opensimgear/device-template/tree/main/simulation). Cockpit neither creates simulated devices nor manages their processes.

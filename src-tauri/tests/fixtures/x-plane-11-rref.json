@@ -1,0 +1,7 @@
+{
+  "provenance": "Authored software fixture; not a simulator capture or native qualification",
+  "version": 11,
+  "aircraft": "Aircraft/Laminar Research/Cessna 172SP/Cessna_172SP.acf",
+  "engines": 1,
+  "channels": { "airspeed_kts": 115.5, "altitude_ft": 4200, "engine_1_rpm": 2400, "gear_unsafe": true }
+}

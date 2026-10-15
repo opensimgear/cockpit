@@ -1,7 +1,7 @@
 import type { ActionValue, DeviceAction, DeviceActions } from './device-actions';
 import type { DcsInputKind, DcsTarget, PanelInputState } from './dcs-profile';
 
-export type IntegrationProvider = 'dcs-bios' | 'assetto-corsa-rally';
+export type IntegrationProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'x-plane';
 export type IntegrationRole = { id: string; label: string };
 export type IntegrationInput = {
   id: string; role: string; kind: DcsInputKind; control: number; command: string;
@@ -25,7 +25,9 @@ export type IntegrationDocument = {
 export type IntegrationConnection = {
   freshnessMs: number; cataloguePath?: string; commandHost?: string; commandPort?: number;
   listenAddress?: string; listenPort?: number; multicastGroup?: string; multicastInterface?: string;
-  source?: 'shared-memory' | 'synthetic'; processId?: number | null;
+  source?: 'shared-memory' | 'synthetic' | 'rref'; processId?: number | null;
+  host?: string; port?: number; updateHz?: number; version?: 11 | 12;
+  processIdentity?: { pid: number; path: string; epoch: number };
 };
 export type IntegrationAssignment = { role: string; gatewayId: string; moduleId: string };
 export type IntegrationConfig = { document: IntegrationDocument; connection: IntegrationConnection; assignments: IntegrationAssignment[] };
@@ -74,6 +76,7 @@ export function newIntegrationConfig(provider: IntegrationProvider = 'dcs-bios')
       context: provider === 'dcs-bios' ? { aircraftModule: 'A-10C' } : {}, roles: [{ id: 'panel', label: 'Panel' }], inputs: [], outputs: [] },
     connection: provider === 'dcs-bios' ? { freshnessMs: 1500, cataloguePath: '', commandHost: '127.0.0.1', commandPort: 7778,
       listenAddress: '0.0.0.0', listenPort: 5010, multicastGroup: '239.255.50.10', multicastInterface: '127.0.0.1' } :
+      provider === 'x-plane' ? { freshnessMs: 1500, source: 'rref', host: '127.0.0.1', port: 49000, listenPort: 0, updateHz: 10, version: 11 } :
       { freshnessMs: 1500, source: 'shared-memory' }, assignments: [],
   };
 }
@@ -101,11 +104,11 @@ export function integrationFormatError(f: unknown): string {
 export function integrationError(value: unknown, portableOnly = false): string {
   if (!object(value) || bytes(JSON.stringify(value)) > 65536 || !object(value.document)) return 'Use a JSON profile no larger than 64 KiB.';
   const d = value.document;
-  if (d.schemaVersion !== 1 || !identifier(d.id) || !text(d.name,63) || !['dcs-bios','assetto-corsa-rally'].includes(String(d.provider))) return 'Choose a supported provider, profile identifier, name and schema version.';
+  if (d.schemaVersion !== 1 || !identifier(d.id) || !text(d.name,63) || !['dcs-bios','assetto-corsa-rally','x-plane'].includes(String(d.provider))) return 'Choose a supported provider, profile identifier, name and schema version.';
   if (Object.keys(d).some(key => !['schemaVersion','id','name','provider','context','roles','inputs','outputs'].includes(key))) return 'Portable profiles must not contain local paths, network settings or device assignments.';
   if (!object(d.context) || !known(d.context,['aircraftModule']) || d.provider === 'dcs-bios' && !text(d.context.aircraftModule,64) || d.context.aircraftModule !== undefined && !text(d.context.aircraftModule,64)) return 'Choose the installed aircraft module by name.';
   if (!Array.isArray(d.roles) || !d.roles.length || d.roles.length > 8 || !Array.isArray(d.inputs) || d.inputs.length > 16 || !Array.isArray(d.outputs) || d.outputs.length > 16 || !d.inputs.length && !d.outputs.length) return 'Add one to eight roles and up to 16 inputs and 16 outputs.';
-  if (d.provider === 'assetto-corsa-rally' && d.inputs.length) return 'Assetto Corsa Rally currently provides telemetry outputs only.';
+  if (d.provider !== 'dcs-bios' && d.inputs.length) return 'This provider currently provides telemetry outputs only.';
   const roles = new Set<string>(), ids = new Set<string>(), physical = new Set<string>(), commands = new Set<string>(), endpoints = new Set<string>();
   for (const role of d.roles) {
     if (!object(role) || !known(role,['id','label']) || !identifier(role.id) || !text(role.label,63) || roles.has(role.id)) return 'Each device role needs a unique identifier and label.';
@@ -139,6 +142,9 @@ export function integrationError(value: unknown, portableOnly = false): string {
     if (!text(c.cataloguePath,4096)) return 'Choose the installed DCS-BIOS doc/json directory.';
     if (![c.commandHost,c.listenAddress,c.multicastInterface].every(v => text(v,253) && !/\s/.test(v)) || !text(c.multicastGroup,253,true) || /\s/.test(c.multicastGroup)) return 'Enter UDP addresses without spaces; multicast may be blank.';
     if (!whole(c.commandPort,1,65535) || !whole(c.listenPort,1,65535)) return 'UDP ports must be from 1 to 65535.';
+  } else if (d.provider === 'x-plane') {
+    if (c.source !== 'rref' || ![11,12].includes(Number(c.version)) || !/^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(String(c.host)) || String(c.host).split('.').some(n => Number(n)>255)) return 'Choose X-Plane 11/12 RREF and a local IPv4 loopback host.';
+    if (!whole(c.port,1,65535) || !whole(c.listenPort,0,65535) || !whole(c.updateHz,1,20) || Number(c.freshnessMs)<2000/Number(c.updateHz)) return 'Choose valid UDP ports, 1–20 updates per second and freshness allowing two updates.';
   } else if (c.source !== 'synthetic' && (c.source !== 'shared-memory' || c.processId != null && !whole(c.processId,1,4294967295))) return 'Choose synthetic telemetry or the Windows game process ID.';
   if (!Array.isArray(value.assignments) || value.assignments.length > 8) return 'Assign up to eight logical roles.';
   const assigned = new Map<string,string>(), gateways = new Set<string>();
@@ -220,6 +226,7 @@ export function integrationPhysicalControls(kind: DcsInputKind, events?: PanelIn
 }
 export function integrationStartError(config: IntegrationConfig, targets: IntegrationTarget[]): string {
   const error = integrationError(config); if (error) return error;
+  if (config.document.provider === 'x-plane') return 'Launch or activate the matching X-Plane game profile from Games to select its monitored process.';
   if (config.document.provider === 'assetto-corsa-rally' && config.connection.source === 'shared-memory' && config.connection.processId == null) return 'Launch this integration from Games, or select a running ACR process for a manual session.';
   for (const role of config.document.roles) {
     const rows = [...config.document.inputs, ...config.document.outputs].filter(row => row.role === role.id); if (!rows.length) continue;

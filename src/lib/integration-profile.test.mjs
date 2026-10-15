@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+
 import { loadModules } from './test-module-loader.mjs';
 const modules=await loadModules(['./integration-profile']);
 const api=modules.get('./integration-profile');
@@ -135,4 +137,18 @@ test('native ACR profiles save before first launch while manual Start requires a
   assert.equal(integrationStartError(c, [target]), '');
   assert.equal(integrationStartError(saved, []), message);
   assert.equal('processId' in saved.connection, false, 'Start guard never invents a process or changes the saved profile');
+});
+
+test('X-Plane defaults and portable imports preserve local settings without activating a process', () => {
+  const config = newIntegrationConfig('x-plane');
+  config.document.outputs = [{id:'speed',role:'panel',channel:'airspeed_kts',endpoint:'display.speed',actionId:'display.speed.set',format:{kind:'fixed',decimals:1}}];
+  assert.equal(integrationError(config),'');
+  config.connection.version=12;config.connection.port=49005;
+  const imported=importIntegrationDocument(exportIntegrationDocument(config),config);
+  assert.equal(imported.error,undefined);assert.equal(imported.config.connection.port,49005);assert.equal(imported.config.connection.version,12);
+  assert.match(integrationStartError(config,[]),/Games/);
+  for (const [key,value] of [['host','192.168.0.1'],['host','127.999.0.1'],['port',0],['listenPort',65536],['updateHz',21],['version',10],['source','synthetic']]) {
+    const changed=JSON.parse(JSON.stringify(config));changed.connection[key]=value;assert.notEqual(integrationError(changed),'',key);
+  }
+  config.document.inputs=[{id:'input',role:'panel'}];assert.match(integrationError(config),/outputs only/);
 });

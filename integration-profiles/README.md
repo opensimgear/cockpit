@@ -1,5 +1,10 @@
 # Integration profiles
 
+[`x-plane-c172-panel.json`](x-plane-c172-panel.json) demonstrates an X-Plane
+indicator and numeric airspeed display. Assign local devices and replace example
+endpoint/action IDs with advertised hardware capabilities before validation.
+See the [X-Plane guide](../docs/x-plane.md) for configuration and qualification limits.
+
 Open **Integrations** for Milestone 4 portable profiles. Exported JSON contains
 the provider, logical device roles and named input/output bindings. Assign roles
 to local gateway/device identities separately, refresh capabilities, then

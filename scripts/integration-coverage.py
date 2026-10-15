@@ -47,7 +47,7 @@ def main():
     command([str(llvm / 'llvm-profdata'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
     sources = [root / 'src-tauri/src' / name
-               for name in ['integration_profile.rs', 'integration_runtime.rs', 'game_telemetry.rs',
+               for name in ['integration_profile.rs', 'integration_runtime.rs', 'game_telemetry.rs', 'xplane.rs', 'xplane_installation.rs',
                             'acr_windows.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'game_discovery.rs', 'mapping_panels.rs', 'game_mapping.rs']]
     annotated = command([str(llvm / 'llvm-cov'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)

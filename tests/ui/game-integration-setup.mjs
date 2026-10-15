@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 const require = createRequire(import.meta.url);
 const playwrightModule = process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright';
@@ -16,6 +17,64 @@ const endpoint = process.env.OSG_SETUP_UI_URL ?? 'http://127.0.0.1:5187';
 const artifacts = resolve(process.env.OSG_SETUP_UI_ARTIFACTS ?? '.research/setup-ui-acceptance');
 const folder = String.raw`C:\Users\Pilot\Saved Games\DCS`;
 const alternate = String.raw`D:\Profiles\Saved Games\DCS.openbeta`;
+
+test('frontend X-Plane setup, version-scoped profile capture and portable indicator/display editing', {timeout:60000}, async () => {
+  await mkdir(artifacts,{recursive:true});
+  const browser=await chromium.launch({headless:true, ...(process.env.OSG_BROWSER_CHANNEL ? {channel:process.env.OSG_BROWSER_CHANNEL} : {})});
+  const page=await browser.newPage({viewport:{width:1440,height:1080}});
+  const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
+  const catalogue=[11,12].map(version=>({id:`x-plane-${version}`,name:`X-Plane ${version}`,provider:'x-plane',installed:true,launchSupported:true,executable:`C:/Games/X-Plane ${version}/X-Plane.exe`,source:'steam',installations:[{executable:`C:/Games/X-Plane ${version}/X-Plane.exe`,installPath:`C:/Games/X-Plane ${version}`,source:'steam'},{executable:`D:/Backup/X-Plane ${version}/X-Plane.exe`,installPath:`D:/Backup/X-Plane ${version}`,source:'standalone'}],integrationSetup:{state:'setup-required',message:'Set up RREF UDP for this installation.',live:'waiting',verified:false}}));
+  const games={catalogue,profiles:[],defaultProfiles:{},session:{phase:'idle'}};
+  const integration={configured:false,running:false,revision:1};
+  await page.route('**/api/gateway/**',async route=>{
+    const r=route.request().postDataJSON();requests.push(r);const game=catalogue.find(g=>g.id===r.gameId);
+    if(r.command==='game_installation' && game) game.executable=r.executable;
+    if(r.command==='game_integration_setup' && game) game.integrationSetup={state:'ready',message:'RREF UDP configured; live qualification pending.',live:'waiting',verified:false,connection:{source:'rref',version:Number(game.id.slice(-2)),host:'127.0.0.1',port:49000,listenPort:0,updateHz:10,freshnessMs:1500}};
+    if(r.command==='integration_validate') integration.validation={valid:true,diagnostics:[],catalogueRevision:1};
+    if(r.command==='integration_save') {integration.config=structuredClone(r.integrationConfig);integration.configured=true;integration.revision++;}
+    if(r.command==='game_profile_save') {games.profiles=[r.gameProfile];games.defaultProfiles[r.gameProfile.gameId]=r.gameProfile.id;}
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,state:{running:false,needsReconnect:false,modules:[],ports:[],games,integration,dcsBios:{running:false}}})});
+  });
+  try {
+    await page.goto(endpoint);
+    const nav=page.getByRole('navigation',{name:'Main navigation'});
+    await nav.getByRole('button',{name:'Games',exact:true}).click();
+    await page.getByRole('button',{name:'Open X-Plane 12 details',exact:true}).click();
+    const panel=page.locator('.setup-panel');
+    await expect(page.getByLabel('Detected X-Plane installations')).toBeVisible();
+    await page.getByLabel('Detected X-Plane installations').selectOption('D:/Backup/X-Plane 12/X-Plane.exe');
+    await page.getByRole('button',{name:'Use this path',exact:true}).click();
+    await panel.getByRole('button',{name:'Set up telemetry',exact:true}).click();
+    await expect(panel.getByText('Ready for integration',{exact:true})).toBeVisible();
+    await expect(panel.getByText('Waiting for game data',{exact:true})).toBeVisible();
+    await expect(page.getByLabel('DCS Saved Games folder')).toHaveCount(0);
+    await page.screenshot({path:resolve(artifacts,'xplane-ready-desktop.png'),fullPage:true});
+    await nav.getByRole('button',{name:'Integrations',exact:true}).click();
+    const editor=page.locator('section[aria-label="Simulator integrations"]');
+    await editor.getByLabel(/^Provider/).selectOption('x-plane');
+    await editor.getByLabel(/^Simulator version/).selectOption('12');
+    await editor.getByRole('button',{name:'Use prepared connection settings'}).click();
+    await editor.getByLabel('Simulator UDP receive port',{exact:true}).fill('49005');
+    await editor.getByText('Import or export portable profile JSON',{exact:true}).click();
+    await editor.getByLabel('Portable document JSON',{exact:true}).fill(await readFile(resolve('integration-profiles/x-plane-c172-panel.json'),'utf8'));
+    await editor.getByRole('button',{name:'Preview import',exact:true}).click();
+    await expect(editor.getByLabel('Simulator UDP receive port',{exact:true})).toHaveValue('49005');
+    await expect(editor.getByRole('heading',{name:'Outputs',exact:true})).toBeVisible();
+    await editor.getByRole('button',{name:'Validate draft',exact:true}).click();
+    await editor.getByRole('button',{name:'Save validated profile',exact:true}).click();
+    await expect(editor.getByRole('button',{name:'Start integration',exact:true})).toBeDisabled();
+    await page.screenshot({path:resolve(artifacts,'xplane-integration-desktop.png'),fullPage:true});
+    await nav.getByRole('button',{name:'Games',exact:true}).click();
+    await page.getByRole('button',{name:'Open X-Plane 12 details',exact:true}).click();
+    await page.getByRole('button',{name:'Use saved integration',exact:true}).click();
+    await page.getByRole('button',{name:'Save profile',exact:true}).click();
+    const saved=requests.find(r=>r.command==='game_profile_save');
+    assert.equal(saved.gameProfile.gameId,'x-plane-12');assert.equal(saved.gameProfile.integration.connection.version,12);assert.equal(saved.gameProfile.integration.connection.port,49005);
+    assert.equal(saved.gameProfile.integration.document.outputs.length,2);
+    for(const width of [768,390]) {await page.setViewportSize({width,height:1024});await page.screenshot({path:resolve(artifacts,`xplane-ready-${width}px.png`),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));}
+    assert.equal(requests.some(r=>r.command==='integration_start'||r.command==='game_launch'),false);assert.deepEqual(errors,[]);
+  } catch(error) {console.log(await page.locator('main').innerText());throw error;} finally {await browser.close();}
+});
 
 test('frontend DCS and ACR setup actions, readiness, native verification and responsive layout', { timeout: 90_000 }, async () => {
   await mkdir(artifacts, { recursive: true });

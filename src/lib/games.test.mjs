@@ -14,6 +14,23 @@ const integration = () => ({
   connection: { freshnessMs: 1000, source: 'shared-memory', processId: 123 }, assignments: [{ role: 'panel', gatewayId, moduleId }],
 });
 
+test('X-Plane profiles distinguish versions and configuration readiness from live qualification', () => {
+  for (const version of [11,12]) {
+    const gameId = `x-plane-${version}`;
+    const p = plain(newGameProfile(gameId));
+    p.integration = integration(); p.integration.document.provider = 'x-plane';
+    p.integration.connection = { source: 'rref', version, host:'127.0.0.1', port:49000, listenPort:0, updateHz:10, freshnessMs:1500 };
+    assert.equal(gameProfileError(p),'');
+    const game = { id:gameId, provider:'x-plane', installed:true, integrationSetup:{state:'ready',live:'waiting',verified:false} };
+    assert.equal(gameIntegrationReady(game),true); assert.equal(gameIntegrationNativeVerified(game),false);
+    assert.equal(gameIntegrationLiveLabel(game),'Waiting for game data');
+    p.integration.connection.version = version === 11 ? 12 : 11;
+    assert.match(gameProfileError(p),/version must match/);
+    p.integration.document.provider = 'assetto-corsa-rally';
+    assert.notEqual(gameProfileError(p),'');
+  }
+});
+
 test('game library defaults to installations and shows all supported games on request', () => {
   const catalogue = [{ id: 'dcs', installed: true }, { id: 'assetto-corsa-rally', installed: false }];
   assert.deepEqual(plain(visibleGames(catalogue, false)), [catalogue[0]]);

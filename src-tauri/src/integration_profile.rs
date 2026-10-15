@@ -204,7 +204,7 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
         || text(&document["name"], 63, false).is_none()
         || !matches!(
             document["provider"].as_str(),
-            Some("dcs-bios" | "assetto-corsa-rally")
+            Some("dcs-bios" | "assetto-corsa-rally" | "x-plane")
         )
     {
         return Err(INVALID.into());
@@ -261,9 +261,7 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
         .as_array()
         .filter(|v| v.len() <= 16)
         .ok_or(INVALID)?;
-    if inputs.is_empty() && outputs.is_empty()
-        || provider == "assetto-corsa-rally" && !inputs.is_empty()
-    {
+    if inputs.is_empty() && outputs.is_empty() || provider != "dcs-bios" && !inputs.is_empty() {
         return Err(INVALID.into());
     }
     let mut ids = HashSet::new();
@@ -368,6 +366,8 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
                 return Err(INVALID.into());
             }
         }
+    } else if provider == crate::xplane::PROVIDER {
+        crate::xplane::validate_connection(connection)?;
     } else {
         match connection["source"].as_str() {
             Some("shared-memory")

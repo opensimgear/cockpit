@@ -1,0 +1,7 @@
+{
+  "provenance": "Authored software fixture; not a simulator capture or native qualification",
+  "version": 12,
+  "aircraft": "Aircraft/Laminar Research/Beechcraft Baron 58/Baron_58.acf",
+  "engines": 2,
+  "channels": { "airspeed_kts": 175.25, "altitude_ft": 7200, "engine_1_rpm": 2300, "engine_2_rpm": 2310, "gear_unsafe": false }
+}

@@ -1,5 +1,64 @@
 use super::*;
 use crate::game_discovery::ProcessIdentity;
+#[test]
+fn xplane_setup_is_repeatable_preserves_overrides_and_separates_live_status() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("setup.json");
+    let setup = GameIntegrationSetup::new(path.clone(), true);
+    let game = json!({"id":"x-plane-11","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe"});
+    assert_eq!(setup.inner.inspect(&game, None)["state"], "setup-required");
+    let request = json!({"command":"game_integration_setup","connection":{"port":49005,"updateHz":5,"freshnessMs":2000}});
+    setup
+        .request(
+            &request,
+            &game,
+            Arc::new(FakePlatform(false)),
+            &panel(false),
+        )
+        .unwrap();
+    let before = read_settings(&path).unwrap();
+    assert_eq!(before["games"]["x-plane-11"]["connection"]["port"], 49005);
+    setup
+        .request(
+            &json!({"command":"game_integration_setup"}),
+            &game,
+            Arc::new(FakePlatform(false)),
+            &panel(false),
+        )
+        .unwrap();
+    assert_eq!(read_settings(&path).unwrap(), before);
+    let mut catalogue = vec![game.clone()];
+    setup.decorate(&mut catalogue, &json!({}), &json!({}));
+    assert_eq!(catalogue[0]["integrationSetup"]["state"], "ready");
+    assert_eq!(catalogue[0]["integrationSetup"]["live"], "waiting");
+    assert_eq!(catalogue[0]["integrationSetup"]["verified"], false);
+    setup.decorate(&mut catalogue,&json!({"running":true,"config":{"document":{"provider":"x-plane"},"connection":{"version":11}},"telemetry":{"fresh":true}}),&json!({}));
+    assert_eq!(catalogue[0]["integrationSetup"]["live"], "receiving");
+    let mut changed = game.clone();
+    changed["executable"] = json!("/another/X-Plane.exe");
+    assert_eq!(
+        setup.inner.inspect(&changed, None)["state"],
+        "setup-required"
+    );
+    let profile = json!({"gameId":"x-plane-11","integration":{"connection":before["games"]["x-plane-11"]["connection"]}});
+    assert!(setup.preflight(&profile, &game).is_ok());
+    assert!(setup.preflight(&profile, &changed).is_err());
+    for connection in [
+        json!({"host":"192.168.0.5"}),
+        json!({"version":12}),
+        json!({"port":0}),
+    ] {
+        assert!(setup
+            .request(
+                &json!({"command":"game_integration_setup","connection":connection}),
+                &game,
+                Arc::new(FakePlatform(false)),
+                &panel(false)
+            )
+            .is_err());
+    }
+    assert_eq!(read_settings(&path).unwrap(), before);
+}
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {

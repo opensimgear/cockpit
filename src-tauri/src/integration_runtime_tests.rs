@@ -5,6 +5,25 @@ const A: &str = "stm32:00112233445566778899aabb";
 const B: &str = "stm32:112233445566778899aabbcc";
 const MODULE: &str = "00112233445566778899aabbccddeeff";
 
+#[test]
+fn xplane_catalogue_and_profiles_reuse_validation_without_starting_outputs() {
+    let f = Fixture::new();
+    let mut c = config();
+    c["document"]["provider"] = json!("x-plane");
+    c["document"]["outputs"][0]["channel"] = json!("engine_1_rpm");
+    c["connection"] = crate::xplane::defaults(11);
+    f.request("integration_catalogue", json!({"integrationConfig":c}))
+        .unwrap();
+    assert_eq!(f.runtime.status()["catalogue"]["provider"], "x-plane");
+    f.request("integration_validate", json!({"integrationConfig":c}))
+        .unwrap();
+    assert_eq!(f.runtime.status()["validation"]["valid"], true);
+    f.save(c);
+    assert_ne!(f.runtime.status()["running"], true);
+    assert!(f.request("integration_start", json!({})).is_err());
+    assert_ne!(f.runtime.status()["running"], true);
+}
+
 fn wait(label: &str, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {

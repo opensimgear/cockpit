@@ -2,7 +2,7 @@ import type { CapturedMapping } from './mappings';
 import { configurationError, type RuntimeConfig } from './runtime-config';
 import { integrationError, type IntegrationConfig, type IntegrationProvider } from './integration-profile';
 
-export type GameId = 'dcs' | 'assetto-corsa-rally';
+export type GameId = 'dcs' | 'assetto-corsa-rally' | 'x-plane-11' | 'x-plane-12';
 export type GameIntegrationSetup = {
   state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
   message: string; userFolder?: string; candidates?: string[]; version?: string; cataloguePath?: string;
@@ -11,7 +11,7 @@ export type GameIntegrationSetup = {
   channels?: Record<string, { status: string; value?: unknown }>; optionalMaxRpm?: boolean;
   probeChannels?: Record<string, { status: 'available' | 'unknown' }>;
 };
-export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup };
+export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup };
 export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
 export type GameProfile = { schemaVersion: 1 | 2; id: string; gameId: GameId; name: string; devices: GameDevice[]; integration?: IntegrationConfig | null; mapping?: CapturedMapping | null };
 export type GameSession = { phase: 'idle' | 'validating' | 'applying' | 'launching' | 'waiting' | 'running' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; profileId?: string | null; pid?: number | null; error?: string | null; steps?: string[]; bindingWarning?: boolean | string | null };
@@ -23,6 +23,8 @@ export type GameRequest = { command: GameCommandName; gameId?: GameId; executabl
 export const supportedGames: Game[] = [
   { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },
   { id: 'assetto-corsa-rally', name: 'Assetto Corsa Rally', provider: 'assetto-corsa-rally', installed: false, launchSupported: false },
+  { id: 'x-plane-11', name: 'X-Plane 11', provider: 'x-plane', installed: false, launchSupported: false },
+  { id: 'x-plane-12', name: 'X-Plane 12', provider: 'x-plane', installed: false, launchSupported: false },
 ];
 
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
@@ -48,7 +50,7 @@ export function gameIntegrationNativeVerified(game: Game): boolean {
 }
 
 export function gameIntegrationReady(game: Game): boolean {
-  return game.installed && game.integrationSetup?.state === 'ready' && (game.id === 'dcs' || gameIntegrationNativeVerified(game));
+  return game.installed && game.integrationSetup?.state === 'ready' && (game.id === 'dcs' || game.provider === 'x-plane' || gameIntegrationNativeVerified(game));
 }
 
 export function gameIntegrationVerificationLabel(game: Game): string {
@@ -130,7 +132,7 @@ const text = (value: unknown, limit: number): value is string => typeof value ==
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 export function gameProfileError(value: unknown): string {
-  if (!object(value) || ![1,2].includes(value.schemaVersion as number) || !['dcs', 'assetto-corsa-rally'].includes(String(value.gameId))) return 'Choose a supported game and profile schema version 1 or 2.';
+  if (!object(value) || ![1,2].includes(value.schemaVersion as number) || !supportedGames.some(g => g.id === value.gameId)) return 'Choose a supported game and profile schema version 1 or 2.';
   if (value.schemaVersion === 1 && 'mapping' in value) return 'Capture mapping through an explicit upgrade to schema 2.';
   if (value.mapping != null && (!object(value.mapping) || !object(value.mapping.profile) || !Array.isArray(value.mapping.assignments) || !Array.isArray(value.mapping.targets))) return 'Capture a complete mapping snapshot.';
   if (typeof value.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(value.id)) return 'Choose a profile ID of 1–64 letters, numbers, dots, underscores or hyphens.';
@@ -152,7 +154,8 @@ export function gameProfileError(value: unknown): string {
     const error = integrationError(value.integration);
     if (error) return error;
     const provider = (value.integration as IntegrationConfig).document.provider;
-    if (provider !== (value.gameId === 'dcs' ? 'dcs-bios' : 'assetto-corsa-rally')) return 'The integration provider must match the selected game.';
+    if (provider !== supportedGames.find(g => g.id === value.gameId)?.provider) return 'The integration provider must match the selected game.';
+    if (provider === 'x-plane' && (value.integration as IntegrationConfig).connection.version !== Number(String(value.gameId).slice(-2))) return 'The X-Plane connection version must match the selected game.';
   }
   return '';
 }

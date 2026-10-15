@@ -46,11 +46,12 @@ fn read_settings(path: &Path) -> Result<Value, String> {
     let value: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     if value["schemaVersion"] != 1
         || !value["games"].is_object()
-        || value["games"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .any(|k| !matches!(k.as_str(), "dcs" | "assetto-corsa-rally"))
+        || value["games"].as_object().unwrap().keys().any(|k| {
+            !matches!(
+                k.as_str(),
+                "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+            )
+        })
     {
         return Err(
             "Invalid integration setup settings. Preserve the file and repair it before setup."
@@ -119,6 +120,13 @@ pub(crate) fn dcs_connection(path: &Path) -> Value {
     json!({"cataloguePath":path,"freshnessMs":1500,"commandHost":"127.0.0.1","commandPort":7778,"listenAddress":"0.0.0.0","listenPort":5010,"multicastGroup":"239.255.50.10","multicastInterface":"0.0.0.0"})
 }
 fn validate_connection(game: &str, value: &Value) -> Result<(), String> {
+    if game.starts_with("x-plane-") {
+        crate::xplane::validate_connection(value)?;
+        if value["version"].as_u64() != game.trim_start_matches("x-plane-").parse::<u64>().ok() {
+            return Err("X-Plane connection version must match the game.".into());
+        }
+        return Ok(());
+    }
     if !value.is_object() || value.to_string().len() > 8192 {
         return Err("Invalid local game connection settings.".into());
     }
@@ -236,7 +244,10 @@ impl GameIntegrationSetup {
                 status
             });
             let running = integration["running"] == true
-                && integration["config"]["document"]["provider"] == game["provider"];
+                && integration["config"]["document"]["provider"] == game["provider"]
+                && (game["provider"] != "x-plane"
+                    || integration["config"]["connection"]["version"].as_u64()
+                        == id.trim_start_matches("x-plane-").parse::<u64>().ok());
             let native_running = running
                 && (id != "assetto-corsa-rally"
                     || integration["config"]["connection"]["source"] == "shared-memory");
@@ -365,6 +376,42 @@ impl GameIntegrationSetup {
         }
         if let Some(error) = &self.inner.settings_error {
             return Err(error.clone());
+        }
+        if command == "game_integration_setup" && id.starts_with("x-plane-") {
+            if game["installed"] != true {
+                return Err("Choose an X-Plane installation first.".into());
+            }
+            let executable = game["executable"]
+                .as_str()
+                .ok_or("Choose the X-Plane executable.")?;
+            platform.validate(id, executable)?;
+            let version = id.trim_start_matches("x-plane-").parse::<u64>().unwrap();
+            let mut saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());
+            let mut connection = saved["games"][id]["connection"]
+                .as_object()
+                .map(|_| saved["games"][id]["connection"].clone())
+                .unwrap_or_else(|| crate::xplane::defaults(version));
+            if let Some(overrides) = request.get("connection") {
+                for (k, v) in overrides
+                    .as_object()
+                    .ok_or("Invalid X-Plane connection overrides.")?
+                {
+                    if !["host", "port", "listenPort", "updateHz", "freshnessMs"]
+                        .contains(&k.as_str())
+                    {
+                        return Err("Unsupported X-Plane setup override.".into());
+                    }
+                    connection[k] = v.clone();
+                }
+            }
+            validate_connection(id, &connection)?;
+            let mut draft = saved.clone();
+            draft["games"][id] = json!({"connection":connection,"executable":executable});
+            write_settings(&self.inner.path, &draft)?;
+            *saved = draft;
+            drop(saved);
+            self.refresh(std::slice::from_ref(game));
+            return Ok(());
         }
         if command == "game_integration_setup" && id == "assetto-corsa-rally" {
             return self.begin_acr(
@@ -674,6 +721,20 @@ impl GameIntegrationSetup {
         if !self.inner.native || profile["integration"].is_null() {
             return Ok(());
         }
+        if profile["gameId"]
+            .as_str()
+            .is_some_and(|g| g.starts_with("x-plane-"))
+        {
+            let id = profile["gameId"].as_str().unwrap();
+            let saved =
+                self.inner.saved.lock().unwrap_or_else(|p| p.into_inner())["games"][id].clone();
+            validate_connection(id, &saved["connection"])
+                .map_err(|_| "Set up X-Plane telemetry before activation.")?;
+            if saved["executable"] != game["executable"] {
+                return Err("The selected X-Plane installation changed. Set up telemetry for this installation.".into());
+            }
+            validate_connection(id, &profile["integration"]["connection"])?;
+        }
         if profile["gameId"] == "dcs" {
             let catalogue = profile["integration"]["connection"]["cataloguePath"]
                 .as_str()
@@ -809,6 +870,19 @@ impl Inner {
         }
         if game["installed"] != true {
             return json!({"state":"not-installed","message":"Find the game installation first."});
+        }
+        if game["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("x-plane-"))
+        {
+            let id = game["id"].as_str().unwrap();
+            let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner())["games"][id].clone();
+            if saved["executable"] != game["executable"]
+                || validate_connection(id, &saved["connection"]).is_err()
+            {
+                return json!({"state":"setup-required","message":"Set up RREF UDP for this X-Plane installation. No game files are changed.","verified":false});
+            }
+            return json!({"state":"ready","connection":saved["connection"],"verified":false,"message":"RREF UDP configured. Start a flight in the selected installation. Check its UDP receive port (default 49000), firewall, pause/replay and the live status separately. Simulator/hardware qualification is pending."});
         }
         if game["id"] == "assetto-corsa-rally" {
             return self.inspect_acr(game);

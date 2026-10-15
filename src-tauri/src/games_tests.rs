@@ -5,6 +5,78 @@ use std::time::{Duration, Instant};
 const GATEWAY: &str = "stm32:00112233445566778899aabb";
 const MODULE: &str = "00112233445566778899aabbccddeeff";
 
+#[test]
+fn legacy_game_settings_keep_profiles_defaults_and_installations_when_xplane_is_added() {
+    let mut old = Saved::fresh().value();
+    old["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["gameId"] == "dcs" || p["gameId"] == "assetto-corsa-rally");
+    old["defaultProfiles"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|k, _| !k.starts_with("x-plane-"));
+    old["manualInstallations"] = json!({"dcs":"/custom/DCS.exe"});
+    let migrated = Saved::parse(&old).unwrap().value();
+    assert_eq!(migrated["profiles"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        migrated["defaultProfiles"]["dcs"],
+        old["defaultProfiles"]["dcs"]
+    );
+    assert_eq!(migrated["manualInstallations"], old["manualInstallations"]);
+    for prior in old["profiles"].as_array().unwrap() {
+        assert!(migrated["profiles"].as_array().unwrap().contains(prior));
+    }
+    assert_eq!(Saved::parse(&migrated).unwrap().value(), migrated);
+}
+#[test]
+fn full_legacy_profile_store_and_new_default_id_collisions_migrate_without_data_loss() {
+    let mut old = Saved::fresh().value();
+    old["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["gameId"] == "dcs" || p["gameId"] == "assetto-corsa-rally");
+    old["defaultProfiles"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|k, _| !k.starts_with("x-plane-"));
+    for i in 0..30 {
+        let mut p = default_profile("dcs");
+        p["id"] = json!(if i == 0 {
+            "x-plane-11-default".into()
+        } else {
+            format!("old-{i}")
+        });
+        old["profiles"].as_array_mut().unwrap().push(p);
+    }
+    let migrated = Saved::parse(&old).unwrap().value();
+    assert_eq!(migrated["profiles"].as_array().unwrap().len(), 34);
+    for profile in old["profiles"].as_array().unwrap() {
+        assert!(migrated["profiles"].as_array().unwrap().contains(profile));
+    }
+    assert_ne!(
+        migrated["defaultProfiles"]["x-plane-11"],
+        "x-plane-11-default"
+    );
+    assert_eq!(Saved::parse(&migrated).unwrap().value(), migrated);
+}
+
+#[test]
+fn xplane_profiles_are_version_scoped_and_discard_transient_process_identity() {
+    let mut value = default_profile("x-plane-11");
+    let mut c = integration();
+    c["document"]["provider"] = json!("x-plane");
+    c["connection"] = crate::xplane::defaults(11);
+    c["connection"]["processIdentity"] = json!({"pid":42,"path":"/fixture/X-Plane.exe","epoch":12});
+    value["integration"] = c;
+    let saved = profile(&value).unwrap();
+    assert!(saved["integration"]["connection"]["processIdentity"].is_null());
+    value["gameId"] = json!("x-plane-12");
+    assert!(profile(&value).is_err());
+    value["integration"]["connection"]["version"] = json!(12);
+    assert!(profile(&value).is_ok());
+}
+
 struct FakePlatform {
     alive: AtomicBool,
     found: AtomicBool,
@@ -254,7 +326,7 @@ fn profile_validation_rejects_unknown_fields_invalid_bounds_and_route_aliases() 
 #[test]
 fn saves_roundtrip_defaults_delete_manual_selection_and_bad_requests() {
     let (runtime, _, _, path) = setup();
-    assert_eq!(runtime.status()["profiles"].as_array().unwrap().len(), 2);
+    assert_eq!(runtime.status()["profiles"].as_array().unwrap().len(), 4);
     save(&runtime, peripheral_profile("dcs"));
     runtime
         .request(&json!({"command":"game_profile_default","gameId":"dcs","profileId":"custom"}))
@@ -540,6 +612,38 @@ fn rally_live_integration_uses_actual_game_pid_after_launch() {
         .unwrap();
     wait(&runtime, "idle");
     clean(&path);
+}
+#[test]
+fn xplane_launch_uses_a_fresh_process_identity_and_exit_restores_the_session() {
+    for version in [11, 12] {
+        let (runtime, m, platform, path) = setup();
+        let game = format!("x-plane-{version}");
+        let mut p = peripheral_profile(&game);
+        let mut c = integration();
+        c["document"]["provider"] = json!("x-plane");
+        c["document"]["outputs"][0]["channel"] = json!("airspeed_kts");
+        c["connection"] = crate::xplane::defaults(version);
+        p["integration"] = c;
+        save(&runtime, p);
+        assert!(!platform.launched.load(Ordering::Acquire));
+        assert!(!m
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|c| c == "integration_start"));
+        launch(&runtime, &game);
+        wait(&runtime, "running");
+        assert_eq!(
+            m.lock().unwrap().integration["config"]["connection"]["processIdentity"],
+            FakePlatform::identity().value()
+        );
+        platform.alive.store(false, Ordering::Release);
+        wait(&runtime, "idle");
+        assert_eq!(m.lock().unwrap().config, config("Baseline"));
+        assert!(!path.with_extension("recovery.json").exists());
+        clean(&path);
+    }
 }
 #[test]
 fn changed_mapping_with_enabled_controller_publishes_and_restores_hid_profiles() {

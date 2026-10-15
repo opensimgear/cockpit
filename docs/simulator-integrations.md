@@ -1,5 +1,9 @@
 # Simulator profiles and telemetry outputs
 
+The `x-plane` provider adds X-Plane 11/12 RREF UDP telemetry through the same
+portable bindings, endpoint leases and fallback runtime. See the [X-Plane guide](x-plane.md)
+for setup, typed channels, example bindings and explicit qualification limits.
+
 Milestone 4 uses one provider-neutral binding document and separate local connection settings/device assignments. Open **Integrations** to import or create a profile. DCS-BIOS supports named inputs and outputs from an installed aircraft catalogue. The Assetto Corsa Rally starter advertises telemetry outputs only. Other games can add acquisition/decoding providers without adding game-specific LED commands to firmware.
 
 **Games** can capture a saved integration configuration in a game profile and

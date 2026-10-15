@@ -1,5 +1,10 @@
 # Games and hardware profiles
 
+X-Plane 11 and 12 have separate game identities and profiles. Their read-only RREF
+provider shares the existing output runtime. See [X-Plane setup, channels and
+qualification limits](x-plane.md). Native launch/telemetry currently requires
+Windows; live simulator and physical hardware qualification remains pending.
+
 Open **Games** to discover DCS World and Assetto Corsa Rally, select a hardware
 profile and launch a game. The initial view shows found installations. The
 **Show all supported** switch reveals muted, unavailable games; their details

@@ -111,6 +111,9 @@ fn controls(config: &Config) -> Arc<Controls> {
     })
 }
 fn catalogue(config: &Config, request: &Value) -> Result<Value, String> {
+    if config.provider() == crate::xplane::PROVIDER {
+        return Ok(crate::xplane::catalogue());
+    }
     if config.provider() == crate::game_telemetry::PROVIDER {
         return Ok(crate::game_telemetry::catalogue());
     }
@@ -443,7 +446,7 @@ impl IntegrationRuntime {
                 let config = if let Some(draft) = request.get("integrationConfig") {
                     let provider = draft["document"]["provider"]
                         .as_str()
-                        .filter(|p| matches!(*p, "dcs-bios" | "assetto-corsa-rally"))
+                        .filter(|p| matches!(*p, "dcs-bios" | "assetto-corsa-rally" | "x-plane"))
                         .ok_or("Choose a supported telemetry provider.")?;
                     let _ = provider;
                     Config {
@@ -566,7 +569,16 @@ impl IntegrationRuntime {
                 let control = controls(&config);
                 let cancel = Arc::new(AtomicBool::new(false));
                 let mut fixture = None;
-                let feed: Option<Feed> = if config.provider() == crate::game_telemetry::PROVIDER {
+                let feed: Option<Feed> = if config.provider() == crate::xplane::PROVIDER {
+                    let outputs = config.document["outputs"].as_array().unwrap().clone();
+                    let mut source = crate::xplane::Source::new(&config.connection, outputs)?;
+                    let provider = self.provider.clone();
+                    Some(Box::new(move |_now| {
+                        let (snapshot, status) = source.poll(Instant::now());
+                        *provider.lock().unwrap_or_else(|p| p.into_inner()) = status;
+                        snapshot
+                    }))
+                } else if config.provider() == crate::game_telemetry::PROVIDER {
                     let freshness = config.connection["freshnessMs"].as_u64().unwrap_or(1500);
                     let mut session = crate::game_telemetry::Session::new(freshness)?;
                     let mut source: Box<dyn crate::game_telemetry::Source + Send> =

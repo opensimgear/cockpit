@@ -24,6 +24,8 @@ mod protocol;
 mod runtime;
 pub mod stm32;
 mod transport;
+mod xplane;
+mod xplane_installation;
 
 use serde_json::Value;
 use std::sync::Arc;

@@ -57,6 +57,14 @@ impl ProcessIdentity {
 #[derive(Default)]
 pub(crate) struct NativePlatform;
 
+pub(crate) fn exclusive_xplane(expected: &ProcessIdentity) -> Result<(), String> {
+    let actual = native::find(&["X-Plane.exe".into()])?;
+    if actual.as_ref() != Some(expected) {
+        return Err("The running X-Plane process does not match the selected installation/session. Stop and activate its game profile again.".into());
+    }
+    Ok(())
+}
+
 struct SupportedGame {
     id: &'static str,
     name: &'static str,
@@ -79,6 +87,20 @@ const GAMES: &[SupportedGame] = &[
         steam_id: 3917090,
         // The Unreal runtime is preferred over a root bootstrap executable.
         executables: &["acr/Binaries/Win64/acr.exe", "acr.exe"],
+    },
+    SupportedGame {
+        id: "x-plane-11",
+        name: "X-Plane 11",
+        provider: "x-plane",
+        steam_id: 269950,
+        executables: &["X-Plane.exe"],
+    },
+    SupportedGame {
+        id: "x-plane-12",
+        name: "X-Plane 12",
+        provider: "x-plane",
+        steam_id: 2014780,
+        executables: &["X-Plane.exe"],
     },
 ];
 fn supported(id: &str) -> Result<&'static SupportedGame, String> {
@@ -113,6 +135,8 @@ fn paths_match(left: &str, right: &str) -> bool {
 fn validated_executable(game: &SupportedGame, path: &Path) -> Result<PathBuf, String> {
     let expected = if game.id == "dcs" {
         "dcs.exe"
+    } else if game.provider == "x-plane" {
+        "X-Plane.exe"
     } else {
         "acr.exe"
     };
@@ -129,6 +153,19 @@ fn validated_executable(game: &SupportedGame, path: &Path) -> Result<PathBuf, St
         ));
     }
     let path = fs::canonicalize(path).map_err(|e| format!("Cannot access game executable: {e}"))?;
+    if game.provider == "x-plane"
+        && crate::xplane_installation::version(&path)?
+            != game
+                .id
+                .trim_start_matches("x-plane-")
+                .parse::<u64>()
+                .unwrap()
+    {
+        return Err(format!(
+            "The selected executable does not belong to {}.",
+            game.name
+        ));
+    }
     if path_string(&path).is_none() {
         return Err("Game executable path is not valid text.".into());
     }
@@ -361,13 +398,26 @@ fn discover(roots: &Roots, manual: &BTreeMap<String, String>) -> Vec<Value> {
             let install = roots.dcs.iter().find_map(|p|installation(game,p));
             if install.is_some() { source = "standalone"; }
             install
+        } else if game.provider == "x-plane" {
+            let install=crate::xplane_installation::roots().iter().find_map(|p|installation(game,p));
+            if install.is_some() {source="standalone";}
+            install
         } else { None };
         let matches_steam = found.as_ref().is_some_and(|(_, _, root)| {
             steam_installs.iter().any(|(id, (_, _, steam_root))| {
                 *id == game.id && paths_match(&root.to_string_lossy(), &steam_root.to_string_lossy())
             })
         });
-        let steam = source == "steam" || matches_steam || game.id == "assetto-corsa-rally" && found.is_some();
+        let steam = game.provider != "x-plane" && (source == "steam" || matches_steam || game.id == "assetto-corsa-rally" && found.is_some());
+        // X-Plane supports direct launch, including a selected secondary copy.
+        // Steam -applaunch may launch another installation, so monitor/launch the exact executable.
+        let mut installations: Vec<Value> = steam_installs.iter().filter(|(id,_)|*id==game.id).map(|(_, (exe,_,root))|json!({"executable":exe,"installPath":root,"source":"steam"})).collect();
+        if game.provider == "x-plane" {
+            for root in crate::xplane_installation::roots() {
+                if let Some((exe,_,root))=installation(game,&root) { if !installations.iter().any(|i|i["executable"]==json!(exe)) { installations.push(json!({"executable":exe,"installPath":root,"source":"standalone"})); } }
+            }
+            if let Some((exe,_,root))=&found { if !installations.iter().any(|i|i["executable"]==json!(exe)) { installations.push(json!({"executable":exe,"installPath":root,"source":source})); } }
+        }
         let executable = found.as_ref().and_then(|(exe,_,_)|path_string(exe));
         let install_path = found.as_ref().and_then(|(_,_,root)|path_string(root));
         let process_executables: Vec<_> = found.as_ref().map(|(_,paths,_)|paths.iter().filter_map(|p|path_string(p)).collect()).unwrap_or_default();
@@ -377,7 +427,7 @@ fn discover(roots: &Roots, manual: &BTreeMap<String, String>) -> Vec<Value> {
             else { None };
         json!({"id":game.id,"name":game.name,"provider":game.provider,
             "installed":found.is_some(),"executable":executable,"installPath":install_path,
-            "source":source,"manualPath":selected,"launchSupported":launch_supported,"processMonitoringSupported":roots.launch_supported,
+            "source":source,"manualPath":selected,"installations":installations,"launchSupported":launch_supported,"processMonitoringSupported":roots.launch_supported,
             "launchUnavailableReason":reason,"steamAppId":if steam {Some(game.steam_id)} else {None},
             "steamExecutable":if steam {steam_executable.as_ref().and_then(|p|path_string(p))} else {None},
             "processExecutables":process_executables})
@@ -737,6 +787,8 @@ mod native {
             .map_err(|e| format!("Could not launch the game: {e}"))
     }
     pub(super) fn find(paths: &[String]) -> Result<Option<ProcessIdentity>, String> {
+        let exclusive = paths == ["X-Plane.exe"];
+        let mut selected = None;
         let raw = unsafe { CreateToolhelp32Snapshot(2, 0) };
         if raw as isize == -1 {
             return Err(format!(
@@ -765,7 +817,12 @@ mod native {
             }) {
                 if let Some(handle) = open(entry.pid)? {
                     if let Some(identity) = identity(&handle, entry.pid)? {
-                        if paths.iter().any(|p| paths_match(p, &identity.path)) {
+                        if exclusive {
+                            if selected.is_some() {
+                                return Err("Multiple X-Plane processes are running. Close the other installations before using telemetry.".into());
+                            }
+                            selected = Some(identity);
+                        } else if paths.iter().any(|p| paths_match(p, &identity.path)) {
                             return Ok(Some(identity));
                         }
                     }
@@ -779,7 +836,7 @@ mod native {
                 ));
             }
         }
-        Ok(None)
+        Ok(selected)
     }
     pub(super) fn alive(expected: &ProcessIdentity) -> Result<bool, String> {
         let Some(handle) = open(expected.pid)? else {
@@ -794,6 +851,64 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn xplane_steam_versions_manual_copies_and_launch_use_the_selected_installation() {
+        let scratch = Scratch::new();
+        let steam = scratch
+            .write("Steam/steam.exe", "")
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        for (v, appid) in [(11, 269950), (12, 2014780)] {
+            scratch.write(
+                &format!("Steam/steamapps/appmanifest_{appid}.acf"),
+                &format!("AppState {{ appid {appid} installdir \"X-Plane {v}\" }}"),
+            );
+            scratch.write(
+                &format!("Steam/steamapps/common/X-Plane {v}/X-Plane.exe"),
+                "",
+            );
+            scratch.write(
+                &format!("Steam/steamapps/common/X-Plane {v}/Resources/plugins/DataRefs.txt"),
+                &format!("2 {v}0050\n"),
+            );
+        }
+        let roots = Roots {
+            steam: vec![steam],
+            launch_supported: true,
+            ..Roots::default()
+        };
+        let games = discover(&roots, &BTreeMap::new());
+        for (game, v) in games[2..].iter().zip([11, 12]) {
+            assert_eq!(game["id"], format!("x-plane-{v}"));
+            assert_eq!(game["installed"], true);
+            assert_eq!(game["source"], "steam");
+            let request = launch_request(game).unwrap();
+            assert_eq!(request.executable.to_str(), game["executable"].as_str());
+            assert!(request.arguments.is_empty());
+            assert_eq!(
+                process_paths(game).unwrap(),
+                vec![game["executable"].as_str().unwrap()]
+            );
+        }
+        let copy = scratch.write("Standalone copy/X-Plane.exe", "");
+        scratch.write(
+            "Standalone copy/Resources/plugins/DataRefs.txt",
+            "2 120050\n",
+        );
+        assert!(NativePlatform
+            .validate("x-plane-11", copy.to_str().unwrap())
+            .is_err());
+        assert!(NativePlatform
+            .validate("x-plane-12", copy.to_str().unwrap())
+            .is_ok());
+        let manual = BTreeMap::from([("x-plane-12".into(), copy.to_str().unwrap().into())]);
+        let game = discover(&roots, &manual).remove(3);
+        assert_eq!(game["source"], "manual");
+        assert_eq!(game["executable"], copy.to_str().unwrap());
+        assert_eq!(game["installations"].as_array().unwrap().len(), 2);
+        assert_eq!(launch_request(&game).unwrap().executable, copy);
+    }
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {
@@ -916,12 +1031,12 @@ mod tests {
             ..Roots::default()
         };
         let games = discover(&roots, &BTreeMap::new());
-        assert_eq!(games.len(), 2);
+        assert_eq!(games.len(), 4);
         assert_eq!(games[0]["source"], "steam");
         assert_eq!(games[1]["source"], "steam");
         assert_eq!(games[1]["provider"], "assetto-corsa-rally");
         assert_eq!(games[0]["processExecutables"].as_array().unwrap().len(), 2);
-        for game in &games {
+        for game in &games[..2] {
             assert_eq!(game["installed"], true);
             assert_eq!(game["launchSupported"], true);
         }
