@@ -12,6 +12,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 pub struct Service {
+    suppression: super::suppression::Control,
+    platform: super::capabilities::Platform,
     instances: Mutex<std::collections::BTreeMap<String, (super::session::Source, String)>>,
     admission: Mutex<()>,
     settings: Mutex<Settings>,
@@ -39,6 +41,8 @@ impl Service {
     pub fn new(path: Option<PathBuf>, registry: Arc<Mutex<Registry>>) -> Self {
         let settings = Settings::new(path.as_ref().map(|p| p.join("controller-visibility.json")));
         Self {
+            suppression: Default::default(),
+            platform: super::capabilities::current(),
             instances: Mutex::new(std::collections::BTreeMap::new()),
             admission: Mutex::new(()),
             settings: Mutex::new(settings),
@@ -50,13 +54,20 @@ impl Service {
             qualified: false,
         }
     }
+    pub fn with_suppression(mut self, control: super::suppression::Control) -> Self {
+        self.suppression = control;
+        self
+    }
     pub fn active(&self) -> bool {
-        self.worker
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .active()
+        self.suppression.active()
+            || self
+                .worker
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .active()
     }
     pub fn shutdown(&self) {
+        let _ = self.suppression.stop(None);
         self.worker
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -86,10 +97,10 @@ impl Service {
             match &*snapshot { Ok(Some(state)) => Some(json!({"hidden":state.active && super::policy::contains(&state.hidden,instance),"configured":super::policy::contains(&state.hidden,instance),"inverse":state.inverse,"scope":"last-inspected"})), _ => None }
         });
         json!({"offset":0,"total":0,"limit":32,"visibility":{
-            "enabled":settings.value.enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
+            "platform":format!("{:?}",self.platform).to_lowercase(),"modes":super::capabilities::modes(self.platform),"enabled":settings.value.enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
             "selected":settings.value.devices.iter().filter(|(_,p)|!matches!(p,Intent::Visible)).map(|(id,_)|id).take(16).collect::<Vec<_>>(),
-            "settingsError":settings.error,"global":global,"job":self.worker.lock().unwrap_or_else(|p|p.into_inner()).snapshot(),"recovery":recovery,
-            "reason":if self.qualified{"Apply affects every instance of the selected executable path. Existing applications may need a qualified device-handle refresh."}else{"Device hiding is unavailable until native visibility and recovery qualification is complete. Saving a selection does not hide anything."}
+            "settingsError":settings.error,"global":global,"job":if self.platform==super::capabilities::Platform::Windows{json!(self.worker.lock().unwrap_or_else(|p|p.into_inner()).snapshot())}else{self.suppression.snapshot()},"recovery":recovery,
+            "reason":if self.qualified{"Apply affects every instance of the selected executable path. Existing applications may need a qualified device-handle refresh."}else{super::capabilities::reason(self.platform)}
         }})
     }
     pub fn request(&self, request: &Value) -> Result<Value, String> {
@@ -122,6 +133,10 @@ impl Service {
             }
 
             "controller_visibility_inspect" => {
+                if self.platform != super::capabilities::Platform::Windows {
+                    *self.snapshot.lock().unwrap_or_else(|p| p.into_inner()) = Ok(None);
+                    return Ok(self.status(id));
+                }
                 if self.active() {
                     return Err("Restore the active visibility session before opening another driver inspection handle.".into());
                 }
@@ -162,11 +177,25 @@ impl Service {
                     let intent: Intent = serde_json::from_value(request["intent"].clone())
                         .map_err(|_| "Invalid visibility intent.")?;
                     intent.validate()?;
+                    let mode = match &intent {
+                        Intent::Visible => "visible",
+                        Intent::HideAll => "hide-all",
+                        Intent::HideFromProcess { .. } => "hide-from-process",
+                        Intent::BlockOriginalInput => "block-original-input",
+                    };
+                    super::capabilities::validate(self.platform, mode)?;
                     value.devices.insert(id.to_owned(), intent);
                 }
                 settings.save(value)?;
             }
+            "controller_visibility_launch" => {
+                super::suppression::controlled_launch(request)?;
+            }
             "controller_visibility_restore" => {
+                if self.platform != super::capabilities::Platform::Windows {
+                    self.suppression.stop(request["jobId"].as_str())?;
+                    return Ok(self.status(id));
+                }
                 let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
                 if worker.active() {
                     worker.stop(request["jobId"].as_str())?;
@@ -190,9 +219,10 @@ impl Service {
             }
             "controller_visibility_apply" => {
                 if !self.qualified {
-                    return Err(
-                        "HidHide Apply is disabled until native qualification is complete.".into(),
-                    );
+                    return Err(format!(
+                        "Apply is disabled: {}",
+                        super::capabilities::reason(self.platform)
+                    ));
                 }
                 let preferences = self
                     .settings
@@ -205,6 +235,34 @@ impl Service {
                 }
                 let ids: Vec<String> = serde_json::from_value(request["sourceIds"].clone())
                     .map_err(|_| "Choose exact local source IDs.")?;
+                if self.platform != super::capabilities::Platform::Windows {
+                    if !matches!(
+                        self.platform,
+                        super::capabilities::Platform::Linux | super::capabilities::Platform::Macos
+                    ) {
+                        return Err("No suppression adapter.".into());
+                    }
+                    if ids.iter().any(|id| {
+                        !matches!(
+                            preferences.devices.get(id),
+                            Some(Intent::BlockOriginalInput)
+                        )
+                    }) {
+                        return Err("Only explicit broad event suppression is supported; no fallback is applied.".into());
+                    }
+                    let backend = if self.platform == super::capabilities::Platform::Linux {
+                        "linux-evdev"
+                    } else {
+                        "macos-iohid"
+                    };
+                    let sources = self
+                        .registry
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .physical_sources(&ids, backend)?;
+                    self.suppression.apply(sources)?;
+                    return Ok(self.status(id));
+                }
                 let expected = self
                     .registry
                     .lock()

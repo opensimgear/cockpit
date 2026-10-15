@@ -144,6 +144,14 @@ struct FakeSnapshot {
     overflow: bool,
 }
 impl Snapshot for FakeSnapshot {
+    fn reopen(
+        &mut self,
+        _enabled: bool,
+        _send: mpsc::SyncSender<NativeValue>,
+        _lost: Arc<AtomicBool>,
+    ) -> Result<Box<dyn std::any::Any>, String> {
+        Ok(Box::new(()))
+    }
     fn values(&self) -> Result<Vec<NativeValue>, String> {
         if self.fail {
             return Err(capture::permission_error("macos", "not permitted"));
@@ -173,6 +181,7 @@ fn baseline_requires_fresh_values_and_filters_older_callbacks() {
             timestamps: BTreeMap::new(),
         },
         _subscription: None,
+        suppressed: false,
     };
     assert_eq!(input.definition().name, "Joystick");
     assert!(matches!(&input.baseline().unwrap()[0],Event::Values(0,v) if v[&0]==1));
@@ -207,6 +216,12 @@ fn baseline_requires_fresh_values_and_filters_older_callbacks() {
     input.device.overflow = false;
     input.definition.controls[0].kind = Kind::Diagnostic;
     assert!(input.baseline().unwrap().is_empty());
+    input.suppress(false).unwrap();
+    input.suppress(true).unwrap();
+    assert!(input.suppressed);
+    assert!(send.try_send((1, 1, 20)).is_err()); // old callbacks cannot cross the transition
+    input.suppress(false).unwrap();
+    assert!(!input.suppressed);
 }
 
 struct FakeDevice {
@@ -314,4 +329,74 @@ fn shared_iohid_lifecycle_filters_virtual_and_releases_owners() {
     assert!(lost.load(Ordering::Acquire));
     drop(receive);
     publish(&send, &lost, (1, 0, 3));
+}
+
+#[test]
+fn reopen_gate_and_partial_failure_preserve_exact_ownership() {
+    let mut opened = true;
+    assert!(reopen_owned(
+        &mut opened,
+        true,
+        false,
+        || panic!("must not close"),
+        |_| panic!("must not open")
+    )
+    .is_err());
+    assert!(opened);
+    assert!(reopen_owned(
+        &mut opened,
+        true,
+        true,
+        || Err("close denied".into()),
+        |_| panic!("must not open")
+    )
+    .is_err());
+    assert!(opened);
+    assert!(reopen_owned(
+        &mut opened,
+        true,
+        true,
+        || Ok(()),
+        |options| {
+            assert_eq!(options, 1);
+            Err("permission denied".into())
+        }
+    )
+    .is_err());
+    assert!(!opened);
+    reopen_owned(
+        &mut opened,
+        false,
+        false,
+        || panic!("already closed"),
+        |options| {
+            assert_eq!(options, 0);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(opened);
+    reopen_owned(
+        &mut opened,
+        true,
+        true,
+        || Ok(()),
+        |options| {
+            assert_eq!(options, 1);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(opened);
+    reopen_owned(
+        &mut opened,
+        false,
+        false,
+        || Ok(()),
+        |options| {
+            assert_eq!(options, 0);
+            Ok(())
+        },
+    )
+    .unwrap();
 }

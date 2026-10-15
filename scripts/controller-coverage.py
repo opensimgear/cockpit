@@ -47,7 +47,7 @@ def main():
         sources.append(root / 'crates/controller-input/src/linux.rs')
     if sys.platform == 'darwin':
         sources.append(root / 'crates/controller-input/src/macos.rs')
-    sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['policy', 'journal', 'wire', 'settings', 'session', 'runtime', 'service'])
+    sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['capabilities', 'suppression', 'policy', 'journal', 'wire', 'settings', 'session', 'runtime', 'service'])
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/visibility/windows.rs')
     summary = {}

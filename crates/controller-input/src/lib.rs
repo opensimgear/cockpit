@@ -68,16 +68,20 @@ impl ControllerService {
         }
         let registry = Arc::new(Mutex::new(registry));
         let stop = Arc::new(AtomicBool::new(false));
+        let suppression = visibility::suppression::Control::default();
         let enabled = native
             && (cfg!(windows) || (probe && cfg!(any(target_os = "linux", target_os = "macos"))));
         let worker = if enabled {
             let shared = registry.clone();
             let stopped = stop.clone();
+            let suppression = suppression.clone();
             match std::thread::Builder::new()
                 .name("controller-input".into())
                 .spawn(move || {
-                    let result = std::panic::catch_unwind(|| native_run(shared.clone(), stopped))
-                        .unwrap_or_else(|_| Err("Controller capture stopped unexpectedly.".into()));
+                    let result = std::panic::catch_unwind(|| {
+                        native_run(shared.clone(), stopped, suppression)
+                    })
+                    .unwrap_or_else(|_| Err("Controller capture stopped unexpectedly.".into()));
                     let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
                     r.disconnect_all();
                     match result {
@@ -112,7 +116,8 @@ impl ControllerService {
                 .and_then(|p| p.parent())
                 .map(|p| p.to_path_buf()),
             registry.clone(),
-        );
+        )
+        .with_suppression(suppression);
         Self {
             registry,
             stop,
@@ -260,22 +265,27 @@ impl Drop for ControllerService {
         self.shutdown();
     }
 }
-fn native_run(shared: Arc<Mutex<Registry>>, stop: Arc<AtomicBool>) -> Result<(), String> {
+fn native_run(
+    shared: Arc<Mutex<Registry>>,
+    stop: Arc<AtomicBool>,
+    suppression: visibility::suppression::Control,
+) -> Result<(), String> {
     #[cfg(windows)]
     {
+        let _ = suppression;
         windows::run(shared, stop)
     }
     #[cfg(target_os = "linux")]
     {
-        capture::run(linux::Linux::new(), shared, stop)
+        capture::run_controlled(linux::Linux::new(), shared, stop, suppression)
     }
     #[cfg(target_os = "macos")]
     {
-        capture::run(macos::Mac::new()?, shared, stop)
+        capture::run_controlled(macos::Mac::new()?, shared, stop, suppression)
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        let _ = (shared, stop);
+        let _ = (shared, stop, suppression);
         Err("Unsupported native capture platform.".into())
     }
 }

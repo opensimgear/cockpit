@@ -39,14 +39,14 @@
 </script>
 <section class="visibility">
   <h3>Device visibility</h3>
-  <p>Optional hiding is independent of virtual controllers. Saving a selection does not apply it.</p>
+  <p>Visibility and input suppression are independent of virtual controllers. Saving a selection does not apply it.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}
     <p class="notice">{status.reason}</p>
     {#if status.settingsError}<p class="error">Saved settings need attention: {status.settingsError}</p>{/if}
-    <label class="check"><input type="checkbox" checked={status.enabled} disabled={busy || status.job?.active} onchange={event => action({ command: 'controller_visibility_enable', enabled: event.currentTarget.checked })} />Enable optional device hiding on this computer</label>
+    <label class="check"><input type="checkbox" checked={status.enabled} disabled={busy || status.job?.active} onchange={event => action({ command: 'controller_visibility_enable', enabled: event.currentTarget.checked })} />Enable optional visibility controls on this computer</label>
     <div class="fields">
-      <label>Saved policy<select bind:value={mode} disabled={busy || status.job?.active}><option value="visible">Visible</option><option value="hide-all">Hide from all applications</option><option value="hide-from-process">Hide from a specific process</option></select></label>
+      <label>Saved policy<select bind:value={mode} disabled={busy || status.job?.active}>{#each status.modes as option}<option value={option.mode} disabled={!option.supported}>{option.label}{option.supported ? '' : ' · unavailable'}</option>{/each}</select></label>
       {#if mode === 'hide-from-process'}
         <label>Executable path<input bind:value={executable} maxlength="4096" placeholder="C:\Games\Game.exe" disabled={busy || status.job?.active} /></label>
         <button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_processes', offset: 0 })}>Choose a running application</button>
@@ -54,15 +54,15 @@
         {#if nextProcess != null}<button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_processes', offset: nextProcess ?? 0 })}>More applications</button>{/if}
       {/if}
     </div>
-    <p class="hint">Process rules apply to every instance at the saved executable path, including later starts. HidHide shares one application policy across all hidden devices; incompatible selections are rejected.</p>
+    <p class="hint">{status.modes.find(option => option.mode === mode)?.reason}</p>
     <div class="actions">
       <button class="secondary-button" disabled={busy || status.job?.active || (mode === 'hide-from-process' && !executable.trim())} onclick={() => action({ command: 'controller_visibility_save', intent: mode === 'hide-from-process' ? { mode, executable: executable.trim() } : { mode } })}>Save visibility selection</button>
-      <button class="secondary-button" disabled={busy || status.job?.active} onclick={() => action({ command: 'controller_visibility_inspect' })}>Inspect HidHide</button>
+      <button class="secondary-button" disabled={busy || status.job?.active} onclick={() => action({ command: 'controller_visibility_inspect' })}>{status.platform === 'windows' ? 'Inspect HidHide' : 'Inspect visibility capabilities'}</button>
       <button class="secondary-button" disabled={busy || !status.qualified || !status.enabled || status.job?.active || !source.online || !source.baselineReady || status.intent.mode === 'visible'} onclick={() => action({ command: 'controller_visibility_apply', sourceIds: [source.id] })}>Apply visibility</button>
       {#if status.selectedCount > 1}<button class="secondary-button" disabled={busy || !status.qualified || !status.enabled || status.job?.active || status.selectedCount > 16} onclick={() => action({ command: 'controller_visibility_apply', sourceIds: status?.selected ?? [] })}>Apply all saved selections</button>{/if}
       <button class="secondary-button" disabled={busy || (!status.job?.active && (!status.qualified || !status.recovery.required || !status.recovery.id))} onclick={() => action({ command: 'controller_visibility_restore', jobId: status?.job?.jobId, sessionId: status?.recovery.id })}>Restore visibility</button>
     </div>
-    {#if status.global.error}<p class="notice">HidHide setup: {status.global.error}</p>{/if}
+    {#if status.global.error}<p class="notice">Visibility setup: {status.global.error}</p>{/if}
     {#if status.global.inspected && !status.global.error}<p>Last inspected policy: cloaking {status.global.active ? 'on' : 'off'}, {status.global.inverse ? 'selected applications blocked' : 'listed applications exempt'}. {status.global.hiddenCount} configured hidden devices.</p>{/if}
     {#if status.effective}<p>This controller {status.effective.hidden ? 'has an active global HidHide rule' : status.effective.configured ? 'has an inactive HidHide rule' : 'has no configured HidHide rule'} in the inspected state. Visible does not remove externally managed rules.</p>{/if}
     {#if status.global.applications?.length}<details><summary>{status.global.inverse ? 'Blocked executable paths' : 'Existing application exceptions'} ({status.global.applicationCount})</summary><ul>{#each status.global.applications as path}<li>{path}</li>{/each}</ul>{#if (status.global.applicationCount ?? 0) > 16}<p>First 16 paths shown.</p>{/if}</details>{/if}

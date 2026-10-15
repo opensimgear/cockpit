@@ -12,6 +12,7 @@ pub enum Intent {
     #[default]
     Visible,
     HideAll,
+    BlockOriginalInput,
     HideFromProcess {
         executable: String,
     },

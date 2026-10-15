@@ -3,11 +3,14 @@ use super::*;
 use crate::registry::{Control, Definition, Identity};
 use std::collections::BTreeMap;
 fn inventory() -> (Arc<Mutex<Registry>>, String) {
+    inventory_for("windows-raw-input")
+}
+fn inventory_for(backend: &str) -> (Arc<Mutex<Registry>>, String) {
     let mut registry = Registry::default();
     let id = registry
         .connect(Definition {
             identity: Identity {
-                backend: "windows-raw-input".into(),
+                backend: backend.into(),
                 vendor_id: 0x231d,
                 product_id: 0x200,
                 serial: None,
@@ -48,6 +51,7 @@ fn default_status_and_saved_intent_are_inert_without_optional_dependencies() {
     let (registry, id) = inventory();
     let temp = tempfile::tempdir().unwrap();
     let mut service = Service::new(Some(temp.path().into()), registry.clone());
+    service.platform = super::super::capabilities::Platform::Windows;
     service.factory = Arc::new(|| Err("HidHide missing or restart required".into()));
     let status = service
         .request(&json!({"command":"controller_visibility_status","sourceId":id}))
@@ -98,6 +102,7 @@ fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
     let shared = state.clone();
     let mut service = Service::new(Some(temp.path().into()), registry.clone());
     service.qualified = true;
+    service.platform = super::super::capabilities::Platform::Windows;
     service.factory = Arc::new(move || Ok(Box::new(Fixture(shared.clone()))));
     assert!(service
         .request(&json!({"command":"controller_visibility_apply","sourceIds":[id]}))
@@ -182,4 +187,59 @@ fn corrupt_recovery_and_preferences_are_reported_without_startup_replay() {
     assert!(status["visibility"]["settingsError"].is_string());
     assert_eq!(status["visibility"]["recovery"]["required"], true);
     assert!(!service.active());
+}
+
+#[test]
+fn unix_capabilities_save_without_driver_access_and_never_broaden() {
+    use super::super::capabilities::Platform;
+    for (platform, backend) in [
+        (Platform::Linux, "linux-evdev"),
+        (Platform::Macos, "macos-iohid"),
+    ] {
+        let (registry, id) = inventory_for(backend);
+        let dir = tempfile::tempdir().unwrap();
+        let control = super::super::suppression::Control::default();
+        let mut service =
+            Service::new(Some(dir.path().into()), registry).with_suppression(control.clone());
+        service.platform = platform;
+        service.factory = Arc::new(|| panic!("Unix visibility must not inspect HidHide"));
+        assert!(service
+            .request(&json!({"command":"controller_visibility_inspect"}))
+            .is_ok());
+        assert!(service.request(&json!({"command":"controller_visibility_save","sourceId":id,"intent":{"mode":"hide-all"}})).is_err());
+        service.request(&json!({"command":"controller_visibility_save","sourceId":id,"intent":{"mode":"block-original-input"}})).unwrap();
+        service
+            .request(&json!({"command":"controller_visibility_enable","enabled":true}))
+            .unwrap();
+        assert!(service
+            .request(&json!({"command":"controller_visibility_apply","sourceIds":[id]}))
+            .unwrap_err()
+            .contains("disabled"));
+        assert!(control.take().is_none());
+        service.qualified = true;
+        let result = service
+            .request(&json!({"command":"controller_visibility_apply","sourceIds":[id]}))
+            .unwrap();
+        assert_eq!(result["visibility"]["job"]["active"], true);
+        assert!(matches!(
+            control.take(),
+            Some(super::super::suppression::Command::Apply { .. })
+        ));
+        service
+            .request(&json!({"command":"controller_visibility_restore"}))
+            .unwrap();
+        assert!(matches!(
+            control.take(),
+            Some(super::super::suppression::Command::Stop)
+        ));
+        control.update("stopped", "");
+        service.request(&json!({"command":"controller_visibility_save","sourceId":id,"intent":{"mode":"visible"}})).unwrap();
+        assert!(service
+            .request(&json!({"command":"controller_visibility_apply","sourceIds":[id]}))
+            .unwrap_err()
+            .contains("no fallback"));
+        assert!(service
+            .request(&json!({"command":"controller_visibility_launch","pid":1}))
+            .is_err());
+    }
 }

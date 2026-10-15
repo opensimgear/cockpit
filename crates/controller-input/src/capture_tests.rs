@@ -26,6 +26,8 @@ struct State {
     baseline: VecDeque<Result<Vec<Event>, String>>,
     fail_open: bool,
     fail_scan: bool,
+    suppressions: Vec<(String, bool)>,
+    fail_suppress: bool,
 }
 struct Fake {
     state: Arc<Mutex<State>>,
@@ -38,6 +40,16 @@ impl Drop for Fake {
     }
 }
 impl Input for Fake {
+    fn suppress(&mut self, enabled: bool) -> Result<(), String> {
+        let mut s = self.state.lock().unwrap();
+        s.suppressions.push((self.path.clone(), enabled));
+        if s.fail_suppress {
+            Err("grab/release failed".into())
+        } else {
+            Ok(())
+        }
+    }
+
     fn definition(&self) -> Definition {
         definition(&self.path)
     }
@@ -263,8 +275,103 @@ fn worker_shutdown_and_diagnostics() {
     let (_, state, r, drops) = setup();
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
-    let handle = std::thread::spawn(move || run(Backend { state, drops }, r, stopped));
+    let handle = std::thread::spawn(move || run_controlled(Backend { state, drops }, r, stopped, Default::default()));
     std::thread::sleep(Duration::from_millis(520));
     stop.store(true, Ordering::Release);
     assert!(handle.join().unwrap().is_ok());
+}
+
+fn select(c: &Capture<Backend>, r: &Shared) -> Vec<crate::visibility::session::Source> {
+    let ids = c
+        .devices
+        .values()
+        .map(|d| d.source_id.clone())
+        .collect::<Vec<_>>();
+    r.lock().unwrap().physical_sources(&ids, "fixture").unwrap()
+}
+#[test]
+fn suppression_is_on_capture_handles_and_requires_new_baselines() {
+    let (mut c, s, r, _) = setup();
+    s.lock().unwrap().paths.push("b".into());
+    c.scan().unwrap();
+    c.tick();
+    let sources = select(&c, &r);
+    c.control.apply(sources.clone()).unwrap();
+    c.tick();
+    assert_eq!(c.control.snapshot()["phase"], "active");
+    assert_eq!(s.lock().unwrap().suppressions.len(), 2);
+    assert_eq!(select(&c, &r)[0].generation, sources[0].generation + 1);
+    c.control.stop(None).unwrap();
+    c.tick();
+    assert!(!c.control.active());
+    assert_eq!(
+        s.lock()
+            .unwrap()
+            .suppressions
+            .iter()
+            .filter(|(_, v)| !*v)
+            .count(),
+        2
+    );
+    assert_eq!(select(&c, &r).len(), 2);
+    c.control.apply(sources).unwrap();
+    c.tick();
+    assert!(!c.control.active()); // stale generation cannot grab
+    assert_eq!(s.lock().unwrap().suppressions.len(), 4);
+}
+#[test]
+fn suppression_failure_gap_removal_and_timeout_release_every_owned_handle() {
+    let (mut c, s, r, drops) = setup();
+    c.scan().unwrap();
+    c.tick();
+    let src = select(&c, &r);
+    s.lock().unwrap().fail_suppress = true;
+    c.control.apply(src).unwrap();
+    c.tick();
+    assert!(!c.control.active());
+    assert_eq!(drops.load(Ordering::Relaxed), 1);
+    assert_eq!(s.lock().unwrap().suppressions.len(), 2);
+    s.lock().unwrap().fail_suppress = false;
+    c.scan().unwrap();
+    c.tick();
+    c.control.apply(select(&c, &r)).unwrap();
+    c.tick();
+    s.lock()
+        .unwrap()
+        .events
+        .push_back(Ok(vec![Event::Gap("lost".into())]));
+    c.tick();
+    assert!(!c.control.active());
+    c.tick();
+    c.control.apply(select(&c, &r)).unwrap();
+    s.lock()
+        .unwrap()
+        .baseline
+        .push_back(Ok(vec![Event::PendingBaseline]));
+    c.tick();
+    assert_eq!(c.control.snapshot()["phase"], "baseline");
+    c.baseline_deadline = Some(Instant::now());
+    s.lock()
+        .unwrap()
+        .baseline
+        .push_back(Ok(vec![Event::PendingBaseline]));
+    c.tick();
+    assert!(!c.control.active());
+    c.tick();
+    c.control.apply(select(&c, &r)).unwrap();
+    c.tick();
+    s.lock().unwrap().paths.clear();
+    c.scan().unwrap();
+    c.tick();
+    assert!(!c.control.active());
+}
+#[test]
+fn suppression_stop_before_apply_never_grabs() {
+    let (mut c, s, r, _) = setup();
+    c.scan().unwrap();
+    c.tick();
+    c.control.apply(select(&c, &r)).unwrap();
+    c.control.stop(None).unwrap();
+    c.tick();
+    assert!(s.lock().unwrap().suppressions.is_empty());
 }

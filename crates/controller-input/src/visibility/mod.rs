@@ -7,3 +7,7 @@ pub mod settings;
 #[cfg(windows)]
 pub mod windows;
 pub mod wire;
+
+pub mod capabilities;
+
+pub mod suppression;

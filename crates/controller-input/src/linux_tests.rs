@@ -109,6 +109,13 @@ struct Fake {
     fail: bool,
 }
 impl Kernel for Fake {
+    fn suppress(&mut self, _enabled: bool) -> Result<(), String> {
+        if self.fail {
+            Err("grab failed".into())
+        } else {
+            Ok(())
+        }
+    }
     fn read(&mut self) -> Result<Vec<(u16, u16, i32)>, String> {
         self.reads.pop_front().unwrap_or(Ok(vec![]))
     }
@@ -147,6 +154,7 @@ fn input() -> LinuxInput<Fake> {
         frames: Frames::default(),
         keys: vec![0x120],
         axes: axes(),
+        suppressed: false,
     }
 }
 #[test]
@@ -344,4 +352,20 @@ fn keyboard_mouse_and_virtual_nodes_are_not_controllers() {
     assert!(!controller_node("1", "1", "", "/sys/devices/pci/input0"));
     assert!(!controller_node("1", "", "1", "/sys/devices/pci/input0"));
     assert!(!controller_node("1", "", "", "/sys/devices/virtual/input0"));
+}
+
+#[test]
+fn owned_grab_releases_and_resets_frames() {
+    let mut i = input();
+    i.suppress(false).unwrap();
+    i.suppress(true).unwrap();
+    assert!(i.suppressed);
+    i.suppress(false).unwrap();
+    assert!(!i.suppressed);
+    i.device.fail = true;
+    assert!(i.suppress(true).is_err());
+    assert!(i.suppressed);
+    assert!(i.suppress(false).is_err());
+    i.device.fail = false;
+    drop(i);
 }

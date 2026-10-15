@@ -192,6 +192,7 @@ fn run(
                     .unwrap_or(&Intent::Visible)
                 {
                     Intent::Visible => super::policy::Policy::Visible,
+                    Intent::BlockOriginalInput => return Err("Input suppression requires the native capture owner; HidHide is not a fallback.".into()),
                     Intent::HideAll => super::policy::Policy::HideAll,
                     Intent::HideFromProcess { executable } => {
                         let image = adapter.executable(executable)?;

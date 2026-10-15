@@ -432,6 +432,13 @@ impl Registry {
         &self,
         ids: &[String],
     ) -> Result<Vec<crate::visibility::session::Source>, String> {
+        self.physical_sources(ids, "windows-raw-input")
+    }
+    pub fn physical_sources(
+        &self,
+        ids: &[String],
+        backend: &str,
+    ) -> Result<Vec<crate::visibility::session::Source>, String> {
         if ids.is_empty() || ids.len() > 16 {
             return Err("Select 1 to 16 physical controllers.".into());
         }
@@ -443,11 +450,11 @@ impl Registry {
                     .filter(|source| source.ready())
                     .ok_or("Selected controller requires a complete current baseline.")?;
                 let identity = &source.saved.identity;
-                if identity.backend != "windows-raw-input"
+                if identity.backend != backend
                     || (identity.vendor_id == 0x1234 && identity.product_id == 0xbead)
                 {
                     return Err(
-                        "HidHide selection requires an observed physical Windows controller."
+                        "Selection requires an observed physical controller from the current native backend."
                             .into(),
                     );
                 }

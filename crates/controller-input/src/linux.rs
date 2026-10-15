@@ -1,4 +1,4 @@
-//! evdev SYN_REPORT assembly. No grabs, writes, uinput access or permission mutations.
+//! evdev SYN_REPORT assembly and capture-owned, qualification-gated event suppression.
 use crate::{
     capture::{self, Event, Input, Platform, Values, MAX_EVENTS},
     registry::{Control, Definition, Identity, Kind},
@@ -276,6 +276,7 @@ impl Platform for Linux {
             frames: Frames::default(),
             axes,
             keys,
+            suppressed: false,
         }))
     }
 }
@@ -327,13 +328,25 @@ struct LinuxInput<D: Kernel> {
     frames: Frames,
     axes: Vec<Axis>,
     keys: Vec<u16>,
+    suppressed: bool,
 }
 trait Kernel {
+    fn suppress(&mut self, enabled: bool) -> Result<(), String>;
     fn read(&mut self) -> Result<Vec<(u16, u16, i32)>, String>;
     fn snapshot(&self, keys: &[u16], axes: &[Axis], controls: &[Control])
         -> Result<Frames, String>;
 }
 impl Kernel for RawDevice {
+    fn suppress(&mut self, enabled: bool) -> Result<(), String> {
+        const QUALIFIED: bool = false;
+        if enabled && !QUALIFIED {
+            return Err("Linux evdev suppression is not qualified; no grab was attempted.".into());
+        }
+        if enabled {
+            return self.grab().map_err(|e| e.to_string());
+        }
+        self.ungrab().map_err(|e| e.to_string())
+    }
     fn read(&mut self) -> Result<Vec<(u16, u16, i32)>, String> {
         match self.fetch_events() {
             Ok(events) => Ok(events
@@ -381,7 +394,24 @@ fn snapshot_values(
     }
     Ok(frames)
 }
+impl<D: Kernel> Drop for LinuxInput<D> {
+    fn drop(&mut self) {
+        if self.suppressed {
+            let _ = self.device.suppress(false);
+        }
+    }
+}
 impl<D: Kernel> Input for LinuxInput<D> {
+    fn suppress(&mut self, enabled: bool) -> Result<(), String> {
+        if !enabled && !self.suppressed {
+            return Ok(());
+        }
+        self.suppressed = true;
+        self.device.suppress(enabled)?;
+        self.suppressed = enabled;
+        self.frames = Frames::default();
+        Ok(())
+    }
     fn definition(&self) -> Definition {
         self.definition.clone()
     }

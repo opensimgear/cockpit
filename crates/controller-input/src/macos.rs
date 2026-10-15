@@ -226,6 +226,7 @@ impl Platform for Mac {
                 timestamps: BTreeMap::new(),
             },
             _subscription: Some(subscription),
+            suppressed: false,
         }))
     }
 }
@@ -273,10 +274,12 @@ impl Device for NativeDevice {
         send: mpsc::SyncSender<NativeValue>,
         lost: Arc<AtomicBool>,
     ) -> Result<Box<dyn std::any::Any>, String> {
-        self.device
-            .open_with_options(0)
-            .map_err(|e| capture::permission_error("macos", e))?;
-        self.opened = true;
+        if !self.opened {
+            self.device
+                .open_with_options(0)
+                .map_err(|e| capture::permission_error("macos", e))?;
+            self.opened = true;
+        }
         let subscription = self
             .device
             .on_input_value(&[], move |v| {
@@ -290,7 +293,45 @@ impl Device for NativeDevice {
         Ok(Box::new(subscription))
     }
 }
+// The permission gate is evaluated before closing the current capture handle.
+fn reopen_owned(
+    opened: &mut bool,
+    enabled: bool,
+    qualified: bool,
+    mut close: impl FnMut() -> Result<(), String>,
+    mut open: impl FnMut(u32) -> Result<(), String>,
+) -> Result<(), String> {
+    if enabled && !qualified {
+        return Err("IOHID seizure is not qualified; no device was reopened.".into());
+    }
+    if *opened {
+        close()?;
+        *opened = false;
+    }
+    open(if enabled { 1 } else { 0 })?;
+    *opened = true;
+    Ok(())
+}
 impl Snapshot for NativeDevice {
+    fn reopen(
+        &mut self,
+        enabled: bool,
+        send: mpsc::SyncSender<NativeValue>,
+        lost: Arc<AtomicBool>,
+    ) -> Result<Box<dyn std::any::Any>, String> {
+        reopen_owned(
+            &mut self.opened,
+            enabled,
+            false,
+            || self.device.close_with_options(0).map_err(|e| e.to_string()),
+            |options| {
+                self.device
+                    .open_with_options(options)
+                    .map_err(|e| capture::permission_error("macos", e))
+            },
+        )?;
+        self.subscribe(send, lost)
+    }
     fn values(&self) -> Result<Vec<NativeValue>, String> {
         let descriptors = controls(&self.elements())?;
         self.native
@@ -307,6 +348,14 @@ impl Snapshot for NativeDevice {
     }
 }
 impl Snapshot for Box<dyn Device> {
+    fn reopen(
+        &mut self,
+        enabled: bool,
+        send: mpsc::SyncSender<NativeValue>,
+        lost: Arc<AtomicBool>,
+    ) -> Result<Box<dyn std::any::Any>, String> {
+        (**self).reopen(enabled, send, lost)
+    }
     fn values(&self) -> Result<Vec<NativeValue>, String> {
         (**self).values()
     }
@@ -348,6 +397,14 @@ fn definition(info: HidDeviceInfo, path: &str, elements: &[Element]) -> Result<D
 }
 trait Snapshot {
     fn values(&self) -> Result<Vec<(u32, i64, u64)>, String>;
+    fn reopen(
+        &mut self,
+        _enabled: bool,
+        _send: mpsc::SyncSender<NativeValue>,
+        _lost: Arc<AtomicBool>,
+    ) -> Result<Box<dyn std::any::Any>, String> {
+        Err("IOHID seizure is unsupported by this capture adapter.".into())
+    }
 }
 struct MacInput<D: Snapshot> {
     device: D,
@@ -355,8 +412,31 @@ struct MacInput<D: Snapshot> {
     definition: Definition,
     queue: Queue,
     _subscription: Option<Box<dyn std::any::Any>>,
+    suppressed: bool,
+}
+impl<D: Snapshot> Drop for MacInput<D> {
+    fn drop(&mut self) {
+        self._subscription.take();
+    }
 }
 impl<D: Snapshot> Input for MacInput<D> {
+    fn suppress(&mut self, enabled: bool) -> Result<(), String> {
+        if !enabled && !self.suppressed {
+            return Ok(());
+        }
+        self.suppressed = true;
+        self._subscription.take();
+        let (send, receive) = mpsc::sync_channel(MAX_EVENTS);
+        let lost = Arc::new(AtomicBool::new(false));
+        self._subscription = Some(self.device.reopen(enabled, send, lost.clone())?);
+        self.queue = Queue {
+            receive,
+            lost,
+            timestamps: BTreeMap::new(),
+        };
+        self.suppressed = enabled;
+        Ok(())
+    }
     fn definition(&self) -> Definition {
         self.definition.clone()
     }

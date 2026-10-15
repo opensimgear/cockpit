@@ -356,7 +356,10 @@ fn visibility_sources_require_current_physical_windows_baselines() {
             definition.identity.vendor_id = 0x1234;
             definition.identity.product_id = 0xbead;
         }
-        if virtual_target { assert!(registry.connect(definition).is_err()); continue; }
+        if virtual_target {
+            assert!(registry.connect(definition).is_err());
+            continue;
+        }
         let id = registry.connect(definition).unwrap();
         registry
             .report(&id, 1, &BTreeMap::from([(0, 0), (1, 0)]))
