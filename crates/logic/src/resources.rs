@@ -6,12 +6,26 @@ pub fn child_limits() -> Result<(), String> {
         (libc::RLIMIT_DATA, 256 * 1024 * 1024),
         (libc::RLIMIT_NOFILE, 32),
     ] {
+        let mut inherited = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if unsafe { libc::getrlimit(resource, &mut inherited) } != 0 {
+            return Err(format!(
+                "Cannot inspect script resource {resource}: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let limit = limit.min(inherited.rlim_cur).min(inherited.rlim_max);
         let value = libc::rlimit {
             rlim_cur: limit,
             rlim_max: limit,
         };
         if unsafe { libc::setrlimit(resource, &value) } != 0 {
-            return Err(std::io::Error::last_os_error().to_string());
+            return Err(format!(
+                "Cannot enforce script resource {resource} limit {limit}: {}",
+                std::io::Error::last_os_error()
+            ));
         }
     }
     Ok(())
@@ -21,7 +35,9 @@ pub fn child_limits() -> Result<(), String> {
     Ok(())
 }
 #[cfg(windows)]
-pub struct Guard { _handle: std::os::windows::io::OwnedHandle }
+pub struct Guard {
+    _handle: std::os::windows::io::OwnedHandle,
+}
 #[cfg(not(windows))]
 pub struct Guard;
 #[cfg(windows)]
@@ -52,7 +68,7 @@ impl Guard {
         {
             return Err(std::io::Error::last_os_error().to_string());
         }
-        Ok(Self{_handle:handle})
+        Ok(Self { _handle: handle })
     }
 }
 #[cfg(not(windows))]

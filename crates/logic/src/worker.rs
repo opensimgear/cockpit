@@ -157,7 +157,10 @@ pub fn serve(
     input: &mut impl std::io::Read,
     output: &mut impl std::io::Write,
 ) -> Result<(), String> {
-    resources::child_limits()?;
+    if let Err(message) = resources::child_limits() {
+        wire::write(&Reply::Error { message }, output)?;
+        return Ok(());
+    }
     let Request::Compile { source } = wire::read(input)? else {
         return Err("Compile handshake required.".into());
     };

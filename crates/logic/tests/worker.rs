@@ -245,10 +245,8 @@ fn framed_worker_exits_cleanly_on_eof_and_rejects_recompilation() {
             &mut input,
         )
         .unwrap();
-        assert!(matches!(
-            wire::read::<Reply>(&mut output).unwrap(),
-            Reply::Compiled
-        ));
+        let handshake = wire::read::<Reply>(&mut output).unwrap();
+        assert!(matches!(handshake, Reply::Compiled), "{handshake:?}");
         if recompile {
             wire::write(
                 &Request::Compile {
