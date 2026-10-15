@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MappingEditor from './MappingEditor.svelte';
+  import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest } from './gateway';
   import { controlLabel, type ControllerControl, type HostController } from './controllers';
   import { capturedKind, compatibleControl, directProfile, oneToOneProfile, importMapping, savedAssignments, type PanelMappingSource, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
@@ -219,6 +220,7 @@
 </section>
 <section class="panel mapping-panel" aria-label="Virtual controllers">
   <div class="mapping-row"><h2>Virtual controllers</h2><button class="secondary-button" disabled={busy} onclick={() => action(async () => { virtual = await request({ command: 'mapping_virtual_inspect' }); })}>Inspect {status.virtualDevices?.backend === 'uinput' ? 'Linux output' : status.virtualDevices?.backend === 'macos-hid' ? 'macOS helper' : 'vJoy'}</button></div>
+  <OptionalDependencies only="vjoy" />
   <label class="enable-option"><input type="checkbox" checked={status.virtualDevices?.enabled ?? false} disabled={busy} onchange={event => action(async () => { await request({ command: 'mapping_virtual_enable', enabled: event.currentTarget.checked }); })} />Enable {status.virtualDevices?.backend === 'uinput' ? 'Linux virtual devices' : status.virtualDevices?.backend === 'macos-hid' ? 'macOS virtual devices' : 'installed vJoy'} for this computer</label>
   <p>{virtual?.reason ?? status.virtualDevices?.reason ?? 'Virtual output is optional and disabled by default.'}</p>
   {#each virtual?.slots ?? [] as slot}<div class="virtual-slot"><strong>vJoy slot {slot.id} · {slot.status}</strong><span>{slot.buttons} buttons · {slot.axes.length} axes · {slot.continuousHats} continuous hats · {slot.discreteHats} discrete hats{slot.forceFeedback ? ' · force feedback' : ''}{slot.ownerPid ? ' · owner PID ' + slot.ownerPid : ''}</span></div>{/each}

@@ -15,6 +15,7 @@ mod hid_names;
 mod integration_profile;
 mod integration_runtime;
 mod local_gateway;
+mod optional_dependencies;
 mod output_leases;
 mod panel_events;
 mod mapping_panels;
@@ -43,6 +44,21 @@ fn local_document(url: &tauri::Url) -> bool {
 struct NativeGateway(Arc<gateways::GatewayManager>);
 
 #[tauri::command]
+fn optional_dependencies() -> Value {
+    optional_dependencies::list()
+}
+
+#[tauri::command]
+async fn optional_dependency_install(app: tauri::AppHandle, id: String) -> Result<String, String> {
+    let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        optional_dependencies::install(&resources, &id).map(str::to_owned)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn gateway_request(
     request: Value,
     state: tauri::State<'_, NativeGateway>,
@@ -65,7 +81,11 @@ pub fn run() {
             app.manage(NativeGateway(Arc::new(gateways::GatewayManager::new())));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![gateway_request])
+        .invoke_handler(tauri::generate_handler![
+            gateway_request,
+            optional_dependencies,
+            optional_dependency_install
+        ])
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<NativeGateway>().0.shutdown();

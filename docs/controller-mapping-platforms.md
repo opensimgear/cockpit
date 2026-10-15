@@ -15,12 +15,20 @@ have independent opt-ins: a profile that requests neither needs neither driver.
 The current inspection adapter accepts the pinned **vJoy 2.2.2.0 x64** DLL and
 driver at their expected installation paths. The [M0 record](verification/2026-10-14-controller-mapping-m0.md)
 contains release links, artifact hashes and the signed-driver observations.
-Install that upstream package separately if inspection is wanted, complete its
+Use **Set up vJoy** under Devices → Host controllers or Mappings → Virtual
+controllers to open the bundled upstream installer. Complete its
 Windows authorization/restart requirements, then use **Inspect vJoy**. A changed
 version, missing file or hash mismatch is reported as unavailable. Cockpit does
 not download or install a driver on startup, or take a slot owned by another app.
 
-HidHide is a separate upstream installation. The recorded package is 1.5.230.0
+Use **Set up HidHide** under Devices → Host controllers or a selected controller's
+Device visibility section to open its independent bundled installer. Both setup
+actions are optional and available in the Windows x64 desktop app. Cockpit checks
+the pinned installer hash and publisher signature before showing the upstream
+wizard, reports cancellation/failure or a restart requirement, and does not
+enable output or hiding after setup. See the [installer catalog and licenses](../src-tauri/resources/dependencies/README.md).
+
+The recorded HidHide package is 1.5.230.0
 with its 1.4.181.0 driver; these version numbers refer to different artifacts.
 Keep any existing device selections and application exceptions. Cockpit's saved
 visibility intent does not edit that policy while qualification is disabled.
@@ -44,9 +52,9 @@ pwsh -File scripts/package-windows-mapping.ps1 `
 
 Release staging requires an artifact signed by the external release process.
 Development staging accepts an unsigned build and labels it `development`.
-The script copies only the application into a new directory and records its hash
-and signature status. It does not bundle drivers, sign, install, elevate or change
-qualification. A valid signature alone does not qualify deployment. The usual
+The script copies the application and optional installer resources into a new
+directory and records their hashes and signature status. It does not sign,
+install, elevate or change qualification. A valid signature alone does not qualify deployment. The usual
 Tauri bundle remains the application installer; driver setup stays independent.
 
 vJoy slots are persistent driver devices. Stopping a feeder relinquishes ownership

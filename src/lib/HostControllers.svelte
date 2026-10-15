@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
   import DeviceVisibility from './DeviceVisibility.svelte';
+  import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { controllerRoles, controlLabel, inputLabel, type ControllerResult, type HostController } from './controllers';
   let { topology = false }: { topology?: boolean } = $props();
@@ -64,6 +65,7 @@
 
 <section class="host-controllers" aria-label="Host controllers">
   <div class="panel-heading"><div><h2>{topology ? 'USB controllers connected to this computer' : 'Host controllers'}</h2><p>Physical controller input · {inventory.backendStatus ?? 'Connecting'}</p></div><span class="quiet-tag">Experimental</span></div>
+  {#if !topology}<OptionalDependencies />{/if}
   {#if inventory.diagnostic}<p class="notice">{inventory.diagnostic}</p>{/if}
   {#if error}<p class="notice amber-notice" role="alert">{error}</p>{/if}
   {#if actionError}<p class="notice amber-notice" role="alert">{actionError}</p>{/if}

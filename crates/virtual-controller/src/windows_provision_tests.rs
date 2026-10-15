@@ -60,7 +60,32 @@ impl Fixture {
                 Ok(if entries.is_empty() {
                     vec![slot(1)]
                 } else {
-                    entries.keys().map(|id| slot(*id)).collect()
+                    entries
+                        .iter()
+                        .map(|(id, entry)| {
+                            // Unknown registry entries remain visible to snapshot tests;
+                            // this fixture only synthesizes shapes for recognized layouts.
+                            let layout = entry
+                                .descriptor
+                                .as_deref()
+                                .and_then(|bytes| {
+                                    crate::descriptor::Layout::from_descriptor(*id, bytes).ok()
+                                })
+                                .unwrap_or(crate::descriptor::Layout::LEGACY);
+                            let mut published = slot(*id);
+                            published.axes.retain(|axis| {
+                                layout.axes
+                                    & (1 << AXIS_USAGES
+                                        .iter()
+                                        .position(|usage| *usage == axis.usage)
+                                        .unwrap())
+                                    != 0
+                            });
+                            published.buttons = layout.buttons.into();
+                            published.continuous_hats = layout.hats;
+                            Ok(published)
+                        })
+                        .collect::<Result<Vec<_>, String>>()?
                 })
             }),
             refresh: Box::new(move || {
@@ -267,6 +292,79 @@ fn journal_rejects_identity_forgery_claims_and_external_changes() {
     assert!(NativeBackend::native(&uuid::Uuid::new_v4().to_string()).is_ok());
     assert!(NativeBackend::open("invalid", Box::new(|| Ok(vec![])), Box::new(|| Ok(()))).is_err());
 }
+#[test]
+fn native_writer_accepts_only_complete_canonical_custom_descriptors() {
+    for layout in [
+        crate::descriptor::Layout::STARTER,
+        crate::descriptor::Layout {
+            axes: 3,
+            buttons: 8,
+            hats: 1,
+        },
+    ] {
+        let bytes = layout.descriptor(2).unwrap();
+        let value = Entry {
+            size: Some(bytes.len() as u32),
+            descriptor: Some(bytes.clone()),
+            unknown: false,
+        };
+        assert_eq!(validated_descriptor(2, &value).unwrap(), bytes);
+        assert!(validated_descriptor(3, &value).is_err());
+        let mut invalid = value.clone();
+        invalid.size = Some(123);
+        assert!(validated_descriptor(2, &invalid).is_err());
+        invalid = value.clone();
+        invalid.unknown = true;
+        assert!(validated_descriptor(2, &invalid).is_err());
+        invalid = value.clone();
+        invalid.descriptor.as_mut().unwrap()[0] = 0;
+        assert!(validated_descriptor(2, &invalid).is_err());
+        invalid.descriptor = None;
+        assert!(validated_descriptor(2, &invalid).is_err());
+    }
+}
+
+#[test]
+fn custom_layouts_commit_their_actual_descriptor_size_and_keep_existing_slots() {
+    for layout in [
+        crate::descriptor::Layout {
+            axes: 3,
+            buttons: 8,
+            hats: 1,
+        },
+        crate::descriptor::Layout::STARTER,
+        crate::descriptor::Layout {
+            axes: u16::MAX,
+            buttons: 128,
+            hats: 4,
+        },
+    ] {
+        let mut f = Fixture::new();
+        if !f.transactions() {
+            return;
+        } // Native SYSTEM-hive qualification is recorded separately.
+        let before = f.backend.snapshot().unwrap();
+        let mut plan = provision::plan_layout(before.clone(), 2, layout).unwrap();
+        plan.id = f.backend.operation.clone();
+        let expected = plan.owned.clone();
+        let committed = provision::execute(&mut f.backend, plan).unwrap();
+        assert!(committed.committed);
+        assert_eq!(committed.written, [1, 2].into_iter().collect());
+        let after = f.backend.snapshot().unwrap();
+        assert_eq!(after.entries, expected);
+        assert_eq!(after.ancillary_fingerprint, before.ancillary_fingerprint);
+        assert_eq!(
+            crate::descriptor::Layout::from_slot(&after.published[1]).unwrap(),
+            layout
+        );
+        assert_eq!(
+            after.entries[&2].size,
+            Some(layout.descriptor(2).unwrap().len() as u32)
+        );
+        assert!(f.backend.remove(2).is_err()); // Committed persistent slots are not rollback targets.
+    }
+}
+
 #[test]
 fn descriptor_and_ownership_are_atomic_and_recovery_never_deletes_recreated_keys() {
     let mut f = Fixture::new();

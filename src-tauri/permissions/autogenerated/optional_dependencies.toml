@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-optional-dependencies"
+description = "Enables the optional_dependencies command without any pre-configured scope."
+commands.allow = ["optional_dependencies"]
+
+[[permission]]
+identifier = "deny-optional-dependencies"
+description = "Denies the optional_dependencies command without any pre-configured scope."
+commands.deny = ["optional_dependencies"]

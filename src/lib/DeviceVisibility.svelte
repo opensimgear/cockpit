@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import type { HostController } from './controllers';
   import type { VisibilityIntent, VisibilityStatus } from './visibility';
@@ -42,6 +43,7 @@
 </script>
 <section class="visibility">
   <h3>Device visibility</h3>
+  <OptionalDependencies only="hidhide" />
   <p>Visibility and input suppression are independent of virtual controllers. Saving a selection does not apply it.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}
