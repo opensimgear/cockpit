@@ -1,6 +1,6 @@
 # Third party devices and controller mapping implementation plan
 
-Status: Windows-only delivery is active. M3 Windows acceptance (#25) is closed with its six listed criteria verified; production enablement and remaining Windows qualification are tracked in #33. Linux and macOS support is deferred. Full controller mapping is not delivered. Updated: 15 October 2026.
+Status: Windows-only delivery is active. M0 Windows contract v1 and its eight listed checks have evidence; M3 Windows acceptance (#25) is closed with its six listed criteria verified. Production enablement and remaining Windows qualification are tracked in #26/#31/#33. Linux and macOS support is deferred. Full controller mapping is not delivered. Updated: 15 October 2026.
 
 ## Current delivery priority
 

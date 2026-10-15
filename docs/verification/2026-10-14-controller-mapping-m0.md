@@ -1,5 +1,9 @@
 # Controller mapping M0 qualification, 14 October 2026
 
+Historical checkpoint: the [15 October Windows continuation](2026-10-15-windows-m0-completion.md)
+supersedes the remaining Windows M0 status below. Its bounded Windows v1 contract
+does not enable production backends; Linux/macOS qualification is deferred.
+
 Status: **partial; #21 remains open**. No controller-mapping production feature is
 enabled by this work. The Ready queue in OpenSimGear project 2 contains Cockpit
 #21–#33. Their prerequisite order begins with #21; this record does not mark its

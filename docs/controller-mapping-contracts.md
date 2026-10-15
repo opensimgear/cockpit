@@ -1,11 +1,27 @@
-# Controller mapping contract candidate (M0)
+# Controller mapping Windows v1 contract baseline (M0)
 
-This is the version-1 contract candidate for [Cockpit #21](https://github.com/opensimgear/cockpit/issues/21).
-It is exercised by the bounded experiments in [.research/controller-mapping-m0](../.research/controller-mapping-m0/README.md).
-It does not expose controller mapping in the application or qualify a platform backend.
-M0 remains open until the required physical/provisioning/visibility gates in the
-[qualification record](verification/2026-10-14-controller-mapping-m0.md) pass.
-Do not claim that the release contract or those backends are frozen/delivered yet.
+This is the version-1 Windows contract baseline for [Cockpit #21](https://github.com/opensimgear/cockpit/issues/21),
+recorded on 15 October 2026. The [Windows continuation evidence](verification/2026-10-15-windows-m0-completion.md)
+supersedes the remaining Windows M0 gaps in the earlier prototype record. Freezing
+the protocol and supported dependency contract does not enable production live
+output, provisioning, scripts or hiding; their deployment qualification remains in
+#26/#31/#33. Linux and macOS qualification is deferred to #48/#49.
+
+## Selected Windows dependency contract
+
+- vJoy 2.2.2.0 x64: matching driver/DLL version `0x222`, pinned signed artifacts,
+  and the 124-byte, four-byte-aligned V3 report. Create only bounded canonical
+  non-FFB layouts; preserve existing custom descriptors and OEM registration.
+  Existing FFB, discrete-POV or unknown layouts reject provisioning before mutation.
+  This contract does not create FFB devices or forward force-feedback effects.
+- HidHide 1.5.230.0 release: its driver component reports 1.4.181.0. Use the pinned
+  persistent list/mode IOCTLs, durable ownership journal and explicit recovery.
+  Do not assume newer session-scoped APIs exist in this release.
+- Rhai 1.26.1 and Rust 1.90.0, with dependencies pinned in the implementation
+  lockfiles. Live-script qualification remains separate from bounded evaluation.
+
+Native observations apply to the recorded Windows 11 x64 machine and tested APIs;
+CI compilation is not a broader physical-device, OS or game qualification claim.
 
 ## Independent features and readiness
 
@@ -119,9 +135,11 @@ mappings may synchronize a baseline. Stop cancels pending actions, publishes
 per-control fallback output, releases visibility, then relinquishes outputs.
 Do not use a driver's configurable Reset operation as the definition of neutral.
 
-The proposed feeder lease is renewed every 50 ms and expires after 250 ms.
-The feeder rejects obsolete generations even after expiry. These are prototype
-budgets to qualify under load, not measured guarantees. A supervisor may reacquire
+The feeder lease is renewed every 50 ms and expires after 250 ms. Its initial
+lease starts after successful native acquisition; Start/Recover have a separate
+three-second response budget, while ordinary IPC responses retain 100 ms.
+The feeder rejects obsolete generations even after expiry. These are enforced
+budgets, not measured end-to-end latency guarantees. A supervisor may reacquire
 a recorded vJoy slot only when FREE. Total process termination does not guarantee
 vJoy neutralization; recovery needs an explicit documented procedure.
 
@@ -157,11 +175,12 @@ Before persistent mutations, journal original state, intended exact post-state,
 owned additions and mutation progress. Restore only owned deltas when current state
 still matches expected state; external changes are a conflict, not permission to
 replace the user's configuration. The pure prototype exercises conflict refusal;
-the live Windows prototype additionally qualifies normal-mode DirectInput/HID
+the live Windows prototypes additionally record normal/inverse DirectInput/HID
 access and process-exit restoration for the selected specimen. Raw Input reports
 remain visible to the non-allowlisted observer. Never advertise universal process
-isolation from that result; qualify each supported input API. Inverse mode, reboot
-recovery and full supervisor termination remain unqualified.
+isolation from that result; qualify each supported input API. The M0 inverse-mode
+and reboot-restoration checks passed. Production session-owner/supervisor failure,
+conflicts, reconnect and real-game scope remain qualification work in #26/#33.
 
 Linux EVIOCGRAB and macOS seizure are input-suppression capabilities, not guaranteed
 enumeration hiding. Linux process isolation applies only to a qualified controlled
