@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 import queue
 import subprocess
@@ -82,11 +83,14 @@ def main():
     parser.add_argument('--service', type=Path, required=True)
     parser.add_argument('--physical', help='Optional Windows VID:PID for read-only physical preview')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--expect-unavailable', action='store_true',
+                        help='Require the native optional output dependency to be unavailable (CI)')
     args = parser.parse_args()
     profile = json.loads((ROOT / 'crates/mapping/fixtures/direct-profile.json').read_text())
     profile['id'] = str(uuid.uuid4())
     assigned = assignments(profile)
-    evidence = {'synthetic': False, 'restart': False, 'physical': 'not requested',
+    evidence = {'platform': platform.platform(), 'architecture': platform.machine(),
+                'qualification': False, 'synthetic': False, 'restart': False, 'physical': 'not requested',
                 'virtualReportsSent': False, 'driverLayoutsChanged': False}
     # Exercise the private production feeder entry with an invalid empty target
     # set. It cannot acquire a slot or send a virtual report.
@@ -101,6 +105,9 @@ def main():
     assert 1 <= len(lines) <= 2 and all(len(line) <= 66560 for line in lines)
     hello = json.loads(lines[0])
     assert hello['backend'] == backend and hello['protocol'] == 1
+    if args.expect_unavailable:
+        assert hello['ok'] is False, 'CI must exercise startup without an available output dependency'
+    evidence['optionalOutputUnavailable'] = not hello['ok']
     if hello['ok']:
         reply = json.loads(lines[1])
         assert not reply['ok'] and reply['token'] == rejected['token'] and not reply['active']
@@ -113,6 +120,19 @@ def main():
         try:
             status = service.mapping('mapping_status')
             assert not status['running'] and not status['virtualDevices']['enabled']
+            assert status['virtualDevices']['qualified'] is False
+            visibility = service.request('controller_visibility_status')
+            assert visibility['ok'], visibility
+            visibility = visibility['state']['controllers']['visibility']
+            assert not visibility['enabled'] and not visibility['qualified'], visibility
+            assert not visibility['global']['inspected'], visibility
+            evidence['visibilityDisabledWithoutInspection'] = True
+            if args.expect_unavailable and sys.platform == 'win32':
+                inspected = service.request('controller_visibility_inspect')
+                assert inspected['ok'], inspected
+                inspected = inspected['state']['controllers']['visibility']
+                assert inspected['global'].get('error'), 'Windows CI requires HidHide to be absent too'
+                evidence['hidingDependencyUnavailable'] = True
             upload(service, profile)
             service.mapping('mapping_assignments_save', profileId=profile['id'], assignments=assigned)
             token = service.mapping('mapping_preview_start', profileId=profile['id'])['token']

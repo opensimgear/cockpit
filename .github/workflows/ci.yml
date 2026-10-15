@@ -59,7 +59,7 @@ jobs:
       - name: Native mapping acceptance without optional drivers
         run: |
           cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
-          python3 scripts/mapping-acceptance.py --service .e2e/build/cockpit/debug/osg-gateway-service --output .research/mapping-m3/native-acceptance.json
+          python3 scripts/mapping-acceptance.py --service .e2e/build/cockpit/debug/osg-gateway-service --expect-unavailable --output .research/mapping-m3/native-acceptance.json
       - name: Device action coverage above 70 percent
         run: |
           rustup component add llvm-tools-preview
@@ -118,12 +118,23 @@ jobs:
           python-version: "3.12"
       - name: Portable framing, readiness, source and visibility contracts
         run: python -m unittest discover -s .research/controller-mapping-m0 -v
+      - name: Qualification evidence validation
+        run: python -m unittest discover -s tests/qualification -v
       - name: Install logic coverage tools
         run: rustup component add llvm-tools-preview
       - name: Production script worker budgets, replay and per-module coverage
         run: python scripts/logic-coverage.py
       - name: Bounded Rhai evaluation
         run: cargo test --locked --manifest-path .research/controller-mapping-m0/rhai/Cargo.toml
+      - name: Upload production script evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logic-coverage-${{ matrix.os }}
+          path: |
+            .research/logic-coverage/summary.json
+            .research/logic-coverage/*-lines.txt
+            .research/logic-coverage/tests.log
       - name: Compile Windows background-capture experiment
         if: runner.os == 'Windows'
         shell: pwsh
@@ -152,7 +163,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2022, macos-14]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-python@v5
@@ -173,14 +184,23 @@ jobs:
         run: |
           cargo build --locked --manifest-path crates/virtual-controller/Cargo.toml --bin osg-macos-hid-helper
           crates/virtual-controller/target/debug/osg-macos-hid-helper --inspect
-      - name: Windows desktop compilation and regression tests
-        if: runner.os == 'Windows'
+      - name: Windows and macOS desktop compilation and regression tests
+        if: runner.os != 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Windows native mapping acceptance
         if: runner.os == 'Windows'
         run: |
+          cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service --bin osg-cockpit
+          python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --expect-unavailable --output .research/mapping-m3/native-acceptance.json
+      - name: Stage Windows private-worker packaging evidence
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-windows-mapping.ps1 -Executable src-tauri/target/debug/osg-cockpit.exe -OutputDirectory .research/windows-mapping-package -BuildKind development
+      - name: macOS native startup and preview without an authorized helper
+        if: runner.os == 'macOS'
+        run: |
           cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
-          python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --output .research/mapping-m3/native-acceptance.json
+          python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service --expect-unavailable --output .research/mapping-m3/native-acceptance.json
       - name: Upload controller coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -197,6 +217,7 @@ jobs:
             .research/mapping-host-coverage/*-lines.txt
             .research/mapping-host-coverage/tests.log
             .research/mapping-m3/native-acceptance.json
+            .research/windows-mapping-package/qualification.json
 
   mapping:
     name: Portable mapping (${{ matrix.os }})

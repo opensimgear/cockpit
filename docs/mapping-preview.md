@@ -49,15 +49,18 @@ discrete hats, busy slots and changed axis ranges are rejected.
   a candidate 250 ms lease. Lease checks run independently of stdin/stdout.
 - Bounded helper IPC, output acknowledgements tied to the run token, deadlines,
   subprocess liveness and termination of only the owned helper.
-- A narrow provisioning transaction for the M0 default 123-byte descriptor:
+- A provisioning transaction for recognized non-FFB layouts and the M0 default:
   before-state journal, exclusive-creation ownership, persistent-slot commit,
   bounded rollback and preservation of unrelated/OEM/FFB settings.
   Its backend is currently exercised with fault-injection fixtures.
 
 ## Remaining #25 implementation and qualification
 
-The production elevated Windows registry/refresh helper and its durable guardian
-still need integration. The parent live-output lifecycle now connects ordered
+The production elevated Windows registry/refresh helper is integrated with an
+operation-scoped cancellation event, protected journals and a transient cleanup
+owner. It is a private mode of the application executable, with its own false
+qualification gate. Configurable recognized non-FFB layouts are implemented;
+unknown/FFB/discrete-hat layouts remain unavailable. The parent lifecycle connects ordered
 capture to a fresh feeder, renews quiet sessions, stops on loss, and attempts
 fallback recovery of acknowledged target ownership through a new helper. These
 paths are exercised with the production reducer and injected drivers; the
@@ -66,9 +69,11 @@ application gate must remain closed until actual Windows qualification passes.
 The current live lifecycle requires an explicit Stop before another live Start.
 It does not guess ownership when the initial acquisition acknowledgement is lost,
 and it does not automatically resume a run. Interrupted in-process recovery is
-retained; persistent recovery across a whole-app crash still needs integration.
+retained, and durable output/provisioning journals expose interrupted operations
+for explicit recovery. Actual whole-app/driver failure recovery remains unqualified;
+a journal is not proof that cleanup succeeded.
 
-After provisioning exists, qualify cancellation, driver refresh, concurrent external
+Before enabling provisioning, qualify cancellation, driver refresh, concurrent external
 configuration, partial acquisition, supervisor/feeder death, lease timing under
 load, total-process termination, two persistent devices, real physical button/axis/
 hat routing, game binding and binding retention across restarts. A successful

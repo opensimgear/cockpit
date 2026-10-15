@@ -63,7 +63,7 @@ research crate's Cargo.lock.
 | vJoy report ABI/readback | FREE slot 1 acquired; existing complete report resubmitted unchanged through UpdateVJD; every declared field matched GetPosition readback; slot relinquished in finally. No generated button pulses/game-binding test. |
 | Update configuration backup | Service parameters and OEM force-feedback registration exported locally before installation. No explicit custom slot descriptors were present. OEM force-feedback registration is byte-for-byte unchanged afterward. |
 | Live slot provisioning | Passed for the observed implicit default: materialize slot 1, add/report/delete slot 2, restore implicit slot 1, and verify unchanged OEM FFB registration. General custom/FFB layouts and failure recovery remain pending; see additional checks below. |
-| HidHide visibility/session lifecycle | Normal-mode DirectInput/HID access and normal/error/forced-exit restoration passed on the selected MOZA source. Raw Input remains visible. Inverse mode, reboot recovery and other APIs are pending; see additional checks below. |
+| HidHide visibility/session lifecycle | Normal-mode DirectInput/HID access and normal/error/forced-exit restoration passed on the selected VID 231D/PID 0200 source (later identified as VKBsim Gladiator EVO R). Raw Input remains visible. Inverse mode, reboot recovery and other APIs are pending; see additional checks below. |
 | Linux readiness | No /dev/input/event nodes; ordinary-user /dev/uinput open denied with EACCES. A disposable user/mount namespace could be entered; this is not controlled game-launch isolation. |
 | macOS | Unavailable: no native Mac, signing authorization or helper deployment was tested. |
 
@@ -121,7 +121,10 @@ The first checkpoint, 0fcd00ceb4fb068cb45dc9895f4ce9c9e16ed5c0, passed all jobs 
 [GitHub CI run 38602518148](https://github.com/opensimgear/cockpit/actions/runs/38602518148):
 frontend, native, and the three operating-system prototype jobs.
 
-The user selected the MOZA VID 231D / PID 0200 collection and closed the game.
+The user selected the VID 231D / PID 0200 collection and closed the game. The
+selection request called it MOZA; later production discovery reports its name as
+VKBsim Gladiator EVO R (see the M1 record). No MOZA hardware claim follows from
+this test.
 The installed device stack includes HidHide, hidgamepad and HidUsb. The native
 visibility experiment retained the existing active normal mode and all four
 application exceptions and three hidden-device entries. It briefly added one

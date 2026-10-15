@@ -70,9 +70,9 @@ pnpm native:test
 pnpm build
 ```
 
-`pnpm build` packages the application under `src-tauri/target/release/bundle/`. Local macOS builds can use ad-hoc signing.
+`pnpm build` packages the application under `src-tauri/target/release/bundle/`. Local macOS desktop builds can use ad-hoc signing; that does not authorize the separately gated virtual-HID helper.
 
-GitHub Actions runs frontend type checks, transport tests and the UI build on every push and pull request. A Linux native job compiles/tests the Rust application, checks dependency bootstrap behavior, and runs the independent gateway/device acceptance scenarios with sanitizers. Integration dependency manifests and run reports are uploaded as CI artifacts.
+GitHub Actions runs frontend type checks, transport tests and the UI build on every push and pull request. Native Windows, Linux and macOS jobs compile/test the desktop and mapping libraries, gate per-module coverage, and run native service startup/recording preview without optional output dependencies. The Linux job also checks dependency bootstrap and independent gateway/device acceptance with sanitizers. Coverage, startup and integration evidence is uploaded as CI artifacts; physical hardware/game qualification remains separate.
 
 For browser development through the same normal Rust adapters:
 
@@ -244,7 +244,7 @@ Open **Integrations** for portable profile import/export, explicit local device 
 
 See [the integration guide](docs/simulator-integrations.md) for setup, lease/fallback behavior, source provenance and validation limits, and [the software verification record](docs/verification/2026-10-14-simulator-integrations.md) for tests and measured coverage. Hardware and live-game validation are deferred.
 
-The experimental **Mappings** workspace saves/imports direct profiles, assigns native or synthetic inputs, runs ordered recording previews, and inspects the installed vJoy layout. Local optional-feature preferences and target-slot assignments persist separately from portable profiles. Live virtual output, provisioning and hiding remain gated while their implementation and platform qualification continue. See the [mapping preview guide](docs/mapping-preview.md), [host controller guide](docs/host-controllers.md), and [controller mapping implementation plan](docs/controller-mapping-plan.md).
+The experimental **Mappings** workspace saves/imports profiles, assigns native, synthetic or explicit ordered panel-event inputs, runs recording previews, and inspects the installed vJoy layout. Game profiles can explicitly capture an immutable mapping snapshot; unavailable requested output/visibility capabilities fail before hardware changes. Local optional-feature preferences and target-slot assignments persist separately from portable profiles. Live virtual output, provisioning and hiding remain gated while their implementation and platform qualification continue. See the [mapping preview guide](docs/mapping-preview.md), [host controller guide](docs/host-controllers.md), [platform setup and recovery guide](docs/controller-mapping-platforms.md), [qualification matrix](docs/verification/2026-10-15-mapping-qualification-m7.md), and [controller mapping implementation plan](docs/controller-mapping-plan.md).
 
 ## Related repositories
 
