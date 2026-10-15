@@ -330,7 +330,10 @@ impl Service {
                             .engine()
                             .map(|e| e.inspect(offset))
                             .unwrap_or(json!(null));
-                        if let Some(nodes) = status["inspector"]["nodes"].as_array_mut() {
+                        if let Some(nodes) = status["inspector"]
+                            .get_mut("nodes")
+                            .and_then(Value::as_array_mut)
+                        {
                             let ids = nodes
                                 .iter()
                                 .flat_map(|n| n["inputs"].as_array().into_iter().flatten())

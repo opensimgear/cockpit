@@ -2,7 +2,8 @@
 
 The feature remains **experimental**. This record consolidates software evidence
 and outstanding deployment checks; it does not qualify a backend. #33 and the
-unfinished prerequisite milestones remain open/In progress. Live virtual output,
+unfinished prerequisite milestones remain open/In review for qualification;
+only an issue undergoing implementation is In progress. Live virtual output,
 provisioning, visibility changes, Linux/macOS physical capture and live script
 output retain their existing false qualification gates.
 
@@ -11,17 +12,17 @@ output retain their existing false qualification gates.
 | Area | Recorded evidence | Still required before qualification |
 | --- | --- | --- |
 | Portable engine/profile | Native three-OS deterministic reducer/replay, validation, generation, arbitration, state-machine and migration tests; M2 closed. | Retain regression gates as platform support changes. |
-| Windows input | Authored HID fixtures and production-adapter read-only captures; M0 foreground ACR background-read probe. | Controlled physical transitions, unplug/replug/port changes, duplicate hardware, foreground game and loaded timing on the production path. |
+| Windows input | Authored HID fixtures; production read-only capture during foreground ACR with full four-axis ranges, 23 button transitions and all hat positions; same-port reconnect establishes a fresh baseline, and a port change preserves the prior offline identity (71f5f3a). | Identical-device identity matrix, signed-axis hardware/live monitor qualification and loaded timing. |
 | Linux/macOS input | Native evdev/IOHID compilation, adapter coverage and injected error/baseline/hotplug tests. | Native physical models, permission denial/regrant, background-game capture and identity/baseline checks. WSL is not a native desktop qualification system. |
 | vJoy | Pinned signed 2.2.2.0 artifacts; M0 unchanged report/readback and implicit-default slot-2 add/delete/restore; production descriptor, provisioner, ownership and failure fixtures. | Production UAC/refresh/cancel/recovery, custom layouts, two live targets, real source routing, contention, helper/whole-app failure and restart/game retention. |
 | Linux virtual | Native ABI/syscall-boundary tests, report/lifetime fixtures, real WSL permission-denied inspection. | Actual device creation/destruction, two physical sources, native game and qualified Proton bindings, permissions/distributions. |
 | macOS virtual | Native codec/helper/API boundary tests, unsigned staging, unavailable-helper inspection. | Authorized signing/entitlement/notarization, protected installation and upgrades, actual device/game recognition, cleanup/recreation and supported OS/architecture matrix. |
-| Optional dependencies | Production native service startup, ordered synthetic preview, restart and unavailable output rejection; separate opt-ins, saved settings and injected dependency failures. M7 extends this acceptance to macOS and asserts output unavailability in CI. | Physical installation combinations: neither, each alone, both, installed/disabled, unsupported versions, required reboot, removal while active and user enable/disable. |
+| Optional dependencies | Production native service startup, ordered synthetic preview, restart and unavailable output rejection on all three OSes; separate opt-ins, saved settings and injected dependency failures. Linux additionally runs the service and its private feeder in a disposable device namespace with `/dev/uinput` absent. | Physical installation combinations: neither, each alone, both, installed/disabled, unsupported versions, required reboot, removal while active and user enable/disable. |
 | HidHide | M0 normal-mode DirectInput/direct-HID test plus normal/error/forced-exit restoration; production policy/journal/conflict fixtures. Raw Input remained visible. | Inverse mode, every advertised API/process scope, authorized capture access, external live conflicts, restart/whole-process failure and game binding. Existing external policy was preserved. |
 | Linux/macOS visibility | Native suppression boundary and policy/cleanup fixtures; implemented Linux isolated-launch supervisor with disposable namespace, descriptor, cancellation and parent-death checks; production gates remain closed. | Alternative access paths, actual suppression/cleanup/reconnect and physical Linux controlled-launch qualification, including device-number reuse; graphical/Steam/Proton paths and macOS process mode remain unsupported. |
 | Custom logic | Real isolated workers on all three OSes, compile/runtime/budget failures, transaction rollback, deterministic timer replay, stale reply/process death tests. | Real virtual-output scripts, loaded capture/feeder responsiveness and physical source loss; macOS native-library/whole-RSS ceiling qualification (Rust heap cap alone is narrower). |
 | Existing behavior | Full application/integration regressions, output leases, game rollback, ordered panel consumers and independent gateway acceptance. | Assembled hardware and live DCS/racing acceptance. Debug Pico fixtures are not physical panel qualification. |
-| Vendor hardware | Windows reports VKBsim Gladiator EVO R (231D:0200) and VKBSim T-Rudder (231D:011F), with read-only reports and complete baselines. | Firmware and USB/hub topology, deliberate controls and reconnects; at least one real MOZA/SIMAGIC racing specimen with exact model/firmware. No blanket vendor claim. |
+| Vendor hardware | Windows reports VKBsim Gladiator EVO R (231D:0200), Gladiator EVO OT L (231D:3201) and VKBSim T-Rudder (231D:011F), with separate identities and complete baselines. Right-hand deliberate controls/reconnects are recorded in M1. The left/right pair has different product IDs and unsigned axes. | Firmware and USB/hub topology; identical-device and signed-axis specimens; at least one real MOZA/SIMAGIC racing specimen with exact model/firmware. No blanket vendor claim. |
 | Games | Existing Windows profile coordinator and schema-2 immutable captures; synthetic failed-launch/recovery/ownership tests; native Tauri capture/save without activation. | Real DCS and racing game, vJoy-only originals visible and combined hiding, captured requirements, controls, restart/reconnect and rollback. |
 
 The historic M0 device label "MOZA VID 231D/PID 0200" was based on the selection
@@ -48,7 +49,12 @@ failures. This is not hardware coverage. M6 measured panel adapter 92.48%, game
 schema/overlap 97.92%, game coordinator 92.47%, and mapping-host modules
 78.42–100%. The historical records retain their exact checkpoint results.
 
-M7 changes verification tools, CI and documentation, not production behavior.
+M7 changes verification tools, CI and documentation, and fixes an empty-inspector
+serialization bug found during native UI acceptance. Reading a missing `nodes`
+field through mutable JSON indexing had changed `null` into an incomplete object,
+causing the stopped UI to display "1–NaN of". Inspection now preserves `null`;
+native acceptance checks the empty state before preview and on restart,
+as well as populated rule pagination during preview and retained inspection after Stop.
 The latency analyzer has authored unit tests on all three CI platforms. The
 Windows staging step records the same executable that contains private workers;
 unsigned CI artifacts remain explicitly development builds. macOS staging still
@@ -92,6 +98,17 @@ datagrams, recovery and final fallback. No production behavior changed.
   restart passed. uinput inspection reported permission denied. This is the local
   unavailable-dependency check, not physical Linux qualification. Evidence:
   `.research/m7/linux-native-acceptance.json`.
+- Literal absence is tested separately with bubblewrap's private `/dev`, a
+  read-only root, disposable `/tmp` and a writable evidence directory. The same
+  namespace contains the acceptance script, native service and private feeder.
+  It asserts `/dev/uinput` has no directory entry, `stat` returns ENOENT, inspection
+  reports OS error 2, output remains unavailable, and preview/restart still work.
+  No host device is removed or remapped. CI uses Ubuntu's distro helper AppArmor
+  profile on its disposable runner without disabling global user-namespace
+  restrictions. Evidence: `.research/m7/linux-uinput-absent.json` locally and
+  `.research/mapping-m3/native-uinput-absent.json` in the CI artifact.
+  Local run passed on WSL/Linux; native Ubuntu CI supplies the deployment-host
+  acceptance evidence. This does not qualify Linux physical input or output.
 - Four latency-analyzer tests passed, including percentile boundary failures,
   script/delay separation, missing diagnostics, ordering and malformed data.
 - Windows packaging staged the development desktop artifact and recorded
@@ -100,6 +117,17 @@ datagrams, recovery and final fallback. No production behavior changed.
 - The Windows Tauri dev session was restarted and its native WebView returned a
   populated Overview with one gateway/five devices and no active game/integration.
   No physical controller or visibility state was changed for this check.
+- README and the GitHub repository description were checked against delivered
+  capabilities during this audit: both label mapping experimental and state that
+  virtual output/hiding remain qualification-gated. No broader support claim was
+  added. Physical/deployment and latency criteria below remain open.
+- Post-audit validation: Linux/Windows mapping-host coverage passes 38/37 tests
+  with every module above 70% (service 80.00%/72.99%); rebuilt native services pass
+  startup, ordered preview, inspector and restart checks. The running Windows
+  Tauri Mappings page shows the empty-inspector prompt with no NaN pagination or
+  JavaScript exceptions (`.research/m7/native-empty-inspector.png`). Existing
+  vJoy configuration and visibility policy are unchanged. Exact-commit CI results
+  are recorded on issue #33.
 
 ## Latency protocol and missing measurements
 

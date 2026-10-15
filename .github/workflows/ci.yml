@@ -45,7 +45,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends \
             build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev libudev-dev
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev bubblewrap apparmor-profiles
+          # Disposable runner: permit only the distro helper profile's namespaces.
+          # Keep global user-namespace restrictions enabled.
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -60,6 +63,15 @@ jobs:
         run: |
           cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
           python3 scripts/mapping-acceptance.py --service .e2e/build/cockpit/debug/osg-gateway-service --expect-unavailable --output .research/mapping-m3/native-acceptance.json
+      - name: Native mapping startup with uinput absent
+        run: |
+          mkdir -p .research/mapping-m3
+          bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp \
+            --bind "$GITHUB_WORKSPACE/.research/mapping-m3" "$GITHUB_WORKSPACE/.research/mapping-m3" \
+            --unshare-pid --die-with-parent -- \
+            python3 scripts/mapping-acceptance.py \
+              --service .e2e/build/cockpit/debug/osg-gateway-service \
+              --expect-uinput-absent --output .research/mapping-m3/native-uinput-absent.json
       - name: Device action coverage above 70 percent
         run: |
           rustup component add llvm-tools-preview
@@ -90,6 +102,7 @@ jobs:
             .e2e/resolved-dependencies.json
             .e2e/runs/
             .research/mapping-m3/native-acceptance.json
+            .research/mapping-m3/native-uinput-absent.json
             .research/action-coverage/action-summary.json
             .research/action-coverage/native-tests.log
             .research/action-coverage/lines.txt

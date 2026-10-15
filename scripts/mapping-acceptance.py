@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise mapping IPC in an isolated real native service; never send virtual reports."""
 import argparse
+import errno
 import json
 import os
 import platform
@@ -85,6 +86,8 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--expect-unavailable', action='store_true',
                         help='Require the native optional output dependency to be unavailable (CI)')
+    parser.add_argument('--expect-uinput-absent', action='store_true',
+                        help='Require Linux /dev/uinput to be literally absent in this process namespace')
     args = parser.parse_args()
     profile = json.loads((ROOT / 'crates/mapping/fixtures/direct-profile.json').read_text())
     profile['id'] = str(uuid.uuid4())
@@ -92,6 +95,16 @@ def main():
     evidence = {'platform': platform.platform(), 'architecture': platform.machine(),
                 'qualification': False, 'synthetic': False, 'restart': False, 'physical': 'not requested',
                 'virtualReportsSent': False, 'driverLayoutsChanged': False}
+    if args.expect_uinput_absent:
+        assert sys.platform == 'linux', 'The absent-uinput check requires Linux'
+        assert not os.path.lexists('/dev/uinput'), '/dev/uinput must be absent, not just inaccessible'
+        try:
+            os.stat('/dev/uinput')
+        except OSError as error:
+            assert error.errno == errno.ENOENT, error
+        else:
+            raise AssertionError('/dev/uinput unexpectedly exists')
+        evidence['uinputNode'] = {'path': '/dev/uinput', 'exists': False, 'errno': errno.ENOENT}
     # Exercise the private production feeder entry with an invalid empty target
     # set. It cannot acquire a slot or send a virtual report.
     rejected = dict(command='start', token=dict(session=str(uuid.uuid4()), generation='1'), bindings=[])
@@ -105,8 +118,9 @@ def main():
     assert 1 <= len(lines) <= 2 and all(len(line) <= 66560 for line in lines)
     hello = json.loads(lines[0])
     assert hello['backend'] == backend and hello['protocol'] == 1
-    if args.expect_unavailable:
+    if args.expect_unavailable or args.expect_uinput_absent:
         assert hello['ok'] is False, 'CI must exercise startup without an available output dependency'
+    evidence['feederHello'] = hello
     evidence['optionalOutputUnavailable'] = not hello['ok']
     if hello['ok']:
         reply = json.loads(lines[1])
@@ -118,9 +132,10 @@ def main():
         directory = Path(temporary)
         service = Service(args.service.resolve(), directory)
         try:
-            status = service.mapping('mapping_status')
+            status = service.mapping('mapping_status', inspect=True)
             assert not status['running'] and not status['virtualDevices']['enabled']
             assert status['virtualDevices']['qualified'] is False
+            assert status['inspector'] is None, 'Stopped inspector must not become a partial object'
             visibility = service.request('controller_visibility_status')
             assert visibility['ok'], visibility
             visibility = visibility['state']['controllers']['visibility']
@@ -136,6 +151,9 @@ def main():
             upload(service, profile)
             service.mapping('mapping_assignments_save', profileId=profile['id'], assignments=assigned)
             token = service.mapping('mapping_preview_start', profileId=profile['id'])['token']
+            active = service.mapping('mapping_status', inspect=True)['inspector']
+            assert active['offset'] == 0 and active['total'] == len(profile['nodes'])
+            assert len(active['nodes']) == min(32, active['total'])
             for pressed in [True, False, True, False]:
                 service.mapping('mapping_simulate', token=token, source=assigned[0]['source'],
                                 changes=[dict(control='trigger', value=dict(kind='button', value=pressed))])
@@ -147,9 +165,16 @@ def main():
             for command in ['mapping_virtual_start', 'mapping_virtual_create', 'mapping_virtual_recover']:
                 assert not service.request(command)['ok']
             service.mapping('mapping_stop')
+            stopped = service.mapping('mapping_status', inspect=True)
+            assert not stopped['running']
+            assert stopped['inspector']['total'] == len(profile['nodes'])
             assert not service.request('mapping_simulate', token=token, source=assigned[0]['source'],
                                        changes=[dict(control='trigger', value=dict(kind='button', value=True))])['ok']
             inspection = service.mapping('mapping_virtual_inspect')
+            if args.expect_uinput_absent:
+                readiness = inspection
+                assert not readiness['permissionVerified'] and readiness['state'] == 'setup-required'
+                assert 'os error 2' in readiness['reason'], readiness
             evidence['inspection'] = inspection
             evidence['synthetic'] = True
             if args.physical:
@@ -196,8 +221,9 @@ def main():
             service.close()
         restarted = Service(args.service.resolve(), directory)
         try:
-            status = restarted.mapping('mapping_status')
+            status = restarted.mapping('mapping_status', inspect=True)
             assert not status['running'] and not status['virtualDevices']['enabled']
+            assert status['inspector'] is None
             saved = restarted.mapping('mapping_export', profileId=profile['id'])['document']
             assert saved == profile
             local = restarted.mapping('mapping_assignments_get', profileId=profile['id'])

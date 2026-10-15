@@ -347,6 +347,10 @@ fn linux_templates_persist_and_limits_are_checked_without_native_creation() {
 #[test]
 fn bounded_inspector_does_not_change_run_or_activate_learning() {
     let (service, _root, p, assignments, _) = setup();
+    assert!(service
+        .request(&json!({"command":"mapping_status","inspect":true}))
+        .unwrap()["inspector"]
+        .is_null());
     service.request(&json!({"command":"mapping_assignments_save","profileId":p.id,"assignments":assignments})).unwrap();
     assert!(service
         .request(&json!({"command":"mapping_learn_start"}))
@@ -367,4 +371,9 @@ fn bounded_inspector_does_not_change_run_or_activate_learning() {
         .request(&json!({"command":"mapping_status","inspect":true,"offset":257}))
         .is_err());
     service.request(&json!({"command":"mapping_stop"})).unwrap();
+    let stopped = service
+        .request(&json!({"command":"mapping_status","inspect":true}))
+        .unwrap();
+    assert_eq!(stopped["running"], false);
+    assert_eq!(stopped["inspector"]["total"], view["inspector"]["total"]);
 }
