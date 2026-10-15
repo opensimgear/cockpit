@@ -174,7 +174,13 @@ jobs:
         run: rustup component add llvm-tools-preview
       - name: Linux controller development dependency
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends libudev-dev bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libudev-dev bubblewrap apparmor-profiles
+          # Disposable runner only: allow the distro helper to create namespaces,
+          # with its children confined by the distro profile. Keep global userns
+          # restrictions enabled; never replace them with a sysctl exception.
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
       - name: Native controller tests with per-module coverage
         run: python scripts/controller-coverage.py
       - name: Native virtual-output tests with per-module coverage

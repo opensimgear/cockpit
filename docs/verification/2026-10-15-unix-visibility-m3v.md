@@ -74,11 +74,17 @@ service lifecycle without opening the production gate.
   accessible. These are kernel-boundary software checks, not controller/game
   qualification.
 - Linux production-line coverage: launch supervisor 91.57%, device plan 100%,
-  native namespace adapter 76.22%, visibility service 92.64%. Windows portable
+  native namespace adapter 76.44%, visibility service 92.64%. Windows portable
   launch coverage is 91.45%/100%; every measured controller module exceeds 71%.
 - Controller coverage runs independent test fixtures serially because native fork
   probes briefly inherit process-wide advisory file locks. Worker concurrency,
   ownership conflicts and process failure remain explicitly tested.
+- Ubuntu CI loads the distribution's `bwrap-userns-restrict` AppArmor profile
+  from `apparmor-profiles` on its disposable runner. Without the helper-specific
+  allowance, the runner denies bubblewrap's isolated loopback setup. Global
+  user-namespace restrictions remain enabled, and no local host policy is changed.
+  This CI setup is not application installation or distribution qualification.
+  Failed test stdout/stderr is retained in both the job log and evidence artifact.
 - Full local Linux application regression: 310 passed, one existing hardware
   test ignored, plus native framing/service tests. Frontend check reports zero
   errors/warnings; all 152 transport/helper tests pass. Local application checks
