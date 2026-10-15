@@ -76,9 +76,11 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     );
     assert_eq!(games["ok"], true);
     let catalogue = games["state"]["games"]["catalogue"].as_array().unwrap();
-    assert_eq!(catalogue.len(), 2);
+    assert_eq!(catalogue.len(), 4);
     assert!(catalogue.iter().any(|g| g["id"] == "dcs"));
     assert!(catalogue.iter().any(|g| g["id"] == "assetto-corsa-rally"));
+    assert!(catalogue.iter().any(|g| g["id"] == "x-plane-11"));
+    assert!(catalogue.iter().any(|g| g["id"] == "x-plane-12"));
     let profile = json!({"schemaVersion":1,"id":"service-dcs","gameId":"dcs","name":"Service test","devices":[]});
     assert_eq!(
         exchange(
