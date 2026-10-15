@@ -1,6 +1,7 @@
 # Windows vJoy M3 qualification — 15 October 2026
 
-Issue #25 remains open, **3/6 acceptance criteria verified**. Windows hardware
+Issue #25 remains open, **6/6 listed acceptance criteria verified; reliability
+qualification remains incomplete**. Windows hardware
 qualification resumed after verified reboot restoration. The earlier blocked
 checkpoint below is retained as history. No production qualification gate was enabled.
 
@@ -336,3 +337,55 @@ contention, partial acquisition and provisioning cases are still incomplete, and
 the unexplained spontaneous feeder exit still needs investigation before closure.
 The previous documentation checkpoint `ad184ee` passed its complete CI run
 [38750392520](https://github.com/opensimgear/cockpit/actions/runs/38750392520).
+
+## Gremlin contention, partial acquisition and cancellation
+
+The installed Joystick Gremlin reports R13.3 at startup (Windows uninstall metadata
+says 13.1.0). A separate temporary profile copies the existing profile's remap
+grammar and directs its three right-Gladiator axes only to vJoy slot 3. The original
+saved profile remained unchanged (SHA-256
+`2ac9b5c30f7c422be37004d1401919d025276d3b77f04bb3235b76d5a8af3aac`).
+The user loaded and activated the temporary profile. Gremlin acquires this output
+lazily: the first physical X-axis movement made slot 3 BUSY, owned by Gremlin PID
+31956, with slots 1/2 free. Production Session activation then rejected the two-slot
+mapping with `Slot 3 is Busy; never take over another feeder`. Before/after layouts
+and ownership were identical; Gremlin retained slot 3 and the probe's intent-only
+journal was explicitly acknowledged without output recovery.
+
+For partial acquisition, Gremlin was deactivated and an independent SDK query
+confirmed all slots free. A scratch Driver wrapper around the actual native SDK
+paused production `Feeder::receive(Start)` immediately before slot 3's second
+inspection. The actual production preflight had checked both slots free; slot 2
+was then acquired by the probe (PID 32928) and given its complete neutral report.
+Gremlin was reactivated and the user moved X again. Independent inspection confirmed
+slot 2 owned by the probe and slot 3 owned by Gremlin before the barrier resumed.
+Production Feeder returned `A target became owned during acquisition`, submitted
+fallback and released **only slot 2**. Its event log contains no acquisition,
+submission or release of slot 3. A fresh SDK inspection confirmed slots 1/2 free
+and slot 3 still owned by Gremlin. The temporary profile was then deactivated and
+all slots were verified free. The barrier is bounded to 180 seconds and changes
+only qualification scheduling, not production acquisition/cleanup logic.
+
+The final provisioning probe signalled the production cancellation event **before**
+launching the elevated helper for a prospective slot 4. The user approved UAC;
+the helper exited with code 1 in 406 ms, before journal preparation or mutation.
+The complete configuration snapshot (including ancillary fingerprint and published
+layouts/owners) was identical afterward, slot 4 remained absent and no pending
+journal existed. This qualifies native prewrite cooperative cancellation; it does
+not claim user-declined UAC or cancellation during an in-flight PnP refresh. Earlier
+native failure/restoration and successful custom creation/refresh evidence above
+cover those separate listed failure and driver-refresh cases.
+
+Together with native mismatch rejection, these results complete listed criterion 4.
+All six listed criteria are now checked. **The issue stays open:** the earlier
+unexplained spontaneous feeder exit remains a reliability qualification gap, and
+the issue's additional custom-logic/final-qualification scope is not declared
+complete by this hardware checklist. Ordinary output/provisioning gates stay false.
+Checkpoint `336aaaa` passed all 11 jobs in
+[CI run 38756510846](https://github.com/opensimgear/cockpit/actions/runs/38756510846).
+
+Raw evidence includes `vjoy-gremlin-after-inspect.json`, `busy-*.jsonl`,
+`vjoy-partial-barrier-ownership-latest.json`, `vjoy-partial-events.jsonl`,
+`vjoy-partial-result.json`, `vjoy-after-partial-race.json`,
+`vjoy-after-gremlin-cleanup.json`, `vjoy-prewrite-cancellation.jsonl` and
+`vjoy-after-cancellation-sdk.json` under `.research/review-audit/`.
