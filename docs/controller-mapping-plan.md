@@ -1,6 +1,6 @@
 # Third party devices and controller mapping implementation plan
 
-Status: Windows-only delivery is active. M0 Windows contract v1 and its eight listed checks have evidence; M3 Windows acceptance (#25) is closed with its six listed criteria verified. Production enablement and remaining Windows qualification are tracked in #26/#31/#33. Linux and macOS support is deferred. Full controller mapping is not delivered. Updated: 15 October 2026.
+Status: Windows-only delivery is active. M0 Windows contract v1 and its eight listed checks have evidence; M3 Windows acceptance (#25) is closed with its six listed criteria verified. HidHide implementation (#26) has eight verified criteria; the remaining qualification is split into #50. Production enablement and remaining Windows qualification are tracked separately from implementation. Linux and macOS support is deferred. Full controller mapping is not delivered. Updated: 16 October 2026.
 
 ## Current delivery priority
 
@@ -9,6 +9,14 @@ on Windows. Linux and macOS have separate tickets in Backlog; their native hardw
 game, permission and deployment checks do not block Windows milestones. Preserve
 existing platform code, portable contracts and cross-platform CI. Unqualified
 capture, output, provisioning, script and visibility capabilities remain disabled.
+
+Local CI-equivalent checks are the primary implementation feedback loop; check
+remote CI at milestones. Minimize manual validation and reuse existing hardware
+evidence. At the user's request on 16 October, move missing qualification checks
+to explicit follow-up stories before accepting an implemented milestone. Preserve
+the unchecked wording and provenance; a transfer is not a passing check or
+permission to enable an unqualified production capability. HidHide follow-up:
+[#50](https://github.com/opensimgear/cockpit/issues/50).
 
 | Deferred work | Linux | macOS |
 | --- | --- | --- |

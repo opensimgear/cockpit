@@ -1,7 +1,11 @@
 # Windows production HidHide session checks — 15 October 2026
 
-#26 remains In progress, with **8/11 criteria verified**. Ordinary production
-qualification gates stay false. Tests use a separate explicit host and local state.
+Implementation acceptance update — 16 October 2026: #26 has **8/11 criteria
+verified**. At the user's request, the three remaining composite qualification
+criteria and the Raw Input scope limitation are transferred to
+[#50](https://github.com/opensimgear/cockpit/issues/50), not marked passed.
+The implementation may close independently; ordinary production qualification
+gates stay false. Tests use a separate explicit host and local state.
 
 ## Native ABI correction
 
@@ -111,7 +115,13 @@ capability gates remain disabled.
 
 The first CI attempt for `1ffc752` passed controller-input tests but failed a
 mapping-host script lifecycle test when its safety heartbeat expired. The failed
-Windows job was rerun; its result must be checked before claiming full CI success.
+Windows job was rerun and passed that stage, then was cancelled by the subsequent
+documentation push. It is not counted as a complete passing run. Local CI on a
+clean `87aae91` export passed all 69 Windows controller-input tests and every
+controller-input and mapping-host module's 71% line-coverage gate; the HidHide
+transport has 100% line coverage. Mapping-host runs real restricted script workers
+with the production feeder protocol and an authored SDK adapter, not live output.
+Local checks are the primary iteration loop; remote CI is checked at milestones.
 
 Machine data remains in ignored `.research/review-audit/` storage. SHA-256:
 
