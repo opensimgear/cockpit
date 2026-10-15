@@ -56,6 +56,14 @@ does not sign or install anything. Neither staging tool can enable a capability.
 
 ## Local M7 checks
 
+The first full macOS desktop run exposed a test timing assumption: a 30 ms sleep
+could outlast the test's 150 ms export freshness on a loaded runner. The display
+correctly became STALE while the assertion still expected UNKNOWN. The test now
+drives the production ExportSession through the existing feed boundary with an
+explicit clock, checking the partial frame/counter before committing it, then
+advancing past the freshness boundary. No assertion is skipped and no production
+timeout is relaxed.
+
 - Windows 11 build 26200: rebuilt native service, ordered recording preview and
   persistence/restart checks passed with the installed vJoy driver. Inspection
   reported slot 1 FREE, 16 axes, eight buttons, no hats. No acquisition/report,

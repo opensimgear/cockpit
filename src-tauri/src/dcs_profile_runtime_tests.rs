@@ -349,6 +349,24 @@ struct Running {
     worker: Option<JoinHandle<()>>,
 }
 impl Running {
+    fn with_feed(profile: CompiledProfile, mock: &Mock, feed: Feed) -> Self {
+        let state = Arc::new(Mutex::new(Value::Null));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker = start_source(
+            profile,
+            mock.panel(),
+            state.clone(),
+            cancel.clone(),
+            Arc::new(Controls::default()),
+            Some(feed),
+        )
+        .unwrap();
+        Self {
+            state,
+            cancel,
+            worker: Some(worker),
+        }
+    }
     fn start(profile: CompiledProfile, mock: &Mock) -> Self {
         let state = Arc::new(Mutex::new(Value::Null));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -703,38 +721,58 @@ fn export_frames_commit_atomically_and_unknown_then_stale_outputs_use_bounded_fa
     let mut freq = frequency(A);
     freq["format"]["unknownText"] = json!("UNKNOWN");
     freq["format"]["staleText"] = json!("STALE");
-    let mut run = Running::start(
-        fixture.compile(
-            vec![],
-            vec![
-                freq,
-                output("preset", A, "UHF_PRESET", "display.preset", "text"),
-                output("caution", A, "MASTER_CAUTION", "led.caution", "boolean"),
-            ],
-            150,
-        ),
-        &mock,
+    let profile = fixture.compile(
+        vec![],
+        vec![
+            freq,
+            output("preset", A, "UHF_PRESET", "display.preset", "text"),
+            output("caution", A, "MASTER_CAUTION", "led.caution", "boolean"),
+        ],
+        150,
     );
-    fixture.send(&frame(1, None, None, None));
+    // Advance the production export parser's clock explicitly. A loaded native
+    // runner may pause longer than 150 ms between assertions; wall-clock sleep
+    // cannot distinguish frame atomicity from legitimate freshness expiry.
+    let export = Arc::new(Mutex::new((ExportSession::new(&profile), 0u64)));
+    let source = export.clone();
+    let mut run = Running::with_feed(
+        profile,
+        &mock,
+        Box::new(move |_| {
+            let mut state = source.lock().unwrap();
+            let now = state.1;
+            state.0.tick(now);
+            state.0.snapshot(now)
+        }),
+    );
+    let feed = |bytes: &[u8], now: u64| {
+        let mut state = export.lock().unwrap();
+        state.1 = now;
+        state.0.feed(bytes, now);
+    };
+    feed(&frame(1, None, None, None), 0);
     run.applied("frequency", json!(["UNKNOWN"]));
     let bytes = frame(2, Some("251.000"), Some("20"), Some(true));
     let split = bytes.len() - 6;
-    fixture.send(&bytes[..split]);
-    thread::sleep(Duration::from_millis(30));
+    feed(&bytes[..split], 10);
+    let partial = export.lock().unwrap().0.snapshot(10);
+    assert_eq!(partial.counter, Some(1));
+    assert!(!partial.values.contains_key("frequency"));
     assert_eq!(
         mock.fake.lock().unwrap().devices[A].values["display.frequency"],
         json!(["UNKNOWN"])
     );
-    fixture.send(&bytes[split..]);
+    feed(&bytes[split..], 20);
     run.applied("frequency", json!(["251.000"]));
     run.applied("preset", json!(["20"]));
     run.applied("caution", json!([true]));
+    export.lock().unwrap().1 = 171;
     wait("stale output fallback", || {
         run.value()["feedbackFresh"] == false
     });
     run.applied("frequency", json!(["STALE  "]));
     run.applied("caution", json!([false]));
-    fixture.send(&frame(3, Some("300.125"), Some("01"), Some(false)));
+    feed(&frame(3, Some("300.125"), Some("01"), Some(false)), 180);
     run.applied("frequency", json!(["300.125"]));
     run.stop();
     assert_eq!(

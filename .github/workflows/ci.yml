@@ -89,6 +89,7 @@ jobs:
           path: |
             .e2e/resolved-dependencies.json
             .e2e/runs/
+            .research/mapping-m3/native-acceptance.json
             .research/action-coverage/action-summary.json
             .research/action-coverage/native-tests.log
             .research/action-coverage/lines.txt
