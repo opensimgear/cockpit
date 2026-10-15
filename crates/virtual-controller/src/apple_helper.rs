@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 pub const QUALIFIED: bool = false;
-pub const REASON:&str="macOS virtual output is unavailable until a signed, notarized helper with Apple's virtual-HID entitlement and native game/lifetime qualification is approved. Recording preview remains available.";
+pub const REASON:&str="macOS virtual output is disabled until a signed, notarized helper with Apple's virtual-HID entitlement and native game/lifetime qualification is approved. Recording preview remains available.";
 pub const ARGUMENT: &str = "--osg-macos-hid-feeder";
 pub const PATH: &str = "/Library/Application Support/OpenSimGear/Cockpit/HID/osg-macos-hid-helper";
 pub const ENTITLEMENT: &str = "com.apple.developer.hid.virtual.device";
