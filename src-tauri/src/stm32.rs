@@ -3484,7 +3484,14 @@ mod tests {
     #[test]
     fn automatic_disable_enable_and_forget_are_observed_without_manual_apply() {
         let (mut gateway, context) = automatic_harness();
-        assert_eq!(connect(&mut gateway)["ok"], true);
+        // This checks successful lifecycle transitions, not deadline expiry. A
+        // loaded runner can preempt the test beyond the timeout fixtures' 15 ms
+        // command budget before it consumes the already-buffered mock reply.
+        let production_timing = Timing::default();
+        gateway.timing.command = production_timing.command;
+        gateway.timing.reconnect = production_timing.reconnect;
+        let connected = connect(&mut gateway);
+        assert_eq!(connected["ok"], true, "{connected}");
         let disabled = request(&mut gateway, "disable", json!({"moduleId":MODULE}));
         assert_eq!(disabled["ok"], true, "{disabled}");
         assert_eq!(disabled["state"]["modules"][0]["enabled"], false);

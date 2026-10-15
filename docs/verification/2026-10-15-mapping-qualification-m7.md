@@ -137,6 +137,16 @@ at branch commit `2f216b7`, which contains the implementation fixes `c108fb7` an
 on Windows, Linux and macOS. The original `4266c84` run was superseded by the
 subsequent branch push; the successful result is for that descendant commit.
 
+The next evidence-only commit hit an existing gateway lifecycle test's initial
+connect assertion on macOS (run 38724705989). Its normal-success fixture shared
+the timeout tests' 15 ms command budget, so runner scheduling could exhaust it
+before consuming an already-buffered reply. This lifecycle test now uses the
+unchanged production command/reconnect budgets and reports the full failed reply.
+It still asserts disable, enable, online-forget rejection, offline forget and the
+absence of manual apply/register/save commands. Timeout fixtures retain their
+short budgets; no production timeout or lifecycle behavior changes. The issue
+tracks the follow-up validation result separately from the prior successful run.
+
 - Windows 11 build 26200: rebuilt native service, ordered recording preview and
   persistence/restart checks passed with the installed vJoy driver. Inspection
   reported slot 1 FREE, 16 axes, eight buttons, no hats. No acquisition/report,
