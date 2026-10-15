@@ -7,6 +7,44 @@ pub trait Io {
     fn call(&mut self, function: u32, input: Option<&[u8]>) -> Result<Vec<u8>, String>;
 }
 pub struct Driver<T: Io>(pub T);
+/// Translate the released driver's bytes-returned contract into the transport's
+/// response payload. List setters acknowledge input bytes without returning data.
+#[cfg(any(windows, test))]
+pub(crate) fn exchange(
+    function: u32,
+    input: Option<&[u8]>,
+    mut raw: impl FnMut(u32, Option<&[u8]>, &mut [u8]) -> Result<usize, String>,
+) -> Result<Vec<u8>, String> {
+    let reading = matches!(function, 2048 | 2050 | 2052 | 2054);
+    if !(reading || matches!(function, 2049 | 2051 | 2053 | 2055)) || reading != input.is_none() {
+        return Err("Invalid HidHide operation.".into());
+    }
+    if input.is_some_and(|v| v.len() > LIMIT) {
+        return Err("Oversized HidHide operation.".into());
+    }
+    let length = if matches!(function, 2048 | 2050) {
+        let size = raw(function, None, &mut [])?;
+        // An empty driver collection is a single terminating WCHAR.
+        if size < 2 || size > LIMIT || size % 2 != 0 {
+            return Err("Invalid HidHide list size.".into());
+        }
+        size
+    } else if reading {
+        1
+    } else {
+        0
+    };
+    let mut output = vec![0; length];
+    let expected = if matches!(function, 2049 | 2051) {
+        input.map_or(0, |v| v.len())
+    } else {
+        length
+    };
+    if raw(function, input, &mut output)? != expected {
+        return Err("Unexpected HidHide response or acknowledgement size.".into());
+    }
+    Ok(output)
+}
 fn list(data: &[u8]) -> Result<Vec<String>, String> {
     if data.len() < 2 || data.len() > LIMIT || data.len() % 2 != 0 {
         return Err("Invalid HidHide multi-string length.".into());

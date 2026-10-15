@@ -1,5 +1,9 @@
 # Device visibility M3H implementation evidence
 
+The later [Windows live-session continuation](2026-10-15-hidhide-windows-live.md)
+records production normal/inverse sessions, a native ABI correction and current
+acceptance status. Earlier partial results below remain historical evidence.
+
 Issue #26 remains In progress. The production HidHide write gate is false.
 
 ## Policy and persistent ownership core

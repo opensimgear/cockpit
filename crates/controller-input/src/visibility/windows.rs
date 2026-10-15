@@ -81,36 +81,13 @@ pub fn installed() -> Result<Driver<Kernel>, String> {
 }
 impl Io for Kernel {
     fn call(&mut self, function: u32, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
-        let reading = matches!(function, 2048 | 2050 | 2052 | 2054);
-        if !(reading || matches!(function, 2049 | 2051 | 2053 | 2055)) || reading != input.is_none()
-        {
-            return Err("Invalid HidHide operation.".into());
-        }
-        if !reading && !QUALIFIED {
+        if input.is_some() && !QUALIFIED {
             return Err(
                 "HidHide mutation is disabled until native visibility qualification is complete."
                     .into(),
             );
         }
-        if input.is_some_and(|v| v.len() > policy::LIMIT) {
-            return Err("Oversized HidHide operation.".into());
-        }
-        let length = if matches!(function, 2048 | 2050) {
-            let size = self.raw(function, None, &mut [])?;
-            if size < 4 || size > policy::LIMIT || size % 2 != 0 {
-                return Err("Invalid HidHide list size.".into());
-            }
-            size
-        } else if reading {
-            1
-        } else {
-            0
-        };
-        let mut output = vec![0; length];
-        if self.raw(function, input, &mut output)? != length {
-            return Err("HidHide response size changed during inspection.".into());
-        }
-        Ok(output)
+        super::wire::exchange(function, input, |f, i, o| self.raw(f, i, o))
     }
 }
 impl Kernel {

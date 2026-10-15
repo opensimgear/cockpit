@@ -1,5 +1,74 @@
 use super::super::policy::tests::state;
 use super::*;
+#[test]
+fn released_native_list_acknowledgement_and_empty_policy_roundtrip() {
+    struct NativeLists {
+        hidden: Vec<String>,
+    }
+    impl Io for NativeLists {
+        fn call(&mut self, f: u32, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+            exchange(f, input, |function, data, output| {
+                if function == 2051 {
+                    let data = data.unwrap();
+                    self.hidden = list(data)?;
+                    return Ok(data.len()); // Released OnControlDeviceIoSetBlacklist.
+                }
+                let bytes = match function {
+                    2048 => vec![0, 0], // Released collection encoding: one empty WCHAR.
+                    2050 if self.hidden.is_empty() => vec![0, 0],
+                    2050 => encode(&self.hidden),
+                    2052 | 2054 => vec![0],
+                    _ => return Err("Unexpected native operation".into()),
+                };
+                if !output.is_empty() {
+                    output.copy_from_slice(&bytes);
+                }
+                Ok(bytes.len())
+            })
+        }
+    }
+    let mut driver = Driver(NativeLists {
+        hidden: vec![r"HID\ORIGINAL".into()],
+    });
+    let before = driver.read().unwrap();
+    let mut cleared = before.clone();
+    cleared.hidden.clear();
+    driver.change(&before, &cleared).unwrap();
+    assert_eq!(driver.read().unwrap(), cleared);
+    driver.change(&cleared, &before).unwrap();
+    assert_eq!(driver.read().unwrap(), before);
+}
+
+#[test]
+fn native_exchange_rejects_invalid_frames_and_inconsistent_counts() {
+    for (function, input) in [(0, None), (2048, Some(&[][..])), (2051, None)] {
+        assert!(exchange(function, input, |_, _, _| panic!(
+            "No syscall for invalid request"
+        ))
+        .is_err());
+    }
+    assert!(exchange(2051, Some(&vec![0; LIMIT + 1]), |_, _, _| panic!(
+        "Oversized request"
+    ))
+    .is_err());
+    for size in [0, 1, 3, LIMIT + 2] {
+        assert!(exchange(2050, None, |_, _, _| Ok(size)).is_err());
+    }
+    assert!(
+        exchange(2050, None, |_, _, output| Ok(if output.is_empty() {
+            2
+        } else {
+            0
+        }))
+        .is_err()
+    );
+    assert!(exchange(2051, Some(&[0, 0]), |_, _, _| Ok(0)).is_err());
+    assert!(exchange(2053, Some(&[1]), |_, _, _| Ok(1)).is_err());
+    assert!(exchange(2055, Some(&[0]), |_, _, _| Ok(0))
+        .unwrap()
+        .is_empty());
+    assert!(exchange(2048, None, |_, _, _| Err("native failure".into())).is_err());
+}
 struct Fake {
     state: State,
     calls: usize,
