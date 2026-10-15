@@ -167,8 +167,7 @@ impl Provider for NativeProvider {
             devices.push((
                 id.0.to_string(),
                 Box::new(NativeDevice {
-                    device,
-                    native,
+                    handle: NativeHandle { device, native },
                     opened: false,
                 }),
             ));
@@ -235,19 +234,25 @@ fn publish(send: &mpsc::SyncSender<NativeValue>, lost: &AtomicBool, value: Nativ
         lost.store(true, Ordering::Release);
     }
 }
-struct NativeDevice {
+trait Handle: Device {
+    fn open(&self, options: u32) -> Result<(), String>;
+    fn close(&self) -> Result<(), String>;
+}
+struct NativeHandle {
     device: HidDevice,
     native: Vec<HidElement>,
-    opened: bool,
 }
-impl Drop for NativeDevice {
-    fn drop(&mut self) {
-        if self.opened {
-            let _ = self.device.close_with_options(0);
-        }
+impl Handle for NativeHandle {
+    fn open(&self, options: u32) -> Result<(), String> {
+        self.device
+            .open_with_options(options)
+            .map_err(|e| capture::permission_error("macos", e))
+    }
+    fn close(&self) -> Result<(), String> {
+        self.device.close_with_options(0).map_err(|e| e.to_string())
     }
 }
-impl Device for NativeDevice {
+impl Device for NativeHandle {
     fn info(&self) -> HidDeviceInfo {
         self.device.info()
     }
@@ -274,12 +279,6 @@ impl Device for NativeDevice {
         send: mpsc::SyncSender<NativeValue>,
         lost: Arc<AtomicBool>,
     ) -> Result<Box<dyn std::any::Any>, String> {
-        if !self.opened {
-            self.device
-                .open_with_options(0)
-                .map_err(|e| capture::permission_error("macos", e))?;
-            self.opened = true;
-        }
         let subscription = self
             .device
             .on_input_value(&[], move |v| {
@@ -312,26 +311,7 @@ fn reopen_owned(
     *opened = true;
     Ok(())
 }
-impl Snapshot for NativeDevice {
-    fn reopen(
-        &mut self,
-        enabled: bool,
-        send: mpsc::SyncSender<NativeValue>,
-        lost: Arc<AtomicBool>,
-    ) -> Result<Box<dyn std::any::Any>, String> {
-        reopen_owned(
-            &mut self.opened,
-            enabled,
-            false,
-            || self.device.close_with_options(0).map_err(|e| e.to_string()),
-            |options| {
-                self.device
-                    .open_with_options(options)
-                    .map_err(|e| capture::permission_error("macos", e))
-            },
-        )?;
-        self.subscribe(send, lost)
-    }
+impl Snapshot for NativeHandle {
     fn values(&self) -> Result<Vec<NativeValue>, String> {
         let descriptors = controls(&self.elements())?;
         self.native
@@ -345,6 +325,56 @@ impl Snapshot for NativeDevice {
                     .map_err(|e| capture::permission_error("macos", e))
             })
             .collect()
+    }
+}
+struct NativeDevice<H: Handle> {
+    handle: H,
+    opened: bool,
+}
+impl<H: Handle> Drop for NativeDevice<H> {
+    fn drop(&mut self) {
+        if self.opened {
+            let _ = self.handle.close();
+        }
+    }
+}
+impl<H: Handle> Device for NativeDevice<H> {
+    fn info(&self) -> HidDeviceInfo {
+        self.handle.info()
+    }
+    fn elements(&self) -> Vec<Element> {
+        self.handle.elements()
+    }
+    fn subscribe(
+        &mut self,
+        send: mpsc::SyncSender<NativeValue>,
+        lost: Arc<AtomicBool>,
+    ) -> Result<Box<dyn std::any::Any>, String> {
+        if !self.opened {
+            self.handle.open(0)?;
+            self.opened = true;
+        }
+        self.handle.subscribe(send, lost)
+    }
+}
+impl<H: Handle> Snapshot for NativeDevice<H> {
+    fn reopen(
+        &mut self,
+        enabled: bool,
+        send: mpsc::SyncSender<NativeValue>,
+        lost: Arc<AtomicBool>,
+    ) -> Result<Box<dyn std::any::Any>, String> {
+        reopen_owned(
+            &mut self.opened,
+            enabled,
+            false,
+            || self.handle.close(),
+            |options| self.handle.open(options),
+        )?;
+        self.subscribe(send, lost)
+    }
+    fn values(&self) -> Result<Vec<NativeValue>, String> {
+        self.handle.values()
     }
 }
 impl Snapshot for Box<dyn Device> {

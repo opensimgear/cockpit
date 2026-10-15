@@ -400,3 +400,96 @@ fn reopen_gate_and_partial_failure_preserve_exact_ownership() {
     )
     .unwrap();
 }
+
+#[test]
+fn native_capture_owner_gates_reopen_and_closes_after_subscription_failures() {
+    use std::{cell::RefCell, rc::Rc};
+    struct NativeFixture {
+        calls: Rc<RefCell<Vec<String>>>,
+        fail: &'static str,
+    }
+    impl Snapshot for NativeFixture {
+        fn values(&self) -> Result<Vec<NativeValue>, String> {
+            Ok(vec![(1, 0, 1)])
+        }
+    }
+    impl Handle for NativeFixture {
+        fn open(&self, options: u32) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("open:{options}"));
+            if self.fail == "open" {
+                Err("denied".into())
+            } else {
+                Ok(())
+            }
+        }
+        fn close(&self) -> Result<(), String> {
+            self.calls.borrow_mut().push("close".into());
+            if self.fail == "close" {
+                Err("close failed".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    impl Device for NativeFixture {
+        fn info(&self) -> HidDeviceInfo {
+            info()
+        }
+        fn elements(&self) -> Vec<Element> {
+            vec![element(1)]
+        }
+        fn subscribe(
+            &mut self,
+            send: mpsc::SyncSender<NativeValue>,
+            _: Arc<AtomicBool>,
+        ) -> Result<Box<dyn std::any::Any>, String> {
+            self.calls.borrow_mut().push("subscribe".into());
+            if self.fail == "subscribe" {
+                Err("subscription failed".into())
+            } else {
+                Ok(Box::new(send))
+            }
+        }
+    }
+    let calls = Rc::new(RefCell::new(vec![]));
+    let (send, _) = mpsc::sync_channel(4);
+    let lost = Arc::new(AtomicBool::new(false));
+    let mut d = NativeDevice {
+        handle: NativeFixture {
+            calls: calls.clone(),
+            fail: "",
+        },
+        opened: false,
+    };
+    assert_eq!(d.info().product, info().product);
+    assert_eq!(d.elements().len(), 1);
+    assert_eq!(d.values().unwrap().len(), 1);
+    assert!(d.reopen(true, send.clone(), lost.clone()).is_err());
+    assert!(calls.borrow().is_empty());
+    d.subscribe(send.clone(), lost.clone()).unwrap();
+    d.subscribe(send.clone(), lost.clone()).unwrap();
+    assert_eq!(&*calls.borrow(), &["open:0", "subscribe", "subscribe"]);
+    d.reopen(false, send.clone(), lost.clone()).unwrap();
+    assert!(d.opened);
+    d.handle.fail = "close";
+    assert!(d.reopen(false, send.clone(), lost.clone()).is_err());
+    assert!(d.opened);
+    d.handle.fail = "open";
+    assert!(d.reopen(false, send.clone(), lost.clone()).is_err());
+    assert!(!d.opened);
+    assert!(d.subscribe(send.clone(), lost.clone()).is_err());
+    d.handle.fail = "subscribe";
+    assert!(d.subscribe(send.clone(), lost.clone()).is_err());
+    assert!(d.opened);
+    drop(d);
+    assert_eq!(calls.borrow().last().unwrap(), "close");
+    let mut boxed: Box<dyn Device> = Box::new(NativeDevice {
+        handle: NativeFixture {
+            calls: calls.clone(),
+            fail: "",
+        },
+        opened: false,
+    });
+    boxed.reopen(false, send, lost).unwrap();
+    drop(boxed);
+}
