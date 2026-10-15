@@ -93,6 +93,14 @@ fn entries(parameters: &Key) -> Result<(BTreeMap<u8, Entry>, bool), String> {
     }
     Ok((entries, unexpected))
 }
+fn validated_descriptor(slot: u8, value: &Entry) -> Result<&[u8], String> {
+    let bytes = value.descriptor.as_deref().ok_or("Missing descriptor.")?;
+    if value.unknown || value.size != Some(bytes.len() as u32) {
+        return Err("Unknown or incomplete descriptor.".into());
+    }
+    crate::descriptor::Layout::from_descriptor(slot, bytes)?;
+    Ok(bytes)
+}
 impl NativeBackend {
     /// Construct callbacks without loading the SDK, elevating, or changing a key.
     pub fn native(operation: &str) -> Result<Self, String> {
@@ -315,12 +323,7 @@ impl NativeBackend {
         {
             return Err("Descriptor creation does not match unused journal intent.".into());
         }
-        if value.unknown
-            || value.descriptor.as_ref() != Some(&crate::provision::descriptor(slot)?)
-            || value.size != Some(123)
-        {
-            return Err("Only the pinned descriptor can be provisioned.".into());
-        }
+        let bytes = validated_descriptor(slot, value)?;
         let parameters = Key::open(self.hive, &self.parameters, KEY_READ | KEY_WRITE, Some(&tx))?
             .ok_or("vJoy parameters disappeared.")?;
         let (device, created) = Key::create(parameters.0, &format!("Device{slot:02}"), Some(&tx))?;
@@ -329,12 +332,12 @@ impl NativeBackend {
                 "An external configurator created the slot; ownership was not taken.".into(),
             );
         }
+        device.write("HidReportDescriptor", REG_BINARY, bytes)?;
         device.write(
-            "HidReportDescriptor",
-            REG_BINARY,
-            value.descriptor.as_ref().unwrap(),
+            "HidReportDescriptorSize",
+            REG_DWORD,
+            &(bytes.len() as u32).to_le_bytes(),
         )?;
-        device.write("HidReportDescriptorSize", REG_DWORD, &123u32.to_le_bytes())?;
         record.written.insert(slot);
         Self::write_record(&journal, &record)?;
         drop(device);
