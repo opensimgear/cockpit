@@ -40,8 +40,9 @@ The requested Windows Tauri dev app was built and launched successfully. Because
 
 The physical background-capture, same-port reconnect and port-change checks below
 supersede those gaps for the tested Gladiator. Simultaneous identical hardware,
-signed-axis hardware and matching monitor display, additional racing/flight
-models and latency/overload measurements remain open. M0's earlier foreground-game
+the remaining button/hat monitor comparison, additional racing/flight
+models and latency/overload measurements remain open. Signed-axis hardware and
+monitor evidence on the MOZA R5 is recorded below. M0's earlier foreground-game
 probe remains evidence for that prototype only.
 
 The native UI inspection tool and browser inspection tool both failed to initialize with `windows sandbox failed: helper_unknown_error: setup refresh had errors`. Native process responsiveness, actual service IPC, Svelte validation and compilation were verified; a visual layout acceptance check was not completed.
@@ -85,3 +86,22 @@ The left descriptor has six unsigned axes (X/Y 0–4095, Z/Rz 0–2047, Rx/Ry
 0–1023). These are different product identities, so this inspection does not
 complete the identical-device or signed-axis criteria. The inspection is saved
 as `.research/review-audit/windows-pair-inspect.jsonl`.
+
+### Follow-up racing hardware and signed monitor
+
+The user confirmed both Gladiators use VKB v2.20C firmware and connect directly to
+the PC. The MOZA R5 (346E:0004), firmware v1.2.6.7, is also directly connected;
+its HBP handbrake (v1.2.1.3) connects through the base. A cued production capture
+received 26,751 R5 reports with no stream gaps, wheel movement, 11 button
+press/release pairs and a signed Dial axis crossing −32767–30026.
+
+The actual Windows Tauri monitor then displayed negative and positive signed
+values matching native readings, including −32767 and 32767, while ChatGPT was
+foreground during the cued movements. The detailed evidence, hashes and hardware
+limitations are in [the M7 qualification record](2026-10-15-mapping-qualification-m7.md#user-confirmed-hardware-and-read-only-moza-capture).
+
+A subsequent Gladiator monitor attempt showed only small axis jitter and no
+deliberate button/hat transitions. The user was asked to clarify the device/cues;
+that attempt is inconclusive, not a pass. Criterion 2 remains unchecked until the
+button/hat display comparison is observed. The identical-controller matrix also
+remains open; the left/right Gladiators have different product IDs.

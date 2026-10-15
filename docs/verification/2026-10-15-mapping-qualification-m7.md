@@ -22,14 +22,40 @@ output retain their existing false qualification gates.
 | Linux/macOS visibility | Native suppression boundary and policy/cleanup fixtures; implemented Linux isolated-launch supervisor with disposable namespace, descriptor, cancellation and parent-death checks; production gates remain closed. | Alternative access paths, actual suppression/cleanup/reconnect and physical Linux controlled-launch qualification, including device-number reuse; graphical/Steam/Proton paths and macOS process mode remain unsupported. |
 | Custom logic | Real isolated workers on all three OSes, compile/runtime/budget failures, transaction rollback, deterministic timer replay, stale reply/process death tests. | Real virtual-output scripts, loaded capture/feeder responsiveness and physical source loss; macOS native-library/whole-RSS ceiling qualification (Rust heap cap alone is narrower). |
 | Existing behavior | Full application/integration regressions, output leases, game rollback, ordered panel consumers and independent gateway acceptance. | Assembled hardware and live DCS/racing acceptance. Debug Pico fixtures are not physical panel qualification. |
-| Vendor hardware | Windows reports VKBsim Gladiator EVO R (231D:0200), Gladiator EVO OT L (231D:3201) and VKBSim T-Rudder (231D:011F), with separate identities and complete baselines. Right-hand deliberate controls/reconnects are recorded in M1. The left/right pair has different product IDs and unsigned axes. | Firmware and USB/hub topology; identical-device and signed-axis specimens; at least one real MOZA/SIMAGIC racing specimen with exact model/firmware. No blanket vendor claim. |
+| Vendor hardware | Windows reports VKBsim Gladiator EVO R (231D:0200), Gladiator EVO OT L (231D:3201), VKBSim T-Rudder (231D:011F) and MOZA R5 Base (346E:0004). User-confirmed firmware/topology and R5 signed-axis capture are recorded below. The Gladiator pair has different product IDs and unsigned axes. | Identical-device qualification; full native monitor/device/game matrix. T-Rudder firmware/topology remains unknown. No blanket vendor claim. |
 | Games | Existing Windows profile coordinator and schema-2 immutable captures; synthetic failed-launch/recovery/ownership tests; native Tauri capture/save without activation. | Real DCS and racing game, vJoy-only originals visible and combined hiding, captured requirements, controls, restart/reconnect and rollback. |
 
 The historic M0 device label "MOZA VID 231D/PID 0200" was based on the selection
 request. Later OS-reported evidence identifies it as **VKBsim Gladiator EVO R**;
 the M0 wording is corrected. MOZA RacingLab owning a vJoy slot was a software
-ownership observation, not evidence of a MOZA physical racing device. Firmware
-and physical USB topology were not recorded and remain unknown.
+ownership observation, not evidence of a MOZA physical racing device. Subsequent
+R5 observations below establish that particular model independently.
+
+### User-confirmed hardware and read-only MOZA capture
+
+On 15 October the user reported **VKB v2.20C** on both Gladiators (vendor firmware,
+not OpenSimGear), **v1.2.6.7** on the MOZA R5 and **v1.2.1.3** on its HBP handbrake.
+Both Gladiators and the R5 connect directly to the PC; the HBP connects through
+the R5. These firmware/topology details are user-confirmed, not inferred from HID.
+
+The Windows production capture service observed R5 VID/PID **346E:0004** with a
+complete baseline and 148 controls. Its X axis declares 0–65535; seven other axes
+declare −32768–32767. During the cued 75-second read-only test it received 26,751
+R5 reports without a stream gap. X changed through 11123–59954, 11 buttons had
+press/release transitions, and signed Dial (usage 0x37, field 2) crossed
+−32767–30026 over 137 transitions. The HBP is represented through the base, not
+claimed as an independently enumerated USB device. Evidence:
+`.research/review-audit/windows-moza-capture-2026-10-15.jsonl` and its summary.
+SHA-256: `5715ede0fd4c7164182d2cc67431c43dd0d636b3bc7a2fdc3ec06bb0467ce11e`.
+A second cued test sampled the actual Windows Tauri monitor 221 times. Its final
+98 samples included the full −32767–32767 Dial range; every displayed signed
+value matched its native value, with no JavaScript exceptions. Foreground sampling
+during the movements recorded ChatGPT for all 147 observations. Evidence:
+`.research/review-audit/moza-monitor.json` (SHA-256
+`a6d96b0753a504f13ea7fdd520df6eaa94423f99e788702034c84a2167f718ff`) and
+`moza-monitor-foreground-movement.json`. This verifies signed capture and monitor
+display on this particular hardware/firmware combination; real virtual-output/game
+binding remains separate.
 
 ## Automated evidence and coverage
 
@@ -88,6 +114,15 @@ That test now observes armed/recovered/error/stale states, uses the normal
 1500 ms configured freshness window, and stops its export peer on any exit.
 It retains real UDP command delivery and asserts both ordered press/release
 datagrams, recovery and final fallback. No production behavior changed.
+
+The first post-audit macOS run passed all 37 mapping-host tests, then failed
+coverage aggregation because a raw LLVM profile had a corrupt header. The host
+coverage command had included profiles from build tools and deliberately killed
+script helpers. It now merges only profiles from the successfully exited host-test
+PID, where all host code and fixture threads run. Missing or corrupt host profiles
+still fail; no failed test, module or coverage threshold is suppressed. Script
+helper production coverage remains the independent logic suite. Local Windows
+and Linux host coverage pass with this selection; final macOS CI must pass too.
 
 - Windows 11 build 26200: rebuilt native service, ordered recording preview and
   persistence/restart checks passed with the installed vJoy driver. Inspection

@@ -7,7 +7,7 @@ Issues close only when their complete scope and acceptance criteria are met.
 | Dependency order | Implementation finding | Remaining manual interaction |
 | --- | --- | --- |
 | #21 M0 | Prototypes and bounded contracts exist; no additional prototype implementation gap identified. | Existing custom/FFB layouts, inverse HidHide, setup/reboot, native Linux/macOS and contract approval. |
-| #22 M1 | Production Raw Input/HidP registry and monitor are wired. Interactive foreground-game capture, reconnect and a port change are recorded in 71f5f3a. | Identical-device identity matrix and signed-axis hardware/live monitor qualification; the connected left/right Gladiators have different product IDs and unsigned axes. |
+| #22 M1 | Production Raw Input/HidP registry and monitor are wired. Foreground-game capture, reconnect and a port change are recorded in 71f5f3a; MOZA R5 signed capture/monitor and user-confirmed firmware/topology follow in M7. | Identical-device identity matrix and remaining button/hat live-display comparison; the connected left/right Gladiators have different product IDs. |
 | #23 M1P | evdev/IOHID capture and permission/baseline paths exist behind qualification gates. | Physical native Linux/macOS devices and permissions/game matrix. |
 | #25 M3 | Provisioning, descriptor generation, feeder, leases and recovery are implemented. | Two production-created slots, real controls/game bindings, Gremlin contention, UAC/failure/restart and whole-process termination. |
 | #26 M3H | Policy validation, session ownership and journaled restoration are implemented. | Normal/inverse process/API scope, hardware dependency matrix, live conflicts and recovery. |

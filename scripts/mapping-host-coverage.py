@@ -38,18 +38,27 @@ def main():
                 and entry.get('executable') and entry.get('profile', {}).get('test')]
     if len(binaries) != 1:
         raise RuntimeError('Expected one mapping host library test executable.')
-    tests = subprocess.run([binaries[0]], cwd=root, env=env, text=True, encoding='utf-8',
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    (output / 'tests.log').write_text(tests.stdout, encoding='utf-8')
+    # Host code runs in this process, including its capture/feeder fixture threads.
+    # Real script helpers are deliberately killed by lifecycle tests and can leave
+    # incomplete LLVM profiles. Their coverage belongs to logic-coverage.py.
+    # Select the successful host PID, never silently ignore corrupt host evidence.
+    test_env = dict(env, LLVM_PROFILE_FILE=str(profiles / 'host-%m-%p.profraw'))
+    tests = subprocess.Popen([binaries[0]], cwd=root, env=test_env, text=True, encoding='utf-8',
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    test_output, _ = tests.communicate()
+    (output / 'tests.log').write_text(test_output, encoding='utf-8')
     if tests.returncode:
-        print(tests.stdout, flush=True)
-        tests.check_returncode()
+        print(test_output, flush=True)
+        raise subprocess.CalledProcessError(tests.returncode, tests.args)
+    host_profiles = list(profiles.glob(f'host-*-{tests.pid}.profraw'))
+    if not host_profiles:
+        raise RuntimeError('The successful mapping-host process produced no coverage profile.')
     sysroot = Path(run(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', run(['rustc', '-vV'], root), re.M).group(1)
     suffix = '.exe' if os.name == 'nt' else ''
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
-    run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
+    run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *host_profiles, '-o', profile], root)
     sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game']]
     summary = {}
     for source in sources:
