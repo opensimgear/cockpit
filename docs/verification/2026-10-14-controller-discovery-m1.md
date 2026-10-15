@@ -39,13 +39,16 @@ The requested Windows Tauri dev app was built and launched successfully. Because
 ## Qualification still open
 
 The physical background-capture, same-port reconnect and port-change checks below
-supersede those gaps for the tested Gladiator. Simultaneous identical hardware,
-the remaining button/hat monitor comparison, additional racing/flight
-models and latency/overload measurements remain open. Signed-axis hardware and
+supersede those gaps for the tested Gladiator. The live monitor comparisons below
+verify buttons, unipolar/signed axes and hats while Cockpit is unfocused.
+Simultaneous identical hardware, additional racing/flight models and
+latency/overload measurements remain open. Signed-axis hardware and
 monitor evidence on the MOZA R5 is recorded below. M0's earlier foreground-game
 probe remains evidence for that prototype only.
 
-The native UI inspection tool and browser inspection tool both failed to initialize with `windows sandbox failed: helper_unknown_error: setup refresh had errors`. Native process responsiveness, actual service IPC, Svelte validation and compilation were verified; a visual layout acceptance check was not completed.
+The initial UI inspection tools failed to initialize. Subsequent native WebView
+inspection reached the actual Tauri monitor and verified its displayed controls,
+as recorded below; this does not establish a full visual layout review.
 
 Linux/macOS capture, output and visibility capabilities remain unavailable until their separate implementation and qualification milestones. Inverse HidHide and the remaining driver/game gates from M0 stay open.
 
@@ -65,7 +68,7 @@ diagnostic fields. This does not qualify signed-axis hardware or MOZA devices.
 
 | Check | Observation | Acceptance implication |
 | --- | --- | --- |
-| Foreground-game capture | 5,976 reports; 5,889 with process 33284 (`acr`, window `Assetto Corsa Rally`) in the foreground. Four axes traversed their full declared ranges: X/Y 0–4095, Z/Rz 0–2047. 23 buttons changed between 0 and 1; the hat visited all eight directions and null/neutral 8. Zero stream gaps. | Production background input verified for this hardware. Criterion 2 remains unchecked because signed-axis hardware and matching live monitor display are still outstanding. |
+| Foreground-game capture | 5,976 reports; 5,889 with process 33284 (`acr`, window `Assetto Corsa Rally`) in the foreground. Four axes traversed their full declared ranges: X/Y 0–4095, Z/Rz 0–2047. 23 buttons changed between 0 and 1; the hat visited all eight directions and null/neutral 8. Zero stream gaps. | Production background input verified for this hardware. The follow-up signed-axis and native monitor checks below complete criterion 2. |
 | Unplug / same-port reconnect | At 22.366 s, `online` and `baselineReady` became false and a disconnect event arrived. At 38.671 s, the same source ID became available with generation 2, a fresh baseline and 1,571 subsequent reports. Zero gaps. | Criterion 5, unplug clears availability, is verified. |
 | USB port change | At 20.344 s the original local-path identity went offline. At 26.370 s a different ID appeared with its own fresh baseline while the old identity stayed offline. Zero gaps. Return to the original port was not observed within the timed capture. | Port change does not silently transfer assignments. Criterion 1 remains unchecked for the simultaneous identical-controller matrix. |
 
@@ -76,7 +79,7 @@ SHA-256 hashes of the three JSONL records, in table order:
 - `fc85f868293586421a2cc5481c07d212f06579455e390f7158909d7ad9c17112`
 - `68160e96730240d5ed26539660868e52ed488f01c0b04242ef4d930d8c4e8a53`
 
-Issue #22 remains open/In review with 5/7 acceptance criteria checked. No output,
+Issue #22 remains open/In review with 6/7 acceptance criteria checked. No output,
 hiding, script or platform qualification gate changes as a result of these checks.
 
 The user also connected a left-hand Gladiator. A separate production inventory
@@ -100,8 +103,31 @@ values matching native readings, including −32767 and 32767, while ChatGPT was
 foreground during the cued movements. The detailed evidence, hashes and hardware
 limitations are in [the M7 qualification record](2026-10-15-mapping-qualification-m7.md#user-confirmed-hardware-and-read-only-moza-capture).
 
-A subsequent Gladiator monitor attempt showed only small axis jitter and no
-deliberate button/hat transitions. The user was asked to clarify the device/cues;
-that attempt is inconclusive, not a pass. Criterion 2 remains unchecked until the
-button/hat display comparison is observed. The identical-controller matrix also
-remains open; the left/right Gladiators have different product IDs.
+### Follow-up Gladiator monitor comparison
+
+An initial short monitor sample showed no deliberate button/hat transitions and
+was inconclusive. A synchronized repeat recorded 1,650 production raw reports
+with zero stream gaps, four trigger transitions and every hat value (0–7 plus
+neutral 8). The actual native monitor was sampled 478 times, all while unfocused.
+Comparing displayed values with the monitor's native readings verified 1,144
+unipolar-axis and 286 hat values with no mismatches or JavaScript exceptions.
+The observed display labels were N, NE, E, S, W, NW and Neutral; all eight raw hat
+directions were captured, but SE/SW did not coincide with a monitor sample.
+
+The first comparison changed to the axes/hat page before the user's trigger
+holds, so its lack of displayed presses was a sampling-timing problem, not
+evidence of a capture failure. A separate fixed-page check waited for an observed
+press followed by release. It recorded 1,060 unfocused samples, including
+**Pressed / Native 1** and **Released / Native 0**, with no JavaScript exceptions.
+Together with the R5 signed-axis comparison, this verifies criterion 2. No
+production code or qualification gate was changed for these read-only checks.
+Criterion 1 remains open: the connected left/right Gladiators have different
+product IDs and cannot qualify simultaneous identical controllers.
+
+The private records remain in `.research/review-audit`:
+
+| Record | SHA-256 |
+| --- | --- |
+| `windows-gladiator-comparison-2.jsonl` | `65a654667d0c930c0d3c3bf5035eecbd31442e4a416e5cfdbfb470594bc0692b` |
+| `gladiator-comparison-ui.json` | `34171dcf346bb70199c1a106d718d538ce2d7b0202be9002ad4a5b1f51445d75` |
+| `gladiator-trigger-monitor.json` | `0699ddcc2df5c96c2ade370f68f0ee9a1253dab14166ad08820ef51eb57feb3b` |

@@ -12,7 +12,7 @@ output retain their existing false qualification gates.
 | Area | Recorded evidence | Still required before qualification |
 | --- | --- | --- |
 | Portable engine/profile | Native three-OS deterministic reducer/replay, validation, generation, arbitration, state-machine and migration tests; M2 closed. | Retain regression gates as platform support changes. |
-| Windows input | Authored HID fixtures; production read-only capture during foreground ACR with full four-axis ranges, 23 button transitions and all hat positions; same-port reconnect establishes a fresh baseline, and a port change preserves the prior offline identity (71f5f3a). | Identical-device identity matrix, signed-axis hardware/live monitor qualification and loaded timing. |
+| Windows input | Authored HID fixtures; production read-only capture during foreground ACR with full four-axis ranges, 23 button transitions and all hat positions; same-port reconnect establishes a fresh baseline, and a port change preserves the prior offline identity (71f5f3a). Follow-up native monitor checks verify buttons, unipolar/signed axes and hats while unfocused. | Identical-device identity matrix and loaded timing. |
 | Linux/macOS input | Native evdev/IOHID compilation, adapter coverage and injected error/baseline/hotplug tests. | Native physical models, permission denial/regrant, background-game capture and identity/baseline checks. WSL is not a native desktop qualification system. |
 | vJoy | Pinned signed 2.2.2.0 artifacts; M0 unchanged report/readback and implicit-default slot-2 add/delete/restore; production descriptor, provisioner, ownership and failure fixtures. | Production UAC/refresh/cancel/recovery, custom layouts, two live targets, real source routing, contention, helper/whole-app failure and restart/game retention. |
 | Linux virtual | Native ABI/syscall-boundary tests, report/lifetime fixtures, real WSL permission-denied inspection. | Actual device creation/destruction, two physical sources, native game and qualified Proton bindings, permissions/distributions. |
@@ -22,7 +22,7 @@ output retain their existing false qualification gates.
 | Linux/macOS visibility | Native suppression boundary and policy/cleanup fixtures; implemented Linux isolated-launch supervisor with disposable namespace, descriptor, cancellation and parent-death checks; production gates remain closed. | Alternative access paths, actual suppression/cleanup/reconnect and physical Linux controlled-launch qualification, including device-number reuse; graphical/Steam/Proton paths and macOS process mode remain unsupported. |
 | Custom logic | Real isolated workers on all three OSes, compile/runtime/budget failures, transaction rollback, deterministic timer replay, stale reply/process death tests. | Real virtual-output scripts, loaded capture/feeder responsiveness and physical source loss; macOS native-library/whole-RSS ceiling qualification (Rust heap cap alone is narrower). |
 | Existing behavior | Full application/integration regressions, output leases, game rollback, ordered panel consumers and independent gateway acceptance. | Assembled hardware and live DCS/racing acceptance. Debug Pico fixtures are not physical panel qualification. |
-| Vendor hardware | Windows reports VKBsim Gladiator EVO R (231D:0200), Gladiator EVO OT L (231D:3201), VKBSim T-Rudder (231D:011F) and MOZA R5 Base (346E:0004). User-confirmed firmware/topology and R5 signed-axis capture are recorded below. The Gladiator pair has different product IDs and unsigned axes. | Identical-device qualification; full native monitor/device/game matrix. T-Rudder firmware/topology remains unknown. No blanket vendor claim. |
+| Vendor hardware | Windows reports VKBsim Gladiator EVO R (231D:0200), Gladiator EVO OT L (231D:3201), VKBSim T-Rudder (231D:011F) and MOZA R5 Base (346E:0004). User-confirmed firmware/topology, R5 signed-axis capture/monitor and Gladiator R button/axis/hat monitor checks are recorded. The Gladiator pair has different product IDs and unsigned axes. | Identical-device qualification and full device/game matrix. T-Rudder firmware/topology remains unknown. No blanket vendor claim. |
 | Games | Existing Windows profile coordinator and schema-2 immutable captures; synthetic failed-launch/recovery/ownership tests; native Tauri capture/save without activation. | Real DCS and racing game, vJoy-only originals visible and combined hiding, captured requirements, controls, restart/reconnect and rollback. |
 
 The historic M0 device label "MOZA VID 231D/PID 0200" was based on the selection
@@ -56,6 +56,14 @@ during the movements recorded ChatGPT for all 147 observations. Evidence:
 `moza-monitor-foreground-movement.json`. This verifies signed capture and monitor
 display on this particular hardware/firmware combination; real virtual-output/game
 binding remains separate.
+
+The subsequent Gladiator comparison verified 1,144 displayed unipolar-axis and
+286 hat values against native readings, with zero mismatches across 478 unfocused
+samples. A separate fixed-page trigger check recorded Pressed/native 1 followed
+by Released/native 0 across 1,060 unfocused samples. Neither check raised a
+JavaScript exception. These checks complete #22's combined live-display criterion;
+the [M1 record](2026-10-14-controller-discovery-m1.md#follow-up-gladiator-monitor-comparison)
+retains the timing limitation of the first attempt and hashes of the final records.
 
 ## Automated evidence and coverage
 
@@ -122,7 +130,12 @@ script helpers. It now merges only profiles from the successfully exited host-te
 PID, where all host code and fixture threads run. Missing or corrupt host profiles
 still fail; no failed test, module or coverage threshold is suppressed. Script
 helper production coverage remains the independent logic suite. Local Windows
-and Linux host coverage pass with this selection; final macOS CI must pass too.
+and Linux host coverage pass with this selection. The corrected macOS job and all
+11 jobs passed in [run 38722740479](https://github.com/opensimgear/cockpit/actions/runs/38722740479)
+at branch commit `2f216b7`, which contains the implementation fixes `c108fb7` and
+`4266c84`. This includes native startup/preview with optional dependencies absent
+on Windows, Linux and macOS. The original `4266c84` run was superseded by the
+subsequent branch push; the successful result is for that descendant commit.
 
 - Windows 11 build 26200: rebuilt native service, ordered recording preview and
   persistence/restart checks passed with the installed vJoy driver. Inspection
