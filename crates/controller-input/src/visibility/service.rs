@@ -12,6 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 pub struct Service {
+    launch: Mutex<super::launch::Worker>,
     suppression: super::suppression::Control,
     platform: super::capabilities::Platform,
     instances: Mutex<std::collections::BTreeMap<String, (super::session::Source, String)>>,
@@ -41,6 +42,7 @@ impl Service {
     pub fn new(path: Option<PathBuf>, registry: Arc<Mutex<Registry>>) -> Self {
         let settings = Settings::new(path.as_ref().map(|p| p.join("controller-visibility.json")));
         Self {
+            launch: Mutex::new(super::launch::Worker::default()),
             suppression: Default::default(),
             platform: super::capabilities::current(),
             instances: Mutex::new(std::collections::BTreeMap::new()),
@@ -59,7 +61,11 @@ impl Service {
         self
     }
     pub fn active(&self) -> bool {
-        self.suppression.active()
+        self.launch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .active()
+            || self.suppression.active()
             || self
                 .worker
                 .lock()
@@ -67,6 +73,10 @@ impl Service {
                 .active()
     }
     pub fn shutdown(&self) {
+        self.launch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .shutdown();
         let _ = self.suppression.stop(None);
         self.worker
             .lock()
@@ -99,7 +109,7 @@ impl Service {
         json!({"offset":0,"total":0,"limit":32,"visibility":{
             "platform":format!("{:?}",self.platform).to_lowercase(),"modes":super::capabilities::modes(self.platform),"enabled":settings.value.enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
             "selected":settings.value.devices.iter().filter(|(_,p)|!matches!(p,Intent::Visible)).map(|(id,_)|id).take(16).collect::<Vec<_>>(),
-            "settingsError":settings.error,"global":global,"job":if self.platform==super::capabilities::Platform::Windows{json!(self.worker.lock().unwrap_or_else(|p|p.into_inner()).snapshot())}else{self.suppression.snapshot()},"recovery":recovery,
+            "settingsError":settings.error,"global":global,"job":if self.platform==super::capabilities::Platform::Windows{json!(self.worker.lock().unwrap_or_else(|p|p.into_inner()).snapshot())}else{self.suppression.snapshot()},"recovery":recovery,"launch":self.launch.lock().unwrap_or_else(|p|p.into_inner()).snapshot(),
             "reason":if self.qualified{"Apply affects every instance of the selected executable path. Existing applications may need a qualified device-handle refresh."}else{super::capabilities::reason(self.platform)}
         }})
     }
@@ -189,10 +199,68 @@ impl Service {
                 settings.save(value)?;
             }
             "controller_visibility_launch" => {
-                super::suppression::controlled_launch(request)?;
+                if self.platform != super::capabilities::Platform::Linux {
+                    return Err("Isolated launch is a Linux-only capability.".into());
+                }
+                if request.get("pid").is_some() || request.get("alreadyRunning").is_some() {
+                    return Err(
+                        "Already-running applications cannot enter an owned launch boundary."
+                            .into(),
+                    );
+                }
+                let launch = super::launch::Request::parse(&request["launch"])?;
+                if !self
+                    .launch
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .qualified()
+                {
+                    return Err(super::launch::REASON.into());
+                }
+                if self.active() {
+                    return Err(
+                        "Restore the active visibility session before isolated launch.".into(),
+                    );
+                }
+                if !self
+                    .settings
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .value
+                    .enabled
+                {
+                    return Err(
+                        "Explicitly enable optional visibility before isolated launch.".into(),
+                    );
+                }
+                let ids: Vec<String> = serde_json::from_value(request["sourceIds"].clone())
+                    .map_err(|_| "Choose exact local source IDs.")?;
+                let sources = self
+                    .registry
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .physical_sources(&ids, "linux-evdev")?;
+                let registry = self.registry.clone();
+                let observe = Arc::new(move |ids: &[String]| {
+                    registry
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .physical_sources(ids, "linux-evdev")
+                });
+                self.launch
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .start(launch, sources, observe)?;
             }
             "controller_visibility_restore" => {
                 if self.platform != super::capabilities::Platform::Windows {
+                    let launch = self.launch.lock().unwrap_or_else(|p| p.into_inner());
+                    if launch.active() {
+                        launch.stop(request["jobId"].as_str())?;
+                        drop(launch);
+                        return Ok(self.status(id));
+                    }
+                    drop(launch);
                     self.suppression.stop(request["jobId"].as_str())?;
                     return Ok(self.status(id));
                 }

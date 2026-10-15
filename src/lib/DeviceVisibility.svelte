@@ -7,6 +7,9 @@
   let status = $state<VisibilityStatus | null>(null);
   let mode = $state<VisibilityIntent['mode']>('visible');
   let executable = $state('');
+  let launchExecutable = $state('');
+  let launchDirectory = $state('');
+  let launchArguments = $state('');
   let processes = $state<{ pid: number; path: string }[]>([]);
   let nextProcess = $state<number | null>(null);
   let busy = $state(false);
@@ -67,6 +70,21 @@
     {#if status.effective}<p>This controller {status.effective.hidden ? 'has an active global HidHide rule' : status.effective.configured ? 'has an inactive HidHide rule' : 'has no configured HidHide rule'} in the inspected state. Visible does not remove externally managed rules.</p>{/if}
     {#if status.global.applications?.length}<details><summary>{status.global.inverse ? 'Blocked executable paths' : 'Existing application exceptions'} ({status.global.applicationCount})</summary><ul>{#each status.global.applications as path}<li>{path}</li>{/each}</ul>{#if (status.global.applicationCount ?? 0) > 16}<p>First 16 paths shown.</p>{/if}</details>{/if}
     {#if status.job}<p role="status">{status.job.phase}: {status.job.message}</p>{/if}
+    {#if status.platform === 'linux' && status.launch}
+      <h4>Launch an isolated application</h4>
+      <p class="notice">{status.launch.reason}</p>
+      <p class="hint">The new application and its children receive a fixed device view with this controller and its sibling input interfaces excluded. Host applications keep their access. Network, desktop brokers and display sharing are unavailable; files in the application directory are read-only and session data is temporary. A device change stops the child and requires an explicit new launch.</p>
+      <div class="fields">
+        <label>Application directory<input bind:value={launchDirectory} maxlength="4096" placeholder="/opt/application" disabled={busy || status.launch.job?.active} /></label>
+        <label>Executable<input bind:value={launchExecutable} maxlength="4096" placeholder="/opt/application/program" disabled={busy || status.launch.job?.active} /></label>
+        <label>Arguments (one per line)<textarea bind:value={launchArguments} maxlength="16384" disabled={busy || status.launch.job?.active}></textarea></label>
+      </div>
+      <div class="actions">
+        <button class="secondary-button" disabled={busy || !status.launch.qualified || !status.enabled || status.job?.active || status.launch.job?.active || !source.online || !source.baselineReady || !launchExecutable.trim() || !launchDirectory.trim()} onclick={() => action({ command: 'controller_visibility_launch', sourceIds: [source.id], launch: { launchKind: 'direct-child', executable: launchExecutable.trim(), directory: launchDirectory.trim(), arguments: launchArguments ? launchArguments.split('\n') : [] } })}>Launch isolated application</button>
+        <button class="secondary-button" disabled={busy || !status.launch.job?.active} onclick={() => action({ command: 'controller_visibility_restore', jobId: status?.launch?.job?.jobId })}>Stop isolated application</button>
+      </div>
+      {#if status.launch.job}<p role="status">{status.launch.job.phase}: {status.launch.job.message}</p>{/if}
+    {/if}
     {#if status.recovery.required && !status.job?.active}<p class="notice">An interrupted visibility operation needs explicit recovery. {status.recovery.error ?? 'No hiding is reapplied automatically.'}</p>{/if}
   {/if}
 </section>
@@ -75,7 +93,7 @@
   .fields, .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 14px 0; }
   label { display: flex; flex-direction: column; gap: 8px; min-width: 200px; flex: 1; }
   .check { flex-direction: row; align-items: center; }
-  select, input:not([type=checkbox]) { padding: 9px; color: inherit; background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
+  select, textarea, input:not([type=checkbox]) { padding: 9px; color: inherit; background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
   .hint { font-size: 12px; opacity: .7; }
   li { overflow-wrap: anywhere; }
 </style>

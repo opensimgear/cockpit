@@ -70,19 +70,6 @@ fn busy(phase: &str) -> bool {
         "queued" | "applying" | "baseline" | "active" | "restoring"
     )
 }
-/// Fail before spawning or changing namespaces. There is no approved isolation helper yet.
-/// A process ID can never stand in for an owned, new child launch.
-pub fn controlled_launch(request: &Value) -> Result<(), String> {
-    if request.get("pid").is_some() || request["alreadyRunning"].as_bool() == Some(true) {
-        return Err(
-            "Already-running applications cannot enter a controlled-launch boundary.".into(),
-        );
-    }
-    if request["launchKind"].as_str() != Some("direct-child") {
-        return Err("This launch path cannot preserve an owned Linux device namespace.".into());
-    }
-    Err("Linux controlled-launch device isolation has no qualified helper. No child was launched and no device nodes were changed.".into())
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,18 +106,5 @@ mod tests {
         c.apply(vec![source()]).unwrap();
         c.stop(None).unwrap();
         assert!(matches!(c.take(), Some(Command::Stop)));
-    }
-    #[test]
-    fn no_launch_fallback() {
-        assert!(controlled_launch(&json!({"pid":42}))
-            .unwrap_err()
-            .contains("Already-running"));
-        assert!(controlled_launch(&json!({"alreadyRunning":true})).is_err());
-        assert!(controlled_launch(&json!({"launchKind":"steam"}))
-            .unwrap_err()
-            .contains("launch path"));
-        assert!(controlled_launch(&json!({"launchKind":"direct-child"}))
-            .unwrap_err()
-            .contains("no qualified helper"));
     }
 }

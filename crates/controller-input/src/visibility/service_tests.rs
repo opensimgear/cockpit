@@ -243,3 +243,86 @@ fn unix_capabilities_save_without_driver_access_and_never_broaden() {
             .is_err());
     }
 }
+
+#[test]
+fn isolated_launch_is_independent_gated_and_owned_by_the_service() {
+    use super::super::launch;
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::{Duration, Instant},
+    };
+    struct Child(Arc<AtomicUsize>);
+    impl launch::Child for Child {
+        fn poll(&mut self) -> Result<launch::Poll, String> {
+            Ok(launch::Poll::Running)
+        }
+        fn stop(&mut self) -> Result<(), String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let (registry, id) = inventory_for("linux-evdev");
+    let dir = tempfile::tempdir().unwrap();
+    let mut service = Service::new(Some(dir.path().into()), registry.clone());
+    let request = json!({"command":"controller_visibility_launch","sourceIds":[id],"launch":{"launchKind":"direct-child","executable":"/opt/app/game","directory":"/opt/app","arguments":[]}});
+    service.platform = super::super::capabilities::Platform::Macos;
+    assert!(service
+        .request(&request)
+        .unwrap_err()
+        .contains("Linux-only"));
+    service.platform = super::super::capabilities::Platform::Linux;
+    assert_eq!(
+        service.status("")["visibility"]["launch"]["qualified"],
+        false
+    );
+    assert!(service.request(&request).unwrap_err().contains("disabled"));
+    assert!(dir.path().read_dir().unwrap().next().is_none());
+    let mut invalid = request.clone();
+    invalid["pid"] = json!(12);
+    assert!(service
+        .request(&invalid)
+        .unwrap_err()
+        .contains("Already-running"));
+    let stops = Arc::new(AtomicUsize::new(0));
+    let stopped = stops.clone();
+    *service.launch.lock().unwrap() =
+        launch::Worker::fixture(Arc::new(move |_, _| Ok(Box::new(Child(stopped.clone())))));
+    assert!(service
+        .request(&request)
+        .unwrap_err()
+        .contains("Explicitly enable"));
+    service
+        .request(&json!({"command":"controller_visibility_enable","enabled":true}))
+        .unwrap();
+    let mut invalid = request.clone();
+    invalid["sourceIds"] = json!([]);
+    assert!(service.request(&invalid).is_err());
+    let status = service.request(&request).unwrap();
+    assert_eq!(status["visibility"]["launch"]["job"]["active"], true);
+    assert!(!service.suppression.active());
+    assert!(service.request(&request).is_err());
+    assert!(service
+        .request(&json!({"command":"controller_visibility_enable","enabled":false}))
+        .is_err());
+    assert!(service
+        .request(&json!({"command":"controller_visibility_restore","jobId":"stale"}))
+        .is_err());
+    let until = Instant::now() + Duration::from_secs(3);
+    while service.status("")["visibility"]["launch"]["job"]["phase"] != "running" {
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    service.request(&json!({"command":"controller_visibility_restore","jobId":status["visibility"]["launch"]["job"]["jobId"]})).unwrap();
+    while service.active() {
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(stops.load(Ordering::SeqCst), 1);
+    service.request(&request).unwrap();
+    registry.lock().unwrap().disconnect(&id);
+    while service.active() {
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!service.suppression.active());
+}

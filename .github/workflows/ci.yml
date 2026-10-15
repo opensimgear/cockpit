@@ -174,7 +174,7 @@ jobs:
         run: rustup component add llvm-tools-preview
       - name: Linux controller development dependency
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends libudev-dev
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends libudev-dev bubblewrap
       - name: Native controller tests with per-module coverage
         run: python scripts/controller-coverage.py
       - name: Native virtual-output tests with per-module coverage

@@ -82,10 +82,22 @@ recreate devices. Kernel lifecycle, physical routing and native/Proton bindings
 remain unqualified; see [M3L](verification/2026-10-15-linux-virtual-m3l.md).
 
 An evdev grab is broad input suppression, not enumeration hiding: hidraw, raw USB
-and other access paths are separate. Process-specific hiding and the proposed
-isolated launcher are unavailable. Creating a namespace in WSL does not establish
-Steam/Proton isolation, broker/child-process scope, inherited-handle handling or
-hotplug protection. No automatic fallback broadens a requested visibility scope.
+and other access paths are separate. The isolated-launch candidate is implemented
+but remains disabled in its Linux device controls and native service. It requires
+a separately approved, root-owned bubblewrap release; none is approved yet.
+Its closed device view excludes selected physical siblings, retains observed
+unselected/virtual nodes, and stops its owned child when the inventory changes.
+The application directory is read-only and session storage is temporary. Host
+clients and device permissions are unchanged.
+
+The candidate supports only direct children without host display/audio/input
+brokers or network access. Running applications, Steam/Proton and container launch
+chains remain unsupported. Kernel-boundary fixtures verify namespace/child
+cleanup and inherited-handle exclusion, but do not establish physical hotplug,
+device-number reuse or real-game behavior. No automatic fallback broadens the
+requested scope. See [isolated-launch evidence and remaining qualification](verification/2026-10-15-unix-visibility-m3v.md#linux-isolated-launch-implementation-follow-up).
+Linux development tests need the distribution's `bubblewrap` package as well as
+`libudev-dev`; CI exercises the real namespace probes with production gates closed.
 
 ## macOS
 

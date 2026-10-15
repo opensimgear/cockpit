@@ -31,7 +31,10 @@ def main():
                 and entry.get('executable') and entry.get('profile', {}).get('test')]
     if len(binaries) != 1:
         raise RuntimeError('Expected one controller library test executable.')
-    (output / 'tests.log').write_text(run([binaries[0]], root, env), encoding='utf-8')
+    # Native fork/namespace probes briefly inherit process-wide advisory locks.
+    # Keep independent lock fixtures out of that fork window; worker concurrency
+    # and competing-owner behavior are exercised explicitly within their tests.
+    (output / 'tests.log').write_text(run([binaries[0], '--test-threads=1'], root, env), encoding='utf-8')
     sysroot = Path(run(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', run(['rustc', '-vV'], root), re.M).group(1)
     suffix = '.exe' if os.name == 'nt' else ''
@@ -48,6 +51,9 @@ def main():
     if sys.platform == 'darwin':
         sources.append(root / 'crates/controller-input/src/macos.rs')
     sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['capabilities', 'suppression', 'policy', 'journal', 'wire', 'settings', 'session', 'runtime', 'service'])
+    sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['launch', 'launch_plan'])
+    if sys.platform.startswith('linux'):
+        sources.append(root / 'crates/controller-input/src/visibility/launch_linux.rs')
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/visibility/windows.rs')
     summary = {}
