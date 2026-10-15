@@ -56,6 +56,18 @@ does not sign or install anything. Neither staging tool can enable a capability.
 
 ## Local M7 checks
 
+Artifact inspection also found a false-green Windows coverage step: Python lookup
+failed in the harmless ShellExecute child fixture, but PowerShell returned the
+exit code of a later successful coverage command. M7 splits controller, virtual
+and host coverage into separate CI steps and separates Windows build/acceptance.
+Coverage supplies its actual Python interpreter, and plain cargo tests resolve
+Python through PATH before canonicalizing it. Historical overall job success
+alone must not be read as proof that every component suite ran successfully;
+local Windows virtual coverage had passed with an explicit interpreter path.
+After the fix, plain cargo Python discovery passes and all 77 Windows virtual
+controller tests pass under instrumentation; all 23 measured modules exceed 71%
+(minimum 76.32%, native launcher 81.88%).
+
 The first full macOS desktop run exposed a test timing assumption: a 30 ms sleep
 could outlast the test's 150 ms export freshness on a loaded runner. The display
 correctly became STALE while the assertion still expected UNKNOWN. The test now

@@ -27,7 +27,8 @@ def main():
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     profiles = Path(tempfile.mkdtemp(prefix='profiles-', dir=output))
-    env = dict(os.environ, CARGO_TARGET_DIR=str(output / 'target'), RUSTFLAGS='-C instrument-coverage',
+    env = dict(os.environ, OSG_TEST_PYTHON=sys.executable,
+               CARGO_TARGET_DIR=str(output / 'target'), RUSTFLAGS='-C instrument-coverage',
                LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
     artifacts = run(['cargo', 'test', '--locked', '--lib', '--no-run', '--message-format=json',
                      '--manifest-path', root / 'crates/virtual-controller/Cargo.toml'], root, env)

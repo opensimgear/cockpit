@@ -64,7 +64,19 @@ fn request_arguments_are_bounded_canonical_and_cannot_inject_a_command() {
 }
 #[test]
 fn shell_handle_observes_harmless_child_completion_without_elevation_or_driver_changes() {
-    let python = std::env::var("OSG_TEST_PYTHON").unwrap_or_else(|_| "python".into());
+    use std::os::windows::process::CommandExt;
+    // ShellExecute needs an absolute path. Canonicalizing the literal "python"
+    // searches the current directory, not PATH; resolve through the interpreter
+    // for ordinary cargo test as well as the explicitly configured coverage run.
+    let python = std::env::var("OSG_TEST_PYTHON").unwrap_or_else(|_| {
+        let result = std::process::Command::new("python")
+            .args(["-c", "import sys; print(sys.executable)"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+            .expect("Python must be installed for the harmless child-process fixture");
+        assert!(result.status.success());
+        String::from_utf8(result.stdout).unwrap().trim().to_owned()
+    });
     let python = Path::new(&python).canonicalize().unwrap();
     let child = execute(
         &python,

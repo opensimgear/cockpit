@@ -175,11 +175,12 @@ jobs:
       - name: Linux controller development dependency
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --no-install-recommends libudev-dev
-      - name: Native controller and virtual-output tests with per-module coverage
-        run: |
-          python scripts/controller-coverage.py
-          python scripts/virtual-coverage.py
-          python scripts/mapping-host-coverage.py
+      - name: Native controller tests with per-module coverage
+        run: python scripts/controller-coverage.py
+      - name: Native virtual-output tests with per-module coverage
+        run: python scripts/virtual-coverage.py
+      - name: Native mapping-host tests with per-module coverage
+        run: python scripts/mapping-host-coverage.py
       - name: Build unavailable Apple helper and inspect without activation
         if: runner.os == 'macOS'
         run: |
@@ -188,11 +189,12 @@ jobs:
       - name: Windows and macOS desktop compilation and regression tests
         if: runner.os != 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build Windows desktop and service binaries
+        if: runner.os == 'Windows'
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service --bin osg-cockpit
       - name: Windows native mapping acceptance
         if: runner.os == 'Windows'
-        run: |
-          cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service --bin osg-cockpit
-          python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --expect-unavailable --output .research/mapping-m3/native-acceptance.json
+        run: python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --expect-unavailable --output .research/mapping-m3/native-acceptance.json
       - name: Stage Windows private-worker packaging evidence
         if: runner.os == 'Windows'
         shell: pwsh
