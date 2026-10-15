@@ -2570,14 +2570,17 @@ mod tests {
         }
     }
     fn timing() -> Timing {
+        // Normal mock exchanges must tolerate runner scheduling, rather than
+        // accidentally exercising timeout/recovery on an already-buffered reply.
+        // Deadline-specific assertions opt into their short budgets explicitly.
         Timing {
-            command: Duration::from_millis(15),
-            reconnect: Duration::from_millis(45),
+            command: Duration::from_secs(1),
+            reconnect: Duration::from_secs(3),
             settle: Duration::from_millis(1),
             poll: Duration::from_millis(1),
             heartbeat: Duration::from_millis(5),
-            ui_timeout: Duration::from_millis(25),
-            claim_timeout: Duration::from_millis(15),
+            ui_timeout: Duration::from_secs(1),
+            claim_timeout: Duration::from_secs(1),
         }
     }
     #[test]
@@ -2653,6 +2656,7 @@ mod tests {
         opened: Vec<String>,
         lines: Vec<(bool, bool)>,
         fragment: usize,
+        read_stall_once: Option<Duration>,
         stale: bool,
         timeout: Option<String>,
         malformed: bool,
@@ -2713,6 +2717,10 @@ mod tests {
     }
     impl Read for MockConnection {
         fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let stall = self.context.lock().unwrap().read_stall_once.take();
+            if let Some(stall) = stall {
+                thread::sleep(stall);
+            }
             if self.data.is_empty() {
                 thread::sleep(Duration::from_millis(1));
                 return Err(io::ErrorKind::TimedOut.into());
@@ -2995,6 +3003,7 @@ mod tests {
             opened: Vec::new(),
             lines: Vec::new(),
             fragment: 4096,
+            read_stall_once: None,
             stale: false,
             timeout: None,
             malformed: false,
@@ -3482,14 +3491,25 @@ mod tests {
     }
 
     #[test]
+    fn buffered_reply_tolerates_scheduling_pause_but_expired_deadline_still_fails() {
+        for expires in [false, true] {
+            let (mut gateway, context) = automatic_harness();
+            context.lock().unwrap().read_stall_once = Some(Duration::from_millis(50));
+            if expires {
+                gateway.timing.command = Duration::from_millis(15);
+            }
+            let reply = connect(&mut gateway);
+            assert_eq!(reply["ok"], !expires, "{reply}");
+            if expires {
+                assert!(reply["error"].as_str().unwrap().contains("timed out"));
+                assert!(gateway.connection.is_none());
+            }
+        }
+    }
+
+    #[test]
     fn automatic_disable_enable_and_forget_are_observed_without_manual_apply() {
         let (mut gateway, context) = automatic_harness();
-        // This checks successful lifecycle transitions, not deadline expiry. A
-        // loaded runner can preempt the test beyond the timeout fixtures' 15 ms
-        // command budget before it consumes the already-buffered mock reply.
-        let production_timing = Timing::default();
-        gateway.timing.command = production_timing.command;
-        gateway.timing.reconnect = production_timing.reconnect;
         let connected = connect(&mut gateway);
         assert_eq!(connected["ok"], true, "{connected}");
         let disabled = request(&mut gateway, "disable", json!({"moduleId":MODULE}));
@@ -3846,6 +3866,8 @@ mod tests {
             1
         );
         context.lock().unwrap().config_route_not_ready = 1000;
+        gateway.timing.command = Duration::from_millis(15);
+        gateway.timing.reconnect = Duration::from_millis(45);
         let started = Instant::now();
         assert_eq!(
             gateway.read_active(MODULE, None).unwrap_err(),
@@ -4156,7 +4178,7 @@ mod tests {
         context.lock().unwrap().state["modules"][0]["online"] = json!(true);
         other["command"] = json!("claim");
         assert_eq!(gateway.request(other)["ok"], true);
-        gateway.heartbeat(Instant::now() - Duration::from_millis(100));
+        gateway.heartbeat(Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1));
         assert!(gateway.connection.is_none());
         assert!(gateway.claims.is_empty());
         assert_eq!(context.lock().unwrap().state["running"], true);
