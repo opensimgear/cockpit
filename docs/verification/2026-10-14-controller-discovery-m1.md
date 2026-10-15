@@ -41,8 +41,9 @@ The requested Windows Tauri dev app was built and launched successfully. Because
 The physical background-capture, same-port reconnect and port-change checks below
 supersede those gaps for the tested Gladiator. The live monitor comparisons below
 verify buttons, unipolar/signed axes and hats while Cockpit is unfocused.
-Simultaneous identical hardware, additional racing/flight models and
-latency/overload measurements remain open. Signed-axis hardware and
+The identical-controller check below completes the remaining physical identity
+check. Additional racing/flight models and latency/overload measurements remain
+separate M7 work. Signed-axis hardware and
 monitor evidence on the MOZA R5 is recorded below. M0's earlier foreground-game
 probe remains evidence for that prototype only.
 
@@ -70,7 +71,7 @@ diagnostic fields. This does not qualify signed-axis hardware or MOZA devices.
 | --- | --- | --- |
 | Foreground-game capture | 5,976 reports; 5,889 with process 33284 (`acr`, window `Assetto Corsa Rally`) in the foreground. Four axes traversed their full declared ranges: X/Y 0–4095, Z/Rz 0–2047. 23 buttons changed between 0 and 1; the hat visited all eight directions and null/neutral 8. Zero stream gaps. | Production background input verified for this hardware. The follow-up signed-axis and native monitor checks below complete criterion 2. |
 | Unplug / same-port reconnect | At 22.366 s, `online` and `baselineReady` became false and a disconnect event arrived. At 38.671 s, the same source ID became available with generation 2, a fresh baseline and 1,571 subsequent reports. Zero gaps. | Criterion 5, unplug clears availability, is verified. |
-| USB port change | At 20.344 s the original local-path identity went offline. At 26.370 s a different ID appeared with its own fresh baseline while the old identity stayed offline. Zero gaps. Return to the original port was not observed within the timed capture. | Port change does not silently transfer assignments. Criterion 1 remains unchecked for the simultaneous identical-controller matrix. |
+| USB port change | At 20.344 s the original local-path identity went offline. At 26.370 s a different ID appeared with its own fresh baseline while the old identity stayed offline. Zero gaps. Return to the original port was not observed within the timed capture. | Port change does not silently transfer assignments. The subsequent identical-controller check below completes the remaining physical identity check. |
 
 Private raw observations and summaries remain under `.research/review-audit`.
 SHA-256 hashes of the three JSONL records, in table order:
@@ -79,8 +80,13 @@ SHA-256 hashes of the three JSONL records, in table order:
 - `fc85f868293586421a2cc5481c07d212f06579455e390f7158909d7ad9c17112`
 - `68160e96730240d5ed26539660868e52ed488f01c0b04242ef4d930d8c4e8a53`
 
-Issue #22 remains open/In review with 6/7 acceptance criteria checked. No output,
-hiding, script or platform qualification gate changes as a result of these checks.
+The physical checks below complete #22's hardware criteria. Software commit
+`c9114a33cd57ec1bee8af9720bc500cd8344c423` passed
+[all 11 CI jobs](https://github.com/opensimgear/cockpit/actions/runs/38727635108),
+completing the regression criterion. All seven criteria now have supporting
+evidence; closure is tracked on GitHub. The final evidence-only record passes its
+validator, hash and diff checks. No output, hiding, script or platform
+qualification gate changes as a result of these checks.
 
 The user also connected a left-hand Gladiator. A separate production inventory
 observed both units simultaneously with different source IDs and complete
@@ -121,8 +127,9 @@ press followed by release. It recorded 1,060 unfocused samples, including
 **Pressed / Native 1** and **Released / Native 0**, with no JavaScript exceptions.
 Together with the R5 signed-axis comparison, this verifies criterion 2. No
 production code or qualification gate was changed for these read-only checks.
-Criterion 1 remains open: the connected left/right Gladiators have different
-product IDs and cannot qualify simultaneous identical controllers.
+The left/right Gladiators have different product IDs and cannot themselves
+qualify simultaneous identical controllers; the separate matching pair below
+provides that evidence.
 
 The private records remain in `.research/review-audit`:
 
@@ -131,3 +138,46 @@ The private records remain in `.research/review-audit`:
 | `windows-gladiator-comparison-2.jsonl` | `65a654667d0c930c0d3c3bf5035eecbd31442e4a416e5cfdbfb470594bc0692b` |
 | `gladiator-comparison-ui.json` | `34171dcf346bb70199c1a106d718d538ce2d7b0202be9002ad4a5b1f51445d75` |
 | `gladiator-trigger-monitor.json` | `0699ddcc2df5c96c2ade370f68f0ee9a1253dab14166ad08820ef51eb57feb3b` |
+
+### Two identical controllers
+
+The user connected two physical devices named **Controller**, both **0079:0126**,
+and confirmed that each connects directly to the PC. Their product model and
+firmware were not supplied, so this evidence identifies the tested pair by USB
+identity and descriptor, without a vendor-wide claim. Both expose the same 34
+fields: four unsigned 8-bit axes (0–255), 13 buttons, one hat and 16 diagnostic
+fields. Each receives a separate source ID, a complete baseline and explicitly
+limited `local-path` identity confidence. The descriptors compare equal.
+
+One continuous read-only production capture lasted 271.109 seconds. The user
+held button 2 on A, released A and held the same button on B. The held states
+belonged to different source IDs, without merging or cross-talk. A's same-port
+unplug cleared availability and baseline at 99.783 s. At 113.576 s its original
+source ID returned with generation 2 and a fresh baseline; its deliberate
+press/release then appeared in that generation. B stayed online and baseline-ready
+at generation 1 throughout.
+
+Moving A to a different port produced a new source ID and fresh baseline at
+181.097 s. By 181.305 s the old A identity was offline with its baseline cleared;
+it was not reassigned to the new path. B retained its identity. The final
+inventory contained two online matching controllers and the remembered offline
+A identity. Captured report counts were 20,175 for A's original identity, 33,054
+for B and 10,958 for A's new path, with zero stream gaps. The user was told they
+could restore A's original port after capture; that restoration is not claimed
+as an observed result. No application settings, output or hiding were changed.
+
+Together with the earlier hotplug/port evidence, independently enumerated debug
+HID collections and authored collection/identity fixtures, this completes
+criterion 1 for the tested Windows setup. Cross-port matching for these serialless
+devices remains an explicit user reassignment; identical labels are not treated
+as permanent physical identity. The scratch probe uses an in-memory registry, so
+UUID comparisons above are within its continuous session; initial inspection
+invocations are not evidence of persisted UUIDs across process restart.
+
+Private records in `.research/review-audit`:
+
+| Record | SHA-256 |
+| --- | --- |
+| `windows-identical-inspect.jsonl` | `55300b3fc64969d2e32d04b5782299f418d7ce830e0a8a3a72bf10dae33541b2` |
+| `windows-identical-comparison.jsonl` | `f507a6009953f2c1df8d1945e5bea678b942c0e98165596bf762ef272a55c1f2` |
+| `windows-identical-comparison-summary.json` | `235191d4095d9f0ac6ecfb50c691726800cf1fcf72d97b7ccb0cd4517d349216` |
