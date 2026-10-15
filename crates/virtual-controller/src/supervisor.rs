@@ -17,6 +17,7 @@ pub struct Worker {
     outgoing: Option<SyncSender<Vec<u8>>>,
     incoming: Receiver<Result<Value, String>>,
     timeout: Duration,
+    activation_timeout: Duration,
     hello: Value,
 }
 impl Worker {
@@ -72,9 +73,10 @@ impl Worker {
             outgoing: Some(outgoing),
             incoming,
             timeout,
+            activation_timeout: timeout,
             hello: Value::Null,
         };
-        let hello = worker.reply()?;
+        let hello = worker.reply(timeout)?;
         if hello["ok"] != true || hello["backend"] != backend || hello["protocol"] != 1 {
             return Err("Output helper handshake does not match the expected backend.".into());
         }
@@ -87,8 +89,8 @@ impl Worker {
     pub fn handshake(&self) -> &Value {
         &self.hello
     }
-    fn reply(&mut self) -> Result<Value, String> {
-        match self.incoming.recv_timeout(self.timeout) {
+    fn reply(&mut self, timeout: Duration) -> Result<Value, String> {
+        match self.incoming.recv_timeout(timeout) {
             Ok(result) => result,
             Err(_) => Err("Output helper exited or exceeded its response deadline.".into()),
         }
@@ -105,7 +107,15 @@ impl Worker {
                 .ok_or("Output helper has stopped.")?
                 .try_send(bytes)
                 .map_err(|_| "Output helper input queue is unavailable.")?;
-            let response = self.reply()?;
+            // Native slot acquisition can exceed the report/renewal budget even
+            // when the driver is healthy. Keep Start/Recover bounded by the
+            // original startup budget; steady-state reports retain the short lease budget.
+            let timeout = if matches!(message, Message::Start { .. } | Message::Recover { .. }) {
+                self.activation_timeout.max(self.timeout)
+            } else {
+                self.timeout
+            };
+            let response = self.reply(timeout)?;
             if response["token"]
                 != serde_json::to_value(message.token()).map_err(|e| e.to_string())?
             {
