@@ -188,6 +188,11 @@ fn native_worker_pulse_replay_and_process_death() {
 }
 #[test]
 fn compiler_and_ipc_fail_closed() {
+    let (profile, _) = fixture();
+    let mut worker = Worker::spawn(helper(), &profile.scripts[0].source).unwrap();
+    assert!(worker.alive());
+    worker.terminate();
+    assert!(!worker.alive());
     assert!(!std::process::Command::new(helper())
         .output()
         .unwrap()

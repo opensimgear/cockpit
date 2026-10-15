@@ -12,6 +12,35 @@ Linux and Windows script modules exceed 70% production line coverage. Portable m
 
 ## Open qualification
 
-Real user-written script output requires a qualified virtual backend; none is enabled. Native macOS resource-control behavior, adversarial memory exhaustion under the final packaged helpers, signed packaging and physical end-to-end latency remain qualification work. The local resource-control tests do not establish an OS permission sandbox. Keep #31 open/In progress and all live script output disabled while these gaps remain.
+Real user-written script output requires a qualified virtual backend; none is enabled. Native macOS resource-control behavior, adversarial memory exhaustion under the final packaged helpers, signed packaging and physical end-to-end latency remain qualification work. The local resource-control tests do not establish an OS permission sandbox. Keep #31 open for these checks and all live script output disabled; implementation is In progress only while its changes and validation are underway, then In review.
 
 Darwin CI exposed that `RLIMIT_DATA=256 MiB` is rejected during helper startup, including with nano malloc disabled. macOS now bounds requested Rust heap allocations at 256 MiB before compilation and limits descriptors, with independent interpreter and parent deadlines. This is **not a cap on native-library allocations or total process RSS**; that qualification remains open and live script output stays disabled. Linux retains RLIMIT_DATA; Windows retains the process Job memory limit. No test is skipped for macOS.
+
+## Live-path completion after implementation audit
+
+The original live entry rejected every scripted profile and never attached the
+compiled helpers to its output router. The prepared-start path now carries the
+workers and source subscription through complete baseline validation, target
+acquisition, reducer transactions and feeder delivery. Qualification is checked
+before any helper/output process starts. `SCRIPT_LIVE_QUALIFIED` remains false,
+as do the independent platform output gates; only injected test services exercise
+the candidate path.
+
+Supervision now observes idle helper death on every pump. Previously an idle
+helper could exit while holding a contribution, with no error until the next
+callback. Death now removes its outputs/state/timers without requiring input.
+Feeder failure also drops remaining script workers and panel subscriptions.
+
+Tests use actual restricted Rhai subprocesses and the production feeder protocol
+with an authored driver adapter. They cover delivered script transactions,
+syntax rejection before acquisition, runtime exceptions, infinite-loop budgets,
+loss of either declared source, idle helper termination and stale input after
+Stop. These are software integration checks, not physical virtual-device or
+game qualification. Native coverage and final exact-commit CI are recorded on
+issue #31; its four composite physical/resource criteria remain unchecked.
+
+Local validation after this change: 30 mapping-host tests pass on Linux and 29
+on Windows (one Linux-specific launch test). All six measured host modules
+exceed 70% production line coverage: the minimum is 79.84% on Linux and 72.59%
+on Windows. Linux's seven script modules also exceed 70%. The running Windows
+Tauri window still renders the overview without JavaScript exceptions.

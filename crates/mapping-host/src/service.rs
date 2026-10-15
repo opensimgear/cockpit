@@ -25,6 +25,7 @@ pub const QUALIFICATION: &str = osg_virtual_controller::uinput::REASON;
 #[cfg(target_os = "macos")]
 pub const QUALIFICATION: &str = osg_virtual_controller::apple_helper::REASON;
 pub const BACKEND: &str = osg_virtual_controller::entry::BACKEND;
+pub const SCRIPT_LIVE_QUALIFIED: bool = false;
 fn native_readiness() -> Value {
     #[cfg(target_os = "linux")]
     {
@@ -50,6 +51,8 @@ pub struct Service {
     inspector: Inspector,
     output_factory: osg_virtual_controller::session::Factory,
     qualified: bool,
+    script_live_qualified: bool,
+    script_factory: Arc<dyn Fn(&str) -> Result<osg_logic::worker::Worker, String> + Send + Sync>,
     stop: Arc<AtomicBool>,
     lifecycle: AtomicU64,
     #[cfg(test)]
@@ -124,6 +127,13 @@ impl Service {
             inspector,
             output_factory,
             qualified,
+            script_live_qualified: SCRIPT_LIVE_QUALIFIED,
+            script_factory: Arc::new(|source| {
+                osg_logic::worker::Worker::spawn(
+                    &std::env::current_exe().map_err(|e| e.to_string())?,
+                    source,
+                )
+            }),
             stop,
             lifecycle: AtomicU64::new(0),
             #[cfg(test)]
@@ -259,10 +269,7 @@ impl Service {
                     .as_str()
                     .filter(|s| !s.is_empty() && s.len() <= 16384)
                     .ok_or("Script source must contain 1–16384 bytes.")?;
-                let worker = osg_logic::worker::Worker::spawn(
-                    &std::env::current_exe().map_err(|e| e.to_string())?,
-                    source,
-                )?;
+                let worker = (self.script_factory)(source)?;
                 Ok(json!({"compiled":true,"sourceHash":worker.source_hash}))
             }
 
@@ -488,7 +495,7 @@ impl Service {
                     .try_lock()
                     .map_err(|_| "A script compilation is already running.")?;
                 let mut workers = std::collections::BTreeMap::new();
-                if live && !profile.scripts.is_empty() {
+                if live && !profile.scripts.is_empty() && !self.script_live_qualified {
                     return Err("Live script output remains disabled pending qualification.".into());
                 }
                 for script in &profile.scripts {
@@ -499,11 +506,8 @@ impl Service {
                     }
                     workers.insert(
                         script.id.clone(),
-                        osg_logic::worker::Worker::spawn(
-                            &std::env::current_exe().map_err(|e| e.to_string())?,
-                            &script.source,
-                        )
-                        .map_err(|error| format!("Script {}: {error}", script.id))?,
+                        (self.script_factory)(&script.source)
+                            .map_err(|error| format!("Script {}: {error}", script.id))?,
                     );
                 }
                 let ids: Vec<String> = assignments
@@ -554,13 +558,15 @@ impl Service {
                         .cloned()
                         .ok_or("Assign a local slot to every target before Start.")?;
                     drop(settings);
-                    router.start_live_with_journal(
+                    router.start_live_prepared(
                         profile,
                         assignments,
                         snapshot,
                         bindings,
                         self.output_factory.clone(),
                         Some(self.recovery_path()?),
+                        workers,
+                        panels,
                     )?
                 } else {
                     router.start_with_panels(profile, assignments, snapshot, workers, panels)?

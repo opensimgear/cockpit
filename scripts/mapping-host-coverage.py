@@ -28,6 +28,9 @@ def main():
     profiles = Path(tempfile.mkdtemp(prefix='profiles-', dir=output))
     env = dict(os.environ, CARGO_TARGET_DIR=str(output / 'target'), RUSTFLAGS='-C instrument-coverage',
                LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
+    run(['cargo', 'build', '--locked', '--bin', 'osg-logic', '--manifest-path',
+         root / 'crates/logic/Cargo.toml'], root, env)
+    env['OSG_TEST_LOGIC_WORKER'] = str(output / 'target/debug' / ('osg-logic.exe' if os.name == 'nt' else 'osg-logic'))
     artifacts = run(['cargo', 'test', '--locked', '--lib', '--no-run', '--message-format=json',
                      '--manifest-path', root / 'crates/mapping-host/Cargo.toml'], root, env)
     binaries = [entry['executable'] for line in artifacts.splitlines()
@@ -35,7 +38,12 @@ def main():
                 and entry.get('executable') and entry.get('profile', {}).get('test')]
     if len(binaries) != 1:
         raise RuntimeError('Expected one mapping host library test executable.')
-    (output / 'tests.log').write_text(run([binaries[0]], root, env), encoding='utf-8')
+    tests = subprocess.run([binaries[0]], cwd=root, env=env, text=True, encoding='utf-8',
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    (output / 'tests.log').write_text(tests.stdout, encoding='utf-8')
+    if tests.returncode:
+        print(tests.stdout, flush=True)
+        tests.check_returncode()
     sysroot = Path(run(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', run(['rustc', '-vV'], root), re.M).group(1)
     suffix = '.exe' if os.name == 'nt' else ''

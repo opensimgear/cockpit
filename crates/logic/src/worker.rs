@@ -99,6 +99,11 @@ impl Worker {
     pub fn id(&self) -> Option<u32> {
         self.child.as_ref().map(Child::id)
     }
+    pub fn alive(&mut self) -> bool {
+        self.child
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
+    }
     pub fn pending(&self) -> Option<&Ticket> {
         self.pending.as_ref().map(|(ticket, _)| ticket)
     }

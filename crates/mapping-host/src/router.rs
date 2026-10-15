@@ -403,6 +403,14 @@ impl Router {
     pub fn poll_scripts(&mut self) {
         let mut obsolete = Vec::new();
         for (id, worker) in &mut self.scripts {
+            if !worker.alive() {
+                self.runtime.script_fault(
+                    id,
+                    "Script helper terminated; its outputs and timers were released.",
+                );
+                obsolete.push(id.clone());
+                continue;
+            }
             if self.runtime.engine().is_none_or(|e| !e.script_enabled(id)) {
                 obsolete.push(id.clone());
                 continue;
@@ -466,6 +474,28 @@ impl Router {
         factory: osg_virtual_controller::session::Factory,
         path: Option<std::path::PathBuf>,
     ) -> Result<RunToken, String> {
+        self.start_live_prepared(
+            profile,
+            assignments,
+            snapshot,
+            bindings,
+            factory,
+            path,
+            BTreeMap::new(),
+            None,
+        )
+    }
+    pub fn start_live_prepared(
+        &mut self,
+        profile: Profile,
+        assignments: Vec<Assignment>,
+        snapshot: stream::Snapshot,
+        bindings: Vec<osg_virtual_controller::vjoy::Binding>,
+        factory: osg_virtual_controller::session::Factory,
+        path: Option<std::path::PathBuf>,
+        workers: BTreeMap<String, osg_logic::worker::Worker>,
+        panels: Option<crate::panels::Feed>,
+    ) -> Result<RunToken, String> {
         if self.runtime.token().is_ok()
             || self.output.as_ref().is_some_and(|o| o.recovery_required())
         {
@@ -479,12 +509,9 @@ impl Router {
                     .into(),
             );
         }
-        if !profile.scripts.is_empty() {
-            return Err("Live script output remains disabled pending resource-control and driver qualification. Use recording preview.".into());
-        }
         crate::settings::validate_bindings(&profile, &bindings)?;
         let mut candidate = Router::default();
-        let token = candidate.start(profile, assignments, snapshot)?;
+        let token = candidate.start_with_panels(profile, assignments, snapshot, workers, panels)?;
         let cursor = self.runtime.recording.cursor();
         // Acquire and confirm every target before replacing the stopped workspace.
         let output = osg_virtual_controller::session::Session::start_with_journal(
@@ -525,6 +552,8 @@ impl Router {
         };
         if let Err(error) = result {
             self.runtime.stop();
+            self.scripts.clear();
+            self.panels = None;
             self.fault = Some(error.clone());
             return Err(error);
         }
