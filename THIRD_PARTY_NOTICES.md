@@ -15,6 +15,11 @@ upstream library data or other separately licensed portions.
   not imply that its code is owned by OpenSimGear.
 - Any separately distributed vJoy, HidHide, DCS-BIOS or other external software
   retains its upstream terms.
+- Bundled optional Windows installers for vJoy 2.2.2.0 (BrunnerInnovation) and
+  HidHide 1.5.230.0 (nefarius) are unmodified upstream releases. Their provenance,
+  hashes and complete upstream license notices are in
+  `src-tauri/resources/dependencies/`, distributed as `dependencies/` alongside
+  the application's resources.
 - Bundled firmware and other resources must retain the notices supplied with
   their source projects.
 

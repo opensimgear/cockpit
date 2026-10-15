@@ -7,6 +7,8 @@
   ],
   "permissions": [
     "allow-gateway-request",
+    "allow-optional-dependencies",
+    "allow-optional-dependency-install",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

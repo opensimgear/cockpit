@@ -9,6 +9,18 @@ $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Run staging on native Windows.' }
 $repository = Split-Path -Parent $PSScriptRoot
 $noticeNames = @('LICENSE', 'THIRD_PARTY_NOTICES.md')
+$dependencyRoot = Join-Path $repository 'src-tauri/resources/dependencies'
+$dependencies = @(Get-Content -LiteralPath (Join-Path $dependencyRoot 'manifest.json') -Raw | ConvertFrom-Json)
+foreach ($dependency in $dependencies) {
+    $installer = Join-Path $dependencyRoot $dependency.filename
+    if ((Get-Item -LiteralPath $installer).Length -ne $dependency.size -or
+        (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dependency.sha256) {
+        throw "Optional installer does not match the pinned catalog: $($dependency.id)"
+    }
+    if ((Get-AuthenticodeSignature -LiteralPath $installer).Status -ne 'Valid') {
+        throw "Optional installer has no valid publisher signature: $($dependency.id)"
+    }
+}
 foreach ($name in $noticeNames) {
     if (-not (Test-Path -LiteralPath (Join-Path $repository $name) -PathType Leaf)) {
         throw "Missing distribution notice: $name"
@@ -28,6 +40,10 @@ $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPat
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $destination = Join-Path $output 'osg-cockpit.exe'
 $manifest = Join-Path $output 'qualification.json'
+$dependencyDestination = Join-Path $output 'dependencies'
+if (Test-Path -LiteralPath $dependencyDestination) {
+    throw 'Use a new staging directory; existing dependencies are not replaced.'
+}
 if ((Test-Path -LiteralPath $destination) -or (Test-Path -LiteralPath $manifest)) {
     throw 'Use a new staging directory; existing artifacts are not replaced.'
 }
@@ -44,6 +60,13 @@ if ($stagedSignature.Status -ne $signature.Status) { throw 'Signature status cha
 foreach ($name in $noticeNames) {
     Copy-Item -LiteralPath (Join-Path $repository $name) -Destination (Join-Path $output $name)
 }
+Copy-Item -LiteralPath $dependencyRoot -Destination $dependencyDestination -Recurse
+foreach ($dependency in $dependencies) {
+    $installer = Join-Path $dependencyDestination $dependency.filename
+    if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dependency.sha256) {
+        throw "Optional installer changed during staging: $($dependency.id)"
+    }
+}
 $evidence = [ordered]@{
     schema = 1
     qualified = $false
@@ -54,7 +77,7 @@ $evidence = [ordered]@{
     signer = if ($stagedSignature.SignerCertificate) { $stagedSignature.SignerCertificate.Subject } else { $null }
     os = [Environment]::OSVersion.VersionString
     helperPackaging = 'Private modes of the same executable; no replacement helper path from settings.'
-    optionalDependenciesBundled = @()
+    optionalDependenciesBundled = @($dependencies | Select-Object id, version, filename, sha256)
     gates = 'Live output, provisioning, visibility and live script output remain disabled.'
     remaining = 'Signed installer/driver setup, UAC/upgrade/recovery, physical routing and real-game qualification.'
 }

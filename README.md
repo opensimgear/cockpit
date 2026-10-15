@@ -44,6 +44,14 @@ This discovery slice does not activate virtual outputs or hiding. Linux/macOS ca
 
 ## Controller workflow
 
+The Windows x64 desktop app includes optional **vJoy 2.2.2.0** and
+**HidHide 1.5.230.0** installers. Open **Devices → Host controllers → Optional
+Windows dependencies**, then choose **Set up vJoy** or **Set up HidHide**.
+Setup is also available beside the corresponding mapping and visibility controls.
+Each action opens the upstream setup wizard with Windows administrator approval;
+complete any requested restart, then inspect the dependency. Neither is required
+for ordinary controller input. See the [platform setup guide](docs/controller-mapping-platforms.md).
+
 The automatic controller workflow is recorded in the [USB HID architecture](https://github.com/opensimgear/opensimgear.github.io/blob/main/src/content/docs/gear/architecture/usb-hid.md) and [Cockpit #5](https://github.com/opensimgear/cockpit/issues/5). Enabled devices have dynamic collections. Offline ghosts retain them temporarily; Disable or Remove deletes them. A replacement identity appends independently and keeps its own module settings/calibration. This implementation does not provide permanent empty collections or transfer another device’s calibration.
 
 ## Run and build
