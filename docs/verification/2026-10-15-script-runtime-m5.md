@@ -12,7 +12,7 @@ Linux and Windows script modules exceed 70% production line coverage. Portable m
 
 ## Open qualification
 
-Real user-written script output requires a qualified virtual backend; none is enabled. Native macOS resource-control behavior, adversarial memory exhaustion under the final packaged helpers, signed packaging and physical end-to-end latency remain qualification work. The local resource-control tests do not establish an OS permission sandbox. Keep #31 open for these checks and all live script output disabled; implementation is In progress only while its changes and validation are underway, then In review.
+Real user-written script output requires a qualified virtual backend; none is enabled. Native macOS resource-control behavior, adversarial memory exhaustion under the final packaged helpers, signed packaging and physical end-to-end latency remain qualification work. The local resource-control tests do not establish an OS permission sandbox. Live script output remains disabled. The 16 October acceptance split below moves the missing Windows checks to a separate story; macOS qualification remains deferred separately.
 
 Darwin CI exposed that `RLIMIT_DATA=256 MiB` is rejected during helper startup, including with nano malloc disabled. macOS now bounds requested Rust heap allocations at 256 MiB before compilation and limits descriptors, with independent interpreter and parent deadlines. This is **not a cap on native-library allocations or total process RSS**; that qualification remains open and live script output stays disabled. Linux retains RLIMIT_DATA; Windows retains the process Job memory limit. No test is skipped for macOS.
 
@@ -44,3 +44,22 @@ on Windows (one Linux-specific launch test). All six measured host modules
 exceed 70% production line coverage: the minimum is 79.84% on Linux and 72.59%
 on Windows. Linux's seven script modules also exceed 70%. The running Windows
 Tauri window still renders the overview without JavaScript exceptions.
+
+## Implementation acceptance — 16 October 2026
+
+At the user's request, #31's four unverified composite criteria move, unchecked,
+to [#52](https://github.com/opensimgear/cockpit/issues/52): actual script-to-vJoy
+delivery, packaged resource/failure cleanup, native two-source loss, and loaded
+capture/UI/feeder response. Existing deterministic replay and software failure
+checks remain valid; transferring a composite does not mark its missing portions
+passed. Three original criteria are verified, and implementation may close while
+ordinary live script/output gates remain false.
+
+Local CI on a clean committed export passes real restricted worker tests and all
+seven Windows logic module coverage gates (minimum 77.42%). The mapping-host
+script/feeder integration suite and all six host coverage gates pass (minimum
+72.99%). Portable reducer/rule/runtime coverage passes (minimum 92.72%); Windows
+virtual-output coverage passes all measured modules (minimum 76.32%). Frontend
+type/Svelte checks, transport, coverage and production UI build also pass. These
+checks use actual isolated script processes and authored output adapters; no
+physical qualification or production enablement is inferred from them.
