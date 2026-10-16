@@ -7,6 +7,7 @@ mod dcs_profile;
 mod dcs_profile_runtime;
 mod dcs_runtime;
 mod dcs_setup;
+mod desktop;
 mod game_discovery;
 mod game_integration_setup;
 mod game_telemetry;
@@ -108,7 +109,12 @@ async fn gateway_request(
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        desktop::show_main(app);
+    }));
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -118,15 +124,20 @@ pub fn run() {
         )
         .setup(|app| {
             app.manage(NativeGateway(Arc::new(gateways::GatewayManager::new())));
+            desktop::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             gateway_request,
             optional_dependencies,
             optional_dependency_install,
-            pick_game_executable
+            pick_game_executable,
+            desktop::desktop_preferences,
+            desktop::set_tray_preferences,
+            desktop::set_autostart
         ])
         .on_window_event(|window, event| {
+            desktop::window_event(window, event);
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<NativeGateway>().0.shutdown();
                 window.app_handle().exit(0);
@@ -135,6 +146,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("could not start OpenSimGear Cockpit");
     app.run(|handle, event| {
+        if matches!(event, tauri::RunEvent::MainEventsCleared) {
+            desktop::hide_if_minimized(handle);
+        }
         if matches!(
             event,
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }

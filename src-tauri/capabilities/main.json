@@ -10,6 +10,9 @@
     "allow-optional-dependencies",
     "allow-optional-dependency-install",
     "allow-pick-game-executable",
+    "allow-desktop-preferences",
+    "allow-set-tray-preferences",
+    "allow-set-autostart",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

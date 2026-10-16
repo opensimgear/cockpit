@@ -5,6 +5,9 @@ fn main() {
             "optional_dependencies",
             "optional_dependency_install",
             "pick_game_executable",
+            "desktop_preferences",
+            "set_tray_preferences",
+            "set_autostart",
         ]),
     ))
     .expect("could not build Cockpit desktop resources");

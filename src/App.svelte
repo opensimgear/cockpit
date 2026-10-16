@@ -16,6 +16,7 @@
   import DcsBiosPanel from './lib/DcsBiosPanel.svelte';
   import IntegrationsPanel from './lib/IntegrationsPanel.svelte';
   import GamesPanel from './lib/GamesPanel.svelte';
+  import DesktopPreferences from './lib/DesktopPreferences.svelte';
   import type { GamesState, GameRequest } from './lib/games';
   import type { IntegrationConfig, IntegrationRequest, IntegrationState } from './lib/integration-profile';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
@@ -404,6 +405,7 @@
         {:else if view === 'preferences'}
           <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Preferences</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
           <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
+          <DesktopPreferences />
         {:else if view === 'mappings'}
           <MappingsPanel />
         {:else if view === 'companions'}
