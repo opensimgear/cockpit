@@ -482,13 +482,14 @@ static void command(cJSON *v){
     state=settings.token[0]?AUTH:PAIR_BEGIN;next_request=millis();report(phases[state]);
 }
 static size_t serial_used;
-static bool serial_overflow;
+static bool serial_overflow,serial_timed_out;
+static uint64_t serial_started_ms;
 static void serial_byte(int c){
     if(c=='\n'||c=='\r'){
-        if(serial_overflow){report("provisioning-line-too-large");serial_overflow=false;}
+        if(serial_overflow){if(!serial_timed_out)report("provisioning-line-too-large");}
         else if(serial_used){serial_line[serial_used]=0;cJSON *v=osg_json_parse(serial_line,serial_used);if(v){command(v);cJSON_Delete(v);}else report("invalid-command-json");}
-        mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;
-    }else if(!serial_overflow){if(serial_used<OSG_PROVISION_BYTES)serial_line[serial_used++]=(char)c;else serial_overflow=true;}
+        mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;serial_overflow=serial_timed_out=false;serial_started_ms=0;
+    }else if(!serial_overflow){if(!serial_used)serial_started_ms=millis();if(serial_used<OSG_PROVISION_BYTES)serial_line[serial_used++]=(char)c;else serial_overflow=true;}
 }
 static void update_screen(void){
     osg_screen_state screen=!settings.token[0] ? OSG_SCREEN_UNPAIRED :
@@ -496,6 +497,31 @@ static void update_screen(void){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(ui.runtime->screen!=screen){ui.runtime->screen=screen;*ui.dirty=true;}
     xSemaphoreGive(ui.mutex);
+}
+/* A UART EOF can split one host command. The synchronous request reader must
+ * not consume its suffix as a fresh reply record. Retain parser ownership until
+ * LF, cancel an armed source after100ms, and discard expired input until LF. */
+static void work_after_serial(void){
+    if(serial_used||serial_overflow){
+        if(!serial_timed_out){
+            xSemaphoreTake(ui.mutex,portMAX_DELAY);
+            const bool active=state==LIVE&&(remote_armed||input.mode==OSG_INPUT_PREPARING||input.mode==OSG_INPUT_ARMED);
+            const uint64_t now=millis();
+            const bool expired=now<serial_started_ms||now-serial_started_ms>=(active?100u:5000u);
+            if(expired&&active){input_health();osg_input_cancel(&input,OSG_INPUT_CANCELLED);*ui.dirty=true;}
+            xSemaphoreGive(ui.mutex);
+            if(expired){
+                mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;serial_overflow=serial_timed_out=true;
+                if(active)fail("serial-command-fragment-timeout-input-stopped");
+                else report("serial-command-fragment-expired");
+            }
+        }
+        update_screen();return;
+    }
+#ifdef OSG_RENDER_ENGINE
+    navigate_scene();
+#endif
+    advance();update_screen();arm_when_ready();
 }
 static void network_task(void *arg){
     (void)arg;osg_json_init();
@@ -515,10 +541,7 @@ static void network_task(void *arg){
     }
     (void)fcntl(fileno(stdin),F_SETFL,O_NONBLOCK);report("serial-provisioning-ready");
     for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
-#ifdef OSG_RENDER_ENGINE
-        navigate_scene();
-#endif
-        advance();update_screen();arm_when_ready();
+        work_after_serial();
 #ifdef ESP_PLATFORM
         static uint64_t last_stack;
         if(millis()-last_stack>=1000){osg_diagnostics_stack(OSG_DIAG_NETWORK_STACK,(uint32_t)uxTaskGetStackHighWaterMark(NULL));last_stack=millis();}

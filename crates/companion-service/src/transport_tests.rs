@@ -511,3 +511,7 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     assert_eq!(call(&mut socket,json!({"type":"auth","token":token}))["ok"],false);
     drop(socket);drop(server);
 }
+
+#[cfg(windows)]
+#[path = "render_transport_tests.rs"]
+mod render_transport;

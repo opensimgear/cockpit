@@ -134,6 +134,25 @@ static void live_input_tests(void){
     assert(measured.pending_input_max_us>=250000&&measured.touch_age_max_us>=600000&&measured.render_age_max_us>=600000&&measured.queue_max==OSG_INPUT_QUEUE_CAPACITY);
     permit_inputs=false;stop();
 }
+static void serial_text(const char *value){for(;*value;value++)serial_byte((unsigned char)*value);}
+static void serial_fragment_tests(void){
+    /* A split status command owns the UART parser until its delimiter. */
+    setup();state=AUTH;osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    serial_text("{\"command\":\"sta");int before=requests;fake_ms+=99;work_after_serial();assert(state==AUTH&&requests==before&&serial_used&&!serial_overflow);
+    serial_text("tus\"}\n");assert(!serial_used&&!serial_overflow);work_after_serial();assert(state==OPEN&&requests==before+1);
+    /* Never renew a source lease while a partial command is pending. */
+    permit_inputs=true;live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);advance();assert(mock_button);
+    serial_text("{\"command\":\"sta");before=requests;int lost=loss_requests;uint64_t ack=input.last_ack_ms;fake_ms+=99;work_after_serial();assert(state==LIVE&&test_runtime.armed&&mock_button&&requests==before&&input.last_ack_ms==ack);
+    fake_ms++;work_after_serial();assert(state==FAULT&&!test_runtime.armed&&!remote_armed&&!mock_button&&input.count==0&&loss_requests==lost+1&&requests==before&&serial_overflow&&serial_timed_out);
+    /* A timed-out suffix cannot become a new command, even if it is valid JSON. */
+    serial_text("{\"command\":\"connect\"}\n");assert(state==FAULT&&!serial_used&&!serial_overflow&&!serial_timed_out);for(size_t i=0;i<sizeof(serial_line);i++)assert(!serial_line[i]);
+    /* Ordinary setup fragments expire after5s and remain discarded until LF. */
+    setup();state=AUTH;serial_text("{");before=requests;fake_ms+=4999;work_after_serial();assert(state==AUTH&&requests==before&&!serial_timed_out);
+    fake_ms++;work_after_serial();assert(state==AUTH&&requests==before&&serial_overflow&&serial_timed_out);serial_text("discarded\n");assert(!serial_used&&!serial_overflow);work_after_serial();assert(state==OPEN&&requests==before+1);
+    /* An overflowing record has the same100ms active-source deadline. */
+    live_ready();live_arm();for(size_t i=0;i<OSG_PROVISION_BYTES+1;i++)serial_byte('a');assert(serial_overflow);before=requests;fake_ms+=100;work_after_serial();assert(state==FAULT&&!mock_host_armed&&requests==before);serial_byte('\n');assert(!serial_overflow&&!serial_used);
+    stop();permit_inputs=false;
+}
 int main(int argc,char **argv){
     assert(argc==2);osg_json_init();char raw[OSG_REPLY_BYTES];FILE *f=fopen(argv[1],"rb");assert(f);size_t n=fread(raw,1,sizeof(raw),f);fclose(f);fixture=osg_json_parse(raw,n);assert(fixture);
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&images[0],800,480));
@@ -245,5 +264,6 @@ int main(int argc,char **argv){
     osg_network_render(test_runtime.panel,true,true);osg_network_touch(true,false,0,0);
     arm_when_ready();assert(remote_armed&&test_runtime.armed);
     stop();
+    serial_fragment_tests();
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

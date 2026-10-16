@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <stdio.h>
 static osg_engine mock_engine;static osg_runtime snapshot;
-static int acquire_result=1;static unsigned tiles,starts,finishes,presents,chrome,updates,release_calls,last_slice,failures;
+static int acquire_result=1;static unsigned tiles,starts,finishes,presents,chrome,updates,release_calls,last_slice,failures,render_calls;
 static bool acquired,release_hits,present_ok=true,chrome_fail,slice_fail;
 static uint64_t clock_us;
 int64_t esp_timer_get_time(void){clock_us+=100;return (int64_t)clock_us;}
@@ -16,7 +16,7 @@ void osg_network_scene_release(bool publish){assert(acquired);acquired=false;rel
 void osg_network_render(const osg_panel *panel,bool finished,bool success){assert(acquired&&panel==snapshot.panel);if(finished){finishes++;if(!success)failures++;}else starts++;}
 const char *osg_engine_current_package(const osg_engine *e){assert(e==&mock_engine);return e->package_hash;}
 bool osg_engine_update_from_runtime(osg_engine *e,const osg_runtime *r,uint64_t now){(void)now;assert(acquired&&r==&drawing);updates++;if(e->failed||e->scene.pending||e->scene.awaiting_present)return false;if(tiles)e->scene.pending=true;return true;}
-unsigned osg_engine_render_slice(osg_engine *e,unsigned maximum,osg_write_pixels write,void *context){(void)write;(void)context;assert(acquired&&maximum==8&&e->scene.pending);last_slice=maximum;if(slice_fail){e->failed=true;e->scene.failed=true;e->scene.pending=false;return 0;}unsigned n=tiles<maximum?tiles:maximum;tiles-=n;if(!tiles){e->scene.pending=false;e->scene.awaiting_present=true;}return n;}
+unsigned osg_engine_render_slice(osg_engine *e,unsigned maximum,osg_write_pixels write,void *context){(void)write;(void)context;assert(acquired&&maximum==8&&e->scene.pending);last_slice=maximum;render_calls++;if(slice_fail){e->failed=true;e->scene.failed=true;e->scene.pending=false;return 0;}unsigned n=tiles<maximum?tiles:maximum;tiles-=n;if(!tiles){e->scene.pending=false;e->scene.awaiting_present=true;}return n;}
 void osg_engine_presented(osg_engine *e,bool success){assert(acquired);e->scene.awaiting_present=false;if(success)e->scene.ready=true;else{e->failed=e->scene.failed=true;e->scene.pending=false;e->scene.ready=false;}}
 void osg_raster_status(osg_raster *r,const osg_runtime *runtime){assert(acquired&&runtime==&drawing);chrome++;r->failed=chrome_fail;}
 static bool present(void *context){(void)context;assert(acquired);presents++;return present_ok;}
@@ -32,6 +32,17 @@ int main(void){
     /* Input-health changes must present chrome even if content has no damage. */
     snapshot.arming=true;assert(scene_tick(&board,4,&rendered)==0&&presents==saved+1&&release_hits);snapshot.arming=false;snapshot.armed=true;assert(scene_tick(&board,5,&rendered)==0&&presents==saved+2);
     snapshot.connected=false;assert(scene_tick(&board,6,&rendered)==0&&presents==saved+3);
+    /* Warm prepare reuses an already presented package but publishes a new
+     * logical shim. The stopped/offline state and scene properties are equal,
+     * so only a trusted chrome fence can acknowledge this new activation. */
+    static const osg_panel warm_panel={0};unsigned before_present=presents,before_chrome=chrome,before_start=starts,before_finish=finishes,before_tiles=render_calls;
+    snapshot.panel=&warm_panel;acquire_result=0;assert(scene_tick(&board,6,&rendered)==0&&presents==before_present);acquire_result=1;
+    assert(mock_engine.scene.ready&&!tiles&&!mock_engine.scene.pending);
+    assert(scene_tick(&board,6,&rendered)==0&&presents==before_present+1&&chrome==before_chrome+1&&starts==before_start+1&&finishes==before_finish+1&&release_hits);
+    assert(render_calls==before_tiles&&mock_engine.scene.ready);
+    assert(scene_tick(&board,6,&rendered)==0&&presents==before_present+1&&!release_hits);
+    /* Both alternating logical image slots need a fence on subsequent reuse. */
+    snapshot.panel=&panel;assert(scene_tick(&board,6,&rendered)==0&&presents==before_present+2&&release_hits&&render_calls==before_tiles);
     /* A transfer may replace the sole scene between bounded slices. */
     tiles=16;assert(scene_tick(&board,7,&rendered)==1);reset_scene("package-B");tiles=1;assert(scene_tick(&board,8,&rendered)==0&&release_hits);
     present_ok=false;tiles=1;assert(scene_tick(&board,9,&rendered)==0&&mock_engine.failed&&failures==1&&release_hits);saved=finishes;assert(scene_tick(&board,10,&rendered)==0&&finishes==saved);

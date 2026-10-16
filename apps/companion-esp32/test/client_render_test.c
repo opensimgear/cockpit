@@ -10,7 +10,7 @@ static int fake_settimeofday(const struct timeval *,const struct timezone *);
 static void paint(bool success);
 static uint64_t fake_ms;static unsigned mutex_depth,release_after;
 static bool network_ok=true,store_ok=true,assignment_available=true,obsolete,malformed_open,malformed_feedback;
-static unsigned opens,closes,baselines,source_inputs,auths,feedback_sequence;
+static unsigned opens,closes,baselines,source_inputs,auths,feedback_sequence,wire_requests;
 static bool host_armed,host_button;static host management;static cJSON *legacy_publication;
 static bool legacy_mode;
 static osg_runtime runtime;static bool dirty;static const osg_panel *drawing;
@@ -45,7 +45,7 @@ static void compact_feedback(cJSON *reply){
     }
 }
 bool osg_socket_request(osg_socket *s,cJSON *value,cJSON **out,unsigned timeout){
-    (void)s;assert(!mutex_depth);const char *type=osg_string(value,"type");assert(type);if(!strncmp(type,"render-",7)&&strcmp(type,"render-open"))return fake_request(&management,value,out,timeout);
+    (void)s;assert(!mutex_depth);wire_requests++;const char *type=osg_string(value,"type");assert(type);if(!strncmp(type,"render-",7)&&strcmp(type,"render-open"))return fake_request(&management,value,out,timeout);
     *out=reply_base("ack");cJSON *r=*out;char source[72];source_hash(management.package,source);if(legacy_mode)assert(osg_copy(source,72,osg_string(legacy_publication,"publicationHash")));
     if(!strcmp(type,"auth")){auths++;replace_text(r,"type","authenticated");cJSON_AddStringToObject(r,"hostId","host");cJSON_AddStringToObject(r,"companionId","screen");cJSON *list=cJSON_AddArrayToObject(r,"assignments");if(assignment_available){cJSON *a=cJSON_CreateObject();cJSON_AddItemToArray(list,a);cJSON_AddStringToObject(a,"instanceId","panel");cJSON_AddStringToObject(a,"publicationHash",source);}}
     else if(!strcmp(type,"render-open")||!strcmp(type,"open")){
@@ -73,6 +73,7 @@ static void paint(bool success){
 static void connect_package(const fixture *f){stop();management=(host){.package=f,.engine=&render_engine};memset(&settings,0,sizeof(settings));osg_copy(settings.host,sizeof(settings.host),"host");osg_copy(settings.companion,sizeof(settings.companion),"screen");osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");state=AUTH;next_request=fake_ms;legacy_mode=false;assignment_available=true;obsolete=malformed_open=malformed_feedback=false;}
 static void transfer_to_paint(void){advance();assert(state==OPEN);advance();assert(state==RENDER_TRANSFER&&engine_suspended);assert(osg_network_scene_acquire(NULL,NULL)==0);unsigned limit=0;while(state==RENDER_TRANSFER){fake_ms+=10;advance();assert(++limit<5000);}assert(state==RENDER_PAINT&&!engine_suspended&&!runtime.connected&&!runtime.armed);}
 static void open_after_paint(void){unsigned before=opens;advance();assert(state==RENDER_PAINT&&opens==before);paint(true);assert(render_engine.scene.ready&&!scene_hits.ready);advance();assert(state==RENDER_OPEN&&opens==before);advance();assert(state==LIVE&&opens==before+1&&runtime.connected&&!runtime.armed&&render_session);paint(true);assert(scene_hits.ready);osg_network_touch(true,false,0,0);}
+static void serial_text(const char *value){for(;*value;value++)serial_byte((unsigned char)*value);}
 static void arm_live(void){assert(state==LIVE&&!runtime.armed);arm_when_ready();assert(runtime.armed&&remote_armed&&host_armed);advance();}
 int main(int argc,char **argv){
     assert(argc==4);osg_json_init();size_t legacy_bytes;char *legacy_raw=load(argv[3],&legacy_bytes);legacy_publication=osg_json_parse(legacy_raw,legacy_bytes);free(legacy_raw);assert(legacy_publication);sha=EVP_MD_CTX_new();assert(sha);unsigned board=!strcmp(argv[2],"waveshare");const char *name=board?"waveshare":"sunton",*profile=board?"waveshare-lcd7-s3":"sunton-3248s035r";unsigned width=board?800:480,height=board?480:320;
@@ -80,6 +81,9 @@ int main(int argc,char **argv){
     char initial_source[72];source_hash(&a,initial_source);osg_page page={"boot","Boot",(uint16_t)width,(uint16_t)(height-32)};osg_widget widget={.id="boot",.reference="boot",.output_id="",.label="Boot",.prefix="",.suffix="",.unit="",.kind=OSG_BUTTON,.bounds={.1,.1,.2,.2}};osg_panel panel={"boot",initial_source,&page,&widget,1,1};assert(osg_init(&runtime,&panel,(osg_display){NULL,(int)width,(int)height,fill,text},NULL,NULL));osg_network_start((osg_network_ui){&runtime,(void *)1,&dirty,&drawing,true});
     assert(osg_network_scene_acquire(NULL,NULL)==-1);connect_package(&a);transfer_to_paint();assert(management.reads>0);open_after_paint();advance();assert(session.feedback_seen&&runtime.samples[render_engine.output_widgets[0]].available);paint(true);arm_live();
     osg_engine_hit control=scene_hits.hits[0];assert(control.widget!=OSG_ENGINE_NONE);fake_ms++;osg_network_touch(true,true,control.x+1,control.y+1);advance();assert(source_inputs==1&&host_button);fake_ms+=20;osg_network_touch(true,false,0,0);advance();assert(source_inputs==2&&!host_button);
+    // A split management command retains parser ownership before input/heartbeat/nav work.
+    serial_text("{\"command\":\"sta");unsigned wire_before=wire_requests;navigation_pending=0;fake_ms+=30;work_after_serial();assert(state==LIVE&&runtime.armed&&wire_requests==wire_before&&navigation_pending==0);navigation_pending=-1;
+    serial_text("tus\"}\n");work_after_serial();assert(state==LIVE&&!serial_used&&!serial_overflow&&runtime.armed);
     unsigned before=flash_writes,old_open=opens;connect_package(&a);transfer_to_paint();assert(!management.reads&&!delivery.received&&flash_writes==before);open_after_paint();assert(opens==old_open+1&&!runtime.armed);
     // A source assignment change invalidates the old input session before downloading B.
     obsolete=true;next_request=fake_ms;advance();assert(state==AUTH&&!runtime.connected&&!runtime.armed&&!render_session);obsolete=false;management=(host){.package=&b,.engine=&render_engine};fake_ms+=500;transfer_to_paint();open_after_paint();assert(!strcmp(render_engine.package_hash,b.hash)&&!runtime.armed);
@@ -98,6 +102,11 @@ int main(int argc,char **argv){
     osg_network_touch(false,true,control.x+1,control.y+1);osg_network_touch(false,false,0,0);assert(source_inputs==edges);scene_hits=saved_hits;
     navigation_pending=-1;navigate_scene();navigation_pending=99;navigate_scene();engine_suspended=true;navigation_pending=0;navigate_scene();engine_suspended=false;
     public_status("render-status");osg_network_scene_release(false);
+    // The same parser guard cancels a held render source within100ms without a new ACK.
+    paint(true);osg_network_touch(true,false,0,0);arm_live();osg_engine_hit held=scene_hits.hits[0];fake_ms++;osg_network_touch(true,true,held.x+1,held.y+1);advance();assert(host_button);
+    serial_text("{\"command\":\"sta");wire_before=wire_requests;uint64_t last_ack=input.last_ack_ms;fake_ms+=99;work_after_serial();assert(host_button&&runtime.armed&&wire_requests==wire_before&&input.last_ack_ms==last_ack);
+    fake_ms++;work_after_serial();assert(state==FAULT&&!runtime.armed&&!host_button&&!host_armed&&wire_requests==wire_before);serial_text("{\"command\":\"connect\"}\n");assert(state==FAULT&&!serial_used&&!serial_overflow);
+    connect_package(&b);transfer_to_paint();open_after_paint();
     // A framebuffer failure suppresses hits and cannot become an armed session.
     connect_package(&a);transfer_to_paint();paint(false);advance();assert(state==RENDER_PAINT&&!scene_hits.ready);fake_ms=next_request;advance();assert(state==FAULT&&!runtime.armed&&!host_armed);
     osg_content_release(&render_engine.active_view);assert(osg_engine_initialize_io(&render_engine,profile,(uint16_t)width,(uint16_t)height,io())==OSG_CONTENT_OK);scene_disarmed_presented=false;

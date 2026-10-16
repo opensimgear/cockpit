@@ -140,6 +140,7 @@ jobs:
           cargo test --locked --manifest-path crates/companion-service/Cargo.toml render_object
           cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test render_objects
           cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test render_delivery
+          cargo test --locked --manifest-path crates/companion-service/Cargo.toml --lib real_wss_render_management
       - name: USB serial pairing, bounded delivery and connection isolation
         run: |
           cargo test --locked --manifest-path crates/companion-serial/Cargo.toml

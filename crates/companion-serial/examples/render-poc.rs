@@ -113,11 +113,11 @@ fn run()->Result<(),String>{
             revision="B".into();install(&hub,&mut boards,&revision,false)?;switched=true;live_since=None;
         }
         if start.elapsed().as_secs()>=last_print {
-            for row in &rows{println!("{}",json!({"event":"device","elapsedMs":start.elapsed().as_millis(),"revision":revision,"port":row["port"],"device":row["device"],"lastWireRequest":row["lastWireRequest"],"lastHostError":row["lastHostError"],"contentBytes":row["renderContentBytes"],"contentRequests":row["renderContentRequests"]}));}
+            for row in &rows{println!("{}",json!({"event":"device","elapsedMs":start.elapsed().as_millis(),"revision":revision,"port":row["port"],"device":row["device"],"deviceStatus":row["deviceStatus"],"lastWireRequest":row["lastWireRequest"],"lastHostError":row["lastHostError"],"contentBytes":row["renderContentBytes"],"contentRequests":row["renderContentRequests"]}));}
             println!("{}",json!({"event":"input-evidence","elapsedMs":start.elapsed().as_millis(),"counts":evidence.0.lock().unwrap().clone()}));
             last_print=start.elapsed().as_secs()+1;
         }
-        thread::sleep(Duration::from_millis(33));
+        thread::sleep(Duration::from_millis(50));
     }
     manager.shutdown();println!("{}",json!({"event":"complete","revision":revision,"switched":switched,"counts":evidence.0.lock().unwrap().clone()}));Ok(())
 }

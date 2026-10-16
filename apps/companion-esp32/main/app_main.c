@@ -29,12 +29,15 @@ static bool scene_batch,scene_error_reported,chrome_pending,chrome_known;
 static bool chrome_connected,chrome_armed,chrome_arming;
 static int64_t scene_started;
 static char scene_package[72];
+static const osg_panel *scene_logical_panel;
 static int scene_tick(osg_board *board,uint64_t now,uint64_t *last_render){
     osg_engine *engine=NULL;int acquired=osg_network_scene_acquire(&drawing,&engine);
-    if(acquired<0){scene_batch=chrome_known=chrome_pending=false;return -1;}
+    if(acquired<0){scene_batch=chrome_known=chrome_pending=false;scene_logical_panel=NULL;return -1;}
     if(!acquired)return 0;
-    if(strcmp(scene_package,osg_engine_current_package(engine))||(!engine->failed&&!engine->scene.ready&&!engine->scene.pending&&!engine->scene.awaiting_present)){
-        osg_copy(scene_package,sizeof(scene_package),osg_engine_current_package(engine));scene_batch=chrome_known=chrome_pending=scene_error_reported=false;raster.failed=false;
+    if(scene_logical_panel!=drawing.panel||strcmp(scene_package,osg_engine_current_package(engine))||(!engine->failed&&!engine->scene.ready&&!engine->scene.pending&&!engine->scene.awaiting_present)){
+        /* A warm activation publishes a fresh logical shim even when cached scene
+         * pixels are valid. Re-fence trusted chrome for this panel identity. */
+        scene_logical_panel=drawing.panel;osg_copy(scene_package,sizeof(scene_package),osg_engine_current_package(engine));scene_batch=chrome_known=chrome_pending=scene_error_reported=false;raster.failed=false;
     }
     (void)osg_engine_update_from_runtime(engine,&drawing,now);
     bool chrome_changed=!chrome_known||chrome_connected!=drawing.connected||chrome_armed!=drawing.armed||chrome_arming!=drawing.arming;
