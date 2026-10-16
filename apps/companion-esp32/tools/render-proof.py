@@ -60,6 +60,7 @@ HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 RAW_HASH = re.compile(r"[0-9a-f]{64}\Z")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 DECIMAL = re.compile(r"(?:0|[1-9][0-9]{0,19})\Z")
+FIRMWARE_VERSION = re.compile(r"(?:20[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{1,6}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\Z")
 
 
 def require(condition, message):
@@ -255,7 +256,11 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
                                 pairs=0, byteIncrement=0, readIncrement=0, regressions=0,
                                 missing=0, rejected=0, deviceEvents=[], deviceEventCounts={},
                                 eventGaps=0, health=None, previousHealth=None, healthSamples=0,
-                                healthRegressions=0, ack={key: None for key in ACK_FIELDS})
+                                healthRegressions=0, ack={key: None for key in ACK_FIELDS},
+                                firstLiveHealth=None, firmwareVersions=set(),
+                                liveHealthMeasured=0, liveHealthMissing=0, liveHealthResetPairs=0,
+                                liveHealthIncrements={key: 0 for key in SERIAL_HEALTH},
+                                liveHealthRegressions={key: 0 for key in SERIAL_HEALTH})
         return states[board]
 
     def apply_event(board, entry):
@@ -314,6 +319,10 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
                     counter(value[key])
             device = value.get("device")
             require(device is None or isinstance(device, dict), "Invalid device record")
+            firmware = device.get("firmwareVersion") if device else None
+            if firmware is not None:
+                require(isinstance(firmware, str) and FIRMWARE_VERSION.fullmatch(firmware),
+                        "Invalid firmware release version")
             board = ports.get(connection)
             if device is not None:
                 profile = device.get("boardProfile")
@@ -333,6 +342,8 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
             if board is None:
                 continue
             current = state(board)
+            if firmware is not None:
+                current["firmwareVersions"].add(firmware)
             require(current["lastTime"] is None or now >= current["lastTime"], "Device evidence time regressed")
             current["lastTime"] = now
             content, reads = value.get("contentBytes"), value.get("contentRequests")
@@ -342,8 +353,10 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
                 current["lastReads"] = counter(reads)
             for key, measured in ack_measurements.items():
                 current["ack"][key] = max(current["ack"][key] or 0, measured)
+            sample_health = None
             if device is not None and device.get("serialHealth") is not None:
                 measured = health_counters(device["serialHealth"])
+                sample_health = measured.copy()
                 current["healthSamples"] += 1
                 if current["previousHealth"] is not None:
                     current["healthRegressions"] += sum(measured[key] < current["previousHealth"][key]
@@ -364,11 +377,30 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
             require(isinstance(generation, str) and DECIMAL.fullmatch(generation) and
                     int(generation) <= MAX_COUNTER, "Invalid live session generation")
             current["sessions"].add((session, generation))
-            key = (identity["packageHash"], session, generation)
+            if current["firstLiveHealth"] is None:
+                current["firstLiveHealth"] = dict(elapsedMs=now, packageHash=identity["packageHash"],
+                    sourcePublicationHash=identity["sourcePublicationHash"], sessionId=session,
+                    generation=generation, firmwareVersion=firmware, counters=sample_health)
+            live_key = (identity["packageHash"], session, generation)
             previous = current["previous"]
-            consecutive = previous is not None and previous["key"] == key
+            consecutive = previous is not None and previous["key"] == live_key
             if consecutive:
                 current["pairs"] += 1
+                old_health = previous["health"]
+                if sample_health is None or old_health is None:
+                    current["liveHealthMissing"] += 1
+                else:
+                    regressed = [key for key in SERIAL_HEALTH if sample_health[key] < old_health[key]]
+                    if regressed:
+                        # A reset makes this entire pair ambiguous: never add a
+                        # positive difference from another counter in that pair.
+                        current["liveHealthResetPairs"] += 1
+                        for key in regressed:
+                            current["liveHealthRegressions"][key] += 1
+                    else:
+                        current["liveHealthMeasured"] += 1
+                        for key in SERIAL_HEALTH:
+                            current["liveHealthIncrements"][key] += sample_health[key] - old_health[key]
                 if None in (content, reads, previous["bytes"], previous["reads"]):
                     current["missing"] += 1
                 else:
@@ -379,13 +411,14 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
             if not consecutive or now - previous["time"] > max_gap_ms:
                 segment = {key: identity[key] for key in ("board", "revision", "boardProfile", "targetProfileId", "profileHash", "packageHash", "sourcePublicationHash")}
                 segment.update({"sessionId": session, "generation": generation,
-                           "firstObservedMs": now, "lastObservedMs": now, "samples": 1})
+                           "firstObservedMs": now, "lastObservedMs": now, "samples": 1,
+                           "firmwareVersion": firmware, "firstSerialHealth": sample_health})
                 current["events"].append(segment)
                 current["current"] = segment
             else:
                 current["current"]["lastObservedMs"] = now
                 current["current"]["samples"] += 1
-            current["previous"] = dict(key=key, bytes=content, reads=reads, time=now)
+            current["previous"] = dict(key=live_key, bytes=content, reads=reads, time=now, health=sample_health)
         elif event == "feedback-rejected":
             board = value.get("board")
             require(board in BOARD_PROFILES, "Unknown rejected-feedback board")
@@ -426,6 +459,9 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
         measured_pairs = current["pairs"] - current["missing"]
         violation = current["byteIncrement"] != 0 or current["readIncrement"] != 0 or current["regressions"] != 0
         verified = False if violation else (None if measured_pairs == 0 or current["missing"] else True)
+        health_positive = any(current["liveHealthIncrements"].values())
+        health_zero = False if health_positive else (None if current["liveHealthMeasured"] == 0 or
+            current["liveHealthMissing"] or current["liveHealthResetPairs"] else True)
         reports.append(dict(board=board, boardProfile=sample["boardProfile"], targetProfileId=sample["targetProfileId"],
                             profileHash=sample["profileHash"], liveEvents=current["events"],
                             sessionCount=len(current["sessions"]), longestContinuousLiveMs=longest,
@@ -441,6 +477,16 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
                             steadyAckMaxBytes=current["ack"]["steadyAckMaxBytes"],
                             serialHealthMax=current["health"], serialHealthSamples=current["healthSamples"],
                             serialHealthCounterRegressions=current["healthRegressions"],
+                            firmwareVersions=sorted(current["firmwareVersions"]) or None,
+                            firstLiveSerialHealth=current["firstLiveHealth"],
+                            consecutiveLiveSerialHealth=dict(pairs=current["pairs"],
+                                measuredPairs=current["liveHealthMeasured"],
+                                missingCounterPairs=current["liveHealthMissing"],
+                                counterRegressionPairs=current["liveHealthResetPairs"],
+                                counterRegressionsByField=current["liveHealthRegressions"],
+                                increments={key: current["liveHealthIncrements"][key]
+                                    if current["liveHealthMeasured"] else None for key in SERIAL_HEALTH},
+                                allZero=health_zero),
                             inputEvidenceCounts=instance_counts.get("render-poc-" + board),
                             application=application_proof(board, current["port"], before, after)))
     return dict(formatVersion=1, runComplete=complete, liveStatus="live-armed", maximumSampleGapMs=max_gap_ms,

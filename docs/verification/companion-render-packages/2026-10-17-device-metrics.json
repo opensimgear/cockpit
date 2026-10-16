@@ -58,7 +58,7 @@
       ],
       "touchAgeMaxUs": 24000,
       "board": "sunton",
-      "capturedAtUtc": "2026-10-17T00:02:33.124377+02:00",
+      "capturedAtUtc": "2026-10-16T22:02:33.124377+00:00",
       "scenario": "ab",
       "sourceAckAgeMaxUs": 485000,
       "minimumInternalBytes": 85004
@@ -119,7 +119,7 @@
       ],
       "touchAgeMaxUs": 24000,
       "board": "sunton",
-      "capturedAtUtc": "2026-10-17T00:13:16.470322+02:00",
+      "capturedAtUtc": "2026-10-16T22:13:16.470322+00:00",
       "scenario": "warm",
       "sourceAckAgeMaxUs": 485000,
       "minimumInternalBytes": 85004
@@ -180,7 +180,7 @@
       ],
       "touchAgeMaxUs": 23000,
       "board": "waveshare",
-      "capturedAtUtc": "2026-10-17T00:02:33.386378+02:00",
+      "capturedAtUtc": "2026-10-16T22:02:33.386378+00:00",
       "scenario": "ab",
       "sourceAckAgeMaxUs": 300000,
       "minimumInternalBytes": 73263
@@ -241,10 +241,71 @@
       ],
       "touchAgeMaxUs": 23000,
       "board": "waveshare",
-      "capturedAtUtc": "2026-10-17T00:13:18.700105+02:00",
+      "capturedAtUtc": "2026-10-16T22:13:18.700105+00:00",
       "scenario": "warm",
       "sourceAckAgeMaxUs": 309000,
       "minimumInternalBytes": 73263
+    },
+    {
+      "board": "waveshare",
+      "scenario": "uart-fixed-ab",
+      "capturedAtUtc": "2026-10-16T22:31:30.980359+00:00",
+      "declaredApplicationSha256": "sha256:7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+      "windowMs": 464525,
+      "minimumInternalBytes": 73207,
+      "smallestLargestInternalBytes": 47104,
+      "stackMinBytes": [
+        4336,
+        6960,
+        5412
+      ],
+      "touchAgeMaxUs": 22000,
+      "renderAgeMaxUs": 386000,
+      "sourceAckAgeMaxUs": 313000,
+      "metrics": {
+        "host-request": {
+          "count": 2108,
+          "failed": 4,
+          "maxUs": 3002834,
+          "p95UpperUs": 131072
+        },
+        "source-ack": {
+          "count": 973,
+          "failed": 0,
+          "maxUs": 22000,
+          "p95UpperUs": 32768
+        },
+        "input-source-ack": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "render": {
+          "count": 1177,
+          "failed": 0,
+          "maxUs": 1851041,
+          "p95UpperUs": 262144
+        },
+        "present": {
+          "count": 1177,
+          "failed": 0,
+          "maxUs": 148851,
+          "p95UpperUs": 131072
+        },
+        "touch-poll": {
+          "count": 23034,
+          "failed": 0,
+          "maxUs": 541,
+          "p95UpperUs": 512
+        },
+        "touch-poll-interval": {
+          "count": 23033,
+          "failed": 0,
+          "maxUs": 22037,
+          "p95UpperUs": 32768
+        }
+      }
     }
   ]
 }

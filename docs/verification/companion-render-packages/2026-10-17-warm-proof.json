@@ -18,6 +18,43 @@
         "pairs": 625,
         "requestIncrement": null
       },
+      "consecutiveLiveSerialHealth": {
+        "allZero": null,
+        "counterRegressionPairs": 0,
+        "counterRegressionsByField": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "increments": {
+          "breaks": null,
+          "bufferFull": null,
+          "deferredFull": null,
+          "fifoOverflows": null,
+          "frameErrors": null,
+          "frameOverflows": null,
+          "invalidJson": null,
+          "invalidReply": null,
+          "parityErrors": null,
+          "queueFullObservations": null,
+          "replyMismatch": null,
+          "requestTimeouts": null,
+          "writeFailures": null
+        },
+        "measuredPairs": 0,
+        "missingCounterPairs": 625,
+        "pairs": 625
+      },
       "deviceEventCounts": {
         "arming": 1,
         "live-armed": 1,
@@ -52,6 +89,18 @@
         }
       ],
       "feedbackRejectedCount": 0,
+      "firmwareVersions": [
+        "2026.10.16.2"
+      ],
+      "firstLiveSerialHealth": {
+        "counters": null,
+        "elapsedMs": 4046,
+        "firmwareVersion": "2026.10.16.2",
+        "generation": "1",
+        "packageHash": "sha256:ce6543303e0703980853d8aea104c61b0062f92cc4a28130972daba2a72e6aa7",
+        "sessionId": "a0e09431-638f-46c0-a7fc-ec629e2a045c",
+        "sourcePublicationHash": "sha256:e868c3a26adad450cd117dcebafebbf89c2c3af72060c79af5b4b558db83f70a"
+      },
       "inputEvidenceCounts": {
         "baselines": 1,
         "sourceLosses": 1
@@ -62,7 +111,9 @@
         {
           "board": "sunton",
           "boardProfile": "sunton-3248s035r",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 4046,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 629012,
           "packageHash": "sha256:ce6543303e0703980853d8aea104c61b0062f92cc4a28130972daba2a72e6aa7",
@@ -103,6 +154,43 @@
         "missingCounterPairs": 570,
         "pairs": 570,
         "requestIncrement": null
+      },
+      "consecutiveLiveSerialHealth": {
+        "allZero": null,
+        "counterRegressionPairs": 0,
+        "counterRegressionsByField": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "increments": {
+          "breaks": null,
+          "bufferFull": null,
+          "deferredFull": null,
+          "fifoOverflows": null,
+          "frameErrors": null,
+          "frameOverflows": null,
+          "invalidJson": null,
+          "invalidReply": null,
+          "parityErrors": null,
+          "queueFullObservations": null,
+          "replyMismatch": null,
+          "requestTimeouts": null,
+          "writeFailures": null
+        },
+        "measuredPairs": 0,
+        "missingCounterPairs": 570,
+        "pairs": 570
       },
       "deviceEventCounts": {
         "arming": 12,
@@ -483,6 +571,18 @@
         }
       ],
       "feedbackRejectedCount": 0,
+      "firmwareVersions": [
+        "2026.10.16.2"
+      ],
+      "firstLiveSerialHealth": {
+        "counters": null,
+        "elapsedMs": 8035,
+        "firmwareVersion": "2026.10.16.2",
+        "generation": "1",
+        "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+        "sessionId": "e3817379-fe6d-4446-90df-bc9c22f64ebd",
+        "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e"
+      },
       "inputEvidenceCounts": {
         "baselines": 12,
         "sourceLosses": 12
@@ -493,7 +593,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 8035,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 29010,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -507,7 +609,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 34018,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 74017,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -521,7 +625,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 79018,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 246024,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -535,7 +641,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 251022,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 293008,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -549,7 +657,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 298004,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 312047,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -563,7 +673,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 316043,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 434047,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -577,7 +689,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 438036,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 445018,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -591,7 +705,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 449007,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 500008,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -605,7 +721,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 505016,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 508004,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -619,7 +737,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 512047,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 609045,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -633,7 +753,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 614048,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 615011,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
@@ -647,7 +769,9 @@
         {
           "board": "waveshare",
           "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
           "firstObservedMs": 620018,
+          "firstSerialHealth": null,
           "generation": "1",
           "lastObservedMs": 629012,
           "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",

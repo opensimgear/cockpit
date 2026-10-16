@@ -321,6 +321,78 @@ class RenderProofTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 proof.summarize([published(),live(),value],catalog())
 
+    def test_first_live_health_and_deltas_exclude_startup_and_new_package_download(self):
+        base={key:0 for key in proof.SERIAL_HEALTH}
+        startup=live()
+        startup["device"]["status"]="opening-panel"
+        startup["device"]["serialHealth"]={**base,"breaks":100,"queueFullObservations":6,"requestTimeouts":1}
+        first=live(1000)
+        first["device"]["serialHealth"]={**base,"breaks":101,"queueFullObservations":6,"requestTimeouts":1}
+        second=copy.deepcopy(first);second["elapsedMs"]=2000
+        download=live(3000)
+        download["device"]["status"]="opening-panel"
+        download["device"]["serialHealth"]={**base,"breaks":111,"queueFullObservations":8,"requestTimeouts":2}
+        bfirst=live(4000,"B","session-b")
+        bfirst["device"]["serialHealth"]=copy.deepcopy(download["device"]["serialHealth"])
+        bsecond=copy.deepcopy(bfirst);bsecond["elapsedMs"]=5000
+        for row in (startup,first,second,download,bfirst,bsecond):
+            row["device"]["firmwareVersion"]="2026.10.17.1"
+        result=proof.summarize([published(),startup,first,second,published(revision="B"),
+                                download,bfirst,bsecond,finish()],catalog())["boards"][0]
+        self.assertEqual(result["serialHealthMax"]["breaks"],111)
+        self.assertEqual(result["firstLiveSerialHealth"]["elapsedMs"],1000)
+        self.assertEqual(result["firstLiveSerialHealth"]["counters"]["breaks"],101)
+        self.assertEqual([v["firstSerialHealth"]["breaks"] for v in result["liveEvents"]],[101,111])
+        self.assertEqual(result["consecutiveLiveSerialHealth"]["pairs"],2)
+        self.assertEqual(result["consecutiveLiveSerialHealth"]["measuredPairs"],2)
+        self.assertEqual(result["consecutiveLiveSerialHealth"]["increments"],base)
+        self.assertTrue(result["consecutiveLiveSerialHealth"]["allZero"])
+        self.assertEqual(result["firmwareVersions"],["2026.10.17.1"])
+        self.assertTrue(all(v["firmwareVersion"]=="2026.10.17.1" for v in result["liveEvents"]))
+
+    def test_live_health_resets_exclude_the_entire_pair_without_canceling_increments(self):
+        base={key:0 for key in proof.SERIAL_HEALTH}
+        first=live()
+        first["device"]["serialHealth"]={**base,"breaks":100,"requestTimeouts":10}
+        reset=live(1000)
+        reset["device"]["serialHealth"]={**base,"breaks":90,"requestTimeouts":12}
+        resumed=live(2000)
+        resumed["device"]["serialHealth"]={**base,"breaks":91,"requestTimeouts":13}
+        result=proof.summarize([published(),first,reset,resumed,finish()],catalog())["boards"][0]["consecutiveLiveSerialHealth"]
+        self.assertEqual(result["measuredPairs"],1)
+        self.assertEqual(result["counterRegressionPairs"],1)
+        self.assertEqual(result["counterRegressionsByField"]["breaks"],1)
+        self.assertEqual(result["increments"]["breaks"],1)
+        self.assertEqual(result["increments"]["requestTimeouts"],1)
+        self.assertFalse(result["allZero"])
+        unknown=proof.summarize([published(),first,reset,finish()],catalog())["boards"][0]["consecutiveLiveSerialHealth"]
+        self.assertEqual(unknown["counterRegressionPairs"],1)
+        self.assertTrue(all(value is None for value in unknown["increments"].values()))
+        self.assertIsNone(unknown["allZero"])
+
+    def test_missing_live_health_remains_unknown_and_first_anchor_is_not_backfilled(self):
+        base={key:0 for key in proof.SERIAL_HEALTH}
+        first=live()
+        second=live(1000);second["device"]["serialHealth"]={**base,"breaks":3}
+        third=copy.deepcopy(second);third["elapsedMs"]=2000
+        result=proof.summarize([published(),first,second,third,finish()],catalog())["boards"][0]
+        self.assertIsNone(result["firstLiveSerialHealth"]["counters"])
+        self.assertIsNone(result["liveEvents"][0]["firstSerialHealth"])
+        counters=result["consecutiveLiveSerialHealth"]
+        self.assertEqual((counters["pairs"],counters["measuredPairs"],counters["missingCounterPairs"]),(2,1,1))
+        self.assertEqual(counters["increments"],base)
+        self.assertIsNone(counters["allZero"])
+        self.assertIsNone(result["firmwareVersions"])
+        changed=copy.deepcopy(second);changed["device"]["sessionId"]="another-session"
+        boundary=proof.summarize([published(),first,changed,finish()],catalog())["boards"][0]["consecutiveLiveSerialHealth"]
+        self.assertEqual(boundary["pairs"],0)
+        self.assertTrue(all(value is None for value in boundary["increments"].values()))
+        for bad in ["secret-never-output","2026.10.17.1-token",True,0,{}]:
+            row=live();row["device"]["firmwareVersion"]=bad
+            with self.assertRaises(ValueError):
+                proof.summarize([published(),row,finish()],catalog())
+        old=live();old["device"]["firmwareVersion"]="0.1.0"
+        self.assertEqual(proof.summarize([published(),old,finish()],catalog())["boards"][0]["firmwareVersions"],["0.1.0"])
     def test_installer_file_loading_rejects_duplicate_profiles(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/"installer.json"
