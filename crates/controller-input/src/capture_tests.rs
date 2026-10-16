@@ -275,7 +275,9 @@ fn worker_shutdown_and_diagnostics() {
     let (_, state, r, drops) = setup();
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
-    let handle = std::thread::spawn(move || run_controlled(Backend { state, drops }, r, stopped, Default::default()));
+    let handle = std::thread::spawn(move || {
+        run_controlled(Backend { state, drops }, r, stopped, Default::default())
+    });
     std::thread::sleep(Duration::from_millis(520));
     stop.store(true, Ordering::Release);
     assert!(handle.join().unwrap().is_ok());
