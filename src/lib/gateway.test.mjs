@@ -249,3 +249,52 @@ test('mapping stop and driver inspection cannot wait behind an uploading profile
   upload.resolve();
   await blocked;
 });
+
+test('companion instances have independent queues and Stop cancels an older queued Start', async () => {
+  const inspection = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.companion?.instanceId === 'panel-a' && request.companion?.action === 'inspect') await inspection.promise;
+    return { ok: true, state: { mappings: { companionRoute: { running: false } } } };
+  } });
+  const inspect = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'inspect', instanceId: 'panel-a' } });
+  const start = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel-a', mode: 'recording' } });
+  const rejectedStart = assert.rejects(start, /cancelled by Stop/);
+  await tick();
+  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'inspect', instanceId: 'panel-b' } });
+  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'stop', instanceId: 'panel-a' } });
+  await api.gatewayRequest({ command: 'controller_list' });
+  assert.deepEqual(api.calls.map(call => call.args.request.companion?.action ?? call.args.request.command), ['inspect', 'inspect', 'stop', 'controller_list']);
+  inspection.resolve(); await inspect; await rejectedStart;
+  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel-a', mode: 'recording' } });
+  assert.equal(api.calls.at(-1).args.request.companion.action, 'start');
+});
+
+test('companion priority Stop does not bypass ordering for saves or cancel another instance Start', async () => {
+  const blocked = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'mapping_companion_route' && request.companion.action === 'save') await blocked.promise;
+    return { ok: true, state: { mappings: {} } };
+  } });
+  const save = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'save', instanceId: 'panel-a' } });
+  const reconcile = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'reconcile', instanceId: 'panel-a' } });
+  await tick();
+  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'stop', instanceId: 'panel-a' } });
+  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel-b', mode: 'recording' } });
+  assert.deepEqual(api.calls.map(call => call.args.request.companion.action), ['save', 'stop', 'start']);
+  blocked.resolve(); await Promise.all([save, reconcile]);
+  assert.equal(api.calls.at(-1).args.request.companion.action, 'reconcile');
+});
+
+test('a new explicit companion Start waits for its prior priority Stop to finish', async () => {
+  const stopping = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.companion?.action === 'stop') await stopping.promise;
+    return { ok: true, state: { mappings: {} } };
+  } });
+  const stop = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'stop', instanceId: 'panel' } });
+  const start = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel', mode: 'recording' } });
+  await tick();
+  assert.deepEqual(api.calls.map(call => call.args.request.companion.action), ['stop']);
+  stopping.resolve(); await Promise.all([stop, start]);
+  assert.deepEqual(api.calls.map(call => call.args.request.companion.action), ['stop', 'start']);
+});

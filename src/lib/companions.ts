@@ -4,7 +4,7 @@ export type CompanionCommand = 'companion_feedback' | 'companion_status' | 'comp
 export interface CompanionHostState {
   listener?: { enabled: boolean; endpoint?: string | null; caSpkiSha256?: string; lastError?: string | null; discovery?: unknown; interfaces?: string[] };
   host?: { hostId?: string; clients?: Record<string, unknown>[]; pending?: Record<string, unknown>[]; instances?: Record<string, unknown>[]; publications?: Record<string, unknown>[] };
-  pairing?: { manualPayload: string; qrMatrix: boolean[][]; ttlMs: number };
+  pairing?: { manualPayload: string; qrMatrix: string[]; ttlMs: number };
   interfaces?: string[];
   uploadId?: string;
 }

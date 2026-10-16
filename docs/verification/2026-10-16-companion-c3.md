@@ -128,3 +128,18 @@ Unqualified output/provisioning/hiding/live-script and mobile-authentication
 capabilities remain disabled.
 
 Mobile Bonjour declarations do not establish multicast discovery: mdns-sd uses raw multicast sockets, so iOS entitlement/native Bonjour and Android multicast-lock/permission behavior require #55/#56. Manual/decoded-QR pinned WSS is independent.
+## Post-delivery native compilation evidence
+
+The companion build workflow for `72c6526` completed successfully on all four
+matrix targets: Windows NSIS, Linux Debian, macOS native application and Android
+debug APK, including the Android Kotlin bridge compile.
+[Run 38869580519](https://github.com/opensimgear/cockpit/actions/runs/38869580519).
+This supersedes the earlier unrun macOS/Android compilation notes; it does not
+establish installation, protected-store/device behavior, signing or physical LAN
+qualification. iOS native compilation remains unrun.
+
+The separate main CI run exposed a timing-dependent controller launch test on
+macOS: the mock could complete before the competing-Start assertion. C4 replaces
+that scheduling assumption with a channel gate while retaining the production
+behavior and cleanup assertions. This is separate from the passing companion
+package matrix and does not mark the failed main run green.

@@ -113,3 +113,52 @@ test('companion mappings use a dedicated origin and explicit versioned migration
   assert.notEqual(migrated.roles, legacy.roles);
   assert.throws(() => migrateMappingSchema({ ...legacy, schema: 9 }));
 });
+
+const companionHelpers = await import('./companion-mappings.ts');
+const slotFor=(id=2)=>({id,status:'free',ownerPid:null,buttons:2,axes:[{usage:48,min:0,max:32767},{usage:49,min:0,max:32767}],continuousHats:1,discreteHats:0,forceFeedback:false});
+const targetFor=(id='output')=>({id,name:id,layout:{buttons:2,axes:[{range:'unipolar',fallback:8192},{range:'bipolar',fallback:-4000}],hats:1}});
+test('companion target matching preserves each range/fallback and refuses shape truncation or axis aliasing',()=>{
+  const {equalTargetLayout,virtualBindingIssues,targetLayoutLabel}=companionHelpers,target=targetFor(),slot=slotFor();
+  const binding={target:target.id,slot:2,axes:[48,49],layout:structuredClone(target.layout)};
+  assert.equal(equalTargetLayout(target.layout,binding.layout),true);assert.deepEqual(virtualBindingIssues(target,binding,slot),[]);assert.match(targetLayoutLabel(target.layout),/fallback 8192/);assert.match(targetLayoutLabel(target.layout),/fallback -4000/);assert.match(targetLayoutLabel({buttons:1,axes:[],hats:0}),/1 buttons/);
+  for(const changed of [{...binding,target:'other'},{...binding,slot:0},{...binding,axes:[48,48]},{...binding,axes:[48]},{...binding,axes:[48,99]},{...binding,layout:{...binding.layout,buttons:1}},{...binding,layout:{...binding.layout,axes:[{range:'unipolar',fallback:0},binding.layout.axes[1]]}}])assert.ok(virtualBindingIssues(target,changed,slot).length);
+  for(const changed of [{...slot,id:3},{...slot,buttons:3},{...slot,continuousHats:0},{...slot,discreteHats:1},{...slot,forceFeedback:true},{...slot,axes:[{usage:48,min:0,max:0},slot.axes[1]]}])assert.ok(virtualBindingIssues(target,binding,changed).length);
+  assert.match(virtualBindingIssues(target,binding).join(' '),/Inspect/);
+  for(const invalid of [{...target.layout,buttons:129},{...target.layout,axes:[{range:'unipolar',fallback:-1}]},{buttons:0,axes:[],hats:0}])assert.equal(equalTargetLayout(invalid,invalid),false);
+});
+test('multiple authored targets require separate complete native slots and keep nonzero fallbacks',()=>{
+  const {exactTargetBindings}=companionHelpers,profile={targets:[targetFor('first'),targetFor('second')]};
+  const result=exactTargetBindings(profile,{first:2,second:3},[slotFor(2),slotFor(3)]);assert.deepEqual(result.map(binding=>binding.slot),[2,3]);assert.equal(result[0].layout.axes[0].fallback,8192);result[0].layout.axes[0].fallback=0;assert.equal(profile.targets[0].layout.axes[0].fallback,8192);
+  assert.throws(()=>exactTargetBindings(profile,{first:2,second:2},[slotFor(2)]),/distinct/);assert.throws(()=>exactTargetBindings(profile,{first:2,second:3},[slotFor(2)]),/Inspect/);
+});
+test('same-UI companion roles keep instance identity and descriptor/baseline readiness separate',()=>{
+  const {companionInstanceLabel,companionRoleReadiness}=companionHelpers;
+  const source=id=>({id,name:'Identical flight panel',origin:'companion',online:true,baselineReady:true,publicationHash:'sha256:current',controlCount:4,generation:'1',sequence:'0',fault:null});
+  const first=source('instance-a'),second=source('instance-b');assert.notEqual(companionInstanceLabel(first),companionInstanceLabel(second));
+  const profile={roles:[{id:'a',name:'A',origin:'companion'},{id:'b',name:'B',origin:'companion'},{id:'physical',origin:'host-controller'}]},assignments=[{role:'a',source:{origin:'companion',id:first.id}},{role:'b',source:{origin:'companion',id:second.id}}];
+  const ready=companionRoleReadiness(profile,assignments,[first,second]);assert.deepEqual(ready.map(role=>role.state),['ready','ready']);assert.notEqual(ready[0].sourceId,ready[1].sourceId);
+  assert.deepEqual(companionRoleReadiness(profile,assignments,[{...first,online:false},second]).map(role=>role.state),['offline','ready']);
+  assert.equal(companionRoleReadiness(profile,assignments,[{...first,baselineReady:false},second])[0].state,'waiting-baseline');assert.equal(companionRoleReadiness(profile,assignments,[{...first,fault:'lease expired'},second])[0].state,'fault');
+  assert.equal(companionRoleReadiness(profile,assignments,[first,second],{'instance-a':'sha256:old'})[0].state,'descriptor-changed');assert.equal(companionRoleReadiness(profile,assignments,[second])[0].state,'offline');assert.equal(companionRoleReadiness(profile,[],[first,second])[0].state,'unassigned');
+});
+
+test('companion template assignments preserve all axes and reject unsupported backend shapes',()=>{
+  const {companionTargetBindings}=companionHelpers,profile={targets:[targetFor()]};
+  assert.match(companionTargetBindings(profile,{output:2},null).issues[0],/Inspect/);
+  assert.deepEqual(companionTargetBindings(profile,{output:2},{backend:'vjoy',slots:[slotFor()]}).issues,[]);
+  for(const backend of ['uinput','macos-hid']){const output={backend,limits:{axes:8,buttons:32,hats:4,targets:8}};const valid=companionTargetBindings(profile,{output:2},output);assert.deepEqual(valid.issues,[]);assert.deepEqual(valid.bindings[0].axes,[48,49]);assert.equal(valid.bindings[0].layout.axes[0].fallback,8192);assert.ok(companionTargetBindings(profile,{output:0},output).issues.length);assert.ok(companionTargetBindings(profile,{output:2},output,{output:[48,48]}).issues.length);assert.ok(companionTargetBindings({targets:[{...targetFor(),layout:{...targetFor().layout,buttons:33}}]},{output:2},output).issues.length);assert.ok(companionTargetBindings({targets:[targetFor('a'),targetFor('b')]},{a:2,b:2},output).issues.length);assert.ok(companionTargetBindings(profile,{output:2},{backend,limits:{axes:8,buttons:32,hats:4,targets:0}}).issues.length);}
+});
+test('per-instance operation guards reject late Start/inspect results after Stop without cancelling other native instances',()=>{
+  const guard=companionHelpers.createCompanionOperationGuard();guard.select('a');const inspection=guard.capture(),start=guard.begin('a');assert.equal(guard.current(inspection),false);assert.equal(guard.current(start),true);const stop=guard.begin('a');assert.equal(guard.current(start),false);assert.equal(guard.current(stop),true);guard.select('b');const second=guard.begin('b');assert.equal(guard.current(stop),false);assert.equal(guard.current(second),true);guard.begin('a');assert.equal(guard.current(second),true);guard.dispose();assert.equal(guard.current(second),false);
+});
+
+test('Start requires the saved revision, native readiness, fresh source and completed cleanup independently per instance',()=>{
+  const {companionStartAllowed,companionSessionLabel}=companionHelpers;
+  const source={id:'a',online:true,baselineReady:true,fault:null},route={instanceId:'a',publicationHash:'current',expectedPublicationHash:'current',preflight:{recordingReady:true,liveReady:false},session:{running:false,ready:false,mode:null,starting:false,busy:false,stopRequested:false,cleanupComplete:true,cleanup:'complete',recoveryRequired:false}};
+  assert.equal(companionStartAllowed(route,'recording',false,source),true);assert.equal(companionStartAllowed(route,'live',false,source),false);
+  for(const changed of [{...route,expectedPublicationHash:'old'},{...route,expectedPublicationHash:undefined},{...route,session:{...route.session,running:true}},{...route,session:{...route.session,busy:true}},{...route,session:{...route.session,starting:true}},{...route,session:{...route.session,cleanupComplete:false}},{...route,session:{...route.session,stopRequested:true,cleanupComplete:false}},{...route,session:{...route.session,recoveryRequired:true}}])assert.equal(companionStartAllowed(changed,'recording',false,source),false);
+  assert.equal(companionStartAllowed(route,'recording',true,source),false);for(const changed of [undefined,{...source,id:'b'},{...source,online:false},{...source,baselineReady:false},{...source,fault:'lost'}])assert.equal(companionStartAllowed(route,'recording',false,changed),false);
+  assert.match(companionSessionLabel(route.session),/cleanup complete/);assert.match(companionSessionLabel({...route.session,busy:true}),/pending/);assert.match(companionSessionLabel({...route.session,stopRequested:true,busy:true,cleanupComplete:false}),/waiting for native cleanup/);assert.match(companionSessionLabel({...route.session,recoveryRequired:true}),/Recovery required/);assert.match(companionSessionLabel({...route.session,starting:true}),/Starting/);assert.match(companionSessionLabel({...route.session,cleanupComplete:false}),/cleanup pending/);assert.equal(companionStartAllowed({...route,session:{...route.session,stopRequested:true}},'recording',false,source),true);assert.match(companionSessionLabel({...route.session,running:true,ready:true,mode:'recording'}),/Recording session.*Ready/);assert.match(companionSessionLabel({...route.session,running:true,ready:false,mode:'live'}),/Native live session.*Waiting/);
+});
+
+test('a stalled instance poll cannot block another instance or create duplicate requests for its own route',()=>{const guard=companionHelpers.createCompanionOperationGuard();guard.select('a');const first=guard.beginPoll('a');assert.ok(first);assert.equal(guard.beginPoll('a'),null);guard.select('b');const second=guard.beginPoll('b');assert.ok(second);assert.equal(guard.current(first),false);assert.equal(guard.current(second),true);guard.endPoll(first);assert.equal(guard.beginPoll('b'),null);guard.endPoll(second);assert.ok(guard.beginPoll('b'));});

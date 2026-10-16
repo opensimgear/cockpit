@@ -268,6 +268,37 @@ impl Hub {
             started: Arc::new(Instant::now()),
         })
     }
+
+    /// Trusted local mapping boundary. This is deliberately not a wire command.
+    /// Retained source descriptors alone do not grant mapping authority after revoke.
+    pub fn assigned_publication(&self, instance_id: &str) -> Result<Publication, String> {
+        ensure(id(instance_id), "Invalid controller instance.")?;
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let assignment = inner
+            .record
+            .instances
+            .iter()
+            .find(|assignment| assignment.instance_id == instance_id)
+            .ok_or("The controller instance is not assigned to a trusted companion.")?;
+        ensure(
+            inner
+                .record
+                .credentials
+                .iter()
+                .any(|credential| credential.companion_id == assignment.companion_id),
+            "The companion installation is no longer authorized.",
+        )?;
+        let publication = inner
+            .publications
+            .get(&assignment.publication_hash)
+            .ok_or("Make the assigned panel revision available again before mapping it.")?;
+        ensure(
+            publication.definition(instance_id) == assignment.definition,
+            "The assigned publication descriptor changed; reconcile the assignment explicitly.",
+        )?;
+        Ok(publication.clone())
+    }
+
     pub fn now_ms(&self) -> u64 {
         self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
     }

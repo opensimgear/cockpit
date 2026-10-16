@@ -50,7 +50,7 @@
 
 <details class="connections" ontoggle={e => { if (e.currentTarget.open) void refresh(); }}>
   <summary>Companion connections · {hostState.listener?.enabled ? 'Listening' : 'Disabled'}</summary>
-  <p>Connect another Windows PC to this host. Android and iOS pairing is not available yet. Pairing and assigning a panel leave game output inactive; start a mapping separately when its capabilities are qualified.</p>
+  <p>Connect a Windows, Linux or macOS desktop to this host. Android and iOS pairing is not available yet. Pairing and assigning a panel leave game output inactive; start a mapping separately when its capabilities are qualified.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}{#if notice}<p role="status">{notice}</p>{/if}
   <div inert={busy}>
     <div class="row"><label>Listen on IP<input bind:value={address} placeholder="192.168.1.10" /></label><label>Advertised host IP<input bind:value={advertisedHost} /></label><label>Port<input type="number" min="1024" max="65535" bind:value={port} /></label><label><input type="checkbox" bind:checked={discovery} />LAN discovery</label>
@@ -64,7 +64,7 @@
     <button disabled={!hostState.listener?.enabled} onclick={() => action(offer)}>Pair a companion</button>
     {#if pairing && secondsLeft}
       <div class="pairing"><div><h4>One-time pairing offer · {secondsLeft}s</h4><p>Scan from the companion or copy this offer to its pairing screen. The offer includes the host fingerprint; share it only with the installation you intend to pair.</p><textarea aria-label="One-time pairing offer" readonly rows="4" value={pairing.manualPayload}></textarea></div>
-        {#if pairing.qrMatrix.length}<svg aria-label="Companion pairing QR code" role="img" viewBox={`-4 -4 ${pairing.qrMatrix.length+8} ${pairing.qrMatrix.length+8}`}><rect x="-4" y="-4" width={pairing.qrMatrix.length+8} height={pairing.qrMatrix.length+8} fill="white" />{#each pairing.qrMatrix as row,y}{#each row as dark,x}{#if dark}<rect {x} {y} width="1" height="1" fill="black" />{/if}{/each}{/each}</svg>{/if}
+        {#if pairing.qrMatrix.length}<svg aria-label="Companion pairing QR code" role="img" viewBox={`-4 -4 ${pairing.qrMatrix.length+8} ${pairing.qrMatrix.length+8}`}><rect x="-4" y="-4" width={pairing.qrMatrix.length+8} height={pairing.qrMatrix.length+8} fill="white" />{#each pairing.qrMatrix as row,y}{#each row as dark,x}{#if dark === '1'}<rect {x} {y} width="1" height="1" fill="black" />{/if}{/each}{/each}</svg>{/if}
       </div>
     {/if}
     {#each hostState.host?.pending ?? [] as pending}<div class="card"><span>Pairing request: {text(pending,'displayName') || text(pending,'name') || id(pending)}</span><button onclick={() => action(async () => { await send('companion_approve', { companionId: id(pending), requestId: text(pending,'requestId') }); notice = 'Installation approved. Assign a published panel next.'; })}>Approve installation</button></div>{/each}

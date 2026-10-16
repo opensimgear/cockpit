@@ -755,3 +755,61 @@ fn malformed_and_exhausted_counters_fail_without_numeric_precision_loss() {
         assert_eq!(wire(&h, "c", f)["ok"], false);
     }
 }
+
+#[test]
+fn mapping_blueprints_require_current_assignment_authority_and_exact_publication() {
+    let memory = Arc::new(Memory::default());
+    let hub = Hub::with_storage(memory.clone(), Arc::new(Sink::default())).unwrap();
+    assert!(hub.assigned_publication("not-assigned").is_err());
+    assert!(hub.assigned_publication("../invalid").is_err());
+    paired(&hub, "installation");
+    let publication = publish(&hub, fixture());
+    assign(
+        &hub,
+        "installation",
+        "instance",
+        &publication.publication_hash,
+    );
+    let blueprint = hub.assigned_publication("instance").unwrap();
+    assert_eq!(blueprint.publication_hash, publication.publication_hash);
+    assert_eq!(blueprint.canonical_document, publication.canonical_document);
+    assert_eq!(
+        blueprint.definition("instance"),
+        publication.definition("instance")
+    );
+    assert_eq!(
+        operator(&hub, json!({"command":"companion_status"}))["instances"][0]["armed"],
+        false
+    );
+
+    let reopened = Hub::with_storage(memory.clone(), Arc::new(Sink::default())).unwrap();
+    assert!(reopened
+        .assigned_publication("instance")
+        .unwrap_err()
+        .contains("available again"));
+    publish(&reopened, fixture());
+    assert_eq!(
+        reopened
+            .assigned_publication("instance")
+            .unwrap()
+            .publication_hash,
+        publication.publication_hash
+    );
+
+    let mut saved: Value =
+        serde_json::from_slice(memory.value.lock().unwrap().as_ref().unwrap()).unwrap();
+    saved["instances"][0]["definition"]["name"] = json!("changed descriptor");
+    *memory.value.lock().unwrap() = Some(serde_json::to_vec(&saved).unwrap());
+    let changed = Hub::with_storage(memory, Arc::new(Sink::default())).unwrap();
+    publish(&changed, fixture());
+    assert!(changed
+        .assigned_publication("instance")
+        .unwrap_err()
+        .contains("descriptor changed"));
+
+    operator(
+        &hub,
+        json!({"command":"companion_revoke","companionId":"installation"}),
+    );
+    assert!(hub.assigned_publication("instance").is_err());
+}

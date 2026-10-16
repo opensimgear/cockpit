@@ -159,6 +159,23 @@ impl Service {
                     }
                 }
             }
+            self.confirm_companion_pins(&capture.assignments)?;
+            for assignment in capture
+                .assignments
+                .iter()
+                .filter(|a| a.source.origin == Origin::Companion)
+            {
+                let provider = self.companion_provider()?;
+                let descriptor = provider.definition(&assignment.source.id)?;
+                provider.require_ready(
+                    &assignment.source.id,
+                    &descriptor.publication_hash,
+                    true,
+                )?;
+            }
+            {
+                let _resources = self.reserve_manual(&capture.profile, &capture.targets, true)?;
+            }
             // The helper handshake checks dependency readiness without Start/acquisition.
             let mut probe = (self.output_factory)()?;
             probe.terminate();
@@ -287,6 +304,26 @@ impl Service {
                 Ok(())
             }
         };
+        if virtual_output {
+            self.confirm_companion_pins(&capture.assignments)?;
+        }
+        let _resources = self.reserve_manual(&capture.profile, &capture.targets, virtual_output)?;
+        let pinned_sources = if virtual_output {
+            capture
+                .assignments
+                .iter()
+                .filter(|a| a.source.origin == Origin::Companion)
+                .map(|a| {
+                    let provider = self.companion_provider()?;
+                    let definition = provider.definition(&a.source.id)?;
+                    let generation =
+                        provider.require_ready(&a.source.id, &definition.publication_hash, true)?;
+                    Ok((a.source.id.clone(), definition.publication_hash, generation))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        } else {
+            vec![]
+        };
         let mut workers = std::collections::BTreeMap::new();
         for script in &capture.profile.scripts {
             cancelled()?;
@@ -367,7 +404,14 @@ impl Service {
         }
         let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
         cancelled()?;
-        let token = router.adopt_game(candidate, output)?;
+        if virtual_output {
+            for (id, hash, generation) in &pinned_sources {
+                if self.companion_provider()?.require_ready(id, hash, false)? != *generation {
+                    return Err("Companion ownership changed during game acquisition; Start again explicitly.".into());
+                }
+            }
+        }
+        let token = router.adopt_checked(candidate, output, cancelled)?;
         if owner.is_some() {
             lease.as_mut().unwrap().expected = Some(token.clone());
         }

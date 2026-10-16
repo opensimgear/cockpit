@@ -108,7 +108,7 @@ pub struct GatewayManager {
     controllers: Arc<osg_controller_input::ControllerService>,
     mapping_host: Arc<osg_mapping_host::service::Service>,
     mapping_documents: osg_mapping::documents::Documents,
-    companion_host: crate::companion_host::Runtime,
+    companion_host: Arc<crate::companion_host::Runtime>,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -139,10 +139,14 @@ impl GatewayManager {
             Arc::new(move || companion_clock.stream_page("", 0).captured_us),
         ));
         mapping_host.set_companion_provider(companion_provider.clone());
-        let companion_host = crate::companion_host::Runtime::new(
+        let companion_host = Arc::new(crate::companion_host::Runtime::new(
             native.then(|| crate::dcs_runtime::config_path().with_file_name("companions")),
             companion_provider,
-        );
+        ));
+        let companion_blueprints = companion_host.clone();
+        mapping_host.set_companion_blueprint_provider(Arc::new(move |instance_id| {
+            companion_blueprints.assigned_publication(instance_id)
+        }));
         let sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let targets = sessions.clone();

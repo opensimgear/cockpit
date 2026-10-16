@@ -104,7 +104,15 @@ fn worker_owns_child_completion_failure_stop_and_source_loss() {
         let stops = Arc::new(AtomicUsize::new(0));
         let p = polls.clone();
         let s = stops.clone();
+        // Keep the first job active until competing-start admission is checked.
+        // Error/exit mocks can otherwise finish before the caller is rescheduled.
+        let (release, gate) = std::sync::mpsc::sync_channel(1);
+        let gate = std::sync::Mutex::new(gate);
         worker.factory = Arc::new(move |_, _| {
+            gate.lock()
+                .unwrap()
+                .recv()
+                .map_err(|_| "Launch fixture admission gate closed".to_string())?;
             Ok(Box::new(Mock {
                 polls: p.clone(),
                 stops: s.clone(),
@@ -120,6 +128,7 @@ fn worker_owns_child_completion_failure_stop_and_source_loss() {
             .start_owned(request(), sources.clone(), observing)
             .is_err());
         assert!(worker.stop(Some("stale")).is_err());
+        release.send(()).unwrap();
         if mode == 4 {
             while polls.load(Ordering::SeqCst) == 0 {
                 std::thread::sleep(Duration::from_millis(2));

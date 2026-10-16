@@ -1,7 +1,10 @@
-# Mobile and desktop companions (C0–C3)
+# Mobile and desktop companions (C0–C4)
 
-Status: C0 contracts (#38), C1 designer (#39) and Windows C2 native transport/source
-integration (#40) and C3 app/cache/multiplatform desktop targets (#41) are implemented for feature #37. Physical LAN/device qualification, signed distribution and qualified game input remain separate.
+Status: C0 contracts (#38), C1 designer (#39), C2 native transport/source
+integration (#40), C3 app/cache/multiplatform desktop targets (#41), and C4 authored
+per-instance mapping/recording/preflight (#42) are implemented for feature #37.
+Physical LAN/device qualification, signed distribution and qualified game input
+remain separate.
 The selected stack is **Tauri 2, Svelte 5 and TypeScript**. The same panel can run
 on Android, iOS or a separate PC; the companion is a client of Cockpit, not another
 Cockpit host. All existing live-output, provisioning, hiding and script gates stay
@@ -91,8 +94,10 @@ Latency/freshness numbers are release targets, not current measurements. Report
 client render time, network time, host processing, successful virtual submission,
 queues, dropped/coalesced data and faults separately. Configured gesture delays
 and game sampling are separate. C6 must qualify the chosen network/device/load
-matrix. Current mapping limits are one active run, 16 total source roles, eight
-total targets and 256 total nodes. Physical/panel sources share those budgets.
+matrix. C4 coordinates the ordinary physical/panel mapping and bounded companion
+routes in one workspace. Each companion route has its own execution worker and
+Stop scope, while all routes share 16 total source roles, eight total targets and
+256 total nodes. This preserves the C0 resource envelope across execution engines.
 Eight companions is a ceiling, not eight guaranteed free slots; preflight reserves
 every role, target and node before arming and rejects unsupported backend layouts.
 
@@ -197,6 +202,50 @@ queue, gateway worker, mapping clock or feedback. C2 implements these boundaries
 sockets. Second-PC LAN and mobile native trust/storage qualification remain open;
 local socket tests are not physical-network release evidence.
 
+## Authored companion mappings (C4)
+
+In Cockpit's Mappings page, use **Companion controller mappings** to select a
+persistent instance, inspect its trusted publication and save its authored route.
+The native host derives source roles, target indices, axis ranges, declared
+fallbacks and bindings from that immutable publication. Two copies of the same UI
+receive distinct instance, profile and target identities. The manual mapping
+editor remains available for existing physical/panel workflows.
+
+**Save for recording only** needs no virtual driver. **Start selected recording**
+requires current assignment authority and waits for a complete source baseline
+before recording input reports through the production mapping engine. The report log identifies
+the target, sequence, state and reason; these are software reports, not evidence
+that a game received input. Saving, pairing, reconnecting or restoring settings
+never starts a route.
+
+For live output, inspect native targets and explicitly save exact output
+assignments, including native axis usages. Preflight checks the pinned revision,
+authorization, baseline, explicit output enablement, backend qualification,
+capabilities, inventory, recovery and shared reservations. Missing or extra axes,
+buttons or hats, duplicate slots, mismatched fallback and over-budget layouts are
+rejected rather than truncated. Publishing a changed revision requires Stop and
+explicit reconciliation; a new baseline cannot revive an old route.
+
+Each route has a bounded worker and separate recovery journal. A slow feeder does
+not run on the ordinary mapping worker or another companion's worker. Stop
+invalidates queued/in-flight Start for that instance, cancels pending actions and
+applies its declared fallback. Pending or failed cleanup remains visible and
+retains resource ownership until recovery completes. Source loss, revocation,
+lease expiry and restart require a fresh baseline and explicit Start. Existing
+physical mappings and other companion instances retain their own sessions.
+
+Windows, Linux and macOS companion clients use the same authenticated protocol;
+the client OS does not select or qualify the host output backend. Recording is
+available while live output is unqualified. Linux/macOS host output and multiple
+live feeder processes on those hosts remain gated by their backend limitations
+and #48/#49. Current production qualification gates remain disabled, including
+Windows output pending #54. No test-only feeder can be selected from the UI.
+
+Real-game routing, game binding retention, physical fallback and desktop-client
+OS combinations remain in [#66](https://github.com/opensimgear/cockpit/issues/66).
+Native installation, protected-store and LAN/lifecycle checks remain in the
+platform stories below. Automated local WSS/recording and injected feeder tests
+do not replace those checks.
 ## Delivery, schema migration and validation
 
 C1 delivers the designer and full shared renderer. C2 adds the native listener,
@@ -205,8 +254,8 @@ origin through an explicit schema migration. Existing `host-controller`, panel
 and synthetic sources are not reused to impersonate a remote controller. Preserve
 existing imports and recording behavior; production startup never enables new
 listener/input effects implicitly. C3 delivers Android, iOS and desktop companion
-packages. C4 composes isolated companion sources within one coordinated mapping
-run and checks backend layouts; it does not create unrelated concurrent runs.
+packages. C4 coordinates isolated companion engines with the ordinary mapping,
+reserves shared resources and checks exact backend layouts before acquisition.
 C5 adds feedback and captured game settings. C6 qualifies distribution/lifecycle,
 mixed peers, performance and supported host/backend combinations.
 
@@ -233,6 +282,7 @@ panel's appearance.
 | Windows C2 second-PC LAN, firewall/discovery and failure checks | [#60](https://github.com/opensimgear/cockpit/issues/60) |
 | Linux desktop installation, Secret Service, display/lifecycle and LAN | [#61](https://github.com/opensimgear/cockpit/issues/61) |
 | macOS desktop native build/install, Keychain, permissions and signing | [#62](https://github.com/opensimgear/cockpit/issues/62) |
+| C4 real-game routing, binding retention, fallback and client OS matrix | [#66](https://github.com/opensimgear/cockpit/issues/66) |
 | Packaged mixed-peer trust, load and measured end-to-end performance | [#58](https://github.com/opensimgear/cockpit/issues/58) |
 
 Primary framework references: [Tauri mobile plugins](https://v2.tauri.app/develop/plugins/develop-mobile/),

@@ -48,6 +48,8 @@ pub struct Service {
     capture: Arc<ControllerService>,
     panels: Mutex<Option<Arc<dyn crate::panels::Provider>>>,
     companions: Mutex<Option<Arc<crate::companions::CompanionProvider>>>,
+    companion_blueprints: Mutex<Option<companion_runs::BlueprintProvider>>,
+    companion_runs: Arc<Mutex<companion_runs::Manager>>,
     root: Option<PathBuf>,
     inspector: Inspector,
     output_factory: osg_virtual_controller::session::Factory,
@@ -91,21 +93,23 @@ impl Service {
         let state = router.clone();
         let input = capture.clone();
         let stopped = stop.clone();
+        let companion_runs = Arc::new(Mutex::new(companion_runs::Manager::new(root.clone())));
         let worker = std::thread::Builder::new()
             .name("mapping-preview".into())
             .spawn(move || {
                 while !stopped.load(Ordering::Acquire) {
                     {
-                        let mut router = state.lock().unwrap_or_else(|p| p.into_inner());
-                        if router.runtime.token().is_ok() {
-                            let (session, cursor) = router.cursor();
-                            let page = input.stream_page(session, cursor);
-                            let _ = router.pump(page);
-                        }
-                        let _ = router.flush_output();
-                        if let Some(learner) = router.learner.as_mut() {
-                            let page = input.stream_page(&learner.session, learner.cursor);
-                            learner.pump(page);
+                        if let Ok(mut router) = state.try_lock() {
+                            if router.runtime.token().is_ok() {
+                                let (session, cursor) = router.cursor();
+                                let page = input.stream_page(session, cursor);
+                                let _ = router.pump(page);
+                            }
+                            let _ = router.flush_output();
+                            if let Some(learner) = router.learner.as_mut() {
+                                let page = input.stream_page(&learner.session, learner.cursor);
+                                learner.pump(page);
+                            }
                         }
                     }
                     std::thread::sleep(Duration::from_millis(2));
@@ -127,6 +131,8 @@ impl Service {
             provisioning: Mutex::new(osg_virtual_controller::windows_jobs::Manager::default()),
             panels: Mutex::new(None),
             companions: Mutex::new(None),
+            companion_blueprints: Mutex::new(None),
+            companion_runs,
             settings: Mutex::new(settings),
             router,
             capture,
@@ -163,6 +169,12 @@ impl Service {
     }
     pub fn set_companion_provider(&self, provider: Arc<crate::companions::CompanionProvider>) {
         *self.companions.lock().unwrap_or_else(|p| p.into_inner()) = Some(provider);
+    }
+    pub fn set_companion_blueprint_provider(&self, provider: companion_runs::BlueprintProvider) {
+        *self
+            .companion_blueprints
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(provider);
     }
     fn companion_provider(&self) -> Result<Arc<crate::companions::CompanionProvider>, String> {
         self.companions
@@ -239,6 +251,7 @@ impl Service {
                 | "mapping_panel_inspect"
                 | "mapping_companion_sources"
                 | "mapping_companion_inspect"
+                | "mapping_companion_route"
                 | "mapping_script_validate"
                 | "mapping_trace_export"
                 | "mapping_status"
@@ -283,6 +296,7 @@ impl Service {
                 .ok_or_else(|| "Select a saved mapping profile.".to_string())
         };
         match command {
+            "mapping_companion_route" => self.companion_request(&request["companion"]),
             "mapping_capture" => self
                 .capture_saved(
                     profile_id()?,
@@ -290,10 +304,7 @@ impl Service {
                 )
                 .map(|capture| json!({"capture":capture})),
             "mapping_panel_sources" => self.panel_provider()?.list(),
-            "mapping_companion_sources" => self.companion_provider().map_or_else(
-                |_| Ok(json!({"companionSources":[]})),
-                |provider| provider.list(),
-            ),
+            "mapping_companion_sources" => self.companion_sources(),
             "mapping_companion_inspect" => self.companion_provider()?.inspect(
                 request["sourceId"]
                     .as_str()
@@ -451,6 +462,9 @@ impl Service {
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .enable_virtual(enabled)?;
+                if !enabled {
+                    companion_runs::stop_all(&self.companion_runs, true);
+                }
                 if let Some(error) = stop_error {
                     return Err(error);
                 }
@@ -594,6 +608,19 @@ impl Service {
                 if self.lifecycle.load(Ordering::Acquire) != epoch {
                     return Err("Preview start was superseded by a newer start or stop.".into());
                 }
+                if live {
+                    self.confirm_companion_pins(&assignments)?;
+                }
+                let reserved_bindings = self
+                    .settings
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .value
+                    .targets
+                    .get(&profile.id)
+                    .cloned()
+                    .unwrap_or_default();
+                let _resources = self.reserve_manual(&profile, &reserved_bindings, live)?;
                 let token = if live {
                     let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
                     if !settings.value.virtual_devices {
@@ -817,6 +844,7 @@ impl Service {
             let _ = worker.join();
         }
         self.router.lock().unwrap_or_else(|p| p.into_inner()).stop();
+        companion_runs::stop_all(&self.companion_runs, false);
     }
 }
 impl Drop for Service {
@@ -834,3 +862,6 @@ mod live_tests;
 
 #[path = "game.rs"]
 pub mod game;
+
+#[path = "companion_runs.rs"]
+pub mod companion_runs;

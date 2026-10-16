@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MappingEditor from './MappingEditor.svelte';
+  import CompanionMappings from './CompanionMappings.svelte';
+  import { companionInstanceLabel, companionRoleReadiness, exactTargetBindings } from './companion-mappings';
   import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest } from './gateway';
   import { controlLabel, type ControllerControl, type HostController } from './controllers';
@@ -41,6 +43,7 @@
   let lastCompanionRefresh = 0;
   const profile = $derived(profiles.find(p => p.id === selected));
   const creatorControls = $derived(controls[newSource]?.filter(c => capturedKind(c)) ?? []);
+  const companionReadiness = $derived(profile ? companionRoleReadiness(profile, assignments, companions) : []);
   async function request(value: MappingRequest): Promise<MappingResult> {
     const result = (await gatewayRequest(value)).mappings;
     if (!result) throw new Error('Restart the native Cockpit service to use controller mappings.');
@@ -61,16 +64,23 @@
     controls = { ...controls, [id]: all };
   }
   async function loadSources() {
-    const all: HostController[] = [];
-    for (let offset = 0; offset < 256; offset += 32) {
-      const result = (await gatewayRequest({ command: 'controller_list', offset })).controllers;
-      if (!result?.sources) throw new Error('Native controller discovery is unavailable.');
-      all.push(...result.sources);
-      if (offset + 32 >= result.total) break;
-    }
-    sources = all;
-    panels = (await request({command:'mapping_panel_sources'})).panelSources ?? [];
-    companions = (await request({command:'mapping_companion_sources'})).companionSources ?? [];
+    const physical = async () => {
+      const all: HostController[] = [];
+      for (let offset = 0; offset < 256; offset += 32) {
+        const result = (await gatewayRequest({ command: 'controller_list', offset })).controllers;
+        if (!result?.sources) throw new Error('Physical controller discovery is unavailable.');
+        all.push(...result.sources);
+        if (offset + 32 >= result.total) break;
+      }
+      return all;
+    };
+    const results = await Promise.allSettled([physical(), request({command:'mapping_panel_sources'}), request({command:'mapping_companion_sources'})]);
+    const [physicalResult,panelResult,companionResult]=results;
+    sources=physicalResult.status==='fulfilled'?physicalResult.value:[];
+    panels=panelResult.status==='fulfilled'?panelResult.value.panelSources??[]:[];
+    companions=companionResult.status==='fulfilled'?companionResult.value.companionSources??[]:[];
+    const unavailable=results.flatMap(result=>result.status==='rejected'?[result.reason instanceof Error?result.reason.message:String(result.reason)]:[]);
+    if(unavailable.length)notice='Some source types are unavailable: '+unavailable.join(' ');
   }
   async function loadProfiles() {
     const all: MappingProfile[] = [];
@@ -171,15 +181,16 @@
   });
 </script>
 
-<div class="page-heading"><div><div class="eyebrow">YOUR INPUTS, YOUR LAYOUT</div><h1>Controller mappings</h1><p>Assign physical controllers or synthetic inputs, then preview complete output reports.</p></div><span class="quiet-tag">Experimental</span></div>
+<div class="page-heading"><div><div class="eyebrow">YOUR INPUTS, YOUR LAYOUT</div><h1>Controller mappings</h1><p>Map companion instances independently, or assign physical, panel and synthetic inputs to ordinary mapping profiles.</p></div><span class="quiet-tag">Experimental</span></div>
 {#if error}<p class="notice amber-notice" role="alert">{error}</p>{/if}
 {#if notice}<p class="notice" role="status">{notice}</p>{/if}
 {#if status.storageError}<p class="notice amber-notice" role="alert">Saved mapping settings need repair: {status.storageError}</p>{/if}
+<CompanionMappings send={request} sources={companions}/>
 <section class="panel mapping-panel" aria-label="Create a direct mapping">
-  <h2>New direct mapping</h2>
+  <h2>New generic direct mapping</h2>
   <div class="mapping-row">
     <label>Name<input class="text-input" bind:value={name} maxlength="80" /></label>
-    <label>Input source<select bind:value={newSource} onchange={() => action(async () => { newControl = ''; if (newSource !== 'synthetic') await loadControls(newSource); })}><option value="synthetic">Synthetic preview input</option>{#each sources.filter(s => s.online) as source}<option value={source.id}>{source.name}</option>{/each}{#each panels as panel}<option value={panel.id}>{panel.name ?? panel.moduleId} · panel events</option>{/each}{#each companions as companion}<option value={`companion:${companion.id}`}>{companion.name} · companion{companion.online ? '' : ' (offline)'}</option>{/each}</select></label>
+    <label>Input source<select bind:value={newSource} onchange={() => action(async () => { newControl = ''; if (newSource !== 'synthetic') await loadControls(newSource); })}><option value="synthetic">Synthetic preview input</option>{#each sources.filter(s => s.online) as source}<option value={source.id}>{source.name}</option>{/each}{#each panels as panel}<option value={panel.id}>{panel.name ?? panel.moduleId} · panel events</option>{/each}{#each companions as companion}<option value={`companion:${companion.id}`}>{companionInstanceLabel(companion)} · companion{companion.online ? '' : ' (offline)'}</option>{/each}</select></label>
     {#if newSource === 'synthetic'}<label>Control<select bind:value={syntheticKind}><option value="button">Button</option><option value="axis">Bipolar axis</option><option value="hat">Hat</option></select></label>
     {:else}<label>Control<select bind:value={newControl}><option value="">Choose a control</option>{#each creatorControls as control}<option value={control.capability.id}>{controlLabel(control)} · {control.capability.reportId}:{control.capability.dataIndex}</option>{/each}</select></label>{/if}
     <button class="primary-button" disabled={busy || !name.trim() || (newSource !== 'synthetic' && !newControl)} onclick={() => action(create)}>Save direct mapping</button>
@@ -187,7 +198,7 @@
     {#if newSource!=='synthetic'}<button class="secondary-button" disabled={busy || learning || sourceOrigin(newSource) !== 'host-controller'} onclick={()=>action(()=>learn(newSource))}>Learn input without output</button><button class="secondary-button" disabled={busy} onclick={()=>action(createPreset)}>Save one-to-one preset</button>{/if}
   </div>
   <label class="import-file">Import profile JSON<input type="file" accept=".json,application/json" disabled={busy} onchange={event => { const file = event.currentTarget.files?.[0]; if (file) void action(async () => { if (file.size > 65536) throw new Error('Mapping files are limited to 65536 bytes.'); const saved = await importMapping(await file.text(), request); await loadProfiles(); await selectProfile(saved.id); }); event.currentTarget.value = ''; }} /></label>
-  <p class="muted">Saving and importing never start a mapping, change controller layouts, or hide devices.</p>
+  <p class="muted">Generic presets are manual transformations. Use Companion controller mappings above to preserve a published panel’s complete authored targets and declared fallbacks. Saving and importing never start a mapping, change controller layouts, or hide devices.</p>
 </section>
 <section class="panel mapping-panel" aria-label="Mapping assignments">
   <div class="mapping-row"><h2>Saved profiles</h2><select aria-label="Saved mapping profile" value={selected} disabled={busy} onchange={event => action(() => selectProfile(event.currentTarget.value))}><option value="">Choose a profile</option>{#each profiles as item}<option value={item.id}>{item.name}</option>{/each}</select></div>
@@ -196,8 +207,9 @@
     {#each profile.roles as role, index}
       {@const assigned = assignments[index]}
       {#if assigned}<fieldset><legend>{role.name} · {role.origin}</legend>
-        {#if role.origin !== 'synthetic'}<label>Local source<select value={assigned.source.id} disabled={busy} onchange={event => action(() => chooseSource(index, event.currentTarget.value))}><option value="">Choose a controller</option>{#each (role.origin === 'companion' ? companions : role.origin === 'osg-panel-events' ? panels.map(p=>({id:p.id,name:p.name ?? p.moduleId,online:true})) : sources) as source}<option value={source.id}>{source.name}{source.online ? '' : ' (offline)'}</option>{/each}</select></label>
+        {#if role.origin !== 'synthetic'}<label>Local source<select value={assigned.source.id} disabled={busy} onchange={event => action(() => chooseSource(index, event.currentTarget.value))}><option value="">Choose a controller</option>{#each (role.origin === 'companion' ? companions : role.origin === 'osg-panel-events' ? panels.map(p=>({id:p.id,name:p.name ?? p.moduleId,online:true})) : sources) as source}<option value={source.id}>{role.origin === 'companion' ? companionInstanceLabel(source) : source.name}{source.online ? '' : ' (offline)'}</option>{/each}</select></label>
         {:else}<p>Synthetic inputs are controlled below during a recording preview.</p>{/if}
+        {#if role.origin === 'companion'}{@const readiness=companionReadiness.find(item=>item.role===role.id)}{#if readiness}<p class="muted">{readiness.state}: {readiness.reason}</p>{/if}{/if}
         <div class="assignment-controls">{#each role.controls as control, controlIndex}
           {#if role.origin !== 'synthetic'}<label>{control.id}<select aria-label={'Source control for ' + role.name + ' ' + control.id} bind:value={assignments[index].controls[controlIndex].sourceControl} disabled={busy}><option value="">Choose matching control</option>{#each (controls[sourceKey(assigned.source)] ?? []).filter(c => compatibleControl(control.kind, c)) as native}<option value={native.capability.id}>{controlLabel(native)} · {native.capability.reportId}:{native.capability.dataIndex}</option>{/each}</select></label><button class="secondary-button" disabled={busy || learning || !assigned.source.id || role.origin !== 'host-controller'} onclick={()=>action(()=>learn(assigned.source.id,{roleIndex:index,controlIndex}))}>Learn {control.id}</button>
           {:else if role.origin === 'synthetic' && status.running && status.profileId === profile.id}
@@ -245,7 +257,7 @@
   {:else if profile && virtual}
     <h3>Local target slots</h3>
     <div class="mapping-row">{#each profile.targets as target}<label>{target.name}<select bind:value={slotAssignments[target.id]}><option value={undefined}>Choose a matching slot</option>{#each virtual.slots ?? [] as slot}<option value={slot.id} disabled={slot.buttons !== target.layout.buttons || slot.axes.length !== target.layout.axes.length || slot.continuousHats !== target.layout.hats || slot.discreteHats !== 0 || slot.forceFeedback}>Slot {slot.id} · {slot.buttons} buttons, {slot.axes.length} axes, {slot.continuousHats} hats</option>{/each}</select></label>{/each}
-    <button class="secondary-button" disabled={busy || profile.targets.some(t => !slotAssignments[t.id])} onclick={() => action(async () => { const bindings = profile.targets.map(target => { const slot = virtual?.slots?.find(s => s.id === slotAssignments[target.id]); if (!slot) throw new Error('Inspect the selected slot first.'); return { target: target.id, slot: slot.id, axes: slot.axes.map(a => a.usage), layout: target.layout }; }); await request({ command: 'mapping_targets_save', profileId: profile.id, bindings }); notice = 'Local slots saved. Activation will recheck the actual layouts.'; })}>Save target slots</button></div>
+    <button class="secondary-button" disabled={busy || profile.targets.some(t => !slotAssignments[t.id])} onclick={() => action(async () => { const bindings = exactTargetBindings(profile, slotAssignments, virtual?.slots ?? []); await request({ command: 'mapping_targets_save', profileId: profile.id, bindings }); notice = 'Local slots saved. Activation will recheck the actual layouts.'; })}>Save target slots</button></div>
   {/if}
   {#if status.outputRecovery?.required}
     <div class="notice" role="status">

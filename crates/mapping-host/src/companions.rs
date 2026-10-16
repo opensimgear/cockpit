@@ -4,6 +4,7 @@ use osg_mapping::{
     engine::{Assignment, Change, Counter, Frame, Source},
     profile::{self, Kind, Origin, Profile, Value},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -12,9 +13,9 @@ use std::{
 pub const MAX_REGISTERED: usize = 128;
 pub const QUEUE_LIMIT: usize = 512;
 pub const LEASE_US: u64 = 1_500_000;
-const MAX_SUBSCRIPTIONS: usize = 4;
+const MAX_SUBSCRIPTIONS: usize = 16;
 type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ControlDefinition {
     pub id: String,
     pub kind: Kind,
@@ -47,6 +48,9 @@ struct Instance {
 #[derive(Default)]
 struct Queue {
     controls: BTreeSet<String>,
+    publication_hash: String,
+    explicit_restart: bool,
+    restart_required: bool,
     frames: VecDeque<Frame>,
     loss: Option<Frame>,
     started: bool,
@@ -121,6 +125,9 @@ fn token_valid(token: &InputToken) -> bool {
 }
 fn loss_queue(queue: &mut Queue, id: &str, now: u64) {
     queue.frames.clear();
+    if queue.started && queue.generation > 0 && queue.explicit_restart {
+        queue.restart_required = true;
+    }
     if queue.started && queue.generation > 0 && queue.loss.is_none() {
         if let Some(sequence) = queue.sequence.checked_add(1) {
             queue.sequence = sequence;
@@ -293,11 +300,9 @@ impl CompanionProvider {
         instance.values = values.clone();
         instance.fault = None;
         for subscription in state.subscriptions.values_mut() {
-            if let Some(queue) = subscription
-                .sources
-                .get_mut(&token.source_id)
-                .filter(|q| q.started)
-            {
+            if let Some(queue) = subscription.sources.get_mut(&token.source_id).filter(|q| {
+                q.started && !q.restart_required && q.publication_hash == token.publication_hash
+            }) {
                 queue.frames.clear();
                 queue.generation = generation;
                 queue.sequence = 1;
@@ -360,7 +365,9 @@ impl CompanionProvider {
             .subscriptions
             .values()
             .filter_map(|s| s.sources.get(&token.source_id))
-            .filter(|q| q.started)
+            .filter(|q| {
+                q.started && !q.restart_required && q.publication_hash == token.publication_hash
+            })
             .any(|q| {
                 let count = changes
                     .iter()
@@ -387,11 +394,9 @@ impl CompanionProvider {
         instance.wire_sequence = sequence;
         instance.last_seen_us = now;
         for subscription in state.subscriptions.values_mut() {
-            if let Some(queue) = subscription
-                .sources
-                .get_mut(&token.source_id)
-                .filter(|q| q.started)
-            {
+            if let Some(queue) = subscription.sources.get_mut(&token.source_id).filter(|q| {
+                q.started && !q.restart_required && q.publication_hash == token.publication_hash
+            }) {
                 for change in changes
                     .iter()
                     .filter(|c| queue.controls.contains(&c.control))
@@ -450,6 +455,42 @@ impl CompanionProvider {
         }
         lose(&mut state, source_id, now, "Companion instance released.");
         Ok(())
+    }
+    pub(crate) fn definition(&self, id: &str) -> Result<Definition, String> {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .instances
+            .get(id)
+            .map(|i| i.definition.clone())
+            .ok_or_else(|| "Unknown companion instance.".into())
+    }
+    pub(crate) fn require_ready(&self, id: &str, hash: &str, neutral: bool) -> Result<u64, String> {
+        let now = self.now();
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        expire(&mut state, now);
+        let instance = state
+            .instances
+            .get(id)
+            .ok_or("Unknown companion instance.")?;
+        if instance.definition.publication_hash != hash {
+            return Err(
+                "Published companion revision changed; reconcile explicitly before Start.".into(),
+            );
+        }
+        if instance.owner.is_none() || instance.values.len() != instance.definition.controls.len() {
+            return Err("Connect the assigned companion and establish its complete neutral baseline before live Start.".into());
+        }
+        if neutral
+            && instance
+                .definition
+                .controls
+                .iter()
+                .any(|c| instance.values.get(&c.id) != Some(&c.fallback))
+        {
+            return Err("Release controls or reconnect the companion to its declared fallback baseline before live Start.".into());
+        }
+        Ok(instance.generation)
     }
     pub fn list(&self) -> Result<serde_json::Value, String> {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -533,6 +574,10 @@ impl CompanionProvider {
                         source.id.clone(),
                         Queue {
                             controls: controls.keys().cloned().collect(),
+                            publication_hash: state.instances[&source.id]
+                                .definition
+                                .publication_hash
+                                .clone(),
                             ..Queue::default()
                         },
                     )
@@ -551,6 +596,49 @@ impl CompanionProvider {
     }
 }
 impl Feed {
+    pub(crate) fn require_explicit_rearm(&self) {
+        let mut state = self
+            .provider
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(subscription) = state.subscriptions.get_mut(&self.subscription) {
+            for queue in subscription.sources.values_mut() {
+                queue.explicit_restart = true;
+            }
+        }
+    }
+    pub(crate) fn require_live_ready(&self) -> Result<(), String> {
+        let now = self.provider.now();
+        let mut state = self
+            .provider
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        expire(&mut state, now);
+        let subscription = state
+            .subscriptions
+            .get(&self.subscription)
+            .ok_or("Companion subscription ended.")?;
+        for (id, queue) in &subscription.sources {
+            let instance = &state.instances[id];
+            if !queue.started
+                || queue.restart_required
+                || instance
+                    .definition
+                    .controls
+                    .iter()
+                    .any(|c| instance.values.get(&c.id) != Some(&c.fallback))
+                || queue.generation == 0
+                || instance.owner.is_none()
+                || instance.generation != queue.generation
+                || instance.definition.publication_hash != queue.publication_hash
+            {
+                return Err("Companion source identity, revision or baseline changed before output activation; Start again explicitly.".into());
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn initial(&mut self) -> Result<Vec<Frame>, String> {
         let now = self.provider.now();
         let mut state = self
@@ -572,6 +660,7 @@ impl Feed {
             let instance = &state.instances[&id];
             let generation = instance.generation;
             let values = instance.owner.as_ref().map(|_| instance.values.clone());
+            let publication_hash = instance.definition.publication_hash.clone();
             let queue = state
                 .subscriptions
                 .get_mut(&self.subscription)
@@ -584,7 +673,7 @@ impl Feed {
             queue.loss = None;
             queue.generation = generation;
             queue.sequence = 0;
-            if let Some(values) = values {
+            if let Some(values) = values.filter(|_| queue.publication_hash == publication_hash) {
                 queue.sequence = 1;
                 frames.push(Frame {
                     source: source(&id),

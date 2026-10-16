@@ -535,6 +535,15 @@ impl Router {
             }
         }
     }
+    pub(crate) fn require_live_sources(&self) -> Result<(), String> {
+        if !self.runtime.engine().is_some_and(|engine| engine.ready()) {
+            return Err("Every assigned source requires a complete fresh baseline before acquiring live targets.".into());
+        }
+        if let Some(feed) = &self.companions {
+            feed.require_live_ready()?;
+        }
+        Ok(())
+    }
     pub fn live(&self) -> bool {
         self.output.as_ref().is_some_and(|o| o.active())
     }
@@ -626,6 +635,7 @@ impl Router {
             panels,
             companions,
         )?;
+        candidate.require_live_sources()?;
         let cursor = self.runtime.recording.cursor();
         // Acquire and confirm every target before replacing the stopped workspace.
         let output = osg_virtual_controller::session::Session::start_with_journal(
@@ -639,9 +649,18 @@ impl Router {
     }
     pub(crate) fn adopt_game(
         &mut self,
-        mut candidate: Router,
+        candidate: Router,
         output: Option<osg_virtual_controller::session::Session>,
     ) -> Result<RunToken, String> {
+        self.adopt_checked(candidate, output, || Ok(()))
+    }
+    pub(crate) fn adopt_checked(
+        &mut self,
+        mut candidate: Router,
+        output: Option<osg_virtual_controller::session::Session>,
+        cancelled: impl Fn() -> Result<(), String>,
+    ) -> Result<RunToken, String> {
+        cancelled()?;
         if self.runtime.token().is_ok()
             || self
                 .output
@@ -651,6 +670,9 @@ impl Router {
             return Err("A newer mapping or pending recovery must be preserved.".into());
         }
         let token = candidate.runtime.token()?;
+        if output.is_some() {
+            candidate.require_live_sources()?;
+        }
         if output
             .as_ref()
             .is_some_and(|o| o.token() != &token || o.cursor() != self.runtime.recording.cursor())
@@ -674,6 +696,18 @@ impl Router {
         candidate.runtime.recording.record(reports);
         candidate.output = output;
         *self = candidate;
+        // A Stop that arrived during backend acquisition must never flush the
+        // candidate's held baseline, even once.
+        if let Err(error) = cancelled().and_then(|_| {
+            if self.output.is_some() {
+                self.require_live_sources()
+            } else {
+                Ok(())
+            }
+        }) {
+            let _ = self.stop_result();
+            return Err(error);
+        }
         self.flush_output()?;
         Ok(token)
     }

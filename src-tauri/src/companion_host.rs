@@ -228,7 +228,12 @@ impl Runtime {
                     .ok_or("Pairing offer did not contain an expiry.")?;
                 let payload = services.server.pairing_payload(secret, expires)?;
                 let manual = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-                let matrix = qrcode_matrix(&manual)?;
+                // Dense binary rows preserve every QR module without a boolean
+                // JSON array exceeding the bounded private-service reply frame.
+                let matrix: Vec<String> = qrcode_matrix(&manual)?
+                    .into_iter()
+                    .map(|row| row.into_iter().map(|dark| if dark { '1' } else { '0' }).collect())
+                    .collect();
                 let mut state = self.status(services)?;
                 state["pairing"] = json!({"manualPayload":manual,"qrMatrix":matrix,"ttlMs":60_000});
                 Ok(state)
@@ -247,6 +252,16 @@ impl Runtime {
             _ => Err("Unsupported companion operator command.".into()),
         }
     }
+
+    /// Local mapping uses the same trusted, immutable revision as the authorized
+    /// native instance. This getter never starts the listener or game output.
+    pub fn assigned_publication(
+        &self,
+        instance_id: &str,
+    ) -> Result<osg_companion_service::Publication, String> {
+        self.services()?.hub.assigned_publication(instance_id)
+    }
+
     pub fn shutdown(&self) {
         if let Some(Ok(services)) = self.services.get() {
             services.server.stop();
@@ -366,7 +381,18 @@ mod tests {
         );
         assert!(call(&runtime, "companion_enable", config).is_err());
         let offer = call(&runtime, "companion_pair_offer", json!({})).unwrap();
-        assert!(offer["pairing"]["qrMatrix"].as_array().unwrap().len() > 20);
+        let rows = offer["pairing"]["qrMatrix"].as_array().unwrap();
+        assert!((21..=177).contains(&rows.len()));
+        let original = qrcode_matrix(offer["pairing"]["manualPayload"].as_str().unwrap()).unwrap();
+        for (row, expected) in rows.iter().zip(original) {
+            let bits = row.as_str().unwrap();
+            assert_eq!(bits.len(), rows.len());
+            assert!(bits.bytes().all(|bit| bit == b'0' || bit == b'1'));
+            assert_eq!(bits.bytes().map(|bit| bit == b'1').collect::<Vec<_>>(), expected);
+        }
+        // Pairing must fit both the native acceptance frame and browser bridge,
+        // without increasing either transport's bound to accommodate QR data.
+        assert!(serde_json::to_vec(&json!({"ok":true,"state":{"companions":offer}})).unwrap().len() < 66_561);
         let pairing: Value =
             serde_json::from_str(offer["pairing"]["manualPayload"].as_str().unwrap()).unwrap();
         assert!(pairing["endpoint"]
@@ -416,6 +442,14 @@ mod tests {
         );
         let assigned=call(&runtime,"companion_assign",json!({"companionId":"test-installation","instanceId":"saved-panel","publicationHash":fixture["publicationHash"]})).unwrap();
         assert_eq!(assigned["host"]["instances"][0]["armed"], false);
+        assert_eq!(
+            runtime
+                .assigned_publication("saved-panel")
+                .unwrap()
+                .publication_hash,
+            fixture["publicationHash"].as_str().unwrap()
+        );
+        assert!(runtime.assigned_publication("unknown-instance").is_err());
         assert!(call(
             &runtime,
             "companion_approve",
@@ -440,6 +474,7 @@ mod tests {
             json!({"companionId":"test-installation"}),
         )
         .unwrap();
+        assert!(runtime.assigned_publication("saved-panel").is_err());
         assert!(call(&runtime, "companion_unsupported", json!({})).is_err());
         assert_eq!(
             call(&runtime, "companion_disable", json!({})).unwrap()["listener"]["enabled"],

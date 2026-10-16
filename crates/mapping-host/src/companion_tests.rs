@@ -359,9 +359,10 @@ fn gaps_stale_generations_and_descriptor_changes_are_isolated_and_atomic() {
     next.publication_hash = format!("sha256:{}", "b".repeat(64));
     provider.baseline_native(&next, 0, &baseline()).unwrap();
     let frames = feed.drain();
-    assert!(frames
-        .iter()
-        .any(|frame| frame.reason == osg_mapping::engine::Reason::Baseline));
+    assert!(
+        frames.is_empty(),
+        "A changed immutable revision must not revive an old subscription"
+    );
     drop(feed);
     let mut changed = definition("left");
     changed.controls[1].fallback = Value::Axis(1000);

@@ -80,15 +80,38 @@ type GatewayResult = { ok: boolean; state?: GatewayState; error?: string };
 // Each gateway owns its command queue. A blocked serial connection must not
 // hold up discovery or requests for another gateway, including the same backend.
 const requestQueues = new Map<string, Promise<unknown>>();
+// Stop has a priority queue and invalidates starts that have not reached native
+// code yet. Track lifetime with pending requests so arbitrary stale IDs do not
+// leave an ever-growing epoch map behind.
+const companionRoutes = new Map<string, { epoch: number; pending: number }>();
 function queuedRequest(request: GatewayRequest, operation: () => Promise<GatewayState>): Promise<GatewayState> {
-  const key = request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command === 'mapping_stop' ? 'mapping-stop' : request.command === 'mapping_virtual_inspect' ? 'mapping-inspect' : request.command.startsWith('mapping_') ? 'mapping' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
+  const route = request.command === 'mapping_companion_route';
+  const instance = typeof request.companion?.instanceId === 'string' ? request.companion.instanceId : 'invalid';
+  const action = request.companion?.action;
+  let ticket: { epoch: number; pending: number } | undefined;
+  if (route) {
+    ticket = companionRoutes.get(instance) ?? { epoch: 0, pending: 0 };
+    companionRoutes.set(instance, ticket); ticket.pending++;
+    if (action === 'stop') ticket.epoch++;
+  }
+  const epoch = ticket?.epoch;
+  const key = route ? `companion-route:${instance}:${action === 'stop' ? 'stop' : 'requests'}` : request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command === 'mapping_stop' ? 'mapping-stop' : request.command === 'mapping_virtual_inspect' ? 'mapping-inspect' : request.command.startsWith('mapping_') ? 'mapping' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
   const previous = requestQueues.get(key) ?? Promise.resolve();
-  const pending = previous.catch(() => {}).then(operation);
+  const stopping = route && action === 'start' ? requestQueues.get(`companion-route:${instance}:stop`) : undefined;
+  const before = stopping ? Promise.all([previous, stopping]) : previous;
+  const pending = before.catch(() => {}).then(() => {
+    if (action === 'start' && ticket && epoch !== ticket.epoch) throw new GatewayError('Companion Start was cancelled by Stop; start explicitly again.');
+    return operation();
+  });
   const settled = pending.then(() => {}, () => {});
   requestQueues.set(key, settled);
-  void settled.then(() => { if (requestQueues.get(key) === settled) requestQueues.delete(key); });
+  void settled.then(() => {
+    if (requestQueues.get(key) === settled) requestQueues.delete(key);
+    if (ticket && --ticket.pending === 0 && companionRoutes.get(instance) === ticket) companionRoutes.delete(instance);
+  });
   return pending;
 }
+
 export class GatewayError extends Error {
   constructor(message: string, public state?: GatewayState) { super(message); }
 }
