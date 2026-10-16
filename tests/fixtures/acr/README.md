@@ -1,5 +1,9 @@
 # Assetto Corsa Rally prefix fixtures
 
+## Development status and disclaimer
+
+This project is heavily under development and is not ready for use. Use it entirely at your own risk. To the fullest extent permitted by applicable law, the authors and contributors disclaim all liability for any damage, loss, or other issues arising from its use.
+
 These authored binary samples exercise the production ACR parser and source
 freshness engine. They are synthetic; they are not recordings or evidence of live
 game, Windows process or hardware qualification.

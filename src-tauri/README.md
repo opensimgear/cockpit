@@ -1,5 +1,9 @@
 # Cockpit native gateway services
 
+## Development status and disclaimer
+
+This project is heavily under development and is not ready for use. Use it entirely at your own risk. To the fullest extent permitted by applicable law, the authors and contributors disclaim all liability for any damage, loss, or other issues arising from its use.
+
 Cockpit is a Tauri 2 desktop application. `pnpm dev` launches the desktop; `pnpm build` packages it. Rust 1.90.0 is pinned in the repository. The installed app communicates directly with gateway transports and does not depend on firmware source, simulation executables or external development tools.
 
 The same `gateway_request` transport serves the global `game_*` commands.

@@ -1,5 +1,9 @@
 # STM32 gateway protocol fixtures
 
+## Development status and disclaimer
+
+This project is heavily under development and is not ready for use. Use it entirely at your own risk. To the fullest extent permitted by applicable law, the authors and contributors disclaim all liability for any damage, loss, or other issues arising from its use.
+
 `x-plane-11-rref.json` and `x-plane-12-rref.json` are authored C172/Baron
 software fixtures, not simulator captures. Provider tests encode their values as
 RREF replies and exercise the production parser and channel mapping. Real

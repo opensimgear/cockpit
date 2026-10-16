@@ -1,5 +1,9 @@
 # Simulated DCS-BIOS panels
 
+## Development status and disclaimer
+
+This project is heavily under development and is not ready for use. Use it entirely at your own risk. To the fullest extent permitted by applicable law, the authors and contributors disclaim all liability for any damage, loss, or other issues arising from its use.
+
 This local peer sends the DCS-BIOS binary export format and receives named
 panel commands. It is for software development without DCS or hardware.
 Its authored catalogue uses synthetic addresses; Cockpit resolves them

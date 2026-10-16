@@ -1,5 +1,9 @@
 # Integration profiles
 
+## Development status and disclaimer
+
+This project is heavily under development and is not ready for use. Use it entirely at your own risk. To the fullest extent permitted by applicable law, the authors and contributors disclaim all liability for any damage, loss, or other issues arising from its use.
+
 [`x-plane-c172-panel.json`](x-plane-c172-panel.json) demonstrates an X-Plane
 indicator and numeric airspeed display. Assign local devices and replace example
 endpoint/action IDs with advertised hardware capabilities before validation.
