@@ -183,10 +183,17 @@ IPC commands are `integration_get_state`, `integration_catalogue`, `integration_
 
 [Windows release CI](../.github/workflows/cockpit-windows-release.yml) builds and tests
 Cockpit on native Windows x64, then publishes a development prerelease with an NSIS
-installer, portable ZIP and SHA-256 checksums. Run it manually from `main` to publish
-`cockpit-windows-build-<run-number>`, or push `cockpit-v<version>` matching the app's
-version to publish that tag. Manual runs on other branches upload CI artifacts only.
-The workflow does not replace the latest stable release.
+installer, portable ZIP and SHA-256 checksums. A push to `main` automatically builds
+and publishes `cockpit-windows-build-<run-number>` when desktop source, browser
+companion, shared UI/native dependencies, bundled resources, dependency/toolchain
+configuration, examples/test fixtures, or Windows packaging files change. Mobile-only
+app/platform changes, ESP32-only firmware changes (apart from the embedded firmware
+version header), and unrelated documentation do not trigger a Windows release.
+
+Manual dispatch from `main` also publishes a build. Push `cockpit-v<version>` matching
+the app's version to publish that tag; explicit tag pushes bypass path filters.
+Manual runs on other branches upload CI artifacts only. The workflow does not
+replace the latest stable release.
 
 The portable package uses the existing dependency hash/signature checks in
 `package-windows-mapping.ps1` and retains development qualification metadata. No
