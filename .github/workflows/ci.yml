@@ -58,9 +58,9 @@ jobs:
       - name: Install Tauri and serial platform dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends \
+          sudo apt-get install -y --no-install-recommends \
             build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev bubblewrap apparmor-profiles
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev bubblewrap apparmor-profiles dbus-x11 gnome-keyring
           # Disposable runner: permit only the distro helper profile's namespaces.
           # Keep global user-namespace restrictions enabled.
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
@@ -73,7 +73,12 @@ jobs:
         run: rustup show active-toolchain
       - run: pnpm install --frozen-lockfile
       - name: Native tests and desktop compile
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            cargo test --locked --manifest-path src-tauri/Cargo.toml
+          '
+
       - name: Native mapping acceptance without optional drivers
         run: |
           cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
