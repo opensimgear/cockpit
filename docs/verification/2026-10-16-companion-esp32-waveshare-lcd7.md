@@ -1,6 +1,6 @@
 # Waveshare LCD7 driver checkpoint — 16 October 2026
 
-Issue [#63](https://github.com/opensimgear/cockpit/issues/63) remains in progress. The supplied rear-board photograph identifies Waveshare ESP32-S3-Touch-LCD-7 Rev 1.2. The official matching schematic identifies N8R8, ST7262 RGB, GT911 and CH422G. This is a new local working-tree implementation, not yet committed/pushed or flashed.
+Issue [#63](https://github.com/opensimgear/cockpit/issues/63) remains in progress. The supplied rear-board photograph identifies Waveshare ESP32-S3-Touch-LCD-7 Rev 1.2. The official matching schematic identifies N8R8, ST7262 RGB, GT911 and CH422G. The driver was committed and pushed as 44cd4e8. No board was flashed.
 
 ## Implementation
 
@@ -17,6 +17,7 @@ Issue [#63](https://github.com/opensimgear/cockpit/issues/63) remains in progres
 - Existing portable renderer/raster/bridge and network/input suites pass their sanitizer and coverage gates.
 - Final real-board profile cross-build passes: application 869600 bytes (0xd44e0), 43% of the configured single app partition free. Existing ESP32 and ESP32-S3 headless builds also pass after the generic API/build changes. Wrong-MCU profile configuration is rejected as expected.
 - CI includes the board-native runner/coverage and the real profile cross-build/artifacts. Remote CI success has not been claimed. No USB device was accessed or flashed.
+- Toolchain setup verified in WSL Ubuntu: ESP-IDF v5.5.2, Xtensa GCC 14.2.0, esptool 4.12.0 and pyserial. The PowerShell launcher successfully activates the existing SDK and builds the Waveshare image with forwarded profile/target/config arguments. The shell launcher passes bash syntax checks. No global PATH, shell profile or execution-policy setting was changed. Windows USB serial requires passthrough before WSL flashing; no board was flashed.
 
 Reproduce with python3 apps/companion-esp32/test/waveshare.py and the board guide's IDF command. Evidence: .research/esp32-waveshare-native/{coverage.json,board-test.log}, .research/esp32-waveshare-build.log, .research/esp32-waveshare-wrong-target.log, .research/esp32-live-build.log and .research/esp32s3-live-build.log.
 

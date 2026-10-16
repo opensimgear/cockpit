@@ -34,6 +34,15 @@ The queue holds 64 edges, sends at most 16 per batch and retains each reservatio
 
 ## Build and flash
 
+This workstation has ESP-IDF v5.5.2 and its compiler/Python tools installed in WSL Ubuntu under the repository's ignored .research directory. From the repository root in PowerShell, activate it for one command with:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\apps\companion-esp32\tools\idf.ps1 --version
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\apps\companion-esp32\tools\idf.ps1 -B build-waveshare-lcd7 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-waveshare-lcd7/sdkconfig -DOSG_BOARD_PROFILE=waveshare-lcd7-s3 build
+
+The launcher resolves this checkout's WSL distribution and activates the SDK without changing PATH, shell profiles or global execution policy. Linux users can run bash apps/companion-esp32/tools/idf.sh with the same arguments. On another workstation, install the pinned SDK/tools first and set OSG_ESP_IDF_PATH inside WSL/Linux if it is outside the cached location; an existing IDF_PATH/IDF_TOOLS_PATH is also supported. These launchers do not download or install tools.
+
+This is a WSL toolchain, not a native Windows installation. Flash/monitor/provision commands running in WSL need an actual Linux serial device, normally exposed through USB passthrough; Windows COM5 is not a WSL device path. Alternatively use a native Windows SDK and its COM port. No USB device was flashed as part of setup.
+
 Pinned SDK: **ESP-IDF v5.5.2**, commit 30aaf64524299d3bde422ca9a2848090d1bc5d0f. Use the official SDK installation/export workflow. The firmware rejects another IDF version at compile time. No third-party graphics dependencies are downloaded by the firmware project. Pinned cJSON source and its MIT notice are retained under third_party; native tests and firmware compile the same parser.
 
 From the repository root, Node 24+ can export a compatible designer bundle:
