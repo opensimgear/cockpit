@@ -14,6 +14,8 @@ The complete plan is tracked in [GitHub feature #69](https://github.com/opensimg
 - [R5 Interaction catalog extension #75](https://github.com/opensimgear/cockpit/issues/75) — [milestone](https://github.com/opensimgear/cockpit/milestone/6).
 - [R6 Physical proof of concept #76](https://github.com/opensimgear/cockpit/issues/76) — [milestone](https://github.com/opensimgear/cockpit/milestone/7).
 
+Implementation checkpoint: [draft PR #77](https://github.com/opensimgear/cockpit/pull/77) contains the framebuffer coherence fix. Follow-up work adds bounded diagnostics, initial physical redraw captures on both boards, ABI 1 pack/validation contracts and independent C/Rust golden readers. [Measured evidence and limitations](verification/companion-render-packages/milestone-0-baseline.md) distinguish the completed stopped-input captures from pending live-session qualification. Download delivery and the two-board package replacement proof remain separate acceptance gates.
+
 ## Implementation decisions
 
 1. Keep logical controls, feedback channels, target bindings and session ownership common across companions. Add a versioned presentation model for compositions and keep compiled device packages separate from source publications.

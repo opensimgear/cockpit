@@ -105,7 +105,8 @@ static void live_input_tests(void){
     char stale[1024];arm_text(stale);input.epoch++;cmd(stale);assert(baseline_requests==baselines);
     osg_network_touch(true,true,100,100);char held[1024];arm_text(held);cmd(held);assert(!test_runtime.armed&&baseline_requests==baselines);
     osg_network_touch(true,false,0,0);cmd(held);assert(baseline_requests==baselines);arm_text(stale);live_arm();assert(baseline_requests==baselines+1);cmd(stale);assert(baseline_requests==baselines+1);
-    public_status("status-request");fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
+    public_status("status-request");cmd("{\"command\":\"diagnostics\",\"reset\":true}");assert(remote_armed&&test_runtime.armed);
+    fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
     int sent=input_requests;fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(input_requests==sent&&mock_button);
     fake_ms++;osg_network_touch(true,false,0,0);advance();assert(!mock_button&&input_sequence==2);
     fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(mock_button);sent=input_requests;
@@ -128,6 +129,9 @@ static void live_input_tests(void){
     live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);input_sequence=UINT64_MAX-1;advance();assert(state==FAULT&&!mock_host_armed);
     live_ready();live_arm();session.heartbeat=UINT64_MAX-1;next_request=fake_ms;advance();assert(state==FAULT);
     live_ready();live_arm();fake_ms++;osg_network_touch(false,false,0,0);advance();assert(state==FAULT&&!mock_host_armed);
+    osg_diagnostics measured;osg_diagnostics_snapshot(&measured);
+    assert(measured.metrics[OSG_DIAG_INPUT_ACK].count>0&&measured.metrics[OSG_DIAG_INPUT_ACK].failed>0&&measured.metrics[OSG_DIAG_INPUT_ACK].max_us>=250000);
+    assert(measured.pending_input_max_us>=250000&&measured.touch_age_max_us>=600000&&measured.render_age_max_us>=600000&&measured.queue_max==OSG_INPUT_QUEUE_CAPACITY);
     permit_inputs=false;stop();
 }
 int main(int argc,char **argv){
@@ -135,6 +139,11 @@ int main(int argc,char **argv){
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&images[0],800,480));
     assert(osg_init(&test_runtime,&images[0].panel,(osg_display){NULL,800,480,fill,label},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
+    assert(age_us(2,1)==1000&&age_us(0,1)==UINT64_MAX&&age_us(UINT64_MAX,0)==UINT64_MAX);
+    cmd("{\"command\":\"diagnostics\",\"reset\":true}");
+    osg_diagnostics_memory(100000,90000,70000);osg_diagnostics_stack(OSG_DIAG_MAIN_STACK,3000);
+    cmd("{\"command\":\"diagnostics\",\"requestId\":\"baseline-test\"}");
+    cmd("{\"command\":\"diagnostics\",\"requestId\":\"bad id\"}");
     setup();advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=false;advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=true;
     advance();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
     advance();assert(!strcmp(requested_type,"heartbeat")&&session.heartbeat==1);fake_ms+=250;wrong_session=true;advance();assert(state==FAULT&&!test_runtime.connected);

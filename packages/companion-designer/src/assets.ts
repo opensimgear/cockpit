@@ -58,11 +58,15 @@ async function verifyDecodedBitmap(bytes: Uint8Array, mime: string): Promise<voi
 }
 export async function validateAssets(document: DesignerDocument, payloads: AssetPayload[]): Promise<AssetPayload[]> {
   assert(Array.isArray(payloads) && payloads.length === document.ui.assets.length, "Asset payloads do not match manifest");
+  // Verification crosses asynchronous digest/browser-decode boundaries. Capture
+  // both sides before yielding so caller mutations cannot replace verified bytes
+  // or change the manifest against which this invocation verifies them.
+  const manifests = clone(document.ui.assets), snapshot = clone(payloads);
   const ids = new Set<string>(); let total = 0, pixels = 0;
   const images: { bytes: Uint8Array; mime: string }[] = [];
-  for (const value of payloads) {
+  for (const value of snapshot) {
     const payload = exact(value, ["assetId", "base64"]); assert(typeof payload.assetId === "string" && !ids.has(payload.assetId), "Duplicate asset payload"); ids.add(payload.assetId);
-    const manifest = document.ui.assets.find(asset => asset.id === payload.assetId); assert(manifest, "Unknown asset payload");
+    const manifest = manifests.find(asset => asset.id === payload.assetId); assert(manifest, "Unknown asset payload");
     const bytes = decodeBase64(payload.base64 as string); total += bytes.length; assert(total <= COMPANION_LIMITS.totalAssetBytes, "Asset total exceeds budget");
     assert(bytes.length === manifest.sizeBytes && await digest(bytes) === manifest.sha256, "Asset size or digest mismatch");
     const dimensions = imageDimensions(bytes, manifest.mime); pixels += dimensions.width * dimensions.height;
@@ -70,7 +74,7 @@ export async function validateAssets(document: DesignerDocument, payloads: Asset
     images.push({ bytes, mime: manifest.mime });
   }
   for (const image of images) await verifyDecodedBitmap(image.bytes, image.mime);
-  return clone(payloads);
+  return snapshot;
 }
 export async function importAsset(document: DesignerDocument, bytes: Uint8Array, mime: "image/png" | "image/jpeg" | "image/webp"): Promise<{ document: DesignerDocument; asset: AssetPayload; width: number; height: number }> {
   const dimensions = imageDimensions(bytes, mime), doc = checked(document); await verifyDecodedBitmap(bytes, mime);

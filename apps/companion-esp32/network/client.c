@@ -2,6 +2,7 @@
 #include "firmware.h"
 #include "input.h"
 #include "serial.h"
+#include "diagnostics.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "mbedtls/platform_util.h"
@@ -13,6 +14,9 @@
 #include <unistd.h>
 #include <math.h>
 #include <time.h>
+#ifdef ESP_PLATFORM
+#include "freertos/task.h"
+#endif
 
 typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT } phase;
 static osg_network_ui ui;
@@ -27,6 +31,7 @@ static uint64_t input_sequence, next_input_request;
 static phase state;
 static char pending[65], assigned[65], publication[72];
 static uint64_t next_request, pair_deadline;
+static uint64_t diagnostics_window_started;
 static char serial_line[OSG_PROVISION_BYTES+1];
 static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error"};
 static uint64_t millis(void){return (uint64_t)(esp_timer_get_time()/1000);}
@@ -36,7 +41,20 @@ static void stop(void);
 static void abort_connection(void){osg_socket_close(&connection);disconnected();state=OFF;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
 static void fail(const char *reason){abort_connection();state=FAULT;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));report(reason);}
 static cJSON *message(const char *type){cJSON *v=cJSON_CreateObject();if(v)cJSON_AddStringToObject(v,"type",type);return v;}
-static bool request(cJSON *v,cJSON **reply,unsigned timeout){return osg_socket_request(&connection,v,reply,timeout);}
+static bool request(cJSON *v,cJSON **reply,unsigned timeout){
+    const int64_t started=esp_timer_get_time();
+    const bool ok=osg_socket_request(&connection,v,reply,timeout);
+    osg_diagnostics_record(OSG_DIAG_REQUEST,(uint64_t)(esp_timer_get_time()-started),0,ok);return ok;
+}
+/* Called with ui.mutex held, before monitoring or polling can reset evidence.
+ * Source ACK age is deliberately based on request start, as are the leases. */
+static uint64_t age_us(uint64_t now,uint64_t before){return now<before?UINT64_MAX:(now-before>UINT64_MAX/1000?UINT64_MAX:(now-before)*1000);}
+static void input_health(void){
+    if(input.mode!=OSG_INPUT_PREPARING&&input.mode!=OSG_INPUT_ARMED)return;
+    const uint64_t now=millis();
+    osg_diagnostics_health(input.count,input.count?age_us(now,input.queue[input.head].created_ms):0,
+        age_us(now,input.last_poll_ms),age_us(now,input.last_ack_ms),input.rendering?age_us(now,input.render_start_ms):0);
+}
 static bool equal(const char *a,const char *b){return a&&b&&!strcmp(a,b);}
 static bool identity(const cJSON *reply,const char *type){return equal(osg_string(reply,"type"),type)&&equal(osg_string(reply,"hostId"),settings.host)&&equal(osg_string(reply,"companionId"),settings.companion);}
 static cJSON *session_message(const char *type,const char *sequence){
@@ -53,12 +71,46 @@ static void stop(void){
     if(close){cJSON *reply=NULL;(void)request(session_message("close",NULL),&reply,300);cJSON_Delete(reply);}
     abort_connection();
 }
-static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
+static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started,bool input_ack){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    input_health();
     const uint64_t before=session.feedback_sequence,before_generation=session.binding_generation;const bool seen=session.feedback_seen;
     bool ok=osg_input_monitor(&input,millis())&&osg_ack(reply,&session,sequence,ui.runtime,millis());
     if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)*ui.dirty=true;}
-    xSemaphoreGive(ui.mutex);return ok;
+    xSemaphoreGive(ui.mutex);
+    const uint64_t elapsed=age_us(millis(),started);
+    osg_diagnostics_record(OSG_DIAG_SOURCE_ACK,elapsed,0,ok);
+    if(input_ack)osg_diagnostics_record(OSG_DIAG_INPUT_ACK,elapsed,0,ok);
+    return ok;
+}
+static void public_diagnostics(const cJSON *command){
+    /* Dumping several serial records can block the UART. Never put that work
+     * inside an armed source's 250/600/1000 ms lease windows. */
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    const bool active=remote_armed||input.mode==OSG_INPUT_PREPARING||input.mode==OSG_INPUT_ARMED;
+    xSemaphoreGive(ui.mutex);
+    if(active){report("diagnostics-requires-stopped-input");return;}
+    if(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(command,"reset"))){osg_diagnostics_reset();diagnostics_window_started=millis();report("diagnostics-reset");return;}
+    osg_diagnostics d;osg_diagnostics_snapshot(&d);
+    const char *id=osg_string(command,"requestId");if(!osg_stable_id(id))id="";
+    printf("{\"status\":\"diagnostics-summary\",\"version\":1,\"requestId\":\"%s\",\"boardProfile\":\"%s\",\"firmwareVersion\":\"%s\","
+        "\"sampledAtUptimeMs\":%" PRIu64 ",\"windowStartedUptimeMs\":%" PRIu64 ","
+        "\"serialRequestTxBytes\":%" PRIu64 ",\"serialRequestRxBytes\":%" PRIu64 ",\"wsTxPayloadBytes\":%" PRIu64 ",\"wsRxPayloadBytes\":%" PRIu64 ","
+        "\"memorySamples\":%" PRIu32 ",\"freeInternalBytes\":%" PRIu32 ",\"minimumInternalBytes\":%" PRIu32 ",\"largestInternalBytes\":%" PRIu32 ",\"smallestLargestInternalBytes\":%" PRIu32 ","
+        "\"stackMinBytes\":[%" PRIu32 ",%" PRIu32 ",%" PRIu32 "],\"stackSamples\":[%" PRIu32 ",%" PRIu32 ",%" PRIu32 "],"
+        "\"queueMax\":%" PRIu32 ",\"pendingInputMaxUs\":%" PRIu64 ",\"touchAgeMaxUs\":%" PRIu64 ",\"sourceAckAgeMaxUs\":%" PRIu64 ",\"renderAgeMaxUs\":%" PRIu64 "}\n",
+        id,OSG_BOARD_PROFILE,OSG_FIRMWARE_VERSION,millis(),diagnostics_window_started,d.bytes[OSG_DIAG_SERIAL_TX],d.bytes[OSG_DIAG_SERIAL_RX],d.bytes[OSG_DIAG_WS_TX],d.bytes[OSG_DIAG_WS_RX],
+        d.memory_samples,d.free_internal_bytes,d.minimum_internal_bytes,d.largest_internal_bytes,d.smallest_largest_internal_bytes,
+        d.stack_min_bytes[0],d.stack_min_bytes[1],d.stack_min_bytes[2],d.stack_samples[0],d.stack_samples[1],d.stack_samples[2],
+        d.queue_max,d.pending_input_max_us,d.touch_age_max_us,d.ack_age_max_us,d.render_age_max_us);
+    for(unsigned i=0;i<OSG_DIAG_METRIC_COUNT;i++){
+        const osg_diag_stat *s=&d.metrics[i];
+        printf("{\"status\":\"diagnostics-metric\",\"version\":1,\"requestId\":\"%s\",\"metric\":\"%s\",\"count\":%" PRIu32 ",\"failed\":%" PRIu32 ",\"dropped\":%" PRIu32
+            ",\"bytes\":%" PRIu64 ",\"totalUs\":%" PRIu64 ",\"maxUs\":%" PRIu64 ",\"p50UpperUs\":%" PRIu64 ",\"p95UpperUs\":%" PRIu64 ",\"p99UpperUs\":%" PRIu64 "}\n",
+            id,osg_diagnostics_metric_name((osg_diag_metric)i),s->count,s->failed,s->dropped,s->bytes,s->total_us,s->max_us,
+            osg_diagnostics_percentile(s,50),osg_diagnostics_percentile(s,95),osg_diagnostics_percentile(s,99));
+    }
+    printf("{\"status\":\"diagnostics-complete\",\"version\":1,\"requestId\":\"%s\"}\n",id);fflush(stdout);
 }
 static void public_status(const char *request_id){
     cJSON *v=cJSON_CreateObject();char encoded[1024],epoch[21];
@@ -106,7 +158,7 @@ static void arm(const cJSON *command){
     /* The host may accept even if the ACK is lost. Every failure below closes
      * this connection; this baseline is never retried or silently replayed. */
     const uint64_t started=millis();remote_armed=true;
-    bool ok=request(v,&reply,700)&&acknowledgement(reply,"0",started);
+    bool ok=request(v,&reply,700)&&acknowledgement(reply,"0",started,false);
     cJSON_Delete(reply);
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(ok)ok=osg_input_commit(&input,epoch,started,millis());
@@ -148,6 +200,7 @@ static void advance(void){
     bool send_input=false;
     if(state==LIVE){
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
+        input_health();
         bool healthy=osg_input_monitor(&input,millis());
         send_input=remote_armed&&input.mode==OSG_INPUT_ARMED&&input.count&&millis()>=next_input_request;
         xSemaphoreGive(ui.mutex);
@@ -200,7 +253,7 @@ static void advance(void){
             if(session.heartbeat>=UINT64_MAX-1){fail("session-counter-exhausted");return;}
             char sequence[21];snprintf(sequence,sizeof(sequence),"%" PRIu64,++session.heartbeat);
             const uint64_t started=millis();
-            ok=request(session_message("heartbeat",sequence),&reply,700)&&acknowledgement(reply,sequence,started);
+            ok=request(session_message("heartbeat",sequence),&reply,700)&&acknowledgement(reply,sequence,started,false);
             next_request=millis()+250;
         }else if(send_input){
             osg_input_edge edges[OSG_INPUT_BATCH_EDGES];size_t count=0;uint64_t epoch=0;
@@ -215,7 +268,7 @@ static void advance(void){
                 cJSON_AddBoolToObject(change,"value",edges[i].down);cJSON_AddItemToArray(changes,change);
             }
             const uint64_t started=millis();
-            ok=request(v,&reply,400)&&acknowledgement(reply,sequence,started);
+            ok=request(v,&reply,400)&&acknowledgement(reply,sequence,started,true);
             xSemaphoreTake(ui.mutex,portMAX_DELAY);
             if(ok)ok=osg_input_accept(&input,epoch,count);
             xSemaphoreGive(ui.mutex);next_input_request=millis()+OSG_INPUT_BATCH_INTERVAL_MS;
@@ -241,6 +294,7 @@ static void install_identity(void){
 }
 static void command(cJSON *v){
     const char *type=osg_string(v,"command");
+    if(equal(type,"diagnostics")){public_diagnostics(v);return;}
     if(equal(type,"status")){public_status(osg_string(v,"requestId"));return;}
     if(equal(type,"scan-wifi")){
         stop();osg_wifi_stop();cJSON *list=osg_wifi_scan(),*reply=cJSON_CreateObject();
@@ -339,10 +393,16 @@ static void network_task(void *arg){
         else {state=AUTH;next_request=millis();report("restoring-saved-setup");}
     }
     (void)fcntl(fileno(stdin),F_SETFL,O_NONBLOCK);report("serial-provisioning-ready");
-    for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);advance();update_screen();arm_when_ready();vTaskDelay(pdMS_TO_TICKS(10));}
+    for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);advance();update_screen();arm_when_ready();
+#ifdef ESP_PLATFORM
+        static uint64_t last_stack;
+        if(millis()-last_stack>=1000){osg_diagnostics_stack(OSG_DIAG_NETWORK_STACK,(uint32_t)uxTaskGetStackHighWaterMark(NULL));last_stack=millis();}
+#endif
+        vTaskDelay(pdMS_TO_TICKS(10));}
 }
 void osg_network_touch(bool valid,bool down,int x,int y){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    input_health();
     bool was_armed=ui.runtime->armed,was_arming=ui.runtime->arming;int previous=ui.runtime->active;
     osg_input_poll(&input,valid,down,x,y,millis());
     if(was_armed!=ui.runtime->armed||was_arming!=ui.runtime->arming||previous!=ui.runtime->active)*ui.dirty=true;
@@ -350,6 +410,7 @@ void osg_network_touch(bool valid,bool down,int x,int y){
 }
 void osg_network_render(const osg_panel *panel,bool finished,bool success){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    input_health();
     osg_input_render(&input,panel,finished,success,millis());
     if(!success)*ui.dirty=true;
     xSemaphoreGive(ui.mutex);

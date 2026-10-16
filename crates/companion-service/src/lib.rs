@@ -3,6 +3,7 @@ pub use feedback::*;
 mod hub;
 pub mod pairing_code;
 pub mod persistence;
+pub mod render_object;
 mod publication;
 pub mod sources;
 pub use hub::*;

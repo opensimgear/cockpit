@@ -14,7 +14,7 @@ for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda"):
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g", "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048"]
 includes = ["test/include", "core", "network", "third_party/cjson", "test"]
 flags += ["-I" + str(APP / p) for p in includes]
-common = ["core/companion.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
+common = ["core/companion.c", "core/diagnostics.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
 for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c")):
     subprocess.run([*flags, *[str(APP / p) for p in common], str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
     with (OUT / (binary + ".log")).open("w") as log:

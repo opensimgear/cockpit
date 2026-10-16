@@ -1,0 +1,1325 @@
+{
+  "formatVersion": 1,
+  "q": 65536,
+  "vectors": [
+    {
+      "name": "constant-zero",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "constant-int32-min",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -2147483648
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": -2147483648
+    },
+    {
+      "name": "constant-int32-max",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 2147483647
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 2147483647
+    },
+    {
+      "name": "variable-read",
+      "instructions": [
+        {
+          "op": 2,
+          "operand": 0
+        }
+      ],
+      "variables": [
+        98304
+      ],
+      "lookup": [],
+      "expected": 98304
+    },
+    {
+      "name": "variable-unavailable",
+      "instructions": [
+        {
+          "op": 2,
+          "operand": 0
+        }
+      ],
+      "variables": [
+        null
+      ],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "variable-missing",
+      "instructions": [
+        {
+          "op": 2,
+          "operand": 1
+        }
+      ],
+      "variables": [
+        65536
+      ],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "add-q16",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 98304
+        },
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 131072
+    },
+    {
+      "name": "subtract-q16",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 4
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": -98304
+    },
+    {
+      "name": "multiply-q16",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 98304
+        },
+        {
+          "op": 1,
+          "value": -32768
+        },
+        {
+          "op": 5
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": -49152
+    },
+    {
+      "name": "multiply-truncates-negative-fraction",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -1
+        },
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 5
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "divide-q16",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 196608
+        },
+        {
+          "op": 1,
+          "value": 131072
+        },
+        {
+          "op": 6
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 98304
+    },
+    {
+      "name": "divide-truncates-negative",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 1,
+          "value": 196608
+        },
+        {
+          "op": 6
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": -21845
+    },
+    {
+      "name": "minimum",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 7
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": -65536
+    },
+    {
+      "name": "maximum",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 8
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "less-true",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 9
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "less-false",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 9
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "equal-true",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 10
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "equal-false",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 10
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "and-00",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 11
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "or-00",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 12
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "and-01",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 11
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "or-01",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 12
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "and-10",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 11
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "or-10",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 12
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "and-11",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 11
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "or-11",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 12
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "not-false",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 13
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "not-true",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 13
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "select-true",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 7
+        },
+        {
+          "op": 1,
+          "value": -9
+        },
+        {
+          "op": 14
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 7
+    },
+    {
+      "name": "select-false",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 7
+        },
+        {
+          "op": 1,
+          "value": -9
+        },
+        {
+          "op": 14
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": -9
+    },
+    {
+      "name": "clamp-low",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 15
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 0
+    },
+    {
+      "name": "clamp-high",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 131072
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 15
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 65536
+    },
+    {
+      "name": "clamp-middle",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 15
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": 32768
+    },
+    {
+      "name": "lookup-low-clamp",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          65536,
+          131072
+        ],
+        [
+          131072,
+          65536
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "name": "lookup-high-clamp",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 196608
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          65536,
+          131072
+        ],
+        [
+          131072,
+          65536
+        ]
+      ],
+      "expected": 65536
+    },
+    {
+      "name": "lookup-rising-segment",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          65536,
+          131072
+        ],
+        [
+          131072,
+          65536
+        ]
+      ],
+      "expected": 65536
+    },
+    {
+      "name": "lookup-decreasing-segment",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 98304
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          65536,
+          131072
+        ],
+        [
+          131072,
+          65536
+        ]
+      ],
+      "expected": 98304
+    },
+    {
+      "name": "lookup-negative-toward-zero",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 1
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          3,
+          -2
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "name": "lookup-negative-whole-plus-fraction",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 2
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          3,
+          -2
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "name": "lookup-int32-extremes-increasing",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          -2147483648,
+          -2147483648
+        ],
+        [
+          2147483647,
+          2147483647
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "name": "lookup-int32-extremes-decreasing",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          -2147483648,
+          2147483647
+        ],
+        [
+          2147483647,
+          -2147483648
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "name": "lookup-int32-extremes-off-center",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -1
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          -2147483648,
+          2147483647
+        ],
+        [
+          2147483647,
+          -2147483648
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "name": "lookup-offset-range",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 1
+        },
+        {
+          "op": 16,
+          "operand": 1,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          -10,
+          100
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          20,
+          999
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "name": "invalid-division-zero",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 6
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-add-overflow",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 2147483647
+        },
+        {
+          "op": 1,
+          "value": 1
+        },
+        {
+          "op": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-subtract-underflow",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -2147483648
+        },
+        {
+          "op": 1,
+          "value": 1
+        },
+        {
+          "op": 4
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-multiply-overflow",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 2147483647
+        },
+        {
+          "op": 1,
+          "value": 131072
+        },
+        {
+          "op": 5
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-divide-overflow",
+      "instructions": [
+        {
+          "op": 1,
+          "value": -2147483648
+        },
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 6
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-not-boolean",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 13
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-and-does-not-short-circuit",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 11
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-or-does-not-short-circuit",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 12
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-select-condition",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 32768
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 14
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-reversed-clamp",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 65536
+        },
+        {
+          "op": 1,
+          "value": -65536
+        },
+        {
+          "op": 15
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-empty-expression",
+      "instructions": [],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-stack-underflow",
+      "instructions": [
+        {
+          "op": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-extra-stack-values",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 1
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-stack-depth-nine",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 3
+        },
+        {
+          "op": 3
+        },
+        {
+          "op": 3
+        },
+        {
+          "op": 3
+        },
+        {
+          "op": 3
+        },
+        {
+          "op": 3
+        },
+        {
+          "op": 3
+        },
+        {
+          "op": 3
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-opcode",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 255
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-lookup-count-one",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 1
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ]
+      ],
+      "expected": null
+    },
+    {
+      "name": "invalid-lookup-count-257",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 257
+        }
+      ],
+      "variables": [],
+      "lookup": [],
+      "expected": null
+    },
+    {
+      "name": "invalid-lookup-range",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 16,
+          "operand": 2,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          65536,
+          131072
+        ],
+        [
+          131072,
+          65536
+        ]
+      ],
+      "expected": null
+    },
+    {
+      "name": "invalid-lookup-unsorted",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "expected": null
+    },
+    {
+      "name": "invalid-lookup-duplicate-x",
+      "instructions": [
+        {
+          "op": 1,
+          "value": 0
+        },
+        {
+          "op": 16,
+          "operand": 0,
+          "value": 2
+        }
+      ],
+      "variables": [],
+      "lookup": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "expected": null
+    }
+  ]
+}

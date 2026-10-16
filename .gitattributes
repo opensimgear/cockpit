@@ -1,2 +1,9 @@
 # Generated companion imports are byte-for-byte deterministic on every platform.
 examples/companion/*.json text eol=lf
+
+# WSL SDK entry points must remain executable shell text after a Windows clone.
+apps/companion-esp32/tools/*.sh text eol=lf
+# Exact-byte cross-language package/hash vectors.
+packages/companion-renderer/test/fixtures/*.json text eol=lf
+packages/companion-renderer/test/fixtures/*.bin -text
+apps/companion-esp32/test/panel.h text eol=lf

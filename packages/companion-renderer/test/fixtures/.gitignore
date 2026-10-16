@@ -1,0 +1,2 @@
+# ABI golden objects are source fixtures, not firmware build artifacts.
+!*.bin

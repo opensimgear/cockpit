@@ -1,0 +1,180 @@
+{
+  "date": "2026-10-16",
+  "sourceWorkspace": "C:\\Users\\ivang\\_pws\\opensimgear\\cockpit",
+  "commandsPassed": [
+    "pnpm companion:check",
+    "pnpm companion:test",
+    "node --test apps/companion-esp32/test/export.test.mjs",
+    "python3 apps/companion-esp32/test/run.py",
+    "python3 apps/companion-esp32/test/network.py",
+    "python3 apps/companion-esp32/test/storage.py",
+    "python3 apps/companion-esp32/test/serial.py",
+    "python3 apps/companion-esp32/test/sunton.py",
+    "python3 apps/companion-esp32/test/waveshare.py",
+    "python3 apps/companion-esp32/test/diagnostics.py",
+    "python3 apps/companion-esp32/test/package.py",
+    "python3 apps/companion-esp32/test/expressions.py",
+    "python -m unittest discover -s apps/companion-esp32/test -p baseline_test.py -v",
+    "python scripts/companion-coverage.py --service-only",
+    "cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test render_objects"
+  ],
+  "nativeCoverage": {
+    "raster": {
+      "companion": {
+        "lines": 97.92746113989638,
+        "branches": 78.54545454545455,
+        "functions": 95.0
+      },
+      "raster": {
+        "lines": 100.0,
+        "branches": 87.36263736263736,
+        "functions": 100.0
+      },
+      "esp_lcd_bridge": {
+        "lines": 100.0,
+        "branches": 100.0,
+        "functions": 100.0
+      }
+    },
+    "network": {
+      "json": {
+        "lines": 100.0,
+        "branches": 73.98648648648648,
+        "functions": 100.0
+      },
+      "publication": {
+        "lines": 100.0,
+        "branches": 77.22772277227723,
+        "functions": 100.0
+      },
+      "settings": {
+        "lines": 100.0,
+        "branches": 72.58064516129032,
+        "functions": 100.0
+      },
+      "client": {
+        "lines": 96.5625,
+        "branches": 75.27675276752767,
+        "functions": 96.66666666666667
+      },
+      "input": {
+        "lines": 100.0,
+        "branches": 81.92771084337349,
+        "functions": 100.0
+      }
+    },
+    "serial": {
+      "lines": 100.0,
+      "branches": 87.5,
+      "functions": 100.0
+    },
+    "diagnostics": {
+      "lines": 100.0,
+      "branches": 96.15384615384616,
+      "functions": 100.0
+    },
+    "waveshare": {
+      "waveshare-lcd7": {
+        "lines": 100.0,
+        "branches": 86.51685393258427,
+        "functions": 100.0
+      }
+    },
+    "renderObjects": {
+      "render-package": {
+        "lines": 100.0,
+        "branches": 94.91525423728814,
+        "functions": 100.0
+      }
+    },
+    "expressions": {
+      "render-expressions": {
+        "lines": 100.0,
+        "branches": 95.79439252336448,
+        "functions": 100.0
+      }
+    },
+    "rustService": {
+      "service/lib.rs": {
+        "covered": 16,
+        "lines": 16,
+        "percent": 100.0
+      },
+      "service/sources.rs": {
+        "covered": 28,
+        "lines": 29,
+        "percent": 96.55
+      },
+      "service/persistence.rs": {
+        "covered": 156,
+        "lines": 166,
+        "percent": 93.98
+      },
+      "service/publication.rs": {
+        "covered": 392,
+        "lines": 525,
+        "percent": 74.67
+      },
+      "service/render_object.rs": {
+        "covered": 98,
+        "lines": 99,
+        "percent": 98.99
+      },
+      "service/feedback.rs": {
+        "covered": 340,
+        "lines": 341,
+        "percent": 99.71
+      },
+      "service/hub.rs": {
+        "covered": 934,
+        "lines": 1011,
+        "percent": 92.38
+      },
+      "service/hub_feedback.rs": {
+        "covered": 126,
+        "lines": 128,
+        "percent": 98.44
+      },
+      "service/hub_assignments.rs": {
+        "covered": 204,
+        "lines": 208,
+        "percent": 98.08
+      },
+      "service/tls.rs": {
+        "covered": 156,
+        "lines": 158,
+        "percent": 98.73
+      },
+      "service/server.rs": {
+        "covered": 458,
+        "lines": 543,
+        "percent": 84.35
+      },
+      "service/client.rs": {
+        "covered": 1021,
+        "lines": 1136,
+        "percent": 89.88
+      }
+    }
+  },
+  "boundaries": [
+    "Software verification only; physical redraw captures are separate evidence",
+    "C/Rust object inspection is structural and does not authorize packages",
+    "No downloadable package activation, durable content slots, scene compositor or physical package proof is enabled"
+  ],
+  "designer": {
+    "tests": 72,
+    "composite": {
+      "branches": 97.25,
+      "functions": 98.53,
+      "lines": 100
+    }
+  },
+  "renderer": {
+    "branches": 96.68,
+    "functions": 97.33,
+    "independentExpressionVectors": 63,
+    "tests": 21,
+    "lines": 99.3
+  }
+}

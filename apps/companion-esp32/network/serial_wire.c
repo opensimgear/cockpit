@@ -1,5 +1,6 @@
 /* Bounded USB serial transport for the existing companion protocol. */
 #include "platform.h"
+#include "diagnostics.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "mbedtls/platform_util.h"
@@ -28,14 +29,17 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     cJSON_AddStringToObject(v,"linkId",s->link);cJSON_AddStringToObject(v,"requestId",id);cJSON_AddItemToObject(v,"frame",request);
     bool ok=cJSON_PrintPreallocated(v,outbound,sizeof(outbound),false);cJSON_Delete(v);
     if(!ok){mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
-    puts(outbound);fflush(stdout);mbedtls_platform_zeroize(outbound,sizeof(outbound));
+    const size_t encoded_bytes=strlen(outbound)+1; /* Includes the LF wrapper delimiter. */
+    if(puts(outbound)>=0&&fflush(stdout)==0)osg_diagnostics_bytes(OSG_DIAG_SERIAL_TX,encoded_bytes);
+    mbedtls_platform_zeroize(outbound,sizeof(outbound));
     memset(osg_transport_reply,0,OSG_REPLY_BYTES);
     osg_transfer transfer={.bytes=osg_transport_reply,.capacity=OSG_REPLY_BYTES};
-    size_t used=0;bool overflow=false;
+    size_t used=0,received=0;bool overflow=false;
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
     while(esp_timer_get_time()<deadline){
         int c=getchar();
         if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(1));continue;}
+        received++;
         if(c!='\r'&&c!='\n'){
             if(used<8192&&!overflow)osg_transport_frame[used++]=(char)c;else overflow=true;
             continue;
@@ -58,11 +62,13 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
         int result=osg_reply_feed(&transfer,osg_transport_frame,strlen(osg_transport_frame),osg_platform_crypto,response);
         if(result<0)break;
         if(result==1){
+            osg_diagnostics_bytes(OSG_DIAG_SERIAL_RX,received);
             mbedtls_platform_zeroize(osg_transport_frame,OSG_FRAME_BYTES+1);
             mbedtls_platform_zeroize(osg_transport_reply,OSG_REPLY_BYTES);
             return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));
         }
     }
+    osg_diagnostics_bytes(OSG_DIAG_SERIAL_RX,received);
     mbedtls_platform_zeroize(osg_transport_frame,OSG_FRAME_BYTES+1);
     mbedtls_platform_zeroize(osg_transport_reply,OSG_REPLY_BYTES);return false;
 }
