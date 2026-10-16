@@ -1,8 +1,7 @@
-# Mobile and desktop companions (C0–C2)
+# Mobile and desktop companions (C0–C3)
 
 Status: C0 contracts (#38), C1 designer (#39) and Windows C2 native transport/source
-integration (#40) are implemented for feature #37. Real second-PC LAN qualification,
-mobile protected stores, signed distribution and qualified game input remain separate.
+integration (#40) and C3 app/cache/multiplatform desktop targets (#41) are implemented for feature #37. Physical LAN/device qualification, signed distribution and qualified game input remain separate.
 The selected stack is **Tauri 2, Svelte 5 and TypeScript**. The same panel can run
 on Android, iOS or a separate PC; the companion is a client of Cockpit, not another
 Cockpit host. All existing live-output, provisioning, hiding and script gates stay
@@ -16,7 +15,7 @@ and the pure session model. `apps/companion` owns a separate application identif
 storage boundary and Tauri shell. `packages/companion-designer` owns the schema 2
 designer/library/publication model and `packages/companion-ui` supplies the shared
 Svelte canvas and input semantics. `crates/companion-service` owns the narrow native
-WSS transport, pairing, Windows protected stores and pure source-sink interface.
+WSS transport, pairing, native protected stores and pure source-sink interface.
 Cockpit integrates that interface with the dedicated `companion` mapping origin
 in `crates/mapping-host`; the client crate has no controller-driver dependency.
 Cockpit retains ownership of mappings, virtual devices, game profiles and feedback.
@@ -25,16 +24,15 @@ The companion must not link Cockpit's gateway/serial stack, acquire local vJoy
 slots, change HidHide, launch games, expose the development bridge or accept
 arbitrary native commands. It needs no controller driver on the second PC.
 Cockpit persists its local designer library separately from native authority. The
-currently downloaded companion panel can remain viewable in memory after a
-disconnect, with input disarmed; C2 does not persist a downloaded asset cache across
-companion restarts. Pairing and publishing do not start game output.
+companion caches up to four verified public panels (24 MiB total) with assets and page selection across restarts. Offline content remains disarmed with unavailable feedback; it grants no authority. Pairing and publishing do not start game output.
 
 | Target | Candidate build floor | Current qualification boundary |
 | --- | --- | --- |
 | Windows desktop companion | Windows 10/11 x64, WebView2 | Native pinned-WSS client and local multi-client tests pass; second-PC LAN, sleep/lock and signed installation require qualification. |
 | Android companion | Android 10 / API 29 | Candidate floor; real multitouch, lifecycle, LAN permissions and signed APK/AAB are unqualified. |
 | iOS/iPadOS companion | iOS/iPadOS 15 | Candidate floor; real-device lifecycle, local-network trust and signed installation are unqualified. Requires macOS/Xcode to build. |
-| Linux/macOS desktop companions | Deferred; no minimum selected | Shared design is portable; no desktop package or permission/signing support claim. These do not block Windows. |
+| Linux desktop companion | Native Ubuntu 24.04 CI baseline | Secret Service adapter and Debian build target; physical desktop/install/store/lifecycle qualification in #61. |
+| macOS desktop companion | Candidate macOS 11 | Keychain adapter, native .app target and local-network declarations; native install/signing/lifecycle qualification in #62. |
 
 These floors are application decisions, not a claim that every device above them
 is supported. Android Studio/SDK/NDK are required for Android builds; iOS needs a
@@ -180,9 +178,7 @@ The listener limits unauthenticated attempts (5/minute per address, 20/minute
 globally), bounds handshakes and pairing offers, and requires host approval of
 the requesting installation/permissions. A successful exchange consumes the
 one-use secret and issues a revocable per-installation credential. C2 persists host authority, trust/private keys and the Windows client credential
-through per-user DPAPI-protected native files. Android Keystore and Apple Keychain
-adapters are not implemented: pairing/connect are disabled on those platforms
-before any secret exchange, with no plaintext fallback. Do not put secrets in UI
+through per-user DPAPI-protected native files. C3 adds Linux Secret Service and Apple Keychain-backed AES-256-GCM storage, plus an Android Keystore bridge. Missing/locked stores fail closed. Mobile authentication remains disabled pending #55/#56 before secret exchange. Do not put secrets in UI
 exports, logs, URLs or web localStorage.
 Revocation terminates that installation's sessions and releases its controls.
 
@@ -235,6 +231,8 @@ panel's appearance.
 | iOS/iPadOS device lifecycle, trust and signed install | [#56](https://github.com/opensimgear/cockpit/issues/56) |
 | Second Windows PC, lock/sleep/network and installation | [#57](https://github.com/opensimgear/cockpit/issues/57) |
 | Windows C2 second-PC LAN, firewall/discovery and failure checks | [#60](https://github.com/opensimgear/cockpit/issues/60) |
+| Linux desktop installation, Secret Service, display/lifecycle and LAN | [#61](https://github.com/opensimgear/cockpit/issues/61) |
+| macOS desktop native build/install, Keychain, permissions and signing | [#62](https://github.com/opensimgear/cockpit/issues/62) |
 | Packaged mixed-peer trust, load and measured end-to-end performance | [#58](https://github.com/opensimgear/cockpit/issues/58) |
 
 Primary framework references: [Tauri mobile plugins](https://v2.tauri.app/develop/plugins/develop-mobile/),
@@ -396,3 +394,7 @@ firewall/discovery, second-PC lifecycle and failure qualification.
 [#58](https://github.com/opensimgear/cockpit/issues/58) retains packaged mixed-peer
 load and measured p95/p99 successful-submission latency. Neither local WSS tests
 nor source-accepted acknowledgements establish those performance targets.
+
+## C3 application and desktop delivery
+
+C3 adds persistent verified offline panels, explicit recovery and guarded async session/view state to the standalone app. Windows, Linux and macOS are native desktop build targets; Android/iOS retain configured shells/adapters with authentication disabled pending their native qualification. See [app commands and storage behavior](../apps/companion/README.md) and [C3 validation and open checks](verification/2026-10-16-companion-c3.md). Native desktop CI packages unsigned development artifacts without installing or publishing them. A package build is distinct from signed/native lifecycle qualification.

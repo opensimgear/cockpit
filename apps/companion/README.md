@@ -1,38 +1,71 @@
 # OpenSimGear Companion
 
-A separate Tauri 2 + Svelte 5 + TypeScript panel client for another Windows PC, sharing Cockpit's `@opensimgear/companion-ui` renderer. It renders immutable published C1 documents and typed feedback, or runs the flight/racing templates in recording-only local preview. Browser preview has no native pairing or remote-input access.
+A separate **Tauri 2, Svelte 5 and TypeScript** panel app for Windows, Linux and macOS, with Android/iOS shells. It uses Cockpit's shared canvas and connects as a narrow authenticated client to the same host endpoint. It does not link Cockpit's gateway, game-launch or controller-driver services, and needs no vJoy/HidHide on the client computer.
 
-## Windows pairing and use
+## Pair and run a panel
 
-1. In Cockpit, publish a panel, enable the Companion service on a chosen LAN interface/port, and create a pairing offer. Transfer its payload directly to this Companion; nearby-host discovery is an untrusted hint, not an authorization source.
-2. Paste the manual/decoded QR payload, name this installation, and request pairing. Rust verifies the out-of-band host CA SPKI pin and the ordinary TLS chain, hostname, validity and signatures before sending the one-time secret. Approve the pending request in Cockpit and assign a published controller instance. Distinct installations receive separate credentials.
-3. Refresh assignments if needed, choose an instance and Connect. The exact canonical publication and bounded raster assets are verified before rendering. A fresh neutral baseline must be acknowledged before Start panel is available. Start is explicit; connecting never resumes input automatically.
-4. Stop or Disconnect when finished. Window focus loss, hidden/unloaded pages, native lifecycle invalidation, a stalled UI lease, lost transport, malformed input or queue overflow stop the session and clear its source. A busy instance requires an explicit host-side Disconnect/Takeover decision. Game confirmation requires a real feedback source; a source-accepted acknowledgment alone does not claim virtual output or a game action.
+1. Publish a panel in Cockpit, enable its Companion listener on the intended interface/port, and make the immutable revision available.
+2. Transfer the host's pairing payload directly to this app. Discovery is an untrusted hint; the native client checks the out-of-band CA fingerprint and ordinary TLS chain/SAN/validity/signatures before sending a one-time secret.
+3. Request pairing and approve/assign the installation in Cockpit. Refresh assignments, select a controller instance and Connect. Verified layouts/assets and a fresh acknowledged neutral baseline must arrive before **Start panel**.
+4. Start explicitly. Stop, page/orientation/layout change, focus/close/background loss, native invalidation, stalled UI, network failure or overflow disarms this instance. Reconnect and Start explicitly; old actions are never replayed.
 
-The native client stores credentials with Windows user DPAPI; tokens never enter JavaScript. Only two application commands are allowed to the trusted local main window: lifecycle state and a narrow Companion client request API. Remote navigation is denied. There are no JavaScript network, filesystem, shell, Cockpit gateway, vJoy or HidHide permissions. The WSS endpoint exposes only the Companion protocol.
+Source acknowledgments say `source-accepted` with `submitted: false`. They do not claim successful virtual output or a game action. Existing unqualified host output, provisioning, hiding and script gates are unchanged.
 
-Digital transitions use ordered IPC and ordered native WSS input batches. Each batch has at most 64 changes; the frontend and native queue each cap pending/in-flight transitions at 256 (512 combined), reject backlogs older than 250 ms and stop on overflow rather than replaying stale controls. Input is limited to 120 batches/second. The native 600 ms UI lease and host 1500 ms source lease remain independent of renderer callbacks. Normal fallbacks for all 128 primitives are split into legal batches before close.
+## Offline content and recovery
 
-Local preview records control transitions only. Its shared renderer supports buttons, toggles, bounded pulses/repeats, selectors, hats, encoders, sliders, XY axes and typed text/numeric/icon/indicator/gauge output. Per-document ranges, fallback, centering, latching, deadzone and inversion apply. Cancellation releases owned pointers; Stop, page/document changes and lifecycle loss clear all timers and latched values. Preview never resumes automatically.
+The app atomically caches up to **four verified public panels, 24 MiB total, at most 13 MiB per entry**, including raster assets and the last selected page. Every disk read revalidates the document, capability/content hashes and assets. Credentials and input/action queues never enter IndexedDB. Quota/corruption errors leave online use available; **Clear saved panels** explicitly resets the public cache.
 
-## Commands
+Use **Open offline** to view a saved panel after disconnection/restart. Controls remain disarmed and feedback is unavailable. A cached panel grants no authority: Connect again for a new generation/baseline and explicitly Start. Feedback is cleared on epoch/selection/lifecycle loss. Late asynchronous responses cannot rearm an obsolete view.
 
-From the repository root:
+Native credential adapters are distinct from this public cache:
 
-- `pnpm --filter @opensimgear/companion ui:dev`: browser preview at `http://127.0.0.1:1431`.
-- `pnpm --filter @opensimgear/companion dev`: standalone desktop Tauri app.
-- `pnpm companion:check` and `pnpm companion:test`: contract/model/renderer/storage and client queue validation.
-- `pnpm --filter @opensimgear/companion ui:build`: production frontend.
-- `pnpm --filter @opensimgear/companion tauri build --no-bundle`: local desktop executable.
-- `cargo test --manifest-path apps/companion/src-tauri/Cargo.toml --locked`: native shell/lifecycle/navigation tests.
-- `cargo test --manifest-path crates/companion-service/Cargo.toml --locked`: core, TLS and real-WSS isolation/lifecycle regression tests.
-
-## Targets and qualification
-
-| Target | Candidate | Status |
+| Platform | Native protection | Qualification boundary |
 | --- | --- | --- |
-| Windows desktop | Windows 10/11, WebView2 | Native pairing, sealed credential reload and multi-client sessions covered by local Windows WSS tests. Cross-PC LAN/firewall, discovery, lock/sleep and extended-load qualification remain in #60. |
-| Android | Minimum API 29 / Android 10 | Shared renderer and mobile entry point configured. Pairing/authentication is disabled until protected storage and native-device qualification in #55. Local preview remains available. |
-| iOS | Minimum iOS 15.0 | Shared renderer and mobile entry point configured. Pairing/authentication is disabled until protected storage and native-device qualification in #56. Local preview remains available. |
+| Windows | Current-user DPAPI | Local native transport/store tests; physical second-PC, lock/sleep and signed install remain #57/#60. |
+| Linux | Secret Service holds the AES-256-GCM file key | Requires a running, unlocked Secret Service; missing/locked service fails closed. Native package/display-server/store/lifecycle qualification remains #61. |
+| macOS | Keychain holds the AES-256-GCM file key | Native build/install, permission, lifecycle and signing/notarization qualification remains #62. |
+| Android | App-owned Android Keystore AES-GCM adapter | Native bridge wired; authentication remains disabled pending #55. |
+| iOS/iPadOS | Native Apple Keychain adapter | Authentication remains disabled pending #56. |
 
-With the relevant SDK installed, generate native projects using `pnpm --filter @opensimgear/companion tauri android init` or `tauri ios init`, followed by `android dev`/`ios dev`. Generated projects are ignored. A configured minimum OS version or a Windows build does not establish mobile support. Linux/macOS host-controller capabilities and ordinary Cockpit live-output qualification gates are unchanged.
+There is no plaintext credential fallback. **Retry protected storage** re-probes a locked store and restores valid saved authority disarmed. Corrupt state remains inspectable; **Forget saved pairing** explicitly deletes only this app's saved credential before allowing a new installation identity. Failed deletion preserves existing authority. Forgetting pairing and clearing public panels are separate actions.
+
+Only the trusted local main window gets two narrow application commands (lifecycle/client request). Remote navigation is denied. The Android native storage plugin grants no JavaScript commands. No JavaScript network/filesystem/shell/controller-driver permissions are added.
+
+## Development and native builds
+
+Run from the repository root with the pinned Rust toolchain, Node and pnpm:
+
+```text
+pnpm install --frozen-lockfile
+pnpm companion:check
+pnpm companion:test
+pnpm companion:ui:dev
+pnpm companion:dev
+```
+
+Browser preview uses `http://127.0.0.1:1431` and has no native pairing/remote input. Local preview records shared control transitions only; it is separate from offline cached viewing.
+
+Build on each native desktop OS:
+
+```text
+python scripts/companion-package.py --print-plan
+python scripts/companion-package.py --output-dir <evidence-directory>
+python scripts/companion-package.py --verify-only <evidence-directory>/<platform>/development-evidence.json
+```
+
+The helper tests locked native dependencies, rejects host/driver dependencies, builds **unsigned development** NSIS (Windows), Debian (Linux), or zipped .app (macOS), and records sizes/SHA-256. It does not install, publish or qualify them. The desktop CI matrix runs the same commands and uploads artifacts. Native prerequisites follow [Tauri's distribution guide](https://v2.tauri.app/distribute/); Linux also needs DBus/Secret Service development headers.
+
+Mobile SDK entry points:
+
+```text
+pnpm --filter @opensimgear/companion android:init
+pnpm --filter @opensimgear/companion android:dev
+pnpm --filter @opensimgear/companion android:build:dev
+pnpm --filter @opensimgear/companion ios:init
+pnpm --filter @opensimgear/companion ios:dev
+pnpm --filter @opensimgear/companion ios:build:dev
+```
+
+Android needs the configured SDK/NDK/JDK; iOS needs macOS/Xcode and signing/provisioning. Generated projects are ignored and reconstructed from the checked-in Tauri configuration/native plugin. Debug APKs use Android development signing; this is not release qualification. Candidate floors are Android API29, iOS15, macOS11 and Windows10/11; Linux CI builds on Ubuntu24.04. These are configuration choices, not a verified support matrix.
+
+Desktop/mobile physical install, credential/permission and lifecycle checks remain open in #55–#62. See [C3 verification](../../docs/verification/2026-10-16-companion-c3.md) and [the feature guide](../../docs/companion-uis.md).

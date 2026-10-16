@@ -1,6 +1,6 @@
 # Native companion service
 
-`osg-companion-service` implements Windows C2 pairing, trust, transport and
+`osg-companion-service` implements C2/C3 pairing, native protected stores, trust, transport and
 per-instance input sessions for Cockpit and the separate Tauri Companion app.
 It has no mapping, HID, vJoy, serial, game-launch or gateway dependency. The host
 adapts its `SourceSink` interface to a dedicated mapping source; clients therefore
@@ -15,7 +15,7 @@ do not link controller drivers.
 | `sources` | Logical descriptors, normalized values, exact integer axis quantization and the nonblocking in-memory `SourceSink` boundary |
 | `server` | One opt-in narrow WSS listener, independent bounded workers, handshake/admission limits, discovery hints and chunked verified publication transfer |
 | `tls` | Persistent pinned host CA, signed server leaf and ordinary rustls signature/validity/SAN checks |
-| `persistence` | Bounded atomic per-user Windows DPAPI state; other OSes fail closed without plaintext fallback |
+| `persistence` | Bounded atomic Windows DPAPI or Linux Secret Service/Apple Keychain-backed AES-256-GCM; unavailable stores fail closed |
 | `client` | Protected credential/trust, pairing approval flow, publication verification, native epochs, ordered bounded input and lifecycle/UI/host lease controls |
 
 ## Host integration
@@ -131,3 +131,7 @@ See [the architecture and usage guide](../../docs/companion-uis.md),
 and [mixed-peer/performance qualification #58](https://github.com/opensimgear/cockpit/issues/58).
 Existing unqualified game-output, hiding and script capability gates remain
 unchanged. Source-accepted timing is not the p95/p99 successful-submission target.
+
+## C3 platform storage and recovery
+
+ClientRuntime::with_storage accepts a native StateStorage adapter, including the Android Keystore bridge; tokens never enter JavaScript. Authentication admission is separate from adapter availability: Android/iOS remain disabled pending #55/#56. Locked stores can be explicitly retried; corrupt data leaves the client inspectable/disarmed until restoration or Forget. Forget deletes the protected credential first and rotates the installation identity only on success. Desktop native key creation is serialized; no plaintext key/credential file fallback is permitted. Real Linux/macOS native store/install/lifecycle qualification remains #61/#62.

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateAssets } from "../src/index.ts";
+import { validateAssets, canonical } from "../src/index.ts";
 import { newDocument, createDesignerHistory, applyDesignerCommand as apply, undoDesigner, redoDesigner, widgetPresets, validateDesignerDocument as validate, normalizeToPortableUi, migratePortableUi, flightTemplate, racingTemplate, compareDesignerPublications, publishDocument, importAsset, exportBundle, importBundle, imageDimensions, encodeBase64, decodeBase64, createLibrary, saveDraft, openDraft, duplicateDraft, deleteDraft, validateLibrary, DESIGNER_LIMITS as L } from "../src/index.ts";
 import { exampleUi } from "../../companion-contracts/src/index.ts";
 const clone = value => structuredClone(value);
@@ -362,4 +362,17 @@ test("two distinct authored flight/racing panels each survive pages/assets and t
     }
   }
   assert.equal(library.drafts.length, 4);
+});
+
+test("canonical publication round-trip ignores object key order while preserving logical page item order and values", async () => {
+  for (const document of [flightTemplate, racingTemplate]) {
+    const published=await publishDocument(document,[]);
+    const reparsed=JSON.parse(canonical(published.document));
+    assert.equal(validate(reparsed).ok,true);
+    assert.equal((await publishDocument(reparsed,[])).publicationHash,published.publicationHash);
+    const reversed=clone(reparsed);reversed.ui.pages[0].items.reverse();
+    assert.equal(validate(reversed).ok,false);
+    const altered=clone(reparsed);altered.ui.pages[0].items[0].bounds.x+=0.001;
+    assert.equal(validate(altered).ok,false);
+  }
 });

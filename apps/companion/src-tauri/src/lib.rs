@@ -1,65 +1,77 @@
+mod lifecycle;
+use lifecycle::{Lifecycle, LifecycleSnapshot};
 use osg_companion_service::client::ClientRuntime;
-use serde::Serialize;
-use serde_json::Value;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use serde_json::{json, Value};
+use std::sync::{Arc, OnceLock};
 use tauri::{Emitter, Manager};
 
-/// Lifecycle epoch invalidates local preview if JavaScript missed an event while suspended.
-/// Active remote sessions are invalidated natively before the suspended UI can resume.
-#[derive(Default)]
-struct Lifecycle(AtomicU64);
+type ClientInitialization = Result<Arc<ClientRuntime>, String>;
+#[derive(Clone, Default)]
+struct ClientBridge(Arc<OnceLock<ClientInitialization>>);
 
-impl Lifecycle {
-    fn invalidate(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::SeqCst) + 1
+impl ClientBridge {
+    fn client(&self) -> Result<Arc<ClientRuntime>, String> {
+        self.0
+            .get()
+            .ok_or_else(|| "Native protected storage is initializing; please retry".to_string())?
+            .as_ref()
+            .cloned()
+            .map_err(Clone::clone)
     }
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LifecycleSnapshot {
-    invalidation_epoch: u64,
 }
 
 #[tauri::command]
 fn companion_lifecycle(state: tauri::State<'_, Lifecycle>) -> LifecycleSnapshot {
-    LifecycleSnapshot {
-        invalidation_epoch: state.0.load(Ordering::SeqCst),
-    }
+    state.snapshot()
 }
 
-struct ClientBridge {
-    client: Result<Arc<ClientRuntime>, String>,
-}
 #[tauri::command]
 async fn companion_client_request(
     state: tauri::State<'_, ClientBridge>,
+    window: tauri::Window,
     request: Value,
 ) -> Result<Value, String> {
-    let client = state.client.as_ref().map_err(Clone::clone)?.clone();
+    if state.0.get().is_none() && request["type"] == "status" {
+        return Ok(json!({"phase":"initializing","busy":true,"epoch":0,
+            "protectedStoreAvailable":false,"authenticationAvailable":false,
+            "authenticationUnavailableReason":"Native protected storage is initializing",
+            "assignments":[],"feedback":[]}));
+    }
+    let client = state.client()?;
+    #[cfg(desktop)]
+    if lifecycle::input_command(&request)
+        && (!window.is_focused().unwrap_or(false)
+            || !window.is_visible().unwrap_or(false)
+            || !lifecycle::desktop_input_available())
+    {
+        client.invalidate(
+            "Window is inactive or workstation is locked; Connect and Start explicitly",
+        );
+        return Err(
+            "Input is disarmed while the window is inactive or the workstation is locked".into(),
+        );
+    }
+    #[cfg(mobile)]
+    let _ = window;
     tauri::async_runtime::spawn_blocking(move || client.command(request))
         .await
         .map_err(|error| error.to_string())?
 }
 
-fn invalidate(window: &tauri::Window) {
+fn invalidate(window: &tauri::Window, reason: &str) {
     if let Some(bridge) = window.try_state::<ClientBridge>() {
-        if let Ok(client) = &bridge.client {
+        if let Ok(client) = bridge.client() {
             if matches!(
                 client.status().phase.as_str(),
                 "armed" | "ready" | "connecting"
             ) {
-                client.invalidate("Native lifecycle changed; Connect and Start explicitly");
+                client.invalidate(reason);
             }
         }
     }
     let lifecycle = window.state::<Lifecycle>();
-    let invalidation_epoch = lifecycle.invalidate();
-    let _ = window.emit(
-        "companion-lifecycle-invalidated",
-        LifecycleSnapshot { invalidation_epoch },
-    );
+    let snapshot = lifecycle.invalidate();
+    let _ = window.emit("companion-lifecycle-invalidated", snapshot);
 }
 
 fn local_document(url: &tauri::Url) -> bool {
@@ -75,7 +87,10 @@ fn local_document(url: &tauri::Url) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_companion_platform::init());
+    builder
         .manage(Lifecycle::default())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("local-navigation")
@@ -83,26 +98,37 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            let client = app
+            let path = app
                 .path()
                 .app_data_dir()
-                .map_err(|error| error.to_string())
-                .and_then(|path| ClientRuntime::open(path.join("companion-client")))
-                .map(Arc::new);
-            app.manage(ClientBridge { client });
+                .map_err(|error| error.to_string())?
+                .join("companion-client");
+            let bridge = ClientBridge::default();
+            app.manage(bridge.clone());
+            #[cfg(target_os = "android")]
+            let store = app
+                .state::<tauri_plugin_companion_platform::PlatformStore<tauri::Wry>>()
+                .inner()
+                .clone();
+            // Keychain/Secret Service can prompt. Android callbacks must not block
+            // the UI thread that dispatches the mobile plugin.
+            tauri::async_runtime::spawn_blocking(move || {
+                #[cfg(target_os = "android")]
+                let client = ClientRuntime::with_storage(path, Arc::new(store));
+                #[cfg(not(target_os = "android"))]
+                let client = ClientRuntime::open(path);
+                let _ = bridge.0.set(client.map(Arc::new));
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             companion_lifecycle,
             companion_client_request
         ])
-        .on_window_event(|window, event| match event {
-            tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed => {
-                invalidate(window)
+        .on_window_event(|window, event| {
+            if let Some(reason) = lifecycle::reason(event) {
+                invalidate(window, reason);
             }
-            #[cfg(mobile)]
-            tauri::WindowEvent::Suspended | tauri::WindowEvent::Resumed => invalidate(window),
-            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error running OpenSimGear Companion");
@@ -111,7 +137,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn navigation_never_gives_remote_documents_native_client_access() {
         for address in [
@@ -134,11 +159,13 @@ mod tests {
         }
     }
     #[test]
-    fn every_native_invalidation_advances_epoch_without_rearming_anything() {
-        let lifecycle = Lifecycle::default();
-        assert_eq!(lifecycle.0.load(Ordering::SeqCst), 0);
-        assert_eq!(lifecycle.invalidate(), 1);
-        assert_eq!(lifecycle.invalidate(), 2);
-        assert_eq!(lifecycle.0.load(Ordering::SeqCst), 2);
+    fn asynchronous_initialization_never_exposes_a_half_ready_client() {
+        let bridge = ClientBridge::default();
+        assert!(bridge.client().is_err());
+        bridge
+            .0
+            .set(Err("Protected store locked".into()))
+            .unwrap_or_else(|_| panic!("already set"));
+        assert_eq!(bridge.client().err().unwrap(), "Protected store locked");
     }
 }

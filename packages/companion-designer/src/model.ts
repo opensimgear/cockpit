@@ -118,7 +118,7 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
       const key = target.id + ":" + binding.kind + ":" + binding.index; assert(!slots.has(key), "Target slot already bound"); slots.add(key); bound.add(String(binding.controlId));
     }
     const result = doc as unknown as DesignerDocument;
-    assert(JSON.stringify(normalizeToPortableUi(result).pages) === JSON.stringify(ui.pages), "Presentation and logical page items differ");
+    assert(canonical(normalizeToPortableUi(result).pages) === canonical(ui.pages), "Presentation and logical page items differ");
     return { ok: true, value: result };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Invalid designer document" }; }
 }

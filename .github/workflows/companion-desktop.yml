@@ -1,0 +1,91 @@
+name: Companion desktop development packages
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: companion-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-companion:
+    name: Standalone Companion (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.research/companion-desktop-target
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Linux WebKit and Secret Service development dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev libdbus-1-dev patchelf
+      - name: Use pinned Rust toolchain
+        run: rustup show active-toolchain
+      - run: pnpm install --frozen-lockfile
+      - name: Packaging verifier regressions
+        run: python -m unittest discover -s scripts -p test_companion_package.py -v
+      - name: Shared UI and lifecycle checks
+        run: |
+          pnpm companion:check
+          pnpm companion:test
+      - name: Compile, test and package unsigned native development app
+        run: python scripts/companion-package.py
+      - name: Upload development packages and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-development-${{ matrix.os }}
+          path: .research/companion-package/
+          if-no-files-found: error
+          retention-days: 14
+
+  android-companion:
+    name: Android debug APK compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.research/companion-android-target
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install pinned Android SDK components and Rust target
+        run: |
+          rustup target add aarch64-linux-android
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Android project and compile the native Keystore bridge
+        run: |
+          pnpm --filter @opensimgear/companion tauri android init --ci
+          pnpm --filter @opensimgear/companion tauri android build --debug --apk --target aarch64 --ci -- --locked
+      - name: Upload debug-signed test APK; no release publishing
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-development-android
+          path: apps/companion/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14

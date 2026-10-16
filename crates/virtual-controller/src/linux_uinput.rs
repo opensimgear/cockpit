@@ -195,8 +195,16 @@ impl<C: Calls> Drop for Handle<C> {
         }
     }
 }
+/// Release this process's ownership explicitly before closing. CLOEXEC alone
+/// does not close a file description temporarily inherited between fork and exec.
+struct OwnerLease(File);
+impl Drop for OwnerLease {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
 pub struct Native {
-    _lease: File,
+    _lease: OwnerLease,
 }
 impl Native {
     pub fn open() -> Result<Self, String> {
@@ -211,7 +219,7 @@ impl Native {
         })
     }
 }
-fn owner_lock() -> Result<File, String> {
+fn owner_lock() -> Result<OwnerLease, String> {
     let uid = unsafe { libc::geteuid() };
     let path = std::env::temp_dir().join(format!("opensimgear-cockpit-uinput-{uid}.lock"));
     let file = OpenOptions::new()
@@ -229,7 +237,7 @@ fn owner_lock() -> Result<File, String> {
     }
     file.try_lock()
         .map_err(|_| "Another Cockpit output owner is still alive; no device is recreated.")?;
-    Ok(file)
+    Ok(OwnerLease(file))
 }
 pub struct NativeDevice(Handle<Kernel>);
 impl Device for NativeDevice {

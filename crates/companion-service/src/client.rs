@@ -1,5 +1,6 @@
 //! Native client: credentials stay sealed, epochs reject stale UI, and UI stalls close the lease.
 use crate::{
+    persistence::{self, StateStorage},
     server::{
         receive_json, send_json, websocket_config, BudgetIo, DeadlineTcp, PairingPayload,
         SERVICE_TYPE, SUBPROTOCOL,
@@ -24,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tungstenite::{client::IntoClientRequest, WebSocket};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 type Socket = WebSocket<BudgetIo<StreamOwned<ClientConnection, DeadlineTcp>>>;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +49,9 @@ impl Drop for SavedCredential {
 pub struct ClientStatus {
     pub phase: String,
     pub protected_store_available: bool,
+    pub authentication_available: bool,
+    pub authentication_unavailable_reason: Option<String>,
+    pub storage_error: Option<String>,
     pub busy: bool,
     pub epoch: u64,
     pub paired_host: Option<Value>,
@@ -64,7 +68,12 @@ impl Default for ClientStatus {
     fn default() -> Self {
         Self {
             phase: "unpaired".into(),
-            protected_store_available: cfg!(windows),
+            protected_store_available: false,
+            authentication_available: false,
+            authentication_unavailable_reason: Some(
+                "Native protected storage has not been probed.".into(),
+            ),
+            storage_error: None,
             busy: false,
             epoch: 0,
             paired_host: None,
@@ -81,6 +90,8 @@ impl Default for ClientStatus {
 }
 struct State {
     status: ClientStatus,
+    companion_id: String,
+    storage_loaded: bool,
     credential: Option<SavedCredential>,
     publication: Option<Value>,
     sender: Option<SyncSender<QueuedInput>>,
@@ -120,34 +131,39 @@ struct Shared {
     epoch: AtomicU64,
     ui_tick: AtomicU64,
     started: Instant,
-    path: PathBuf,
-    companion_id: String,
+    storage: Arc<dyn StateStorage>,
 }
 pub struct ClientRuntime {
     shared: Arc<Shared>,
 }
 impl ClientRuntime {
     pub fn open(data_dir: PathBuf) -> Result<Self, String> {
+        let storage = Arc::new(persistence::SealedFileStore::new(
+            data_dir.join("companion-client.dpapi"),
+        ));
+        Self::with_storage(data_dir, storage)
+    }
+    /// Native injection boundary for Android Keystore and deterministic tests.
+    /// The adapter reads/writes plaintext only inside native code and must protect
+    /// persisted bytes itself; never supply web/localStorage or a plaintext file.
+    pub fn with_storage(data_dir: PathBuf, storage: Arc<dyn StateStorage>) -> Result<Self, String> {
         std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
-        let path = data_dir.join("companion-client.dpapi");
-        let credential = if path.exists() {
-            let bytes = tls::read_sealed(&path, 65536)?;
-            if bytes.len() > 65536 {
-                return Err("Stored client credential exceeds budget".into());
-            }
-            let mut plain = crate::persistence::unseal(&bytes)?;
-            let parsed = serde_json::from_slice::<SavedCredential>(&plain)
-                .map_err(|_| "Stored companion credential is invalid".to_string());
-            plain.zeroize();
-            Some(parsed?)
+        let availability = storage.available();
+        let loaded = if availability.is_ok() {
+            load_credential(storage.as_ref())
         } else {
-            None
+            Ok(None)
         };
+        let storage_error = loaded.as_ref().err().cloned();
+        let storage_loaded = availability.is_ok() && storage_error.is_none();
+        let credential = loaded.ok().flatten();
         let companion_id = credential
             .as_ref()
             .map(|value| value.companion_id.clone())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let mut status = ClientStatus::default();
+        status.storage_error = storage_error;
+        set_storage_status(&mut status, availability);
         if let Some(value) = &credential {
             status.phase = "paired".into();
             status.paired_host = Some(public_host(value));
@@ -157,6 +173,8 @@ impl ClientRuntime {
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
                     status,
+                    companion_id,
+                    storage_loaded,
                     credential,
                     publication: None,
                     sender: None,
@@ -169,8 +187,7 @@ impl ClientRuntime {
                 epoch: AtomicU64::new(0),
                 ui_tick: AtomicU64::new(0),
                 started: Instant::now(),
-                path,
-                companion_id,
+                storage,
             }),
         })
     }
@@ -217,14 +234,54 @@ impl ClientRuntime {
         let command = request["type"]
             .as_str()
             .ok_or("Missing companion client command")?;
-        if matches!(command, "pair-start" | "connect" | "refresh-assignments") && !cfg!(windows) {
-            return Err(
-                "Native pairing is disabled until protected storage is qualified on this platform"
-                    .into(),
-            );
+        if matches!(
+            command,
+            "pair-start" | "connect" | "refresh-assignments" | "storage-status"
+        ) {
+            let availability = self.shared.storage.available();
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .map_err(|_| "Client state lock poisoned")?;
+            if availability.is_ok() && !state.storage_loaded {
+                match load_credential(self.shared.storage.as_ref()) {
+                    Ok(credential) => {
+                        if let Some(saved) = &credential {
+                            state.companion_id = saved.companion_id.clone();
+                        }
+                        state.status.phase = if credential.is_some() {
+                            "paired"
+                        } else {
+                            "unpaired"
+                        }
+                        .into();
+                        state.status.paired_host = credential.as_ref().map(public_host);
+                        state.status.assignments = credential
+                            .as_ref()
+                            .map(|saved| saved.assignments.clone())
+                            .unwrap_or_else(|| json!([]));
+                        state.credential = credential;
+                        state.storage_loaded = true;
+                        state.status.storage_error = None;
+                        state.status.last_error = None;
+                    }
+                    Err(error) => state.status.storage_error = Some(error),
+                }
+            }
+            set_storage_status(&mut state.status, availability);
+            if command != "storage-status" && !state.status.authentication_available {
+                return Err(state
+                    .status
+                    .authentication_unavailable_reason
+                    .clone()
+                    .unwrap_or_else(|| "Native authentication is unavailable".into()));
+            }
         }
         match command {
-            "status" => serde_json::to_value(self.status()).map_err(|error| error.to_string()),
+            "status" | "storage-status" => {
+                serde_json::to_value(self.status()).map_err(|error| error.to_string())
+            }
             "publication" => {
                 let state = self
                     .shared
@@ -376,14 +433,16 @@ impl ClientRuntime {
                     .state
                     .lock()
                     .map_err(|_| "Client state lock poisoned")?;
+                self.shared.storage.delete()?;
+                let availability = self.shared.storage.available();
                 state.credential = None;
+                state.companion_id = uuid::Uuid::new_v4().to_string();
+                state.storage_loaded = true;
                 state.status = ClientStatus {
                     epoch: self.shared.epoch.load(Ordering::SeqCst),
                     ..Default::default()
                 };
-                if self.shared.path.exists() {
-                    std::fs::remove_file(&self.shared.path).map_err(|error| error.to_string())?;
-                }
+                set_storage_status(&mut state.status, availability);
                 Ok(json!({"ok":true}))
             }
             "discover" => discover(Duration::from_millis(
@@ -469,6 +528,44 @@ fn apply_ack(state: &mut State, reply: Value, now_ms: u64) {
         }
     }
     state.status.ack = Some(reply);
+}
+fn load_credential(storage: &dyn StateStorage) -> Result<Option<SavedCredential>, String> {
+    match storage.read()? {
+        Some(bytes) => {
+            let plain = Zeroizing::new(bytes);
+            if plain.len() > 65536 {
+                return Err(
+                    "Stored client credential exceeds budget. Explicitly Forget host to remove it."
+                        .into(),
+                );
+            }
+            serde_json::from_slice::<SavedCredential>(&plain).map(Some).map_err(|_| "Stored companion credential is invalid. Restore the original protected state or explicitly Forget host; no automatic reset was attempted.".into())
+        }
+        None => Ok(None),
+    }
+}
+fn set_storage_status(status: &mut ClientStatus, availability: Result<(), String>) {
+    let unavailable = availability.err();
+    status.protected_store_available = unavailable.is_none();
+    status.authentication_unavailable_reason = authentication_reason(
+        unavailable,
+        cfg!(any(target_os = "android", target_os = "ios")),
+    );
+    if let Some(error) = &status.storage_error {
+        status.phase = "storage-error".into();
+        status.authentication_unavailable_reason =
+            Some(format!("Saved native credential cannot be opened: {error}"));
+    }
+    status.authentication_available = status.authentication_unavailable_reason.is_none();
+}
+fn authentication_reason(unavailable: Option<String>, mobile: bool) -> Option<String> {
+    if mobile {
+        Some("Mobile authentication remains disabled pending native protected-store and lifecycle qualification (#55/#56); local preview and protected-store probing remain available.".into())
+    } else {
+        unavailable.map(|reason| {
+            format!("Native authentication requires an available protected store: {reason}")
+        })
+    }
 }
 fn public_host(value: &SavedCredential) -> Value {
     json!({"hostId":value.host_id,"endpoint":value.endpoint,"caSpkiSha256":value.ca_spki_sha256,"companionId":value.companion_id,"name":value.name})
@@ -655,10 +752,9 @@ fn refresh_worker(
             .lock()
             .map_err(|_| "Client state lock poisoned")?;
         if state.status.epoch == epoch {
-            let mut plain = serde_json::to_vec(&credential).map_err(|error| error.to_string())?;
-            let sealed = crate::persistence::seal(&plain)?;
-            plain.zeroize();
-            crate::persistence::atomic_write(&shared.path, &sealed)?;
+            let plain =
+                Zeroizing::new(serde_json::to_vec(&credential).map_err(|error| error.to_string())?);
+            shared.storage.write(&plain)?;
             state.status.phase = "paired".into();
             state.status.assignments = credential.assignments.clone();
             state.credential = Some(credential);
@@ -689,6 +785,12 @@ fn pair_worker(
     name: String,
 ) -> Result<(), String> {
     let secret = zeroize::Zeroizing::new(std::mem::take(&mut payload.secret));
+    let companion_id = shared
+        .state
+        .lock()
+        .map_err(|_| "Client state lock poisoned")?
+        .companion_id
+        .clone();
     let mut socket = connect(
         &payload.endpoint,
         &payload.ca_certificate,
@@ -699,7 +801,7 @@ fn pair_worker(
     }
     let mut reply = request(
         &mut socket,
-        json!({"type":"pair","secret":secret.as_str(),"companionId":shared.companion_id,"name":name}),
+        json!({"type":"pair","secret":secret.as_str(),"companionId":companion_id,"name":name}),
         Duration::from_secs(3),
     )?;
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -709,7 +811,7 @@ fn pair_worker(
             return Ok(());
         }
         if reply["type"] == "paired" {
-            if reply["hostId"] != payload.host_id || reply["companionId"] != shared.companion_id {
+            if reply["hostId"] != payload.host_id || reply["companionId"] != companion_id {
                 return Err(
                     "Pairing approval identity does not match the pinned host/device".into(),
                 );
@@ -720,7 +822,7 @@ fn pair_worker(
                 .ok_or("Host returned invalid native credential")?
                 .to_string();
             let credential = SavedCredential {
-                companion_id: shared.companion_id.clone(),
+                companion_id: companion_id.clone(),
                 name,
                 token,
                 endpoint: payload.endpoint,
@@ -729,9 +831,8 @@ fn pair_worker(
                 ca_spki_sha256: payload.ca_spki_sha256,
                 assignments: reply["assignments"].clone(),
             };
-            let mut plain = serde_json::to_vec(&credential).map_err(|error| error.to_string())?;
-            let sealed = crate::persistence::seal(&plain)?;
-            plain.zeroize();
+            let plain =
+                Zeroizing::new(serde_json::to_vec(&credential).map_err(|error| error.to_string())?);
             if !current(&shared, epoch) {
                 return Ok(());
             }
@@ -742,7 +843,7 @@ fn pair_worker(
             if state.status.epoch != epoch {
                 return Ok(());
             }
-            crate::persistence::atomic_write(&shared.path, &sealed)?;
+            shared.storage.write(&plain)?;
             state.status.phase = "paired".into();
             state.status.paired_host = Some(public_host(&credential));
             state.status.assignments = credential.assignments.clone();
@@ -1074,6 +1175,174 @@ pub fn discover(duration: Duration) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct Adapter {
+        value: Mutex<Option<Vec<u8>>>,
+        available: AtomicBool,
+        delete_fails: AtomicBool,
+        probes: AtomicUsize,
+    }
+    impl StateStorage for Adapter {
+        fn read(&self) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.value.lock().unwrap().clone())
+        }
+        fn write(&self, bytes: &[u8]) -> Result<(), String> {
+            *self.value.lock().unwrap() = Some(bytes.to_vec());
+            Ok(())
+        }
+        fn available(&self) -> Result<(), String> {
+            self.probes.fetch_add(1, Ordering::SeqCst);
+            if self.available.load(Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("Native store is locked".into())
+            }
+        }
+        fn delete(&self) -> Result<(), String> {
+            if self.delete_fails.load(Ordering::SeqCst) {
+                Err("Delete denied".into())
+            } else {
+                self.value.lock().unwrap().take();
+                Ok(())
+            }
+        }
+    }
+    fn adapter() -> Arc<Adapter> {
+        Arc::new(Adapter {
+            value: Mutex::new(None),
+            available: AtomicBool::new(true),
+            delete_fails: AtomicBool::new(false),
+            probes: AtomicUsize::new(0),
+        })
+    }
+    #[test]
+    fn native_adapter_probe_and_mobile_qualification_are_distinct_admission_boundaries() {
+        assert!(authentication_reason(None, false).is_none());
+        assert!(authentication_reason(Some("Locked".into()), false)
+            .unwrap()
+            .contains("Locked"));
+        assert!(authentication_reason(None, true)
+            .unwrap()
+            .contains("#55/#56"));
+        assert!(authentication_reason(Some("Locked".into()), true).is_some());
+        let root = tempfile::tempdir().unwrap();
+        let storage = adapter();
+        storage.available.store(false, Ordering::SeqCst);
+        let client =
+            ClientRuntime::with_storage(root.path().to_path_buf(), storage.clone()).unwrap();
+        assert!(!client.status().protected_store_available);
+        assert!(!client.status().authentication_available);
+        assert!(client
+            .command(json!({"type":"pair-start","payload":"never transmitted"}))
+            .unwrap_err()
+            .contains("locked"));
+        assert!(client
+            .command(json!({"type":"connect","instanceId":"a"}))
+            .is_err());
+        storage.available.store(true, Ordering::SeqCst);
+        assert_eq!(
+            client.command(json!({"type":"storage-status"})).unwrap()["protectedStoreAvailable"],
+            true
+        );
+        let probes = storage.probes.load(Ordering::SeqCst);
+        let _ = client.status();
+        assert_eq!(storage.probes.load(Ordering::SeqCst), probes);
+    }
+    #[test]
+    fn injected_adapter_restores_only_authority_and_failed_forget_preserves_saved_credential() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = adapter();
+        let saved = SavedCredential {
+            companion_id: "saved-instance".into(),
+            name: "Panel".into(),
+            token: "native-secret".into(),
+            endpoint: "wss://127.0.0.1:54437/companion".into(),
+            host_id: "host".into(),
+            ca_certificate: "certificate".into(),
+            ca_spki_sha256: "pin".into(),
+            assignments: json!([]),
+        };
+        storage.write(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        let client =
+            ClientRuntime::with_storage(root.path().to_path_buf(), storage.clone()).unwrap();
+        assert_eq!(client.status().phase, "paired");
+        assert!(client.status().session.is_none());
+        assert!(!client.status().busy);
+        assert_eq!(
+            client.shared.state.lock().unwrap().companion_id,
+            "saved-instance"
+        );
+        storage.delete_fails.store(true, Ordering::SeqCst);
+        assert!(client.command(json!({"type":"forget"})).is_err());
+        assert!(storage.read().unwrap().is_some());
+        assert!(client.shared.state.lock().unwrap().credential.is_some());
+        storage.delete_fails.store(false, Ordering::SeqCst);
+        client.command(json!({"type":"forget"})).unwrap();
+        assert!(storage.read().unwrap().is_none());
+        assert!(client.shared.state.lock().unwrap().credential.is_none());
+        storage.write(b"broken authority").unwrap();
+        let corrupt =
+            ClientRuntime::with_storage(root.path().to_path_buf(), storage.clone()).unwrap();
+        assert_eq!(corrupt.status().phase, "storage-error");
+        assert!(!corrupt.status().authentication_available);
+        assert!(corrupt
+            .command(json!({"type":"connect","instanceId":"a"}))
+            .is_err());
+        assert_eq!(
+            corrupt.command(json!({"type":"storage-status"})).unwrap()["phase"],
+            "storage-error"
+        );
+        assert_eq!(storage.read().unwrap().unwrap(), b"broken authority");
+        corrupt.command(json!({"type":"forget"})).unwrap();
+        assert!(corrupt.status().storage_error.is_none());
+        assert_eq!(corrupt.status().phase, "unpaired");
+        storage.write(&vec![0u8; 65537]).unwrap();
+        assert_eq!(
+            ClientRuntime::with_storage(root.path().to_path_buf(), storage)
+                .unwrap()
+                .status()
+                .phase,
+            "storage-error"
+        );
+    }
+    #[test]
+    fn temporarily_locked_store_retries_without_losing_the_saved_pairing_or_resuming_input() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = adapter();
+        let saved = SavedCredential {
+            companion_id: "persistent-install".into(),
+            name: "Saved".into(),
+            token: "sealed-only".into(),
+            endpoint: "wss://127.0.0.1:54437/companion".into(),
+            host_id: "host".into(),
+            ca_certificate: "certificate".into(),
+            ca_spki_sha256: "pin".into(),
+            assignments: json!([{"instanceId":"retained"}]),
+        };
+        let bytes = serde_json::to_vec(&saved).unwrap();
+        storage.write(&bytes).unwrap();
+        storage.available.store(false, Ordering::SeqCst);
+        let client =
+            ClientRuntime::with_storage(root.path().to_path_buf(), storage.clone()).unwrap();
+        assert!(!client.status().authentication_available);
+        assert!(client.status().paired_host.is_none());
+        assert_eq!(storage.read().unwrap().unwrap(), bytes);
+        storage.available.store(true, Ordering::SeqCst);
+        client.command(json!({"type":"storage-status"})).unwrap();
+        assert_eq!(client.status().phase, "paired");
+        assert!(client.status().session.is_none());
+        assert!(!client.status().busy);
+        assert_eq!(
+            client.shared.state.lock().unwrap().companion_id,
+            "persistent-install"
+        );
+        assert_eq!(storage.read().unwrap().unwrap(), bytes);
+        client.command(json!({"type":"forget"})).unwrap();
+        assert_ne!(
+            client.shared.state.lock().unwrap().companion_id,
+            "persistent-install"
+        );
+        assert!(storage.read().unwrap().is_none());
+    }
     fn fixture() -> Value {
         serde_json::from_str(include_str!("../tests/fixtures/c1-flight-publication.json")).unwrap()
     }
@@ -1187,7 +1456,17 @@ mod tests {
         client.command(json!({"type":"forget"})).unwrap();
         assert_eq!(client.status().phase, "unpaired");
         std::fs::write(directory.path().join("companion-client.dpapi"), b"invalid").unwrap();
-        assert!(ClientRuntime::open(directory.path().to_path_buf()).is_err());
+        let reopened = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
+        assert!(!reopened.status().authentication_available);
+        if reopened.status().protected_store_available {
+            assert_eq!(reopened.status().phase, "storage-error");
+        }
+        assert_eq!(
+            std::fs::read(directory.path().join("companion-client.dpapi")).unwrap(),
+            b"invalid"
+        );
+        reopened.command(json!({"type":"forget"})).unwrap();
+        assert!(!directory.path().join("companion-client.dpapi").exists());
     }
     #[test]
     fn wrong_pin_is_rejected_before_even_an_invalid_endpoint_is_resolved() {

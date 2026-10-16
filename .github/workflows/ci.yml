@@ -50,7 +50,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends \
             build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev libudev-dev bubblewrap apparmor-profiles
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev bubblewrap apparmor-profiles
           # Disposable runner: permit only the distro helper profile's namespaces.
           # Keep global user-namespace restrictions enabled.
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
@@ -194,7 +194,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends libudev-dev bubblewrap apparmor-profiles
+          sudo apt-get install --no-install-recommends libudev-dev libdbus-1-dev bubblewrap apparmor-profiles
           # Disposable runner only: allow the distro helper to create namespaces,
           # with its children confined by the distro profile. Keep global userns
           # restrictions enabled; never replace them with a sysctl exception.

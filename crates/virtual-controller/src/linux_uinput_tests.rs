@@ -161,3 +161,116 @@ int main(void) { printf("%zu %zu %zu %zu %lu %lu %lu %lu %lu %lu %lu %lu",sizeof
         vec![24, 92, 28, 16, CREATE, DESTROY, SETUP, ABS, EVBIT, KEYBIT, PHYS, VERSION]
     );
 }
+
+#[test]
+fn dropping_owner_releases_lock_even_while_a_forked_child_holds_the_file_description() {
+    use std::os::fd::FromRawFd;
+    // Every file is private to this regression: no live controller or per-user
+    // output lock is acquired, and other parallel tests need not serialize.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("owner.lock");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    file.try_lock().unwrap();
+    let lease = OwnerLease(file);
+    let mut ready = [0; 2];
+    let mut release = [0; 2];
+    assert_eq!(
+        unsafe { libc::pipe2(ready.as_mut_ptr(), libc::O_CLOEXEC) },
+        0
+    );
+    let ready_read = unsafe { File::from_raw_fd(ready[0]) };
+    let ready_write = unsafe { File::from_raw_fd(ready[1]) };
+    assert_eq!(
+        unsafe { libc::pipe2(release.as_mut_ptr(), libc::O_CLOEXEC) },
+        0
+    );
+    let release_read = unsafe { File::from_raw_fd(release[0]) };
+    let release_write = unsafe { File::from_raw_fd(release[1]) };
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        // A fork from Rust's multithreaded test process must not allocate, lock,
+        // run destructors or call non-async-signal-safe Rust/library routines.
+        unsafe {
+            libc::alarm(5);
+            libc::close(ready[0]);
+            libc::close(release[1]);
+            let mut byte = 1u8;
+            if libc::write(ready[1], (&byte as *const u8).cast(), 1) != 1 {
+                libc::_exit(2);
+            }
+            if libc::read(release[0], (&mut byte as *mut u8).cast(), 1) != 1 {
+                libc::_exit(3);
+            }
+            libc::close(ready[1]);
+            libc::close(release[0]);
+            libc::_exit(0);
+        }
+    }
+    assert!(pid > 0, "fork failed");
+    struct Child(libc::pid_t);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            if self.0 > 0 {
+                unsafe {
+                    libc::kill(self.0, libc::SIGKILL);
+                    while libc::waitpid(self.0, std::ptr::null_mut(), 0) < 0
+                        && *libc::__errno_location() == libc::EINTR
+                    {}
+                }
+            }
+        }
+    }
+    let mut child = Child(pid);
+    drop(ready_write);
+    drop(release_read);
+    let mut poll = libc::pollfd {
+        fd: ready_read.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    assert_eq!(
+        unsafe { libc::poll(&mut poll, 1, 2000) },
+        1,
+        "child did not reach its inherited-FD wait"
+    );
+    let mut byte = 0u8;
+    assert_eq!(
+        unsafe { libc::read(ready_read.as_raw_fd(), (&mut byte as *mut u8).cast(), 1) },
+        1
+    );
+    assert_eq!(byte, 1);
+    assert_eq!(
+        unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) },
+        0
+    );
+    drop(lease);
+    let replacement = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    replacement
+        .try_lock()
+        .expect("an inherited FD must not retain a released owner's lock");
+    let _replacement = OwnerLease(replacement);
+    assert_eq!(
+        unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) },
+        0,
+        "child must still hold the inherited file description"
+    );
+    assert_eq!(
+        unsafe { libc::write(release_write.as_raw_fd(), (&byte as *const u8).cast(), 1) },
+        1
+    );
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    child.0 = 0;
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0);
+}
