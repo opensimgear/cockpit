@@ -504,3 +504,18 @@ software evidence from [native qualification #67](https://github.com/opensimgear
 Mobile authentication, virtual output, provisioning, hiding and script capability
 gates retain their existing disabled/unqualified state. Native companion client
 support does not qualify Linux/macOS host output backends (#48/#49).
+## C6 release preparation
+
+The [user guide](companion-guide.md) covers designer/import, pairing, independent
+recording routes, feedback, captured game assignments, readiness and recovery.
+[Flight/button-box and axis/racing examples](../examples/companion/README.md) are
+portable designer imports; they contain no credentials or local assignments and
+do not connect or activate output when imported.
+
+The [release matrix](companion-release-matrix.md) lists Windows/Linux/macOS client
+packages alongside Android/iOS candidates, exact limits and all pending native
+qualification. **No client target is release-qualified.** Development package
+verification and metadata compatibility checks are build evidence. Signed
+cross-version updates remain #68; device/LAN/lifecycle, real game/feedback and
+measured load remain #55-#62/#66/#67/#58. C6 does not enable a signed release,
+automatic updater or any unqualified capability; feature #37 remains open.

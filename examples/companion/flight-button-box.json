@@ -1,0 +1,701 @@
+{
+  "bundleVersion": 1,
+  "document": {
+    "schemaVersion": 2,
+    "ui": {
+      "schemaVersion": 1,
+      "id": "example-flight",
+      "title": "Flight button box",
+      "controls": [
+        {
+          "id": "example-flight-transmit",
+          "label": "Transmit",
+          "kind": "button"
+        },
+        {
+          "id": "example-flight-gear",
+          "label": "Gear request",
+          "kind": "button"
+        },
+        {
+          "id": "example-flight-ack",
+          "label": "Acknowledge",
+          "kind": "button"
+        },
+        {
+          "id": "example-flight-lights",
+          "label": "Lights request",
+          "kind": "button"
+        },
+        {
+          "id": "example-flight-radio-up",
+          "label": "Radio preset up",
+          "kind": "button"
+        },
+        {
+          "id": "example-flight-radio-down",
+          "label": "Radio preset down",
+          "kind": "button"
+        },
+        {
+          "id": "example-flight-view",
+          "label": "View direction",
+          "kind": "hat",
+          "fallback": -1
+        },
+        {
+          "id": "example-flight-flaps",
+          "label": "Flaps request",
+          "kind": "axis",
+          "axisMode": "unipolar",
+          "fallback": 0
+        },
+        {
+          "id": "example-flight-aux",
+          "label": "Auxiliary",
+          "kind": "button"
+        },
+        {
+          "id": "example-flight-trim",
+          "label": "Trim",
+          "kind": "axis",
+          "axisMode": "bipolar",
+          "fallback": 0
+        }
+      ],
+      "feedbackWidgets": [
+        {
+          "id": "example-flight-gear-state-output",
+          "label": "Gear requested",
+          "kind": "indicator",
+          "channelId": "example-flight-gear-requested"
+        },
+        {
+          "id": "example-flight-radio-text-output",
+          "label": "Radio frequency",
+          "kind": "text",
+          "channelId": "example-flight-radio-text"
+        },
+        {
+          "id": "example-flight-trim-state-output",
+          "label": "Trim requested",
+          "kind": "gauge",
+          "channelId": "example-flight-trim-requested"
+        },
+        {
+          "id": "example-flight-rpm-output",
+          "label": "Engine RPM",
+          "kind": "gauge",
+          "channelId": "example-flight-rpm"
+        }
+      ],
+      "assets": [],
+      "pages": [
+        {
+          "id": "example-flight-page-1",
+          "title": "Flight controls",
+          "items": [
+            {
+              "kind": "control",
+              "refId": "example-flight-transmit",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.06,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-gear",
+              "bounds": {
+                "x": 0.36,
+                "y": 0.06,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-ack",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.06,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-lights",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.36,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-radio-up",
+              "bounds": {
+                "x": 0.36,
+                "y": 0.36,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-radio-down",
+              "bounds": {
+                "x": 0.36,
+                "y": 0.36,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-view",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.36,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-flaps",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.6599999999999999,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-aux",
+              "bounds": {
+                "x": 0.36,
+                "y": 0.6599999999999999,
+                "width": 0.28,
+                "height": 0.24
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-flight-trim",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.6599999999999999,
+                "width": 0.28,
+                "height": 0.24
+              }
+            }
+          ]
+        },
+        {
+          "id": "example-flight-page-2",
+          "title": "Flight feedback",
+          "items": [
+            {
+              "kind": "feedback",
+              "refId": "example-flight-gear-state-output",
+              "bounds": {
+                "x": 0.06,
+                "y": 0.08,
+                "width": 0.42,
+                "height": 0.34
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "example-flight-radio-text-output",
+              "bounds": {
+                "x": 0.52,
+                "y": 0.08,
+                "width": 0.42,
+                "height": 0.34
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "example-flight-trim-state-output",
+              "bounds": {
+                "x": 0.06,
+                "y": 0.52,
+                "width": 0.42,
+                "height": 0.34
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "example-flight-rpm-output",
+              "bounds": {
+                "x": 0.52,
+                "y": 0.52,
+                "width": 0.42,
+                "height": 0.34
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "presentation": {
+      "widgets": [
+        {
+          "id": "example-flight-transmit-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "button",
+          "label": "Transmit (held)",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.06,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-transmit"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-flight-gear-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "button",
+          "label": "Gear request (toggle)",
+          "bounds": {
+            "x": 0.36,
+            "y": 0.06,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-gear"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "buttonMode": "toggle",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-flight-ack-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "button",
+          "label": "Acknowledge (100 ms)",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.06,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-ack"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "buttonMode": "pulse",
+            "pulseMs": 100,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-flight-lights-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "button",
+          "label": "Lights request (toggle)",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.36,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-lights"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "buttonMode": "toggle",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-flight-radio-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "encoder",
+          "label": "Radio preset - / +",
+          "bounds": {
+            "x": 0.36,
+            "y": 0.36,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-radio-up",
+            "example-flight-radio-down"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "pulseMs": 50,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-flight-view-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "hat",
+          "label": "View hat",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.36,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-view"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {}
+        },
+        {
+          "id": "example-flight-flaps-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "selector",
+          "label": "Flaps request",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.6599999999999999,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-flaps"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "options": [
+              {
+                "label": "Up",
+                "value": 0
+              },
+              {
+                "label": "Half",
+                "value": 0.5
+              },
+              {
+                "label": "Full",
+                "value": 1
+              }
+            ]
+          }
+        },
+        {
+          "id": "example-flight-aux-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "button",
+          "label": "Auxiliary (held)",
+          "bounds": {
+            "x": 0.36,
+            "y": 0.6599999999999999,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-aux"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-flight-trim-widget",
+          "pageId": "example-flight-page-1",
+          "kind": "slider",
+          "label": "Trim (spring return)",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.6599999999999999,
+            "width": 0.28,
+            "height": 0.24
+          },
+          "controlIds": [
+            "example-flight-trim"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.03,
+            "inverted": false,
+            "orientation": "horizontal"
+          }
+        },
+        {
+          "id": "example-flight-gear-state-widget",
+          "pageId": "example-flight-page-2",
+          "kind": "indicator",
+          "label": "Gear requested",
+          "bounds": {
+            "x": 0.06,
+            "y": 0.08,
+            "width": 0.42,
+            "height": 0.34
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-flight-gear-state-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {}
+        },
+        {
+          "id": "example-flight-radio-text-widget",
+          "pageId": "example-flight-page-2",
+          "kind": "text",
+          "label": "Radio frequency",
+          "bounds": {
+            "x": 0.52,
+            "y": 0.08,
+            "width": 0.42,
+            "height": 0.34
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-flight-radio-text-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "prefix": "",
+            "suffix": ""
+          }
+        },
+        {
+          "id": "example-flight-trim-state-widget",
+          "pageId": "example-flight-page-2",
+          "kind": "numeric",
+          "label": "Trim requested",
+          "bounds": {
+            "x": 0.06,
+            "y": 0.52,
+            "width": 0.42,
+            "height": 0.34
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-flight-trim-state-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "min": -1,
+            "max": 1,
+            "unit": "ratio",
+            "precision": 2
+          }
+        },
+        {
+          "id": "example-flight-rpm-widget",
+          "pageId": "example-flight-page-2",
+          "kind": "gauge",
+          "label": "Engine RPM",
+          "bounds": {
+            "x": 0.52,
+            "y": 0.52,
+            "width": 0.42,
+            "height": 0.34
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-flight-rpm-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "min": 0,
+            "max": 100000,
+            "unit": "rpm",
+            "precision": 0
+          }
+        }
+      ],
+      "groups": [],
+      "grid": {
+        "columns": 24,
+        "rows": 16,
+        "snap": true
+      },
+      "viewports": [
+        {
+          "pageId": "example-flight-page-1",
+          "width": 390,
+          "height": 844,
+          "safeInsets": {
+            "top": 0.04,
+            "right": 0.02,
+            "bottom": 0.04,
+            "left": 0.02
+          }
+        },
+        {
+          "pageId": "example-flight-page-2",
+          "width": 390,
+          "height": 844,
+          "safeInsets": {
+            "top": 0.04,
+            "right": 0.02,
+            "bottom": 0.04,
+            "left": 0.02
+          }
+        }
+      ]
+    },
+    "targets": [
+      {
+        "id": "example-flight-controller",
+        "label": "Flight button box",
+        "axes": [
+          "unipolar",
+          "bipolar"
+        ],
+        "buttons": 7,
+        "hats": 1
+      }
+    ],
+    "bindings": [
+      {
+        "controlId": "example-flight-transmit",
+        "targetId": "example-flight-controller",
+        "kind": "button",
+        "index": 0
+      },
+      {
+        "controlId": "example-flight-gear",
+        "targetId": "example-flight-controller",
+        "kind": "button",
+        "index": 1
+      },
+      {
+        "controlId": "example-flight-ack",
+        "targetId": "example-flight-controller",
+        "kind": "button",
+        "index": 2
+      },
+      {
+        "controlId": "example-flight-lights",
+        "targetId": "example-flight-controller",
+        "kind": "button",
+        "index": 3
+      },
+      {
+        "controlId": "example-flight-radio-up",
+        "targetId": "example-flight-controller",
+        "kind": "button",
+        "index": 4
+      },
+      {
+        "controlId": "example-flight-radio-down",
+        "targetId": "example-flight-controller",
+        "kind": "button",
+        "index": 5
+      },
+      {
+        "controlId": "example-flight-view",
+        "targetId": "example-flight-controller",
+        "kind": "hat",
+        "index": 0
+      },
+      {
+        "controlId": "example-flight-flaps",
+        "targetId": "example-flight-controller",
+        "kind": "axis",
+        "index": 0
+      },
+      {
+        "controlId": "example-flight-aux",
+        "targetId": "example-flight-controller",
+        "kind": "button",
+        "index": 6
+      },
+      {
+        "controlId": "example-flight-trim",
+        "targetId": "example-flight-controller",
+        "kind": "axis",
+        "index": 1
+      }
+    ]
+  },
+  "assets": []
+}

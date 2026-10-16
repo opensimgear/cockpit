@@ -259,6 +259,22 @@ impl Fixture {
     fn start(&self, id: &str, mode: &str) -> Value {
         self.request(id, "start", json!({"mode":mode})).unwrap()
     }
+    fn submission(&self, id: &str) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match self.service.companion_submission(id) {
+                Ok(proof) => return proof,
+                Err(error) if error == "Companion submission proof is temporarily busy." => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "Submission inspector remained busy"
+                    );
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("Unexpected submission inspection failure: {error}"),
+            }
+        }
+    }
     fn output(&self, id: &str) -> Value {
         let route = self.service.companion_runs.lock().unwrap().routes[id].clone();
         let router = route.router.lock().unwrap();
@@ -1094,10 +1110,7 @@ fn submission_feedback_needs_acknowledged_live_output_and_is_read_only() {
     f.save("panel", Some(2));
     f.baseline("panel", 1);
     f.start("panel", "recording");
-    assert_eq!(
-        f.service.companion_submission("panel").unwrap()["confirmed"],
-        false
-    );
+    assert_eq!(f.submission("panel")["confirmed"], false);
     f.request("panel", "stop", json!({})).unwrap();
     f.wait("panel", |v| v["session"]["cleanupComplete"] == true);
     f.enable();
@@ -1105,21 +1118,57 @@ fn submission_feedback_needs_acknowledged_live_output_and_is_read_only() {
     f.change("panel", 1, 1, "flight-input-0", InputValue::Button(true));
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        if let Ok(proof) = f.service.companion_submission("panel") {
-            if proof["confirmed"] == true && proof["values"]["flight-input-0"] == true {
-                break;
-            }
+        let proof = f.submission("panel");
+        if proof["confirmed"] == true && proof["values"]["flight-input-0"] == true {
+            break;
         }
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(2));
     }
-    let before = f.messages.lock().unwrap().len();
-    let _ = f.service.companion_submission("panel").unwrap();
-    assert_eq!(f.messages.lock().unwrap().len(), before);
+    // The independent live worker may renew its lease during a read. Count
+    // output mutations instead, so healthy renewal is not mistaken for a write.
+    let mutations = || {
+        f.messages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|message| message["message"]["command"] != "renew")
+            .count()
+    };
+    let before = mutations();
+    let proof = f.submission("panel");
+    assert_eq!(proof["values"]["flight-input-0"], true);
+    assert_eq!(mutations(), before);
     f.request("panel", "stop", json!({})).unwrap();
     f.wait("panel", |v| v["session"]["cleanupComplete"] == true);
+    assert_eq!(f.submission("panel")["confirmed"], false);
+}
+
+#[test]
+fn submission_inspection_is_nonblocking_while_the_route_worker_owns_its_router() {
+    let f = Fixture::new(false);
+    f.add("panel", publication());
+    f.save("panel", None);
+    f.baseline("panel", 1);
+    f.start("panel", "recording");
+    let route = f.service.companion_runs.lock().unwrap().routes["panel"].clone();
+    let guard = route.router.lock().unwrap();
+    let before = f.messages.lock().unwrap().clone();
+    let service = f.service.clone();
+    let (send, receive) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        send.send(service.companion_submission("panel")).unwrap();
+    });
+    // Keep the router locked until after the result is observed. A blocking
+    // inspector fails this bound rather than waiting for an accidental unlock.
+    let result = receive.recv_timeout(Duration::from_secs(2));
+    let unchanged = *f.messages.lock().unwrap() == before;
+    drop(guard);
+    worker.join().unwrap();
     assert_eq!(
-        f.service.companion_submission("panel").unwrap()["confirmed"],
-        false
+        result.unwrap().unwrap_err(),
+        "Companion submission proof is temporarily busy."
     );
+    assert!(unchanged);
+    assert_eq!(f.submission("panel")["confirmed"], false);
 }

@@ -37,6 +37,17 @@ jobs:
           pnpm companion:check
           pnpm companion:test
           pnpm companion:ui:build
+      - name: Companion package evidence and release-readiness validation
+        run: |
+          python3 -m unittest discover -s scripts -p test_companion_package.py -v
+          python3 -m unittest discover -s scripts -p test_companion_release_check.py -v
+          python3 scripts/companion-release-check.py --output .research/companion-c6/release-readiness.json
+      - name: Upload companion release readiness
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-release-readiness
+          path: .research/companion-c6/release-readiness.json
 
   native:
     runs-on: ubuntu-24.04

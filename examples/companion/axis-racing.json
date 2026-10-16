@@ -1,0 +1,547 @@
+{
+  "bundleVersion": 1,
+  "document": {
+    "schemaVersion": 2,
+    "ui": {
+      "schemaVersion": 1,
+      "id": "example-racing",
+      "title": "Racing axes",
+      "controls": [
+        {
+          "id": "example-racing-steering",
+          "label": "Steering",
+          "kind": "axis",
+          "axisMode": "bipolar",
+          "fallback": 0
+        },
+        {
+          "id": "example-racing-throttle",
+          "label": "Throttle",
+          "kind": "axis",
+          "axisMode": "unipolar",
+          "fallback": 0
+        },
+        {
+          "id": "example-racing-brake",
+          "label": "Brake",
+          "kind": "axis",
+          "axisMode": "unipolar",
+          "fallback": 0
+        },
+        {
+          "id": "example-racing-handbrake",
+          "label": "Handbrake",
+          "kind": "axis",
+          "axisMode": "unipolar",
+          "fallback": 0
+        },
+        {
+          "id": "example-racing-shift-down",
+          "label": "Shift down",
+          "kind": "button"
+        },
+        {
+          "id": "example-racing-shift-up",
+          "label": "Shift up",
+          "kind": "button"
+        }
+      ],
+      "feedbackWidgets": [
+        {
+          "id": "example-racing-rpm-output",
+          "label": "Engine RPM",
+          "kind": "gauge",
+          "channelId": "example-racing-rpm"
+        },
+        {
+          "id": "example-racing-speed-output",
+          "label": "Speed",
+          "kind": "gauge",
+          "channelId": "example-racing-speed"
+        },
+        {
+          "id": "example-racing-gear-output",
+          "label": "Gear",
+          "kind": "gauge",
+          "channelId": "example-racing-gear"
+        },
+        {
+          "id": "example-racing-steering-state-output",
+          "label": "Steering requested",
+          "kind": "gauge",
+          "channelId": "example-racing-steering-requested"
+        }
+      ],
+      "assets": [],
+      "pages": [
+        {
+          "id": "example-racing-page-1",
+          "title": "Driving controls",
+          "items": [
+            {
+              "kind": "control",
+              "refId": "example-racing-steering",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.07,
+                "width": 0.55,
+                "height": 0.22
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-racing-throttle",
+              "bounds": {
+                "x": 0.65,
+                "y": 0.07,
+                "width": 0.13,
+                "height": 0.49
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-racing-brake",
+              "bounds": {
+                "x": 0.82,
+                "y": 0.07,
+                "width": 0.13,
+                "height": 0.49
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-racing-handbrake",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.35,
+                "width": 0.55,
+                "height": 0.22
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-racing-shift-down",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.67,
+                "width": 0.24,
+                "height": 0.23
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "example-racing-shift-up",
+              "bounds": {
+                "x": 0.34,
+                "y": 0.67,
+                "width": 0.25,
+                "height": 0.23
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "example-racing-rpm-output",
+              "bounds": {
+                "x": 0.65,
+                "y": 0.67,
+                "width": 0.3,
+                "height": 0.23
+              }
+            }
+          ]
+        },
+        {
+          "id": "example-racing-page-2",
+          "title": "Driving feedback",
+          "items": [
+            {
+              "kind": "feedback",
+              "refId": "example-racing-speed-output",
+              "bounds": {
+                "x": 0.06,
+                "y": 0.08,
+                "width": 0.42,
+                "height": 0.34
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "example-racing-gear-output",
+              "bounds": {
+                "x": 0.52,
+                "y": 0.08,
+                "width": 0.42,
+                "height": 0.34
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "example-racing-steering-state-output",
+              "bounds": {
+                "x": 0.06,
+                "y": 0.52,
+                "width": 0.88,
+                "height": 0.34
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "presentation": {
+      "widgets": [
+        {
+          "id": "example-racing-steering-widget",
+          "pageId": "example-racing-page-1",
+          "kind": "slider",
+          "label": "Steering",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.07,
+            "width": 0.55,
+            "height": 0.22
+          },
+          "controlIds": [
+            "example-racing-steering"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.03,
+            "inverted": false,
+            "orientation": "horizontal"
+          }
+        },
+        {
+          "id": "example-racing-throttle-widget",
+          "pageId": "example-racing-page-1",
+          "kind": "slider",
+          "label": "Throttle",
+          "bounds": {
+            "x": 0.65,
+            "y": 0.07,
+            "width": 0.13,
+            "height": 0.49
+          },
+          "controlIds": [
+            "example-racing-throttle"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.03,
+            "inverted": false,
+            "orientation": "vertical"
+          }
+        },
+        {
+          "id": "example-racing-brake-widget",
+          "pageId": "example-racing-page-1",
+          "kind": "slider",
+          "label": "Brake",
+          "bounds": {
+            "x": 0.82,
+            "y": 0.07,
+            "width": 0.13,
+            "height": 0.49
+          },
+          "controlIds": [
+            "example-racing-brake"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.03,
+            "inverted": false,
+            "orientation": "vertical"
+          }
+        },
+        {
+          "id": "example-racing-handbrake-widget",
+          "pageId": "example-racing-page-1",
+          "kind": "slider",
+          "label": "Handbrake",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.35,
+            "width": 0.55,
+            "height": 0.22
+          },
+          "controlIds": [
+            "example-racing-handbrake"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.03,
+            "inverted": false,
+            "orientation": "horizontal"
+          }
+        },
+        {
+          "id": "example-racing-shift-down-widget",
+          "pageId": "example-racing-page-1",
+          "kind": "button",
+          "label": "Shift down (held)",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.67,
+            "width": 0.24,
+            "height": 0.23
+          },
+          "controlIds": [
+            "example-racing-shift-down"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-racing-shift-up-widget",
+          "pageId": "example-racing-page-1",
+          "kind": "button",
+          "label": "Shift up (held)",
+          "bounds": {
+            "x": 0.34,
+            "y": 0.67,
+            "width": 0.25,
+            "height": 0.23
+          },
+          "controlIds": [
+            "example-racing-shift-up"
+          ],
+          "feedbackIds": [],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "example-racing-rpm-widget",
+          "pageId": "example-racing-page-1",
+          "kind": "gauge",
+          "label": "Engine RPM",
+          "bounds": {
+            "x": 0.65,
+            "y": 0.67,
+            "width": 0.3,
+            "height": 0.23
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-racing-rpm-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "min": 0,
+            "max": 100000,
+            "unit": "rpm",
+            "precision": 0
+          }
+        },
+        {
+          "id": "example-racing-speed-widget",
+          "pageId": "example-racing-page-2",
+          "kind": "numeric",
+          "label": "Speed",
+          "bounds": {
+            "x": 0.06,
+            "y": 0.08,
+            "width": 0.42,
+            "height": 0.34
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-racing-speed-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "min": 0,
+            "max": 2000,
+            "unit": "km/h",
+            "precision": 1
+          }
+        },
+        {
+          "id": "example-racing-gear-widget",
+          "pageId": "example-racing-page-2",
+          "kind": "numeric",
+          "label": "Gear",
+          "bounds": {
+            "x": 0.52,
+            "y": 0.08,
+            "width": 0.42,
+            "height": 0.34
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-racing-gear-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "min": -1,
+            "max": 31,
+            "unit": "ratio",
+            "precision": 0
+          }
+        },
+        {
+          "id": "example-racing-steering-state-widget",
+          "pageId": "example-racing-page-2",
+          "kind": "gauge",
+          "label": "Steering requested",
+          "bounds": {
+            "x": 0.06,
+            "y": 0.52,
+            "width": 0.88,
+            "height": 0.34
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "example-racing-steering-state-output"
+          ],
+          "style": {
+            "foreground": "#F2F5F7",
+            "background": "#14232D",
+            "accent": "#56D4BD"
+          },
+          "config": {
+            "min": -1,
+            "max": 1,
+            "unit": "ratio",
+            "precision": 2
+          }
+        }
+      ],
+      "groups": [],
+      "grid": {
+        "columns": 24,
+        "rows": 16,
+        "snap": true
+      },
+      "viewports": [
+        {
+          "pageId": "example-racing-page-1",
+          "width": 390,
+          "height": 844,
+          "safeInsets": {
+            "top": 0.04,
+            "right": 0.02,
+            "bottom": 0.04,
+            "left": 0.02
+          }
+        },
+        {
+          "pageId": "example-racing-page-2",
+          "width": 390,
+          "height": 844,
+          "safeInsets": {
+            "top": 0.04,
+            "right": 0.02,
+            "bottom": 0.04,
+            "left": 0.02
+          }
+        }
+      ]
+    },
+    "targets": [
+      {
+        "id": "example-racing-controller",
+        "label": "Racing axes",
+        "axes": [
+          "bipolar",
+          "unipolar",
+          "unipolar",
+          "unipolar"
+        ],
+        "buttons": 2,
+        "hats": 0
+      }
+    ],
+    "bindings": [
+      {
+        "controlId": "example-racing-steering",
+        "targetId": "example-racing-controller",
+        "kind": "axis",
+        "index": 0
+      },
+      {
+        "controlId": "example-racing-throttle",
+        "targetId": "example-racing-controller",
+        "kind": "axis",
+        "index": 1
+      },
+      {
+        "controlId": "example-racing-brake",
+        "targetId": "example-racing-controller",
+        "kind": "axis",
+        "index": 2
+      },
+      {
+        "controlId": "example-racing-handbrake",
+        "targetId": "example-racing-controller",
+        "kind": "axis",
+        "index": 3
+      },
+      {
+        "controlId": "example-racing-shift-down",
+        "targetId": "example-racing-controller",
+        "kind": "button",
+        "index": 0
+      },
+      {
+        "controlId": "example-racing-shift-up",
+        "targetId": "example-racing-controller",
+        "kind": "button",
+        "index": 1
+      }
+    ]
+  },
+  "assets": []
+}

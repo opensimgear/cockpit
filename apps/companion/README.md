@@ -69,3 +69,14 @@ pnpm --filter @opensimgear/companion ios:build:dev
 Android needs the configured SDK/NDK/JDK; iOS needs macOS/Xcode and signing/provisioning. Generated projects are ignored and reconstructed from the checked-in Tauri configuration/native plugin. Debug APKs use Android development signing; this is not release qualification. Candidate floors are Android API29, iOS15, macOS11 and Windows10/11; Linux CI builds on Ubuntu24.04. These are configuration choices, not a verified support matrix.
 
 Desktop/mobile physical install, credential/permission and lifecycle checks remain open in #55–#62. See [C3 verification](../../docs/verification/2026-10-16-companion-c3.md) and [the feature guide](../../docs/companion-uis.md).
+
+## C6 guides and release status
+
+Use the [companion user guide](../../docs/companion-guide.md) for setup, designer,
+pairing, feedback and recovery; start from the [portable example layouts](../../examples/companion/README.md).
+The [release matrix](../../docs/companion-release-matrix.md) and
+`python scripts/companion-release-check.py` record the current blocked release
+state and pending native qualification. No Windows/Linux/macOS/Android/iOS client
+is release-qualified. Unsigned development artifacts, package metadata comparison
+and local fixtures do not establish signed/native upgrade, game or latency results.
+Signed distribution and cross-version trust/rollback remain #68, reusing #55-#62.
