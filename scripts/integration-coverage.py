@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run native tests and gate each integration production module above 70% line coverage."""
+"""Run native tests and gate each integration production module at least 71% production line coverage."""
 import argparse
 import json
 import os
@@ -10,7 +10,7 @@ import tempfile
 
 
 def command(args, cwd, env=None):
-    return subprocess.check_output(args, cwd=cwd, env=env, text=True)
+    return subprocess.check_output(args, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace")
 
 
 def main():
@@ -24,7 +24,8 @@ def main():
     sysroot = Path(command(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', command(['rustc', '-vV'], root), re.M).group(1)
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
-    if not all((llvm / tool).exists() for tool in ['llvm-profdata', 'llvm-cov']):
+    suffix = '.exe' if os.name == 'nt' else ''
+    if not all((llvm / f'{tool}{suffix}').exists() for tool in ['llvm-profdata', 'llvm-cov']):
         raise SystemExit('Install the pinned Rust llvm-tools-preview component before measuring coverage.')
     build_profiles = output / 'build-profiles'
     build_profiles.mkdir(exist_ok=True)
@@ -40,18 +41,18 @@ def main():
     if len(binaries) != 1:
         raise RuntimeError('Expected one instrumented Cockpit library test executable.')
     profiles = Path(tempfile.mkdtemp(prefix='test-profiles-', dir=output))
-    tests = command([binaries[0]], root,
+    tests = command([binaries[0], '--test-threads=1'], root,
                     dict(environment, LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw')))
-    (output / 'native-tests.log').write_text(tests)
+    (output / 'native-tests.log').write_text(tests, encoding='utf-8')
     profile = output / 'coverage.profdata'
-    command([str(llvm / 'llvm-profdata'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
+    command([str(llvm / f'llvm-profdata{suffix}'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
     sources = [root / 'src-tauri/src' / name
                for name in ['integration_profile.rs', 'integration_runtime.rs', 'game_telemetry.rs', 'xplane.rs', 'xplane_installation.rs',
-                            'acr_windows.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'game_discovery.rs', 'mapping_panels.rs', 'game_mapping.rs']]
-    annotated = command([str(llvm / 'llvm-cov'), 'show', binaries[0], f'-instr-profile={profile}',
+                            'acr_windows.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'game_discovery.rs', 'mapping_panels.rs', 'game_mapping.rs', 'game_companions.rs', 'companion_game_owner.rs', 'companion_feedback.rs']]
+    annotated = command([str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
-    (output / 'lines.txt').write_text(annotated)
+    (output / 'lines.txt').write_text(annotated, encoding='utf-8')
     source_paths = {str(path): path for path in sources}
     counts, current = {}, ''
     for line in annotated.splitlines():
@@ -61,7 +62,7 @@ def main():
             counts.setdefault(current, {})[int(match[1])] = int(match[2])
     report = {}
     for source in sources:
-        lines = source.read_text().splitlines()
+        lines = source.read_text(encoding='utf-8').splitlines()
         end = next((index + 1 for index, line in enumerate(lines) if '#[cfg(test)]' in line), len(lines) + 1)
         measured = {line: count for line, count in counts.get(source.name, {}).items() if line < end}
         if not measured:
@@ -70,9 +71,9 @@ def main():
         percent = 100 * covered / len(measured)
         report[source.name] = {'covered': covered, 'lines': len(measured), 'percent': round(percent, 2)}
         print(f'{source.name}: {covered}/{len(measured)} production lines ({percent:.2f}%)', flush=True)
-    (output / 'integration-summary.json').write_text(json.dumps(report, indent=2) + '\n')
-    if any(item['percent'] <= 70 for item in report.values()):
-        raise SystemExit('Each integration production module must exceed 70% line coverage.')
+    (output / 'integration-summary.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    if any(item['percent'] < 71 for item in report.values()):
+        raise SystemExit('Each integration production module must meet 71% production line coverage.')
 
 
 if __name__ == '__main__':

@@ -1,8 +1,8 @@
-/** C0 feasibility contracts. These limits do not qualify a native/network backend. */
+/** Shared companion contracts. These limits do not qualify a native/network backend. */
 export const COMPANION_LIMITS = Object.freeze({
   clients: 8, targets: 8, roles: 16, controls: 128, pages: 16, feedbackWidgets: 64,
   uiBytes: 1024 * 1024, assetBytes: 2 * 1024 * 1024, totalAssetBytes: 8 * 1024 * 1024,
-  frameBytes: 16 * 1024, changesPerBatch: 64, inputBatchesPerSecond: 120,
+  frameBytes: 16 * 1024, feedbackBytes: 128 * 1024, changesPerBatch: 64, inputBatchesPerSecond: 120,
   feedbackFreshMs: 250, feedbackStaleMs: 1000, feedbackHz: 30, queuedTransitions: 512, heartbeatMs: 250, leaseMs: 1500, sessionIdsPerRun: 512,
 });
 export type Value = number | boolean;
@@ -30,7 +30,12 @@ export interface FeedbackFrame {
   version: 1; type: "feedback"; clientId: string; sessionId: string; generation: string;
   sequence: string; publicationHash: string; values: FeedbackValue[];
 }
-export interface FeedbackValue { channelId: string; value: Value | string; provenance: "requested" | "local" | "host-accepted" | "host-submitted" | "game-confirmed"; sourceKind: "simulator" | "host" | "script"; sourceAgeMs: number; unit: string; range?: { min: number; max: number } }
+export interface FeedbackUpdateFrame extends FeedbackFrame {
+  controllerInstanceId: string; bindingGeneration: string; mode: "snapshot" | "delta";
+  bindings?: { channelId: string; outputId: string }[];
+}
+export type FeedbackStatus = "fresh" | "unknown" | "stale" | "disconnected";
+export interface FeedbackValue { channelId: string; outputId: string; status: FeedbackStatus; value?: Value | string; provenance: "requested" | "local" | "host-accepted" | "host-submitted" | "game-confirmed"; sourceKind: "simulator" | "host" | "script"; sourceAgeMs: number; unit: string; range?: { min: number; max: number } }
 export interface HeartbeatFrame { version: 1; type: "heartbeat"; clientId: string; sessionId: string; generation: string; publicationHash: string; sequence: string }
 export interface BaselineFrame { version: 1; type: "baseline"; clientId: string; sessionId: string; generation: string; publicationHash: string; sequence: "0"; values: Values }
 export type Validation<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -152,26 +157,60 @@ export function validateInputBatch(input: unknown, ui: PortableUi): Validation<I
     }
   });
 }
+function feedbackValues(input: unknown, ui: PortableUi): void {
+  const seen = new Set<string>();
+  for (const value of list(input, 0, COMPANION_LIMITS.feedbackWidgets)) {
+    const item = record(value); keys(item, ["channelId", "outputId", "status", "provenance", "sourceKind", "sourceAgeMs", "unit"], ["range", "value"]);
+    id(item.channelId); id(item.outputId);
+    if (!["fresh", "unknown", "stale", "disconnected"].includes(item.status as string)) reject("Invalid feedback status");
+    if (!["requested", "local", "host-accepted", "host-submitted", "game-confirmed"].includes(item.provenance as string)) reject("Invalid feedback provenance");
+    if (!["simulator", "host", "script"].includes(item.sourceKind as string)) reject("Invalid feedback source");
+    if (item.provenance === "game-confirmed" && item.sourceKind !== "simulator") reject("Game confirmation requires a simulator source");
+    integer(item.sourceAgeMs, 0, 86400000); text(item.unit, 120);
+    if (!ui.feedbackWidgets.some(widget => widget.channelId === item.channelId && widget.id === item.outputId) || seen.has(item.channelId)) reject("Unknown or repeated feedback channel");
+    seen.add(item.channelId);
+    const hasValue = Object.hasOwn(item, "value");
+    if (item.status === "fresh" && !hasValue || ["unknown", "disconnected"].includes(item.status as string) && hasValue) reject("Feedback status/value mismatch");
+    if (item.range !== undefined) {
+      const range = record(item.range); keys(range, ["min", "max"]);
+      if (!ui.feedbackWidgets.filter(widget => widget.channelId === item.channelId).every(widget => widget.kind === "gauge")) reject("Range requires numeric feedback outputs");
+      if (typeof range.min !== "number" || typeof range.max !== "number" || !Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max) reject("Invalid feedback range");
+      if (hasValue && (typeof item.value !== "number" || item.value < range.min || item.value > range.max)) reject("Feedback outside declared range");
+    }
+    if (hasValue) {
+      const widgets = ui.feedbackWidgets.filter(widget => widget.channelId === item.channelId);
+      if (widgets.some(widget => widget.kind === "text" ? typeof item.value !== "string" : widget.kind === "indicator" ? typeof item.value !== "boolean" : typeof item.value !== "number")) reject("Feedback widget type mismatch");
+      if (typeof item.value === "string") { if (item.value.length > 256 || /[\u0000-\u001f]/.test(item.value)) reject("Invalid feedback text"); }
+      else if (typeof item.value !== "boolean" && (typeof item.value !== "number" || !Number.isFinite(item.value))) reject("Invalid feedback value");
+    }
+  }
+}
+/** Detached, typed full snapshot. This validates visual data only and never creates input. */
+export function validateFeedbackValues(input: unknown, ui: PortableUi): Validation<FeedbackValue[]> {
+  const result = bounded<{ values: FeedbackValue[] }>({ values: input }, COMPANION_LIMITS.feedbackBytes, frame => { keys(frame, ["values"]); feedbackValues(frame.values, ui); });
+  return result.ok ? { ok: true, value: result.value.values } : result;
+}
 export function validateFeedback(input: unknown, ui: PortableUi): Validation<FeedbackFrame> {
   return bounded(input, COMPANION_LIMITS.frameBytes, frame => {
     keys(frame, ["version", "type", "clientId", "sessionId", "generation", "sequence", "publicationHash", "values"]); identity(frame, "feedback"); counter(frame.sequence);
-    const seen = new Set();
-    for (const value of list(frame.values, 0, COMPANION_LIMITS.feedbackWidgets)) {
-      const item = record(value); keys(item, ["channelId", "value", "provenance", "sourceKind", "sourceAgeMs", "unit"], ["range"]);
-      if (!["requested", "local", "host-accepted", "host-submitted", "game-confirmed"].includes(item.provenance as string)) reject("Invalid feedback provenance");
-      if (!["simulator", "host", "script"].includes(item.sourceKind as string)) reject("Invalid feedback source");
-      integer(item.sourceAgeMs, 0, 86400000); text(item.unit, 32);
-      if (item.range !== undefined) {
-        const range = record(item.range); keys(range, ["min", "max"]);
-        if (typeof range.min !== "number" || typeof range.max !== "number" || !Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max || typeof item.value !== "number" || item.value < range.min || item.value > range.max) reject("Invalid feedback range");
-      }
-      if (!ui.feedbackWidgets.some(widget => widget.channelId === item.channelId) || seen.has(item.channelId)) reject("Unknown or repeated feedback channel");
-      seen.add(item.channelId);
-      const widgets = ui.feedbackWidgets.filter(widget => widget.channelId === item.channelId);
-      if (widgets.some(widget => widget.kind === "text" ? typeof item.value !== "string" : widget.kind === "indicator" ? typeof item.value !== "boolean" : typeof item.value !== "number")) reject("Feedback widget type mismatch");
-      if (typeof item.value === "string") text(item.value, 256);
-      else if (typeof item.value !== "boolean" && (typeof item.value !== "number" || !Number.isFinite(item.value))) reject("Invalid feedback value");
-    }
+    feedbackValues(frame.values, ui);
+  });
+}
+/** C5 logical envelope after bounded native transfer reassembly. State/sequence admission stays native. */
+export function validateFeedbackUpdate(input: unknown, ui: PortableUi): Validation<FeedbackUpdateFrame> {
+  return bounded(input, COMPANION_LIMITS.feedbackBytes, frame => {
+    keys(frame, ["version", "type", "clientId", "sessionId", "generation", "controllerInstanceId", "publicationHash", "sequence", "bindingGeneration", "mode", "values"], ["bindings"]);
+    identity(frame, "feedback"); id(frame.controllerInstanceId); counter(frame.sequence); counter(frame.bindingGeneration);
+    if (frame.mode !== "snapshot" && frame.mode !== "delta") reject("Invalid feedback update mode");
+    feedbackValues(frame.values, ui);
+    if (frame.mode === "delta") { if (Object.hasOwn(frame, "bindings")) reject("Delta cannot replace bindings"); return; }
+    const seen = new Set<string>();
+    const bindings = list(frame.bindings, 0, COMPANION_LIMITS.feedbackWidgets).map(value => {
+      const binding = record(value); keys(binding, ["channelId", "outputId"]); id(binding.channelId); id(binding.outputId);
+      if (seen.has(binding.channelId) || !ui.feedbackWidgets.some(output => output.channelId === binding.channelId && output.id === binding.outputId)) reject("Invalid feedback snapshot binding");
+      seen.add(binding.channelId); return binding;
+    });
+    for (const value of frame.values as FeedbackValue[]) if (!bindings.some(binding => binding.channelId === value.channelId && binding.outputId === value.outputId)) reject("Unbound feedback snapshot value");
   });
 }
 export function parseFrame<T>(raw: string, validate: (value: unknown) => Validation<T>): Validation<T> {

@@ -38,6 +38,8 @@ pub struct Publication {
     pub title: String,
     #[serde(skip)]
     pub controls: Vec<SourceControl>,
+    #[serde(skip)]
+    pub feedback: Vec<crate::FeedbackDescriptor>,
 }
 pub(crate) fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -570,6 +572,7 @@ impl Publication {
             ui_id,
             title,
             controls,
+            feedback: crate::feedback_descriptors(&doc)?,
         })
     }
 }

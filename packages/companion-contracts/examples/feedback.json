@@ -13,7 +13,9 @@
       "provenance": "game-confirmed",
       "sourceKind": "simulator",
       "sourceAgeMs": 0,
-      "unit": "status"
+      "unit": "status",
+      "status": "fresh",
+      "outputId": "engine-status"
     }
   ]
 }

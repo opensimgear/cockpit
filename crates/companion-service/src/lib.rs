@@ -1,3 +1,5 @@
+pub mod feedback;
+pub use feedback::*;
 mod hub;
 pub mod persistence;
 mod publication;

@@ -191,6 +191,24 @@ fn validate_format(format: &Value) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn feedback_outputs(document: &Value) -> Result<Vec<Value>, String> {
+    let Some(value) = document.get("feedbackOutputs") else {
+        return Ok(vec![]);
+    };
+    let rows = value.as_array().filter(|a| a.len() <= 16).ok_or(INVALID)?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        if !known(row, &["id", "channel", "output"])
+            || !ids.insert(id(&row["id"], 31).ok_or(INVALID)?)
+            || id(&row["channel"], 64).is_none()
+        {
+            return Err(INVALID.into());
+        }
+        uint(&row["output"], 0, 15)?;
+    }
+    Ok(rows.clone())
+}
+
 /// Pure document/local-settings validation. Missing assignments are preserved
 /// for import previews; resolution and runtime validation require them.
 pub(crate) fn validate(value: &Value) -> Result<Config, String> {
@@ -199,7 +217,7 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
     }
     let document = &value["document"];
     if !document.is_object()
-        || document["schemaVersion"] != 1
+        || !matches!(document["schemaVersion"].as_u64(), Some(1 | 2))
         || id(&document["id"], 31).is_none()
         || text(&document["name"], 63, false).is_none()
         || !matches!(
@@ -221,6 +239,7 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
                 | "roles"
                 | "inputs"
                 | "outputs"
+                | "feedbackOutputs"
         )
     }) {
         return Err(INVALID.into());
@@ -240,7 +259,7 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
     }
     let roles = document["roles"]
         .as_array()
-        .filter(|v| !v.is_empty() && v.len() <= 8)
+        .filter(|v| v.len() <= 8)
         .ok_or(INVALID)?;
     let mut role_ids = HashSet::new();
     for role in roles {
@@ -261,7 +280,16 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
         .as_array()
         .filter(|v| v.len() <= 16)
         .ok_or(INVALID)?;
-    if inputs.is_empty() && outputs.is_empty() || provider != "dcs-bios" && !inputs.is_empty() {
+    let feedback = feedback_outputs(document)?;
+    if document["schemaVersion"] == 1 && document.get("feedbackOutputs").is_some() {
+        return Err(
+            "Migrate the integration document to schema 2 for companion telemetry sources.".into(),
+        );
+    }
+    if outputs.len() + feedback.len() > 16
+        || inputs.is_empty() && outputs.is_empty() && feedback.is_empty()
+        || provider != "dcs-bios" && !inputs.is_empty()
+    {
         return Err(INVALID.into());
     }
     let mut ids = HashSet::new();
@@ -272,6 +300,11 @@ pub(crate) fn validate(value: &Value) -> Result<Config, String> {
         if !ids.insert(id(&binding["id"], 31).ok_or(INVALID)?)
             || !role_ids.contains(id(&binding["role"], 31).ok_or(INVALID)?)
         {
+            return Err(INVALID.into());
+        }
+    }
+    for binding in &feedback {
+        if !ids.insert(id(&binding["id"], 31).ok_or(INVALID)?) {
             return Err(INVALID.into());
         }
     }
@@ -487,8 +520,8 @@ pub(crate) fn catalogue_diagnostics(config: &Config, catalogue: &Value) -> Vec<D
         .as_array()
         .or_else(|| catalogue["channels"].as_array());
     let mut result = Vec::new();
-    for key in ["inputs", "outputs"] {
-        for binding in config.document[key].as_array().unwrap() {
+    for key in ["inputs", "outputs", "feedbackOutputs"] {
+        for binding in config.document[key].as_array().into_iter().flatten() {
             let name = &binding[if key == "inputs" {
                 "command"
             } else {
@@ -554,6 +587,9 @@ pub(crate) fn catalogue_diagnostics(config: &Config, catalogue: &Value) -> Vec<D
                     ));
                     continue;
                 };
+                if key == "feedbackOutputs" {
+                    continue;
+                }
                 let kind = binding["format"]["kind"].as_str().unwrap();
                 let compatible = match kind {
                     "text" => output["type"] == "string",
@@ -871,7 +907,7 @@ mod tests {
     #[test]
     fn invalid_structure_bounds_and_duplicates_are_rejected() {
         for (path, v) in [
-            ("/document/schemaVersion", json!(2)),
+            ("/document/schemaVersion", json!(3)),
             ("/document/provider", json!("unknown")),
             ("/document/id", json!("bad id")),
             ("/document/name", json!("\n")),

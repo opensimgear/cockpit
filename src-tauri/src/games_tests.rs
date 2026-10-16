@@ -286,7 +286,7 @@ fn profile_validation_rejects_unknown_fields_invalid_bounds_and_route_aliases() 
     let valid = peripheral_profile("dcs");
     assert_eq!(profile(&valid).unwrap(), valid);
     for (pointer, value) in [
-        ("/schemaVersion", json!(3)),
+        ("/schemaVersion", json!(4)),
         ("/id", json!("bad id")),
         ("/gameId", json!("unknown")),
         ("/name", json!("\n")),
@@ -1026,3 +1026,6 @@ fn saved_and_journal_parsers_reject_bad_defaults_duplicates_and_untrusted_shapes
 }
 
 include!("games_mapping_tests.rs");
+
+#[path = "game_companion_tests.rs"]
+mod companions;

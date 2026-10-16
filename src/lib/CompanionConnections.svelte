@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CompanionFeedback from './CompanionFeedback.svelte';
   import { gatewayRequest } from './gateway';
   import { sendPublication, stableCompanionId, type CompanionCommand, type CompanionHostState } from './companions';
   import type { Publication } from '@opensimgear/companion-designer';
@@ -25,7 +26,7 @@
   async function send(command: CompanionCommand, companion: Record<string, unknown> = {}) {
     const result = (await gatewayRequest({ command, companion })).companions;
     if (!result) throw new Error('Companion connections require the updated native Cockpit app.');
-    hostState = result; return result;
+    hostState = { ...hostState, ...result }; return result;
   }
   async function action(work: () => Promise<void>) {
     if (busy) return; busy = true; error = ''; notice = '';
@@ -72,6 +73,7 @@
     <div class="row"><label>Local revision<select value={revision?.publicationHash ?? ''} onchange={e => selectedHash = e.currentTarget.value}>{#if !publications.length}<option value="">Publish a draft above first</option>{/if}{#each publications as item}<option value={item.publicationHash}>{item.document.ui.title} · {item.publicationHash.slice(7,19)}</option>{/each}</select></label><button disabled={!revision} onclick={() => action(async () => { await sendPublication(revision!,send); notice = 'Verified immutable revision is available to assigned companions.'; })}>Make revision available</button></div>
     <h4>Controller assignments</h4><div class="row"><label>Installation<select bind:value={companionId}><option value="">Choose a paired companion</option>{#each hostState.host?.clients ?? [] as client}<option value={id(client)}>{text(client,'displayName') || text(client,'name') || id(client)}</option>{/each}</select></label><label>Controller instance ID<input bind:value={instanceId} maxlength="64" /></label><button disabled={!companionId || !revision} onclick={() => action(async () => { await send('companion_assign', { companionId: stableCompanionId(companionId), instanceId: stableCompanionId(instanceId), publicationHash: revision!.publicationHash }); notice = 'Assignment saved. It remains disarmed until the companion starts a fresh session.'; })}>Assign panel</button></div>
     {#each hostState.host?.instances ?? [] as instance}<div class="card"><span>{text(instance,'instanceId')} · {text(instance,'companionId')} · {instance.armed ? 'Input session armed' : 'Disarmed'}</span><button onclick={() => action(async () => { await send('companion_disconnect', { instanceId: text(instance,'instanceId') }); })}>Disconnect input</button><button disabled={!companionId} onclick={() => action(async () => { await send('companion_takeover', { instanceId: text(instance,'instanceId'), companionId: stableCompanionId(companionId) }); notice = 'Prior writer neutralized. The replacement must establish a fresh baseline.'; })}>Give selected installation control</button></div>{/each}
+    <CompanionFeedback {send} />
     <h4>Paired installations</h4>{#each hostState.host?.clients ?? [] as client}<div class="card"><span>{text(client,'displayName') || text(client,'name') || id(client)} <code>{id(client)}</code></span><button onclick={() => action(async () => { await send('companion_revoke', { companionId: id(client) }); notice = 'Credential revoked and its owned sources neutralized.'; })}>Revoke access</button></div>{/each}
   </div>
 </details>

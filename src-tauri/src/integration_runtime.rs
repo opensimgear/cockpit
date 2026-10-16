@@ -36,6 +36,7 @@ pub(crate) struct IntegrationRuntime {
     settings: Mutex<Settings>,
     state: Arc<Mutex<Value>>,
     provider: Arc<Mutex<Value>>,
+    feedback: Arc<Mutex<(Value, Instant)>>,
 }
 fn diagnostic(code: &str, message: &str) -> Value {
     json!({"severity":"error","code":code,"message":message})
@@ -74,9 +75,14 @@ fn compile(config: &Config) -> Result<CompiledProfile, String> {
             output["format"] = json!({"kind":"integer"});
         }
     }
-    let profile = Profile::parse(&value)?;
+    let profile = Profile::parse_telemetry(&value)?;
     if config.provider() == "dcs-bios" {
-        CompiledProfile::load(profile)
+        let compiled = CompiledProfile::load(profile)?;
+        crate::dcs_profile::telemetry_sources(
+            &compiled,
+            &integration_profile::feedback_outputs(&config.document)?,
+        )?;
+        Ok(compiled)
     } else {
         let source = crate::dcs_bios::IntegerOutput::parse(
             &json!({"address":2,"mask":65535,"shift_by":0,"max_value":65535,"type":"integer"}),
@@ -108,6 +114,7 @@ fn controls(config: &Config) -> Arc<Controls> {
             .collect(),
         overrides: Mutex::new(BTreeMap::new()),
         require_ownership: true,
+        ..Controls::default()
     })
 }
 fn catalogue(config: &Config, request: &Value) -> Result<Value, String> {
@@ -131,8 +138,8 @@ fn bound_catalogue(config: &Config) -> Result<Value, String> {
         return catalogue(config, &json!({}));
     }
     let mut controls = BTreeMap::new();
-    for key in ["inputs", "outputs"] {
-        for binding in config.document[key].as_array().unwrap() {
+    for key in ["inputs", "outputs", "feedbackOutputs"] {
+        for binding in config.document[key].as_array().into_iter().flatten() {
             let name = &binding[if key == "inputs" {
                 "command"
             } else {
@@ -149,6 +156,56 @@ fn bound_catalogue(config: &Config) -> Result<Value, String> {
     Ok(
         json!({"provider":"dcs-bios","aircraftModule":config.document["context"]["aircraftModule"],"controls":controls.into_values().collect::<Vec<_>>()}),
     )
+}
+pub(crate) fn feedback_metadata(config: &Config) -> Result<Vec<Value>, String> {
+    let catalogue = bound_catalogue(config)?;
+    let channels = catalogue["channels"]
+        .as_array()
+        .or_else(|| catalogue["controls"].as_array())
+        .ok_or("Provider catalogue has no output channels.")?;
+    let mut result = Vec::new();
+    for row in integration_profile::feedback_outputs(&config.document)? {
+        let channel = channels
+            .iter()
+            .find(|c| c["id"] == row["channel"])
+            .ok_or("Named feedback channel is missing.")?;
+        let index = row["output"].as_u64().unwrap_or(0);
+        let metadata = channel["outputs"]
+            .as_array()
+            .and_then(|a| a.iter().find(|v| v["index"].as_u64() == Some(index)))
+            .unwrap_or(channel);
+        let kind = match metadata["type"].as_str() {
+            Some("boolean") => "boolean",
+            Some("string") => "string",
+            Some("integer") if metadata["maxValue"] == 1 => "boolean",
+            Some("integer" | "number") => "number",
+            _ => return Err("Unsupported feedback telemetry type.".into()),
+        };
+        result.push(json!({"bindingId":row["id"],"channel":row["channel"],"label":channel["label"],"kind":kind,
+            "unit":if kind=="boolean"{"state"}else if kind=="string"{"text"}else{metadata["unit"].as_str().unwrap_or("ratio")},
+            "minimum":metadata.get("minimum"),"maximum":metadata.get("maximum").or_else(||metadata.get("maxValue"))}));
+    }
+    Ok(result)
+}
+pub(crate) fn feedback_revision(config: &Config) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(
+            json!([
+                config.document,
+                config.connection["source"],
+                feedback_metadata(config).unwrap_or_default()
+            ])
+            .to_string()
+            .as_bytes()
+        )
+    )
+}
+fn feedback_idle(config: &Config) -> Value {
+    json!({"running":false,"fresh":false,"revision":feedback_revision(config),"provider":config.provider(),
+    "sourceKind":if config.provider()==crate::game_telemetry::PROVIDER&&config.connection["source"]=="synthetic"{"synthetic"}else{"simulator"},
+    "sourceAgeMs":0,"freshnessMs":config.connection["freshnessMs"],"values":{},"sources":feedback_metadata(config).unwrap_or_default()})
 }
 fn preflight_panel(panel: Panel, value: &Value) -> Result<Panel, String> {
     let rows = value
@@ -328,7 +385,33 @@ impl IntegrationRuntime {
                 json!({"running":false,"status":"stopped","error":error}),
             )),
             provider: Arc::new(Mutex::new(Value::Null)),
+            feedback: Arc::new(Mutex::new((
+                saved
+                    .as_ref()
+                    .and_then(|v| integration_profile::validate(&v["config"]).ok())
+                    .map(|c| feedback_idle(&c))
+                    .unwrap_or(Value::Null),
+                Instant::now(),
+            ))),
         }
+    }
+    pub(crate) fn feedback_snapshot(&self) -> Value {
+        let (mut value, updated) = self
+            .feedback
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if value.is_object() {
+            let age = value["sourceAgeMs"]
+                .as_u64()
+                .unwrap_or(0)
+                .saturating_add(updated.elapsed().as_millis() as u64);
+            value["sourceAgeMs"] = json!(age);
+            if age > value["freshnessMs"].as_u64().unwrap_or(1000) {
+                value["fresh"] = json!(false);
+            }
+        }
+        value
     }
     pub(crate) fn status(&self) -> Value {
         let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
@@ -406,7 +489,11 @@ impl IntegrationRuntime {
                         o.keys().all(|k| {
                             matches!(
                                 k.as_str(),
-                                "command" | "clientId" | "integrationConfig" | "gameDevices"
+                                "command"
+                                    | "clientId"
+                                    | "integrationConfig"
+                                    | "gameDevices"
+                                    | "gameCompanions"
                             )
                         })
                     })
@@ -526,6 +613,8 @@ impl IntegrationRuntime {
                 }
                 saved?;
                 settings.accepted = settings.validation["signature"].as_str().map(str::to_owned);
+                *self.feedback.lock().unwrap_or_else(|p| p.into_inner()) =
+                    (feedback_idle(&config), Instant::now());
                 settings.config = Some(config);
                 settings.revision = revision;
                 Ok(())
@@ -566,11 +655,55 @@ impl IntegrationRuntime {
                     );
                 }
                 let profile = compile(&config)?;
-                let control = controls(&config);
+                let mut control = controls(&config);
+                let decoded = if config.provider() == "dcs-bios" {
+                    crate::dcs_profile::telemetry_sources(
+                        &profile,
+                        &integration_profile::feedback_outputs(&config.document)?,
+                    )?
+                } else {
+                    vec![]
+                };
+                let observed = self.feedback.clone();
+                let metadata = feedback_metadata(&config)?;
+                let source_revision = feedback_revision(&config);
+                let provider_kind = config.provider().to_string();
+                let synthetic = config.provider() == crate::game_telemetry::PROVIDER
+                    && config.connection["source"] == "synthetic";
+                let freshness = config.connection["freshnessMs"].as_u64().unwrap_or(1000);
+                let controls_mut = Arc::get_mut(&mut control).unwrap();
+                controls_mut.feedback_sources = decoded;
+                controls_mut.source_observer = Some(Arc::new(move |sample| {
+                    let mut values = sample.values.clone();
+                    for binding in &metadata {
+                        if binding["kind"] == "boolean" {
+                            if let Some(v) = values.get_mut(binding["bindingId"].as_str().unwrap())
+                            {
+                                if *v == 0 {
+                                    *v = json!(false);
+                                } else if *v == 1 {
+                                    *v = json!(true);
+                                }
+                            }
+                        }
+                    }
+                    *observed.lock().unwrap_or_else(|p| p.into_inner()) = (
+                        json!({"running":true,"provider":provider_kind,
+                        "sourceKind":if synthetic{"synthetic"}else{"simulator"},"fresh":sample.fresh,"sourceAgeMs":sample.age_ms,
+                        "freshnessMs":freshness,"revision":source_revision,"epoch":sample.epoch,"values":values,"sources":metadata}),
+                        Instant::now(),
+                    );
+                }));
                 let cancel = Arc::new(AtomicBool::new(false));
                 let mut fixture = None;
                 let feed: Option<Feed> = if config.provider() == crate::xplane::PROVIDER {
-                    let outputs = config.document["outputs"].as_array().unwrap().clone();
+                    let outputs: Vec<Value> = config.document["outputs"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .cloned()
+                        .chain(integration_profile::feedback_outputs(&config.document)?.into_iter())
+                        .collect();
                     let mut source = crate::xplane::Source::new(&config.connection, outputs)?;
                     let provider = self.provider.clone();
                     Some(Box::new(move |_now| {
@@ -596,7 +729,13 @@ impl IntegrationRuntime {
                             Box::new(SharedFixture(queue))
                         };
                     let provider = self.provider.clone();
-                    let outputs = config.document["outputs"].as_array().unwrap().clone();
+                    let outputs: Vec<Value> = config.document["outputs"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .cloned()
+                        .chain(integration_profile::feedback_outputs(&config.document)?.into_iter())
+                        .collect();
                     Some(Box::new(move |now| {
                         let snapshot = session.poll(source.as_mut(), now);
                         *provider.lock().unwrap_or_else(|p| p.into_inner()) = snapshot.value();
@@ -729,6 +868,11 @@ impl IntegrationRuntime {
             let _ = worker.join();
         }
         settings.fixture = None;
+        let mut feedback = self.feedback.lock().unwrap_or_else(|p| p.into_inner());
+        feedback.0["running"] = json!(false);
+        feedback.0["fresh"] = json!(false);
+        feedback.0["values"] = json!({});
+        drop(feedback);
         *self.provider.lock().unwrap_or_else(|p| p.into_inner()) = Value::Null;
         settings
             .controls

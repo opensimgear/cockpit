@@ -179,6 +179,13 @@ pub(crate) struct Profile {
 }
 impl Profile {
     pub fn parse(value: &Value) -> Result<Self, String> {
+        Self::parse_inner(value, false)
+    }
+    /// Internal source-only integration; the public panel parser remains strict.
+    pub(crate) fn parse_telemetry(value: &Value) -> Result<Self, String> {
+        Self::parse_inner(value, true)
+    }
+    fn parse_inner(value: &Value, allow_empty: bool) -> Result<Self, String> {
         if !value.is_object()
             || value.to_string().len() > 65536
             || value["schemaVersion"] != 2
@@ -202,7 +209,7 @@ impl Profile {
             .as_array()
             .filter(|v| v.len() <= 16)
             .ok_or(INVALID)?;
-        if input_values.is_empty() && output_values.is_empty() {
+        if !allow_empty && input_values.is_empty() && output_values.is_empty() {
             return Err(INVALID.into());
         }
         let mut ids = HashSet::new();
@@ -527,6 +534,56 @@ impl CompiledProfile {
         })
     }
 }
+/// Decode additional named telemetry without inventing physical output targets.
+pub(crate) fn telemetry_sources(
+    profile: &CompiledProfile,
+    rows: &[Value],
+) -> Result<Vec<(String, OutputSource)>, String> {
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+    let document = dcs_bios::read_json(
+        &profile
+            .profile
+            .catalogue_path
+            .join(format!("{}.json", profile.profile.aircraft_module)),
+        dcs_bios::MAX_DOCUMENT,
+    )?;
+    let mut sources = Vec::new();
+    for row in rows {
+        let control = dcs_bios::control(&document, row["channel"].as_str().ok_or(INVALID)?)?;
+        let output = control["outputs"]
+            .as_array()
+            .and_then(|a| a.get(row["output"].as_u64().unwrap_or(0) as usize))
+            .ok_or(CATALOGUE_ERROR)?;
+        let source = match output["type"].as_str() {
+            Some("integer") => {
+                let out = IntegerOutput::parse(output)?;
+                if overlaps(out.address as usize, 2, &profile.catalogue) {
+                    return Err(CATALOGUE_ERROR.into());
+                }
+                OutputSource::Integer(out)
+            }
+            Some("string") => {
+                let address = output["address"]
+                    .as_u64()
+                    .filter(|n| *n <= 65534 && *n % 2 == 0)
+                    .ok_or(CATALOGUE_ERROR)? as u16;
+                let length = output["max_length"]
+                    .as_u64()
+                    .filter(|n| (1..=1024).contains(n))
+                    .ok_or(CATALOGUE_ERROR)? as usize;
+                if overlaps(address as usize, length, &profile.catalogue) {
+                    return Err(CATALOGUE_ERROR.into());
+                }
+                OutputSource::String { address, length }
+            }
+            _ => return Err(CATALOGUE_ERROR.into()),
+        };
+        sources.push((row["id"].as_str().ok_or(INVALID)?.into(), source));
+    }
+    Ok(sources)
+}
 pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
     let path = text(&request["cataloguePath"], 4096, false)
         .filter(|p| Path::new(p).is_absolute())
@@ -806,6 +863,7 @@ pub(crate) struct ExportSnapshot {
 pub(crate) struct ExportSession {
     catalogue: Catalogue,
     outputs: Vec<CompiledOutput>,
+    extra_sources: Vec<(String, OutputSource)>,
     freshness_ms: u64,
     parser: Parser,
     memory: Memory,
@@ -820,6 +878,7 @@ impl ExportSession {
         Self {
             catalogue: profile.catalogue.clone(),
             outputs: profile.outputs.clone(),
+            extra_sources: vec![],
             freshness_ms: profile.profile.network.freshness_ms,
             parser: Parser::new(profile.catalogue.counter.address),
             memory: Memory::new(),
@@ -829,6 +888,9 @@ impl ExportSession {
             epoch: 1,
             malformed_frames: 0,
         }
+    }
+    pub(crate) fn extend_sources(&mut self, values: Vec<(String, OutputSource)>) {
+        self.extra_sources = values;
     }
     fn invalidate(&mut self) {
         self.memory.clear();
@@ -925,19 +987,23 @@ impl ExportSession {
             && self
                 .last_frame
                 .is_some_and(|t| now_ms.saturating_sub(t) <= self.freshness_ms);
-        let values = if fresh {
-            self.outputs
-                .iter()
-                .filter_map(|output| {
-                    output
-                        .source
-                        .read(&self.memory)
-                        .map(|v| (output.binding.id.clone(), v))
-                })
-                .collect()
-        } else {
-            BTreeMap::new()
-        };
+        let values =
+            if fresh {
+                self.outputs
+                    .iter()
+                    .filter_map(|output| {
+                        output
+                            .source
+                            .read(&self.memory)
+                            .map(|v| (output.binding.id.clone(), v))
+                    })
+                    .chain(self.extra_sources.iter().filter_map(|(id, source)| {
+                        source.read(&self.memory).map(|v| (id.clone(), v))
+                    }))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
         ExportSnapshot {
             epoch: self.epoch,
             aircraft: self.aircraft.clone(),

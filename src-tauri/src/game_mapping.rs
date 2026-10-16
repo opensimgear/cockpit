@@ -1,6 +1,8 @@
 //! Game schema migration and immutable optional mapping intent.
 use osg_mapping_host::service::game::Capture;
 use serde_json::Value;
+#[path = "game_companions.rs"]
+pub mod companions;
 pub fn validate(profile: &Value) -> Result<(), String> {
     if profile["schemaVersion"] == 1 {
         if profile.get("mapping").is_some() {
@@ -10,7 +12,7 @@ pub fn validate(profile: &Value) -> Result<(), String> {
         }
         return Ok(());
     }
-    if profile["schemaVersion"] != 2 {
+    if !matches!(profile["schemaVersion"].as_u64(), Some(2 | 3)) {
         return Err("Unsupported game profile schema.".into());
     }
     if !profile["mapping"].is_null() {
@@ -22,7 +24,7 @@ pub fn journal(value: &Value) -> Result<(), String> {
     if value["mapping"].is_null() {
         return Ok(());
     }
-    if value["schemaVersion"] != 2 {
+    if !matches!(value["schemaVersion"].as_u64(), Some(2 | 3)) {
         return Err("Mapping recovery requires journal schema 2.".into());
     }
     let m = &value["mapping"];

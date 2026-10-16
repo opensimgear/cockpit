@@ -787,6 +787,23 @@ impl Router {
     pub fn stop(&mut self) {
         let _ = self.stop_result();
     }
+    /// Native read-only proof: current states are reported only after every
+    /// pending recording report was acknowledged by the owned output session.
+    pub(crate) fn submission_snapshot(&self) -> serde_json::Value {
+        match (&self.output, self.runtime.engine()) {
+            (Some(output), Some(engine))
+                if output.active()
+                    && !output.recovery_required()
+                    && engine.active()
+                    && engine.ready()
+                    && self.fault.is_none()
+                    && output.cursor() == self.runtime.recording.cursor() =>
+            {
+                engine.inspect(0)["outputs"].clone()
+            }
+            _ => serde_json::Value::Null,
+        }
+    }
     pub fn status(&self) -> serde_json::Value {
         let engine = self.runtime.engine();
         json!({"scripts":engine.map(|e|e.script_status()),"scriptLiveQualified":false,"running":engine.is_some_and(|e| e.active()),"ready":engine.is_some_and(|e| e.ready()),"mode":if self.live() { crate::service::BACKEND } else { "recording" },"recoveryRequired":self.output.as_ref().is_some_and(|o| o.recovery_required()),"token":self.runtime.token().ok(),"profileId":engine.map(|e| &e.profile().id),"fault":self.fault.as_deref().or_else(|| engine.and_then(|e| e.fault())),"recordingCursor":self.runtime.recording.cursor()})

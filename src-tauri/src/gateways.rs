@@ -109,6 +109,7 @@ pub struct GatewayManager {
     mapping_host: Arc<osg_mapping_host::service::Service>,
     mapping_documents: osg_mapping::documents::Documents,
     companion_host: Arc<crate::companion_host::Runtime>,
+    companion_feedback: Arc<crate::companion_host::feedback::Runtime>,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -170,6 +171,21 @@ impl GatewayManager {
             panel.clone(),
             crate::dcs_runtime::config_path().with_file_name("integration.json"),
         ));
+        let feedback_host = companion_host.clone();
+        let feedback_source = integration.clone();
+        let feedback_output = mapping_host.clone();
+        let companion_feedback = Arc::new(crate::companion_host::feedback::Runtime::new(
+            native.then(|| {
+                crate::dcs_runtime::config_path()
+                    .with_file_name("companions")
+                    .join("feedback-routes.json")
+            }),
+            Arc::new(move || feedback_host.hub()),
+            Arc::new(move || feedback_source.feedback_snapshot()),
+            Arc::new(move |id| feedback_output.companion_submission(id)),
+        ));
+        let game_companions = companion_host.clone();
+        let game_feedback = companion_feedback.clone();
         let game_dcs = dcs.clone();
         let game_integration = integration.clone();
         let game_gate = integration_gate.clone();
@@ -196,13 +212,44 @@ impl GatewayManager {
                     Ok(state) => json!({"ok":true,"state":state}),
                     Err(error) => json!({"ok":false,"error":error}),
                 }
+            } else if command.starts_with("_game_companion_") {
+                let result = (|| {
+                    if command == "_game_companion_snapshot" || command == "_game_companion_take" {
+                        let desired = if command == "_game_companion_snapshot" {
+                            &request["capture"]
+                        } else {
+                            &request["companions"]["desired"]
+                        };
+                        game_feedback.preflight_assignments(desired)?;
+                        let capture = crate::game_mapping::companions::Capture::parse(desired)?;
+                        for a in capture.assignments {
+                            game_mapping.companion_assignment_available(&a.instance_id)?;
+                        }
+                    }
+                    game_companions.game_command(command, &request)
+                })();
+                match result {
+                    Ok(state) => json!({"ok":true,"state":state}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                }
             } else if command.starts_with("integration_") || command.starts_with("dcs_") {
                 let _guard = game_gate.lock().unwrap_or_else(|p| p.into_inner());
                 let result = if command.starts_with("integration_") {
                     if command == "integration_start" && game_dcs.status()["running"] == true {
                         Err("Stop DCS-BIOS before starting another integration.".into())
                     } else {
-                        game_integration.request(&request)
+                        (|| {
+                            if command == "integration_preflight" {
+                                let config = crate::integration_profile::validate(
+                                    &request["integrationConfig"],
+                                )?;
+                                game_feedback.preflight_integration(
+                                    &request["gameCompanions"],
+                                    &crate::integration_runtime::feedback_revision(&config),
+                                )?;
+                            }
+                            game_integration.request(&request)
+                        })()
                     }
                 } else if command == "dcs_start" && game_integration.running() {
                     Err("Stop the active integration before starting DCS-BIOS.".into())
@@ -240,6 +287,7 @@ impl GatewayManager {
             mapping_host,
             mapping_documents,
             companion_host,
+            companion_feedback,
         };
         manager.attach_panel_capture();
         manager
@@ -354,9 +402,19 @@ impl GatewayManager {
             return self.error("Missing gateway command.", None);
         };
         if command.starts_with("companion_") {
-            return match self.companion_host.request(&request) {
+            if let Err(error) = self.games.guard_request(&request) {
+                return json!({"ok":false,"error":error});
+            }
+            let result = if command == "companion_feedback_routes" {
+                self.companion_feedback.request(&request["companion"])
+            } else {
+                self.companion_host.request(&request)
+            };
+            return match result {
                 Ok(state) => json!({"ok":true,"state":{"companions":state}}),
-                Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
+                Err(error) => {
+                    json!({"ok":false,"error":error.chars().take(256).collect::<String>()})
+                }
             };
         }
         if command.starts_with("game_") {
@@ -388,6 +446,13 @@ impl GatewayManager {
             }
         }
         if command.starts_with("mapping_") {
+            // Explicit companion discovery restores saved sources on demand;
+            // ordinary gateway/mapping startup never opens OS credentials.
+            if command == "mapping_companion_sources" {
+                if let Err(error) = self.companion_host.hub() {
+                    return self.error(&error, None);
+                }
+            }
             // Document responses can use the full profile limit. Keep unrelated
             // gateway inventory out of this separately bounded response.
             let result = if osg_mapping_host::service::Service::handles(&command) {
@@ -578,6 +643,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.companion_feedback.stop();
         self.companion_host.shutdown();
         self.games.shutdown();
         self.mapping_host.shutdown();

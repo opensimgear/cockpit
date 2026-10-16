@@ -436,7 +436,7 @@ backlog and stops expired queued input rather than replaying it. DOM/native
 lifecycle cancellation and a separate UI keepalive supplement the host lease.
 These are implemented failure controls; they do not prove every OS sleep/lock or
 mobile lifecycle path. Typed feedback retains provenance, units/range and source
-age, and cannot emit input. C5 still owns actual simulator-feedback integration.
+age, and cannot emit input. C5 adds the native simulator-feedback integration described below.
 
 Local evidence is recorded in [the C2 verification record](verification/2026-10-16-companion-c2.md).
 [#60](https://github.com/opensimgear/cockpit/issues/60) retains physical Windows LAN,
@@ -448,3 +448,59 @@ nor source-accepted acknowledgements establish those performance targets.
 ## C3 application and desktop delivery
 
 C3 adds persistent verified offline panels, explicit recovery and guarded async session/view state to the standalone app. Windows, Linux and macOS are native desktop build targets; Android/iOS retain configured shells/adapters with authentication disabled pending their native qualification. See [app commands and storage behavior](../apps/companion/README.md) and [C3 validation and open checks](verification/2026-10-16-companion-c3.md). Native desktop CI packages unsigned development artifacts without installing or publishing them. A package build is distinct from signed/native lifecycle qualification.
+
+## C4 isolated controller mappings
+
+Each retained companion instance has its own immutable controller revision,
+recording/output profile, worker, reservation and recovery boundary. Start is an
+explicit operation, with the current native backend qualification and enablement
+checks. See [C4 validation](verification/2026-10-16-companion-c4.md).
+
+## C5 typed feedback and captured game assignments
+
+Windows, Linux and macOS desktop companions share the Svelte renderer and native
+feedback protocol with Android/iOS. The host's Companion connections page exposes
+**Feedback** for a selected instance. Save explicit bindings from a publication's
+feedback widget/channel to requested state, host acceptance, acknowledged native
+submission or an integration source. Numeric sources require compatible units and
+ranges; an explicit scale/offset converts values before the bounded destination
+range is checked. Text and boolean routes retain their types.
+
+The renderer labels provenance independently from freshness. Requested, Local,
+Host accepted, Host submitted and Game confirmed are separate states; missing,
+stale or disconnected data cannot retain a fresh confirmation. Host submitted
+requires an actual native feeder acknowledgement. Recording and source acceptance
+cannot establish submission. ACR's synthetic source is Local; DCS-BIOS or the
+supported simulator provider can establish Game confirmed only from its fresh
+native decoder. This does not add a Star Citizen telemetry feed.
+
+Integration documents keep schema 1 behavior. Schema 2 may add up to 16 combined
+physical/feedback outputs, with source-only `feedbackOutputs` and no module roles.
+These decode supported telemetry without acquiring a panel or inventing physical
+output targets. Bindings pin the semantic integration configuration, channel
+metadata and immutable publication. A changed source requires an explicit save.
+Transient game process IDs do not invalidate an unchanged source definition.
+
+Visual Reset clears displayed values to unknown until the source changes;
+Resync rotates the feedback generation and obtains a native snapshot. Neither
+operation sends control input, starts mappings or creates recording reports.
+Session, publication, generation, controller and output identities are checked on
+both sides. Ordered chunk transport supports bounded full snapshots, with one
+socket worker per peer. Slow or disconnected peers cannot run network I/O on the
+mapping, gateway or integration worker.
+
+Game profiles may optionally capture the current companion assignment identities
+and immutable publication/capability hashes. Schema 3 adds that capture to game
+profiles and recovery journals; schema 1/2 continue to load. Import, capture and
+save do not connect or arm a controller. Activation preflights all captured
+requirements before effects, stops the previous integration before taking the
+assignments and records their baseline. Stop/recovery restores only the exact
+state owned by that game session. External edits cause a visible restoration
+conflict; they are not overwritten. Active game ownership guards assignment and
+feedback-route edits, and preserves emergency Stop/disconnect/revoke operations.
+
+[C5 verification](verification/2026-10-16-companion-c5.md) distinguishes local
+software evidence from [native qualification #67](https://github.com/opensimgear/cockpit/issues/67).
+Mobile authentication, virtual output, provisioning, hiding and script capability
+gates retain their existing disabled/unqualified state. Native companion client
+support does not qualify Linux/macOS host output backends (#48/#49).

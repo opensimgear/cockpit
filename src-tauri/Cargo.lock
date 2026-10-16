@@ -2932,6 +2932,7 @@ dependencies = [
  "osg-mapping",
  "osg-mapping-host",
  "osg-virtual-controller",
+ "serde",
  "serde_json",
  "serialport",
  "sha2",

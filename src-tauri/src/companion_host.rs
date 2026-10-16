@@ -30,17 +30,15 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn new(path: Option<PathBuf>, provider: Arc<CompanionProvider>) -> Self {
-        let runtime = Self {
+        // Protected-store/TLS setup can require an OS credential service. Keep it
+        // outside ordinary gateway startup; explicit companion operations and
+        // captured-game recovery initialize the same retained state on demand.
+        Self {
             path,
             provider,
             services: OnceLock::new(),
             upload: Mutex::new(None),
-        };
-        // Restore retained offline source descriptors while leaving network startup disabled.
-        if runtime.path.is_some() {
-            let _ = runtime.services();
         }
-        runtime
     }
     fn services(&self) -> Result<&Services, String> {
         self.services
@@ -81,6 +79,21 @@ impl Runtime {
             json!({"host":services.hub.command(&json!({"command":"companion_status"}))?, "listener":services.server.status(), "interfaces":interfaces}),
         )
     }
+    pub(crate) fn hub(&self) -> Result<Hub, String> {
+        Ok(self.services()?.hub.clone())
+    }
+    pub(crate) fn game_command(&self, command: &str, request: &Value) -> Result<Value, String> {
+        let hub = self.hub()?;
+        match command {
+            "_game_companion_snapshot" => game_owner::snapshot(&hub, &request["capture"]),
+            "_game_companion_take" => game_owner::take(&hub, &request["companions"]),
+            "_game_companion_restore" => {
+                game_owner::restore(&hub, &request["companions"], request["recovery"] == true)
+            }
+            "_game_companion_abandon" => game_owner::abandon(&hub, &request["companions"]),
+            _ => Err("Unknown trusted game companion operation.".into()),
+        }
+    }
     pub fn request(&self, request: &Value) -> Result<Value, String> {
         let command = request["command"]
             .as_str()
@@ -100,7 +113,7 @@ impl Runtime {
                 let expected = payload["size"]
                     .as_u64()
                     .filter(|n| *n > 0 && *n <= MAX_UPLOAD as u64)
-                    .ok_or("Panel upload must contain 1–13 MiB.")?
+                    .ok_or("Panel upload must contain 1â€“13 MiB.")?
                     as usize;
                 let mut slot = self.upload.lock().unwrap_or_else(|p| p.into_inner());
                 if slot
@@ -145,7 +158,7 @@ impl Runtime {
                     let bytes = payload["bytes"]
                         .as_array()
                         .filter(|a| !a.is_empty() && a.len() <= 8192)
-                        .ok_or("Panel chunks contain 1–8192 bytes.")?;
+                        .ok_or("Panel chunks contain 1â€“8192 bytes.")?;
                     if payload["offset"].as_u64() != Some(upload.bytes.len() as u64)
                         || upload.bytes.len() + bytes.len() > upload.expected
                     {
@@ -189,6 +202,9 @@ impl Runtime {
         }
         let services = self.services()?;
         match command {
+            "companion_game_capture" => {
+                Ok(json!({"capture":game_owner::capture(&services.hub,&payload)?}))
+            }
             "companion_status" => self.status(services),
             "companion_enable" => {
                 let address: IpAddr = payload["address"]
@@ -232,7 +248,11 @@ impl Runtime {
                 // JSON array exceeding the bounded private-service reply frame.
                 let matrix: Vec<String> = qrcode_matrix(&manual)?
                     .into_iter()
-                    .map(|row| row.into_iter().map(|dark| if dark { '1' } else { '0' }).collect())
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|dark| if dark { '1' } else { '0' })
+                            .collect()
+                    })
                     .collect();
                 let mut state = self.status(services)?;
                 state["pairing"] = json!({"manualPayload":manual,"qrMatrix":matrix,"ttlMs":60_000});
@@ -278,6 +298,51 @@ mod tests {
     }
     fn call(runtime: &Runtime, command: &str, payload: Value) -> Result<Value, String> {
         runtime.request(&json!({"command":command,"clientId":"operator-one","companion":payload}))
+    }
+    #[cfg(windows)]
+    #[test]
+    fn explicit_companion_request_reports_unreadable_retained_state_without_replacing_it() {
+        let directory =
+            std::env::temp_dir().join(format!("osg-companion-lazy-error-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("companion-host-state.dpapi");
+        std::fs::write(&path, b"preserve-unreadable-state").unwrap();
+        let runtime = Runtime::new(
+            Some(directory.clone()),
+            Arc::new(CompanionProvider::new(Arc::new(|| 1))),
+        );
+        assert!(runtime.services.get().is_none());
+        assert!(call(&runtime, "companion_status", json!({})).is_err());
+        assert!(matches!(runtime.services.get(), Some(Err(_))));
+        assert_eq!(std::fs::read(&path).unwrap(), b"preserve-unreadable-state");
+        runtime.shutdown();
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+    #[test]
+    fn ordinary_startup_does_not_initialize_or_modify_protected_companion_state() {
+        let directory = std::env::temp_dir().join(format!(
+            "osg-companion-lazy-startup-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("companion-host-state.dpapi");
+        std::fs::write(&path, b"preserve-unavailable-protected-state").unwrap();
+        let provider = Arc::new(CompanionProvider::new(Arc::new(|| 1)));
+        let runtime = Runtime::new(Some(directory.clone()), provider);
+        assert!(
+            runtime.services.get().is_none(),
+            "Unrelated gateway startup must not enter an OS credential service"
+        );
+        runtime.shutdown();
+        assert!(runtime.services.get().is_none());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"preserve-unavailable-protected-state"
+        );
+        assert!(!directory.join("companion-identity.dpapi").exists());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
     #[test]
     fn uploads_are_bounded_ordered_and_owned_without_initializing_the_listener() {
@@ -388,11 +453,19 @@ mod tests {
             let bits = row.as_str().unwrap();
             assert_eq!(bits.len(), rows.len());
             assert!(bits.bytes().all(|bit| bit == b'0' || bit == b'1'));
-            assert_eq!(bits.bytes().map(|bit| bit == b'1').collect::<Vec<_>>(), expected);
+            assert_eq!(
+                bits.bytes().map(|bit| bit == b'1').collect::<Vec<_>>(),
+                expected
+            );
         }
         // Pairing must fit both the native acceptance frame and browser bridge,
         // without increasing either transport's bound to accommodate QR data.
-        assert!(serde_json::to_vec(&json!({"ok":true,"state":{"companions":offer}})).unwrap().len() < 66_561);
+        assert!(
+            serde_json::to_vec(&json!({"ok":true,"state":{"companions":offer}}))
+                .unwrap()
+                .len()
+                < 66_561
+        );
         let pairing: Value =
             serde_json::from_str(offer["pairing"]["manualPayload"].as_str().unwrap()).unwrap();
         assert!(pairing["endpoint"]
@@ -483,3 +556,8 @@ mod tests {
         runtime.shutdown();
     }
 }
+
+#[path = "companion_feedback.rs"]
+pub(crate) mod feedback;
+#[path = "companion_game_owner.rs"]
+pub(crate) mod game_owner;

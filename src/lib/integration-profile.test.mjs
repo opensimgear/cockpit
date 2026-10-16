@@ -8,7 +8,7 @@ const api=modules.get('./integration-profile');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const {newIntegrationConfig,integrationError,integrationFormatError,exportIntegrationDocument,importIntegrationDocument,
   integrationFingerprint,integrationEqual,normalizeIntegrationCatalogue,integrationOutputActions,integrationChannels,
-  roleTarget,assignIntegrationRole,renameIntegrationRole,integrationPhysicalControls,integrationStartError,nextIntegrationId,revLightOutput,syntheticTelemetryFrame}=api;
+  roleTarget,assignIntegrationRole,renameIntegrationRole,integrationPhysicalControls,integrationStartError,nextIntegrationId,revLightOutput,syntheticTelemetryFrame,withIntegrationFeedback}=api;
 const moduleId='00112233445566778899aabbccddeeff',gatewayId='pico:OSG-PICO-0011223344556677';
 const boolean={id:'led.set',endpoint:'led',label:'LED',readable:true,semantics:'setter',parameters:[{type:'boolean'}]};
 const rgb={...boolean,id:'rgb.set',endpoint:'rgb',parameters:[{type:'rgb'}]};
@@ -30,14 +30,14 @@ test('portable export roundtrips semantic IDs and omits every local field',()=>{
 });
 test('malformed, oversized and local-data imports leave current settings untouched',()=>{
   const c=config(),before=JSON.stringify(c);
-  for(const source of ['{','null','[]',JSON.stringify({...c.document,schemaVersion:2}),JSON.stringify({...c.document,provider:'unknown'}),JSON.stringify({...c.document,assignments:c.assignments}),' '.repeat(65537)]) assert.ok(importIntegrationDocument(source,c).error);
+  for(const source of ['{','null','[]',JSON.stringify({...c.document,schemaVersion:3}),JSON.stringify({...c.document,provider:'unknown'}),JSON.stringify({...c.document,assignments:c.assignments}),' '.repeat(65537)]) assert.ok(importIntegrationDocument(source,c).error);
   assert.equal(JSON.stringify(c),before);
   const imported=importIntegrationDocument(exportIntegrationDocument(dcs()),c).config;assert.equal(imported.connection.cataloguePath,'');assert.equal(imported.document.context.aircraftModule,'F-16C_50');
   assert.throws(()=>exportIntegrationDocument({...c,document:{...c.document,cataloguePath:'private'}}));
 });
 test('profile checks bound identities, roles, assignment scope and output-only profiles',()=>{
   const c=config();assert.equal(integrationError(c),'');assert.equal(integrationError(newIntegrationConfig()),'Add one to eight roles and up to 16 inputs and 16 outputs.');
-  for(const change of [{schemaVersion:2},{id:'bad id'},{name:'\n'},{provider:'other'},{context:null},{roles:[]},{roles:Array(9).fill(c.document.roles[0])},{inputs:[],outputs:[]},{outputs:Array(17).fill(c.document.outputs[0])}]) assert.ok(integrationError({...c,document:{...c.document,...change}}));
+  for(const change of [{schemaVersion:3},{id:'bad id'},{name:'\n'},{provider:'other'},{context:null},{roles:[]},{roles:Array(9).fill(c.document.roles[0])},{inputs:[],outputs:[]},{outputs:Array(17).fill(c.document.outputs[0])}]) assert.ok(integrationError({...c,document:{...c.document,...change}}));
   for(const change of [{id:'bad'+'x'.repeat(31)},{role:'missing'},{channel:'bad\nname'},{actionId:''},{endpoint:''},{output:64}]) assert.ok(integrationError({...c,document:{...c.document,outputs:[{...c.document.outputs[0],...change}]}}));
   assert.ok(integrationError({...c,document:{...c.document,roles:[...c.document.roles,c.document.roles[0]]}}));
   assert.ok(integrationError({...c,document:{...c.document,outputs:[...c.document.outputs,{...c.document.outputs[0],id:'another'}]}}));
@@ -151,4 +151,16 @@ test('X-Plane defaults and portable imports preserve local settings without acti
     const changed=JSON.parse(JSON.stringify(config));changed.connection[key]=value;assert.notEqual(integrationError(changed),'',key);
   }
   config.document.inputs=[{id:'input',role:'panel'}];assert.match(integrationError(config),/outputs only/);
+});
+
+test('schema two logical feedback is independent of physical roles and preserves legacy documents',()=>{
+ const legacy=config(),upgraded=plain(withIntegrationFeedback(legacy));assert.equal(legacy.document.schemaVersion,1);assert.equal(Object.hasOwn(legacy.document,'feedbackOutputs'),false);assert.equal(upgraded.document.schemaVersion,2);
+ upgraded.document.inputs=[];upgraded.document.outputs=[];upgraded.document.roles=[];upgraded.assignments=[];upgraded.document.feedbackOutputs=[{id:'rpm-feedback',channel:'rpm',output:0}];
+ assert.equal(integrationError(upgraded),'');assert.equal(integrationStartError(upgraded,[]),'');assert.equal(nextIntegrationId(upgraded,'rpm-feedback'),'rpm-feedback-1');
+ const exported=exportIntegrationDocument(upgraded),imported=importIntegrationDocument(exported,legacy);assert.equal(imported.error,undefined);assert.deepEqual(plain(imported.config.document),upgraded.document);assert.deepEqual(plain(imported.config.assignments),[]);
+ assert.equal(exported.includes('freshnessMs'),false);assert.equal(integrationError({...upgraded,document:{...upgraded.document,schemaVersion:1}}).length>0,true);
+ for(const feedbackOutputs of [[{id:'bad id',channel:'rpm'}],[{id:'ok',channel:'rpm',output:16}],[{id:'ok',channel:'rpm',extra:true}],[{id:'same',channel:'rpm'},{id:'same',channel:'gear'}],Array.from({length:17},(_,i)=>({id:'f'+i,channel:'rpm'}))])assert.ok(integrationError({...upgraded,document:{...upgraded.document,feedbackOutputs}}));
+ const mixed=config();mixed.document.schemaVersion=2;mixed.document.feedbackOutputs=[{id:'rev',channel:'rpm'}];assert.ok(integrationError(mixed));mixed.document.feedbackOutputs=[{id:'feedback',channel:'rpm'}];assert.equal(integrationError(mixed),'');
+ mixed.document.outputs=Array.from({length:16},(_,i)=>({...mixed.document.outputs[0],id:'o'+i,endpoint:'e'+i}));assert.ok(integrationError(mixed));
+ const empty=plain(upgraded);empty.document.feedbackOutputs=[];assert.ok(integrationError(empty));
 });

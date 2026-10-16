@@ -22,6 +22,8 @@ pub(crate) struct Controls {
     pub formats: BTreeMap<String, Value>,
     pub overrides: Mutex<BTreeMap<String, (Value, Instant)>>,
     pub require_ownership: bool,
+    pub feedback_sources: Vec<(String, crate::dcs_profile::OutputSource)>,
+    pub source_observer: Option<Arc<dyn Fn(&ExportSnapshot) + Send + Sync>>,
 }
 #[derive(Clone)]
 struct Lease {
@@ -1346,6 +1348,7 @@ pub(crate) fn start_source(
         None
     };
     let mut session = ExportSession::new(&profile);
+    session.extend_sources(controls.feedback_sources.clone());
     let mut shared = Shared {
         require_ownership: controls.require_ownership,
         export: session.snapshot(0),
@@ -1470,6 +1473,10 @@ pub(crate) fn start_source(
             } else {
                 session.snapshot(now)
             };
+            // Observation copies bounded decoded data only; no network/panel I/O.
+            if let Some(observer) = &controls.source_observer {
+                observer(&source_snapshot);
+            }
             let mut shared = shared.lock().unwrap_or_else(|p| p.into_inner());
             sync_desired_controlled(&mut shared, source_snapshot, Instant::now(), &controls);
             *state.lock().unwrap_or_else(|p| p.into_inner()) =

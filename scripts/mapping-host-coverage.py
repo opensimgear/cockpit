@@ -43,7 +43,7 @@ def main():
     # incomplete LLVM profiles. Their coverage belongs to logic-coverage.py.
     # Select the successful host PID, never silently ignore corrupt host evidence.
     test_env = dict(env, LLVM_PROFILE_FILE=str(profiles / 'host-%m-%p.profraw'))
-    tests = subprocess.Popen([binaries[0]], cwd=root, env=test_env, text=True, encoding='utf-8',
+    tests = subprocess.Popen([binaries[0], "--test-threads=1"], cwd=root, env=test_env, text=True, encoding='utf-8',
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     test_output, _ = tests.communicate()
     (output / 'tests.log').write_text(test_output, encoding='utf-8')

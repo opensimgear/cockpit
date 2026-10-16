@@ -137,13 +137,15 @@ fn profile(value: &Value) -> Result<Value, String> {
                 "devices",
                 "integration",
                 "mapping",
+                "companions",
             ],
         )
-        || !matches!(value["schemaVersion"].as_u64(), Some(1 | 2))
+        || !matches!(value["schemaVersion"].as_u64(), Some(1 | 2 | 3))
     {
         return Err("Invalid game profile document.".into());
     }
     crate::game_mapping::validate(value)?;
+    crate::game_mapping::companions::profile(value)?;
     identifier(&value["id"], 64)?;
     let game = game_id(&value["gameId"])?;
     value["name"]
@@ -477,10 +479,31 @@ impl GamesRuntime {
         {
             return Ok(());
         }
+        if command == "mapping_companion_route"
+            && matches!(
+                request["companion"]["action"].as_str(),
+                Some("inspect" | "recording" | "stop" | "recover")
+            )
+        {
+            return Ok(());
+        }
+        if command == "companion_feedback_routes"
+            && matches!(
+                request["companion"]["action"].as_str(),
+                Some("inspect" | "resync" | "reset")
+            )
+        {
+            return Ok(());
+        }
         if command.starts_with("game_")
             || matches!(
                 command,
-                "ports"
+                "companion_status"
+                    | "companion_game_capture"
+                    | "companion_disable"
+                    | "companion_disconnect"
+                    | "companion_revoke"
+                    | "ports"
                     | "status"
                     | "config_read"
                     | "action_describe"
@@ -598,11 +621,19 @@ impl GamesRuntime {
             let abandoned = settings.journal.take();
             settings.error = None;
             drop(settings);
-            if let Some(journal) = abandoned.filter(|j| !j["mapping"].is_null()) {
-                self.inner.call(
-                    "_game_mapping_abandon",
-                    json!({"mapping":journal["mapping"]}),
-                )?;
+            if let Some(journal) = abandoned {
+                if !journal["mapping"].is_null() {
+                    self.inner.call(
+                        "_game_mapping_abandon",
+                        json!({"mapping":journal["mapping"]}),
+                    )?;
+                }
+                if !journal["companions"].is_null() {
+                    self.inner.call(
+                        "_game_companion_abandon",
+                        json!({"companions":journal["companions"]}),
+                    )?;
+                }
             }
             self.inner.phase("idle", None);
             self.inner.step("Recovery journal archived. The current hardware and integration setup was kept; the previous setup was not restored.");
@@ -781,10 +812,11 @@ impl Drop for GamesRuntime {
 }
 
 fn validate_journal(value: Value) -> Result<Value, String> {
-    if !matches!(value["schemaVersion"].as_u64(), Some(1 | 2)) {
+    if !matches!(value["schemaVersion"].as_u64(), Some(1 | 2 | 3)) {
         return Err("Unsupported recovery journal.".into());
     }
     crate::game_mapping::journal(&value)?;
+    crate::game_mapping::companions::journal(&value)?;
     game_id(&value["gameId"])?;
     identifier(&value["profileId"], 64)?;
     let rows = value["devices"]
@@ -927,6 +959,26 @@ impl Inner {
     }
     fn snapshot(&self, profile: &Value, accepted: bool) -> Result<Value, String> {
         crate::game_mapping::overlap(profile)?;
+        let companions = if profile["companions"].is_null() {
+            Value::Null
+        } else {
+            let snapshot = self.call(
+                "_game_companion_snapshot",
+                json!({"capture":profile["companions"]}),
+            )?;
+            let parsed = crate::game_mapping::companions::Snapshot::parse(&snapshot)?;
+            if serde_json::to_value(parsed.desired).map_err(|e| e.to_string())?
+                != profile["companions"]
+                || parsed.taken
+                || parsed.restored
+            {
+                return Err(
+                    "Companion preflight returned a different capture or an active recovery phase."
+                        .into(),
+                );
+            }
+            snapshot
+        };
         let mapping = if profile["mapping"].is_null() {
             Value::Null
         } else {
@@ -978,7 +1030,7 @@ impl Inner {
                 "configAttempted":false,"controllerAttempted":false,"publicationAttempted":false}));
         }
         if !profile["integration"].is_null() {
-            let validation = self.call("integration_preflight", json!({"integrationConfig":game_integration(&profile["integration"])?.value(),"gameDevices":profile["devices"]}))?["integration"]["validation"].clone();
+            let validation = self.call("integration_preflight", json!({"integrationConfig":game_integration(&profile["integration"])?.value(),"gameDevices":profile["devices"],"gameCompanions":profile["companions"]}))?["integration"]["validation"].clone();
             if validation["valid"] != true {
                 return Err(validation["diagnostics"][0]["message"].as_str().unwrap_or("Game integration preflight failed. Review its catalogue, bindings and peripheral capabilities.").into());
             }
@@ -988,12 +1040,14 @@ impl Inner {
                 json!(BINDING_WARNING);
             return Err(BINDING_WARNING.into());
         }
-        Ok(
-            json!({"schemaVersion":profile["schemaVersion"],"mapping":mapping,"gameId":profile["gameId"],"profileId":profile["id"],"devices":devices,
+        let mut snapshot = json!({"schemaVersion":profile["schemaVersion"],"mapping":mapping,"gameId":profile["gameId"],"profileId":profile["id"],"devices":devices,
             "baselineIntegration":integration["config"],"baselineIntegrationRunning":integration["running"]==true,
             "baselineDcs":dcs["config"],"baselineDcsRunning":dcs["running"]==true,"desiredIntegration":profile["integration"],
-            "integrationTaken":false,"integrationChanged":false}),
-        )
+            "integrationTaken":false,"integrationChanged":false});
+        if profile["schemaVersion"] == 3 {
+            snapshot["companions"] = companions;
+        }
+        Ok(snapshot)
     }
     fn write_config(&self, row: &Value, desired: &Value) -> Result<(), String> {
         let route = json!({"gatewayId":row["gatewayId"],"moduleId":row["moduleId"]});
@@ -1088,6 +1142,16 @@ impl Inner {
         self.call("integration_stop", json!({}))?;
         self.call("dcs_stop", json!({}))?;
         self.step("Previous integration stopped.");
+        if !journal["companions"].is_null() {
+            self.cancelled()?;
+            journal["companions"]["taken"] = json!(true);
+            self.checkpoint(journal)?;
+            self.call(
+                "_game_companion_take",
+                json!({"companions":journal["companions"]}),
+            )?;
+            self.step("Captured companion assignments applied without arming controller input.");
+        }
         let count = journal["devices"].as_array().unwrap().len();
         for index in 0..count {
             self.cancelled()?;
@@ -1274,6 +1338,15 @@ impl Inner {
             }
             self.call("integration_stop", json!({}))?;
             self.call("dcs_stop", json!({}))?;
+        }
+        if journal["companions"]["taken"] == true && journal["companions"]["restored"] != true {
+            self.call(
+                "_game_companion_restore",
+                json!({"companions":journal["companions"],"recovery":recovery}),
+            )?;
+            journal["companions"]["restored"] = json!(true);
+            self.checkpoint(&journal)?;
+            self.step("Owned companion assignments restored; controller input remains disarmed.");
         }
         for index in (0..journal["devices"].as_array().unwrap().len()).rev() {
             let row = journal["devices"][index].clone();

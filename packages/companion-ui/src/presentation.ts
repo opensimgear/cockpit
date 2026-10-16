@@ -4,21 +4,28 @@ export type FeedbackSamples = Record<string, FeedbackValue & { receivedAtMs: num
 export function safeAssetUrl(value: unknown): string | null {
   return typeof value === 'string' && value.length <= 3 * 1024 * 1024 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null;
 }
+/** Output-only projection. A stale sample can show its last value but never light a live indicator. */
 export function feedbackPresentation(widget: DesignerWidget, ui: PortableUi, samples: FeedbackSamples, now: number) {
   const source = ui.feedbackWidgets.find(item => item.id === widget.feedbackIds[0]);
   const sample = source ? samples[source.channelId] : undefined;
+  const unavailable = (text = 'Unknown', freshness = 'unknown', provenance = 'No source') => ({ available: false, value: null, text, provenance, freshness, ageMs: Infinity, confirmed: false, unit: '' });
+  if (!sample) return unavailable();
+  if (!ui.feedbackWidgets.some(output => output.channelId === source?.channelId && output.id === sample.outputId)) return unavailable('Output identity mismatch');
+  if (!Number.isFinite(now) || !Number.isFinite(sample.sourceAgeMs) || !Number.isFinite(sample.receivedAtMs) || sample.sourceAgeMs < 0) return unavailable('Invalid feedback');
+  if (sample.status === 'unknown' || sample.status === 'disconnected') return unavailable(sample.status === 'unknown' ? 'Unknown' : 'Disconnected', sample.status, `${sample.provenance} unavailable · ${sample.sourceKind}`);
   const expected = source?.kind;
-  const valid = sample && Number.isFinite(sample.sourceAgeMs) && Number.isFinite(sample.receivedAtMs) && sample.sourceAgeMs >= 0 && (
-    expected === 'indicator' ? typeof sample.value === 'boolean' : expected === 'gauge' ? typeof sample.value === 'number' && Number.isFinite(sample.value) : typeof sample.value === 'string'
-  );
-  if (!valid) return { available: false, value: null, text: 'Unavailable', provenance: 'No source', freshness: 'unavailable', ageMs: Infinity };
+  const typed = expected === 'indicator' ? typeof sample.value === 'boolean' : expected === 'gauge' ? typeof sample.value === 'number' && Number.isFinite(sample.value) : typeof sample.value === 'string';
+  if (!typed || !['fresh', 'stale'].includes(sample.status)) return unavailable(sample.status === 'stale' ? 'Stale · no value' : 'Invalid feedback', sample.status === 'stale' ? 'stale' : 'unknown');
+  if (sample.range && (typeof sample.value !== 'number' || !Number.isFinite(sample.range.min) || !Number.isFinite(sample.range.max) || sample.range.min >= sample.range.max || sample.value < sample.range.min || sample.value > sample.range.max)) return unavailable('Range mismatch');
+  if ((widget.kind === 'numeric' || widget.kind === 'gauge') && (widget.config.unit.trim() ? widget.config.unit : 'ratio') !== sample.unit) return unavailable('Unit mismatch');
   const ageMs = sample.sourceAgeMs + Math.max(0, now - sample.receivedAtMs);
-  const freshness = ageMs > 1000 ? 'stale' : ageMs > 250 ? 'aging' : 'fresh';
+  const freshness = sample.status === 'stale' || ageMs >= 1000 ? 'stale' : ageMs > 250 ? 'aging' : 'fresh';
   let text: string;
-  if (widget.kind === 'numeric' || widget.kind === 'gauge') text = `${Number(sample.value).toFixed(widget.config.precision)}${widget.config.unit ? ` ${widget.config.unit}` : ''}`;
-  else if (widget.kind === 'text') text = `${widget.config.prefix}${String(sample.value).slice(0, 1024)}${widget.config.suffix}`;
+  if (widget.kind === 'numeric' || widget.kind === 'gauge') text = `${Number(sample.value).toFixed(widget.config.precision)}${sample.unit ? ` ${sample.unit}` : ''}`;
+  else if (widget.kind === 'text') text = `${widget.config.prefix}${String(sample.value).slice(0, 256)}${widget.config.suffix}`;
   else text = sample.value ? 'Active' : 'Inactive';
-  return { available: true, value: sample.value, text, provenance: `${sample.provenance} · ${sample.sourceKind}`, freshness, ageMs };
+  const current = freshness !== 'stale';
+  return { available: current, value: current ? sample.value! : null, text: current ? text : `Stale · last ${text}`, provenance: `${sample.provenance}${current ? '' : ' (historical)'} · ${sample.sourceKind}`, freshness, ageMs, confirmed: current && sample.provenance === 'game-confirmed' && sample.sourceKind === 'simulator', unit: sample.unit };
 }
 
 export function movedBounds(bounds: {x:number;y:number;width:number;height:number}, dx:number, dy:number, grid: {columns:number;rows:number;snap:boolean}) {

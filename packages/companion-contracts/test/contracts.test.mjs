@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COMPANION_LIMITS as L, exampleUi, exampleInputBatch, validatePortableUi, validateInputBatch, validateHello, validateFeedback, parseFrame, publicationHash, comparePublications, neutralValues, validControlValue, isCounter, isPublicationHash, validateBaseline, quantizeAxis } from "../src/index.ts";
+import { COMPANION_LIMITS as L, exampleUi, exampleInputBatch, validatePortableUi, validateInputBatch, validateHello, validateFeedback, validateFeedbackValues, validateFeedbackUpdate, parseFrame, publicationHash, comparePublications, neutralValues, validControlValue, isCounter, isPublicationHash, validateBaseline, quantizeAxis } from "../src/index.ts";
 const clone = value => structuredClone(value);
 const ui = () => clone(exampleUi);
 const input = () => clone(exampleInputBatch);
@@ -104,7 +104,7 @@ test("wire frames reject invalid envelope and payload before session handling", 
 
 const wireIdentity = () => ({ version: 1, clientId: "client-a", sessionId: "session-a", generation: "1", publicationHash: hash });
 test("feedback includes provenance, unit/range and source age with widget-typed values", () => {
-  const frame = { ...wireIdentity(), type: "feedback", sequence: "1", values: [{ channelId: "engine", value: "Running", provenance: "game-confirmed", sourceKind: "simulator", sourceAgeMs: 0, unit: "status" }] };
+  const frame = { ...wireIdentity(), type: "feedback", sequence: "1", values: [{ channelId: "engine", outputId: "engine-status", status: "fresh", value: "Running", provenance: "game-confirmed", sourceKind: "simulator", sourceAgeMs: 0, unit: "status" }] };
   assert.equal(validateFeedback(frame, exampleUi).ok, true);
   for (const mutate of [
     f => f.values[0].value = null, f => f.values[0].value = true,
@@ -161,7 +161,7 @@ test("committed JSON UI and protocol fixtures are valid and bind the exact publi
 test("feedback source and axis conversion reject unsupported semantics", () => {
   assert.throws(() => quantizeAxis(0, "raw", 0), /mode/);
   assert.equal(Object.is(quantizeAxis(-0.0000001, "bipolar", 0), -0), false);
-  const frame = { version: 1, type: "feedback", clientId: "client-a", sessionId: "session-a", generation: "1", publicationHash: hash, sequence: "1", values: [{ channelId: "engine", value: "Running", provenance: "game-confirmed", sourceKind: "untrusted", sourceAgeMs: 0, unit: "status" }] };
+  const frame = { version: 1, type: "feedback", clientId: "client-a", sessionId: "session-a", generation: "1", publicationHash: hash, sequence: "1", values: [{ channelId: "engine", outputId: "engine-status", status: "fresh", value: "Running", provenance: "game-confirmed", sourceKind: "untrusted", sourceAgeMs: 0, unit: "status" }] };
   assert.equal(validateFeedback(frame, exampleUi).ok, false);
 });
 
@@ -170,4 +170,35 @@ test("stable IDs accept native UUIDs without permitting prototype path keys", ()
   frame.companionId = "1fa85f39-aa50-4dc9-a40f-96fd1b386485";
   assert.equal(validateHello(frame).ok, true);
   frame.hostId = "__proto__"; assert.equal(validateHello(frame).ok, false);
+});
+
+test('feedback status explicitly clears unknown/disconnected and retains typed historical stale values', () => {
+ const base={...wireIdentity(),type:'feedback',sequence:'1',values:[{channelId:'engine',outputId:'engine-status',status:'fresh',value:'',provenance:'requested',sourceKind:'host',sourceAgeMs:0,unit:'state'}]};
+ assert.equal(validateFeedback(base,exampleUi).ok,true);
+ for(const status of ['unknown','disconnected']) {const frame=clone(base);frame.values[0].status=status;assert.equal(validateFeedback(frame,exampleUi).ok,false);delete frame.values[0].value;assert.equal(validateFeedback(frame,exampleUi).ok,true);}
+ const stale=clone(base);stale.values[0].status='stale';assert.equal(validateFeedback(stale,exampleUi).ok,true);delete stale.values[0].value;assert.equal(validateFeedback(stale,exampleUi).ok,true);stale.values[0].range={min:0,max:1};assert.equal(validateFeedback(stale,exampleUi).ok,false);const numeric=clone(exampleUi);numeric.feedbackWidgets[0].kind='gauge';assert.equal(validateFeedback(stale,numeric).ok,true);
+ for(const mutate of [f=>delete f.values[0].value,f=>f.values[0].status='live',f=>f.values[0].outputId='bad id',f=>{f.values[0].provenance='game-confirmed';f.values[0].sourceKind='host';},f=>f.values[0].value='bad\u0000text',f=>f.values[0].range={min:0,max:1}]) {const frame=clone(base);mutate(frame);assert.equal(validateFeedback(frame,exampleUi).ok,false);}
+});
+
+test('detached feedback snapshots reject wrong output identity and preserve independent same-channel widgets',()=>{
+ const sample={channelId:'engine',outputId:'engine-status',status:'fresh',value:'Ready',provenance:'local',sourceKind:'host',sourceAgeMs:0,unit:'state'};
+ const result=validateFeedbackValues([sample],exampleUi);assert.equal(result.ok,true);sample.value='mutated';assert.equal(result.value[0].value,'Ready');assert.equal(validateFeedbackValues([{...sample,outputId:'wrong'}],exampleUi).ok,false);assert.equal(validateFeedbackValues(null,exampleUi).ok,false);
+ const shared=clone(exampleUi);shared.feedbackWidgets.push({...shared.feedbackWidgets[0],id:'duplicate'});assert.equal(validateFeedbackValues([{...sample,outputId:'duplicate'}],shared).ok,true);
+});
+
+test('materialized 64-channel feedback remains bounded independently from physical wire frames',()=>{
+ const panel=clone(exampleUi);panel.feedbackWidgets=Array.from({length:64},(_,i)=>({id:'output-'+i,channelId:'channel-'+i,kind:'text',label:'Label'}));
+ const values=panel.feedbackWidgets.map(output=>({channelId:output.channelId,outputId:output.id,status:'fresh',value:'😀'.repeat(128),provenance:'game-confirmed',sourceKind:'simulator',sourceAgeMs:0,unit:'text'}));
+ assert.ok(new TextEncoder().encode(JSON.stringify(values)).length>L.frameBytes);assert.equal(validateFeedbackValues(values,panel).ok,true);assert.equal(validateFeedback({...wireIdentity(),type:'feedback',sequence:'1',values},panel).ok,false);assert.equal(validateFeedbackValues([...values,values[0]],panel).ok,false);
+});
+
+test('C5 feedback transfer envelopes bind controller identity and snapshot bindings without input fields',()=>{
+ const frame={...wireIdentity(),type:'feedback',controllerInstanceId:'panel',sequence:'4',bindingGeneration:'2',mode:'snapshot',bindings:[{channelId:'engine',outputId:'engine-status'}],values:[{channelId:'engine',outputId:'engine-status',status:'fresh',value:'Running',provenance:'game-confirmed',sourceKind:'simulator',sourceAgeMs:0,unit:'text'}]};
+ assert.equal(validateFeedbackUpdate(frame,exampleUi).ok,true);
+ for(const mutate of [f=>delete f.bindings,f=>f.mode='wrong',f=>f.bindingGeneration='-1',f=>f.controllerInstanceId='bad id',f=>f.bindings.push({...f.bindings[0]}),f=>f.bindings[0].outputId='wrong',f=>f.bindings=[],f=>f.changes=[]]) {const changed=clone(frame);mutate(changed);assert.equal(validateFeedbackUpdate(changed,exampleUi).ok,false);}
+ const delta=clone(frame);delta.mode='delta';assert.equal(validateFeedbackUpdate(delta,exampleUi).ok,false);delete delta.bindings;assert.equal(validateFeedbackUpdate(delta,exampleUi).ok,true);
+});
+
+test('C5 feedback preserves existing C1 unit120 UTF16 limits without narrowing valid publications',()=>{
+ const sample={channelId:'engine',outputId:'engine-status',status:'fresh',value:'Ready',provenance:'local',sourceKind:'host',sourceAgeMs:0,unit:'😀'.repeat(60)};assert.equal(validateFeedbackValues([sample],exampleUi).ok,true);assert.equal(validateFeedbackValues([{...sample,unit:sample.unit+'x'}],exampleUi).ok,false);assert.equal(validateFeedbackValues([{...sample,unit:'  '}],exampleUi).ok,false);
 });

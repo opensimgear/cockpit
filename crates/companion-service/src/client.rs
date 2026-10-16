@@ -96,7 +96,9 @@ struct State {
     publication: Option<Value>,
     sender: Option<SyncSender<QueuedInput>>,
     queued_transitions: Arc<AtomicUsize>,
-    feedback_sequence: Option<String>,
+    feedback_schema: Vec<crate::FeedbackDescriptor>,
+    feedback_accumulator: crate::feedback::FeedbackAccumulator,
+    feedback_reset_pending: bool,
     feedback_received_ms: u64,
 }
 // A reservation lives through the network ACK and drops on every error/cancellation path.
@@ -130,6 +132,7 @@ struct Shared {
     running: AtomicBool,
     epoch: AtomicU64,
     ui_tick: AtomicU64,
+    feedback_resync: AtomicU64,
     started: Instant,
     storage: Arc<dyn StateStorage>,
 }
@@ -179,13 +182,16 @@ impl ClientRuntime {
                     publication: None,
                     sender: None,
                     queued_transitions: Arc::new(AtomicUsize::new(0)),
-                    feedback_sequence: None,
+                    feedback_schema: vec![],
+                    feedback_accumulator: Default::default(),
+                    feedback_reset_pending: false,
                     feedback_received_ms: 0,
                 }),
                 cancel: AtomicBool::new(false),
                 running: AtomicBool::new(false),
                 epoch: AtomicU64::new(0),
                 ui_tick: AtomicU64::new(0),
+                feedback_resync: AtomicU64::new(0),
                 started: Instant::now(),
                 storage,
             }),
@@ -202,7 +208,11 @@ impl ClientRuntime {
                     .saturating_sub(state.feedback_received_ms);
                 for sample in &mut status.feedback {
                     if let Some(age) = sample["sourceAgeMs"].as_u64() {
-                        sample["sourceAgeMs"] = json!(age.saturating_add(elapsed));
+                        let age = age.saturating_add(elapsed).min(86_400_000);
+                        sample["sourceAgeMs"] = json!(age);
+                        if age >= crate::FEEDBACK_STALE_MS && sample["status"] == "fresh" {
+                            sample["status"] = json!("stale");
+                        }
                     }
                 }
                 status
@@ -375,6 +385,26 @@ impl ClientRuntime {
                 );
                 Ok(json!({"ok":true,"epoch":epoch}))
             }
+            "feedback-resync" => {
+                checked_epoch(&self.shared, &request)?;
+                let mut state = self
+                    .shared
+                    .state
+                    .lock()
+                    .map_err(|_| "Client state lock poisoned")?;
+                if state.status.session.is_none() {
+                    return Err("Connect before requesting a feedback snapshot.".into());
+                }
+                self.shared
+                    .feedback_resync
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+                    .map_err(|_| "Feedback request counter exhausted; reconnect.")?;
+                state.status.feedback.clear();
+                state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
+                state.feedback_accumulator = Default::default();
+                state.feedback_reset_pending = true;
+                Ok(json!({"ok":true,"feedbackRevision":state.status.feedback_revision}))
+            }
             "keepalive" => {
                 checked_epoch(&self.shared, &request)?;
                 self.shared.ui_tick.store(
@@ -512,22 +542,60 @@ fn clear_session_status(state: &mut State) {
     state.status.ack = None;
     state.status.feedback.clear();
     state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
-    state.feedback_sequence = None;
+    state.feedback_schema.clear();
+    state.feedback_accumulator = Default::default();
+    state.feedback_reset_pending = false;
     state.feedback_received_ms = 0;
 }
-fn apply_ack(state: &mut State, reply: Value, now_ms: u64) {
-    if let (Some(sequence), Some(values)) = (
-        reply["feedbackSequence"].as_str(),
-        reply["feedback"].as_array(),
-    ) {
-        if state.feedback_sequence.as_deref() != Some(sequence) {
-            state.feedback_sequence = Some(sequence.to_owned());
-            state.feedback_received_ms = now_ms;
-            state.status.feedback = values.clone();
-            state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
+fn apply_ack(state: &mut State, reply: Value, now_ms: u64, resync: bool) -> Result<(), String> {
+    if !state.feedback_reset_pending || resync {
+        if let Some(frame) = reply.get("feedback") {
+            let identity = state
+                .status
+                .session
+                .as_ref()
+                .ok_or("Feedback arrived without a current session.")?;
+            if resync && frame["mode"] != "snapshot" {
+                return Err("Feedback resync requires a complete snapshot.".into());
+            }
+            if let Some(samples) =
+                state
+                    .feedback_accumulator
+                    .apply(frame, identity, &state.feedback_schema, now_ms)?
+            {
+                state.feedback_received_ms = now_ms;
+                state.status.feedback = samples
+                    .iter()
+                    .map(|s| serde_json::to_value(s).unwrap())
+                    .collect();
+                state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
+            }
+            if resync {
+                state.feedback_reset_pending = false;
+            }
         }
     }
-    state.status.ack = Some(reply);
+    let mut acknowledgement = reply;
+    if let Some(object) = acknowledgement.as_object_mut() {
+        object.remove("feedback");
+    }
+    state.status.ack = Some(acknowledgement);
+    Ok(())
+}
+fn apply_worker_ack(shared: &Shared, epoch: u64, reply: Value, resync: bool) -> Result<(), String> {
+    let mut state = shared
+        .state
+        .lock()
+        .map_err(|_| "Client state lock poisoned")?;
+    if state.status.epoch == epoch && current(shared, epoch) {
+        apply_ack(
+            &mut state,
+            reply,
+            shared.started.elapsed().as_millis() as u64,
+            resync,
+        )?;
+    }
+    Ok(())
 }
 fn load_credential(storage: &dyn StateStorage) -> Result<Option<SavedCredential>, String> {
     match storage.read()? {
@@ -897,6 +965,7 @@ fn verify_publication(publication: &Value) -> Result<(Value, BTreeMap<String, Pr
     if document["schemaVersion"] != 2 || document["ui"]["schemaVersion"] != 1 {
         return Err("Unsupported published document version".into());
     }
+    crate::feedback_descriptors(&document)?;
     let controls = document["ui"]["controls"]
         .as_array()
         .filter(|values| !values.is_empty() && values.len() <= 128)
@@ -1044,6 +1113,7 @@ fn session_worker(
         return Err("Session identity differs from the paired host/device".into());
     }
     let (publication, primitives) = verify_publication(&opened["publication"])?;
+    let feedback_schema = crate::feedback_descriptors(&publication["document"])?;
     let base = json!({"version":1,"clientId":opened["clientId"],"sessionId":opened["sessionId"],"generation":opened["generation"],"publicationHash":publication["publicationHash"]});
     let mut baseline = base.clone();
     baseline["type"] = json!("baseline");
@@ -1064,11 +1134,13 @@ fn session_worker(
         state.status.session = Some(
             json!({"clientId":opened["clientId"],"sessionId":opened["sessionId"],"generation":opened["generation"],"controllerInstanceId":opened["controllerInstanceId"],"publicationHash":opened["publicationHash"]}),
         );
-        apply_ack(state, ack, shared.started.elapsed().as_millis() as u64);
         state.publication = Some(publication);
+        state.feedback_schema = feedback_schema;
         state.sender = Some(tx);
         state.queued_transitions = queued_transitions;
     });
+    apply_worker_ack(&shared, epoch, ack, false)?;
+    let mut resync_seen = 0;
     let mut sequence = 0u64;
     let mut heartbeat = 0u64;
     let mut last_heartbeat = Instant::now();
@@ -1084,6 +1156,16 @@ fn session_worker(
                 > 600
         {
             break;
+        }
+        let resync = shared.feedback_resync.load(Ordering::SeqCst);
+        if resync != resync_seen {
+            let mut frame = base.clone();
+            frame["type"] = json!("feedback-resync");
+            frame["sequence"] = json!(resync.to_string());
+            let reply = session_request(&mut socket, frame, Duration::from_millis(700))?;
+            let current_resync = shared.feedback_resync.load(Ordering::SeqCst) == resync;
+            apply_worker_ack(&shared, epoch, reply, current_resync)?;
+            resync_seen = resync;
         }
         if let Ok(queued) = rx.try_recv() {
             let input = &queued.frame;
@@ -1109,9 +1191,7 @@ fn session_worker(
             frame["sequence"] = json!(sequence.to_string());
             frame["changes"] = input["changes"].clone();
             let reply = session_request(&mut socket, frame, Duration::from_millis(700))?;
-            set_state(&shared, epoch, |state| {
-                apply_ack(state, reply, shared.started.elapsed().as_millis() as u64);
-            });
+            apply_worker_ack(&shared, epoch, reply, false)?;
         }
         if last_heartbeat.elapsed() >= Duration::from_millis(250) {
             heartbeat = heartbeat
@@ -1121,9 +1201,7 @@ fn session_worker(
             frame["type"] = json!("heartbeat");
             frame["sequence"] = json!(heartbeat.to_string());
             let reply = session_request(&mut socket, frame, Duration::from_millis(700))?;
-            set_state(&shared, epoch, |state| {
-                apply_ack(state, reply, shared.started.elapsed().as_millis() as u64);
-            });
+            apply_worker_ack(&shared, epoch, reply, false)?;
             last_heartbeat = Instant::now();
         }
         thread::sleep(Duration::from_millis(5));
@@ -1582,32 +1660,100 @@ mod tests {
         assert!(local.len() <= 4);
         assert!(local.iter().all(|address| lan_address(address.ip())));
     }
-    #[cfg(windows)]
     #[test]
-    fn feedback_is_deduplicated_ages_from_its_source_and_clears_between_session_epochs() {
+    fn feedback_is_validated_deduplicated_and_resynced_without_input_or_arm_changes() {
+        use crate::feedback::*;
         let directory = tempfile::tempdir().unwrap();
-        let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
+        let client = ClientRuntime::with_storage(directory.path().into(), adapter()).unwrap();
+        assert!(client
+            .command(json!({"type":"feedback-resync","epoch":0}))
+            .is_err());
+        let p = crate::Publication::validate(
+            serde_json::from_str(include_str!("../tests/fixtures/c1-flight-publication.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        let descriptor = p
+            .feedback
+            .iter()
+            .find(|d| d.kind == FeedbackKind::Number)
+            .unwrap();
+        let binding = FeedbackBinding {
+            channel_id: descriptor.channel_id.clone(),
+            output_id: descriptor.output_ids[0].clone(),
+        };
+        let sample = FeedbackSample {
+            channel_id: binding.channel_id.clone(),
+            output_id: binding.output_id.clone(),
+            value: Some(FeedbackValue::Number(42.)),
+            status: FeedbackStatus::Fresh,
+            provenance: FeedbackProvenance::GameConfirmed,
+            source_kind: FeedbackSource::Simulator,
+            source_age_ms: 50,
+            unit: descriptor.unit.clone().unwrap(),
+            range: descriptor.range.clone(),
+        };
+        let identity = json!({"clientId":"client","sessionId":"session","generation":"1","controllerInstanceId":"instance","publicationHash":p.publication_hash});
+        let mut book = FeedbackBook::default();
+        book.configure(p.feedback.clone(), &[binding], 0).unwrap();
+        book.publish(&[sample.clone()], FeedbackMode::Snapshot, 0)
+            .unwrap();
+        let mut cursor = FeedbackCursor::default();
+        let reply =
+            json!({"feedback":book.deliver(&mut cursor,&identity,0),"ackStage":"source-accepted"});
         {
             let mut state = client.shared.state.lock().unwrap();
-            let reply = json!({"feedbackSequence":"1","feedback":[{"channelId":"engine","sourceAgeMs":50}],"ackStage":"source-accepted"});
-            apply_ack(&mut state, reply.clone(), 0);
+            state.publication = Some(
+                verify_publication(&serde_json::to_value(&p).unwrap())
+                    .unwrap()
+                    .0,
+            );
+            state.feedback_schema = p.feedback.clone();
+            state.status.session = Some(identity.clone());
+            state.status.publication_hash = Some(p.publication_hash.clone());
+            state.status.phase = "armed".into();
+            apply_ack(&mut state, reply.clone(), 0, false).unwrap();
             let revision = state.status.feedback_revision;
             let mut repeated = reply.clone();
-            repeated["feedback"][0]["sourceAgeMs"] = json!(500);
-            apply_ack(&mut state, repeated, 450);
+            repeated["feedback"]["values"][0]["sourceAgeMs"] = json!(500);
+            apply_ack(&mut state, repeated, 450, false).unwrap();
             assert_eq!(state.status.feedback_revision, revision);
             assert_eq!(state.status.feedback[0]["sourceAgeMs"], 50);
-            let mut changed = reply;
-            changed["feedbackSequence"] = json!("2");
-            apply_ack(&mut state, changed, 0);
-            assert!(state.status.feedback_revision > revision);
+            let mut stale = reply.clone();
+            stale["feedback"]["sessionId"] = json!("old-session");
+            assert!(apply_ack(&mut state, stale, 500, false).is_err());
+            assert_eq!(state.status.feedback_revision, revision);
         }
-        thread::sleep(Duration::from_millis(2));
-        assert!(client.status().feedback[0]["sourceAgeMs"].as_u64().unwrap() >= 52);
+        let before = client.status().feedback_revision;
+        client
+            .command(json!({"type":"feedback-resync","epoch":0}))
+            .unwrap();
+        assert!(client.status().feedback.is_empty());
+        assert!(client.status().feedback_revision > before);
+        assert_eq!(client.status().phase, "armed");
+        assert_eq!(
+            client
+                .shared
+                .state
+                .lock()
+                .unwrap()
+                .queued_transitions
+                .load(Ordering::SeqCst),
+            0
+        );
+        {
+            let mut state = client.shared.state.lock().unwrap();
+            apply_ack(&mut state, reply.clone(), 500, false).unwrap();
+            assert!(state.status.feedback.is_empty());
+            let mut reset = FeedbackCursor::default();
+            let reply = json!({"feedback":book.deliver(&mut reset,&identity,1000)});
+            apply_ack(&mut state, reply, 0, true).unwrap();
+            assert_eq!(state.status.feedback[0]["status"], "stale");
+            assert!(!state.feedback_reset_pending);
+        }
+        assert_eq!(client.status().feedback[0]["status"], "stale");
         client.invalidate("new lifecycle epoch");
-        let state = client.status();
-        assert!(state.feedback.is_empty());
-        assert!(state.ack.is_none());
-        assert!(state.publication_hash.is_none());
+        assert!(client.status().feedback.is_empty());
+        assert!(client.status().ack.is_none());
     }
 }

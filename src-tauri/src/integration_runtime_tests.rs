@@ -1325,3 +1325,6 @@ fn deferred_native_acr_profile_can_save_but_manual_start_requires_a_live_process
     assert!(fake.devices.values().all(|d| d.leases.is_empty()));
     assert_eq!(f.runtime.status()["running"], false);
 }
+
+#[path = "integration_feedback_tests.rs"]
+mod feedback;

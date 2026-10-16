@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { loadModules } from './test-module-loader.mjs';
 
 const modules = await loadModules(['./runtime-config', './integration-profile', './games']);
-const { visibleGames, defaultGameProfile, newGameProfile, cloneGameProfile, gameProfileEqual, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationVerificationLabel, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationUserFolder, gameIntegrationFolderError, gameIntegrationSetupBlockedReason, profileChangesBindings, gameProfileError, gameSessionLabel } = modules.get('./games');
+const { visibleGames, defaultGameProfile, newGameProfile, cloneGameProfile, gameProfileEqual, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationVerificationLabel, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationUserFolder, gameIntegrationFolderError, gameIntegrationSetupBlockedReason, profileChangesBindings, gameProfileError, gameSessionLabel, gameCompanionCaptureError, captureGameCompanions } = modules.get('./games');
 const plain = value => JSON.parse(JSON.stringify(value));
 const gatewayId = 'stm32:111111111111111111111111', moduleId = '0123456789abcdef0123456789abcdef';
 const configuration = () => ({ name: 'Pedals', expanderMask: 0, buttons: [[0, 0, 0]], axes: [[0, 48, 0, 4095, 32768, 0, 100]], hats: [], encoders: [], selectors: [] });
@@ -82,7 +82,7 @@ test('valid profiles support different configurations and keep a copied integrat
 });
 
 test('profile validation explains invalid version, IDs and bounded UTF-8 names', () => {
-  for (const value of [null, [], false, 1, 'profile', {}, { ...profile(), schemaVersion: 3 }, { ...profile(), gameId: 'unknown' }]) assert.match(gameProfileError(value), /supported game/);
+  for (const value of [null, [], false, 1, 'profile', {}, { ...profile(), schemaVersion: 4 }, { ...profile(), gameId: 'unknown' }]) assert.match(gameProfileError(value), /supported game/);
   for (const id of ['', '../profile', 'space here', 'a'.repeat(65), 5, undefined]) assert.match(gameProfileError({ ...profile(), id }), /profile ID/);
   for (const name of ['', '  ', 'a'.repeat(81), 'é'.repeat(41), 'one\ntwo', '\u0080', 5, undefined]) assert.match(gameProfileError({ ...profile(), name }), /profile name/);
   assert.equal(gameProfileError({ ...profile(), name: 'é'.repeat(40), id: 'A-_.1' }), '');
@@ -248,3 +248,13 @@ test('unknown DCS modules require manual attention before setup can change their
 });
 
 test('mapping capture requires explicit schema migration and survives cloning',()=>{const legacy=profile();assert.match(gameProfileError({...legacy,mapping:null}),/upgrade/);const captured={profile:{name:'Frozen'},assignments:[],targets:[],visibility:null};const next={...legacy,schemaVersion:2,mapping:captured};assert.equal(gameProfileError(next),'');const copy=cloneGameProfile(next);copy.mapping.profile.name='Later';assert.equal(next.mapping.profile.name,'Frozen');assert.match(gameProfileError({...next,mapping:{}}),/complete/);assert.equal(gameProfileError({...next,mapping:null}),'');});
+
+const companionCapture=()=>({schemaVersion:1,assignments:[{instanceId:'panel-a',companionId:'installation-a',publicationHash:'sha256:'+'a'.repeat(64),capabilityFingerprint:'sha256:'+'b'.repeat(64)}]});
+test('companion capture explicitly migrates game schema and freezes revision references',()=>{
+  for(const version of [1,2]){const old={...profile(),schemaVersion:version};assert.match(gameProfileError({...old,companions:null}),/upgrade/);const capture=companionCapture();const next=captureGameCompanions(old,capture);assert.equal(next.schemaVersion,3);assert.equal(gameProfileError(next),'');capture.assignments[0].publicationHash='sha256:'+'c'.repeat(64);assert.notEqual(next.companions.assignments[0].publicationHash,capture.assignments[0].publicationHash);assert.equal(old.schemaVersion,version);assert.equal('companions' in old,false);}
+  const captured={...profile(),schemaVersion:3,companions:companionCapture(),mapping:{profile:{name:'Frozen mapping'},assignments:[],targets:[],visibility:null}};assert.equal(gameProfileError(captured),'');const copy=cloneGameProfile(captured);copy.companions.assignments[0].companionId='edited';assert.equal(captured.companions.assignments[0].companionId,'installation-a');assert.equal(gameProfileError({...captured,companions:null}),'');
+});
+test('companion captures reject invalid identities, hashes, unknown fields, duplicates and budgets',()=>{
+  for(const value of [null,{}, {schemaVersion:1,assignments:[]},{...companionCapture(),extra:true},{...companionCapture(),schemaVersion:2},{schemaVersion:1,assignments:Array.from({length:9},()=>companionCapture().assignments[0])},{schemaVersion:1,assignments:[companionCapture().assignments[0],companionCapture().assignments[0]]},{schemaVersion:1,assignments:[{...companionCapture().assignments[0],extra:true}]},{schemaVersion:1,assignments:[{instanceId:'x'.repeat(4097)}]}]){assert.ok(gameCompanionCaptureError(value));assert.throws(()=>captureGameCompanions(profile(),value));}
+  for(const [key,value] of [['instanceId','bad/id'],['instanceId','x'.repeat(65)],['companionId',''],['companionId',null],['publicationHash','sha256:x'],['capabilityFingerprint','sha256:'+'A'.repeat(64)]]){const capture=companionCapture();capture.assignments[0][key]=value;assert.ok(gameCompanionCaptureError(capture));assert.ok(gameProfileError({...profile(),schemaVersion:3,companions:capture}));}
+});

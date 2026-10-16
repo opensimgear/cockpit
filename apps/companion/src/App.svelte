@@ -3,6 +3,7 @@
   import { flightTemplate, racingTemplate, validateDesignerDocument, type Publication } from '@opensimgear/companion-designer';
   import { PanelCanvas, createPreviewController, type FeedbackSamples } from '@opensimgear/companion-ui';
   import { invoke } from '@tauri-apps/api/core';
+  import { createFeedbackView } from './lib/feedback-state.ts';
   import { createOrderedInputQueue } from './lib/input-queue.ts';
   import { browserCacheStore, cacheKey, createPublicationCache, verifyPublishedPayload, type CacheSummary, type PublishedPayload } from './lib/companion-cache.ts';
   import { createSessionGuard, remoteIdentity, type PanelMode } from './lib/session-guard.ts';
@@ -14,7 +15,9 @@
   let assets = $state<Record<string,string>>({}), feedback = $state<FeedbackSamples>({}), hints = $state<unknown[]>([]);
   let cached = $state<CacheSummary[]>([]), offlineKey = $state(''), currentCacheKey = $state(''), cacheNotice = $state('Loading saved panels...');
   let loadedHash = $state(''), sessionUpdate = $state(0), switching = $state(false);
-  let epoch:number|null=null, polling=false, disposed=false, feedbackSequence='';
+  let epoch:number|null=null, polling=false, disposed=false;
+  let feedbackNotice=$state('');
+  const feedbackView=createFeedbackView();
   let discovering=$state(false);
   const gate=createSessionGuard(), cache=createPublicationCache(browserCacheStore());
   const remoteSelected=$derived(panelMode==='remote'), offline=$derived(panelMode==='offline');
@@ -32,7 +35,7 @@
   function message(value:unknown){return value instanceof Error?value.message:String(value);}
   function invalidate(reason:string,mode:PanelMode=panelMode,selected=instanceId,close=true){
     const shouldClose=remoteSelected&&['ready','armed','connecting'].includes(remote.phase);
-    gate.invalidate(mode,selected);sessionUpdate++;panelMode=mode;inputQueue.stop();feedback={};feedbackSequence='';snapshot=recorder.disarm(reason);
+    gate.invalidate(mode,selected);sessionUpdate++;panelMode=mode;inputQueue.stop();feedbackView.clear();feedback={};feedbackNotice='';snapshot=recorder.disarm(reason);
     if(close&&shouldClose&&nativeAvailable)void request({type:'neutralize'}).catch(()=>{});
     return gate.capture();
   }
@@ -41,7 +44,7 @@
   async function refreshCache(){try{cached=await cache.list();if(!cached.some(entry=>entry.key===offlineKey))offlineKey=cached[0]?.key??'';cacheNotice=cached.length?'Saved panels contain public layouts and assets only.':'No verified panel has been saved yet.';}catch(value){cacheNotice=message(value);}}
   function showPublication(publication:Publication,page?:string){
     const urls:Record<string,string>={};for(const payload of publication.assets){const manifest=publication.document.ui.assets.find(value=>value.id===payload.assetId)!;urls[payload.assetId]=`data:${manifest.mime};base64,${payload.base64}`;}
-    recorder.disarm('Verified panel loaded');panel=publication.document;pageId=panel.ui.pages.some(value=>value.id===page)?page!:panel.ui.pages[0].id;assets=urls;loadedHash=publication.publicationHash;feedback={};feedbackSequence='';
+    recorder.disarm('Verified panel loaded');panel=publication.document;pageId=panel.ui.pages.some(value=>value.id===page)?page!:panel.ui.pages[0].id;assets=urls;loadedHash=publication.publicationHash;feedbackView.clear();feedback={};feedbackNotice='';
   }
   async function openOffline(){
     const token=invalidate('Saved panel opened offline','offline');error='';
@@ -77,13 +80,19 @@
           void cache.save(owner,verifiedPublication,pageId).then(refreshCache).catch(value=>{if(gate.current(token))cacheNotice=`Panel is usable online but could not be saved: ${message(value)}`;});
         }
         if(gate.matches(next)&&['ready','armed'].includes(next.phase)){
-          const sequence=`${next.epoch}:${next.session?.sessionId??''}:${next.feedbackRevision??0}`;
-          if(sequence!==feedbackSequence){const samples:FeedbackSamples={};for(const value of next.feedback??[]){if(typeof value.channelId==='string')samples[value.channelId]={...value,receivedAtMs:performance.now()} as FeedbackSamples[string];}feedback=samples;feedbackSequence=sequence;}
+          const identity=gate.snapshot().verified,actual=remoteIdentity(next);
+          if(identity&&actual){const result=feedbackView.accept(identity,actual,next.feedbackRevision??0,next.feedback??[],panel.ui,performance.now());if(result.accepted){feedback=feedbackView.snapshot();feedbackNotice='';}else if(result.error)feedbackNotice=`Feedback rejected: ${result.error}`;}
         }else feedback={};
       }
       if(instanceId&&!assigned.some(entry=>entry.id===instanceId)){invalidate('Controller assignment changed',loadedHash?'offline':panelMode);instanceId=assigned[0]?.id??'';}
       else if(!instanceId&&assigned.length)instanceId=assigned[0].id;
     }catch(value){if(gate.current(token))fail(value);}finally{polling=false;}
+  }
+  function resetFeedback(){feedbackView.reset();feedback={};feedbackNotice='Visual state cleared locally. Input session and game controls are unchanged.';}
+  async function resyncFeedback(){
+    resetFeedback();const token=gate.capture();
+    try{await request({type:'feedback-resync',epoch:remote.epoch});if(gate.current(token)){feedbackNotice='Fresh visual snapshot requested; controls were not replayed.';await poll();}}
+    catch(value){if(gate.current(token))feedbackNotice=`Feedback resync unavailable: ${message(value)}`;}
   }
   async function pair(){const token=invalidate('Pairing requested'),payload=pairingPayload;pairingPayload='';error='';try{await request({type:'pair-start',payload,name:displayName});if(gate.current(token))await poll();}catch(value){if(gate.current(token))fail(value);}}
   async function connect(){
@@ -124,6 +133,7 @@
     {#if offline}<p class="offline-banner">{savedPanel?`Saved ${new Date(savedPanel.savedAtMs).toLocaleString()}.`:'This view is held in memory; durable saving may be unavailable.'} Controls stay disarmed and feedback is unavailable until a fresh host connection. <button onclick={local}>Explore local references</button></p>{/if}
     {#if error}<p class="validation-error" role="alert">{error}</p>{/if}
     {#if validation.ok}<PanelCanvas document={panel} {pageId} {assets} {feedback} controller={recorder}/>{:else}<p class="validation-error">Panel validation failed: {validation.error}</p>{/if}
+    <div class="template-chooser" aria-label="Feedback controls"><span>Visuals: requested / host accepted / host submitted / game confirmed are separate states.</span><button onclick={resetFeedback}>Clear visual state</button><button onclick={resyncFeedback} disabled={!remoteSelected||!gate.matches(remote)||!['ready','armed'].includes(remote.phase)}>Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
     <section class="offline-library" aria-label="Saved offline panels"><div><strong>Saved panels</strong><span>{cacheNotice}</span></div><label>Panel <select bind:value={offlineKey} disabled={!cached.length}>{#each cached as entry}<option value={entry.key}>{entry.name} · {entry.title} · {entry.hostId.slice(0,8)}</option>{/each}</select></label><button onclick={openOffline} disabled={!offlineKey}>Open offline</button><button onclick={clearCache}>Clear saved panels</button></section>
     <div class="bottom-grid">
       <section class="connection-card"><div class="card-heading"><h3>Connection</h3><span class="pill">{nativeAvailable?remote.phase.toUpperCase():'BROWSER PREVIEW'}</span></div>

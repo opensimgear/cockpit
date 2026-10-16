@@ -8,17 +8,19 @@
   import type { DcsTarget } from './dcs-profile';
   import type { IntegrationConfig } from './integration-profile';
   import type { RuntimeConfig } from './runtime-config';
-  import { cloneGameProfile, defaultGameProfile, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationSetupBlockedReason, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationVerificationLabel, gameIntegrationUserFolder, gameProfileEqual, gameProfileError, gameSessionLabel, newGameProfile, profileChangesBindings, supportedGames, visibleGames, type Game, type GameId, type GameProfile, type GameRequest, type GamesState } from './games';
+  import { captureGameCompanions, cloneGameProfile, defaultGameProfile, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationSetupBlockedReason, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationVerificationLabel, gameIntegrationUserFolder, gameProfileEqual, gameProfileError, gameSessionLabel, newGameProfile, profileChangesBindings, supportedGames, visibleGames, type Game, type GameId, type GameProfile, type GameRequest, type GamesState } from './games';
 
   let mappingChoices = $state<MappingProfile[]>([]);
   let mappingChoice = $state('');
   let visibilityMode = $state('hidhide-session');
+  let companionIds = $state('');
   let { status, busy, request, targets, integration = null, integrationActive = false, readConfig, openIntegrations }: {
     status?: GamesState; busy: boolean; request: (request: GameRequest) => Promise<GamesState | false>;
     targets: DcsTarget[]; integration?: IntegrationConfig | null; integrationActive?: boolean;
     readConfig: (gatewayId: string, moduleId: string) => Promise<RuntimeConfig | null>; openIntegrations: () => void;
   } = $props();
   let response = $state<GamesState>();
+  let profileEpoch = 0;
   let showAll = $state(false), selectedGameId = $state<GameId | ''>(''), draft = $state<GameProfile | null>(null);
   let pending = $state(false), notice = $state(''), executablePath = $state(''), addTargetKey = $state(''), acceptBindings = $state(false);
   let deleting = $state(false), integrationFolder = $state(''), integrationFolderEdited = $state(false);
@@ -59,7 +61,7 @@
     } catch (error) { notice = error instanceof Error ? error.message : String(error); return false; }
     finally { pending = false; }
   }
-  function chooseProfile(profile: GameProfile) { draft = cloneGameProfile(profile); acceptBindings = false; deleting = false; notice = ''; }
+  function chooseProfile(profile: GameProfile) { profileEpoch++; draft = cloneGameProfile(profile); acceptBindings = false; deleting = false; notice = ''; }
   async function browseExecutable() {
     if (!selected || locked) return;
     const gameId = selected.id;
@@ -156,8 +158,17 @@
       const visibility=profile.requirements.deviceHiding ? {mode:visibilityMode,sourceIds:[...new Set(assignments.filter(a=>a.source.origin==='host-controller').map(a=>a.source.id))]} : null;
       const capture=(await gatewayRequest({command:'mapping_capture',profileId:mappingChoice,visibility})).mappings?.capture;
       if(!capture)throw new Error('Mapping capture is unavailable.');
-      if(draft?.id===id){draft.schemaVersion=2;draft.mapping=capture;notice='Mapping captured in schema 2. Save this profile to keep the snapshot.';}
+      if(draft?.id===id){if(draft.schemaVersion===1)draft.schemaVersion=2;draft.mapping=capture;notice='Mapping captured in schema 2. Save this profile to keep the snapshot.';}
     }catch(error){notice=String(error);}finally{pending=false;}
+  }
+  async function captureCompanions() {
+    if(!draft || locked)return; const id=draft.id, epoch=profileEpoch;pending=true;notice='';
+    try {
+      const instanceIds=companionIds.split(',').map(id=>id.trim()).filter(Boolean);
+      const capture=(await gatewayRequest({command:'companion_game_capture',companion:instanceIds.length?{instanceIds}:{}})).companions?.capture;
+      if(!capture)throw new Error('Captured companion assignments are unavailable.');
+      if(draft?.id===id && profileEpoch===epoch){draft=captureGameCompanions(draft,capture);notice='Companion assignment revisions captured. Save this profile to keep this snapshot. Input and output remain stopped.';}
+    } catch(error){notice=error instanceof Error?error.message:String(error);} finally{pending=false;}
   }
   async function configureIntegration() { if (!dirty || await saveProfile()) openIntegrations(); }
 </script>
@@ -225,6 +236,14 @@
             <label class="editor-label">Mapping<select bind:value={mappingChoice} disabled={locked}><option value="">Choose mapping</option>{#each mappingChoices as mapping}<option value={mapping.id}>{mapping.name}</option>{/each}</select></label>
             {#if mappingChoices.find(p=>p.id===mappingChoice)?.requirements.deviceHiding}<label class="editor-label">Requested visibility<select bind:value={visibilityMode} disabled={locked}><option value="hidhide-session">Windows HidHide session</option><option value="linux-grab">Linux input suppression</option><option value="macos-seize">macOS input suppression</option></select></label><p class="field-help">Save an explicit visibility policy for each mapped controller in Devices before capturing it here. Linux isolated launch is available separately in Devices.</p>{/if}
             <button class="secondary-button" disabled={locked || !mappingChoice} onclick={captureMapping}>Capture mapping and upgrade profile</button></section>
+
+            <section class="captured-mapping"><h3>Captured companions</h3>
+              <p class="field-help">Keep specific panel installations and published revisions with this game profile. Later designer edits cannot change the capture. Activation checks paired installations and exact revisions before changing settings; controller input still requires explicit Start.</p>
+              <label class="editor-label">Controller instance IDs (optional)<input class="text-input" bind:value={companionIds} disabled={locked} placeholder="All assigned companions, or comma-separated IDs" /></label>
+              <button class="secondary-button" disabled={locked} onclick={captureCompanions}>Capture current companion assignments</button>
+              {#if draft.companions}<ul>{#each draft.companions.assignments as assignment (assignment.instanceId)}<li><strong>{assignment.instanceId}</strong> · {assignment.companionId}<details><summary>Captured revision</summary><code>{assignment.publicationHash}</code><br /><code>{assignment.capabilityFingerprint}</code></details></li>{:else}<li>No companion assignments captured.</li>{/each}</ul><button class="text-button" disabled={locked} onclick={()=>{if(draft)draft.companions=null;}}>Remove companion capture</button>{/if}
+              <p class="field-help">Save and import do not pair, connect or start controls. Missing revisions must be published again before activation. Restore preserves assignments changed outside the game session and reports the conflict.</p>
+            </section>
 
             {#if changesBindings}<label class="binding-warning"><input type="checkbox" bind:checked={acceptBindings} disabled={locked} /><span>Controller and configuration changes can reconnect USB and affect game bindings. I have reviewed these changes.</span></label>{/if}
             {#if error}<p class="profile-error" role="alert">{error}</p>{/if}

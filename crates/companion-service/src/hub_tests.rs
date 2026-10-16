@@ -678,46 +678,6 @@ fn complete_128_control_baseline_is_atomic_and_not_limited_to_incremental_batch_
 }
 
 #[test]
-fn typed_feedback_retains_provenance_and_source_age_without_emitting_input() {
-    let sink = Arc::new(Sink::default());
-    let h = Hub::new("host".into(), sink.clone());
-    let token = paired(&h, "peer");
-    let p = publish(&h, fixture());
-    assign(&h, "peer", "instance", &p.publication_hash);
-    let open = connect(&h, "c", &token, "instance");
-    baseline(&h, "c", &open, &p);
-    let d: Value = serde_json::from_str(&p.canonical_document).unwrap();
-    let channel = d["ui"]["feedbackWidgets"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|w| w["kind"] == "gauge")
-        .unwrap()["channelId"]
-        .clone();
-    let sample = json!({"channelId":channel,"value":42,"provenance":"host-accepted","sourceKind":"host","sourceAgeMs":100,"unit":"percent","range":{"min":0,"max":100}});
-    let before = sink.events.lock().unwrap().len();
-    operator(
-        &h,
-        json!({"command":"companion_feedback","instanceId":"instance","values":[sample]}),
-    );
-    assert_eq!(sink.events.lock().unwrap().len(), before);
-    let reply = h.handle_wire(frame(&open, "heartbeat", "1"), "c", h.now_ms() + 300);
-    assert_eq!(reply["feedbackSequence"], "1");
-    assert!(reply["feedback"][0]["sourceAgeMs"].as_u64().unwrap() >= 400);
-    assert_eq!(reply["feedback"][0]["provenance"], "host-accepted");
-    assert_eq!(reply["submitted"], false);
-    let mut bad = sample.clone();
-    bad["value"] = json!(101);
-    assert!(h
-        .command(&json!({"command":"companion_feedback","instanceId":"instance","values":[bad]}))
-        .is_err());
-    assert_eq!(
-        wire(&h, "c", json!({"type":"feedback","values":[sample]}))["ok"],
-        false
-    );
-}
-
-#[test]
 fn stale_cancellation_after_disconnect_cannot_rearm_or_mutate_new_sessions() {
     let h = Hub::new("host".into(), Arc::new(Sink::default()));
     let token = paired(&h, "peer");
@@ -813,3 +773,8 @@ fn mapping_blueprints_require_current_assignment_authority_and_exact_publication
     );
     assert!(hub.assigned_publication("instance").is_err());
 }
+
+#[path = "assignment_tests.rs"]
+mod assignment_cases;
+#[path = "hub_feedback_tests.rs"]
+mod feedback_cases;

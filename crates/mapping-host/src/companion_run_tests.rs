@@ -107,11 +107,13 @@ impl Fixture {
     fn new(qualified: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let capture = Arc::new(ControllerService::new(None, false));
-        let clock = capture.clone();
+        // Only explicit test steps advance leases. Coverage/CPU scheduling must
+        // not expire an unrelated instance while a source-loss test is paused.
+        let initial_time = capture.stream_page("", 0).captured_us;
         let offset = Arc::new(AtomicU64::new(0));
         let delta = offset.clone();
         let provider = Arc::new(crate::companions::CompanionProvider::new(Arc::new(
-            move || clock.stream_page("", 0).captured_us + delta.load(Ordering::Acquire),
+            move || initial_time + delta.load(Ordering::Acquire),
         )));
         let messages = Arc::new(Mutex::new(vec![]));
         let gate = Arc::new((Mutex::new(Gate::default()), Condvar::new()));
@@ -1083,4 +1085,41 @@ fn deleted_configuration_does_not_discard_orphaned_driver_ownership() {
     assert_eq!(view["session"]["recoveryRequired"], true);
     assert!(f.service.reserve_manual(&c.profile, &[], true).is_err());
     assert!(f.service.reserve_manual(&c.profile, &[], false).is_ok());
+}
+
+#[test]
+fn submission_feedback_needs_acknowledged_live_output_and_is_read_only() {
+    let f = Fixture::new(true);
+    f.add("panel", publication());
+    f.save("panel", Some(2));
+    f.baseline("panel", 1);
+    f.start("panel", "recording");
+    assert_eq!(
+        f.service.companion_submission("panel").unwrap()["confirmed"],
+        false
+    );
+    f.request("panel", "stop", json!({})).unwrap();
+    f.wait("panel", |v| v["session"]["cleanupComplete"] == true);
+    f.enable();
+    f.start("panel", "live");
+    f.change("panel", 1, 1, "flight-input-0", InputValue::Button(true));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Ok(proof) = f.service.companion_submission("panel") {
+            if proof["confirmed"] == true && proof["values"]["flight-input-0"] == true {
+                break;
+            }
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let before = f.messages.lock().unwrap().len();
+    let _ = f.service.companion_submission("panel").unwrap();
+    assert_eq!(f.messages.lock().unwrap().len(), before);
+    f.request("panel", "stop", json!({})).unwrap();
+    f.wait("panel", |v| v["session"]["cleanupComplete"] == true);
+    assert_eq!(
+        f.service.companion_submission("panel").unwrap()["confirmed"],
+        false
+    );
 }

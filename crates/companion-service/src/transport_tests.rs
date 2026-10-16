@@ -397,3 +397,6 @@ fn occupied_port_is_reported_and_stalled_handshake_has_an_absolute_shutdown_boun
     assert!(start.elapsed() < Duration::from_secs(6));
     assert_eq!(server.status().active_connections, 0);
 }
+
+#[path = "feedback_transport_tests.rs"]
+mod feedback_cases;

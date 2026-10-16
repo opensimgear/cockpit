@@ -69,11 +69,7 @@ struct Session {
     last_seen: u64,
     batches: VecDeque<u64>,
     values: BTreeMap<String, InputValue>,
-}
-struct Feedback {
-    sequence: u64,
-    updated: u64,
-    values: Vec<Value>,
+    feedback_cursor: crate::feedback::FeedbackCursor,
 }
 struct Inner {
     record: Record,
@@ -83,7 +79,7 @@ struct Inner {
     connections: BTreeMap<String, String>,
     sessions: BTreeMap<String, Session>,
     used_sessions: BTreeSet<String>,
-    feedback: BTreeMap<String, Feedback>,
+    feedback: BTreeMap<String, crate::feedback::FeedbackBook>,
     last_now: u64,
     diagnostic: Option<String>,
 }
@@ -127,7 +123,7 @@ fn secret_valid(secret: &str) -> bool {
 fn equal_hash(a: &str, b: &str) -> bool {
     bool::from(a.as_bytes().ct_eq(b.as_bytes()))
 }
-fn counter(value: &Value) -> Result<u64, String> {
+pub(crate) fn counter(value: &Value) -> Result<u64, String> {
     let s = value.as_str().ok_or("Counter must be a decimal string.")?;
     ensure(
         !s.is_empty()
@@ -141,7 +137,7 @@ fn counter(value: &Value) -> Result<u64, String> {
 fn field<'a>(v: &'a Value, name: &str) -> Result<&'a str, String> {
     v[name].as_str().ok_or_else(|| format!("Missing {name}."))
 }
-fn exact(v: &Value, required: &[&str], optional: &[&str]) -> Result<(), String> {
+pub(crate) fn exact(v: &Value, required: &[&str], optional: &[&str]) -> Result<(), String> {
     let map = v.as_object().ok_or("Expected message object.")?;
     ensure(
         required.iter().all(|k| map.contains_key(*k))
@@ -327,6 +323,9 @@ impl Hub {
                     inner.diagnostic = Some(format!("Source cleanup failed: {error}"));
                 }
             }
+            if let Some(feedback) = inner.feedback.get_mut(&session.token.source_id) {
+                feedback.disconnect(inner.last_now);
+            }
             session.armed = false;
             session.sequence = 0;
             session.values.clear();
@@ -507,6 +506,8 @@ impl Hub {
                 inner.connections.retain(|_, c| c != companion);
                 inner.pending.retain(|_, p| p.companion_id != companion);
                 inner.record = record;
+                let retained=inner.record.instances.iter().map(|a|a.instance_id.clone()).collect::<BTreeSet<_>>();
+                inner.feedback.retain(|id,_|retained.contains(id));
                 Ok(json!({"revoked":true}))
             }
             "companion_publish" => {
@@ -643,45 +644,7 @@ impl Hub {
                 }
                 Ok(json!({"disconnected":true}))
             }
-            "companion_feedback" => {
-                let instance = field(request, "instanceId")?;
-                let assignment = inner
-                    .record
-                    .instances
-                    .iter()
-                    .find(|a| a.instance_id == instance)
-                    .ok_or("Unknown controller instance.")?;
-                let p = inner
-                    .publications
-                    .get(&assignment.publication_hash)
-                    .ok_or("Publication unavailable.")?;
-                let values = request["values"]
-                    .as_array()
-                    .ok_or("Feedback values must be an array.")?
-                    .clone();
-                validate_feedback(p, &values)?;
-                ensure(
-                    inner
-                        .feedback
-                        .get(instance)
-                        .is_none_or(|f| now.saturating_sub(f.updated) >= 34),
-                    "Feedback rate exceeds 30 Hz.",
-                )?;
-                let sequence = inner
-                    .feedback
-                    .get(instance)
-                    .map_or(Some(1), |f| f.sequence.checked_add(1))
-                    .ok_or("Feedback counter exhausted.")?;
-                inner.feedback.insert(
-                    instance.into(),
-                    Feedback {
-                        sequence,
-                        updated: now,
-                        values,
-                    },
-                );
-                Ok(json!({"accepted":true,"feedbackSequence":sequence.to_string()}))
-            }
+            "companion_feedback" => Err("Raw feedback commands cannot assert output or simulator truth; use the configured native integration sink.".into()),
             _ => Err("Unknown local companion command.".into()),
         }
     }
@@ -885,13 +848,19 @@ impl Hub {
                             last_seen: now,
                             batches: VecDeque::new(),
                             values: BTreeMap::new(),
+                            feedback_cursor: Default::default(),
                         },
                     );
                     return Ok(
                         json!({"ok":true,"type":"session-open","hostId":inner.record.host_id,"companionId":companion,"controllerInstanceId":instance,"clientId":client_id,"sessionId":session_id,"generation":"1","publicationHash":p.publication_hash,"publication":p}),
                     );
                 }
-                self.session_frame(&mut inner, frame, connection_id, &companion, now)
+                let mut reply =
+                    self.session_frame(&mut inner, frame, connection_id, &companion, now)?;
+                if reply["type"] != "closed" {
+                    self.attach_feedback(&mut inner, frame, &mut reply, now)?;
+                }
+                Ok(reply)
             }
         }
     }
@@ -920,17 +889,25 @@ impl Hub {
             "Stale or unauthorized session identity.",
         )?;
         ensure(frame["version"] == 1, "Unsupported protocol version.")?;
-        let feedback = inner.feedback.get(&session.token.source_id).map(|f| {
-            let mut values = f.values.clone();
-            for value in &mut values {
-                let age = value["sourceAgeMs"].as_u64().unwrap();
-                value["sourceAgeMs"] = json!(age
-                    .saturating_add(now.saturating_sub(f.updated))
-                    .min(86_400_000));
-            }
-            (f.sequence.to_string(), values)
-        });
-        let reply = |seq: Value, kind: &str| json!({"ok":true,"type":kind,"clientId":session.client_id,"sessionId":session_id,"generation":generation.to_string(),"sequence":seq,"ackStage":"source-accepted","submitted":false,"feedbackSequence":feedback.as_ref().map(|(s,_)|s),"feedback":feedback.as_ref().map(|(_,v)|v)});
+        let reply = |seq: Value, kind: &str| json!({"ok":true,"type":kind,"clientId":session.client_id,"sessionId":session_id,"generation":generation.to_string(),"publicationHash":session.token.publication_hash,"sequence":seq,"ackStage":"source-accepted","submitted":false});
+        if frame["type"] == "feedback-resync" {
+            exact(
+                frame,
+                &[
+                    "version",
+                    "type",
+                    "clientId",
+                    "sessionId",
+                    "generation",
+                    "publicationHash",
+                    "sequence",
+                ],
+                &[],
+            )?;
+            counter(&frame["sequence"])?;
+            inner.sessions.get_mut(session_id).unwrap().feedback_cursor = Default::default();
+            return Ok(reply(frame["sequence"].clone(), "feedback-resync"));
+        }
         if frame["type"] == "close" || frame["type"] == "cancel" {
             exact(
                 frame,
@@ -1106,83 +1083,7 @@ impl Hub {
     }
 }
 
-fn validate_feedback(publication: &Publication, values: &[Value]) -> Result<(), String> {
-    ensure(values.len() <= 64, "Feedback value budget exceeded.")?;
-    let doc: Value = serde_json::from_str(&publication.canonical_document)
-        .map_err(|_| "Invalid retained publication.")?;
-    let widgets = doc["ui"]["feedbackWidgets"].as_array().unwrap();
-    let mut channels = BTreeSet::new();
-    for v in values {
-        exact(
-            v,
-            &[
-                "channelId",
-                "value",
-                "provenance",
-                "sourceKind",
-                "sourceAgeMs",
-                "unit",
-            ],
-            &["range"],
-        )?;
-        let channel = field(v, "channelId")?;
-        ensure(channels.insert(channel), "Repeated feedback channel.")?;
-        let bound: Vec<_> = widgets
-            .iter()
-            .filter(|w| w["channelId"] == channel)
-            .collect();
-        ensure(!bound.is_empty(), "Unknown feedback channel.")?;
-        ensure(
-            matches!(
-                v["provenance"].as_str(),
-                Some("requested" | "local" | "host-accepted" | "host-submitted" | "game-confirmed")
-            ) && matches!(
-                v["sourceKind"].as_str(),
-                Some("host" | "simulator" | "script")
-            ),
-            "Invalid feedback provenance.",
-        )?;
-        ensure(
-            v["sourceAgeMs"].as_u64().is_some_and(|n| n <= 86_400_000)
-                && v["unit"].as_str().is_some_and(|s| {
-                    !s.trim().is_empty()
-                        && s.encode_utf16().count() <= 32
-                        && !s.chars().any(|c| c <= '\u{1f}')
-                }),
-            "Invalid feedback age/unit.",
-        )?;
-        for widget in bound {
-            ensure(
-                match widget["kind"].as_str().unwrap() {
-                    "text" => v["value"].as_str().is_some_and(|s| {
-                        !s.trim().is_empty()
-                            && s.encode_utf16().count() <= 256
-                            && !s.chars().any(|c| c <= '\u{1f}')
-                    }),
-                    "indicator" => v["value"].is_boolean(),
-                    _ => v["value"].as_f64().is_some_and(f64::is_finite),
-                },
-                "Feedback value does not match widget type.",
-            )?;
-        }
-        if let Some(range) = v.get("range") {
-            exact(range, &["min", "max"], &[])?;
-            let min = range["min"]
-                .as_f64()
-                .filter(|n| n.is_finite())
-                .ok_or("Invalid feedback range.")?;
-            let max = range["max"]
-                .as_f64()
-                .filter(|n| n.is_finite())
-                .ok_or("Invalid feedback range.")?;
-            ensure(
-                min < max
-                    && v["value"]
-                        .as_f64()
-                        .is_some_and(|n| (min..=max).contains(&n)),
-                "Feedback exceeds declared range.",
-            )?;
-        }
-    }
-    Ok(())
-}
+#[path = "hub_assignments.rs"]
+mod assignments_api;
+#[path = "hub_feedback.rs"]
+mod feedback_api;

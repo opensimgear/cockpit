@@ -1,7 +1,9 @@
 import { canonical, type Publication } from '../../packages/companion-designer/src/index.ts';
 
-export type CompanionCommand = 'companion_feedback' | 'companion_status' | 'companion_enable' | 'companion_disable' | 'companion_pair_offer' | 'companion_approve' | 'companion_revoke' | 'companion_assign' | 'companion_disconnect' | 'companion_takeover' | 'companion_publish_begin' | 'companion_publish_chunk' | 'companion_publish_commit' | 'companion_publish_abort';
+export type CompanionCommand = 'companion_game_capture' | 'companion_feedback_routes' | 'companion_feedback' | 'companion_status' | 'companion_enable' | 'companion_disable' | 'companion_pair_offer' | 'companion_approve' | 'companion_revoke' | 'companion_assign' | 'companion_disconnect' | 'companion_takeover' | 'companion_publish_begin' | 'companion_publish_chunk' | 'companion_publish_commit' | 'companion_publish_abort';
 export interface CompanionHostState {
+  capture?: { schemaVersion: 1; assignments: { instanceId: string; companionId: string; publicationHash: string; capabilityFingerprint: string }[] };
+  feedbackRoutes?: import('./companion-feedback').FeedbackRouteState;
   listener?: { enabled: boolean; endpoint?: string | null; caSpkiSha256?: string; lastError?: string | null; discovery?: unknown; interfaces?: string[] };
   host?: { hostId?: string; clients?: Record<string, unknown>[]; pending?: Record<string, unknown>[]; instances?: Record<string, unknown>[]; publications?: Record<string, unknown>[] };
   pairing?: { manualPayload: string; qrMatrix: string[]; ttlMs: number };

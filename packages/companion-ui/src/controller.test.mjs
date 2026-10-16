@@ -96,13 +96,13 @@ test('asset URLs permit bounded raster data only',()=>{
 });
 test('typed feedback presentation exposes source/provenance/freshness and never manufactures confirmed feedback',()=>{
   const ui={feedbackWidgets:[{id:'text',channelId:'message',kind:'text'},{id:'number',channelId:'rpm',kind:'gauge'},{id:'flag',channelId:'flag',kind:'indicator'}]};
-  const sample=(value,extra={})=>({value,sourceAgeMs:0,receivedAtMs:0,provenance:'host-submitted',sourceKind:'host',unit:'',...extra});
+  const sample=(value,extra={})=>({value,status:'fresh',outputId:typeof value==='boolean'?'flag':typeof value==='number'?'number':'text',sourceAgeMs:0,receivedAtMs:0,provenance:'host-submitted',sourceKind:'host',unit:'',...extra});
   const text={kind:'text',feedbackIds:['text'],config:{prefix:'[',suffix:']'}};
-  assert.equal(feedbackPresentation(text,ui,{},0).text,'Unavailable');assert.equal(feedbackPresentation(text,ui,{message:sample(1)},0).available,false);
+  assert.equal(feedbackPresentation(text,ui,{},0).text,'Unknown');assert.equal(feedbackPresentation(text,ui,{message:sample(1)},0).available,false);
   assert.equal(feedbackPresentation(text,ui,{message:sample('hello')},0).text,'[hello]');assert.equal(feedbackPresentation(text,ui,{message:sample('hello')},300).freshness,'aging');assert.equal(feedbackPresentation(text,ui,{message:sample('hello')},1001).freshness,'stale');
   assert.equal(feedbackPresentation({...text,feedbackIds:['missing']},ui,{},0).provenance,'No source');
   const number={kind:'numeric',feedbackIds:['number'],config:{precision:1,unit:'rpm'}};
-  assert.equal(feedbackPresentation(number,ui,{rpm:sample(123.45)},0).text,'123.5 rpm');assert.equal(feedbackPresentation({...number,kind:'gauge',config:{precision:0,unit:''}},ui,{rpm:sample(3)},0).text,'3');
+  assert.equal(feedbackPresentation(number,ui,{rpm:sample(123.45,{unit:'rpm'})},0).text,'123.5 rpm');assert.equal(feedbackPresentation({...number,kind:'gauge',config:{precision:0,unit:''}},ui,{rpm:sample(3,{unit:'ratio'})},0).text,'3 ratio');
   assert.equal(feedbackPresentation(number,ui,{rpm:sample(NaN)},0).available,false);assert.equal(feedbackPresentation(number,ui,{rpm:sample(3,{sourceAgeMs:-1})},0).available,false);
   const flag={kind:'indicator',feedbackIds:['flag'],config:{}};assert.equal(feedbackPresentation(flag,ui,{flag:sample(true)},0).text,'Active');assert.equal(feedbackPresentation(flag,ui,{flag:sample(false)},0).text,'Inactive');
   assert.equal(feedbackPresentation(flag,ui,{flag:sample('true')},0).available,false);assert.equal(feedbackPresentation(flag,ui,{flag:sample(true)},0).provenance,'host-submitted · host');
@@ -128,4 +128,23 @@ test('resize gestures honor snap, minimum grid size, content boundaries and pres
 });
 test('repeat configurations with no off interval are rejected rather than emitting collapsed edges',()=>{
   const bad=bWidget('repeat');bad.config.repeatMs=bad.config.pulseMs;const{preview:p}=engine(doc([bad],[button()]));p.arm();assert.equal(p.begin(1,'button'),false);assert.equal(p.snapshot().events.length,0);
+});
+
+test('unknown disconnected stale unit mismatch and range mismatch never render a live confirmed state',()=>{
+ const ui={feedbackWidgets:[{id:'flag',channelId:'flag',kind:'indicator'},{id:'rpm',channelId:'rpm',kind:'gauge'}]},flag={kind:'indicator',feedbackIds:['flag'],config:{}},gauge={kind:'gauge',feedbackIds:['rpm'],config:{unit:'rpm',precision:0}};
+ const sample={status:'fresh',outputId:'flag',value:true,sourceAgeMs:0,receivedAtMs:0,provenance:'game-confirmed',sourceKind:'simulator',unit:'state'};
+ assert.equal(feedbackPresentation(flag,ui,{flag:sample},0).confirmed,true);
+ for(const status of ['unknown','disconnected','stale']){const display=feedbackPresentation(flag,ui,{flag:{...sample,status}},0);assert.equal(display.available,false);assert.equal(display.value,null);assert.equal(display.confirmed,false);assert.ok(display.text.includes(status==='unknown'?'Unknown':status==='disconnected'?'Disconnected':'Stale'));}
+ const old=feedbackPresentation(flag,ui,{flag:sample},1000);assert.equal(old.value,null);assert.match(old.provenance,/historical/);
+ assert.equal(feedbackPresentation(flag,ui,{flag:{...sample,status:'stale',value:undefined}},0).text,'Stale · no value');
+ assert.equal(feedbackPresentation(flag,ui,{flag:{...sample,outputId:'wrong'}},0).text,'Output identity mismatch');
+ assert.equal(feedbackPresentation(flag,ui,{flag:sample},NaN).text,'Invalid feedback');
+ const rpm={...sample,outputId:'rpm',value:1200,unit:'rpm',range:{min:0,max:8000}};assert.equal(feedbackPresentation(gauge,ui,{rpm},0).text,'1200 rpm');
+ assert.equal(feedbackPresentation(gauge,ui,{rpm:{...rpm,unit:'km/h'}},0).text,'Unit mismatch');
+ for(const range of [{min:0,max:100},{min:10,max:1},{min:0,max:NaN}])assert.equal(feedbackPresentation(gauge,ui,{rpm:{...rpm,range}},0).text,'Range mismatch');
+});
+
+test('numeric feedback units preserve authored nonblank text and normalize blank/whitespace only to ratio',()=>{
+ const ui={feedbackWidgets:[{id:'number',channelId:'number',kind:'gauge'}]},widget={kind:'numeric',feedbackIds:['number'],config:{unit:'  ',precision:0}},sample={status:'fresh',outputId:'number',value:0.5,sourceAgeMs:0,receivedAtMs:0,provenance:'local',sourceKind:'host',unit:'ratio'};
+ assert.equal(feedbackPresentation(widget,ui,{number:sample},0).available,true);assert.equal(feedbackPresentation({...widget,config:{...widget.config,unit:' rpm '}},ui,{number:{...sample,unit:' rpm '}},0).available,true);assert.equal(feedbackPresentation(widget,ui,{number:{...sample,unit:'rpm'}},0).text,'Unit mismatch');
 });

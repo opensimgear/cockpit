@@ -1211,6 +1211,91 @@ impl Service {
         }
         Ok(())
     }
+    /// This is not a wire/operator input command. It observes successful native
+    /// submissions for the dedicated authored route and never acquires output.
+    pub fn companion_assignment_available(&self, id: &str) -> Result<(), String> {
+        let m = self
+            .companion_runs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if m.routes.get(id).is_some_and(|r| {
+            r.reserved.load(Ordering::Acquire)
+                || r.starting.load(Ordering::Acquire)
+                || r.recovery.load(Ordering::Acquire)
+        }) {
+            return Err("Stop this companion mapping and complete recovery before a captured assignment change.".into());
+        }
+        if let Ok(path) = m.journal(id) {
+            if osg_virtual_controller::output_journal::inspect(&path)?.is_some_and(|r| r.pending())
+            {
+                return Err(
+                    "Resolve this companion's interrupted output before changing its assignment."
+                        .into(),
+                );
+            }
+        }
+        Ok(())
+    }
+    pub fn companion_submission(&self, id: &str) -> Result<Value, String> {
+        let (config, route) = {
+            let m = self
+                .companion_runs
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            (
+                m.configurations
+                    .get(id)
+                    .cloned()
+                    .ok_or("No saved companion route.")?,
+                m.routes
+                    .get(id)
+                    .cloned()
+                    .ok_or("Companion mapping is stopped.")?,
+            )
+        };
+        let router = route
+            .router
+            .try_lock()
+            .map_err(|_| "Companion submission proof is temporarily busy.")?;
+        let output = router.submission_snapshot();
+        if output.is_null() || route.cancelled.load(Ordering::Acquire) {
+            return Ok(json!({"confirmed":false}));
+        }
+        let profile = serde_json::to_value(&config.profile).map_err(|e| e.to_string())?;
+        let mut values = serde_json::Map::new();
+        for node in profile["nodes"].as_array().unwrap() {
+            let Some(control) = node["inputs"][0]["control"].as_str() else {
+                continue;
+            };
+            let Some(target) = node["output"]["target"].as_str() else {
+                continue;
+            };
+            let Some(index) = node["output"]["control"]["index"]
+                .as_u64()
+                .map(|i| i as usize)
+            else {
+                continue;
+            };
+            let state = &output[target];
+            let value = match node["output"]["control"]["kind"].as_str() {
+                Some("button") => state["buttons"][index].clone(),
+                Some("hat") => state["hats"][index]
+                    .as_i64()
+                    .map_or(json!(-1), |v| json!(v)),
+                Some("axis") => {
+                    let Some(n) = state["axes"][index].as_f64() else {
+                        continue;
+                    };
+                    json!(if n < 0. { n / 32768. } else { n / 32767. })
+                }
+                _ => continue,
+            };
+            if !value.is_null() {
+                values.insert(control.into(), value);
+            }
+        }
+        Ok(json!({"confirmed":true,"publicationHash":config.publication_hash,"values":values}))
+    }
     fn recover_route(&self, id: &str) -> Result<(), String> {
         if !self.qualified {
             return Err(QUALIFICATION.into());

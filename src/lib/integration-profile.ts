@@ -18,9 +18,10 @@ export type IntegrationFormat = {
 export type IntegrationOutput = {
   id: string; role: string; endpoint: string; actionId: string; channel: string; output?: number; format: IntegrationFormat;
 };
+export type IntegrationFeedbackOutput = { id: string; channel: string; output?: number };
 export type IntegrationDocument = {
-  schemaVersion: 1; id: string; name: string; provider: IntegrationProvider;
-  context: { aircraftModule?: string }; roles: IntegrationRole[]; inputs: IntegrationInput[]; outputs: IntegrationOutput[];
+  schemaVersion: 1 | 2; id: string; name: string; provider: IntegrationProvider;
+  context: { aircraftModule?: string }; roles: IntegrationRole[]; inputs: IntegrationInput[]; outputs: IntegrationOutput[]; feedbackOutputs?: IntegrationFeedbackOutput[];
 };
 export type IntegrationConnection = {
   freshnessMs: number; cataloguePath?: string; commandHost?: string; commandPort?: number;
@@ -104,10 +105,14 @@ export function integrationFormatError(f: unknown): string {
 export function integrationError(value: unknown, portableOnly = false): string {
   if (!object(value) || bytes(JSON.stringify(value)) > 65536 || !object(value.document)) return 'Use a JSON profile no larger than 64 KiB.';
   const d = value.document;
-  if (d.schemaVersion !== 1 || !identifier(d.id) || !text(d.name,63) || !['dcs-bios','assetto-corsa-rally','x-plane'].includes(String(d.provider))) return 'Choose a supported provider, profile identifier, name and schema version.';
-  if (Object.keys(d).some(key => !['schemaVersion','id','name','provider','context','roles','inputs','outputs'].includes(key))) return 'Portable profiles must not contain local paths, network settings or device assignments.';
+  if ((d.schemaVersion !== 1 && d.schemaVersion !== 2) || !identifier(d.id) || !text(d.name,63) || !['dcs-bios','assetto-corsa-rally','x-plane'].includes(String(d.provider))) return 'Choose a supported provider, profile identifier, name and schema version.';
+  if (Object.keys(d).some(key => !['schemaVersion','id','name','provider','context','roles','inputs','outputs',...(d.schemaVersion===2?['feedbackOutputs']:[])].includes(key))) return 'Portable profiles must not contain local paths, network settings or device assignments.';
   if (!object(d.context) || !known(d.context,['aircraftModule']) || d.provider === 'dcs-bios' && !text(d.context.aircraftModule,64) || d.context.aircraftModule !== undefined && !text(d.context.aircraftModule,64)) return 'Choose the installed aircraft module by name.';
-  if (!Array.isArray(d.roles) || !d.roles.length || d.roles.length > 8 || !Array.isArray(d.inputs) || d.inputs.length > 16 || !Array.isArray(d.outputs) || d.outputs.length > 16 || !d.inputs.length && !d.outputs.length) return 'Add one to eight roles and up to 16 inputs and 16 outputs.';
+  const feedback = d.schemaVersion === 2 ? d.feedbackOutputs ?? [] : [];
+  if (!Array.isArray(feedback) || feedback.length > 16) return 'Use up to 16 logical feedback outputs.';
+  const feedbackOnly = feedback.length > 0 && Array.isArray(d.inputs) && !d.inputs.length && Array.isArray(d.outputs) && !d.outputs.length;
+  if (!Array.isArray(d.roles) || !d.roles.length && !feedbackOnly || d.roles.length > 8 || !Array.isArray(d.inputs) || d.inputs.length > 16 || !Array.isArray(d.outputs) || d.outputs.length + feedback.length > 16 || !d.inputs.length && !d.outputs.length && !feedback.length) return 'Add one to eight roles and up to 16 inputs and 16 outputs.';
+
   if (d.provider !== 'dcs-bios' && d.inputs.length) return 'This provider currently provides telemetry outputs only.';
   const roles = new Set<string>(), ids = new Set<string>(), physical = new Set<string>(), commands = new Set<string>(), endpoints = new Set<string>();
   for (const role of d.roles) {
@@ -134,6 +139,10 @@ export function integrationError(value: unknown, portableOnly = false): string {
     if (endpoints.has(key)) return 'Each output endpoint can be bound once per role.';
     endpoints.add(key);
     const error = integrationFormatError(row.format); if (error) return error;
+  }
+  for (const row of feedback) {
+    if (!object(row) || !known(row,['id','channel','output']) || !identifier(row.id) || ids.has(row.id) || !identifier(row.channel,64) || !whole(row.output ?? 0,0,15)) return 'Logical feedback outputs need unique IDs, named telemetry channels and bounded output indices.';
+    ids.add(row.id);
   }
   if (portableOnly) return '';
   if (!object(value.connection) || !whole(value.connection.freshnessMs,100,10000)) return 'Feedback freshness must be from 100 to 10000 ms.';
@@ -245,8 +254,12 @@ export function integrationStartError(config: IntegrationConfig, targets: Integr
   }
   return '';
 }
+/** Explicit schema upgrade for authored logical feedback; legacy saves remain schema 1. */
+export function withIntegrationFeedback(config: IntegrationConfig): IntegrationConfig {
+  return { ...config, document: { ...config.document, schemaVersion: 2, feedbackOutputs: (config.document.feedbackOutputs ?? []).map(row => ({ ...row })) } };
+}
 export function nextIntegrationId(config: IntegrationConfig, prefix: string): string {
-  const ids = new Set([...config.document.inputs,...config.document.outputs].map(row => row.id));
+  const ids = new Set([...config.document.inputs,...config.document.outputs,...(config.document.feedbackOutputs??[])].map(row => row.id));
   let n=1; while(ids.has(`${prefix}-${n}`)) n++; return `${prefix}-${n}`;
 }
 export function revLightOutput(config: IntegrationConfig, role: string, target: IntegrationTarget, catalogue?: IntegrationCatalogue): IntegrationOutput | undefined {

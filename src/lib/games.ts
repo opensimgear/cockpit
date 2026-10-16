@@ -13,7 +13,9 @@ export type GameIntegrationSetup = {
 };
 export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup };
 export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
-export type GameProfile = { schemaVersion: 1 | 2; id: string; gameId: GameId; name: string; devices: GameDevice[]; integration?: IntegrationConfig | null; mapping?: CapturedMapping | null };
+export type CapturedCompanionAssignment = { instanceId:string; companionId:string; publicationHash:string; capabilityFingerprint:string };
+export type CapturedGameCompanions = { schemaVersion:1; assignments:CapturedCompanionAssignment[] };
+export type GameProfile = { schemaVersion: 1 | 2 | 3; id: string; gameId: GameId; name: string; devices: GameDevice[]; integration?: IntegrationConfig | null; mapping?: CapturedMapping | null; companions?: CapturedGameCompanions | null };
 export type GameSession = { phase: 'idle' | 'validating' | 'applying' | 'launching' | 'waiting' | 'running' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; profileId?: string | null; pid?: number | null; error?: string | null; steps?: string[]; bindingWarning?: boolean | string | null };
 export type GamesState = { catalogue: Game[]; profiles: GameProfile[]; defaultProfiles: Record<string, string>; session: GameSession; error?: string | null };
 export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_profile_save' | 'game_profile_delete' | 'game_profile_default' | 'game_launch' | 'game_activate' | 'game_deactivate' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover';
@@ -135,8 +137,25 @@ export function profileChangesBindings(profile: GameProfile): boolean {
 const text = (value: unknown, limit: number): value is string => typeof value === 'string' && !!value.trim() && new TextEncoder().encode(value).length <= limit && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
+export function gameCompanionCaptureError(value: unknown): string {
+  if (!object(value) || Object.keys(value).some(key=>!['schemaVersion','assignments'].includes(key)) || value.schemaVersion !== 1 || !Array.isArray(value.assignments) || value.assignments.length === 0 || value.assignments.length > 8 || new TextEncoder().encode(JSON.stringify(value)).length > 4096) return 'Capture at most eight complete companion assignments.';
+  const ids=new Set<string>();
+  for (const a of value.assignments) {
+    if (!object(a) || Object.keys(a).some(key=>!['instanceId','companionId','publicationHash','capabilityFingerprint'].includes(key)) || typeof a.instanceId!=='string' || !/^[a-zA-Z0-9_.-]{1,64}$/.test(a.instanceId) || typeof a.companionId!=='string' || !/^[a-zA-Z0-9_.-]{1,64}$/.test(a.companionId) || typeof a.publicationHash!=='string' || !/^sha256:[0-9a-f]{64}$/.test(a.publicationHash) || typeof a.capabilityFingerprint!=='string' || !/^sha256:[0-9a-f]{64}$/.test(a.capabilityFingerprint) || ids.has(a.instanceId)) return 'Companion capture needs unique instance identities and complete immutable publication hashes.';
+    ids.add(a.instanceId);
+  }
+  return '';
+}
+/** Explicit migration stores detached revision references, never live designer objects. */
+export function captureGameCompanions(profile:GameProfile, capture:CapturedGameCompanions):GameProfile {
+  const error=gameCompanionCaptureError(capture); if(error)throw new Error(error);
+  return {...cloneGameProfile(profile),schemaVersion:3,companions:JSON.parse(JSON.stringify(capture))};
+}
+
 export function gameProfileError(value: unknown): string {
-  if (!object(value) || ![1,2].includes(value.schemaVersion as number) || !supportedGames.some(g => g.id === value.gameId)) return 'Choose a supported game and profile schema version 1 or 2.';
+  if (!object(value) || ![1,2,3].includes(value.schemaVersion as number) || !supportedGames.some(g => g.id === value.gameId)) return 'Choose a supported game and profile schema version 1, 2 or 3.';
+  if (value.schemaVersion !== 3 && 'companions' in value) return 'Capture companion assignments through an explicit upgrade to schema 3.';
+  if (value.companions != null) { const error = gameCompanionCaptureError(value.companions); if (error) return error; }
   if (value.schemaVersion === 1 && 'mapping' in value) return 'Capture mapping through an explicit upgrade to schema 2.';
   if (value.mapping != null && (!object(value.mapping) || !object(value.mapping.profile) || !Array.isArray(value.mapping.assignments) || !Array.isArray(value.mapping.targets))) return 'Capture a complete mapping snapshot.';
   if (typeof value.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(value.id)) return 'Choose a profile ID of 1–64 letters, numbers, dots, underscores or hyphens.';
