@@ -63,12 +63,21 @@ static unsigned pressed_visual(osg_engine *e,unsigned interaction){
         assert(osg_scene_record(&e->scene,1,4,i,record,16));
         if(record[2]!=1||read16(record+6)!=1)continue;
         assert(osg_scene_record(&e->scene,1,5,read16(record+4),instruction,16));
-        if(instruction[0]==2&&read16(instruction+2)==variable){assert(node==OSG_ENGINE_NONE);node=read16(record);}
+        if(instruction[0]==2&&read16(instruction+2)==variable){
+            unsigned candidate=read16(record);bool pulses=false;
+            for(unsigned j=0;j<e->scene.object[1].section_count;j++)if(e->scene.object[1].sections[j].kind==6){
+                for(unsigned k=0;k<e->scene.object[1].sections[j].count;k++){
+                    uint8_t timeline[24];assert(osg_scene_record(&e->scene,1,6,k,timeline,24));
+                    if(read16(timeline)==candidate&&timeline[2]==4)pulses=true;
+                }
+            }
+            if(pulses){assert(node==OSG_ENGINE_NONE);node=candidate;}
+        }
     }
     assert(node!=OSG_ENGINE_NONE);return node;
 }
-static void package_c_held_pulse(osg_engine *e,const char *base,const char *board,const char *profile,unsigned width,unsigned height){
-    static osg_engine restored;fixture c=fixture_load(base,board,"C");osg_image logical;osg_runtime current;
+static void package_held_pulse(osg_engine *e,const char *base,const char *board,const char *revision,const char *profile,unsigned width,unsigned height){
+    static osg_engine restored;fixture c=fixture_load(base,board,revision);osg_image logical;osg_runtime current;
     assert(install(e,&c)==OSG_CONTENT_OK&&!strcmp(e->package_hash,c.hash));
     osg_scene_usage usage;assert(osg_scene_get_usage(&e->scene,&usage)&&usage.timelines==3);
     runtime_init(e,&logical,&current);display(e,&current,1000);
@@ -165,8 +174,9 @@ int main(int argc,char **argv){
         assert(!osg_engine_copy_hits(&engine,&hits)&&!hits.count&&engine.failed&&engine.scene.failed&&!engine.ready&&!engine.scene.ready);read_failure=false;
         assert(!osg_engine_copy_hits(&engine,&hits)&&!hits.count);
         assert(osg_engine_initialize_io(&reboot,profile,(uint16_t)width,(uint16_t)height,io())==OSG_CONTENT_OK&&!strcmp(reboot.package_hash,b.hash));osg_content_release(&reboot.active_view);
-        package_c_held_pulse(&engine,argv[1],name,profile,width,height);osg_content_release(&engine.active_view);
+        package_held_pulse(&engine,argv[1],name,"C",profile,width,height);
+        package_held_pulse(&engine,argv[1],name,"D",profile,width,height);osg_content_release(&engine.active_view);
         fixture_free(&a);fixture_free(&b);
     }
-    assert(!osg_json_allocated());EVP_MD_CTX_free(sha);puts("Both-board A/B/C streamed engine install, held-color pulses, canonical manifest/profile/resource rejection, panel shim, variable redraw, warm scan and rollback tests passed");return 0;
+    assert(!osg_json_allocated());EVP_MD_CTX_free(sha);puts("Both-board A/B/C/D streamed engine install, held-color pulses, canonical manifest/profile/resource rejection, panel shim, variable redraw, warm scan and rollback tests passed");return 0;
 }

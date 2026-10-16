@@ -229,11 +229,28 @@ class RenderProofTests(unittest.TestCase):
         wrong=published(revision="B",identities=identities);wrong["revision"]="C"
         with self.assertRaises(ValueError):
             proof.summarize([wrong,finish()],identities)
-        unknown=published(revision="C",identities=identities);unknown["revision"]="D"
+        unknown=published(revision="C",identities=identities);unknown["revision"]="E"
         with self.assertRaises(ValueError):
             proof.summarize([unknown,finish()],identities)
         ab=[published(),live(),live(1000),finish()]
         self.assertEqual(proof.summarize(ab,catalog()),proof.summarize(ab,identities))
+
+    def test_package_d_actual_identity_and_unchanged_prior_c_report(self):
+        prior=catalog(("A","B","C"));expanded=catalog(proof.REVISIONS)
+        delayed=live(1000,"C","session-c",identities=expanded);delayed["revision"]="D"
+        rows=[published(revision="C",identities=expanded),live(0,"C","session-c",identities=expanded),
+              published(revision="D",identities=expanded),delayed,
+              live(2000,"D","session-d",2000,2,expanded),live(3000,"D","session-d",2000,2,expanded),finish()]
+        result=proof.summarize(rows,expanded)["boards"][0]
+        self.assertEqual([v["revision"] for v in result["liveEvents"]],["C","D"])
+        wrong=published(revision="C",identities=expanded);wrong["revision"]="D"
+        with self.assertRaises(ValueError):proof.summarize([wrong,finish()],expanded)
+        old=[published(revision="C",identities=prior),live(0,"C","session-c",identities=prior),finish()]
+        self.assertEqual(proof.summarize(old,prior),proof.summarize(old,expanded))
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)/"fixtures";self.assertEqual(len(self.write_fixtures(root,proof.REVISIONS)),8)
+            (root/"waveshare"/"D"/"manifest.json").write_text("{}")
+            with self.assertRaises(ValueError):proof.load_identities(root)
 
     def test_optional_c_manifest_is_hash_bound_and_uses_the_same_board_profile(self):
         with tempfile.TemporaryDirectory() as directory:

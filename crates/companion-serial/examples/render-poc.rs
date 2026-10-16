@@ -75,11 +75,11 @@ fn run()->Result<(),String>{
         "--sunton"|"--waveshare"=>{let name=arg.trim_start_matches("--").to_owned();let port=args.next().ok_or("Missing port")?;boards.push(Board{instance:format!("render-poc-{name}"),name,port,companion:None,hash:String::new(),assigned:false});},
         "--seconds"=>seconds=args.next().ok_or("Missing duration")?.parse().map_err(|_|"Bad duration")?,
         "--switch-after"=>switch_after=args.next().ok_or("Missing switch duration")?.parse().map_err(|_|"Bad switch duration")?,
-        "--revision"=>revision=args.next().filter(|r|matches!(r.as_str(),"A"|"B"|"C")).ok_or("Revision must be A, B or C")?,
-        "--switch-to"=>switch_to=args.next().filter(|r|matches!(r.as_str(),"A"|"B"|"C")).ok_or("Switch revision must be A, B or C")?,
+        "--revision"=>revision=args.next().filter(|r|matches!(r.as_str(),"A"|"B"|"C"|"D")).ok_or("Revision must be A, B, C or D")?,
+        "--switch-to"=>switch_to=args.next().filter(|r|matches!(r.as_str(),"A"|"B"|"C"|"D")).ok_or("Switch revision must be A, B, C or D")?,
         "--stop-file"=>stop_file=Some(PathBuf::from(args.next().ok_or("Missing stop file path")?)),
         "--reuse-packages"=>reuse=true,
-        _=>return Err("Usage: render-poc --state-dir COPY --sunton COM6 --waveshare COM5 [--revision A|B|C] [--seconds 180] [--switch-after 60] [--switch-to B|C] [--stop-file PATH] [--reuse-packages]".into()),
+        _=>return Err("Usage: render-poc --state-dir COPY --sunton COM6 --waveshare COM5 [--revision A|B|C|D] [--seconds 180] [--switch-after 60] [--switch-to B|C|D] [--stop-file PATH] [--reuse-packages]".into()),
     }}
     if switch_after>0&&revision==switch_to{return Err("Choose a different revision for the package switch.".into());}
     if stop_file.as_ref().is_some_and(|path|path.exists()){return Err("Choose a new stop file path before starting the bench.".into());}

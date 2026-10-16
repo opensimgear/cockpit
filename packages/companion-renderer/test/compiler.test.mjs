@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { publishDocument, newDocument, createDesignerHistory, applyDesignerCommand } from "../../companion-designer/src/index.ts";
-import { SUNTON_PROFILE,WAVESHARE_PROFILE,compileResolvedPanel,compileLegacyPublication,createReferenceRenderer,createStarter,prepareRgba,prepareA4,prepareGlyph,packImages,packFonts,rgb565,blend565,rgb565Bytes,scalar,raw,variable,profileHash,verifyPackage,canonical } from "../src/index.ts";
+import { SUNTON_PROFILE,WAVESHARE_PROFILE,compileResolvedPanel,compileLegacyPublication,createReferenceRenderer,createStarter,prepareRgba,prepareA4,prepareGlyph,packImages,packFonts,rgb565,blend565,rgb565Bytes,scalar,raw,variable,profileHash,verifyPackage,canonical,inspectBinaryObject,records } from "../src/index.ts";
 const fontsJson=JSON.parse(await readFile(new URL("../assets/prepared-fonts.json",import.meta.url),"utf8"));
 const license=await readFile(new URL("../assets/OFL.txt",import.meta.url),"utf8");
 const fonts=fontsJson.fonts.map(font=>({...font,license,glyphs:font.glyphs.map(glyph=>({...glyph,coverage:Uint8Array.from(glyph.coverage)}))}));
@@ -101,7 +101,7 @@ test("legacy compiler derives authority only from source publication and rejects
  const axes=applyDesignerCommand(createDesignerHistory(newDocument()),{type:"add-widget",kind:"slider"});await assert.rejects(()=>publishDocument(axes.present,[]).then(p=>compileLegacyPublication(p,starter.recipe,SUNTON_PROFILE)),/momentary/);
 });
 
-test("both board A/B/C packages recompile deterministically and reference raster states match exact shared goldens",async()=>{
+test("both board A/B/C/D packages recompile deterministically and reference raster states match exact shared goldens",async()=>{
  const cases=JSON.parse(await readFile(new URL("./poc/cases.json",import.meta.url),"utf8")),fingerprints=new Map();
  for(const entry of cases.cases){
    const [board,revision]=entry.package.split("/"),profile=board==="sunton"?SUNTON_PROFILE:WAVESHARE_PROFILE,dir=new URL("./poc/"+entry.package+"/",import.meta.url);
@@ -166,5 +166,57 @@ test("package-only revision C pulses each held button and leaves unpressed butto
      assert.deepEqual(first,second);
    });
    await idle;
+ }
+});
+test("revision D keeps full pressed glow and confines periodic hidden pulse damage to small compiled tile sets",async()=>{
+ for(const [board,profile]of[["sunton",SUNTON_PROFILE],["waveshare",WAVESHARE_PROFILE]]){
+   const loaded={};
+   for(const revision of["C","D"]){
+     const dir=new URL("./poc/"+board+"/"+revision+"/",import.meta.url),manifestBytes=new Uint8Array(await readFile(new URL("manifest.json",dir)));
+     const manifest=JSON.parse(new TextDecoder().decode(manifestBytes)),identity=JSON.parse(await readFile(new URL("identity.json",dir),"utf8")),objects=new Map();
+     for(const object of manifest.objects)objects.set(object.kind,new Uint8Array(await readFile(new URL(object.kind+".bin",dir))));
+     const packed={manifest,manifestBytes,objects,packageHash:identity.packageHash},recipe=createStarter(profile,revision.toLowerCase(),fonts).recipe;
+     const renderer=await createReferenceRenderer(packed,profile),state={page:0,connected:true,pressed:[false,false],feedback:[
+       {type:"number",value:50,available:true,fresh:true},{type:"number",value:50,available:true,fresh:true},{type:"boolean",value:false,available:true,fresh:true}]};
+     const before=renderer.update({...state,timeMs:100}),after=renderer.update({...state,timeMs:500});
+     assert.deepEqual(before.frame,after.frame,"hidden pulse changes properties but no pixels");
+     const changed=new Set(after.properties.flatMap((property,index)=>Object.keys(property).some(key=>property[key]!==before.properties[index][key])?[index]:[]));
+     assert.equal(changed.size,2);assert.ok([...changed].every(index=>!after.properties[index].visible));
+     const scene=inspectBinaryObject("scene",objects.get("scene")),members=records(scene,12),dirtyTiles=new Set();
+     for(const tile of records(scene,11)){
+       const first=tile.getUint16(6,true),count=tile.getUint16(8,true);
+       for(let i=first;i<first+count;++i)if(changed.has(members[i].getUint16(0,true))){
+         dirtyTiles.add(tile.getUint16(0,true)+":"+tile.getUint16(2,true)+":"+tile.getUint16(4,true));break;
+       }
+     }
+     loaded[revision]={packed,recipe,tileCount:dirtyTiles.size,changed:[...changed].map(index=>recipe.pages[0].nodes[index].id)};
+   }
+   assert.deepEqual(loaded.C.changed.sort(),["laser-pressed","stop-pressed"]);
+   assert.deepEqual(loaded.D.changed.sort(),["laser-pulse-band","stop-pulse-band"]);
+   assert.equal(loaded.C.tileCount,board==="sunton"?12:52);
+   assert.equal(loaded.D.tileCount,board==="sunton"?2:4);
+   assert.equal(loaded.C.tileCount/loaded.D.tileCount,board==="sunton"?6:13);
+   const c=loaded.C.packed.manifest,d=loaded.D.packed.manifest,recipe=loaded.D.recipe;
+   assert.equal(d.counts.nodes,c.counts.nodes+2);assert.equal(d.counts.bindings,c.counts.bindings+2);assert.equal(d.counts.timelines,3);
+   assert.equal(d.resources.maxDirtyPixels,c.resources.maxDirtyPixels);
+   assert.ok(d.resources.maxLayersPerTile<=profile.limits.maxLayersPerTile);
+   assert.equal(d.semanticDescriptorHash,c.semanticDescriptorHash);
+   for(const kind of["images","fonts"])assert.equal(d.objects.find(o=>o.kind===kind).sha256,c.objects.find(o=>o.kind===kind).sha256);
+   const frames=JSON.parse(await readFile(new URL("./poc/"+board+"/D/states.json",import.meta.url),"utf8")).frames,rendered=new Map(),renderer=await createReferenceRenderer(loaded.D.packed,profile);
+   for(const frame of frames){
+     const state={...frame.state,feedback:frame.state.feedback.map(f=>({...f,type:f.type===1?"boolean":"number",value:f.type===1?!!f.value:f.value}))};
+     rendered.set(frame.name,renderer.update(state));
+   }
+   for(const [name,bright,dim] of [["laser","pressed","held"],["stop","stop-pressed","stop-held"]]){
+     const maskIndex=recipe.pages[0].nodes.findIndex(node=>node.id===name+"-pressed"),bandIndex=recipe.pages[0].nodes.findIndex(node=>node.id===name+"-pulse-band");
+     assert.equal(recipe.pages[0].nodes[maskIndex].timelines,undefined,"full mask is static color");
+     assert.equal(rendered.get(bright).properties[maskIndex].visible,true);assert.equal(rendered.get(dim).properties[maskIndex].visible,true);
+     assert.equal(rendered.get(bright).properties[maskIndex].color,rendered.get(dim).properties[maskIndex].color);
+     assert.notEqual(rendered.get(bright).properties[bandIndex].color,rendered.get(dim).properties[bandIndex].color);
+     const [x,y,w,h]=recipe.pages[0].nodes[bandIndex].bounds;let changed=0;
+     for(let py=y;py<y+h;++py)for(let px=x;px<x+w;++px)changed+=Number(rendered.get(bright).frame[py*profile.width+px]!==rendered.get(dim).frame[py*profile.width+px]);
+     assert.equal(changed,w*h,"every band pixel visibly pulses while full glow stays steady");
+   }
+   assert.deepEqual(rendered.get("reconnected").frame,rendered.get("stop-released").frame);
  }
 });

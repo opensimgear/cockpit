@@ -44,7 +44,7 @@ function coverage(id:string,width:number,height:number,kind:"press"|"ring"|"stac
   return prepareA4(id,width,height,alpha);
 }
 /** Original compact two-button panel and a roomier instrument panel; target layouts are independent. */
-export function createStarter(profile:DeviceProfile,revision:"a"|"b"|"c",fontCatalog:PreparedFont[]):{document:DesignerDocument;recipe:ResolvedRecipe}{
+export function createStarter(profile:DeviceProfile,revision:"a"|"b"|"c"|"d",fontCatalog:PreparedFont[]):{document:DesignerDocument;recipe:ResolvedRecipe}{
   const large=profile.width===800,board=large?"waveshare":"sunton",pageId="systems",scale=large?1:0;
   const buttonBounds:Rect[]=large?[[32,144,184,48],[32,212,184,48]]:[[16,96,44,44],[80,96,44,44]];
   const numberBounds:Rect=large?[384,184,128,48]:[160,88,64,32],needleBounds:Rect=large?[292,308,3,28]:[160,152,3,16];
@@ -97,6 +97,13 @@ export function createStarter(profile:DeviceProfile,revision:"a"|"b"|"c",fontCat
     if(revision==="c")pressedNode.timelines=[{property:"color",interpolation:"step",repeat:true,
       keyframes:[[0,i?C.red:C.cyan],[400,i?rgb565(112,27,39):rgb565(30,91,104)],[800,i?C.red:C.cyan]]}];
     add(pressedNode);
+    if(revision==="d"){
+      const width=large?120:32,height=large?3:2;
+      add({id:name+"-pulse-band",kind:"rect",bounds:[b[0]+(b[2]-width)/2,b[1]+b[3]-(large?7:6),width,height],
+        color:i?C.red:C.cyan,bindings:{visible:variable(name+"-pressed")},
+        timelines:[{property:"color",interpolation:"step",repeat:true,
+          keyframes:[[0,i?C.red:C.cyan],[400,i?rgb565(112,27,39):rgb565(30,91,104)],[800,i?C.red:C.cyan]]}]});
+    }
     if(large)text(name+"-label",b[0]+20,b[1]+12,b[2]-30,i?"EMERGENCY STOP":"ENABLE LASER",labelFont,i?C.red:C.white);
     else text(name+"-label",b[0],b[1]+48,60,i?"STOP":"LASER",labelFont,i?C.red:C.white);
     hits.push({interactionId:widgetIds[i],nodeId:name+"-face",bounds:b});
@@ -113,7 +120,7 @@ export function createStarter(profile:DeviceProfile,revision:"a"|"b"|"c",fontCat
   const staleBounds:Rect=large?[600,258,128,10]:[288,198,48,8];
   add({id:"stale-lamp",kind:"rect",bounds:staleBounds,color:C.amber,bindings:{visible:operation("not",variable("fresh"))},timelines:[{property:"color",interpolation:"step",repeat:true,keyframes:[[0,C.amber],[500,rgb565(104,71,28)],[1000,C.amber]]}]});
   text("stale-caption",large?600:344,large?316:192,large?144:112,"AGE / CHECK",labelFont,C.muted);
-  text("footer",large?32:16,large?406:270,large?736:448,revision==="a"?"A / PREPARED ARTWORK. LIVE VARIABLES.":revision==="b"?"B / NEW COMPOSITE + SAME ENGINE.":"C / HOLD A BUTTON TO SEE IT PULSE.",labelFont,C.muted);
+  text("footer",large?32:16,large?406:270,large?736:448,revision==="a"?"A / PREPARED ARTWORK. LIVE VARIABLES.":revision==="b"?"B / NEW COMPOSITE + SAME ENGINE.":revision.toUpperCase()+" / HOLD A BUTTON TO SEE IT PULSE.",labelFont,C.muted);
   if(revision!=="a"){
     if(large){images.push(coverage("status-ring",136,136,"ring"));add({id:"status-ring",kind:"mask4",bounds:[348,140,136,136],maskId:"status-ring",color:C.cyan,bindings:{color:operation("select",heat,raw(C.amber),raw(C.cyan))}});text("ring-caption",366,244,128,"POWER / STATE",labelFont,C.muted);}
     else{images.push(coverage("stacked-warning",36,32,"stack"));add({id:"stacked-warning",kind:"mask4",bounds:[84,102,36,32],maskId:"stacked-warning",color:C.red,bindings:{visible:variable("confirmed")}});}

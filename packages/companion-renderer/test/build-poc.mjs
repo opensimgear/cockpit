@@ -9,7 +9,7 @@ export async function buildPoc() {
   const license=await readFile(new URL("../assets/OFL.txt",import.meta.url),"utf8");
   const fonts=prepared.fonts.map(font=>({...font,license,glyphs:font.glyphs.map(glyph=>({...glyph,coverage:Uint8Array.from(glyph.coverage)}))}));
   const cases=[];
-  for(const [board,profile]of[["sunton",SUNTON_PROFILE],["waveshare",WAVESHARE_PROFILE]])for(const revision of["a","b","c"]){
+  for(const [board,profile]of[["sunton",SUNTON_PROFILE],["waveshare",WAVESHARE_PROFILE]])for(const revision of["a","b","c","d"]){
     const dir=new URL(board+"/"+revision.toUpperCase()+"/",root);await mkdir(dir,{recursive:true});
     const starter=createStarter(profile,revision,fonts),publication=await publishDocument(starter.document,[]);
     const compiled=await compileLegacyPublication(publication,starter.recipe,profile);
@@ -27,7 +27,7 @@ export async function buildPoc() {
       ["stale",800,true,73.2,true,false,false],["repeat",1300,true,73.2,true,false,false],
       ["disconnected",1600,false,73.2,true,false,false],["reconnected",2000,true,88.8,true,false,true],
     ];
-    if(revision==="c"){
+    if(revision==="c"||revision==="d"){
       states[3][1]=650;
       states.splice(3,0,["held",600,true,50,false,true,true]);
       states.push(["stop-pressed",2100,true,88.8,true,[false,true],true],

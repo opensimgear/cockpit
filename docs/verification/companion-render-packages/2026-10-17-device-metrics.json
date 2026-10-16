@@ -306,6 +306,128 @@
           "p95UpperUs": 32768
         }
       }
+    },
+    {
+      "board": "sunton",
+      "scenario": "c-animation",
+      "capturedAtUtc": "2026-10-16T22:54:53.307582+00:00",
+      "declaredApplicationSha256": "sha256:e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+      "windowMs": 871580,
+      "minimumInternalBytes": 85004,
+      "smallestLargestInternalBytes": 86016,
+      "stackMinBytes": [
+        4516,
+        7524,
+        7300
+      ],
+      "touchAgeMaxUs": 33000,
+      "renderAgeMaxUs": 310000,
+      "sourceAckAgeMaxUs": 1006000,
+      "metrics": {
+        "host-request": {
+          "count": 1202,
+          "failed": 3,
+          "maxUs": 3012703,
+          "p95UpperUs": 524288
+        },
+        "source-ack": {
+          "count": 1022,
+          "failed": 0,
+          "maxUs": 120000,
+          "p95UpperUs": 131072
+        },
+        "input-source-ack": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "render": {
+          "count": 2042,
+          "failed": 0,
+          "maxUs": 1982291,
+          "p95UpperUs": 262144
+        },
+        "present": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "touch-poll": {
+          "count": 43267,
+          "failed": 0,
+          "maxUs": 793,
+          "p95UpperUs": 512
+        },
+        "touch-poll-interval": {
+          "count": 43266,
+          "failed": 0,
+          "maxUs": 61963,
+          "p95UpperUs": 32768
+        }
+      }
+    },
+    {
+      "board": "waveshare",
+      "scenario": "c-animation",
+      "capturedAtUtc": "2026-10-16T22:54:52.775897+00:00",
+      "declaredApplicationSha256": "sha256:7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+      "windowMs": 1374551,
+      "minimumInternalBytes": 73203,
+      "smallestLargestInternalBytes": 45056,
+      "stackMinBytes": [
+        4336,
+        6960,
+        5412
+      ],
+      "touchAgeMaxUs": 23000,
+      "renderAgeMaxUs": 602000,
+      "sourceAckAgeMaxUs": 304000,
+      "metrics": {
+        "host-request": {
+          "count": 1805,
+          "failed": 3,
+          "maxUs": 3002617,
+          "p95UpperUs": 131072
+        },
+        "source-ack": {
+          "count": 1222,
+          "failed": 0,
+          "maxUs": 22000,
+          "p95UpperUs": 32768
+        },
+        "input-source-ack": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "render": {
+          "count": 854,
+          "failed": 0,
+          "maxUs": 1864100,
+          "p95UpperUs": 524288
+        },
+        "present": {
+          "count": 854,
+          "failed": 0,
+          "maxUs": 138364,
+          "p95UpperUs": 131072
+        },
+        "touch-poll": {
+          "count": 68530,
+          "failed": 19,
+          "maxUs": 797,
+          "p95UpperUs": 512
+        },
+        "touch-poll-interval": {
+          "count": 68529,
+          "failed": 0,
+          "maxUs": 22027,
+          "p95UpperUs": 32768
+        }
+      }
     }
   ]
 }

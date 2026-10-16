@@ -14,7 +14,7 @@ import re
 import sys
 
 MAX_LINE = 8192
-REVISIONS = ("A", "B", "C")
+REVISIONS = ("A", "B", "C", "D")
 MAX_FILE = 16 * 1024 * 1024
 MAX_COUNTER = 18446744073709551615
 MAX_UINT32 = 4294967295
@@ -153,9 +153,9 @@ def load_identities(root):
         hashes = set()
         for revision in REVISIONS:
             directory = Path(root) / board / revision
-            # Existing A/B evidence remains usable before optional C is built.
-            # A present C directory must contain valid bound identities.
-            if revision == "C" and not directory.exists():
+            # Existing A/B evidence remains usable before optional follow-ups are built.
+            # Every present follow-up must contain valid bound identities.
+            if revision not in ("A", "B") and not directory.exists():
                 continue
             identity = read_object(directory / "identity.json")
             with (directory / "manifest.json").open("rb") as source_file:

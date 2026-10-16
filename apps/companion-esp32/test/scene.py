@@ -97,6 +97,19 @@ for case in cases['cases']:
             lines.append('assert(osg_scene_hit_test(&engine,'+str(hit['x'])+','+str(hit['y'])+')=='+str(-1 if hit['expected'] is None else hit['expected'])+');')
         lines.append('}')
 lines.append('}')
+# TODO firmware: gate nonvisual property damage when both old/new nodes are hidden.
+# Capture the CURRENT behavior so package D's mitigation is measurable without a
+# reflash. Update these expectations when that separate engine fix is implemented.
+pulse_costs={'sunton':{'C':12,'D':2},'waveshare':{'C':52,'D':4}}
+lines.append('static void pulse_damage_vectors(void) {')
+for board,costs in pulse_costs.items():
+    profile='&OSG_SCENE_SUNTON' if board=='sunton' else '&OSG_SCENE_WAVESHARE'
+    for revision,expected in costs.items():
+        folder=poc/board/revision
+        lines.append('load_case('+json.dumps(str(folder))+', '+profile+'); assert(osg_scene_admit(&engine,sources,'+profile+'));')
+        lines.append('{ osg_scene_feedback feedback[]={{OSG_EXPRESSION_NUMBER,true,true,37.5},{OSG_EXPRESSION_NUMBER,true,true,37.5},{OSG_EXPRESSION_BOOLEAN,true,true,0}}; bool pressed[]={false,false}; osg_scene_state state={feedback,3,pressed,2,true,0,100};')
+        lines.append('assert(osg_scene_update(&engine,&state)); render(); memcpy(pulse_before,pixels,sizeof(pixels)); state.now_ms=500; assert(osg_scene_update(&engine,&state)); assert(render()=='+str(expected)+'); assert(!memcmp(pulse_before,pixels,sizeof(pixels))); }')
+lines.append('}')
 (OUT/'scene-vectors.h').write_text('\n'.join(lines)+'\n')
 for path in OUT.glob('scene-test-*.gcda'):path.unlink()
 subprocess.run([os.environ.get('CC','gcc'),'-std=c11','-Wall','-Wextra','-Werror','-pedantic','-g','-fsanitize=address,undefined','--coverage','-I'+str(OUT),str(APP/'render/package.c'),str(APP/'render/expressions.c'),str(APP/'render/scene.c'),str(APP/'test/scene_test.c'),'-lm','-o',str(OUT/'scene-test')],cwd=ROOT,check=True)
@@ -105,7 +118,7 @@ result=subprocess.run([str(OUT/'scene-test'),str(OUT/'base')],cwd=ROOT,check=Fal
 if result.returncode:raise SystemExit(result.returncode)
 # Enumerate the actual tested catalog, including optional package-only revisions.
 # This evidence is emitted only after every native full-frame comparison passed.
-evidence={'formatVersion':1,'cases':[{'package':case['package'],'frames':len(case['frames'])} for case in cases['cases']]}
+evidence={'formatVersion':1,'cases':[{'package':case['package'],'frames':len(case['frames'])} for case in cases['cases']],'unpressedPeriodicTileDamage':pulse_costs}
 (OUT/'poc-evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
 print('Native C/TypeScript RGB565 goldens: '+', '.join(case['package']+' ('+str(len(case['frames']))+' frames)' for case in cases['cases']))
 subprocess.run(['gcov','-j','-b','-c','scene-test-scene.gcno'],cwd=OUT,check=True)
