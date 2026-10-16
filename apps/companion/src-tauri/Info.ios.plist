@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Scan the pairing QR code displayed by your Cockpit host.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Connect to your explicitly paired OpenSimGear Cockpit host on the local network.</string>
     <key>NSBonjourServices</key>

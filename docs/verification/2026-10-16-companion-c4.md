@@ -91,7 +91,7 @@ its evidence alongside controller coverage.
 
 ## Platform and qualification boundaries
 
-Windows, Linux and macOS companion clients share this route protocol. Their OS
+Browser and mobile companion clients share these mapping semantics. Their OS
 does not determine the selected host output backend. Windows output stays
 unqualified pending #54; Linux/macOS host output remains deferred in #48/#49.
 Multiple live feeder processes on non-Windows hosts are explicitly refused
@@ -101,18 +101,10 @@ enabled by C4, and no test feeder can be selected by production IPC.
 
 [#66](https://github.com/opensimgear/cockpit/issues/66) retains real-game dual
 virtual-controller delivery, real fallback/ownership/failure recovery, game
-binding retention, whole-host termination and the Windows/Linux/macOS native
-client matrix. It is open/Backlog with unchecked criteria. Native installation,
-protected stores, LAN and lifecycle remain in #57/#60/#61/#62; mobile remains
-#55/#56, and packaged performance/load remains #58/#44. No missing manual or
+binding retention and whole-host termination. Mobile installation, protected stores,
+LAN and lifecycle remain #55/#56; mixed-client performance/load remains #58. No missing manual or
 physical check is marked passed. C5 (#43) and C6 (#44) remain Ready.
 
 ## Remote evidence boundary
 
-The preceding C3 companion package workflow passed Windows NSIS, Linux Debian,
-macOS application and Android debug APK compilation:
-[run 38869580519](https://github.com/opensimgear/cockpit/actions/runs/38869580519).
-The separate C3 main workflow failed only on the controller launch fixture race
-fixed here; that historical failed run is not relabelled green. C4's local checks
-above are the acceptance evidence for this implementation. Remote checks start
-from the pushed commit and are tracked separately from physical qualification.
+Historical desktop package compilation records are retired after the browser migration. Android compilation remains in the mobile workflow. The local host checks above are software evidence and do not establish physical browser/mobile qualification.

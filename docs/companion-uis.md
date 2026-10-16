@@ -1,12 +1,13 @@
-# Mobile and desktop companions (C0–C4)
+# Browser and mobile companions
 
 Status: C0 contracts (#38), C1 designer (#39), C2 native transport/source
-integration (#40), C3 app/cache/multiplatform desktop targets (#41), and C4 authored
+integration (#40), C3 mobile app/cache (#41), and C4 authored
 per-instance mapping/recording/preflight (#42) are implemented for feature #37.
 Physical LAN/device qualification, signed distribution and qualified game input
 remain separate.
-The selected stack is **Tauri 2, Svelte 5 and TypeScript**. The same panel can run
-on Android, iOS or a separate PC; the companion is a client of Cockpit, not another
+The mobile stack is **Tauri 2, Svelte 5 and TypeScript**. Desktop uses the
+[Cockpit-hosted browser companion](browser-companion.md). The same panel can run
+on Android, iOS or in a desktop browser; the companion is a client of Cockpit, not another
 Cockpit host. All existing live-output, provisioning, hiding and script gates stay
 unchanged.
 
@@ -15,7 +16,8 @@ unchanged.
 This repository owns the feature. `packages/companion-contracts` owns versioned
 portable documents, normalized input/feedback, validation, publication identity
 and the pure session model. `apps/companion` owns a separate application identifier,
-storage boundary and Tauri shell. `packages/companion-designer` owns the schema 2
+storage boundary and mobile-only Tauri shell. `apps/browser-companion` owns the
+HTTPS browser client embedded in Cockpit. `packages/companion-designer` owns the schema 2
 designer/library/publication model and `packages/companion-ui` supplies the shared
 Svelte canvas and input semantics. `crates/companion-service` owns the narrow native
 WSS transport, pairing, native protected stores and pure source-sink interface.
@@ -31,16 +33,12 @@ companion caches up to four verified public panels (24 MiB total) with assets an
 
 | Target | Candidate build floor | Current qualification boundary |
 | --- | --- | --- |
-| Windows desktop companion | Windows 10/11 x64, WebView2 | Native pinned-WSS client and local multi-client tests pass; second-PC LAN, sleep/lock and signed installation require qualification. |
 | Android companion | Android 10 / API 29 | Candidate floor; real multitouch, lifecycle, LAN permissions and signed APK/AAB are unqualified. |
 | iOS/iPadOS companion | iOS/iPadOS 15 | Candidate floor; real-device lifecycle, local-network trust and signed installation are unqualified. Requires macOS/Xcode to build. |
-| Linux desktop companion | Native Ubuntu 24.04 CI baseline | Secret Service adapter and Debian build target; physical desktop/install/store/lifecycle qualification in #61. |
-| macOS desktop companion | Candidate macOS 11 | Keychain adapter, native .app target and local-network declarations; native install/signing/lifecycle qualification in #62. |
 
 These floors are application decisions, not a claim that every device above them
 is supported. Android Studio/SDK/NDK are required for Android builds; iOS needs a
-Mac with full Xcode and Apple signing/provisioning. Windows desktop development
-uses the existing Rust/MSVC/WebView2 toolchain. The CLI and API follow Cockpit's
+Mac with full Xcode and Apple signing/provisioning. The CLI and API follow Cockpit's
 Tauri 2 versions, and frontend dependencies share the workspace lockfile.
 
 ## Portable document and identity rules
@@ -139,13 +137,14 @@ No framework can guarantee a final send after an OS kill.
 Tauri Rust mobile suspend/resume handling supplements DOM pointer/visibility/focus
 events. Do not infer iOS coverage from an Android-only JavaScript lifecycle API.
 Native OS lifecycle and touch qualification remain separate from injected events
-and a Windows local preview.
+and a local renderer preview.
 
 ## LAN protocol and trust bootstrap
 
 C2 supplies **one native Rust WSS listener** for all companion UIs/instances, not
-the broad development bridge. Each companion uses an app-owned Rust WSS client
-with explicit trust verification. Stock WebSocket plugin availability alone does
+the broad development bridge. Each native mobile companion uses an app-owned Rust WSS client
+with explicit trust verification. Browser trust and one-use URL pairing follow
+the [browser guide](browser-companion.md). Stock WebSocket plugin availability alone does
 not establish pairing-bound/self-signed LAN certificate support. All targets use
 the same versioned envelopes, authorization and limits. C2's UI default is
 TCP 54437 (user-configurable); a bind conflict is diagnosed without silently
@@ -182,8 +181,7 @@ or send credentials over plaintext as a fallback.
 The listener limits unauthenticated attempts (5/minute per address, 20/minute
 globally), bounds handshakes and pairing offers, and requires host approval of
 the requesting installation/permissions. A successful exchange consumes the
-one-use secret and issues a revocable per-installation credential. C2 persists host authority, trust/private keys and the Windows client credential
-through per-user DPAPI-protected native files. C3 adds Linux Secret Service and Apple Keychain-backed AES-256-GCM storage, plus an Android Keystore bridge. Missing/locked stores fail closed. Mobile authentication remains disabled pending #55/#56 before secret exchange. Do not put secrets in UI
+one-use secret and issues a revocable per-installation credential. Cockpit persists host authority and trust/private keys in protected native storage. Mobile credentials use Apple Keychain or the Android Keystore bridge. Missing/locked stores fail closed. Mobile authentication remains disabled pending #55/#56 before secret exchange. Do not put secrets in UI
 exports, logs, URLs or web localStorage.
 Revocation terminates that installation's sessions and releases its controls.
 
@@ -234,14 +232,14 @@ retains resource ownership until recovery completes. Source loss, revocation,
 lease expiry and restart require a fresh baseline and explicit Start. Existing
 physical mappings and other companion instances retain their own sessions.
 
-Windows, Linux and macOS companion clients use the same authenticated protocol;
+Browser and mobile companion clients share the host authorization model;
 the client OS does not select or qualify the host output backend. Recording is
 available while live output is unqualified. Linux/macOS host output and multiple
 live feeder processes on those hosts remain gated by their backend limitations
 and #48/#49. Current production qualification gates remain disabled, including
 Windows output pending #54. No test-only feeder can be selected from the UI.
 
-Real-game routing, game binding retention, physical fallback and desktop-client
+Real-game routing, game binding retention, physical fallback and browser/mobile
 OS combinations remain in [#66](https://github.com/opensimgear/cockpit/issues/66).
 Native installation, protected-store and LAN/lifecycle checks remain in the
 platform stories below. Automated local WSS/recording and injected feeder tests
@@ -253,15 +251,14 @@ pairing, Rust client/session boundary and a distinct `companion` mapping source
 origin through an explicit schema migration. Existing `host-controller`, panel
 and synthetic sources are not reused to impersonate a remote controller. Preserve
 existing imports and recording behavior; production startup never enables new
-listener/input effects implicitly. C3 delivers Android, iOS and desktop companion
-packages. C4 coordinates isolated companion engines with the ordinary mapping,
+listener/input effects implicitly. C3 delivers the Android and iOS native shells. C4 coordinates isolated companion engines with the ordinary mapping,
 reserves shared resources and checks exact backend layouts before acquisition.
 C5 adds feedback and captured game settings. C6 qualifies distribution/lifecycle,
 mixed peers, performance and supported host/backend combinations.
 
 CI checks contracts and lifecycle tests with at least 71% measurable lines,
-branches and functions, TypeScript/Svelte checks, the renderer build, and a Windows
-native shell compilation/test job. Mobile signing and real devices are separate
+branches and functions, TypeScript/Svelte checks, the renderer build, and an Android
+native build job. Mobile signing and real devices are separate
 checks. C0's local recording prototype sends no virtual reports, opens no LAN
 listener and cannot pair with a host. Do not describe running it on one PC as
 second-PC networking or Android/iOS proof. Follow-up qualification stories retain
@@ -278,10 +275,6 @@ panel's appearance.
 | --- | --- |
 | Android device lifecycle, trust and signed install | [#55](https://github.com/opensimgear/cockpit/issues/55) |
 | iOS/iPadOS device lifecycle, trust and signed install | [#56](https://github.com/opensimgear/cockpit/issues/56) |
-| Second Windows PC, lock/sleep/network and installation | [#57](https://github.com/opensimgear/cockpit/issues/57) |
-| Windows C2 second-PC LAN, firewall/discovery and failure checks | [#60](https://github.com/opensimgear/cockpit/issues/60) |
-| Linux desktop installation, Secret Service, display/lifecycle and LAN | [#61](https://github.com/opensimgear/cockpit/issues/61) |
-| macOS desktop native build/install, Keychain, permissions and signing | [#62](https://github.com/opensimgear/cockpit/issues/62) |
 | C4 real-game routing, binding retention, fallback and client OS matrix | [#66](https://github.com/opensimgear/cockpit/issues/66) |
 | Packaged mixed-peer trust, load and measured end-to-end performance | [#58](https://github.com/opensimgear/cockpit/issues/58) |
 
@@ -326,60 +319,28 @@ file-picker round-trips and real phone/tablet/second-PC safe-area, touch and
 lifecycle checks. Existing Android/iOS,
 networking, signing and mixed-peer release qualifications remain open as well.
 
-C2 now supplies Windows native networking, pairing and a dedicated companion
+C2 supplies native host networking, pairing and a dedicated companion
 source, described below. C4 still owns combined virtual-output preflight and
 submission qualification. Existing unqualified capability gates remain disabled.
 
 
-## C2 Windows native host and companion checkpoint
+## Host transport and mobile client
 
-C2 ([#40](https://github.com/opensimgear/cockpit/issues/40)) connects the shared
-panel renderer to Cockpit through an app-owned Rust client and a single native
-WSS listener. The browser preview remains recording-only. This is the Windows
-implementation checkpoint; it does not qualify Android/iOS or a physical LAN.
-
-To try it with the Windows native apps:
-
-1. In Cockpit's **Companion panels**, save and publish a designer panel, then open
-   **Companion connections** and select **Make revision available**. This validates
-   and installs that immutable revision into the native host's memory cache.
-2. Choose a listen interface IP, advertised reachable IP/hostname and port
-   (default 54437), then explicitly **Enable listener**. The initial address is
-   loopback; choose the host's LAN address for a separate PC. Discovery is optional.
-   Cockpit does not add firewall rules or choose another port on a bind conflict.
-3. Select **Pair a companion**. Transfer the displayed manual/decoded QR payload
-   through a trusted out-of-band path to the native Companion app, select
-   **Request pairing**, then approve that installation in Cockpit. Discovery
-   results alone never establish trust. C2 displays QR output; the Companion app
-   currently accepts a pasted payload rather than integrating a camera scanner.
-4. Assign the available publication to that installation and a stable controller
-   instance ID. In Companion, **Refresh assignments**, choose it, and **Connect**.
-   Native code verifies the publication and obtains a full fallback baseline
-   acknowledgement before the panel becomes ready. Select **Start panel** only
-   after it loads. Connect and Start are separate actions.
-5. In **Controller mappings**, select the companion source and its controls,
-   save local assignments, and start a recording preview. A companion source can
-   be listed while offline. Starting game output remains a separate qualified
-   mapping operation; this flow does not provision a controller or change hiding.
+Cockpit runs the shared HTTPS/WSS listener. Desktop users follow [browser setup and pairing](browser-companion.md). The native mobile shell retains the pinned Rust WSS client, manual pairing and explicit Connect/Start workflow, with authentication gated pending #55/#56. See [mobile instructions](../apps/companion/README.md).
 
 The host UI exposes instance Disconnect and explicit Takeover, plus installation
 Revocation and listener Disable. A remote client cannot take control merely by
 setting `takeover: true` on `open`; host-side authorization releases the old writer
 first. The replacement must open a fresh session and establish its own baseline.
 
-On host restart, DPAPI restores paired installation authority and retained offline
-source descriptors, but no listener, session or held input resumes. Publications
-and their asset bytes are currently a bounded memory cache: select **Make revision
-available** for each needed saved revision again after restarting Cockpit. The
-Cockpit designer's IndexedDB library/publication archive is a separate durable
-store. The Companion app restores its protected credential/trust and assignment
-list, then requires explicit Connect and Start; it does not reconnect or arm itself.
+Cockpit retains paired authority and listener preferences across restarts. Active sessions and held input do not resume. Native mobile clients restore saved trust disarmed and require explicit Connect and Start.
 
 ## Implemented C2 wire and source boundaries
 
-Only `wss://host:port/companion` with subprotocol
-`opensimgear-companion-v1` is accepted. Query strings, browser `Origin` headers,
-binary commands and the general Cockpit gateway protocol are rejected. The native
+The native mobile route is `wss://host:port/companion` with subprotocol
+`opensimgear-companion-v1`. This route rejects query strings, browser `Origin`
+headers, binary commands and the general Cockpit gateway protocol. The browser
+uses a separate same-origin route with exact Origin admission. The native
 client accepts LAN/loopback destinations and performs the offered CA-pin check
 before DNS/socket access or sending the pairing secret. Each peer has its own
 bounded socket worker. Admission allows 16 socket workers, eight authenticated
@@ -439,15 +400,13 @@ mobile lifecycle path. Typed feedback retains provenance, units/range and source
 age, and cannot emit input. C5 adds the native simulator-feedback integration described below.
 
 Local evidence is recorded in [the C2 verification record](verification/2026-10-16-companion-c2.md).
-[#60](https://github.com/opensimgear/cockpit/issues/60) retains physical Windows LAN,
-firewall/discovery, second-PC lifecycle and failure qualification.
 [#58](https://github.com/opensimgear/cockpit/issues/58) retains packaged mixed-peer
 load and measured p95/p99 successful-submission latency. Neither local WSS tests
 nor source-accepted acknowledgements establish those performance targets.
 
-## C3 application and desktop delivery
+## C3 mobile application
 
-C3 adds persistent verified offline panels, explicit recovery and guarded async session/view state to the standalone app. Windows, Linux and macOS are native desktop build targets; Android/iOS retain configured shells/adapters with authentication disabled pending their native qualification. See [app commands and storage behavior](../apps/companion/README.md) and [C3 validation and open checks](verification/2026-10-16-companion-c3.md). Native desktop CI packages unsigned development artifacts without installing or publishing them. A package build is distinct from signed/native lifecycle qualification.
+The native mobile app retains persistent verified offline panels, explicit recovery and guarded async session/view state. Android/iOS authentication remains disabled pending native qualification. See [mobile build and storage instructions](../apps/companion/README.md). Desktop uses the [browser companion](browser-companion.md).
 
 ## C4 isolated controller mappings
 
@@ -458,8 +417,8 @@ checks. See [C4 validation](verification/2026-10-16-companion-c4.md).
 
 ## C5 typed feedback and captured game assignments
 
-Windows, Linux and macOS desktop companions share the Svelte renderer and native
-feedback protocol with Android/iOS. The host's Companion connections page exposes
+Browser and Android/iOS companions share the Svelte renderer and typed
+feedback model. The host's Companion connections page exposes
 **Feedback** for a selected instance. Save explicit bindings from a publication's
 feedback widget/channel to requested state, host acceptance, acknowledged native
 submission or an integration source. Numeric sources require compatible units and
@@ -512,10 +471,4 @@ recording routes, feedback, captured game assignments, readiness and recovery.
 portable designer imports; they contain no credentials or local assignments and
 do not connect or activate output when imported.
 
-The [release matrix](companion-release-matrix.md) lists Windows/Linux/macOS client
-packages alongside Android/iOS candidates, exact limits and all pending native
-qualification. **No client target is release-qualified.** Development package
-verification and metadata compatibility checks are build evidence. Signed
-cross-version updates remain #68; device/LAN/lifecycle, real game/feedback and
-measured load remain #55-#62/#66/#67/#58. C6 does not enable a signed release,
-automatic updater or any unqualified capability; feature #37 remains open.
+The [release matrix](companion-release-matrix.md) lists browser and Android/iOS clients, exact limits and pending qualification. No client target is release-qualified. Signed mobile updates remain #68; device/LAN/lifecycle, real game/feedback and measured load remain #55/#56/#59/#66/#67/#58. Feature #37 remains open.

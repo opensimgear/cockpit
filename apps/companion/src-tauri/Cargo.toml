@@ -6,7 +6,7 @@ authors = ["OpenSimGear"]
 edition = "2021"
 rust-version = "1.90"
 license-file = "../../../LICENSE"
-default-run = "osg-companion"
+autobins = false
 
 [lib]
 name = "osg_companion_lib"
@@ -23,9 +23,6 @@ serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 tauri-plugin-companion-platform = { path = "../../../crates/companion-platform" }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_StationsAndDesktops"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

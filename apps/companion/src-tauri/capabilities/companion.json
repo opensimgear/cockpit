@@ -1,5 +1,5 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
+  "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "companion",
   "description": "The trusted main Companion window can observe lifecycle and request the narrow native paired WSS client. No arbitrary files, shell, JavaScript network plugin or controller-driver APIs.",
   "windows": [

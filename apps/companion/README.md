@@ -1,6 +1,6 @@
 # OpenSimGear Companion
 
-A separate **Tauri 2, Svelte 5 and TypeScript** panel app for Windows, Linux and macOS, with Android/iOS shells. It uses Cockpit's shared canvas and connects as a narrow authenticated client to the same host endpoint. It does not link Cockpit's gateway, game-launch or controller-driver services, and needs no vJoy/HidHide on the client computer.
+A separate **Tauri 2, Svelte 5 and TypeScript** panel app for Android and iOS. Desktop users use the [browser companion](../../docs/browser-companion.md). It uses Cockpit's shared canvas and connects as a narrow authenticated client to the same host endpoint. It does not link Cockpit's gateway, game-launch or controller-driver services, and needs no vJoy/HidHide on the client computer.
 
 ## Pair and run a panel
 
@@ -21,9 +21,6 @@ Native credential adapters are distinct from this public cache:
 
 | Platform | Native protection | Qualification boundary |
 | --- | --- | --- |
-| Windows | Current-user DPAPI | Local native transport/store tests; physical second-PC, lock/sleep and signed install remain #57/#60. |
-| Linux | Secret Service holds the AES-256-GCM file key | Requires a running, unlocked Secret Service; missing/locked service fails closed. Native package/display-server/store/lifecycle qualification remains #61. |
-| macOS | Keychain holds the AES-256-GCM file key | Native build/install, permission, lifecycle and signing/notarization qualification remains #62. |
 | Android | App-owned Android Keystore AES-GCM adapter | Native bridge wired; authentication remains disabled pending #55. |
 | iOS/iPadOS | Native Apple Keychain adapter | Authentication remains disabled pending #56. |
 
@@ -38,22 +35,15 @@ Run from the repository root with the pinned Rust toolchain, Node and pnpm:
 ```text
 pnpm install --frozen-lockfile
 pnpm companion:check
+pnpm --filter @opensimgear/companion check
 pnpm companion:test
+pnpm --filter @opensimgear/companion test
 pnpm companion:ui:dev
-pnpm companion:dev
 ```
 
 Browser preview uses `http://127.0.0.1:1431` and has no native pairing/remote input. Local preview records shared control transitions only; it is separate from offline cached viewing.
 
-Build on each native desktop OS:
-
-```text
-python scripts/companion-package.py --print-plan
-python scripts/companion-package.py --output-dir <evidence-directory>
-python scripts/companion-package.py --verify-only <evidence-directory>/<platform>/development-evidence.json
-```
-
-The helper tests locked native dependencies, rejects host/driver dependencies, builds **unsigned development** NSIS (Windows), Debian (Linux), or zipped .app (macOS), and records sizes/SHA-256. It does not install, publish or qualify them. The desktop CI matrix runs the same commands and uploads artifacts. Native prerequisites follow [Tauri's distribution guide](https://v2.tauri.app/distribute/); Linux also needs DBus/Secret Service development headers.
+The native shell builds only for Android and iOS. Desktop installer builds and native desktop execution are unavailable.
 
 Mobile SDK entry points:
 
@@ -66,9 +56,9 @@ pnpm --filter @opensimgear/companion ios:dev
 pnpm --filter @opensimgear/companion ios:build:dev
 ```
 
-Android needs the configured SDK/NDK/JDK; iOS needs macOS/Xcode and signing/provisioning. Generated projects are ignored and reconstructed from the checked-in Tauri configuration/native plugin. Debug APKs use Android development signing; this is not release qualification. Candidate floors are Android API29, iOS15, macOS11 and Windows10/11; Linux CI builds on Ubuntu24.04. These are configuration choices, not a verified support matrix.
+Android needs the configured SDK/NDK/JDK; iOS needs macOS/Xcode and signing/provisioning. Generated projects are ignored and reconstructed from the checked-in Tauri configuration/native plugin. Debug APKs use Android development signing; this is not release qualification. Candidate floors are Android API29 and iOS15. These are configuration choices, not a verified support matrix.
 
-Desktop/mobile physical install, credential/permission and lifecycle checks remain open in #55–#62. See [C3 verification](../../docs/verification/2026-10-16-companion-c3.md) and [the feature guide](../../docs/companion-uis.md).
+Mobile physical install, credential/permission and lifecycle checks remain open in #55/#56. See [C3 verification](../../docs/verification/2026-10-16-companion-c3.md) and [the feature guide](../../docs/companion-uis.md).
 
 ## C6 guides and release status
 
@@ -76,7 +66,6 @@ Use the [companion user guide](../../docs/companion-guide.md) for setup, designe
 pairing, feedback and recovery; start from the [portable example layouts](../../examples/companion/README.md).
 The [release matrix](../../docs/companion-release-matrix.md) and
 `python scripts/companion-release-check.py` record the current blocked release
-state and pending native qualification. No Windows/Linux/macOS/Android/iOS client
-is release-qualified. Unsigned development artifacts, package metadata comparison
-and local fixtures do not establish signed/native upgrade, game or latency results.
-Signed distribution and cross-version trust/rollback remain #68, reusing #55-#62.
+state and pending native qualification. No browser/Android/iOS client
+is release-qualified. Debug APKs and local fixtures do not establish signed/native upgrade, game or latency results.
+Signed distribution and cross-version trust/rollback remain #68, reusing #55/#56.

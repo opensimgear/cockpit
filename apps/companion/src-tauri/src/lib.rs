@@ -28,7 +28,6 @@ fn companion_lifecycle(state: tauri::State<'_, Lifecycle>) -> LifecycleSnapshot 
 #[tauri::command]
 async fn companion_client_request(
     state: tauri::State<'_, ClientBridge>,
-    window: tauri::Window,
     request: Value,
 ) -> Result<Value, String> {
     if state.0.get().is_none() && request["type"] == "status" {
@@ -38,21 +37,6 @@ async fn companion_client_request(
             "assignments":[],"feedback":[]}));
     }
     let client = state.client()?;
-    #[cfg(desktop)]
-    if lifecycle::input_command(&request)
-        && (!window.is_focused().unwrap_or(false)
-            || !window.is_visible().unwrap_or(false)
-            || !lifecycle::desktop_input_available())
-    {
-        client.invalidate(
-            "Window is inactive or workstation is locked; Connect and Start explicitly",
-        );
-        return Err(
-            "Input is disarmed while the window is inactive or the workstation is locked".into(),
-        );
-    }
-    #[cfg(mobile)]
-    let _ = window;
     tauri::async_runtime::spawn_blocking(move || client.command(request))
         .await
         .map_err(|error| error.to_string())?
@@ -110,7 +94,7 @@ pub fn run() {
                 .state::<tauri_plugin_companion_platform::PlatformStore<tauri::Wry>>()
                 .inner()
                 .clone();
-            // Keychain/Secret Service can prompt. Android callbacks must not block
+            // Keychain can prompt. Android callbacks must not block
             // the UI thread that dispatches the mobile plugin.
             tauri::async_runtime::spawn_blocking(move || {
                 #[cfg(target_os = "android")]

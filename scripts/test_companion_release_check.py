@@ -54,7 +54,11 @@ class ReleaseReadinessTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         release.validate(changed)
         changed = deepcopy(self.matrix)
-        del changed["clients"]["macos"]
+        del changed["clients"]["browser"]
+        with self.assertRaises(ValueError):
+            release.validate(changed)
+        changed = deepcopy(self.matrix)
+        changed["clients"]["windows"] = deepcopy(changed["clients"]["android"])
         with self.assertRaises(ValueError):
             release.validate(changed)
 

@@ -5,12 +5,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
     "tauri": "tauri",
-    "native:test": "cargo test --locked --manifest-path src-tauri/Cargo.toml",
-    "package:dev": "python ../../scripts/companion-package.py",
-    "package:verify": "python ../../scripts/companion-package.py --verify-only",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
     "android:build:dev": "tauri android build --debug --apk --ci",

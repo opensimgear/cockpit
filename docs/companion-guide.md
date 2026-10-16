@@ -1,6 +1,6 @@
 # Use a companion panel
 
-Cockpit designs and hosts the panel. OpenSimGear Companion displays it on another computer and sends its controls to Cockpit. Install controller drivers on the Cockpit host only when its separately qualified output backend needs them; the companion computer needs no vJoy or HidHide.
+Cockpit designs and hosts the panel. The browser companion displays it on desktop; the native Companion app targets Android and iOS. Install controller drivers on the Cockpit host only when its separately qualified output backend needs them; the companion computer needs no vJoy or HidHide.
 
 Start with local preview and recording. The [release matrix](companion-release-matrix.md) is the source of truth for supported installation, network and game-output combinations. **The qualified release matrix is currently empty.** Development builds and automated tests do not establish a signed, physically qualified release. Android/iOS authentication and unqualified host output capabilities remain disabled.
 
@@ -9,13 +9,11 @@ Start with local preview and recording. The [release matrix](companion-release-m
 | Where | What to run | Current boundary |
 | --- | --- | --- |
 | Cockpit host | Native Cockpit | Owns publications, listener, assignments, mappings, simulator connections and game profiles. |
-| Windows companion PC | Native OpenSimGear Companion | Native pairing/client implementation; physical second-PC, installation and lifecycle qualification remains open. |
-| Linux companion PC | Native OpenSimGear Companion | Requires an unlocked Secret Service for credentials; native desktop/LAN qualification remains open. |
-| macOS companion Mac | Native OpenSimGear Companion | Uses Keychain; installation, permissions and lifecycle qualification remains open. |
+| Desktop browser | Cockpit-hosted browser companion | See [browser setup](browser-companion.md) for HTTPS trust, pairing and installation. |
 | Android/iPhone/iPad | Configured Companion mobile shell/local reference preview | Authentication remains disabled pending native device qualification. |
 | Browser preview | Cockpit designer or Companion browser preview | Local design/recording; the browser Companion cannot pair with a host. |
 
-A Linux or macOS **client** does not enable a Linux or macOS **host output backend**. Host output readiness is a separate check. Use the [native build instructions](../apps/companion/README.md#development-and-native-builds) for development builds; signed installation/update paths are tracked in the release matrix.
+A browser client does not select or qualify the host output backend. Host output readiness is a separate check. Use the [native build instructions](../apps/companion/README.md#development-and-native-builds) for development builds; signed installation/update paths are tracked in the release matrix.
 
 ## Import an example and try it locally
 
@@ -39,9 +37,9 @@ Choose **Save draft**, then **Publish revision**. Publishing creates an immutabl
 
 A visual change creates a new publication hash. Changes to input behavior, ranges, fallback or logical bindings also change its capability fingerprint. Updating a connected instance requires an explicit new publication/assignment and mapping reconciliation; it does not silently alter a running route.
 
-## Pair a desktop companion
+## Pair a native mobile companion
 
-Keep Cockpit and the companion on the intended local network. Use native applications for this flow.
+Keep Cockpit and the companion on the intended local network. This flow describes the mobile native client; desktop users follow [browser pairing](browser-companion.md). Mobile authentication remains gated pending device qualification.
 
 1. In Cockpit, expand **Companion connections**. Under **Published panels**, choose the saved **Local revision**, then **Make revision available**. This validates the revision and places its document/assets in the native host's memory cache.
 2. Select **Listen on IP**, **Advertised host IP** and **Port**, then **Enable listener**. Loopback (`127.0.0.1`) works only on the same computer. For another PC, choose a reachable host LAN address and matching advertised address. Port 54437 is the default. Enable **LAN discovery** only if wanted. A bind conflict is reported; Cockpit does not silently select a replacement port or create firewall rules.
@@ -52,8 +50,6 @@ Keep Cockpit and the companion on the intended local network. Use native applica
 7. In Companion, choose **Refresh assignments**, select the **Assigned controller**, then **Connect**. Wait for the verified publication and fresh fallback-baseline acknowledgement. Choose **Start panel** explicitly when ready.
 
 The native client checks the offered host CA fingerprint, certificate validity and endpoint name before sending the pairing secret. Compare trust information with the host screen. Do not bypass certificate errors or install a system-wide trust exception. Connection and **Start panel** are separate operations; pairing and assignment start no mapping or game output.
-
-For same-PC testing, switching away from an active Companion window intentionally disarms it. Prepare the host's recording route before returning to Companion and choosing **Start panel**. A second computer avoids that particular focus switch, but still needs native LAN qualification.
 
 ## Record controls or inspect live readiness
 
@@ -104,7 +100,7 @@ Choose **Restore setup** after the game session, or use recovery if restoration 
 - **Retry protected storage** retries an unavailable/locked native credential store. It restores valid authority disarmed. There is no plaintext fallback. Corrupt state is preserved until an explicit forget succeeds.
 - **Open offline** displays one of up to four verified cached panels, disarmed with unavailable feedback. **Clear saved panels** clears public layouts only; it does not revoke credentials.
 
-After a host restart, paired installation authority and offline source descriptors may remain, but the listener, active sessions and published asset cache do not resume. Choose **Make revision available** again for required revisions, explicitly enable the listener, then reconnect and Start. Game recovery may need those exact saved revisions before it can validate assignments.
+After a host restart, paired installation authority and listener preferences are retained. Active input sessions do not resume. Ensure the required panel revision is available, then reconnect. Native mobile input still needs explicit Start. Game recovery may need the exact saved revision before it can validate assignments.
 
 The authenticated host lease expires after 1500 ms without liveness while the host/mapping clock can run. A final cancellation frame cannot be guaranteed after an app/OS kill. Whole-host or feeder death has backend-specific cleanup limits; the [release matrix](companion-release-matrix.md) keeps that qualification separate from normal Stop or a disconnected socket.
 
@@ -127,7 +123,7 @@ The p95 25 ms/p99 50 ms touch-to-successful-virtual-submit numbers are qualifica
 
 | Symptom | Check / next action |
 | --- | --- |
-| Companion says BROWSER PREVIEW | Run the native Companion app. Browser preview has no remote pairing authority. |
+| Mobile UI says BROWSER PREVIEW | This is the mobile renderer preview. Desktop remote input uses the separate [browser companion](browser-companion.md). |
 | Pairing unavailable on Android/iOS | Native authentication is intentionally gated pending device qualification; use local references, not a flag override. |
 | Another PC cannot connect | Check the LAN listen/advertised address, port, same-network reachability and OS firewall policy. Loopback only serves the same PC. Cockpit does not add a firewall exception. |
 | Port already in use | Stop the competing listener or explicitly choose a free port and create a new trusted pairing payload. |
@@ -139,7 +135,6 @@ The p95 25 ms/p99 50 ms touch-to-successful-virtual-submit numbers are qualifica
 | Panel disarms after changing windows/pages | This is intentional lifecycle cancellation. Return to the panel, reconnect if needed and Start explicitly. |
 | Live output remains blocked | Read each Native preflight reason. Recording can work while output is unqualified; preserve the disabled gate. |
 | Feedback unknown/stale or wrong units | Check the exact published output, saved visual route, integration's validated source/channel/range, and explicit Start. Synthetic data stays Local. |
-| Linux/macOS credential store unavailable | Unlock the native Secret Service/Keychain, then Retry protected storage. Qualification of a live native store remains distinct from injected-storage tests. |
 | Pending output/game recovery | Keep the journal and inspect the conflict. Stop/recover only the affected ownership scope; Keep current setup is an explicit abandonment decision. |
 
 For a bug report, include app/host versions, OS, instance ID, publication hash, relevant preflight/fault text and reproducible steps. Redact pairing payloads, credentials and private trust material. Link the applicable [qualification story](companion-release-matrix.md) instead of marking an unperformed physical check as passed.

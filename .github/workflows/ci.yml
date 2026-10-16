@@ -23,6 +23,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm transport:test
+      - run: pnpm browser:test
       - run: pnpm controllers:coverage
       - run: pnpm mappings:coverage
       - run: pnpm actions:coverage
@@ -37,9 +38,8 @@ jobs:
           pnpm companion:check
           pnpm companion:test
           pnpm companion:ui:build
-      - name: Companion package evidence and release-readiness validation
+      - name: Companion release-readiness validation
         run: |
-          python3 -m unittest discover -s scripts -p test_companion_package.py -v
           python3 -m unittest discover -s scripts -p test_companion_release_check.py -v
           python3 scripts/companion-release-check.py --output .research/companion-c6/release-readiness.json
       - name: Upload companion release readiness
@@ -224,9 +224,6 @@ jobs:
       - name: Windows and macOS desktop compilation and regression tests
         if: runner.os != 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
-      - name: Windows companion shell compilation and lifecycle tests
-        if: runner.os == 'Windows'
-        run: cargo test --locked --manifest-path apps/companion/src-tauri/Cargo.toml
       - name: Windows companion trust, WSS, source isolation and operator coverage
         if: runner.os == 'Windows'
         run: python scripts/companion-coverage.py

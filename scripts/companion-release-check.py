@@ -7,11 +7,9 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-ISSUES = [54, 55, 56, 57, 58, 59, 60, 61, 62, 66, 67, 68]
+ISSUES = [54, 55, 56, 58, 59, 66, 67, 68]
 CLIENTS = {
-    "windows": ("development-only", "nsis", "native-protected-store", [57, 59, 60, 68]),
-    "linux": ("development-only", "deb", "native-protected-store", [61, 68]),
-    "macos": ("development-only", "app-zip", "native-protected-store", [62, 68]),
+    "browser": ("development-only", "host-served-web-app", "browser-origin-storage", [58, 59, 68]),
     "android": ("development-only", "debug-apk", "disabled-pending-qualification", [55, 59, 68]),
     "ios": ("candidate", "unqualified-xcode-build", "disabled-pending-qualification", [56, 59, 68]),
 }
@@ -69,7 +67,7 @@ def validate(matrix, root=ROOT):
     require(matrix["budgets"] == BUDGETS and all(type(v) is int for v in matrix["budgets"].values()),
             "Budgets differ from the declared C0 release targets.")
     clients = matrix["clients"]
-    require(isinstance(clients, dict) and set(clients) == set(CLIENTS), "Declare all five native client targets.")
+    require(isinstance(clients, dict) and set(clients) == set(CLIENTS), "Declare the browser and both mobile client targets.")
     for name, expected in CLIENTS.items():
         row = clients[name]
         require(isinstance(row, dict) and set(row) == {"status", "artifact", "candidateFloor", "authentication", "qualificationIssues"},

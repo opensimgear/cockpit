@@ -3,34 +3,29 @@
 C6 prepares packages, examples, guides and release evidence. **No companion target
 is release-qualified yet.** The implementation milestones C0-C6 do not complete
 physical qualification or close [feature #37](https://github.com/opensimgear/cockpit/issues/37).
-The current Windows/Linux/macOS desktop packages are unsigned development builds;
-Android CI produces a debug APK. iOS requires a native Xcode build and provisioning.
+Desktop companions use the Cockpit-hosted browser UI. Android CI produces a debug APK. iOS requires a native Xcode build and provisioning.
 
 ## Client targets
 
 | Client | Development artifact / candidate floor | Missing qualification |
 | --- | --- | --- |
-| Windows | NSIS installer; Windows 10/11 x64 with WebView2 | Second-PC installation/DPAPI/LAN/lifecycle #57/#60; native document/display #59; signed upgrades #68 |
-| Linux | Debian package; Ubuntu 24.04 native CI baseline | Distribution/CPU/WebKitGTK, Wayland/X11, install, unlocked Secret Service, LAN/lifecycle #61; signed upgrades #68 |
-| macOS | Native .app ZIP; macOS 11 candidate floor | CPU/OS floor, install, Keychain, LAN/lifecycle, signing/notarization/Gatekeeper #62; signed upgrades #68 |
+| Browser | Host-served HTTPS UI / optional PWA | Physical browser/LAN, display and performance qualification #58/#59; cross-version trust #68 |
 | Android | Debug APK; API 29 candidate floor | Native store/trust, touch/lifecycle and signed distribution #55; display #59; upgrades #68 |
 | iOS/iPadOS | Candidate shell; iOS 15 candidate floor | Xcode/device build, Keychain/LAN/touch/lifecycle/signing #56; display #59; upgrades #68 |
 
 A build floor is a configuration choice, not evidence that every device above it
-works. Mobile authentication remains disabled. Desktop authentication requires an
-available protected store and explicit pairing/approval. No plaintext fallback is
+works. Mobile authentication remains disabled. Browser pairing credentials live in the dedicated HTTPS origin storage. No plaintext fallback is
 supported. A development package or metadata match does not qualify installation,
 trust migration or application upgrades.
 
 The companion is a narrow client and needs no local vJoy/HidHide. Windows is the
-selected **host** qualification target. Linux/macOS companion clients connect to
-the same host; they do not enable Linux/macOS host virtual output. Those backends
+selected **host** qualification target. Browser and mobile clients connect to the same host; they do not enable Linux/macOS host virtual output. Those backends
 remain deferred in #48/#49. Windows host output and production recovery remain
 #54/#66; existing unqualified provisioning, hiding and live scripts stay disabled.
 
 ## Evidence and release decision
 
-[The machine-readable matrix](companion-release-matrix.json) preserves all five
+[The machine-readable matrix](companion-release-matrix.json) preserves the browser and both mobile
 candidate client targets, pending qualification stories and the C0 budgets.
 
 ```text
@@ -46,19 +41,7 @@ check is a repository consistency guard, not a signing verifier, runtime probe o
 automatic release authorizer. Editing the matrix cannot qualify a capability.
 Native runtime tests and their own gates remain authoritative.
 
-[Package verification](../apps/companion/README.md) records exact artifact hashes,
-source/config/contract identity and native target metadata. Its compatibility
-comparison describes metadata only. For two schema 2 development manifests:
-
-```text
-python scripts/companion-package.py --verify-only <new>/development-evidence.json --compare-to <previous>/development-evidence.json
-```
-
-Both artifacts must still match their recorded bytes. A legacy schema 1 manifest
-can be verified but cannot establish a compatibility comparison. Signed distribution and compatible/incompatible
-host/client upgrades, trust rotation, interrupted install and rollback remain
-[#68](https://github.com/opensimgear/cockpit/issues/68). Reuse #55-#62 platform evidence
-there instead of repeating manual checks.
+Mobile signed distribution, host/client upgrades, trust rotation, interrupted install and rollback remain [#68](https://github.com/opensimgear/cockpit/issues/68), reusing #55/#56 device evidence. Browser setup and trust are described in the [browser guide](browser-companion.md).
 
 | Remaining evidence | Owner |
 | --- | --- |
@@ -66,7 +49,7 @@ there instead of repeating manual checks.
 | Physical designer/native document workflows and display ergonomics | #59 |
 | Real mapped virtual devices, game bindings, nonzero fallback and whole-process loss | #66, with selected host gate #54 |
 | Real typed simulator feedback, concurrent gateway traffic and captured game assignments | #67 |
-| Signed native installation/update and cross-version trust/rollback matrix | #68, reusing #55-#62 |
+| Signed native installation/update and cross-version trust/rollback matrix | #68, reusing #55/#56 |
 
 Use exact OS/architecture, app/host source and artifact hashes, driver/helper/game
 versions, UI/publication identities, network conditions, timestamp boundaries and

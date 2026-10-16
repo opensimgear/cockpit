@@ -5,13 +5,50 @@
   "featureIssue": 37,
   "implementationIssue": 44,
   "clients": {
-    "windows": {"status": "development-only", "artifact": "nsis", "candidateFloor": "Windows 10/11 x64 with WebView2", "authentication": "native-protected-store", "qualificationIssues": [57, 59, 60, 68]},
-    "linux": {"status": "development-only", "artifact": "deb", "candidateFloor": "Ubuntu 24.04 native CI baseline; Secret Service required", "authentication": "native-protected-store", "qualificationIssues": [61, 68]},
-    "macos": {"status": "development-only", "artifact": "app-zip", "candidateFloor": "macOS 11 candidate floor; native architecture and Keychain required", "authentication": "native-protected-store", "qualificationIssues": [62, 68]},
-    "android": {"status": "development-only", "artifact": "debug-apk", "candidateFloor": "Android API 29 candidate floor", "authentication": "disabled-pending-qualification", "qualificationIssues": [55, 59, 68]},
-    "ios": {"status": "candidate", "artifact": "unqualified-xcode-build", "candidateFloor": "iOS/iPadOS 15 candidate floor; macOS/Xcode required", "authentication": "disabled-pending-qualification", "qualificationIssues": [56, 59, 68]}
+    "browser": {
+      "status": "development-only",
+      "artifact": "host-served-web-app",
+      "candidateFloor": "HTTPS browser with WebSocket support",
+      "authentication": "browser-origin-storage",
+      "qualificationIssues": [
+        58,
+        59,
+        68
+      ]
+    },
+    "android": {
+      "status": "development-only",
+      "artifact": "debug-apk",
+      "candidateFloor": "Android API 29 candidate floor",
+      "authentication": "disabled-pending-qualification",
+      "qualificationIssues": [
+        55,
+        59,
+        68
+      ]
+    },
+    "ios": {
+      "status": "candidate",
+      "artifact": "unqualified-xcode-build",
+      "candidateFloor": "iOS/iPadOS 15 candidate floor; macOS/Xcode required",
+      "authentication": "disabled-pending-qualification",
+      "qualificationIssues": [
+        56,
+        59,
+        68
+      ]
+    }
   },
-  "pendingQualificationIssues": [54, 55, 56, 57, 58, 59, 60, 61, 62, 66, 67, 68],
+  "pendingQualificationIssues": [
+    54,
+    55,
+    56,
+    58,
+    59,
+    66,
+    67,
+    68
+  ],
   "disabledCapabilities": {
     "host-live-output": false,
     "windows-provisioning": false,
@@ -23,12 +60,24 @@
     "mobile-authentication": false
   },
   "budgets": {
-    "activeCompanions": 8, "pagesPerUi": 16, "controlsPerUi": 128, "feedbackChannelsPerUi": 64,
-    "inputFrameBytes": 16384, "changesPerBatch": 64, "inputBatchesPerSecond": 120,
-    "queuedTransitionsPerClient": 512, "feedbackUpdatesPerSecond": 30,
-    "heartbeatMs": 250, "hostLeaseMs": 1500, "feedbackStaleMs": 1000,
-    "sharedSourceRoles": 16, "sharedTargets": 8, "sharedNodes": 256,
-    "releaseLatencyTargetP95Ms": 25, "releaseLatencyTargetP99Ms": 50, "releaseFeedbackTargetMs": 250
+    "activeCompanions": 8,
+    "pagesPerUi": 16,
+    "controlsPerUi": 128,
+    "feedbackChannelsPerUi": 64,
+    "inputFrameBytes": 16384,
+    "changesPerBatch": 64,
+    "inputBatchesPerSecond": 120,
+    "queuedTransitionsPerClient": 512,
+    "feedbackUpdatesPerSecond": 30,
+    "heartbeatMs": 250,
+    "hostLeaseMs": 1500,
+    "feedbackStaleMs": 1000,
+    "sharedSourceRoles": 16,
+    "sharedTargets": 8,
+    "sharedNodes": 256,
+    "releaseLatencyTargetP95Ms": 25,
+    "releaseLatencyTargetP99Ms": 50,
+    "releaseFeedbackTargetMs": 250
   },
   "performanceEvidence": "pending-physical-measurement"
 }

@@ -14,16 +14,12 @@
       {
         "label": "main",
         "title": "OpenSimGear Companion",
-        "width": 1180,
-        "height": 980,
-        "minWidth": 360,
-        "minHeight": 640,
         "backgroundColor": "#0b1118"
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'",
-      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1431 ws://127.0.0.1:1431; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1431 ws://127.0.0.1:1431; object-src 'none'; frame-src 'none'; base-uri 'self'",
       "capabilities": [
         "companion"
       ]
@@ -31,15 +27,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
     "category": "Utility",
     "shortDescription": "OpenSimGear paired portable controller panel companion",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/128x128@2x.png"
     ],
     "createUpdaterArtifacts": false,
     "android": {
