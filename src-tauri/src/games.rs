@@ -447,7 +447,25 @@ impl GamesRuntime {
             .setup
             .auto_check(&catalogue, self.inner.platform.clone(), integration);
         self.inner.setup.decorate(&mut catalogue, integration, dcs);
-        json!({"catalogue":catalogue,"profiles":s.saved.profiles.values().collect::<Vec<_>>(),"defaultProfiles":s.saved.defaults,
+        // Detection is independent of profile activation and observes games
+        // launched outside Cockpit without changing their session or settings.
+        let mut detected = Vec::new();
+        let mut detection_errors = Vec::new();
+        for game in &catalogue {
+            if game["installed"] != true {
+                continue;
+            }
+            match self.inner.platform.find(game) {
+                Ok(Some(process)) => detected
+                    .push(json!({"gameId":game["id"],"name":game["name"],"pid":process.pid})),
+                Ok(None) => {}
+                Err(error) => detection_errors.push(format!(
+                    "{}: {error}",
+                    game["name"].as_str().unwrap_or("Game")
+                )),
+            }
+        }
+        json!({"detectedGames":detected,"detectionErrors":detection_errors,"catalogue":catalogue,"profiles":s.saved.profiles.values().collect::<Vec<_>>(),"defaultProfiles":s.saved.defaults,
             "manualInstallations":s.saved.manual,"session":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":s.error})
     }
     pub(crate) fn active(&self) -> bool {

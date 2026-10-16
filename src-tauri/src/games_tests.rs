@@ -1025,6 +1025,29 @@ fn saved_and_journal_parsers_reject_bad_defaults_duplicates_and_untrusted_shapes
     assert!(validate_journal(json!({"schemaVersion":1,"gameId":"dcs","profileId":"custom","devices":[],"integrationTaken":null})).is_err());
 }
 
+#[test]
+fn overview_detects_external_games_without_activating_a_profile() {
+    let (runtime, hardware, platform, path) = setup();
+    assert!(runtime.status()["detectedGames"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    platform.found.store(true, Ordering::Release);
+    let status = runtime.status();
+    assert_eq!(status["session"]["phase"], "idle");
+    assert_eq!(status["detectedGames"].as_array().unwrap().len(), 4);
+    assert_eq!(status["detectedGames"][0]["pid"], 42);
+    assert!(status["detectionErrors"].as_array().unwrap().is_empty());
+    assert!(!platform.launched.load(Ordering::Acquire));
+    assert!(hardware.lock().unwrap().calls.is_empty());
+    platform.found.store(false, Ordering::Release);
+    assert!(runtime.status()["detectedGames"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    clean(&path);
+}
+
 include!("games_mapping_tests.rs");
 
 #[path = "game_companion_tests.rs"]
