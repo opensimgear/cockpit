@@ -178,3 +178,18 @@ Frontend tests cover native IPC, browser transport, discovery, ownership, error 
 `integration_runtime` validates/saves portable role profiles and local assignments, then starts the shared bounded `dcs_profile_runtime` gateway workers. `integration_profile` validates named identities and formats. `game_telemetry` decodes bounded ACR byte pages and tracks producer progression; `acr_windows` provides read-only Windows shared-memory acquisition. Synthetic snapshots use the identical parser on every platform. `output_leases` validates the additive endpoint claim protocol without returning secret capabilities in status. Global DCS/integration requests share an admission guard; only one run starts at a time.
 
 IPC commands are `integration_get_state`, `integration_catalogue`, `integration_validate`, `integration_save`, `integration_start`, `integration_stop`, `integration_override` and `integration_simulate`. Device routing adds `action_claim`, `action_renew`, `action_release`, `action_ownership` and `action_invoke_owned`. See [the integration guide](../docs/simulator-integrations.md). Acquisition/parser tests and simulated firmware acceptance are distinct from deferred Windows live-game/hardware qualification.
+
+## Windows download releases
+
+[Windows release CI](../.github/workflows/cockpit-windows-release.yml) builds and tests
+Cockpit on native Windows x64, then publishes a development prerelease with an NSIS
+installer, portable ZIP and SHA-256 checksums. Run it manually from `main` to publish
+`cockpit-windows-build-<run-number>`, or push `cockpit-v<version>` matching the app's
+version to publish that tag. Manual runs on other branches upload CI artifacts only.
+The workflow does not replace the latest stable release.
+
+The portable package uses the existing dependency hash/signature checks in
+`package-windows-mapping.ps1` and retains development qualification metadata. No
+Cockpit signing certificate is configured, and driver installation remains explicit.
+See [the release notes](../docs/windows-release-notes.md) for package contents and
+current limitations. This workflow does not run for mobile-only changes.

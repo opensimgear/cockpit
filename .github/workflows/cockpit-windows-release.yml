@@ -1,0 +1,92 @@
+name: Cockpit Windows release
+on:
+  workflow_dispatch:
+  push:
+    tags: ['cockpit-v*']
+permissions:
+  contents: read
+concurrency:
+  group: cockpit-windows-release-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CI: 'true'
+jobs:
+  windows:
+    name: Test and package Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Cache native build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cockpit-windows-release-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+          restore-keys: cockpit-windows-release-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: Frontend checks and tests
+        run: |
+          pnpm check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm browser:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm notifications:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm transport:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm companion:check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm companion:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build browser assets before native tests
+        run: pnpm browser:build
+      - name: Native desktop regression tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build NSIS installer and desktop executable
+        run: pnpm tauri build --bundles nsis -- --locked
+      - name: Stage portable package with pinned optional installers
+        run: ./scripts/package-windows-release.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cockpit-windows-x64
+          path: .research/windows-release/artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+  publish:
+    name: Publish Windows prerelease
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/cockpit-v')
+    needs: windows
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@v4
+        with:
+          name: cockpit-windows-x64
+          path: artifacts
+      - name: Publish installer, portable package and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cockpit-v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="cockpit-windows-build-${GITHUB_RUN_NUMBER}"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" artifacts/* --clobber
+          else
+            gh release create "$tag" artifacts/* --target "$GITHUB_SHA" --prerelease --latest=false --title "Cockpit Windows x64 ($tag)" --notes-file docs/windows-release-notes.md
+          fi
+          echo "Windows release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
