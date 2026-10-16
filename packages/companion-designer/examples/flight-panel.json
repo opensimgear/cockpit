@@ -1,0 +1,593 @@
+{
+  "bundleVersion": 1,
+  "document": {
+    "schemaVersion": 2,
+    "ui": {
+      "schemaVersion": 1,
+      "id": "flight-panel",
+      "title": "Flight instruments",
+      "controls": [
+        {
+          "id": "flight-input-0",
+          "label": "Button",
+          "kind": "button"
+        },
+        {
+          "id": "flight-input-1",
+          "label": "Button",
+          "kind": "button"
+        },
+        {
+          "id": "flight-input-2",
+          "label": "XY pad",
+          "kind": "axis",
+          "axisMode": "bipolar",
+          "fallback": 0
+        },
+        {
+          "id": "flight-input-3",
+          "label": "XY pad 2",
+          "kind": "axis",
+          "axisMode": "bipolar",
+          "fallback": 0
+        },
+        {
+          "id": "flight-input-4",
+          "label": "Selector",
+          "kind": "axis",
+          "axisMode": "unipolar",
+          "fallback": 0
+        },
+        {
+          "id": "flight-input-5",
+          "label": "Encoder",
+          "kind": "button"
+        },
+        {
+          "id": "flight-input-6",
+          "label": "Encoder 2",
+          "kind": "button"
+        },
+        {
+          "id": "flight-input-7",
+          "label": "Hat",
+          "kind": "hat",
+          "fallback": -1
+        },
+        {
+          "id": "flight-input-8",
+          "label": "Slider",
+          "kind": "axis",
+          "axisMode": "bipolar",
+          "fallback": 0
+        }
+      ],
+      "feedbackWidgets": [
+        {
+          "id": "flight-output-0",
+          "label": "Indicator",
+          "kind": "indicator",
+          "channelId": "flight-channel-0"
+        },
+        {
+          "id": "flight-output-1",
+          "label": "Text",
+          "kind": "text",
+          "channelId": "flight-channel-1"
+        },
+        {
+          "id": "flight-output-2",
+          "label": "Numeric",
+          "kind": "gauge",
+          "channelId": "flight-channel-2"
+        },
+        {
+          "id": "flight-output-3",
+          "label": "Icon",
+          "kind": "indicator",
+          "channelId": "flight-channel-3"
+        },
+        {
+          "id": "flight-output-4",
+          "label": "Gauge",
+          "kind": "gauge",
+          "channelId": "flight-channel-4"
+        }
+      ],
+      "pages": [
+        {
+          "id": "flight-page-0",
+          "title": "Page 1",
+          "items": [
+            {
+              "kind": "control",
+              "refId": "flight-input-0",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-1",
+              "bounds": {
+                "x": 0.35000000000000003,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-2",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-3",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-4",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-5",
+              "bounds": {
+                "x": 0.35000000000000003,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-6",
+              "bounds": {
+                "x": 0.35000000000000003,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-7",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "flight-input-8",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.5,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "flight-output-0",
+              "bounds": {
+                "x": 0.35000000000000003,
+                "y": 0.5,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "flight-output-1",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.5,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "flight-output-2",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.74,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "flight-output-3",
+              "bounds": {
+                "x": 0.35000000000000003,
+                "y": 0.74,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "flight-output-4",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.74,
+                "width": 0.3,
+                "height": 0.21
+              }
+            }
+          ]
+        }
+      ],
+      "assets": []
+    },
+    "presentation": {
+      "widgets": [
+        {
+          "id": "flight-widget-0",
+          "pageId": "flight-page-0",
+          "kind": "button",
+          "label": "Button",
+          "bounds": {
+            "x": 0.02,
+            "y": 0.02,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "flight-input-0"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "flight-widget-1",
+          "pageId": "flight-page-0",
+          "kind": "button",
+          "label": "Button",
+          "bounds": {
+            "x": 0.35000000000000003,
+            "y": 0.02,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "flight-input-1"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "buttonMode": "toggle",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "flight-widget-2",
+          "pageId": "flight-page-0",
+          "kind": "xy",
+          "label": "XY pad",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.02,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "flight-input-2",
+            "flight-input-3"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.05,
+            "invertX": false,
+            "invertY": false
+          }
+        },
+        {
+          "id": "flight-widget-3",
+          "pageId": "flight-page-0",
+          "kind": "selector",
+          "label": "Selector",
+          "bounds": {
+            "x": 0.02,
+            "y": 0.26,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "flight-input-4"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "options": [
+              {
+                "label": "Off",
+                "value": 0
+              },
+              {
+                "label": "Standby",
+                "value": 0.5
+              },
+              {
+                "label": "On",
+                "value": 1
+              }
+            ]
+          }
+        },
+        {
+          "id": "flight-widget-4",
+          "pageId": "flight-page-0",
+          "kind": "encoder",
+          "label": "Encoder",
+          "bounds": {
+            "x": 0.35000000000000003,
+            "y": 0.26,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "flight-input-5",
+            "flight-input-6"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "pulseMs": 50,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "flight-widget-5",
+          "pageId": "flight-page-0",
+          "kind": "hat",
+          "label": "Hat",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.26,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "flight-input-7"
+          ],
+          "feedbackIds": [],
+          "config": {}
+        },
+        {
+          "id": "flight-widget-6",
+          "pageId": "flight-page-0",
+          "kind": "slider",
+          "label": "Slider",
+          "bounds": {
+            "x": 0.02,
+            "y": 0.5,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "flight-input-8"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.05,
+            "inverted": false,
+            "orientation": "horizontal"
+          }
+        },
+        {
+          "id": "flight-widget-7",
+          "pageId": "flight-page-0",
+          "kind": "indicator",
+          "label": "Indicator",
+          "bounds": {
+            "x": 0.35000000000000003,
+            "y": 0.5,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "flight-output-0"
+          ],
+          "config": {}
+        },
+        {
+          "id": "flight-widget-8",
+          "pageId": "flight-page-0",
+          "kind": "text",
+          "label": "Text",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.5,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "flight-output-1"
+          ],
+          "config": {
+            "prefix": "",
+            "suffix": ""
+          }
+        },
+        {
+          "id": "flight-widget-9",
+          "pageId": "flight-page-0",
+          "kind": "numeric",
+          "label": "Numeric",
+          "bounds": {
+            "x": 0.02,
+            "y": 0.74,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "flight-output-2"
+          ],
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 0
+          }
+        },
+        {
+          "id": "flight-widget-10",
+          "pageId": "flight-page-0",
+          "kind": "icon",
+          "label": "Icon",
+          "bounds": {
+            "x": 0.35000000000000003,
+            "y": 0.74,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "flight-output-3"
+          ],
+          "config": {
+            "symbol": "power"
+          }
+        },
+        {
+          "id": "flight-widget-11",
+          "pageId": "flight-page-0",
+          "kind": "gauge",
+          "label": "Gauge",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.74,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "flight-output-4"
+          ],
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 0
+          }
+        }
+      ],
+      "groups": [],
+      "viewports": [
+        {
+          "pageId": "flight-page-0",
+          "width": 1280,
+          "height": 800
+        }
+      ],
+      "grid": {
+        "columns": 24,
+        "rows": 16,
+        "snap": true
+      }
+    },
+    "targets": [
+      {
+        "id": "flight-target-0",
+        "label": "Logical controller",
+        "axes": [
+          "bipolar",
+          "bipolar",
+          "unipolar",
+          "bipolar"
+        ],
+        "buttons": 8,
+        "hats": 1
+      }
+    ],
+    "bindings": [
+      {
+        "controlId": "flight-input-0",
+        "targetId": "flight-target-0",
+        "kind": "button",
+        "index": 0
+      },
+      {
+        "controlId": "flight-input-1",
+        "targetId": "flight-target-0",
+        "kind": "button",
+        "index": 1
+      },
+      {
+        "controlId": "flight-input-2",
+        "targetId": "flight-target-0",
+        "kind": "axis",
+        "index": 0
+      },
+      {
+        "controlId": "flight-input-3",
+        "targetId": "flight-target-0",
+        "kind": "axis",
+        "index": 1
+      },
+      {
+        "controlId": "flight-input-4",
+        "targetId": "flight-target-0",
+        "kind": "axis",
+        "index": 2
+      },
+      {
+        "controlId": "flight-input-5",
+        "targetId": "flight-target-0",
+        "kind": "button",
+        "index": 2
+      },
+      {
+        "controlId": "flight-input-6",
+        "targetId": "flight-target-0",
+        "kind": "button",
+        "index": 3
+      },
+      {
+        "controlId": "flight-input-7",
+        "targetId": "flight-target-0",
+        "kind": "hat",
+        "index": 0
+      },
+      {
+        "controlId": "flight-input-8",
+        "targetId": "flight-target-0",
+        "kind": "axis",
+        "index": 3
+      }
+    ]
+  },
+  "assets": []
+}

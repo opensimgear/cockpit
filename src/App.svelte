@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import HostControllers from './lib/HostControllers.svelte';
   import MappingsPanel from './lib/MappingsPanel.svelte';
+  import CompanionDesigner from './lib/CompanionDesigner.svelte';
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';
@@ -22,12 +23,13 @@
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'mappings' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
+  type View = 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
     { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'mappings', label: 'Mappings', icon: 'network' },
+    { id: 'companions', label: 'Panels', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
     { id: 'integrations', label: 'Integrations', icon: 'play' },
     { id: 'dcs-bios', label: 'DCS-BIOS', icon: 'play' },
@@ -409,6 +411,8 @@
           <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
         {:else if view === 'mappings'}
           <MappingsPanel />
+        {:else if view === 'companions'}
+          <CompanionDesigner />
         {:else if view === 'games'}
           <GamesPanel status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => { view = 'integrations'; }} />
         {:else if view === 'integrations'}

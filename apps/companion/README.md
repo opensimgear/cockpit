@@ -1,31 +1,32 @@
-# OpenSimGear Companion (C0)
+# OpenSimGear Companion
 
-A separate Tauri 2 + Svelte 5 + TypeScript panel client for another desktop PC, Android and iOS. The renderer, portable UI document and input/session contracts can later be shared with Cockpit's visual designer. The companion does not depend on Cockpit's controller gateway, vJoy, HidHide or mapping host.
+A separate Tauri 2 + Svelte 5 + TypeScript panel client for another desktop PC, Android and iOS. C1 uses the same `@opensimgear/companion-ui` canvas and recording-only controller as Cockpit's visual designer. The app currently loads the flight and racing reference documents locally. C2/C3 will add paired delivery of published documents; there is no network listener or pairing credential entry yet.
 
-This milestone is an executable **local feasibility preview**. Start local preview, hold either momentary button while dragging the XY control, or press the directional hat. The recorder shows normalized transitions on this device. Pointer cancellation/capture loss returns the affected controls to fallback; window blur, page hiding and navigation disarm the entire preview. Native desktop focus loss and Android/iOS suspension/resumption also advance an invalidation epoch; the frontend disarms on the event or the next native state read. Preview never resumes automatically. No command sends game input, starts a network listener or accepts pairing credentials.
+Start local preview to use the selected panel. The arbitrary-document renderer supports momentary/toggle/pulse/repeat buttons, selectors, hats, encoders, sliders, XY axes, and text/numeric/icon/indicator/gauge feedback. Controls obey per-document ranges, fallback, centering, latching, deadzone and inversion. Local preview records primitive transitions; it never sends game input. Its feedback views remain explicitly unavailable without a typed feedback source.
+
+Pointer cancellation/capture loss releases owned controls; window blur, hidden pages, navigation, document/page changes and Stop disarm all values and timers. Native desktop focus loss and Android/iOS suspension/resumption advance a lifecycle epoch; the frontend disarms on the event or next state read. Preview never resumes automatically.
 
 ## Commands
 
-From the repository root, install the workspace dependencies and run:
+From the repository root:
 
-- `pnpm --filter @opensimgear/companion ui:dev`: browser preview on `http://127.0.0.1:1431`.
+- `pnpm --filter @opensimgear/companion ui:dev`: browser preview at `http://127.0.0.1:1431`.
 - `pnpm --filter @opensimgear/companion dev`: standalone desktop Tauri app.
-- `pnpm --filter @opensimgear/companion check`, `test`, `ui:build`: local validation.
-- `pnpm --filter @opensimgear/companion tauri build --no-bundle`: build the local desktop executable.
-- `cargo test --manifest-path apps/companion/src-tauri/Cargo.toml --locked`: native shell compilation/tests.
+- `pnpm companion:check` and `pnpm companion:test`: shared contract/model/renderer validation.
+- `pnpm --filter @opensimgear/companion ui:build`: production frontend.
+- `pnpm --filter @opensimgear/companion tauri build --no-bundle`: local desktop executable.
+- `cargo test --manifest-path apps/companion/src-tauri/Cargo.toml --locked`: native shell proof.
 
-The Rust shell intentionally registers only local lifecycle read/event APIs. Production CSP has no remote network origin and there are no privileged plugins.
+The Rust shell registers only local lifecycle APIs. It has no Cockpit gateway, virtual controller, HidHide, file or network plugins. Production CSP has no remote network origin.
 
-## Candidate targets and qualification
+## Candidate targets
 
-| Target | Configured candidate | Current scope |
+| Target | Candidate | Qualification |
 | --- | --- | --- |
-| Windows desktop | Windows 10/11, WebView2 | Standalone panel client. Local preview; no remote host connection. |
-| Android | Minimum API 29 / Android 10 | Mobile Rust entry point and shared renderer. Native SDK/device build, multitouch, lifecycle, performance and distribution still require qualification. |
-| iOS | Minimum iOS 15.0 | Mobile Rust entry point and shared renderer. Requires macOS/Xcode; native build, device lifecycle, multitouch, performance and distribution still require qualification. |
+| Windows desktop | Windows 10/11, WebView2 | Local standalone preview builds on the development PC. Cross-PC delivery, lock/sleep and packaging remain separate qualification. |
+| Android | Minimum API 29 / Android 10 | Shared renderer and mobile entry point configured; SDK/device builds, multitouch, lifecycle, latency and distribution need native qualification. |
+| iOS | Minimum iOS 15.0 | Shared renderer and mobile entry point configured; macOS/Xcode, native devices, lifecycle, latency and distribution need qualification. |
 
-Generate native projects only when the relevant SDKs are available: `pnpm --filter @opensimgear/companion tauri android init` or `tauri ios init`, then the corresponding `android dev`/`ios dev`. Generated `src-tauri/gen` content is not committed. A configured minimum does not prove that minimum OS works.
+With the relevant SDK installed, generate native projects using `pnpm --filter @opensimgear/companion tauri android init` or `tauri ios init`, followed by `android dev`/`ios dev`. Generated native projects are ignored. A configured OS minimum does not establish that it works on that OS.
 
-Pairing, authenticated app-owned Rust WSS transport, publication delivery, reconnection and mapping into Cockpit's virtual output belong to later C2/C3 milestones. The pairing card is deliberately unavailable. The recorder/session model does not qualify real touch hardware, native background transitions, LAN latency or app-store packaging; these checks remain follow-up qualification stories. Desktop companion support means the panel client can run on another PC; it does not add Linux/macOS host-controller support.
-
-The C0 renderer uses the validated reference fixture with a fixed layout and spring-return bipolar XY axes. It is not an arbitrary portable-document renderer; page layout editing, other axis fallback policies and generic widget rendering belong to C1. Windows lock/sleep and native Android/iOS lifecycle behavior remain unqualified until follow-up device checks.
+Pairing, app-owned authenticated Rust WSS transport, remote publication delivery, reconnect and Cockpit virtual output belong to later C2/C3 milestones. Desktop Companion support means the panel client can run on another PC; it does not enable Linux/macOS host-controller capabilities.

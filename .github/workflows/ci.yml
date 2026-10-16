@@ -32,7 +32,7 @@ jobs:
       - run: pnpm integration:coverage
       - run: pnpm games:coverage
       - run: pnpm ui:build
-      - name: Companion contracts, renderer and lifecycle checks
+      - name: Companion contracts, designer, renderer and lifecycle checks
         run: |
           pnpm companion:check
           pnpm companion:test

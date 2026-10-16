@@ -230,3 +230,42 @@ Primary framework references: [Tauri mobile plugins](https://v2.tauri.app/develo
 [WebSocket API](https://v2.tauri.app/reference/javascript/websocket/),
 [Rust mobile lifecycle](https://docs.rs/tauri/latest/x86_64-apple-ios/tauri/enum.WindowEvent.html),
 and [Apple local-network privacy](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
+
+## C1 designer and shared renderer checkpoint
+
+C1 ([#39](https://github.com/opensimgear/cockpit/issues/39)) supplies the visual
+designer and arbitrary-document canvas used by Cockpit and the separate
+Companion app. `packages/companion-designer` owns schema 2 documents, editing,
+history, portable target bindings, asset bundles and immutable publication;
+`packages/companion-ui` owns the shared Svelte rendering and recording-only input
+semantics. Schema 2 explicitly wraps the validated C0 logical schema and migrates
+legacy panels while preserving their logical IDs.
+
+The outer publication hash covers the full validated designer document, including
+widget behavior and asset digests. Semantic changes such as toggling, pulse/repeat,
+selector values, axis policies and target bindings change its capability
+fingerprint. Styling edits retain logical bindings. Assets are verified against
+their own bytes before use. Native sessions must bind the outer publication hash;
+hashing only the embedded C0 logical UI would omit renderer behavior.
+
+The local designer supports saved panels, pages, movement/resizing, grid,
+alignment, groups, undo/redo, validated properties, templates, static raster
+assets, logical controller assignment, import/export, target-size preview and
+explicit publication. It never allocates a driver slot or starts game input.
+Drafts and immutable published snapshots are persisted atomically, with hash and
+asset validation on load. Local storage is bounded to 20 drafts, 100 published
+revisions and 64 MiB; portable documents/bundles retain their separate limits.
+
+Local tests, typechecks, frontend builds and browser interaction are recorded in
+[the C1 verification record](verification/2026-10-16-companion-c1.md). Two-panel
+document/storage/asset bundle round-trips passed automatically. Browser checks
+covered two templates, save/reopen, page/widget editing and phone portrait preview.
+The native file-picker attempt stalled and remains unverified. C1 qualification
+follow-up [#59](https://github.com/opensimgear/cockpit/issues/59) retains native
+file-picker round-trips and real phone/tablet/second-PC safe-area, touch and
+lifecycle checks. Existing Android/iOS,
+networking, signing and mixed-peer release qualifications remain open as well.
+
+C2 still supplies production networking, pairing and the native companion source;
+C4 supplies virtual-output integration. C1 leaves existing unqualified capability
+gates disabled.

@@ -586,3 +586,4 @@ footer {
   gap:6px;
   padding-bottom:max(25px,env(safe-area-inset-bottom))}
 }
+.template-chooser{display:flex;align-items:end;gap:14px;padding:0 0 16px;color:#93a8b6;font-size:10px;flex-wrap:wrap}.template-chooser label{display:flex;flex-direction:column;gap:6px}.template-chooser select{background:#132430;color:#d7e4ec;border:1px solid #385161;padding:8px;border-radius:5px;font:inherit}.template-chooser>span{margin-left:auto;padding-bottom:8px;font-size:9px}

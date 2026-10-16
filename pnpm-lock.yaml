@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@opensimgear/companion-designer':
+        specifier: workspace:*
+        version: link:packages/companion-designer
+      '@opensimgear/companion-ui':
+        specifier: workspace:*
+        version: link:packages/companion-ui
       '@tauri-apps/api':
         specifier: ^2.12.3
         version: 2.12.3
@@ -42,6 +48,12 @@ importers:
       '@opensimgear/companion-contracts':
         specifier: workspace:*
         version: link:../../packages/companion-contracts
+      '@opensimgear/companion-designer':
+        specifier: workspace:*
+        version: link:../../packages/companion-designer
+      '@opensimgear/companion-ui':
+        specifier: workspace:*
+        version: link:../../packages/companion-ui
       '@tauri-apps/api':
         specifier: ^2.12.3
         version: 2.12.3
@@ -69,6 +81,34 @@ importers:
         version: 7.3.7(@types/node@24.19.2)
 
   packages/companion-contracts: {}
+
+  packages/companion-designer:
+    dependencies:
+      '@opensimgear/companion-contracts':
+        specifier: workspace:*
+        version: link:../companion-contracts
+
+  packages/companion-ui:
+    dependencies:
+      '@opensimgear/companion-contracts':
+        specifier: workspace:*
+        version: link:../companion-contracts
+      '@opensimgear/companion-designer':
+        specifier: workspace:*
+        version: link:../companion-designer
+      svelte:
+        specifier: ^5.55.4
+        version: 5.57.2
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      svelte-check:
+        specifier: ^4.3.3
+        version: 4.7.6(picomatch@4.0.7)(svelte@5.57.2)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
 packages:
 

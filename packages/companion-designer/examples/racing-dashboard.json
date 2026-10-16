@@ -1,0 +1,385 @@
+{
+  "bundleVersion": 1,
+  "document": {
+    "schemaVersion": 2,
+    "ui": {
+      "schemaVersion": 1,
+      "id": "racing-panel",
+      "title": "Racing dashboard",
+      "controls": [
+        {
+          "id": "racing-input-0",
+          "label": "Button",
+          "kind": "button"
+        },
+        {
+          "id": "racing-input-1",
+          "label": "Slider",
+          "kind": "axis",
+          "axisMode": "unipolar",
+          "fallback": 0
+        },
+        {
+          "id": "racing-input-2",
+          "label": "XY pad",
+          "kind": "axis",
+          "axisMode": "bipolar",
+          "fallback": 0
+        },
+        {
+          "id": "racing-input-3",
+          "label": "XY pad 2",
+          "kind": "axis",
+          "axisMode": "bipolar",
+          "fallback": 0
+        },
+        {
+          "id": "racing-input-4",
+          "label": "Encoder",
+          "kind": "button"
+        },
+        {
+          "id": "racing-input-5",
+          "label": "Encoder 2",
+          "kind": "button"
+        }
+      ],
+      "feedbackWidgets": [
+        {
+          "id": "racing-output-0",
+          "label": "Indicator",
+          "kind": "indicator",
+          "channelId": "racing-channel-0"
+        },
+        {
+          "id": "racing-output-1",
+          "label": "Numeric",
+          "kind": "gauge",
+          "channelId": "racing-channel-1"
+        },
+        {
+          "id": "racing-output-2",
+          "label": "Gauge",
+          "kind": "gauge",
+          "channelId": "racing-channel-2"
+        }
+      ],
+      "pages": [
+        {
+          "id": "racing-page-0",
+          "title": "Page 1",
+          "items": [
+            {
+              "kind": "control",
+              "refId": "racing-input-0",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "racing-input-1",
+              "bounds": {
+                "x": 0.35000000000000003,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "racing-input-2",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "racing-input-3",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "racing-input-4",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "racing-input-5",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "racing-output-0",
+              "bounds": {
+                "x": 0.35000000000000003,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "racing-output-1",
+              "bounds": {
+                "x": 0.68,
+                "y": 0.26,
+                "width": 0.3,
+                "height": 0.21
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "racing-output-2",
+              "bounds": {
+                "x": 0.02,
+                "y": 0.5,
+                "width": 0.3,
+                "height": 0.21
+              }
+            }
+          ]
+        }
+      ],
+      "assets": []
+    },
+    "presentation": {
+      "widgets": [
+        {
+          "id": "racing-widget-0",
+          "pageId": "racing-page-0",
+          "kind": "button",
+          "label": "Button",
+          "bounds": {
+            "x": 0.02,
+            "y": 0.02,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "racing-input-0"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "racing-widget-1",
+          "pageId": "racing-page-0",
+          "kind": "slider",
+          "label": "Slider",
+          "bounds": {
+            "x": 0.35000000000000003,
+            "y": 0.02,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "racing-input-1"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.05,
+            "inverted": false,
+            "orientation": "horizontal"
+          }
+        },
+        {
+          "id": "racing-widget-2",
+          "pageId": "racing-page-0",
+          "kind": "xy",
+          "label": "XY pad",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.02,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "racing-input-2",
+            "racing-input-3"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "centering": "spring",
+            "deadzone": 0.05,
+            "invertX": false,
+            "invertY": false
+          }
+        },
+        {
+          "id": "racing-widget-3",
+          "pageId": "racing-page-0",
+          "kind": "encoder",
+          "label": "Encoder",
+          "bounds": {
+            "x": 0.02,
+            "y": 0.26,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [
+            "racing-input-4",
+            "racing-input-5"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "pulseMs": 50,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "racing-widget-4",
+          "pageId": "racing-page-0",
+          "kind": "indicator",
+          "label": "Indicator",
+          "bounds": {
+            "x": 0.35000000000000003,
+            "y": 0.26,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "racing-output-0"
+          ],
+          "config": {}
+        },
+        {
+          "id": "racing-widget-5",
+          "pageId": "racing-page-0",
+          "kind": "numeric",
+          "label": "Numeric",
+          "bounds": {
+            "x": 0.68,
+            "y": 0.26,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "racing-output-1"
+          ],
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 0
+          }
+        },
+        {
+          "id": "racing-widget-6",
+          "pageId": "racing-page-0",
+          "kind": "gauge",
+          "label": "Gauge",
+          "bounds": {
+            "x": 0.02,
+            "y": 0.5,
+            "width": 0.3,
+            "height": 0.21
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "racing-output-2"
+          ],
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 0
+          }
+        }
+      ],
+      "groups": [],
+      "viewports": [
+        {
+          "pageId": "racing-page-0",
+          "width": 1280,
+          "height": 800
+        }
+      ],
+      "grid": {
+        "columns": 24,
+        "rows": 16,
+        "snap": true
+      }
+    },
+    "targets": [
+      {
+        "id": "racing-target-0",
+        "label": "Logical controller",
+        "axes": [
+          "unipolar",
+          "bipolar",
+          "bipolar"
+        ],
+        "buttons": 8,
+        "hats": 1
+      }
+    ],
+    "bindings": [
+      {
+        "controlId": "racing-input-0",
+        "targetId": "racing-target-0",
+        "kind": "button",
+        "index": 0
+      },
+      {
+        "controlId": "racing-input-1",
+        "targetId": "racing-target-0",
+        "kind": "axis",
+        "index": 0
+      },
+      {
+        "controlId": "racing-input-2",
+        "targetId": "racing-target-0",
+        "kind": "axis",
+        "index": 1
+      },
+      {
+        "controlId": "racing-input-3",
+        "targetId": "racing-target-0",
+        "kind": "axis",
+        "index": 2
+      },
+      {
+        "controlId": "racing-input-4",
+        "targetId": "racing-target-0",
+        "kind": "button",
+        "index": 1
+      },
+      {
+        "controlId": "racing-input-5",
+        "targetId": "racing-target-0",
+        "kind": "button",
+        "index": 2
+      }
+    ]
+  },
+  "assets": []
+}

@@ -1,0 +1,7 @@
+{
+  "name":"@opensimgear/companion-ui","version":"0.1.0","private":true,"type":"module","license":"UNLICENSED",
+  "exports":{".":"./src/index.ts","./controller":"./src/controller.ts"},
+  "scripts":{"check":"svelte-check --tsconfig ./tsconfig.json","test":"node --test src/controller.test.mjs","coverage":"node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/controller.test.mjs"},
+  "dependencies":{"@opensimgear/companion-contracts":"workspace:*","@opensimgear/companion-designer":"workspace:*","svelte":"^5.55.4"},
+  "devDependencies":{"svelte-check":"^4.3.3","typescript":"^5.9.3","@types/node":"^24.19.2"}
+}
