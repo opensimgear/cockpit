@@ -10,10 +10,11 @@
 #else
 #define OSG_ENGINE_MANIFEST_BYTES 8192u
 #endif
-/* Admission includes measured scene temporary work and a bounded allowance for
+/* Admission conservatively includes measured scene temporary work and a bounded allowance for
  * delivery state, the immutable touch cache and partition SHA context. The
  * platform must statically check those auxiliary instances fit this reserve. */
 #define OSG_ENGINE_SCENE_WORK_BYTES 2048u
+#define OSG_ENGINE_MAIN_STACK_BYTES 8192u
 #define OSG_ENGINE_AUXILIARY_BYTES 1536u
 
 typedef struct {uint16_t interaction,page,widget,destination_page;int16_t x,y;uint16_t width,height;} osg_engine_hit;

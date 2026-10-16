@@ -100,3 +100,16 @@ void osg_raster_render(osg_raster *r,osg_runtime *runtime,osg_damage damage,uint
     }
     runtime->display=original;
 }
+void osg_raster_status(osg_raster *r,const osg_runtime *runtime){
+    const char *status=!runtime->connected?"DISCONNECTED - INPUT STOPPED":runtime->armed?"CONNECTED - TOUCH READY":runtime->arming?"CONNECTED - PREPARING INPUT":"CONNECTED - INPUT STOPPED";
+    for(unsigned band=0;band<2;band++){
+        int y=band?runtime->display.height-8:0,height=band?8:24;
+        for(int row=y;row<y+height&&!r->failed;row+=8)for(int col=0;col<runtime->display.width&&!r->failed;col+=64){
+            r->tile_x=col;r->tile_y=row;r->tile_width=runtime->display.width-col<64?runtime->display.width-col:64;r->tile_height=8;r->composing=true;
+            solid(r,col,row,r->tile_width,8,0x08c4);
+            if(!band)label(r,8,7,runtime->display.width-16,10,status,runtime->connected?0xb79f:0xfd20);
+            r->composing=false;
+            if(!r->write||!r->write(r->context,col,row,r->tile_width,8,r->tile))r->failed=true;
+        }
+    }
+}

@@ -21,6 +21,16 @@ jobs:
           python3 apps/companion-esp32/test/expressions.py
       - name: Native network test dependency
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libssl-dev
+      - name: Scene renderer, persistent store, engine and content transport
+        run: |
+          python3 apps/companion-esp32/test/scene.py
+          python3 apps/companion-esp32/test/content_store.py
+          python3 apps/companion-esp32/test/content_store_esp.py
+          python3 apps/companion-esp32/test/engine.py
+          python3 apps/companion-esp32/test/main_scene.py
+          python3 apps/companion-esp32/test/render_delivery.py
+          python3 apps/companion-esp32/test/render_feedback.py
+          python3 apps/companion-esp32/test/client_render.py
       - name: Network protocol, live input, lease and provisioning checks
         run: |
           python3 apps/companion-esp32/test/network.py
@@ -48,6 +58,14 @@ jobs:
             .research/esp32-diagnostics/coverage.json
             .research/esp32-render-package-native/coverage.json
             .research/esp32-render-expressions-native/coverage.json
+            .research/esp32-render-scene-native/coverage.json
+            .research/esp32-content-store-native/coverage.json
+            .research/esp32-content-store-esp-native/coverage.json
+            .research/esp32-engine-native/coverage.json
+            .research/esp32-render-delivery-native/coverage.json
+            .research/esp32-render-feedback/coverage.json
+            .research/esp32-client-render-native/coverage.json
+            .research/esp32-main-scene-native/coverage.json
             .research/esp32-network/*-test.log
             .research/esp32-waveshare-native/coverage.json
             .research/esp32-waveshare-native/board-test.log
@@ -121,5 +139,8 @@ jobs:
         run: |
           cargo test --locked --manifest-path crates/companion-service/Cargo.toml render_object
           cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test render_objects
+          cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test render_delivery
       - name: USB serial pairing, bounded delivery and connection isolation
-        run: cargo test --locked --manifest-path crates/companion-serial/Cargo.toml
+        run: |
+          cargo test --locked --manifest-path crates/companion-serial/Cargo.toml
+          cargo test --locked --manifest-path crates/companion-serial/Cargo.toml --example install-render-engine

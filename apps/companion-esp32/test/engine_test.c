@@ -6,9 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 static uint8_t flash_bytes[0x600000];static size_t flash_size;static bool fail_commit;static unsigned pixel_writes,flash_writes;
-static EVP_MD_CTX *sha;static unsigned sha_failure;
+static EVP_MD_CTX *sha;static unsigned sha_failure;static bool read_failure;
 typedef struct {char *manifest;size_t manifest_bytes;uint8_t *objects[4];size_t bytes[4];char hash[72];} fixture;
-static bool read_flash(void *c,uint32_t offset,void *out,size_t n){(void)c;assert(offset<=flash_size&&n<=flash_size-offset&&n<=2048);memcpy(out,flash_bytes+offset,n);return true;}
+static bool read_flash(void *c,uint32_t offset,void *out,size_t n){(void)c;assert(offset<=flash_size&&n<=flash_size-offset&&n<=2048);if(read_failure)return false;memcpy(out,flash_bytes+offset,n);return true;}
 static bool write_flash(void *c,uint32_t offset,const void *p,size_t n){(void)c;assert(offset<=flash_size&&n<=flash_size-offset&&n<=2048);if(fail_commit&&offset<8192)return false;const uint8_t *v=p;for(size_t i=0;i<n;i++){assert((flash_bytes[offset+i]&v[i])==v[i]);flash_bytes[offset+i]&=v[i];}flash_writes++;return true;}
 static bool erase_flash(void *c,uint32_t offset,uint32_t n){(void)c;assert(offset%4096==0&&n==4096&&offset+n<=flash_size);memset(flash_bytes+offset,255,n);return true;}
 static bool sha_begin(void *c){return sha_failure!=1&&EVP_DigestInit_ex(c,EVP_sha256(),NULL)==1;}
@@ -121,6 +121,9 @@ int main(int argc,char **argv){
         assert(install(&engine,&b)==OSG_CONTENT_OK);runtime_init(&engine,&image,&runtime);runtime.armed=true;runtime.active=0;display(&engine,&runtime,80);osg_scene_properties expected[256];memcpy(expected,engine.scene.properties[engine.scene.displayed],sizeof(expected));
         permute_interactions(&b);assert(install(&engine,&b)==OSG_CONTENT_OK);runtime_init(&engine,&image,&runtime);runtime.armed=true;runtime.active=0;display(&engine,&runtime,80);assert(!memcmp(expected,engine.scene.properties[engine.scene.displayed],engine.scene.nodes*sizeof(expected[0])));
         assert(install(&engine,&b)==OSG_CONTENT_OK&&!strcmp(engine.package_hash,b.hash));runtime_init(&engine,&image,&runtime);display(&engine,&runtime,100);osg_connected(&runtime,false);display(&engine,&runtime,200);assert(osg_engine_copy_hits(&engine,&hits)&&!hits.ready&&!hits.count);
+        osg_connected(&runtime,true);display(&engine,&runtime,300);read_failure=true;hits.count=31;
+        assert(!osg_engine_copy_hits(&engine,&hits)&&!hits.count&&engine.failed&&engine.scene.failed&&!engine.ready&&!engine.scene.ready);read_failure=false;
+        assert(!osg_engine_copy_hits(&engine,&hits)&&!hits.count);
         assert(osg_engine_initialize_io(&reboot,profile,(uint16_t)width,(uint16_t)height,io())==OSG_CONTENT_OK&&!strcmp(reboot.package_hash,b.hash));osg_content_release(&reboot.active_view);osg_content_release(&engine.active_view);
         fixture_free(&a);fixture_free(&b);
     }

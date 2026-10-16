@@ -4,6 +4,8 @@ mod hub;
 pub mod pairing_code;
 pub mod persistence;
 pub mod render_object;
+pub mod render_packages;
+pub mod render_feedback;
 mod publication;
 pub mod sources;
 pub use hub::*;

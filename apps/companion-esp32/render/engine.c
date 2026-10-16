@@ -254,20 +254,22 @@ bool osg_engine_update_from_runtime(osg_engine *e,const osg_runtime *runtime,uin
 unsigned osg_engine_render_slice(osg_engine *e,unsigned max_tiles,osg_write_pixels write,void *context){if(!e||!e->active)return 0;unsigned n=osg_scene_render_slice(&e->scene,max_tiles,write,context);e->failed=e->scene.failed;e->ready=e->scene.ready;return n;}
 void osg_engine_presented(osg_engine *e,bool success){if(e){osg_scene_presented(&e->scene,success);e->failed=e->scene.failed;e->ready=e->scene.ready;}}
 static void clip_rect(int *x,int *y,int *w,int *h,int left,int top,int width,int height){int right=*x+*w,bottom=*y+*h;if(*x<left)*x=left;if(*y<top)*y=top;if(right>left+width)right=left+width;if(bottom>top+height)bottom=top+height;*w=right>*x?right-*x:0;*h=bottom>*y?bottom-*y:0;}
+static bool hits_failed(osg_engine *e,osg_engine_hit_cache *out){e->failed=e->scene.failed=true;e->ready=e->scene.ready=false;out->ready=false;out->count=0;return false;}
 bool osg_engine_copy_hits(osg_engine *e,osg_engine_hit_cache *out){
     if(!e||!out)return false;
     memset(out,0,sizeof(*out));out->page=e->scene.active_page;out->generation=e->scene.generation;
-    if(!e->active||e->scene.failed)return false;
+    if(!e->active)return false;
+    if(e->scene.failed)return hits_failed(e,out);
     if(!e->scene.ready||!e->scene.connected)return true;
     uint8_t hit[24],node[64],interaction[24];
     for(unsigned i=0;i<e->scene.hits;i++){
-        if(!osg_scene_record(&e->scene,1,8,i,hit,24))return false;
+        if(!osg_scene_record(&e->scene,1,8,i,hit,24))return hits_failed(e,out);
         unsigned index=u16(hit+12),owner=u16(hit);if(u16(hit+2)!=e->scene.active_page||!e->scene.properties[e->scene.displayed][index].visible)continue;
-        if(!osg_scene_record(&e->scene,1,2,index,node,64)||!osg_scene_record(&e->scene,0,3,owner,interaction,24))return false;
+        if(!osg_scene_record(&e->scene,1,2,index,node,64)||!osg_scene_record(&e->scene,0,3,owner,interaction,24))return hits_failed(e,out);
         const osg_scene_properties *property=&e->scene.properties[e->scene.displayed][index];int x=s16(hit+4),y=s16(hit+6),w=u16(hit+8),h=u16(hit+10);
         clip_rect(&x,&y,&w,&h,s16(node+4)+property->dx,s16(node+6)+property->dy,u16(node+8),u16(node+10));clip_rect(&x,&y,&w,&h,s16(node+12),s16(node+14),u16(node+16),u16(node+18));clip_rect(&x,&y,&w,&h,e->profile->x,e->profile->y,e->profile->content_width,e->profile->content_height);
         if(!w||!h)continue;
-        if(out->count>=OSG_ENGINE_HITS)return false;
+        if(out->count>=OSG_ENGINE_HITS)return hits_failed(e,out);
         out->hits[out->count++]=(osg_engine_hit){(uint16_t)owner,u16(hit+2),e->interaction_widgets[owner],interaction[6]==2?u16(interaction+14):OSG_ENGINE_NONE,(int16_t)x,(int16_t)y,(uint16_t)w,(uint16_t)h};
     }
     out->ready=true;return true;

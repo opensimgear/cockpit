@@ -624,6 +624,12 @@ fn worker(
                                     Some("serial-request") => {
                                         set(public, "lastWireRequest", v["frame"]["type"].clone());
                                         for response in wire.handle(hub, &v)? {
+                                            if response["frame"]["type"] == "render-chunk" {
+                                                let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
+                                                let bytes=state["renderContentBytes"].as_u64().unwrap_or(0)+response["frame"]["chunk"]["bytes"].as_u64().unwrap_or(0);
+                                                let reads=state["renderContentRequests"].as_u64().unwrap_or(0)+1;
+                                                state["renderContentBytes"]=json!(bytes);state["renderContentRequests"]=json!(reads);
+                                            }
                                             if response["frame"]["type"] == "error" {
                                                 set(
                                                     public,
@@ -685,6 +691,10 @@ fn worker(
                                                 "generation",
                                                 "publicationHash",
                                                 "armEpoch",
+                                                "renderStorageAvailable",
+                                                "renderPackageHash",
+                                                "renderBytesReceived",
+                                                "renderBytesTotal",
                                             ] {
                                                 if let Some(value) = v.get(key) {
                                                     safe[key] = value.clone();

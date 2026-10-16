@@ -84,6 +84,7 @@ struct Session {
     batches: VecDeque<u64>,
     values: BTreeMap<String, InputValue>,
     feedback_cursor: crate::feedback::FeedbackCursor,
+    render_package: Option<(String, String)>,
 }
 struct Inner {
     record: Record,
@@ -97,6 +98,14 @@ struct Inner {
     feedback: BTreeMap<String, crate::feedback::FeedbackBook>,
     last_now: u64,
     diagnostic: Option<String>,
+    render_packages: BTreeMap<String, Arc<crate::render_packages::RenderPackage>>,
+    render_selected: BTreeMap<(String, String), String>,
+    render_prepared: BTreeMap<String, PreparedRender>,
+}
+#[derive(Clone)]
+struct PreparedRender {
+    id: String, instance: String, publication: String, package: String,
+    profile: String, expires: u64,
 }
 
 #[derive(Clone)]
@@ -105,6 +114,8 @@ pub struct Hub {
     sink: Arc<dyn SourceSink>,
     storage: Option<Arc<dyn StateStorage>>,
     started: Arc<Instant>,
+    render_cache: Option<Arc<crate::render_packages::RenderDiskCache>>,
+    render_io: Arc<Mutex<()>>,
 }
 pub struct NullSourceSink;
 impl SourceSink for NullSourceSink {
@@ -164,6 +175,51 @@ pub(crate) fn exact(v: &Value, required: &[&str], optional: &[&str]) -> Result<(
 }
 
 impl Hub {
+
+    fn render_management(&self, inner: &mut Inner, frame: &Value, connection: &str, companion: &str, now: u64) -> Result<Option<Value>, String> {
+        let kind = field(frame,"type")?;
+        if kind == "render-capabilities" {
+            exact(frame,&["type","version"],&[])?;
+            return Ok(Some(json!({"ok":true,"type":kind,"version":2,"chunkBytes":2048,"profiles":[
+                {"id":"sunton-3248s035r-render-v1","hash":format!("sha256:{}",hash(crate::render_packages::profile_bytes("sunton-3248s035r-render-v1")?))},
+                {"id":"waveshare-lcd7-s3-render-v1","hash":format!("sha256:{}",hash(crate::render_packages::profile_bytes("waveshare-lcd7-s3-render-v1")?))}
+            ]})));
+        }
+        if kind == "render-prepare" {
+            exact(frame,&["type","version","instanceId","publicationHash","profileId","profileHash"],&["cachedPackageHash"])?;
+            if let Some(cached)=frame.get("cachedPackageHash") { ensure(cached.as_str().is_some_and(digest_id),"Invalid cached package hash.")?; }
+            ensure(!inner.sessions.values().any(|s|s.connection==connection),"Close the input session before preparing content.")?;
+            let instance=field(frame,"instanceId")?; let publication=field(frame,"publicationHash")?;
+            ensure(inner.record.instances.iter().any(|a|a.instance_id==instance && a.companion_id==companion && a.publication_hash==publication),"Render preparation assignment mismatch.")?;
+            let profile=field(frame,"profileHash")?;
+            ensure(format!("sha256:{}",hash(crate::render_packages::profile_bytes(field(frame,"profileId")?)?))==profile,"Render profile identity mismatch.")?;
+            let package_hash=inner.render_selected.get(&(publication.into(),profile.into())).ok_or("No compatible compiled package is published for this profile.")?.clone();
+            let package=inner.render_packages.get(&package_hash).ok_or("Prepared package unavailable.")?;
+            let id=uuid::Uuid::new_v4().to_string();
+            let cached=frame["cachedPackageHash"].as_str()==Some(package_hash.as_str());
+            let reply=json!({"ok":true,"type":"render-prepared","version":2,"preparedId":id,"packageHash":package_hash,"profileHash":profile,"semanticDescriptorHash":package.manifest.semantic_descriptor_hash,"cached":cached,"manifest":if cached{None}else{Some(String::from_utf8_lossy(&package.manifest_bytes))},"chunkBytes":2048});
+            inner.render_prepared.insert(connection.into(),PreparedRender{id,instance:instance.into(),publication:publication.into(),package:package_hash,profile:profile.into(),expires:now.saturating_add(120000)});
+            return Ok(Some(reply));
+        }
+        if kind == "render-read" {
+            exact(frame,&["type","version","preparedId","packageHash","kind","offset","bytes"],&[])?;
+            let prepared=inner.render_prepared.get(connection).cloned().ok_or("Prepare content on this authenticated connection first.")?;
+            self.check_prepared(inner,&prepared,frame,companion,now)?;
+            ensure(!inner.sessions.values().any(|s|s.connection==connection),"Content reads are unavailable during input sessions.")?;
+            let offset=frame["offset"].as_u64().filter(|n|*n<=crate::render_packages::PACKAGE_BYTES as u64).ok_or("Invalid content offset.")? as usize;
+            let count=frame["bytes"].as_u64().filter(|n|*n<=2048).ok_or("Invalid content chunk.")? as usize;
+            let package=inner.render_packages.get(&prepared.package).ok_or("Prepared package unavailable.")?;
+            let chunk=package.chunk(field(frame,"kind")?,offset,count)?;
+            inner.render_prepared.get_mut(connection).unwrap().expires=now.saturating_add(120000);
+            return Ok(Some(json!({"ok":true,"type":"render-chunk","version":2,"preparedId":prepared.id,"packageHash":prepared.package,"chunk":chunk})));
+        }
+        Ok(None)
+    }
+
+    fn check_prepared(&self, inner: &Inner, p: &PreparedRender, frame: &Value, companion: &str, now: u64) -> Result<(), String> {
+        ensure(p.id==field(frame,"preparedId")? && p.package==field(frame,"packageHash")? && p.expires>now,"Prepared content identity expired or mismatched.")?;
+        ensure(inner.record.instances.iter().any(|a|a.instance_id==p.instance && a.companion_id==companion && a.publication_hash==p.publication) && inner.render_selected.get(&(p.publication.clone(),p.profile.clone()))==Some(&p.package),"Prepared content assignment changed.")
+    }
     pub fn new(host_id: String, sink: Arc<dyn SourceSink>) -> Self {
         Self::from_record(
             Record {
@@ -183,7 +239,7 @@ impl Hub {
                 path.as_ref().join("companion-host-state.dpapi"),
             )),
             sink,
-        )
+        )?.with_render_cache(path.as_ref().join("render-content"))
     }
     pub fn with_storage(
         storage: Arc<dyn StateStorage>,
@@ -274,10 +330,15 @@ impl Hub {
                 feedback: BTreeMap::new(),
                 last_now: 0,
                 diagnostic: None,
+                render_packages: BTreeMap::new(),
+                render_selected: BTreeMap::new(),
+                render_prepared: BTreeMap::new(),
             })),
             sink,
             storage,
             started: Arc::new(Instant::now()),
+            render_cache:None,
+            render_io:Arc::new(Mutex::new(())),
         })
     }
 
@@ -372,6 +433,10 @@ impl Hub {
         let now = now.max(inner.last_now);
         inner.last_now = now;
         inner.pending.retain(|_, p| p.expires > now);
+        let connections=&inner.connections;
+        let assignments=&inner.record.instances;
+        let selections=&inner.render_selected;
+        inner.render_prepared.retain(|connection,p|p.expires>now&&connections.get(connection).is_some_and(|companion|assignments.iter().any(|a|a.instance_id==p.instance&&a.companion_id==*companion&&a.publication_hash==p.publication))&&selections.get(&(p.publication.clone(),p.profile.clone()))==Some(&p.package));
         if inner.code_offer.as_ref().is_some_and(|o| o.expires <= now) {
             inner.code_offer = None;
         }
@@ -397,6 +462,7 @@ impl Hub {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let _ = self.expire(&mut inner, now_ms);
         inner.connections.remove(connection_id);
+        inner.render_prepared.remove(connection_id);
         let ids: Vec<_> = inner
             .sessions
             .iter()
@@ -503,6 +569,11 @@ impl Hub {
     }
 
     pub fn command(&self, request: &Value) -> Result<Value, String> {
+        if request["command"]=="companion_render_publish" {
+            exact(request,&["command","package"],&[])?;
+            let upload=serde_json::from_value(request["package"].clone()).map_err(|_|"Invalid render upload.")?;
+            return self.install_render_package(upload).map(|hash|json!({"packageHash":hash}));
+        }
         // Publication verification may hash assets; it runs before acquiring session state.
         let published = if request["command"] == "companion_publish" {
             let upload = PublicationUpload {
@@ -518,6 +589,7 @@ impl Hub {
         } else {
             None
         };
+        let restored=published.as_ref().map(|p|self.load_cached_render(p)).unwrap_or_default();
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let now = self.now_ms().max(inner.last_now);
         self.expire(&mut inner, now)?;
@@ -597,6 +669,7 @@ impl Hub {
                 )?;
                 let summary = json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title});
                 inner.publications.insert(p.publication_hash.clone(), p);
+                Self::attach_cached_render(&mut inner,restored);
                 Ok(summary)
             }
             "companion_prune" => {
@@ -757,7 +830,7 @@ impl Hub {
             "Frame exceeds budget.",
         )?;
         if let Some(version) = frame.get("version") {
-            ensure(version == 1, "Unsupported protocol version.")?;
+            ensure(version == 1 || (version == 2 && matches!(frame["type"].as_str(),Some("render-capabilities"|"render-prepare"|"render-read"|"render-open"))), "Unsupported protocol version.")?;
         }
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let now = now.max(inner.last_now).max(self.now_ms());
@@ -917,12 +990,27 @@ impl Hub {
                         .any(|c| c.companion_id == companion),
                     "Installation was revoked.",
                 )?;
-                if frame["type"] == "open" {
+                if frame["type"].as_str().is_some_and(|s|s.starts_with("render-")) {
+                    ensure(frame["version"]==2,"Render management requires explicit version 2.")?;
+                    if let Some(reply)=self.render_management(&mut inner,frame,connection_id,&companion,now)? {return Ok(reply);}
+                }
+                if frame["type"] == "open" || frame["type"] == "render-open" {
+                    let render = if frame["type"] == "render-open" {
+                        exact(frame,&["type","version","instanceId","publicationHash","preparedId","packageHash","profileHash","semanticDescriptorHash"],&[])?;
+                        let p=inner.render_prepared.get(connection_id).cloned().ok_or("Prepare and verify content before opening input.")?;
+                        self.check_prepared(&inner,&p,frame,&companion,now)?;
+                        ensure(frame["instanceId"].as_str()==Some(p.instance.as_str()) && frame["publicationHash"].as_str()==Some(p.publication.as_str()),"Prepared instance/source mismatch.")?;
+                        let package=inner.render_packages.get(&p.package).ok_or("Prepared package missing.")?;
+                        ensure(frame["profileHash"].as_str()==Some(p.profile.as_str()) && frame["semanticDescriptorHash"].as_str()==Some(package.manifest.semantic_descriptor_hash.as_str()),"Prepared descriptor/profile mismatch.")?;
+                        Some((p.package.clone(),p.profile.clone(),package.manifest.semantic_descriptor_hash.clone()))
+                    }else{None};
+                    if render.is_none() {
                     exact(
                         frame,
                         &["type", "instanceId"],
                         &["version", "publicationHash", "takeover"],
                     )?;
+                    }
                     let instance = field(frame, "instanceId")?;
                     let assignment = inner
                         .record
@@ -983,8 +1071,13 @@ impl Hub {
                             batches: VecDeque::new(),
                             values: BTreeMap::new(),
                             feedback_cursor: Default::default(),
+                            render_package: render.as_ref().map(|(h,p,_)|(h.clone(),p.clone())),
                         },
                     );
+                    if let Some((package,profile,descriptor))=render {
+                        inner.render_prepared.remove(connection_id);
+                        return Ok(json!({"ok":true,"type":"session-open","hostId":inner.record.host_id,"companionId":companion,"controllerInstanceId":instance,"clientId":client_id,"sessionId":session_id,"generation":"1","publicationHash":p.publication_hash,"packageHash":package,"profileHash":profile,"semanticDescriptorHash":descriptor,"rendererAbi":1}));
+                    }
                     return Ok(
                         json!({"ok":true,"type":"session-open","hostId":inner.record.host_id,"companionId":companion,"controllerInstanceId":instance,"clientId":client_id,"sessionId":session_id,"generation":"1","publicationHash":p.publication_hash,"publication":p}),
                     );
@@ -1221,3 +1314,6 @@ impl Hub {
 mod assignments_api;
 #[path = "hub_feedback.rs"]
 mod feedback_api;
+
+#[path = "hub_render.rs"]
+mod render_api;

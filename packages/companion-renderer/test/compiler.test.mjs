@@ -94,6 +94,10 @@ test("legacy compiler derives authority only from source publication and rejects
  await assert.rejects(()=>compileLegacyPublication({...published,publicationHash:"sha256:"+"0".repeat(64)},starter.recipe,SUNTON_PROFILE),/identity/);
  const toggle=structuredClone(starter.document);toggle.presentation.widgets[0].config.buttonMode="toggle";await assert.rejects(()=>publishDocument(toggle,[]).then(p=>compileLegacyPublication(p,starter.recipe,SUNTON_PROFILE)),/momentary/);
  const h=applyDesignerCommand(createDesignerHistory(newDocument()),{type:"add-widget",kind:"text"});await assert.rejects(()=>publishDocument(h.present,[]).then(p=>compileLegacyPublication(p,starter.recipe,SUNTON_PROFILE)),/text feedback/);
+ const fractional=structuredClone(starter.document);for(const widget of fractional.presentation.widgets)if(widget.kind==="numeric"||widget.kind==="gauge"){widget.config.min=0.1;widget.config.max=0.9;}
+ await assert.rejects(()=>publishDocument(fractional,[]).then(p=>compileLegacyPublication(p,starter.recipe,SUNTON_PROFILE)),/exactly representable as Q16.16/);
+ for(const widget of fractional.presentation.widgets)if(widget.kind==="numeric"||widget.kind==="gauge"){widget.config.min=0.5;widget.config.max=99.5;}
+ assert.ok(await publishDocument(fractional,[]).then(p=>compileLegacyPublication(p,starter.recipe,SUNTON_PROFILE)));
  const axes=applyDesignerCommand(createDesignerHistory(newDocument()),{type:"add-widget",kind:"slider"});await assert.rejects(()=>publishDocument(axes.present,[]).then(p=>compileLegacyPublication(p,starter.recipe,SUNTON_PROFILE)),/momentary/);
 });
 

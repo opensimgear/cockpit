@@ -26,4 +26,11 @@ typedef struct { osg_runtime *runtime; SemaphoreHandle_t mutex; bool *dirty; con
 void osg_network_start(osg_network_ui);
 void osg_network_touch(bool valid, bool down, int x, int y);
 void osg_network_render(const osg_panel *, bool finished, bool success);
+#ifdef OSG_RENDER_ENGINE
+#include "../render/engine.h"
+/* Main acquires one bounded slice. No driver wait runs under the UI mutex.
+ * -1 uses the legacy raster, 0 keeps the current scene frozen, 1 owns a slice. */
+int osg_network_scene_acquire(osg_runtime *, osg_engine **);
+void osg_network_scene_release(bool publish_hits);
+#endif
 #endif
