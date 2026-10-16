@@ -16,8 +16,9 @@
   import DcsBiosPanel from './lib/DcsBiosPanel.svelte';
   import IntegrationsPanel from './lib/IntegrationsPanel.svelte';
   import GamesPanel from './lib/GamesPanel.svelte';
+  import OverviewPanel from './lib/OverviewPanel.svelte';
   import DesktopPreferences from './lib/DesktopPreferences.svelte';
-  import type { GamesState, GameRequest } from './lib/games';
+  import { supportedGames, type GameId, type GamesState, type GameRequest } from './lib/games';
   import type { IntegrationConfig, IntegrationRequest, IntegrationState } from './lib/integration-profile';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
@@ -27,9 +28,10 @@
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
+  type View = 'overview' | 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
+    { id: 'overview', label: 'Overview', icon: 'activity' },
     { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'mappings', label: 'Mappings', icon: 'network' },
@@ -55,9 +57,17 @@
   const nameForGateway = (backend?: string) => backend === 'stm32' ? 'OpenSimGear CAN gateway' : 'Pico W USB gateway';
   const inputSummary = (module: GatewayModule) => module.outputOnly ? 'Output device' : [module.buttonCount ? `${module.buttonCount} buttons` : '', module.hatCount ? `${module.hatCount} hats` : '', module.axisCount ? `${module.axisCount} axes` : ''].filter(Boolean).join(' · ');
   let light = $state(stored<boolean>('osg-light', false));
-  let view = $state<View>('gateways');
-  let entries = $state<GatewayEntry[]>([]);
+  let view = $state<View>('overview');
   let games = $state<GamesState>();
+  let selectedGameId = $state<GameId | ''>('');
+  const selectedGameName = $derived((games?.catalogue ?? supportedGames).find(game => game.id === selectedGameId)?.name);
+  const section = $derived(view === 'device' ? 'devices' : view);
+  const sectionLabel = $derived(navigation.find(item => item.id === section)?.label ?? 'Settings');
+  function navigate(section: View) {
+    selectedGameId = '';
+    view = section;
+  }
+  let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
   let gamesPolling = false;
   let integration = $state<IntegrationState>();
@@ -383,27 +393,29 @@
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="https://www.opensimgear.org" target="_blank" rel="noreferrer" onclick={openLink}><img src={light ? '/logo-light.svg' : '/logo-dark.svg'} alt="" /><span><strong>Open</strong>SimGear<small>COCKPIT</small></span></a>
-      <div class="nav-label">WORKSPACE</div>
+      <button class="nav-label cockpit-home" onclick={() => navigate('overview')}>COCKPIT</button>
       <nav aria-label="Main navigation">
         {#each navigation as item (item.id)}
-          <button title={item.label} class:current={view === item.id || (item.id === 'devices' && view === 'device')} onclick={() => { view = item.id; }}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{devices.length}</span>{/if}</button>
+          <button title={item.label} class:current={view === item.id || (item.id === 'devices' && view === 'device')} onclick={() => navigate(item.id)}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{devices.length}</span>{/if}</button>
         {/each}
       </nav>
       <div class="sidebar-bottom">
-        <button class="sidebar-link" class:current={view === 'preferences'} onclick={() => { view = 'preferences'; }}><Icon name="settings" size={18} />Preferences</button>
+        <button class="sidebar-link" class:current={view === 'preferences'} onclick={() => navigate('preferences')}><Icon name="settings" size={18} />Settings</button>
         <a class="sidebar-link" href="https://www.opensimgear.org/docs/architecture/desktop-cockpit/" target="_blank" rel="noreferrer" onclick={openLink}><Icon name="help" size={18} />Documentation<Icon name="external" size={13} /></a>
         <div class="sidebar-version"><span>Open hardware. Your control.</span><small>v0.1.0</small></div>
       </div>
     </aside>
 
     <div class="main-shell">
-      <header class="topbar"><div class="breadcrumb">Workspace<Icon name="chevron" size={13} /><strong>{view === 'device' ? selected?.settings.label ?? 'Device' : view === 'dcs-bios' ? 'DCS-BIOS' : view.charAt(0).toUpperCase() + view.slice(1)}</strong></div><div class="topbar-actions"><span class="connection-pill">{connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
+      <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><span class="connection-pill">{connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
-        {#if view === 'activity'}
+        {#if view === 'overview'}
+          <OverviewPanel {games} {integration} {dcsBios} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
+        {:else if view === 'activity'}
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
         {:else if view === 'preferences'}
-          <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Preferences</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
+          <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Settings</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
           <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
           <DesktopPreferences />
         {:else if view === 'mappings'}
@@ -411,7 +423,7 @@
         {:else if view === 'companions'}
           <CompanionDesigner />
         {:else if view === 'games'}
-          <GamesPanel status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => { view = 'integrations'; }} />
+          <GamesPanel bind:selectedGameId status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => navigate('integrations')} />
         {:else if view === 'integrations'}
           <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO YOUR GAMES</div><h1>Integrations</h1><p>Reusable profiles, device assignments and telemetry outputs.</p></div></div>
           <section class="panel dcs-profile-panel"><IntegrationsPanel setups={games?.catalogue} bind:draft={integrationDraft} status={integration} targets={dcsTargets} busy={integrationBusy} request={sendIntegration} refresh={refreshIntegrationTarget} /></section>
@@ -577,7 +589,6 @@
       </main>
     </div>
   </div>
-
 
   {#if modal}
     <div class="modal-backdrop"><dialog class="modal" aria-labelledby="modal-title" {@attach showDialog} onclose={() => { modal = null; }}>

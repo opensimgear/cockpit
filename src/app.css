@@ -9,6 +9,7 @@
   -moz-osx-font-smoothing: grayscale;
 }
 * { box-sizing: border-box; }
+html, body, #app { height: 100%; overflow: hidden; }
 body { margin: 0; }
 button, input, select { font: inherit; }
 button, a, input, select { -webkit-tap-highlight-color: transparent; }
@@ -21,10 +22,19 @@ button { border: 0; }
 a { color: inherit; text-decoration: none; }
 button svg, a svg { flex-shrink: 0; }
 h1, h2, h3, p { margin: 0; }
-.cockpit { --bg: #14191f; --surface: #1a222c; --surface-raised: #1d2835; --sidebar: #161d25; --subtle: #19222d; --text: #e8eef6; --muted: #808d9e; --soft: #bcc3cc; --line: #2e3948; --accent: #a0d9ab; --accent-text: #14191f; --accent-bg: #213a30; --faint-line: #27313e; --input-bg: #141b24; --shadow: #00000030; min-height: 100vh; color: var(--text); background: var(--bg); }
+.cockpit { --bg: #14191f; --surface: #1a222c; --surface-raised: #1d2835; --sidebar: #161d25; --subtle: #19222d; --text: #e8eef6; --muted: #808d9e; --soft: #bcc3cc; --line: #2e3948; --accent: #a0d9ab; --accent-text: #14191f; --accent-bg: #213a30; --faint-line: #27313e; --input-bg: #141b24; --shadow: #00000030; height: 100dvh; overflow: hidden; color: var(--text); background: var(--bg); }
 .cockpit.light { --bg: #f4f6fa; --surface: #fff; --surface-raised: #e8eef6; --sidebar: #f9fafc; --subtle: #f4f6fa; --text: #1d2835; --muted: #4d5969; --soft: #4d5969; --line: #dce3eb; --accent: #00823a; --accent-text: #fff; --accent-bg: #e6f2e9; --faint-line: #e8eef6; --input-bg: #f4f6fa; --shadow: #1d283510; }
+/* Scrollbars follow the active Cockpit theme. */
+.cockpit ::-webkit-scrollbar { width: 10px; height: 10px; }
+.cockpit ::-webkit-scrollbar-track, .cockpit ::-webkit-scrollbar-corner { background: var(--bg); }
+.cockpit ::-webkit-scrollbar-thumb { background: var(--muted); border: 3px solid var(--bg); border-radius: 10px; min-height: 32px; }
+.cockpit ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.cockpit ::-webkit-scrollbar-thumb:active { background: var(--accent); }
+@supports not selector(::-webkit-scrollbar) {
+  .cockpit * { scrollbar-width: thin; scrollbar-color: var(--muted) var(--bg); }
+}
 .divider { height: 13px; width: 1px; background: var(--line); display: inline-block; }
-.app-shell { display: flex; min-height: 100vh; }
+.app-shell { display: flex; height: 100%; min-height: 0; overflow: hidden; }
 .sidebar { width: 224px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--line); padding: 0 17px; display: flex; flex-direction: column; }
 .brand { display: flex; gap: 10px; align-items: center; padding: 29px 9px 28px; }
 .brand img { width: 32px; height: 32px; }
@@ -32,6 +42,8 @@ h1, h2, h3, p { margin: 0; }
 .brand strong { font-weight: 850; }
 .brand small { display: block; font-size: 8px; letter-spacing: 4px; padding: 5px 0 0 2px; color: var(--muted); font-weight: 600; }
 .nav-label { font-size: 8px; letter-spacing: 1.7px; color: var(--muted); padding: 0 12px 13px; font-weight: 650; }
+.cockpit-home { background: transparent; text-align: left; }
+.cockpit-home:hover { color: var(--text); }
 nav { display: flex; flex-direction: column; gap: 5px; }
 nav button, .sidebar-link { display: flex; align-items: center; gap: 12px; background: transparent; color: var(--muted); font-size: 12px; padding: 12px 13px; width: 100%; border-radius: 5px; text-align: left; }
 nav button:hover, .sidebar-link:hover { color: var(--text); background: var(--surface); }
@@ -41,15 +53,17 @@ nav button.current, .sidebar-link.current { color: var(--accent); background: va
 .sidebar-link svg:last-child:not(:first-child) { margin-left: auto; }
 .sidebar-version { display: flex; justify-content: space-between; margin: 22px 4px; font-size: 8px; color: var(--muted); }
 .sidebar-version small { font-size: 8px; }
-.main-shell { width: calc(100% - 224px); display: flex; flex-direction: column; }
-.topbar { height: 70px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; padding: 0 34px; }
-.breadcrumb { display: flex; align-items: center; gap: 13px; font-size: 11px; color: var(--muted); }
+.main-shell { width: calc(100% - 224px); min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.topbar { height: 70px; flex-shrink: 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; padding: 0 34px; }
+.breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 13px; font-size: 11px; color: var(--muted); }
+.breadcrumb button { background: transparent; color: inherit; padding: 0; }
+.breadcrumb button:hover { color: var(--text); }
 .breadcrumb strong { color: var(--soft); font-weight: 500; }
 .topbar-actions { display: flex; align-items: center; gap: 15px; }
 .connection-pill { font-size: 9px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
 .icon-button { background: transparent; padding: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); border-radius: 4px; }
 .icon-button:hover { background: var(--surface-raised); color: var(--text); }
-main { padding: 32px 34px 32px; max-width: 1680px; margin: 0 auto; width: 100%; flex: 1; }
+main { padding: 32px 34px 32px; max-width: 1680px; margin: 0 auto; width: 100%; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 27px; }
 .eyebrow { color: var(--muted); font-weight: 600; font-size: 8px; letter-spacing: 1.7px; display: block; }
 h1 { margin-top: 10px; font-size: 31px; font-weight: 560; letter-spacing: -1.15px; line-height: 1.3; }
