@@ -714,3 +714,41 @@ fn producer_query_failure_closes_attached_source_instead_of_using_unqualified_pa
     assert_eq!(result.unwrap_err(), "Process query denied");
     assert!(closed.load(Ordering::Acquire));
 }
+
+#[test]
+fn live_observed_sparse_status_verifies_required_channels_and_reports_state_limit() {
+    let mut verifier = Verifier::new(&identity()).unwrap();
+    for packet in [10, 11] {
+        let mut s = sample(packet, 0);
+        s.statics[..60].fill(0);
+        s.statics[412..416].fill(0);
+        verifier.observe(&s, packet as u64).unwrap();
+    }
+    let result = verifier.assessment(12);
+    assert_eq!(result["compatible"], true);
+    assert_eq!(result["status"], "receiving");
+    assert_eq!(result["maxRpmAvailable"], false);
+    assert!(result["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d.as_str().unwrap().contains("pause/menu/replay")));
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires OSG_ACR_LIVE_EXE and a running ACR driving session"]
+fn running_game_passes_native_setup_probe() {
+    let executable = std::env::var("OSG_ACR_LIVE_EXE").expect("set live game executable");
+    let game = json!({"id":"assetto-corsa-rally","executable":executable});
+    let proof = probe(
+        &game,
+        &crate::game_discovery::NativePlatform,
+        || false,
+        |_, _| {},
+    )
+    .unwrap();
+    println!("LIVE ACR SETUP {proof}");
+    assert_eq!(proof["nativeVerified"], true);
+    assert_eq!(proof["compatible"], true);
+}

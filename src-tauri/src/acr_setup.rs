@@ -15,7 +15,7 @@ use std::{
 const MAX_EXECUTABLE: u64 = 512 * 1024 * 1024;
 const PROBE_MS: u64 = 2500;
 const FRESHNESS_MS: u64 = 1500;
-pub(crate) const LAYOUT_REVISION: &str = "acr-prefix-1";
+pub(crate) const LAYOUT_REVISION: &str = "acr-prefix-2";
 fn paths_match(left: &str, right: &str) -> bool {
     left.replace('/', "\\")
         .trim_start_matches("\\\\?\\")
@@ -282,7 +282,11 @@ fn check_context(sample: &RawSample) -> Result<i32, String> {
             );
         }
     }
-    Ok(reading.status)
+    Ok(if reading.telemetry_active() {
+        2
+    } else {
+        reading.status
+    })
 }
 /// Pure assessment used with native acquisition; it has no nativeVerified success flag.
 struct Verifier {
@@ -290,6 +294,7 @@ struct Verifier {
     expected: SourceIdentity,
     samples: usize,
     last_status: Option<i32>,
+    sparse_status: bool,
 }
 impl Verifier {
     fn new(identity: &ProcessIdentity) -> Result<Self, String> {
@@ -301,12 +306,14 @@ impl Verifier {
             },
             samples: 0,
             last_status: None,
+            sparse_status: false,
         })
     }
     fn observe(&mut self, sample: &RawSample, now: u64) -> Result<Snapshot, String> {
         if sample.source != self.expected {
             return Err("The selected ACR process identity changed. Reattach to the new process and establish a fresh baseline.".into());
         }
+        self.sparse_status = game_telemetry::parse(sample)?.sparse_status();
         self.last_status = Some(check_context(sample)?);
         self.samples += 1;
         Ok(self.session.feed(sample, now))
@@ -349,6 +356,9 @@ impl Verifier {
             .get("max_rpm")
             .is_some_and(|c| c.status == ChannelStatus::Ready && c.value.is_some());
         let mut diagnostics = vec![message.to_string()];
+        if self.sparse_status {
+            diagnostics.push("This ACR build omits session status and version strings. Telemetry freshness uses advancing physics packets; pause/menu/replay detection is unavailable unless the game reports a status or stops packets.".into());
+        }
         if compatible && !max_rpm {
             diagnostics.push("Maximum RPM is unavailable. RPM, gear and speed still work; rev-ratio bindings need a valid maximum RPM. No redline is inferred from observed RPM.".into());
         }

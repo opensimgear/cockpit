@@ -256,6 +256,26 @@ pub(crate) struct Reading {
     pub context: Context,
     pub channels: BTreeMap<String, Channel>,
 }
+impl Reading {
+    /// Live ACR capture (2026-10-14): graphics status and version strings
+    /// remain zero while driving. This dialect has no trustworthy state flag;
+    /// require car/stage identity and let Session qualify packet progression.
+    pub(crate) fn sparse_status(&self) -> bool {
+        self.status == 0
+            && self.context.shared_memory_version.is_empty()
+            && self.context.game_version.is_empty()
+            && !self.context.car_model.is_empty()
+            && !self.context.track.is_empty()
+            && ["rpm", "gear", "speed_kmh"].iter().all(|id| {
+                self.channels
+                    .get(*id)
+                    .is_some_and(|c| c.status == ChannelStatus::Ready)
+            })
+    }
+    pub(crate) fn telemetry_active(&self) -> bool {
+        self.status == 2 || self.sparse_status()
+    }
+}
 pub(crate) fn parse(sample: &RawSample) -> Result<Reading, String> {
     for (name, page, minimum) in [
         ("physics", &sample.physics, PHYSICS_SIZE),
@@ -418,21 +438,21 @@ impl Session {
         let scope_changed = self.source.as_ref() != Some(&sample.source)
             || self.context.as_ref() != Some(&reading.context);
         if scope_changed {
-            self.disarm(if reading.status == 2 {
+            self.disarm(if reading.telemetry_active() {
                 "waiting"
             } else {
                 "inactive"
             });
             self.source = Some(sample.source.clone());
+            self.live = reading.telemetry_active();
             self.context = Some(reading.context);
             self.packet_id = Some(reading.packet_id);
             self.last_seen = None;
             self.ever_fresh = false;
-            self.live = reading.status == 2;
             self.error = None;
             return self.snapshot(now_ms);
         }
-        if reading.status != 2 {
+        if !reading.telemetry_active() {
             if self.live || self.qualified || self.status != "inactive" {
                 self.disarm("inactive");
             }
@@ -548,6 +568,33 @@ mod tests {
     }
     fn advance(sample: &mut RawSample, packet: u32) {
         sample.physics[..4].copy_from_slice(&packet.to_le_bytes());
+    }
+    #[test]
+    fn observed_acr_sparse_status_qualifies_progression_without_inventing_metadata() {
+        let mut s = sample();
+        s.graphics[4..8].fill(0);
+        s.statics[..60].fill(0);
+        s.statics[412..416].fill(0);
+        let mut session = Session::new(100).unwrap();
+        assert!(parse(&s).unwrap().sparse_status());
+        assert!(!session.feed(&s, 0).fresh);
+        advance(&mut s, 11);
+        let snapshot = session.feed(&s, 1);
+        assert!(snapshot.fresh);
+        assert_eq!(snapshot.values()["rpm"], json!(6300));
+        assert!(!snapshot.values().contains_key("max_rpm"));
+        assert!(!session.feed(&s, 102).fresh);
+        for status in [1i32, 3] {
+            s.graphics[4..8].copy_from_slice(&status.to_le_bytes());
+            advance(&mut s, 12 + status as u32);
+            assert!(!session.feed(&s, 103).fresh);
+        }
+        s.graphics[4..8].fill(0);
+        s.statics[68..134].fill(0);
+        assert!(!parse(&s).unwrap().telemetry_active());
+        s = sample();
+        s.graphics[4..8].fill(0);
+        assert!(!parse(&s).unwrap().telemetry_active());
     }
     #[test]
     fn authored_prefixes_decode_real_fields_and_typed_catalogue() {

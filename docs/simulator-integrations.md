@@ -57,3 +57,23 @@ This layout is developer-derived, not an officially guaranteed ACR binary interf
 On every platform, **Synthetic** source accepts bounded authored physics/graphics/static byte pages through the identical parser and runtime. The editor supplies RPM, gear, speed, maximum RPM, progression and live/pause/replay/off controls. Synthetic snapshots are OpenSimGear test input; they are not Rally native UDP. Original Assetto Corsa has a separate [Kunos UDP interface](https://docs.google.com/document/d/1KfkZiIluXZ6mMhLWfDX1qAGbvhGRC3ZUzjVIt5FQpp4/pub) and remains a future independent provider.
 
 Software checks and authored samples do not qualify live Rally versions, real DCS, Windows USB/HID enumeration or assembled LEDs/displays/CAN. Hardware validation is deferred for this milestone; board design versions remain 0.1.0.
+
+### Live ACR compatibility correction (2026-10-14)
+
+A live Windows driving session exposed a sparse variant: graphics packet IDs
+advance but status stays 0; both static version strings and maximum RPM are zero,
+while car/track, RPM, gear and speed are populated. `acr-prefix-2` accepts this
+variant only with both version strings empty, nonempty car/track and valid required
+channels, then requires the usual baseline and advancing physics packets. Other
+status-0 frames remain inactive; explicit replay/pause values still disarm.
+Native setup records the executable fingerprint instead of demanding missing
+version strings for this variant. Diagnostics explicitly report that menu/pause/
+replay discrimination is unavailable if the game continues publishing packets
+without a state flag. Missing max RPM still disables rev-ratio. This supersedes
+the earlier universal assumption that live Rally always reports ACC status 2.
+
+The actual Windows acquisition and complete native setup probe passed against
+executable SHA-256 `42c359b0cd24774a86441710fdc7d7db3bc06b57b3ff30cb9ea5d56fb71448fb`.
+Observed live values included 5156 RPM, first gear and 34.6244 km/h, Lancia Stratos
+HF at Wales Afon Bidno. This verifies reception on that executable; pause/replay
+transitions and dashboard calibration have not been qualified.

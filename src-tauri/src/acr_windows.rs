@@ -462,3 +462,34 @@ mod tests {
         source.close();
     }
 }
+
+#[cfg(all(test, windows))]
+mod live_validation {
+    use super::*;
+    #[test]
+    #[ignore = "requires explicit OSG_ACR_LIVE_PID and a running ACR driving session"]
+    fn selected_running_game_produces_fresh_native_telemetry() {
+        let pid = std::env::var("OSG_ACR_LIVE_PID")
+            .expect("set live PID")
+            .parse()
+            .unwrap();
+        let mut source = WindowsSource::new(pid).unwrap();
+        let mut session = crate::game_telemetry::Session::new(1500).unwrap();
+        let start = std::time::Instant::now();
+        let mut active = false;
+        for _ in 0..20 {
+            let snapshot = session.poll(&mut source, start.elapsed().as_millis() as u64);
+            if snapshot.fresh {
+                assert!(snapshot.values().contains_key("rpm"));
+                assert!(snapshot.values().contains_key("gear"));
+                assert!(snapshot.values().contains_key("speed_kmh"));
+                println!("LIVE ACR {}", snapshot.value());
+                active = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        source.close();
+        assert!(active, "native acquisition never produced fresh telemetry");
+    }
+}
