@@ -58,13 +58,18 @@ async function verifyDecodedBitmap(bytes: Uint8Array, mime: string): Promise<voi
 }
 export async function validateAssets(document: DesignerDocument, payloads: AssetPayload[]): Promise<AssetPayload[]> {
   assert(Array.isArray(payloads) && payloads.length === document.ui.assets.length, "Asset payloads do not match manifest");
-  const ids = new Set<string>(); let total = 0;
+  const ids = new Set<string>(); let total = 0, pixels = 0;
+  const images: { bytes: Uint8Array; mime: string }[] = [];
   for (const value of payloads) {
     const payload = exact(value, ["assetId", "base64"]); assert(typeof payload.assetId === "string" && !ids.has(payload.assetId), "Duplicate asset payload"); ids.add(payload.assetId);
     const manifest = document.ui.assets.find(asset => asset.id === payload.assetId); assert(manifest, "Unknown asset payload");
     const bytes = decodeBase64(payload.base64 as string); total += bytes.length; assert(total <= COMPANION_LIMITS.totalAssetBytes, "Asset total exceeds budget");
-    assert(bytes.length === manifest.sizeBytes && await digest(bytes) === manifest.sha256, "Asset size or digest mismatch"); await verifyDecodedBitmap(bytes, manifest.mime);
+    assert(bytes.length === manifest.sizeBytes && await digest(bytes) === manifest.sha256, "Asset size or digest mismatch");
+    const dimensions = imageDimensions(bytes, manifest.mime); pixels += dimensions.width * dimensions.height;
+    assert(pixels <= DESIGNER_LIMITS.totalAssetPixels, "Asset total decoded pixels exceed budget");
+    images.push({ bytes, mime: manifest.mime });
   }
+  for (const image of images) await verifyDecodedBitmap(image.bytes, image.mime);
   return clone(payloads);
 }
 export async function importAsset(document: DesignerDocument, bytes: Uint8Array, mime: "image/png" | "image/jpeg" | "image/webp"): Promise<{ document: DesignerDocument; asset: AssetPayload; width: number; height: number }> {
@@ -92,16 +97,16 @@ function capabilityData(document: DesignerDocument): unknown {
   const doc = checked(document);
   return {
     uiId: doc.ui.id,
-    controls: doc.ui.controls.map(({ id, kind, ...control }) => ({ id, kind, ...(kind === "axis" ? { axisMode: (control as { axisMode: string }).axisMode, fallback: (control as { fallback: number }).fallback } : {}) })).sort((a, b) => a.id.localeCompare(b.id)),
-    feedback: doc.ui.feedbackWidgets.map(({ id, kind, channelId }) => ({ id, kind, channelId })).sort((a, b) => a.id.localeCompare(b.id)),
+    controls: doc.ui.controls.map(({ id, kind, ...control }) => ({ id, kind, ...(kind === "axis" ? { axisMode: (control as { axisMode: string }).axisMode, fallback: (control as { fallback: number }).fallback } : {}) })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    feedback: doc.ui.feedbackWidgets.map(({ id, kind, channelId }) => ({ id, kind, channelId })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     widgets: doc.presentation.widgets.map(widget => {
       const config = clone(widget.config) as Record<string, unknown>;
       for (const key of ["iconAssetId", "symbol", "prefix", "suffix", "orientation"]) delete config[key];
       if (widget.kind === "selector") config.options = widget.config.options.map(option => ({ value: option.value }));
       return { id: widget.id, kind: widget.kind, controlIds: widget.controlIds, feedbackIds: widget.feedbackIds, config };
-    }).sort((a, b) => a.id.localeCompare(b.id)),
-    targets: doc.targets.map(({ id, axes, buttons, hats }) => ({ id, axes, buttons, hats })).sort((a, b) => a.id.localeCompare(b.id)),
-    bindings: [...doc.bindings].sort((a, b) => a.controlId.localeCompare(b.controlId)),
+    }).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    targets: doc.targets.map(({ id, axes, buttons, hats }) => ({ id, axes, buttons, hats })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    bindings: [...doc.bindings].sort((a, b) => a.controlId < b.controlId ? -1 : a.controlId > b.controlId ? 1 : 0),
   };
 }
 export function compareDesignerPublications(previous: DesignerDocument, next: DesignerDocument): "identical" | "styling" | "capability" {

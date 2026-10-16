@@ -4,7 +4,7 @@
   import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest } from './gateway';
   import { controlLabel, type ControllerControl, type HostController } from './controllers';
-  import { capturedKind, compatibleControl, directProfile, oneToOneProfile, importMapping, savedAssignments, type PanelMappingSource, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
+  import { capturedKind, compatibleControl, directProfile, oneToOneProfile, importMapping, savedAssignments, type CompanionMappingSource, type PanelMappingSource, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
   let createSlot = $state(2);
   let createButtons = $state(32);
   let createHats = $state(1);
@@ -18,7 +18,11 @@
   let selected = $state('');
   let sources = $state<HostController[]>([]);
   let panels = $state<PanelMappingSource[]>([]);
-  const sourceOrigin = (id: string) => id.startsWith('panel-events:') ? 'osg-panel-events' as const : 'host-controller' as const;
+  let companions = $state<CompanionMappingSource[]>([]);
+  const companionOption = (key: string) => companions.find(source => `companion:${source.id}` === key);
+  const sourceOrigin = (key: string) => companionOption(key) ? 'companion' as const : key.startsWith('panel-events:') ? 'osg-panel-events' as const : 'host-controller' as const;
+  const nativeSourceId = (key: string) => companionOption(key)?.id ?? key;
+  const sourceKey = (source: MappingAssignment['source']) => source.origin === 'companion' ? `companion:${source.id}` : source.id;
   let controls = $state<Record<string, ControllerControl[]>>({});
   let assignments = $state<MappingAssignment[]>([]);
   let status = $state<MappingResult>({});
@@ -34,6 +38,7 @@
   let syntheticKind = $state<'button' | 'axis' | 'hat'>('button');
   let disposed = false;
   let polling = false;
+  let lastCompanionRefresh = 0;
   const profile = $derived(profiles.find(p => p.id === selected));
   const creatorControls = $derived(controls[newSource]?.filter(c => capturedKind(c)) ?? []);
   async function request(value: MappingRequest): Promise<MappingResult> {
@@ -44,6 +49,7 @@
   async function exportTrace(){try{const bytes:number[]=[];let offset=0;for(;;){const page=await request({command:'mapping_trace_export',offset});if(!page.bytes || typeof page.next!=='number' || page.next<offset || page.next>4194304)throw new Error('Invalid trace chunk');bytes.push(...page.bytes);offset=page.next;if(offset===page.total)break;}const url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='cockpit-mapping-trace.json';link.click();URL.revokeObjectURL(url);}catch(e){error=String(e);}}
   async function loadControls(id: string) {
     if (controls[id]) return;
+    if (sourceOrigin(id) === 'companion') {const detail=await request({command:'mapping_companion_inspect',sourceId:nativeSourceId(id)});if(!detail.companionControls)throw new Error('Companion controls are unavailable.');controls={...controls,[id]:detail.companionControls};return;}
     if (sourceOrigin(id) === 'osg-panel-events') {const detail=await request({command:'mapping_panel_inspect',sourceId:id});if(!detail.panelControls)throw new Error('Panel controls are unavailable.');controls={...controls,[id]:detail.panelControls};return;}
     const all: ControllerControl[] = [];
     for (let offset = 0; offset < 256; offset += 32) {
@@ -64,6 +70,7 @@
     }
     sources = all;
     panels = (await request({command:'mapping_panel_sources'})).panelSources ?? [];
+    companions = (await request({command:'mapping_companion_sources'})).companionSources ?? [];
   }
   async function loadProfiles() {
     const all: MappingProfile[] = [];
@@ -87,7 +94,7 @@
     catch { assignments = item.roles.map(r => ({ role: r.id, source: { origin: r.origin, id: r.origin === 'synthetic' ? r.id : '' }, controls: r.controls.map(c => ({ control: c.id, sourceControl: r.origin === 'synthetic' ? c.id : '' })) })); notice = 'Assign each source and control, then save the local assignments.'; }
     const targets = await request({ command: 'mapping_targets_get', profileId: id });
     slotAssignments = Object.fromEntries((targets.bindings ?? []).map(binding => [binding.target, binding.slot]));
-    for (const assignment of assignments) if (assignment.source.origin !== 'synthetic' && assignment.source.id) await loadControls(assignment.source.id);
+    for (const assignment of assignments) if (assignment.source.origin !== 'synthetic' && assignment.source.id) await loadControls(sourceKey(assignment.source));
   }
   async function action(operation: () => Promise<void>) {
     busy = true; error = ''; notice = '';
@@ -100,6 +107,12 @@
     polling = true;
     try {
       status = await request({ command: 'mapping_status', inspect: true, offset: inspectOffset });
+      if (Date.now() - lastCompanionRefresh >= 1000) {
+        const next = (await request({command:'mapping_companion_sources'})).companionSources ?? [];
+        const cache = { ...controls };
+        for (const source of next) if (companions.find(prior => prior.id === source.id)?.publicationHash !== source.publicationHash) delete cache[`companion:${source.id}`];
+        controls = cache; companions = next; lastCompanionRefresh = Date.now();
+      }
       if(learning && !status.learning) learning=false;
       if (learning && status.learning && status.learning.phase !== 'listening') {
         learning=false;notice=status.learning.reason;
@@ -124,7 +137,7 @@
     const native = creatorControls.find(c => c.capability.id === newControl);
     const kind: MappingKind | null = newSource === 'synthetic' ? syntheticKind === 'axis' ? { kind: 'axis', range: 'bipolar' } : { kind: syntheticKind } : native ? capturedKind(native) : null;
     if (!kind) throw new Error('Choose an input control.');
-    const result = directProfile(name, kind, { origin: newSource === 'synthetic' ? 'synthetic' : sourceOrigin(newSource), id: newSource === 'synthetic' ? 'preview-input' : newSource }, newSource === 'synthetic' ? 'control' : newControl);
+    const result = directProfile(name, kind, { origin: newSource === 'synthetic' ? 'synthetic' : sourceOrigin(newSource), id: newSource === 'synthetic' ? 'preview-input' : nativeSourceId(newSource) }, newSource === 'synthetic' ? 'control' : newControl);
     const saved = await importMapping(JSON.stringify(result.profile), request);
     await request({ command: 'mapping_assignments_save', profileId: saved.id, assignments: result.assignments });
     await loadProfiles(); await selectProfile(saved.id); notice = 'Profile and local assignment saved. Start a recording preview when ready.';
@@ -136,7 +149,7 @@
     learnTarget=target;learning=true;notice='Move one control deliberately. Learning runs for up to 30 seconds and sends no output.';
   }
   async function createPreset() {
-    const result=oneToOneProfile(name,{origin:sourceOrigin(newSource),id:newSource},controls[newSource]??[]);
+    const result=oneToOneProfile(name,{origin:sourceOrigin(newSource),id:nativeSourceId(newSource)},controls[newSource]??[]);
     const saved=await importMapping(JSON.stringify(result.profile),request);
     await request({command:'mapping_assignments_save',profileId:saved.id,assignments:result.assignments});
     await loadProfiles();await selectProfile(saved.id);
@@ -145,7 +158,7 @@
     if(learning){await request({command:'mapping_stop'});learning=false;learnTarget=null;}
     const item = assignments[index];
     assignments[index] = { ...item, source: { ...item.source, id }, controls: item.controls.map(c => ({ ...c, sourceControl: '' })) };
-    if (id) await loadControls(id);
+    if (id) await loadControls(sourceKey(assignments[index].source));
   }
   async function simulate(assignment: MappingAssignment, control: string, value: MappingValue) {
     if (!status.token) return;
@@ -166,7 +179,7 @@
   <h2>New direct mapping</h2>
   <div class="mapping-row">
     <label>Name<input class="text-input" bind:value={name} maxlength="80" /></label>
-    <label>Input source<select bind:value={newSource} onchange={() => action(async () => { newControl = ''; if (newSource !== 'synthetic') await loadControls(newSource); })}><option value="synthetic">Synthetic preview input</option>{#each sources.filter(s => s.online) as source}<option value={source.id}>{source.name}</option>{/each}{#each panels as panel}<option value={panel.id}>{panel.name ?? panel.moduleId} · panel events</option>{/each}</select></label>
+    <label>Input source<select bind:value={newSource} onchange={() => action(async () => { newControl = ''; if (newSource !== 'synthetic') await loadControls(newSource); })}><option value="synthetic">Synthetic preview input</option>{#each sources.filter(s => s.online) as source}<option value={source.id}>{source.name}</option>{/each}{#each panels as panel}<option value={panel.id}>{panel.name ?? panel.moduleId} · panel events</option>{/each}{#each companions as companion}<option value={`companion:${companion.id}`}>{companion.name} · companion{companion.online ? '' : ' (offline)'}</option>{/each}</select></label>
     {#if newSource === 'synthetic'}<label>Control<select bind:value={syntheticKind}><option value="button">Button</option><option value="axis">Bipolar axis</option><option value="hat">Hat</option></select></label>
     {:else}<label>Control<select bind:value={newControl}><option value="">Choose a control</option>{#each creatorControls as control}<option value={control.capability.id}>{controlLabel(control)} · {control.capability.reportId}:{control.capability.dataIndex}</option>{/each}</select></label>{/if}
     <button class="primary-button" disabled={busy || !name.trim() || (newSource !== 'synthetic' && !newControl)} onclick={() => action(create)}>Save direct mapping</button>
@@ -183,10 +196,10 @@
     {#each profile.roles as role, index}
       {@const assigned = assignments[index]}
       {#if assigned}<fieldset><legend>{role.name} · {role.origin}</legend>
-        {#if role.origin !== 'synthetic'}<label>Local source<select value={assigned.source.id} disabled={busy} onchange={event => action(() => chooseSource(index, event.currentTarget.value))}><option value="">Choose a controller</option>{#each (role.origin === 'osg-panel-events' ? panels.map(p=>({id:p.id,name:p.name ?? p.moduleId,online:true})) : sources) as source}<option value={source.id}>{source.name}{source.online ? '' : ' (offline)'}</option>{/each}</select></label>
+        {#if role.origin !== 'synthetic'}<label>Local source<select value={assigned.source.id} disabled={busy} onchange={event => action(() => chooseSource(index, event.currentTarget.value))}><option value="">Choose a controller</option>{#each (role.origin === 'companion' ? companions : role.origin === 'osg-panel-events' ? panels.map(p=>({id:p.id,name:p.name ?? p.moduleId,online:true})) : sources) as source}<option value={source.id}>{source.name}{source.online ? '' : ' (offline)'}</option>{/each}</select></label>
         {:else}<p>Synthetic inputs are controlled below during a recording preview.</p>{/if}
         <div class="assignment-controls">{#each role.controls as control, controlIndex}
-          {#if role.origin !== 'synthetic'}<label>{control.id}<select aria-label={'Source control for ' + role.name + ' ' + control.id} bind:value={assignments[index].controls[controlIndex].sourceControl} disabled={busy}><option value="">Choose matching control</option>{#each (controls[assigned.source.id] ?? []).filter(c => compatibleControl(control.kind, c)) as native}<option value={native.capability.id}>{controlLabel(native)} · {native.capability.reportId}:{native.capability.dataIndex}</option>{/each}</select></label><button class="secondary-button" disabled={busy || learning || !assigned.source.id || role.origin !== 'host-controller'} onclick={()=>action(()=>learn(assigned.source.id,{roleIndex:index,controlIndex}))}>Learn {control.id}</button>
+          {#if role.origin !== 'synthetic'}<label>{control.id}<select aria-label={'Source control for ' + role.name + ' ' + control.id} bind:value={assignments[index].controls[controlIndex].sourceControl} disabled={busy}><option value="">Choose matching control</option>{#each (controls[sourceKey(assigned.source)] ?? []).filter(c => compatibleControl(control.kind, c)) as native}<option value={native.capability.id}>{controlLabel(native)} · {native.capability.reportId}:{native.capability.dataIndex}</option>{/each}</select></label><button class="secondary-button" disabled={busy || learning || !assigned.source.id || role.origin !== 'host-controller'} onclick={()=>action(()=>learn(assigned.source.id,{roleIndex:index,controlIndex}))}>Learn {control.id}</button>
           {:else if role.origin === 'synthetic' && status.running && status.profileId === profile.id}
             <div class="synthetic-control"><span>{control.id}</span>{#if control.kind.kind === 'button'}<button class="secondary-button" disabled={busy} onclick={() => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'button', value: true }))}>Press</button><button class="secondary-button" disabled={busy} onclick={() => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'button', value: false }))}>Release</button>
             {:else if control.kind.kind === 'axis'}<input aria-label={'Synthetic ' + control.id} type="range" min={control.kind.range === 'bipolar' ? -32768 : 0} max="32767" value="0" onchange={event => action(() => simulate(assigned, assigned.controls[controlIndex].sourceControl, { kind: 'axis', value: Number(event.currentTarget.value) }))} />

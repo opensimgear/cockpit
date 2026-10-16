@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-companion-client-request"
+description = "Enables the companion_client_request command without any pre-configured scope."
+commands.allow = ["companion_client_request"]
+
+[[permission]]
+identifier = "deny-companion-client-request"
+description = "Denies the companion_client_request command without any pre-configured scope."
+commands.deny = ["companion_client_request"]

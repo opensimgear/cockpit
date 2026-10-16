@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { validateAssets } from "../src/index.ts";
 import { newDocument, createDesignerHistory, applyDesignerCommand as apply, undoDesigner, redoDesigner, widgetPresets, validateDesignerDocument as validate, normalizeToPortableUi, migratePortableUi, flightTemplate, racingTemplate, compareDesignerPublications, publishDocument, importAsset, exportBundle, importBundle, imageDimensions, encodeBase64, decodeBase64, createLibrary, saveDraft, openDraft, duplicateDraft, deleteDraft, validateLibrary, DESIGNER_LIMITS as L } from "../src/index.ts";
 import { exampleUi } from "../../companion-contracts/src/index.ts";
 const clone = value => structuredClone(value);
@@ -7,6 +8,37 @@ const seed = () => newDocument("Test panel");
 const history = () => createDesignerHistory(seed());
 const first = doc => doc.presentation.widgets[0];
 function withKind(kind) { return apply(history(), { type: "add-widget", kind }).present; }
+
+test("capability identity uses portable ordinal ID order rather than locale collation", async () => {
+  let h = history(); h = apply(h, { type: "add-widget", kind: "button" });
+  const doc = h.present, oldIds = doc.ui.controls.map(control => control.id);
+  for (let i = 0; i < oldIds.length; i++) {
+    const replacement = i === 0 ? "input-Z" : "input-a";
+    doc.ui.controls[i].id = replacement;
+    doc.bindings.find(binding => binding.controlId === oldIds[i]).controlId = replacement;
+    doc.presentation.widgets[i].controlIds = [replacement];
+  }
+  doc.ui = normalizeToPortableUi(doc);
+  const previous = String.prototype.localeCompare;
+  String.prototype.localeCompare = () => { throw new Error("Locale sorting is not a protocol operation"); };
+  try {
+    const published = await publishDocument(doc, []);
+    const reversed = clone(doc); reversed.ui.controls.reverse(); reversed.bindings.reverse();
+    assert.equal((await publishDocument(reversed, [])).capabilityFingerprint, published.capabilityFingerprint);
+  } finally { String.prototype.localeCompare = previous; }
+});
+
+test("publication JSON preserves ECMAScript small-number and negative-zero canonical spelling", async () => {
+  const doc = withKind("slider");
+  const axis = doc.ui.controls.find(control => control.kind === "axis"); axis.fallback = 1e-7;
+  const widget = doc.presentation.widgets.find(widget => widget.kind === "slider"); widget.bounds.x = 1e-6; widget.bounds.y = -0;
+  doc.ui = normalizeToPortableUi(doc);
+  const publication = await publishDocument(doc, []);
+  const roundtrip = await importBundle(await exportBundle(doc, []));
+  assert.equal((await publishDocument(roundtrip.document, [])).publicationHash, publication.publicationHash);
+  assert.equal(Object.is(publication.document.presentation.widgets.find(widget => widget.kind === "slider").bounds.y, -0), false);
+  assert.equal(publication.document.ui.controls.find(control => control.kind === "axis").fallback, 1e-7);
+});
 
 test("representative flight/racing fixtures are stable, valid, normalized and portable", () => {
   for (const document of [flightTemplate, racingTemplate]) {
@@ -151,6 +183,21 @@ test("library save/reopen/duplicate/delete detaches state and remaps all binding
   assert.equal((await validateLibrary({ ...library, drafts: [library.drafts[0], library.drafts[0]] })).ok, false);
 });
 const png = () => Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), c => c.charCodeAt(0));
+test("the complete asset set must fit the decoded pixel budget before browser decode", async () => {
+  const bytes = png(), view = new DataView(bytes.buffer); view.setUint32(16, 4096); view.setUint32(20, 4096);
+  const sha256 = Buffer.from(await crypto.subtle.digest("SHA-256", bytes)).toString("hex");
+  const document = seed(), assets = [0, 1, 2].map(index => ({ assetId: `image-${index}`, base64: encodeBase64(bytes) }));
+  document.ui.assets = assets.map(({ assetId }) => ({ id: assetId, sizeBytes: bytes.length, sha256, mime: "image/png" }));
+  const oldDecode = globalThis.createImageBitmap; let decoded = 0, closed = 0;
+  globalThis.createImageBitmap = async () => { decoded++; return { width: 4096, height: 4096, close() { closed++; } }; };
+  try {
+    await assert.rejects(validateAssets(document, assets), /total decoded pixels/); assert.equal(decoded, 0);
+    document.ui.assets.pop();
+    assert.equal((await validateAssets(document, assets.slice(0, 2))).length, 2);
+    assert.equal(decoded, 2); assert.equal(closed, 2); assert.equal(L.totalAssetPixels, 2 * 4096 * 4096);
+  } finally { globalThis.createImageBitmap = oldDecode; }
+});
+
 test("image bundle import/export validates digest, MIME, bytes, dimensions and separate budgets", async () => {
   const imported = await importAsset(seed(), png(), "image/png");
   assert.equal(imported.width, 1); assert.equal(imported.height, 1);

@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub struct Router {
     panels: Option<crate::panels::Feed>,
+    companions: Option<crate::companions::Feed>,
     panel_sequences: BTreeMap<Source, (Counter, Counter)>,
     scripts: BTreeMap<String, osg_logic::worker::Worker>,
     pub learner: Option<crate::learn::Learn>,
@@ -122,6 +123,17 @@ impl Router {
         workers: BTreeMap<String, osg_logic::worker::Worker>,
         panels: Option<crate::panels::Feed>,
     ) -> Result<RunToken, String> {
+        self.start_with_sources(profile, assignments, snapshot, workers, panels, None)
+    }
+    pub(crate) fn start_with_sources(
+        &mut self,
+        profile: Profile,
+        assignments: Vec<Assignment>,
+        snapshot: stream::Snapshot,
+        workers: BTreeMap<String, osg_logic::worker::Worker>,
+        panels: Option<crate::panels::Feed>,
+        mut companions: Option<crate::companions::Prepared>,
+    ) -> Result<RunToken, String> {
         if workers.len() != profile.scripts.len()
             || profile.scripts.iter().any(|script| {
                 workers.get(&script.id).is_none_or(|worker| {
@@ -161,7 +173,16 @@ impl Router {
                     .iter()
                     .find(|c| c.id == binding.control)
                     .ok_or("Unknown role control.")?;
-                if assignment.source.origin != Origin::Synthetic {
+                if assignment.source.origin == Origin::Companion {
+                    if companions
+                        .as_ref()
+                        .and_then(|prepared| prepared.controls.get(&assignment.source))
+                        .and_then(|controls| controls.get(&binding.source_control))
+                        != Some(&control.kind)
+                    {
+                        return Err("Companion mapping requires its registered descriptor and owned producer feed.".into());
+                    }
+                } else if assignment.source.origin != Origin::Synthetic {
                     let source = snapshot
                         .sources
                         .iter()
@@ -189,6 +210,9 @@ impl Router {
         let mut baselines = Vec::new();
         let mut sequences = BTreeMap::new();
         for (source, controls) in &expected {
+            if source.origin == Origin::Companion {
+                continue;
+            }
             let (generation, sequence, changes) = if source.origin == Origin::Synthetic {
                 sequences.insert(source.clone(), 1);
                 (
@@ -244,11 +268,15 @@ impl Router {
                 changes,
             });
         }
+        if let Some(prepared) = &mut companions {
+            baselines.extend(prepared.feed.initial()?);
+        }
         let token = self.runtime.start(profile, assignments)?;
         if let Some(trace) = self.runtime.trace.trace.as_mut() {
             trace.metadata["nativeCapabilities"]=serde_json::json!(snapshot.sources.iter().map(|source|serde_json::json!({"id":source.id,"controls":source.controls,"generation":source.baseline.generation.to_string()})).collect::<Vec<_>>());
         }
         self.panels = panels;
+        self.companions = companions.map(|prepared| prepared.feed);
         self.panel_sequences = baselines
             .iter()
             .filter(|f| f.source.origin == Origin::OsgPanelEvents)
@@ -320,6 +348,7 @@ impl Router {
                 );
             }
             self.poll_panels(&token, page.captured_us)?;
+            self.poll_companions(&token);
             for event in page.events {
                 let source = Source {
                     origin: Origin::HostController,
@@ -402,6 +431,26 @@ impl Router {
             self.panel_sequences.insert(key, sequence);
         }
         Ok(())
+    }
+    fn poll_companions(&mut self, token: &RunToken) {
+        let frames = self
+            .companions
+            .as_mut()
+            .map_or_else(Vec::new, |feed| feed.drain());
+        for frame in frames {
+            // A bad peer must never stop unrelated physical, panel or companion producers.
+            let source = frame.source.clone();
+            if source.origin != Origin::Companion || !self.expected.contains_key(&source) {
+                continue;
+            }
+            self.now = self.now.max(frame.captured_us.0);
+            if let Err(error) = self.runtime.accept_for(token, frame) {
+                self.fault = Some(format!("Companion {}: {error}", source.id));
+                if let Some(feed) = &self.companions {
+                    feed.reject(&source.id);
+                }
+            }
+        }
     }
     pub fn simulate(
         &mut self,
@@ -530,6 +579,30 @@ impl Router {
         workers: BTreeMap<String, osg_logic::worker::Worker>,
         panels: Option<crate::panels::Feed>,
     ) -> Result<RunToken, String> {
+        self.start_live_sources(
+            profile,
+            assignments,
+            snapshot,
+            bindings,
+            factory,
+            path,
+            workers,
+            panels,
+            None,
+        )
+    }
+    pub(crate) fn start_live_sources(
+        &mut self,
+        profile: Profile,
+        assignments: Vec<Assignment>,
+        snapshot: stream::Snapshot,
+        bindings: Vec<osg_virtual_controller::vjoy::Binding>,
+        factory: osg_virtual_controller::session::Factory,
+        path: Option<std::path::PathBuf>,
+        workers: BTreeMap<String, osg_logic::worker::Worker>,
+        panels: Option<crate::panels::Feed>,
+        companions: Option<crate::companions::Prepared>,
+    ) -> Result<RunToken, String> {
         if self.runtime.token().is_ok()
             || self.output.as_ref().is_some_and(|o| o.recovery_required())
         {
@@ -545,7 +618,14 @@ impl Router {
         }
         crate::settings::validate_bindings(&profile, &bindings)?;
         let mut candidate = Router::default();
-        let token = candidate.start_with_panels(profile, assignments, snapshot, workers, panels)?;
+        let token = candidate.start_with_sources(
+            profile,
+            assignments,
+            snapshot,
+            workers,
+            panels,
+            companions,
+        )?;
         let cursor = self.runtime.recording.cursor();
         // Acquire and confirm every target before replacing the stopped workspace.
         let output = osg_virtual_controller::session::Session::start_with_journal(
@@ -612,6 +692,7 @@ impl Router {
             self.runtime.stop();
             self.scripts.clear();
             self.panels = None;
+            self.companions = None;
             self.visibility = None;
             self.fault = Some(error.clone());
             return Err(error);
@@ -652,6 +733,7 @@ impl Router {
     pub fn stop_result(&mut self) -> Result<(), String> {
         self.learner = None;
         self.panels = None;
+        self.companions = None;
         self.runtime.stop();
         self.scripts.clear();
         let mut failure = None;

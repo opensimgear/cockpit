@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+osg-companion-service = { path = "../crates/companion-service" }
 osg-mapping-host = { path = "../crates/mapping-host" }
 osg-virtual-controller = { path = "../crates/virtual-controller" }
 osg-mapping = { path = "../crates/mapping" }

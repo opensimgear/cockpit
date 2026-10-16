@@ -223,7 +223,14 @@ impl Service {
     fn capture_sources(
         &self,
         capture: &Capture,
-    ) -> Result<(stream::Snapshot, Option<crate::panels::Feed>), String> {
+    ) -> Result<
+        (
+            stream::Snapshot,
+            Option<crate::panels::Feed>,
+            Option<crate::companions::Prepared>,
+        ),
+        String,
+    > {
         let ids = capture
             .assignments
             .iter()
@@ -257,7 +264,8 @@ impl Service {
         } else {
             None
         };
-        Ok((snapshot, panels))
+        let companions = self.prepare_companions(&capture.profile, &capture.assignments)?;
+        Ok((snapshot, panels, companions))
     }
     fn start_capture(
         &self,
@@ -284,7 +292,7 @@ impl Service {
             cancelled()?;
             workers.insert(script.id.clone(), (self.script_factory)(&script.source)?);
         }
-        let (mut snapshot, mut panels) = self.capture_sources(&capture)?;
+        let (mut snapshot, mut panels, mut companions) = self.capture_sources(&capture)?;
         let mut candidate = Router::default();
         if let Some(owner) = owner {
             candidate.runtime = osg_mapping::runtime::Runtime::owned_session(owner)?;
@@ -336,15 +344,17 @@ impl Service {
                 std::thread::sleep(Duration::from_millis(5));
             }
             drop(panels.take());
-            (snapshot, panels) = self.capture_sources(&capture)?;
+            drop(companions.take());
+            (snapshot, panels, companions) = self.capture_sources(&capture)?;
         }
         cancelled()?;
-        candidate.start_with_panels(
+        candidate.start_with_sources(
             capture.profile,
             capture.assignments,
             snapshot,
             workers,
             panels,
+            companions,
         )?;
         let mut lease = self.game_lease.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(owner) = owner {

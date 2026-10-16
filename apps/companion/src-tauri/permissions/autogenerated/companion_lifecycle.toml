@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-companion-lifecycle"
+description = "Enables the companion_lifecycle command without any pre-configured scope."
+commands.allow = ["companion_lifecycle"]
+
+[[permission]]
+identifier = "deny-companion-lifecycle"
+description = "Denies the companion_lifecycle command without any pre-configured scope."
+commands.deny = ["companion_lifecycle"]

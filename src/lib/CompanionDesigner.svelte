@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import CompanionConnections from './CompanionConnections.svelte';
   import {
     newDocument, createDesignerHistory, applyDesignerCommand, undoDesigner, redoDesigner,
     widgetPresets, createLibrary, saveDraft, duplicateDraft, openDraft, deleteDraft,
-    importAsset, exportBundle, importBundle, publishDocument, compareDesignerPublications,
+    importAsset, validateAssets, exportBundle, importBundle, publishDocument, compareDesignerPublications,
     flightTemplate, racingTemplate,
     type DesignerDocument, type DesignerHistory, type DesignerWidget, type AssetPayload,
     type Publication, type Bounds,
@@ -104,7 +105,9 @@
     await operation(async () => {
       if (file.size > 2 * 1024 * 1024) throw new Error('Each image must be at most 2 MiB');
       const result = await importAsset(document, new Uint8Array(await file.arrayBuffer()), file.type as 'image/png' | 'image/jpeg' | 'image/webp');
-      command({ type: 'replace', document: result.document }); assets = [...assets.filter(a => a.assetId !== result.asset.assetId), result.asset]; message = `Image added (${result.width} × ${result.height})`;
+      const nextAssets = [...assets.filter(a => a.assetId !== result.asset.assetId), result.asset];
+      await validateAssets(result.document, nextAssets.filter(payload => result.document.ui.assets.some(asset => asset.id === payload.assetId)));
+      command({ type: 'replace', document: result.document }); assets = nextAssets; message = `Image added (${result.width} × ${result.height})`;
     });
   }
   async function publish() {
@@ -158,6 +161,7 @@
   <header><div><h2>Companion panels</h2><p>Design portable panels for phones, tablets and another PC.</p></div><span class="badge">Local designer · output disabled</span></header>
   {#if error}<p role="alert" class="error">{error}</p>{/if}
   {#if message}<p role="status" class="message">{message}</p>{/if}
+  <CompanionConnections publications={Object.values(publications).flat()} />
   <div inert={busy}>
   <div class="toolbar">
     <button onclick={create}>New panel</button>

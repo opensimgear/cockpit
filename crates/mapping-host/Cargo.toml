@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
 [dependencies]
+osg-companion-service = { path = "../companion-service" }
 osg-logic = { path = "../logic" }
 osg-mapping = { path = "../mapping" }
 osg-controller-input = { path = "../controller-input" }

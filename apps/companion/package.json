@@ -11,7 +11,7 @@
     "ui:dev": "vite --host 127.0.0.1",
     "ui:build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "pnpm --filter @opensimgear/companion-ui test"
+    "test": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/input-queue.test.mjs"
   },
   "dependencies": {
     "@opensimgear/companion-contracts": "workspace:*",

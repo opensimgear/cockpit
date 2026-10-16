@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { oneToOneProfile, operationPreset, builtins, draftDocument, capturedKind, compatibleControl, directProfile, importMapping, savedAssignments } from './mappings.ts';
+import { migrateMappingSchema, oneToOneProfile, operationPreset, builtins, draftDocument, capturedKind, compatibleControl, directProfile, importMapping, savedAssignments } from './mappings.ts';
 const native = (kind, min = 0) => ({ capability: { kind, min } });
 test('direct mappings retain provenance and never request optional integrations', () => {
   for (const kind of [{ kind: 'button' }, { kind: 'hat' }, { kind: 'axis', range: 'bipolar' }, { kind: 'axis', range: 'unipolar' }]) {
@@ -95,3 +95,21 @@ test('draft validation performs no profile write or run activation',async()=>{
 });
 
 test('panel mappings retain explicit provenance and exclude hats',()=>{const source={origin:'osg-panel-events',id:'panel-events:gateway/module'};for(const kind of [{kind:'button'},{kind:'axis',range:'unipolar'}]){const result=directProfile('Panel',kind,source,'button:0');assert.equal(result.profile.roles[0].origin,source.origin);assert.deepEqual(result.assignments[0].source,source);}});
+
+
+test('companion mappings use a dedicated origin and explicit versioned migration', () => {
+  const source = { origin: 'companion', id: 'retained-instance' };
+  const { profile, assignments } = directProfile('Remote panel', { kind: 'button' }, source, 'stable-button');
+  assert.equal(profile.schema, 2);
+  assert.equal(profile.roles[0].origin, 'companion');
+  assert.deepEqual(assignments[0].source, source);
+  assert.equal(draftDocument(JSON.stringify(profile), profile.id).schema, 2);
+  const invalidLegacy = { ...profile, schema: 1 };
+  assert.throws(() => draftDocument(JSON.stringify(invalidLegacy), profile.id), /schema 2/);
+  const legacy = directProfile('Legacy', { kind: 'button' }, { origin: 'host-controller', id: 'native' }, 'c').profile;
+  const before = structuredClone(legacy), migrated = migrateMappingSchema(legacy);
+  assert.equal(legacy.schema, 1); assert.deepEqual(legacy, before);
+  assert.equal(migrated.schema, 2); assert.equal(migrated.roles[0].origin, 'host-controller');
+  assert.notEqual(migrated.roles, legacy.roles);
+  assert.throws(() => migrateMappingSchema({ ...legacy, schema: 9 }));
+});

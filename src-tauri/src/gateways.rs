@@ -108,6 +108,7 @@ pub struct GatewayManager {
     controllers: Arc<osg_controller_input::ControllerService>,
     mapping_host: Arc<osg_mapping_host::service::Service>,
     mapping_documents: osg_mapping::documents::Documents,
+    companion_host: crate::companion_host::Runtime,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -133,6 +134,15 @@ impl GatewayManager {
             root,
             Arc::new(osg_virtual_controller::inspection::current),
         ));
+        let companion_clock = controllers.clone();
+        let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::new(
+            Arc::new(move || companion_clock.stream_page("", 0).captured_us),
+        ));
+        mapping_host.set_companion_provider(companion_provider.clone());
+        let companion_host = crate::companion_host::Runtime::new(
+            native.then(|| crate::dcs_runtime::config_path().with_file_name("companions")),
+            companion_provider,
+        );
         let sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let targets = sessions.clone();
@@ -225,6 +235,7 @@ impl GatewayManager {
             controllers,
             mapping_host,
             mapping_documents,
+            companion_host,
         };
         manager.attach_panel_capture();
         manager
@@ -338,6 +349,12 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if command.starts_with("companion_") {
+            return match self.companion_host.request(&request) {
+                Ok(state) => json!({"ok":true,"state":{"companions":state}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
+            };
+        }
         if command.starts_with("game_") {
             if matches!(command.as_str(), "game_activate" | "game_launch")
                 && (self.mapping_host.provisioning_active() || self.controllers.visibility_active())
@@ -557,6 +574,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.companion_host.shutdown();
         self.games.shutdown();
         self.mapping_host.shutdown();
         self.controllers.shutdown();

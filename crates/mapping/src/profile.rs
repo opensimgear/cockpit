@@ -9,6 +9,7 @@ pub const MAX_NODES: usize = 256;
 pub enum Origin {
     HostController,
     OsgPanelEvents,
+    Companion,
     Synthetic,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -230,7 +231,7 @@ impl Profile {
         serde_json::to_vec(self).map_err(|e| e.to_string())
     }
     pub fn compile(&self) -> Result<Compiled, String> {
-        if self.schema != 1
+        if ![1, 2].contains(&self.schema)
             || uuid::Uuid::parse_str(&self.id)
                 .map(|id| id.to_string())
                 .ok()
@@ -252,6 +253,14 @@ impl Profile {
             || self.scripts.len() > 16
         {
             return Err("A mapping needs 1–16 roles, 1–8 targets and 1–256 nodes.".into());
+        }
+        if self.schema == 1
+            && self
+                .roles
+                .iter()
+                .any(|role| role.origin == Origin::Companion)
+        {
+            return Err("Companion roles require explicit mapping schema 2; legacy documents are not reinterpreted.".into());
         }
         let mut roles = BTreeMap::new();
         for role in &self.roles {

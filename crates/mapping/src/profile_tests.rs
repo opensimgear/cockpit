@@ -18,7 +18,7 @@ fn portable_round_trip_bounds_and_strict_json() {
     let text = String::from_utf8(profile.export().unwrap()).unwrap();
     for invalid in [
         text.replacen("\"schema\":1", "\"schema\":1,\"schema\":1", 1),
-        text.replacen("\"schema\":1", "\"schema\":2", 1),
+        text.replacen("\"schema\":1", "\"schema\":3", 1),
         text.replacen("\"schema\":1", "\"schema\":1,\"enableOutput\":true", 1),
         text.replacen("\"kind\":\"source\"", "\"kind\":\"virtual-output\"", 1),
         "[]".into(),
@@ -249,4 +249,23 @@ fn visibility_intent_never_contains_local_process_paths() {
         17
     ];
     assert!(p.compile().is_err());
+}
+
+#[test]
+fn companion_origin_requires_explicit_schema_two_without_rewriting_legacy_documents() {
+    let legacy = profile();
+    let legacy_bytes = legacy.export().unwrap();
+    assert_eq!(Profile::parse(&legacy_bytes).unwrap().schema, 1);
+    let mut companion = legacy.clone();
+    companion.roles[0].origin = Origin::Companion;
+    assert!(companion.compile().unwrap_err().contains("schema 2"));
+    companion.schema = 2;
+    assert!(companion.compile().is_ok());
+    let modern = Profile::parse(&companion.export().unwrap()).unwrap();
+    assert_eq!(modern.schema, 2);
+    assert_eq!(modern.roles[0].origin, Origin::Companion);
+    assert_eq!(legacy.export().unwrap(), legacy_bytes);
+    let mut invalid = modern;
+    invalid.schema = 3;
+    assert!(invalid.compile().is_err());
 }

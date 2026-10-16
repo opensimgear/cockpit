@@ -17,7 +17,7 @@
     "web:build": "vite build",
     "native:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "companion:check": "pnpm --filter @opensimgear/companion-contracts check && pnpm --filter @opensimgear/companion-designer check && pnpm --filter @opensimgear/companion-ui check && pnpm --filter @opensimgear/companion check",
-    "companion:test": "pnpm --filter @opensimgear/companion-contracts coverage && pnpm --filter @opensimgear/companion-designer coverage && pnpm --filter @opensimgear/companion-ui coverage && node --experimental-test-coverage --test-coverage-include=src/lib/companion-library.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/companion-library.test.mjs",
+    "companion:test": "pnpm --filter @opensimgear/companion-contracts coverage && pnpm --filter @opensimgear/companion-designer coverage && pnpm --filter @opensimgear/companion-ui coverage && node --experimental-test-coverage --test-coverage-include=src/lib/companion-library.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/companion-library.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/companions.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/companions.test.mjs && pnpm --filter @opensimgear/companion test",
     "companion:ui:dev": "pnpm --filter @opensimgear/companion ui:dev",
     "companion:ui:build": "pnpm --filter @opensimgear/companion ui:build",
     "companion:dev": "pnpm --filter @opensimgear/companion dev",

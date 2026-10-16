@@ -1,7 +1,7 @@
 [package]
 name = "osg-companion"
 version = "0.1.0"
-description = "OpenSimGear portable panel companion feasibility app"
+description = "OpenSimGear paired portable controller panel companion"
 authors = ["OpenSimGear"]
 edition = "2021"
 rust-version = "1.90"
@@ -16,6 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+osg-companion-service = { path = "../../../crates/companion-service" }
+serde_json = "1"
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 

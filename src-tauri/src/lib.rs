@@ -1,5 +1,6 @@
 mod acr_setup;
 mod acr_windows;
+mod companion_host;
 mod actions;
 pub mod dcs_bios;
 mod dcs_profile;

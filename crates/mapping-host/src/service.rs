@@ -47,6 +47,7 @@ pub struct Service {
     router: Arc<Mutex<Router>>,
     capture: Arc<ControllerService>,
     panels: Mutex<Option<Arc<dyn crate::panels::Provider>>>,
+    companions: Mutex<Option<Arc<crate::companions::CompanionProvider>>>,
     root: Option<PathBuf>,
     inspector: Inspector,
     output_factory: osg_virtual_controller::session::Factory,
@@ -125,6 +126,7 @@ impl Service {
             #[cfg(windows)]
             provisioning: Mutex::new(osg_virtual_controller::windows_jobs::Manager::default()),
             panels: Mutex::new(None),
+            companions: Mutex::new(None),
             settings: Mutex::new(settings),
             router,
             capture,
@@ -158,6 +160,32 @@ impl Service {
             .unwrap_or_else(|p| p.into_inner())
             .clone()
             .ok_or("Panel event capture is unavailable.".into())
+    }
+    pub fn set_companion_provider(&self, provider: Arc<crate::companions::CompanionProvider>) {
+        *self.companions.lock().unwrap_or_else(|p| p.into_inner()) = Some(provider);
+    }
+    fn companion_provider(&self) -> Result<Arc<crate::companions::CompanionProvider>, String> {
+        self.companions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .ok_or("Companion input service is unavailable.".into())
+    }
+    fn prepare_companions(
+        &self,
+        profile: &osg_mapping::profile::Profile,
+        assignments: &[Assignment],
+    ) -> Result<Option<crate::companions::Prepared>, String> {
+        if assignments
+            .iter()
+            .any(|a| a.source.origin == Origin::Companion)
+        {
+            Ok(Some(
+                self.companion_provider()?.prepare(profile, assignments)?,
+            ))
+        } else {
+            Ok(None)
+        }
     }
     fn recovery_path(&self) -> Result<PathBuf, String> {
         self.root
@@ -209,6 +237,8 @@ impl Service {
             "mapping_capture"
                 | "mapping_panel_sources"
                 | "mapping_panel_inspect"
+                | "mapping_companion_sources"
+                | "mapping_companion_inspect"
                 | "mapping_script_validate"
                 | "mapping_trace_export"
                 | "mapping_status"
@@ -260,6 +290,15 @@ impl Service {
                 )
                 .map(|capture| json!({"capture":capture})),
             "mapping_panel_sources" => self.panel_provider()?.list(),
+            "mapping_companion_sources" => self.companion_provider().map_or_else(
+                |_| Ok(json!({"companionSources":[]})),
+                |provider| provider.list(),
+            ),
+            "mapping_companion_inspect" => self.companion_provider()?.inspect(
+                request["sourceId"]
+                    .as_str()
+                    .ok_or("Choose a companion source.")?,
+            ),
             "mapping_panel_inspect" => self.panel_provider()?.inspect(
                 request["sourceId"]
                     .as_str()
@@ -547,6 +586,7 @@ impl Service {
                 } else {
                     None
                 };
+                let companions = self.prepare_companions(&profile, &assignments)?;
                 let mut router = self.router.lock().unwrap_or_else(|p| p.into_inner());
                 if self.stop.load(Ordering::Acquire) {
                     return Err("Mapping service has stopped.".into());
@@ -566,7 +606,7 @@ impl Service {
                         .cloned()
                         .ok_or("Assign a local slot to every target before Start.")?;
                     drop(settings);
-                    router.start_live_prepared(
+                    router.start_live_sources(
                         profile,
                         assignments,
                         snapshot,
@@ -575,9 +615,17 @@ impl Service {
                         Some(self.recovery_path()?),
                         workers,
                         panels,
+                        companions,
                     )?
                 } else {
-                    router.start_with_panels(profile, assignments, snapshot, workers, panels)?
+                    router.start_with_sources(
+                        profile,
+                        assignments,
+                        snapshot,
+                        workers,
+                        panels,
+                        companions,
+                    )?
                 };
                 Ok(json!({"token":token,"preview":router.status()}))
             }

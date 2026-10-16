@@ -32,7 +32,7 @@ fn saving_and_failed_replacement_do_not_activate_or_disrupt_a_run() {
     let token = runtime.engine().unwrap().token("left-trigger").unwrap();
     let cursor = runtime.recording.cursor();
     let mut invalid = profile();
-    invalid.schema = 2;
+    invalid.schema = 3;
     assert!(runtime.start(invalid, assignments()).is_err());
     assert_eq!(runtime.recording.cursor(), cursor);
     assert!(runtime.engine().unwrap().ready());
