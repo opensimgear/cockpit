@@ -32,4 +32,6 @@ src-tauri/gen/
 apps/companion/src-tauri/gen/
 src-tauri/resources/firmware/*.uf2
 
+src-tauri/resources/firmware/*/manifest.json
+
 /apps/browser-companion/dist/

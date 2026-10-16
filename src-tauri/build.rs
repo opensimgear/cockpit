@@ -1,7 +1,49 @@
 fn main() {
+    let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let files = ["bootloader.bin", "partition-table.bin", "application.bin"];
+    let header=root.join("../apps/companion-esp32/network/firmware.h");
+    println!("cargo:rerun-if-changed={}",header.display());
+    let source=std::fs::read_to_string(header).unwrap();
+    let version=source.lines().find_map(|line|line.strip_prefix("#define OSG_FIRMWARE_VERSION ")).unwrap();
+    let mut generated=format!("pub const ESP32_FIRMWARE_VERSION: &str = {version};\n");
+    for (profile,symbol,boot) in [("waveshare-lcd7-s3","WAVESHARE_FIRMWARE",0),("sunton-3248s035r","SUNTON_FIRMWARE",0x1000)] {
+        let board=root.join("resources/firmware").join(profile);
+        println!("cargo:rerun-if-changed={}",board.display());
+        let entries=if files.iter().all(|f|board.join(f).is_file()) {
+            files.iter().zip([boot,0x8000,0x10000]).map(|(file,offset)|format!("osg_companion_serial::FirmwareSegment{{offset:{offset},bytes:include_bytes!({:?})}}",board.join(file))).collect::<Vec<_>>().join(",")
+        }else{String::new()};
+        generated.push_str(&format!("pub static {symbol}: &[osg_companion_serial::FirmwareSegment] = &[{entries}];\n"));
+    }
+    std::fs::write(std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("companion_firmware.rs"),generated).unwrap();
+
+    let browser = root.join("../apps/browser-companion/dist");
+    println!("cargo:rerun-if-changed={}", browser.display());
+    let mut entries = Vec::new();
+    fn collect(directory: &std::path::Path, root: &std::path::Path, entries: &mut Vec<String>) {
+        if !directory.is_dir() { return; }
+        let mut files = std::fs::read_dir(directory).unwrap().map(|v|v.unwrap().path()).collect::<Vec<_>>();
+        files.sort();
+        for path in files {
+            if path.is_dir() { collect(&path, root, entries); continue; }
+            let relative = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+            let route = if relative=="index.html" { "/".to_string() } else { format!("/{relative}") };
+            let mime = match path.extension().and_then(|e|e.to_str()).unwrap_or("") {
+                "html"=>"text/html; charset=utf-8", "js"=>"text/javascript; charset=utf-8",
+                "css"=>"text/css; charset=utf-8", "webmanifest"=>"application/manifest+json",
+                "png"=>"image/png", _=>"application/octet-stream",
+            };
+            entries.push(format!("osg_companion_service::browser::BrowserAsset{{path:{route:?},mime:{mime:?},bytes:include_bytes!({path:?})}}"));
+        }
+    }
+    collect(&browser, &browser, &mut entries);
+    std::fs::write(std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("companion_browser.rs"),
+        format!("static BROWSER_ASSETS: &[osg_companion_service::browser::BrowserAsset] = &[{}];", entries.join(","))).unwrap();
+
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "gateway_request",
+            "open_companion_browser",
+            "export_companion_certificate",
             "optional_dependencies",
             "optional_dependency_install",
             "pick_game_executable",

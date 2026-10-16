@@ -6,9 +6,14 @@ use serde_json::{json, Value};
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
+
+include!(concat!(env!("OUT_DIR"), "/companion_firmware.rs"));
+
+include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
 
 const MAX_UPLOAD: usize = 13 * 1024 * 1024;
 struct Upload {
@@ -21,9 +26,15 @@ struct Upload {
 struct Services {
     hub: Hub,
     server: ServerRuntime,
+    usb: osg_companion_serial::Manager,
+    usb_setup: Mutex<()>,
+    directory: PathBuf,
+    saved_listener: Mutex<Option<ServerConfig>>,
+    panel_cache: Mutex<()>,
 }
 pub struct Runtime {
     path: Option<PathBuf>,
+    stopped: AtomicBool,
     provider: Arc<CompanionProvider>,
     services: OnceLock<Result<Services, String>>,
     upload: Mutex<Option<Upload>>,
@@ -35,10 +46,38 @@ impl Runtime {
         // captured-game recovery initialize the same retained state on demand.
         Self {
             path,
+            stopped: AtomicBool::new(false),
             provider,
             services: OnceLock::new(),
             upload: Mutex::new(None),
         }
+    }
+    pub fn start_detection(self: &Arc<Self>) {
+        let owner = Arc::downgrade(self);
+        std::thread::spawn(move || loop {
+            let Some(runtime) = owner.upgrade() else {
+                break;
+            };
+            if runtime.stopped.load(Ordering::SeqCst) {
+                break;
+            }
+            // Do not initialize protected storage for first-time users.
+            if runtime.services.get().is_some()
+                || runtime
+                    .path
+                    .as_ref()
+                    .is_some_and(|p| p.join("companion-host-state.dpapi").is_file())
+            {
+                if let Ok(services) = runtime.services() {
+                    if crate::companion_panels::ready(&services.hub).unwrap_or(false) {
+                        Self::start_saved_listener(services);
+                        let _ = services.usb.reconnect_detected(&services.hub);
+                    }
+                }
+            }
+            drop(runtime);
+            std::thread::sleep(Duration::from_secs(2));
+        });
     }
     fn services(&self) -> Result<&Services, String> {
         self.services
@@ -58,11 +97,36 @@ impl Runtime {
                             .join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())),
                     )
                 };
-                let server = ServerRuntime::new(hub.clone(), directory)?;
-                Ok(Services { hub, server })
+                crate::companion_panels::restore(&hub,&directory)?;
+                let server = ServerRuntime::with_browser(hub.clone(), directory.clone(), BROWSER_ASSETS)?;
+                let saved_listener=match std::fs::read(directory.join("companion-listener.json")){
+                    Ok(bytes)=>match serde_json::from_slice::<ServerConfig>(&bytes){
+                        Ok(config)=>Some(config),
+                        Err(error)=>{server.record_error(format!("Saved companion listener settings are invalid: {error}"));None}
+                    },
+                    Err(_)=>None,
+                };
+                let services=Services {
+                    hub, server, directory,
+                    saved_listener:Mutex::new(saved_listener),
+                    panel_cache:Mutex::new(()),
+                    usb: osg_companion_serial::Manager::default(),
+                    usb_setup: Mutex::new(()),
+                };
+                Self::start_saved_listener(&services);
+                Ok(services)
             })
             .as_ref()
             .map_err(Clone::clone)
+    }
+    fn start_saved_listener(services:&Services){
+        if !crate::companion_panels::ready(&services.hub).unwrap_or(false){return;}
+        if services.server.status().enabled{return;}
+        if let Some(config)=services.saved_listener.lock().unwrap_or_else(|p|p.into_inner()).clone(){
+            if let Err(error)=services.server.start(config){
+                services.server.record_error(format!("Saved companion listener could not start: {error}"));
+            }
+        }
     }
     fn status(&self, services: &Services) -> Result<Value, String> {
         let interfaces: Vec<String> = osg_companion_service::server::local_interfaces()
@@ -75,8 +139,21 @@ impl Runtime {
                 })
             })
             .unwrap_or_default();
+        let firmware_path=services.directory.join("companion-firmware.json");
+        let mut firmware:Value=std::fs::read(&firmware_path).ok().filter(|b|b.len()<65536).and_then(|b|serde_json::from_slice(&b).ok()).filter(Value::is_object).unwrap_or(json!({}));
+        let host=services.hub.command(&json!({"command":"companion_status"}))?;
+        for usb in services.usb.statuses(){
+        if let Some(id)=usb["device"]["companionId"].as_str().filter(|id|host["clients"].as_array().is_some_and(|rows|rows.iter().any(|c|c["companionId"]==*id))){
+            let info=json!({"version":usb["device"]["firmwareVersion"].as_str().unwrap_or("unknown"),"profile":usb["device"]["boardProfile"].as_str().or_else(||firmware[id]["profile"].as_str())});
+            if firmware[id]!=info{firmware[id]=info;std::fs::write(&firmware_path,serde_json::to_vec(&firmware).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;}
+        }
+        }
+        let mut listener=serde_json::to_value(services.server.status()).map_err(|e|e.to_string())?;
+        let config=services.saved_listener.lock().unwrap_or_else(|p|p.into_inner()).clone();
+        listener["configuredEnabled"]=json!(config.is_some());
+        listener["config"]=json!(config);
         Ok(
-            json!({"host":services.hub.command(&json!({"command":"companion_status"}))?, "listener":services.server.status(), "interfaces":interfaces}),
+            json!({"firmware":firmware,"firmwareVersion":ESP32_FIRMWARE_VERSION,"host":services.hub.command(&json!({"command":"companion_status"}))?, "listener":listener,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()}),
         )
     }
     pub(crate) fn hub(&self) -> Result<Hub, String> {
@@ -195,13 +272,161 @@ impl Runtime {
                 }
                 object.insert("command".into(), json!("companion_publish"));
                 let services = self.services()?;
+                let _cache=services.panel_cache.lock().unwrap_or_else(|p|p.into_inner());
                 services.hub.command(&value)?;
+                crate::companion_panels::save(&services.hub,&services.directory)?;
+                Self::start_saved_listener(services);
                 return self.status(services);
             }
             _ => {}
         }
         let services = self.services()?;
         match command {
+            "companion_usb_ports" => Ok(
+                json!({"usbPorts":services.usb.pairing_ports(&services.hub,payload["companionId"].as_str())?,"usb":services.usb.status(),"firmwareProfiles":[{"id":"waveshare-lcd7-s3","name":"Waveshare ESP32-S3 Touch LCD 7 · Rev 1.2 · 800×480","available":!WAVESHARE_FIRMWARE.is_empty()},{"id":"sunton-3248s035r","name":"Sunton/GUITION ESP32-3248S035R · resistive · 480×320","available":!SUNTON_FIRMWARE.is_empty()}]}),
+            ),
+            "companion_usb_update_prepare" => {
+                let _setup=services.usb_setup.lock().unwrap_or_else(|p|p.into_inner());
+                let id=payload["companionId"].as_str().ok_or("Choose a paired companion.")?;
+                let clients=services.hub.command(&json!({"command":"companion_status"}))?;
+                if !clients["clients"].as_array().is_some_and(|rows|rows.iter().any(|c|c["companionId"]==id && c["kind"]=="esp32")){return Err("Choose a paired ESP32 companion.".into());}
+                let ports=services.usb.pairing_ports(&services.hub,Some(id))?;
+                if ports.as_array().is_none_or(|rows|rows.len()!=1){return Err("Connect only this paired companion by USB, then try again.".into());}
+                let metadata=std::fs::read(services.directory.join("companion-firmware.json")).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok()).unwrap_or(json!({}));
+                if !matches!(metadata[id]["profile"].as_str(),Some("sunton-3248s035r"|"waveshare-lcd7-s3")){return Err("This legacy companion has no saved board profile. Identify its board before updating firmware.".into());}
+                services.usb.release_port(ports[0]["port"].as_str().ok_or("USB port is unavailable.")?);
+                Ok(json!({"usbPorts":ports,"usb":services.usb.status()}))
+            }
+            "companion_usb_flash" => {
+                let _setup = services.usb_setup.lock().unwrap_or_else(|p| p.into_inner());
+                let (firmware,target)=match payload["profile"].as_str() {
+                    Some("waveshare-lcd7-s3")=>(WAVESHARE_FIRMWARE,osg_companion_serial::FirmwareTarget::Esp32s3),
+                    Some("sunton-3248s035r")=>(SUNTON_FIRMWARE,osg_companion_serial::FirmwareTarget::Esp32),
+                    _=>return Err("Choose a supported board profile.".into()),
+                };
+                let port = payload["port"].as_str().ok_or("Choose a USB device.")?;
+                let update=payload["companionId"].as_str();
+                if let Some(id)=update{
+                    let metadata=std::fs::read(services.directory.join("companion-firmware.json")).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok()).unwrap_or(json!({}));
+                    if metadata[id]["profile"].as_str().is_some_and(|profile|Some(profile)!=payload["profile"].as_str()){return Err("The firmware profile does not match this companion.".into());}
+                }
+                if !match update {Some(id)=>services.usb.update_candidate_available(port,id)?,None=>services.usb.flash_candidate_available(port)?}
+                {
+                    return Err("The USB selection changed or firmware detection is still in progress. Refresh devices and select this USB port again.".into());
+                }
+                services.usb.flash_options_preserving(
+                    payload["port"].as_str().ok_or("Choose a USB device.")?,
+                    firmware, target, true, update.is_some(),
+                )?;
+                Ok(json!({"usb":services.usb.status()}))
+            }
+            "companion_usb_status" => Ok(json!({"usb":services.usb.status()})),
+            "companion_usb_connect" => {
+                let port = payload["port"].as_str().ok_or("Select a USB device.")?;
+                services.usb.attach(port, services.hub.clone())?;
+                Ok(json!({"usb":services.usb.status()}))
+            }
+            "companion_usb_disconnect" => {
+                services.usb.release();
+                Ok(json!({"usb":services.usb.status()}))
+            }
+            "companion_usb_scan" => {
+                services.usb.scan()?;
+                Ok(json!({"usb":services.usb.status()}))
+            }
+            "companion_usb_arm" => {
+                services.usb.arm()?;
+                Ok(json!({"usb":services.usb.status()}))
+            }
+            "companion_usb_disarm" | "companion_usb_forget" | "companion_usb_reconnect" => {
+                let op = match command {
+                    "companion_usb_disarm" => "disarm",
+                    "companion_usb_forget" => "forget",
+                    _ => "connect",
+                };
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "System clock is invalid.")?
+                    .as_millis() as u64;
+                services.usb.record(json!({"command":op,"unixMs":ms}))?;
+                Ok(json!({"usb":services.usb.status()}))
+            }
+            "companion_usb_provision" => {
+                let _setup = services.usb_setup.lock().unwrap_or_else(|p| p.into_inner());
+                if services.usb.status()["provisioning"] == true {
+                    return Err("Device setup is already running.".into());
+                }
+                if services.usb.status()["ready"] != true {
+                    return Err("Wait for the USB device to be ready.".into());
+                }
+                let name = payload["name"]
+                    .as_str()
+                    .filter(|s| !s.is_empty() && s.len() <= 80)
+                    .ok_or("Enter a device name.")?;
+                let mode = payload["mode"]
+                    .as_str()
+                    .filter(|s| *s == "wifi" || *s == "serial")
+                    .ok_or("Choose Wi-Fi or direct USB.")?;
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "System clock is invalid.")?
+                    .as_millis() as u64;
+                let offer = services
+                    .hub
+                    .command(&json!({"command":"companion_pair_offer","kind":"esp32"}))?;
+                let status = services.usb.status();
+                let host = services
+                    .hub
+                    .command(&json!({"command":"companion_status"}))?;
+                let existing = status["device"]["companionId"].as_str().filter(|id| {
+                    host["clients"]
+                        .as_array()
+                        .is_some_and(|rows| rows.iter().any(|c| c["companionId"] == *id))
+                });
+                let id = if let Some(selected) = payload["companionId"].as_str() {
+                    if existing != Some(selected) {
+                        return Err("Connect the selected paired screen before changing its connection settings.".into());
+                    }
+                    selected.to_owned()
+                } else {
+                    if existing.is_some() {
+                        return Err(
+                            "This screen is already paired. Open its settings instead.".into()
+                        );
+                    }
+                    uuid::Uuid::new_v4().to_string()
+                };
+
+                let mut record = if mode == "wifi" {
+                    let ssid = payload["ssid"]
+                        .as_str()
+                        .filter(|s| !s.is_empty() && s.len() <= 32)
+                        .ok_or("Choose a Wi-Fi network.")?;
+                    let password = payload["password"]
+                        .as_str()
+                        .filter(|s| s.len() <= 64)
+                        .ok_or("Enter the Wi-Fi password.")?;
+                    let pair = services.server.pairing_payload(
+                        offer["secret"].as_str().ok_or("Missing offer.")?,
+                        offer["expiresAtMs"]
+                            .as_u64()
+                            .ok_or("Missing offer expiry.")?,
+                    )?;
+                    json!({"command":"provision","ssid":ssid,"password":password,"keepWifiPassword":payload["keepWifiPassword"]==true,"pairing":pair,"unixMs":ms,"persist":true})
+                } else {
+                    json!({"command":"provision-direct","hostId":offer["hostId"],"secret":offer["secret"]})
+                };
+                record["name"] = json!(name);
+                record["companionId"] = json!(id);
+                if let Some(hash) = payload["publicationHash"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                {
+                    record["_assignment"] = json!({"publicationHash":hash,"instanceId":uuid::Uuid::new_v4().to_string()});
+                }
+                services.usb.provision(record, id)?;
+                Ok(json!({"usb":services.usb.status()}))
+            }
             "companion_game_capture" => {
                 Ok(json!({"capture":game_owner::capture(&services.hub,&payload)?}))
             }
@@ -221,21 +446,42 @@ impl Runtime {
                     .filter(|s| !s.is_empty() && s.len() <= 253)
                     .ok_or("Choose the address companions can reach.")?
                     .to_owned();
-                services.server.start(ServerConfig {
+                let config=ServerConfig {
                     bind: SocketAddr::new(address, port),
                     advertised_host,
                     discovery: payload["discovery"] == true,
-                })?;
+                };
+                if services.server.status().enabled{return Err("Companion listener is already enabled.".into());}
+                if let Some(path)=&self.path{
+                    std::fs::write(path.join("companion-listener.json"),serde_json::to_vec(&config).map_err(|e|e.to_string())?)
+                        .map_err(|error|format!("Cannot save companion listener settings: {error}"))?;
+                }
+                *services.saved_listener.lock().unwrap_or_else(|p|p.into_inner())=Some(config);
+                Self::start_saved_listener(services);
                 self.status(services)
             }
             "companion_disable" => {
+                *services.saved_listener.lock().unwrap_or_else(|p|p.into_inner())=None;
+                if let Some(path)=&self.path {
+                    let config=path.join("companion-listener.json");
+                    if config.exists(){std::fs::remove_file(config).map_err(|e|e.to_string())?;}
+                }
                 services.server.stop();
                 self.status(services)
             }
+            "companion_browser_certificate" => Ok(json!({"certificatePem":services.server.browser_certificate()?})),
             "companion_pair_offer" => {
+                if payload["kind"] == "browser" {
+                    let browser = services.server.browser_url()?;
+                    let offer=services.hub.command(&json!({"command":"companion_pair_offer","kind":"browser","autoApprove":true}))?;
+                    let url=format!("{}#pair={}",browser,offer["secret"].as_str().ok_or("Missing pairing secret")?);
+                    let mut state=self.status(services)?;
+                    state["pairing"]=json!({"browserUrl":url,"ttlMs":60_000,"qrMatrix":[],"manualPayload":""});
+                    return Ok(state);
+                }
                 let offer = services
                     .hub
-                    .command(&json!({"command":"companion_pair_offer"}))?;
+                    .command(&json!({"command":"companion_pair_offer","kind":payload["kind"].as_str().unwrap_or("desktop"),"autoApprove":true}))?;
                 let secret = offer["secret"]
                     .as_str()
                     .ok_or("Pairing offer did not contain a secret.")?;
@@ -243,6 +489,9 @@ impl Runtime {
                     .as_u64()
                     .ok_or("Pairing offer did not contain an expiry.")?;
                 let payload = services.server.pairing_payload(secret, expires)?;
+                let code = services
+                    .hub
+                    .command(&json!({"command":"companion_pair_code","payload":payload}))?;
                 let manual = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
                 // Dense binary rows preserve every QR module without a boolean
                 // JSON array exceeding the bounded private-service reply frame.
@@ -255,18 +504,26 @@ impl Runtime {
                     })
                     .collect();
                 let mut state = self.status(services)?;
-                state["pairing"] = json!({"manualPayload":manual,"qrMatrix":matrix,"ttlMs":60_000});
+                state["pairing"] = json!({"manualPayload":manual,"qrMatrix":matrix,"ttlMs":60_000,"code":code["code"]});
                 Ok(state)
             }
-            "companion_feedback"
+            "companion_pair_cancel"
+            | "companion_feedback"
             | "companion_approve"
+            | "companion_update"
             | "companion_revoke"
+            | "companion_prune"
+            | "companion_unassign"
             | "companion_assign"
             | "companion_disconnect"
             | "companion_takeover" => {
                 let mut request = payload;
                 request["command"] = json!(command);
+                let _cache=services.panel_cache.lock().unwrap_or_else(|p|p.into_inner());
                 services.hub.command(&request)?;
+                if command=="companion_prune" || command=="companion_assign" {
+                    crate::companion_panels::save(&services.hub,&services.directory)?;
+                }
                 self.status(services)
             }
             _ => Err("Unsupported companion operator command.".into()),
@@ -283,7 +540,9 @@ impl Runtime {
     }
 
     pub fn shutdown(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
         if let Some(Ok(services)) = self.services.get() {
+            services.usb.release();
             services.server.stop();
         }
         self.upload.lock().unwrap_or_else(|p| p.into_inner()).take();
@@ -415,6 +674,38 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    fn listener_configuration_restores_after_restart_and_disable_removes_it() {
+        let directory=std::env::temp_dir().join(format!("osg-browser-listener-test-{}",uuid::Uuid::new_v4()));
+        let make=|| {
+            let mut runtime=runtime();runtime.path=Some(directory.clone());runtime
+        };
+        let first=make();
+        let reservation=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port=reservation.local_addr().unwrap().port();drop(reservation);
+        call(&first,"companion_enable",json!({"address":"127.0.0.1","advertisedHost":"127.0.0.1","port":port,"discovery":false})).unwrap();
+        assert!(directory.join("companion-listener.json").is_file());
+        first.shutdown();drop(first);
+        let blocker=std::net::TcpListener::bind(("127.0.0.1",port)).unwrap();
+        let second=make();
+        let waiting=call(&second,"companion_status",json!({})).unwrap();
+        assert_eq!(waiting["listener"]["enabled"],false);
+        assert_eq!(waiting["listener"]["configuredEnabled"],true);
+        assert_eq!(waiting["listener"]["config"]["discovery"],false);
+        drop(blocker);
+        Runtime::start_saved_listener(second.services().unwrap());
+        assert_eq!(call(&second,"companion_status",json!({})).unwrap()["listener"]["enabled"],true);
+        call(&second,"companion_disable",json!({})).unwrap();
+        assert!(!directory.join("companion-listener.json").exists());
+        second.shutdown();drop(second);
+        let third=make();
+        let disabled=call(&third,"companion_status",json!({})).unwrap();
+        assert_eq!(disabled["listener"]["enabled"],false);
+        assert_eq!(disabled["listener"]["configuredEnabled"],false);
+        third.shutdown();drop(third);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+    #[cfg(windows)]
+    #[test]
     fn native_operator_status_pairing_publication_and_assignment_remain_separate_from_output() {
         let runtime = runtime();
         let initial = call(&runtime, "companion_status", json!({})).unwrap();
@@ -436,15 +727,24 @@ mod tests {
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = occupied.local_addr().unwrap().port();
         let config = json!({"address":"127.0.0.1","port":port,"advertisedHost":"127.0.0.1","discovery":false});
-        assert!(call(&runtime, "companion_enable", config.clone())
-            .unwrap_err()
-            .contains("Cannot bind"));
+        let waiting=call(&runtime,"companion_enable",config.clone()).unwrap();
+        assert_eq!(waiting["listener"]["configuredEnabled"],true);
+        assert_eq!(waiting["listener"]["enabled"],false);
+        assert!(waiting["listener"]["lastError"].as_str().unwrap().contains("Cannot bind"));
         drop(occupied);
         assert_eq!(
             call(&runtime, "companion_enable", config.clone()).unwrap()["listener"]["enabled"],
             true
         );
         assert!(call(&runtime, "companion_enable", config).is_err());
+        if !BROWSER_ASSETS.is_empty() {
+            let browser = call(&runtime, "companion_pair_offer", json!({"kind":"browser"})).unwrap();
+            assert!(browser["pairing"]["browserUrl"].as_str().unwrap().starts_with(&format!("https://127.0.0.1:{port}/#pair=")));
+            assert_eq!(browser["pairing"]["ttlMs"],60_000);
+        } else {
+            assert!(call(&runtime,"companion_pair_offer",json!({"kind":"browser"})).unwrap_err().contains("Build the browser"));
+        }
+        assert!(call(&runtime,"companion_browser_certificate",json!({})).unwrap()["certificatePem"].as_str().unwrap().starts_with("-----BEGIN CERTIFICATE-----"));
         let offer = call(&runtime, "companion_pair_offer", json!({})).unwrap();
         let rows = offer["pairing"]["qrMatrix"].as_array().unwrap();
         assert!((21..=177).contains(&rows.len()));

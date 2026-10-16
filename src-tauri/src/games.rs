@@ -517,6 +517,13 @@ impl GamesRuntime {
             || matches!(
                 command,
                 "companion_status"
+                    | "companion_usb_status"
+                    | "companion_usb_ports"
+                    | "companion_usb_connect"
+                    | "companion_usb_disconnect"
+                    | "companion_usb_reconnect"
+                    | "companion_usb_arm"
+                    | "companion_usb_disarm"
                     | "companion_game_capture"
                     | "companion_disable"
                     | "companion_disconnect"

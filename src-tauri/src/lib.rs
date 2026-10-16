@@ -1,6 +1,7 @@
 mod acr_setup;
 mod acr_windows;
 mod companion_host;
+mod companion_panels;
 mod actions;
 pub mod dcs_bios;
 mod dcs_profile;
@@ -98,6 +99,31 @@ async fn optional_dependency_install(app: tauri::AppHandle, id: String) -> Resul
 }
 
 #[tauri::command]
+async fn open_companion_browser(app: tauri::AppHandle, state: tauri::State<'_, NativeGateway>, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let service=state.0.clone();
+    let expected=tauri::async_runtime::spawn_blocking(move || service.request(serde_json::json!({"command":"companion_status","clientId":"browser-launch-native"}))).await.map_err(|e|e.to_string())?;
+    let base=expected["state"]["companions"]["browserUrl"].as_str().ok_or("Enable the companion listener first")?;
+    if url != base && !url.strip_prefix(&format!("{base}#pair=")).is_some_and(|s|s.len()==43 && s.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'_' || b==b'-')) {
+        return Err("Only the current Cockpit browser companion URL can be opened".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e|e.to_string())
+}
+#[tauri::command]
+async fn export_companion_certificate(app: tauri::AppHandle, state: tauri::State<'_, NativeGateway>) -> Result<bool,String> {
+    use tauri_plugin_dialog::DialogExt;
+    let service=state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result=service.request(serde_json::json!({"command":"companion_browser_certificate","clientId":"browser-certificate"}));
+        let pem=result["state"]["companions"]["certificatePem"].as_str().ok_or("Cannot read Cockpit's public certificate")?;
+        let Some(file)=app.dialog().file().set_title("Export Cockpit public certificate").set_file_name("opensimgear-cockpit.crt").add_filter("Certificate",&["crt"]).blocking_save_file() else {return Ok(false)};
+        let path=file.into_path().map_err(|e|e.to_string())?;
+        std::fs::write(path,pem).map_err(|e|e.to_string())?;
+        Ok(true)
+    }).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
 async fn gateway_request(
     request: Value,
     state: tauri::State<'_, NativeGateway>,
@@ -129,6 +155,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             gateway_request,
+            open_companion_browser,
+            export_companion_certificate,
             optional_dependencies,
             optional_dependency_install,
             pick_game_executable,

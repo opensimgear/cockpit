@@ -1,12 +1,19 @@
 import { canonical, type Publication } from '../../packages/companion-designer/src/index.ts';
 
-export type CompanionCommand = 'companion_game_capture' | 'companion_feedback_routes' | 'companion_feedback' | 'companion_status' | 'companion_enable' | 'companion_disable' | 'companion_pair_offer' | 'companion_approve' | 'companion_revoke' | 'companion_assign' | 'companion_disconnect' | 'companion_takeover' | 'companion_publish_begin' | 'companion_publish_chunk' | 'companion_publish_commit' | 'companion_publish_abort';
+export type CompanionCommand = 'companion_usb_update_prepare' | 'companion_browser_certificate' | 'companion_update' | 'companion_pair_cancel' | 'companion_usb_flash' | 'companion_prune' | 'companion_unassign' | 'companion_usb_ports' | 'companion_usb_status' | 'companion_usb_connect' | 'companion_usb_disconnect' | 'companion_usb_scan' | 'companion_usb_provision' | 'companion_usb_reconnect' | 'companion_usb_arm' | 'companion_usb_disarm' | 'companion_usb_forget' | 'companion_game_capture' | 'companion_feedback_routes' | 'companion_feedback' | 'companion_status' | 'companion_enable' | 'companion_disable' | 'companion_pair_offer' | 'companion_approve' | 'companion_revoke' | 'companion_assign' | 'companion_disconnect' | 'companion_takeover' | 'companion_publish_begin' | 'companion_publish_chunk' | 'companion_publish_commit' | 'companion_publish_abort';
 export interface CompanionHostState {
+  firmwareVersion?: string;
+  firmware?: Record<string,{version:string;profile?:string}>;
+  browserUrl?: string;
+  firmwareProfiles?: {id:string;name:string;available:boolean}[];
+  usbPorts?: {port:string;name:string;vid:number;pid:number}[];
+  usb?: {devices?: Omit<NonNullable<CompanionHostState['usb']>,'devices'>[];scanning?:boolean;scanError?:string;lastHostError?:string;flashing?:boolean;flashFinished?:boolean;flashError?:string;flashWarning?:string;progress?:number;connected:boolean;ready?:boolean;port?:string;stage?:string;deviceStatus?:string;networks?:{ssid:string;rssi:number;secured:boolean}[];device?:{name?:string;ssid?:string;wifiPasswordSaved?:boolean;firmwareVersion?:string;boardProfile?:string;status?:string;setupSaved?:boolean;connectionMode?:string;companionId?:string;readyForArm?:boolean;touchAvailable?:boolean}};
+
   capture?: { schemaVersion: 1; assignments: { instanceId: string; companionId: string; publicationHash: string; capabilityFingerprint: string }[] };
   feedbackRoutes?: import('./companion-feedback').FeedbackRouteState;
-  listener?: { enabled: boolean; endpoint?: string | null; caSpkiSha256?: string; lastError?: string | null; discovery?: unknown; interfaces?: string[] };
+  listener?: { configuredEnabled?:boolean;config?:{bind:string;advertisedHost:string;discovery:boolean}|null;enabled: boolean; endpoint?: string | null; caSpkiSha256?: string; lastError?: string | null; discovery?: unknown; interfaces?: string[] };
   host?: { hostId?: string; clients?: Record<string, unknown>[]; pending?: Record<string, unknown>[]; instances?: Record<string, unknown>[]; publications?: Record<string, unknown>[] };
-  pairing?: { manualPayload: string; qrMatrix: string[]; ttlMs: number };
+  pairing?: { browserUrl?: string; manualPayload: string; qrMatrix: string[]; ttlMs: number; code?: string };
   interfaces?: string[];
   uploadId?: string;
 }

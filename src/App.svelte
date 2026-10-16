@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { restoreCompanionPanels } from './lib/companion-startup';
   import Notifications from './lib/Notifications.svelte';
   import { notify as showNotification } from './lib/notifications';
   import Notification from './lib/Notification.svelte';
@@ -6,6 +7,7 @@
   import HostControllers from './lib/HostControllers.svelte';
   import MappingsPanel from './lib/MappingsPanel.svelte';
   import CompanionDesigner from './lib/CompanionDesigner.svelte';
+  import CompanionListenerSettings from './lib/CompanionListenerSettings.svelte';
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';
@@ -35,7 +37,7 @@
     { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'mappings', label: 'Mappings', icon: 'network' },
-    { id: 'companions', label: 'Panels', icon: 'devices' },
+    { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
     { id: 'integrations', label: 'Integrations', icon: 'play' },
     { id: 'dcs-bios', label: 'DCS-BIOS', icon: 'play' },
@@ -291,6 +293,7 @@
   }
   onMount(() => {
     disposed = false;
+    void restoreCompanionPanels().catch(error => notify(String(error)));
     workspace = new GatewayWorkspace({ onChange: syncWorkspace });
     void workspace.refresh();
     void sendDcs({ command: 'dcs_status' }, true);
@@ -418,6 +421,7 @@
           <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Settings</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
           <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
           <DesktopPreferences />
+          <CompanionListenerSettings />
         {:else if view === 'mappings'}
           <MappingsPanel />
         {:else if view === 'companions'}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-companion-certificate"
+description = "Enables the export_companion_certificate command without any pre-configured scope."
+commands.allow = ["export_companion_certificate"]
+
+[[permission]]
+identifier = "deny-export-companion-certificate"
+description = "Denies the export_companion_certificate command without any pre-configured scope."
+commands.deny = ["export_companion_certificate"]

@@ -144,6 +144,7 @@ impl GatewayManager {
             native.then(|| crate::dcs_runtime::config_path().with_file_name("companions")),
             companion_provider,
         ));
+        if native { companion_host.start_detection(); }
         let companion_blueprints = companion_host.clone();
         mapping_host.set_companion_blueprint_provider(Arc::new(move |instance_id| {
             companion_blueprints.assigned_publication(instance_id)
