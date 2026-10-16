@@ -31,9 +31,14 @@
     command: ['M9 7a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v10a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z'],
     zap: ['m13 2-9 12h7l-1 8 10-12h-7z'],
     copy: ['M9 9h12v12H9zM5 15H3V3h12v2'],
+    upload: ['M12 15V3m-5 5 5-5 5 5M3 16v5h18v-5'],
+    back: ['M20 12H4m7-7-7 7 7 7'],
+    undo: ['M3 10h11a7 7 0 0 1 7 7M8 5l-5 5 5 5'],
+    redo: ['M21 10H10a7 7 0 0 0-7 7M16 5l5 5-5 5'],
     download: ['M12 3v12m-5-5 5 5 5-5M3 16v5h18v-5'],
     lock: ['M5 10h14v11H5zM8 10V6a4 4 0 0 1 8 0v4M12 14v3'],
     alert: ['m12 3 10 18H2zM12 9v5M12 17v.1'],
+    mobile: ['M7 2h10v20H7zM11 18h2'],
     monitor: ['M3 3h18v14H3zM8 21h8M12 17v4'],
   };
 </script>

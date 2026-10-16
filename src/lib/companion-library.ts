@@ -62,7 +62,7 @@ async function validateSnapshot(input: unknown): Promise<CompanionLibrarySnapsho
 }
 
 /**
- * Drafts are replaceable; published snapshots remain an append-only local archive.
+ * Panel documents are replaceable; transport snapshots remain immutable while retained.
  * Operations are serialized so a slow earlier validation cannot overwrite a later save.
  */
 export class CompanionLibraryStore {
@@ -79,6 +79,21 @@ export class CompanionLibraryStore {
   private async read(): Promise<CompanionLibrarySnapshot> {
     const stored = await this.storage.read();
     return stored === undefined ? emptySnapshot() : validateSnapshot(capture(stored));
+  }
+
+  compact(pinnedHashes: string[]): Promise<CompanionLibrarySnapshot> {
+    const pinned = new Set(pinnedHashes);
+    return this.ordered(async () => {
+      const snapshot = await this.read();
+      const active = new Set(snapshot.library.drafts.map(d => d.id));
+      for (const [id, revisions] of Object.entries(snapshot.publications)) {
+        const current = active.has(id) ? revisions.at(-1)?.publicationHash : undefined;
+        const retained = revisions.filter(p => p.publicationHash===current || pinned.has(p.publicationHash));
+        if (retained.length) snapshot.publications[id]=retained; else delete snapshot.publications[id];
+      }
+      await this.storage.write(structuredClone(snapshot));
+      return snapshot;
+    });
   }
 
   load(): Promise<CompanionLibrarySnapshot> { return this.ordered(() => this.read()); }

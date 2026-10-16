@@ -224,3 +224,20 @@ test('IndexedDB open, blocked, transaction and abort errors preserve the previou
     assert.deepEqual(state.value, input);
   }
 });
+
+test('simple panels compact old snapshots while preserving current panels and active assignment pins', async () => {
+  const storage=memory(), store=new CompanionLibraryStore(storage), input=snapshot('Panel');
+  const first=await publishDocument(input.library.drafts[0].document,[]);
+  input.publications['draft-0']=[first];await store.save(input);
+  input.library.drafts[0].document.ui.title='Edited';
+  const second=await publishDocument(input.library.drafts[0].document,[]);
+  input.publications['draft-0']=[second];await store.save(input);
+  assert.equal((await store.compact([first.publicationHash])).publications['draft-0'].length,2);
+  assert.deepEqual((await store.compact([])).publications['draft-0'].map(p=>p.publicationHash),[second.publicationHash]);
+  await store.save(snapshot());assert.deepEqual((await store.compact([])).publications,{});
+});
+test('failed compaction preserves previously committed panels and snapshots', async () => {
+  const storage=memory(), store=new CompanionLibraryStore(storage);
+  await store.save(snapshot('Saved'));const before=copy(storage.value);storage.fail=true;
+  await assert.rejects(store.compact([]),/Atomic write failed/);assert.deepEqual(storage.value,before);
+});

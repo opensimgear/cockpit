@@ -425,7 +425,7 @@
         {:else if view === 'mappings'}
           <MappingsPanel />
         {:else if view === 'companions'}
-          <CompanionDesigner />
+          <CompanionDesigner openSettings={() => navigate('preferences')} />
         {:else if view === 'games'}
           <GamesPanel bind:selectedGameId status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => navigate('integrations')} />
         {:else if view === 'integrations'}
