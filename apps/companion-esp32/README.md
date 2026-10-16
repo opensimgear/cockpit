@@ -6,11 +6,13 @@ This directory owns the portable C renderer and ESP-IDF firmware entry point. It
 
 The runtime depends only on rectangle and clipped text callbacks in core/companion.h. The included raster adapter turns them into synchronous RGB565 pixel spans with a 256-pixel (512-byte) scratch buffer. No full-screen framebuffer, heap allocation or PSRAM is required by this core. A driver can convert spans for RGB888, monochrome or a different byte order, or replace the drawing callbacks with an existing graphics library.
 
-A physical screen still needs its correct bus/controller initialization, power/backlight, pins, dimensions, rotation and touch calibration. Screen dimensions alone cannot identify those details. The user's 7-inch 800×480 S3 and smaller WROOM-32 display remain physically unqualified.
+A physical screen still needs its correct bus/controller initialization, power/backlight, pins, dimensions, rotation and touch calibration. Screen dimensions alone cannot identify those details. The user's photograph now identifies the 7-inch board as Waveshare ESP32-S3-Touch-LCD-7 Rev 1.2. Its selectable RGB/GT911 adapter and exact flash/test steps are documented in [the board guide](boards/waveshare-lcd7/README.md). Physical qualification remains open; the smaller WROOM-32 is still unidentified.
 
 Implement osg_board_init from boards/board.h in a board-specific C source. Return the actual dimensions, synchronous pixel writer and optional calibrated single-pointer touch poller. The application polls touch in a separate task every 20 ms; successful polls report the current released/pressed state and display-coordinate position. Driver failure returns false. Keep driver calls bounded and synchronize any shared display/touch bus in the adapter. Return false on initialization failure. Display-only adapters leave touch NULL. The core must be used under the application state mutex; marshal touch/feedback events rather than racing its state. Drawing uses an immutable snapshot outside that mutex. cJSON hooks are process-wide and reserved for the single network task; board adapters must not call this shared parser from another task.
 
 For an initialized esp_lcd panel, boards/esp_lcd_bridge.h supplies the common pixel writer. Its wait_complete callback must fence transfer completion before the scratch buffer is reused. SPI/I80 adapters normally wait for on_color_trans_done; RGB adapters must use the appropriate copy/frame synchronization for their driver. The adapter owns panel color order/endian setup and DMA-capable staging if the controller requires it. Do not let a timed-out driver retain the supplied scratch pointer.
+
+Adapters may optionally provide a bounded present callback after a complete render; its failure cancels live input before the panel is considered ready. No callback runs under the network-state mutex.
 
 Pass a board source with -DOSG_BOARD_SOURCE=/absolute/path/board.c. Add driver component dependencies to main/CMakeLists.txt as necessary. Headless builds provide compilation evidence, not physical-screen support. The API supports different screens; drivers and performance must be qualified per board.
 
@@ -44,6 +46,8 @@ From apps/companion-esp32 with IDF exported:
 
     idf.py -B build-esp32 -DIDF_TARGET=esp32 -DSDKCONFIG=build-esp32/sdkconfig build
     idf.py -B build-esp32s3 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-esp32s3/sdkconfig build
+
+For the identified Waveshare 7-inch S3 board, use a fresh build directory and -DOSG_BOARD_PROFILE=waveshare-lcd7-s3; see [its flash guide](boards/waveshare-lcd7/README.md). This enables the real display/touch adapter and required PSRAM configuration. Other builds still default to headless.
 
 Use -DOSG_PANEL_INCLUDE=/absolute/path/to/generated to embed another exported panel. To use a real screen, supply -DOSG_BOARD_SOURCE=/absolute/path/to/board.c and its matching dimensions/driver. Width/height menuconfig values apply to the headless adapter only. Use separate build/config paths per MCU.
 
@@ -102,6 +106,7 @@ From the repository root:
     node --experimental-test-coverage --test-coverage-include=apps/companion-esp32/tools/export-panel.mjs --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test apps/companion-esp32/test/export.test.mjs
     python3 apps/companion-esp32/test/run.py
     python3 apps/companion-esp32/test/network.py
+    python3 apps/companion-esp32/test/waveshare.py
     python3 -m unittest discover -s apps/companion-esp32/test -p provision_test.py -v
     cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test esp32_display
 

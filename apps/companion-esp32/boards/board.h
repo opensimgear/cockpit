@@ -8,6 +8,8 @@ typedef struct {
     /* Poll calibrated, rotated screen coordinates. Return false on touch I/O
      * failure/cancellation; caller disarms. NULL means display-only. */
     bool (*touch)(void *, bool *down, int *x, int *y);
+    /* Optional bounded presentation fence after all writes, outside the state mutex. */
+    bool (*present)(void *);
 } osg_board;
 bool osg_board_init(osg_board *);
 #endif

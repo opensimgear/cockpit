@@ -45,6 +45,7 @@ void app_main(void) {
         if(render){
             osg_network_render(drawing.panel,false,true);
             osg_render(&drawing,now);last_render=now;
+            if(!raster.failed&&board.present&&!board.present(board.context))raster.failed=true;
             osg_network_render(drawing.panel,true,!raster.failed);
             xSemaphoreTake(mutex,portMAX_DELAY);drawing_panel=NULL;xSemaphoreGive(mutex);
             if(raster.failed){ESP_LOGE("companion","Display flush failed; live input cancelled");raster.failed=false;}
