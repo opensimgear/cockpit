@@ -1,0 +1,15 @@
+[package]
+name = "osg-companion-serial"
+version = "0.1.0"
+edition = "2021"
+license-file = "../../LICENSE"
+
+[dependencies]
+osg-companion-service = { path = "../companion-service" }
+serialport = { version = "4.8", default-features = false }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+base64 = "0.22"
+zeroize = "1"
+espflash = { version = "=4.1.0", default-features = false, features = ["serialport"] }
