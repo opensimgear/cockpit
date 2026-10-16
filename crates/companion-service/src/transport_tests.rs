@@ -400,3 +400,114 @@ fn occupied_port_is_reported_and_stalled_handshake_has_an_absolute_shutdown_boun
 
 #[path = "feedback_transport_tests.rs"]
 mod feedback_cases;
+
+
+#[cfg(windows)]
+#[test]
+fn short_code_pairing_persists_both_ends_tracks_presence_and_revocation() {
+    let directory=tempfile::tempdir().unwrap();
+    let sink=Arc::new(Recorder::default());
+    let hub=Hub::open(directory.path().join("host-record"),sink.clone()).unwrap();
+    let server=ServerRuntime::new(hub.clone(),directory.path().join("tls")).unwrap();
+    let status=server.start(ServerConfig{bind:"127.0.0.1:0".parse().unwrap(),advertised_host:"127.0.0.1".into(),discovery:false}).unwrap();
+    let offer=hub.command(&json!({"command":"companion_pair_offer","kind":"desktop","autoApprove":true})).unwrap();
+    let payload=server.pairing_payload(offer["secret"].as_str().unwrap(),offer["expiresAtMs"].as_u64().unwrap()).unwrap();
+    let code=hub.command(&json!({"command":"companion_pair_code","payload":payload})).unwrap();
+    let client=ClientRuntime::open(directory.path().join("client")).unwrap();
+    client.command(json!({"type":"pair-code-start","code":code["code"],"endpoint":status.endpoint,"name":"Code-paired desktop"})).unwrap();
+    wait(|| client.status().phase=="paired" && !client.status().busy);
+    let state=hub.command(&json!({"command":"companion_status"})).unwrap();
+    let id=state["clients"][0]["companionId"].clone();
+    assert_eq!(state["clients"][0]["kind"],"desktop");
+    wait(||hub.command(&json!({"command":"companion_status"})).unwrap()["clients"][0]["connected"]==true);
+    assert!(sink.events.lock().unwrap().is_empty());
+    let reopened=Hub::open(directory.path().join("host-record"),sink.clone()).unwrap();
+    assert_eq!(reopened.command(&json!({"command":"companion_status"})).unwrap()["clients"][0]["companionId"],id);
+    assert!(ClientRuntime::open(directory.path().join("client")).unwrap().status().paired_host.is_some());
+    hub.command(&json!({"command":"companion_revoke","companionId":id})).unwrap();
+    assert!(hub.command(&json!({"command":"companion_status"})).unwrap()["clients"].as_array().unwrap().is_empty());
+    drop(client);
+    server.stop();
+}
+
+#[test]
+fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation() {
+    use crate::browser::BrowserAsset;
+    use std::{io::{Read,Write}, net::TcpStream};
+    use tungstenite::client::IntoClientRequest;
+    static ASSETS:&[BrowserAsset]=&[BrowserAsset{path:"/",mime:"text/html",bytes:b"browser companion"}];
+    let sink=Arc::new(Recorder::default());
+    let hub=Hub::new("browser-host".into(),sink.clone());
+    let directory=tempfile::tempdir().unwrap();
+    let server=ServerRuntime::with_browser(hub.clone(),directory.path().to_path_buf(),ASSETS).unwrap();
+    let status=server.start(ServerConfig{bind:"127.0.0.1:0".parse().unwrap(),advertised_host:"127.0.0.1".into(),discovery:false}).unwrap();
+    let origin=server.browser_url().unwrap().trim_end_matches('/').to_owned();
+    let endpoint=status.endpoint.unwrap();let address=origin.trim_start_matches("https://");
+    let payload=server.pairing_payload(&"a".repeat(43),10).unwrap();
+    let exported=server.browser_certificate().unwrap();
+    let exported_base64=exported.lines().filter(|line|!line.starts_with("-----")).collect::<String>();
+    assert_eq!(exported_base64,payload.ca_certificate);
+    assert!(!exported.contains("PRIVATE"));
+    let config=tls::pinned_client_config(&exported_base64,&payload.ca_spki_sha256).unwrap();
+    let stream=|| {
+        let tcp=TcpStream::connect(address).unwrap();tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        rustls::StreamOwned::new(rustls::ClientConnection::new(config.clone(),rustls_pki_types::ServerName::try_from("127.0.0.1").unwrap()).unwrap(),tcp)
+    };
+    let http=|path:&str,host:&str| {
+        let mut stream=stream();write!(stream,"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n").unwrap();
+        let mut response=Vec::new();let mut buffer=[0;1024];
+        loop{match stream.read(&mut buffer){Ok(0)=>break,Ok(n)=>response.extend_from_slice(&buffer[..n]),Err(e) if e.kind()==std::io::ErrorKind::UnexpectedEof=>break,Err(e)=>panic!("{e}")}}
+        String::from_utf8(response).unwrap()
+    };
+    let response=http("/",address);assert!(response.starts_with("HTTP/1.1 200"));assert!(response.contains("frame-ancestors 'none'"));assert!(response.ends_with("browser companion"));
+    assert!(http("/../../Cargo.toml",address).starts_with("HTTP/1.1 404"));
+    assert!(http("/","attacker.example").starts_with("HTTP/1.1 403"));
+    let connect=|request_origin:&str| {
+        let mut request=format!("wss://{address}/socket").into_client_request().unwrap();
+        request.headers_mut().insert("Origin",request_origin.parse().unwrap());
+        request.headers_mut().insert("Sec-WebSocket-Protocol",crate::server::SUBPROTOCOL.parse().unwrap());
+        tungstenite::client(request,stream())
+    };
+    assert!(connect("https://attacker.example").is_err());
+    // Native pinned clients retain their separate, Origin-free protocol endpoint.
+    let mut native=endpoint.into_client_request().unwrap();
+    native.headers_mut().insert("Sec-WebSocket-Protocol",crate::server::SUBPROTOCOL.parse().unwrap());
+    let (mut native,_)=tungstenite::client(native,stream()).unwrap();native.close(None).unwrap();drop(native);
+    let (mut socket,_)=connect(&origin).unwrap();
+    let call=|socket:&mut tungstenite::WebSocket<rustls::StreamOwned<rustls::ClientConnection,TcpStream>>,value| {
+        send_json(socket,&value).unwrap();receive_json(socket,Duration::from_secs(2)).unwrap()
+    };
+    assert_eq!(call(&mut socket,json!({"type":"presence"}))["ok"],false);
+    let canonical=document();let hash=tls::sha256(canonical.as_bytes());
+    hub.command(&json!({"command":"companion_publish","canonicalDocument":canonical,"publicationHash":hash,"assets":[]})).unwrap();
+    let offer=hub.command(&json!({"command":"companion_pair_offer","kind":"browser","autoApprove":true})).unwrap();
+    let pending=call(&mut socket,json!({"type":"pair","secret":offer["secret"],"companionId":"browser-one","name":"Browser"}));
+    let paired=call(&mut socket,json!({"type":"pair-status","secret":offer["secret"],"requestId":pending["requestId"]}));
+    let token=paired["token"].clone();assert!(token.is_string());
+    assert_eq!(call(&mut socket,json!({"type":"pair","secret":offer["secret"],"companionId":"browser-two","name":"Other"}))["ok"],false);
+    assert_eq!(call(&mut socket,json!({"type":"auth","token":token}))["ok"],true);
+    hub.command(&json!({"command":"companion_assign","instanceId":"browser-panel","companionId":"browser-one","publicationHash":hash})).unwrap();
+    assert_eq!(call(&mut socket,json!({"type":"presence"}))["assignments"][0]["instanceId"],"browser-panel");
+    let opened=call(&mut socket,json!({"type":"open","instanceId":"browser-panel","publicationHash":hash}));
+    assert_eq!(opened["publication"]["publicationHash"],hash);
+    let frame=|kind:&str,seq:&str|json!({"version":1,"type":kind,"clientId":opened["clientId"],"sessionId":opened["sessionId"],"generation":opened["generation"],"publicationHash":hash,"sequence":seq});
+    let mut baseline=frame("baseline","0");baseline["values"]=json!({"press":false});
+    assert_eq!(call(&mut socket,baseline)["ok"],true);
+    let mut input=frame("input","1");input["changes"]=json!([{"controlId":"press","value":true}]);
+    assert_eq!(call(&mut socket,input)["ok"],true);
+    assert!(sink.events.lock().unwrap().iter().any(|e|e.contains("true")));
+    socket.close(None).unwrap();drop(socket);
+    wait(||sink.events.lock().unwrap().iter().any(|e|e=="loss"));
+    // A new browser window uses the saved credential, with a fresh session/baseline.
+    let (mut socket,_)=connect(&origin).unwrap();
+    assert_eq!(call(&mut socket,json!({"type":"auth","token":token}))["ok"],true);
+    assert_eq!(call(&mut socket,frame("input","2"))["ok"],false);
+    hub.command(&json!({"command":"companion_unassign","instanceId":"browser-panel"})).unwrap();
+    assert_eq!(call(&mut socket,json!({"type":"presence"}))["assignments"],json!([]));
+    hub.command(&json!({"command":"companion_revoke","companionId":"browser-one"})).unwrap();
+    assert_eq!(call(&mut socket,json!({"type":"presence"}))["ok"],false);
+    socket.close(None).unwrap();drop(socket);
+    let (mut socket,_)=connect(&origin).unwrap();
+    assert_eq!(call(&mut socket,json!({"type":"auth","token":token}))["ok"],false);
+    drop(socket);drop(server);
+}

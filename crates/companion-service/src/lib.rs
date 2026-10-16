@@ -1,6 +1,7 @@
 pub mod feedback;
 pub use feedback::*;
 mod hub;
+pub mod pairing_code;
 pub mod persistence;
 mod publication;
 pub mod sources;
@@ -27,6 +28,7 @@ pub fn qrcode_matrix(payload: &str) -> Result<Vec<Vec<bool>>, String> {
         .collect())
 }
 
+pub mod browser;
 pub mod client;
 pub mod server;
 pub mod tls;

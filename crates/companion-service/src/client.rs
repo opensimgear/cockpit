@@ -172,7 +172,7 @@ impl ClientRuntime {
             status.paired_host = Some(public_host(value));
             status.assignments = value.assignments.clone();
         }
-        Ok(Self {
+        let runtime = Self {
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
                     status,
@@ -195,7 +195,9 @@ impl ClientRuntime {
                 started: Instant::now(),
                 storage,
             }),
-        })
+        };
+        start_presence(Arc::downgrade(&runtime.shared));
+        Ok(runtime)
     }
     pub fn status(&self) -> ClientStatus {
         self.shared
@@ -246,7 +248,7 @@ impl ClientRuntime {
             .ok_or("Missing companion client command")?;
         if matches!(
             command,
-            "pair-start" | "connect" | "refresh-assignments" | "storage-status"
+            "pair-start" | "pair-code-start" | "connect" | "refresh-assignments" | "storage-status"
         ) {
             let availability = self.shared.storage.available();
             let mut state = self
@@ -280,7 +282,13 @@ impl ClientRuntime {
                 }
             }
             set_storage_status(&mut state.status, availability);
-            if command != "storage-status" && !state.status.authentication_available {
+            if command != "storage-status"
+                && !(if matches!(command, "pair-start" | "pair-code-start") {
+                    state.status.protected_store_available && state.status.storage_error.is_none()
+                } else {
+                    state.status.authentication_available
+                })
+            {
                 return Err(state
                     .status
                     .authentication_unavailable_reason
@@ -302,6 +310,25 @@ impl ClientRuntime {
                     .publication
                     .clone()
                     .ok_or_else(|| "Connect to an assigned publication first".into())
+            }
+            "pair-code-start" => {
+                let code = Zeroizing::new(crate::pairing_code::normalize(
+                    request["code"].as_str().unwrap_or(""),
+                )?);
+                let endpoint = request["endpoint"]
+                    .as_str()
+                    .ok_or("Choose a Cockpit host or enter its LAN address.")?
+                    .to_owned();
+                let name = request["name"]
+                    .as_str()
+                    .filter(|n| !n.trim().is_empty() && n.len() <= 80)
+                    .ok_or("Choose a companion name.")?
+                    .to_owned();
+                self.start_worker("pairing", move |shared, epoch| {
+                    let payload = resolve_pairing_code(&endpoint, &code)?;
+                    pair_worker(shared, epoch, payload, name)
+                })?;
+                Ok(json!({"ok":true}))
             }
             "pair-start" => {
                 let payload: PairingPayload = if let Some(text) = request["payload"].as_str() {
@@ -661,7 +688,13 @@ fn current(shared: &Shared, epoch: u64) -> bool {
     !shared.cancel.load(Ordering::SeqCst) && shared.epoch.load(Ordering::SeqCst) == epoch
 }
 pub(crate) fn connect(endpoint: &str, ca: &str, pin: &str) -> Result<Socket, String> {
-    let config = tls::pinned_client_config(ca, pin)?; // Out-of-band CA pin precedes DNS/socket/authentication.
+    let config = tls::pinned_client_config(ca, pin)?; // A verified CA always precedes credential transmission.
+    connect_with_config(endpoint, config)
+}
+fn connect_with_config(
+    endpoint: &str,
+    config: Arc<rustls::ClientConfig>,
+) -> Result<Socket, String> {
     if endpoint.len() > 512 {
         return Err("Endpoint exceeds budget".into());
     }
@@ -733,6 +766,26 @@ pub(crate) fn connect(endpoint: &str, ca: &str, pin: &str) -> Result<Socket, Str
         .set_read_timeout(Some(Duration::from_millis(100)))
         .map_err(|error| error.to_string())?;
     Ok(socket)
+}
+// This bootstrap socket carries only a SPAKE2 message. No identity, code, secret or
+// credential is sent until the authenticated offer has been decrypted and its CA pinned.
+fn resolve_pairing_code(endpoint: &str, code: &str) -> Result<PairingPayload, String> {
+    let (state, message) = crate::pairing_code::start(code);
+    let mut socket = connect_with_config(endpoint, tls::pairing_bootstrap_config())?;
+    send_json(
+        &mut socket,
+        &json!({"type":"pair-code","message":STANDARD.encode(message)}),
+    )?;
+    let reply = receive_json(&mut socket, Duration::from_secs(3))?;
+    let _ = socket.close(None);
+    let value = crate::pairing_code::finish(state, &reply)?;
+    let payload: PairingPayload =
+        serde_json::from_value(value).map_err(|_| "Invalid authenticated pairing offer")?;
+    tls::verified_ca(&payload.ca_certificate, &payload.ca_spki_sha256)?;
+    if payload.endpoint != endpoint {
+        return Err("Pairing host address changed. Choose its advertised address.".into());
+    }
+    Ok(payload)
 }
 // System DNS can block independently of socket deadlines. Limit abandoned resolutions
 // globally and bound how long a native client operation waits for one.
@@ -830,6 +883,77 @@ fn refresh_worker(
     }
     let _ = socket.close(None);
     Ok(())
+}
+// Credential-only presence never creates an input source or renews its lease.
+fn start_presence(owner: std::sync::Weak<Shared>) {
+    thread::spawn(move || {
+        let mut socket: Option<Socket> = None;
+        let mut identity = Zeroizing::new(String::new());
+        loop {
+            let Some(shared) = owner.upgrade() else {
+                break;
+            };
+            let credential = shared.state.lock().ok().and_then(|s| {
+                if s.status.protected_store_available {
+                    s.credential.clone()
+                } else {
+                    None
+                }
+            });
+            if let Some(credential) = credential {
+                if identity.as_str() != credential.token {
+                    socket = None;
+                    *identity = credential.token.clone();
+                }
+                if socket.is_none() {
+                    socket = connect(
+                        &credential.endpoint,
+                        &credential.ca_certificate,
+                        &credential.ca_spki_sha256,
+                    )
+                    .ok()
+                    .and_then(|mut link| {
+                        let reply = request(
+                            &mut link,
+                            json!({"type":"auth","token":credential.token}),
+                            Duration::from_secs(2),
+                        )
+                        .ok()?;
+                        if reply["hostId"] != credential.host_id
+                            || reply["companionId"] != credential.companion_id
+                        {
+                            return None;
+                        }
+                        Some(link)
+                    });
+                }
+                if let Some(link) = socket.as_mut() {
+                    match request(link, json!({"type":"presence"}), Duration::from_secs(2)) {
+                        Ok(reply) => {
+                            if let Ok(mut state) = shared.state.lock() {
+                                if state
+                                    .credential
+                                    .as_ref()
+                                    .is_some_and(|c| c.token == credential.token)
+                                    && !shared.running.load(Ordering::SeqCst)
+                                {
+                                    state.status.assignments = reply["assignments"].clone();
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            socket = None;
+                        }
+                    }
+                }
+            } else {
+                socket = None;
+                identity.clear();
+            }
+            drop(shared);
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
 }
 fn session_request(socket: &mut Socket, frame: Value, budget: Duration) -> Result<Value, String> {
     let reply = request(socket, frame.clone(), budget)?;

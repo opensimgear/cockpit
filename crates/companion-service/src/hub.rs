@@ -27,6 +27,8 @@ struct Credential {
     companion_id: String,
     name: String,
     token_hash: String,
+    #[serde(default = "unknown_kind")]
+    kind: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -44,12 +46,24 @@ struct Record {
     credentials: Vec<Credential>,
     instances: Vec<Assignment>,
 }
+fn unknown_kind() -> String {
+    "unknown".into()
+}
+struct CodeOffer {
+    code: Zeroizing<String>,
+    payload: Value,
+    expires: u64,
+    attempts: u8,
+}
 struct Offer {
     secret_hash: String,
     expires: u64,
     consumed: bool,
+    auto_approve: bool,
+    kind: String,
 }
 struct Pending {
+    kind: String,
     companion_id: String,
     name: String,
     secret_hash: String,
@@ -75,6 +89,7 @@ struct Inner {
     record: Record,
     publications: BTreeMap<String, Publication>,
     offer: Option<Offer>,
+    code_offer: Option<CodeOffer>,
     pending: BTreeMap<String, Pending>,
     connections: BTreeMap<String, String>,
     sessions: BTreeMap<String, Session>,
@@ -251,6 +266,7 @@ impl Hub {
                 record,
                 publications: BTreeMap::new(),
                 offer: None,
+                code_offer: None,
                 pending: BTreeMap::new(),
                 connections: BTreeMap::new(),
                 sessions: BTreeMap::new(),
@@ -295,6 +311,13 @@ impl Hub {
         Ok(publication.clone())
     }
 
+    /// Trusted local persistence boundary; never exposed as a wire operation.
+    pub fn publication_uploads(&self) -> Vec<PublicationUpload> {
+        self.inner.lock().unwrap_or_else(|p|p.into_inner()).publications.values().map(|p|PublicationUpload {
+            canonical_document:p.canonical_document.clone(),publication_hash:p.publication_hash.clone(),
+            capability_fingerprint:Some(p.capability_fingerprint.clone()),assets:p.assets.clone(),
+        }).collect()
+    }
     pub fn now_ms(&self) -> u64 {
         self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
     }
@@ -349,6 +372,9 @@ impl Hub {
         let now = now.max(inner.last_now);
         inner.last_now = now;
         inner.pending.retain(|_, p| p.expires > now);
+        if inner.code_offer.as_ref().is_some_and(|o| o.expires <= now) {
+            inner.code_offer = None;
+        }
         if inner.offer.as_ref().is_some_and(|o| o.expires <= now) {
             inner.offer = None;
         }
@@ -394,6 +420,88 @@ impl Hub {
             self.disconnect_connection(&id, self.now_ms());
         }
     }
+    fn approve_pending(
+        &self,
+        inner: &mut Inner,
+        request_id: &str,
+        expected: Option<&str>,
+    ) -> Result<Value, String> {
+        let pending = inner
+            .pending
+            .get(request_id)
+            .ok_or("Pairing request expired or missing.")?;
+        if let Some(expected) = expected {
+            ensure(
+                expected == pending.companion_id,
+                "Pairing installation mismatch.",
+            )?;
+        }
+        if pending.token.is_some() {
+            return Ok(json!({"approved":true}));
+        }
+        let token = Zeroizing::new(random_secret()?);
+        let credential = Credential {
+            companion_id: pending.companion_id.clone(),
+            name: pending.name.clone(),
+            token_hash: hash(token.as_bytes()),
+            kind: pending.kind.clone(),
+        };
+        let mut record = inner.record.clone();
+        record
+            .credentials
+            .retain(|c| c.companion_id != credential.companion_id);
+        ensure(
+            record.credentials.len() < 32,
+            "Paired companion budget exhausted.",
+        )?;
+        record.credentials.push(credential.clone());
+        self.persist(&record)?;
+        let sessions: Vec<_> = inner
+            .sessions
+            .iter()
+            .filter(|(_, s)| s.companion_id == credential.companion_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in sessions {
+            self.disarm(inner, &id, "credential-rotated", true);
+        }
+        inner
+            .connections
+            .retain(|_, c| c != &credential.companion_id);
+        inner.record = record;
+        inner.pending.get_mut(request_id).unwrap().token = Some(token);
+        Ok(json!({"approved":true,"companionId":credential.companion_id}))
+    }
+
+    fn revoke_inner(&self,inner:&mut Inner,companion:&str)->Result<(),String>{
+                let mut record = inner.record.clone();
+                ensure(
+                    record
+                        .credentials
+                        .iter()
+                        .any(|c| c.companion_id == companion),
+                    "Unknown companion.",
+                )?;
+                record.credentials.retain(|c| c.companion_id != companion);
+                record.instances.retain(|a| a.companion_id != companion);
+                self.persist(&record)?;
+                let sessions: Vec<_> = inner
+                    .sessions
+                    .iter()
+                    .filter(|(_, s)| s.companion_id == companion)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in sessions {
+                    self.disarm(inner, &id, "revoked", true);
+                }
+                inner.connections.retain(|_, c| c != companion);
+                inner.pending.retain(|_, p| p.companion_id != companion);
+                inner.record = record;
+                let retained=inner.record.instances.iter().map(|a|a.instance_id.clone()).collect::<BTreeSet<_>>();
+                inner.feedback.retain(|id,_|retained.contains(id));
+        Ok(())
+    }
+
     pub fn command(&self, request: &Value) -> Result<Value, String> {
         // Publication verification may hash assets; it runs before acquiring session state.
         let published = if request["command"] == "companion_publish" {
@@ -422,57 +530,27 @@ impl Hub {
                     secret_hash: hash(secret.as_bytes()),
                     expires,
                     consumed: false,
+                    auto_approve: request["autoApprove"] == true,
+                    kind: request["kind"].as_str().filter(|s| ["browser","desktop","mobile","esp32"].contains(s)).unwrap_or("desktop").into(),
                 });
                 Ok(
                     json!({"secret":secret,"expiresAtMs":expires,"ttlMs":PAIRING_MS,"hostId":inner.record.host_id}),
                 )
             }
             "companion_approve" | "companion_pair_approve" => {
-                let request_id = field(request, "requestId")?;
-                let pending = inner
-                    .pending
-                    .get(request_id)
-                    .ok_or("Pairing request expired or missing.")?;
-                if let Some(expected) = request["companionId"].as_str() {
-                    ensure(
-                        expected == pending.companion_id,
-                        "Pairing installation mismatch.",
-                    )?;
-                }
-                if pending.token.is_some() {
-                    return Ok(json!({"approved":true}));
-                }
-                let token = Zeroizing::new(random_secret()?);
-                let credential = Credential {
-                    companion_id: pending.companion_id.clone(),
-                    name: pending.name.clone(),
-                    token_hash: hash(token.as_bytes()),
-                };
-                let mut record = inner.record.clone();
-                record
-                    .credentials
-                    .retain(|c| c.companion_id != credential.companion_id);
-                ensure(
-                    record.credentials.len() < 32,
-                    "Paired companion budget exhausted.",
-                )?;
-                record.credentials.push(credential.clone());
-                self.persist(&record)?;
-                let sessions: Vec<_> = inner
-                    .sessions
-                    .iter()
-                    .filter(|(_, s)| s.companion_id == credential.companion_id)
-                    .map(|(id, _)| id.clone())
-                    .collect();
-                for id in sessions {
-                    self.disarm(&mut inner, &id, "credential-rotated", true);
-                }
-                inner
-                    .connections
-                    .retain(|_, c| c != &credential.companion_id);
-                inner.record = record;
-                inner.pending.get_mut(request_id).unwrap().token = Some(token);
-                Ok(json!({"approved":true,"companionId":credential.companion_id}))
+                self.approve_pending(&mut inner, field(request, "requestId")?, request["companionId"].as_str())
+            }
+            "companion_pair_code" => {
+                let payload = request["payload"].clone();
+                ensure(payload["secret"].as_str().is_some_and(secret_valid), "Create a pairing offer first.")?;
+                let code = crate::pairing_code::new_code()?;
+                inner.code_offer = Some(CodeOffer { code: Zeroizing::new(code.clone()), payload, expires: now.saturating_add(PAIRING_MS), attempts: 0 });
+                Ok(json!({"code":code,"ttlMs":PAIRING_MS}))
+            }
+            "companion_pair_cancel" => {
+                inner.offer = None; inner.code_offer = None;
+                inner.pending.retain(|_, p| p.token.is_some());
+                Ok(json!({"cancelled":true}))
             }
             "companion_reject" => {
                 ensure(
@@ -481,33 +559,19 @@ impl Hub {
                 )?;
                 Ok(json!({"rejected":true}))
             }
+            "companion_update" => {
+                let companion=field(request,"companionId")?;
+                let name=field(request,"name")?;
+                ensure(label(name),"Enter a valid companion name.")?;
+                let mut record=inner.record.clone();
+                let client=record.credentials.iter_mut().find(|c|c.companion_id==companion).ok_or("Unknown companion.")?;
+                client.name=name.into();
+                self.persist(&record)?;inner.record=record;
+                Ok(Self::status(&inner))
+            }
             "companion_revoke" => {
-                let companion = field(request, "companionId")?;
-                let mut record = inner.record.clone();
-                ensure(
-                    record
-                        .credentials
-                        .iter()
-                        .any(|c| c.companion_id == companion),
-                    "Unknown companion.",
-                )?;
-                record.credentials.retain(|c| c.companion_id != companion);
-                record.instances.retain(|a| a.companion_id != companion);
-                self.persist(&record)?;
-                let sessions: Vec<_> = inner
-                    .sessions
-                    .iter()
-                    .filter(|(_, s)| s.companion_id == companion)
-                    .map(|(id, _)| id.clone())
-                    .collect();
-                for id in sessions {
-                    self.disarm(&mut inner, &id, "revoked", true);
-                }
-                inner.connections.retain(|_, c| c != companion);
-                inner.pending.retain(|_, p| p.companion_id != companion);
-                inner.record = record;
-                let retained=inner.record.instances.iter().map(|a|a.instance_id.clone()).collect::<BTreeSet<_>>();
-                inner.feedback.retain(|id,_|retained.contains(id));
+                let companion=field(request,"companionId")?;
+                self.revoke_inner(&mut inner,companion)?;
                 Ok(json!({"revoked":true}))
             }
             "companion_publish" => {
@@ -534,6 +598,31 @@ impl Hub {
                 let summary = json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title});
                 inner.publications.insert(p.publication_hash.clone(), p);
                 Ok(summary)
+            }
+            "companion_prune" => {
+                let hashes=request["hashes"].as_array().filter(|a|a.len()<=100).ok_or("Invalid panel retention list.")?;
+                let ids=request["panelIds"].as_array().filter(|a|a.len()<=128).ok_or("Invalid panel identity list.")?;
+                let mut managed=BTreeSet::new();
+                for value in ids {let ui=value.as_str().filter(|s|id(s)).ok_or("Invalid panel identity.")?;managed.insert(ui.to_owned());}
+                let mut retained=BTreeSet::new();
+                for value in hashes { let hash=value.as_str().filter(|s|digest_id(s)).ok_or("Invalid panel retention hash.")?;retained.insert(hash.to_owned()); }
+                retained.extend(inner.record.instances.iter().map(|a|a.publication_hash.clone()));
+                retained.extend(inner.sessions.values().map(|s|s.token.publication_hash.clone()));
+                let before=inner.publications.len();
+                inner.publications.retain(|hash,p|!managed.contains(&p.ui_id)||retained.contains(hash));
+                Ok(json!({"removed":before-inner.publications.len()}))
+            }
+            "companion_unassign" => {
+                let instance=field(request,"instanceId")?;
+                let mut record=inner.record.clone();
+                ensure(record.instances.iter().any(|a|a.instance_id==instance),"Unknown controller instance.")?;
+                record.instances.retain(|a|a.instance_id!=instance);
+                let sessions=inner.sessions.iter().filter(|(_,s)|s.token.source_id==instance).map(|(id,_)|id.clone()).collect::<Vec<_>>();
+                for id in sessions { self.disarm(&mut inner,&id,"assignment-removed",true); }
+                self.persist(&record)?;
+                inner.record=record;
+                inner.feedback.remove(instance);
+                Ok(json!({"unassigned":true}))
             }
             "companion_assign" => {
                 let instance = field(request, "instanceId")?;
@@ -649,7 +738,7 @@ impl Hub {
         }
     }
     fn status(inner: &Inner) -> Value {
-        json!({"hostId":inner.record.host_id,"diagnostic":inner.diagnostic,"clients":inner.record.credentials.iter().map(|c|json!({"companionId":c.companion_id,"name":c.name,"connected":inner.connections.values().any(|v|v==&c.companion_id)})).collect::<Vec<_>>(),"pending":inner.pending.iter().map(|(id,p)|json!({"requestId":id,"companionId":p.companion_id,"name":p.name,"expiresAtMs":p.expires,"approved":p.token.is_some()})).collect::<Vec<_>>(),"instances":inner.record.instances.iter().map(|a|{let s=inner.sessions.values().find(|s|s.token.source_id==a.instance_id);json!({"instanceId":a.instance_id,"sourceId":a.instance_id,"companionId":a.companion_id,"publicationHash":a.publication_hash,"name":a.definition.name,"connected":s.is_some(),"armed":s.is_some_and(|s|s.armed),"generation":s.map(|s|s.token.generation.to_string()),"sessionId":s.map(|s|&s.token.session_id),"values":s.map(|s|&s.values)})}).collect::<Vec<_>>(),"publications":inner.publications.values().map(|p|json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title,"controlCount":p.controls.len(),"assetCount":p.assets.len()})).collect::<Vec<_>>()})
+        json!({"hostId":inner.record.host_id,"diagnostic":inner.diagnostic,"clients":inner.record.credentials.iter().map(|c|json!({"companionId":c.companion_id,"name":c.name,"kind":c.kind,"connected":inner.connections.values().any(|v|v==&c.companion_id)})).collect::<Vec<_>>(),"pending":inner.pending.iter().map(|(id,p)|json!({"requestId":id,"companionId":p.companion_id,"name":p.name,"expiresAtMs":p.expires,"approved":p.token.is_some()})).collect::<Vec<_>>(),"instances":inner.record.instances.iter().map(|a|{let s=inner.sessions.values().find(|s|s.token.source_id==a.instance_id);json!({"instanceId":a.instance_id,"sourceId":a.instance_id,"companionId":a.companion_id,"publicationHash":a.publication_hash,"name":a.definition.name,"connected":s.is_some(),"armed":s.is_some_and(|s|s.armed),"generation":s.map(|s|s.token.generation.to_string()),"sessionId":s.map(|s|&s.token.session_id),"values":s.map(|s|&s.values)})}).collect::<Vec<_>>(),"publications":inner.publications.values().map(|p|json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title,"controlCount":p.controls.len(),"assetCount":p.assets.len()})).collect::<Vec<_>>()})
     }
     pub fn handle_wire(&self, frame: Value, connection_id: &str, now_ms: u64) -> Value {
         let result = self.wire(&frame, connection_id, now_ms);
@@ -674,11 +763,24 @@ impl Hub {
         let now = now.max(inner.last_now).max(self.now_ms());
         self.expire(&mut inner, now)?;
         match field(frame, "type")? {
+            "pair-code" => {
+                exact(frame, &["type", "message"], &["version"])?;
+                let offer = inner
+                    .code_offer
+                    .as_mut()
+                    .ok_or("Start pairing in Cockpit.")?;
+                ensure(
+                    offer.expires > now && offer.attempts < 5,
+                    "Pairing code expired or attempt limit reached. Start again in Cockpit.",
+                )?;
+                offer.attempts += 1;
+                crate::pairing_code::respond(&offer.code, field(frame, "message")?, &offer.payload)
+            }
             "pair" => {
                 exact(
                     frame,
                     &["type", "secret", "companionId", "name"],
-                    &["version"],
+                    &["version","replaceToken"],
                 )?;
                 let secret = field(frame, "secret")?;
                 let companion = field(frame, "companionId")?;
@@ -700,8 +802,21 @@ impl Hub {
                         && equal_hash(&offer.secret_hash, &hash(secret.as_bytes())),
                     "Pairing offer is invalid, consumed or expired.",
                 )?;
+                let browser_offer=offer.kind=="browser";
+                let replace=if let Some(value)=frame.get("replaceToken"){
+                    let token=value.as_str().ok_or("Invalid replacement credential.")?;
+                    ensure(secret_valid(token)&&browser_offer,"Replacement requires a browser pairing offer.")?;
+                    let digest=hash(token.as_bytes());
+                    let old=inner.record.credentials.iter().find(|c|equal_hash(&c.token_hash,&digest));
+                    if let Some(old)=old{ensure(old.kind=="browser","Only this browser pairing may be replaced.")?;}
+                    old.map(|c|c.companion_id.clone())
+                }else{None};
+                if let Some(old)=replace{self.revoke_inner(&mut inner,&old)?;}
+                let offer=inner.offer.as_mut().ok_or("Pairing offer is unavailable.")?;
                 offer.consumed = true;
+                let auto_approve = offer.auto_approve;
                 let pending = Pending {
+                    kind: offer.kind.clone(),
                     companion_id: companion.into(),
                     name: name.into(),
                     secret_hash: offer.secret_hash.clone(),
@@ -710,6 +825,10 @@ impl Hub {
                 };
                 let request_id = uuid::Uuid::new_v4().to_string();
                 inner.pending.insert(request_id.clone(), pending);
+                if auto_approve {
+                    self.approve_pending(&mut inner, &request_id, Some(companion))?;
+                    inner.code_offer = None;
+                }
                 Ok(json!({"ok":true,"type":"pair-pending","requestId":request_id}))
             }
             "pair-status" => {
@@ -732,11 +851,21 @@ impl Hub {
                     Ok(json!({"ok":true,"type":"pair-pending","requestId":request_id}))
                 }
             }
+            "presence" => {
+                exact(frame, &["type"], &["version"])?;
+                let companion = inner
+                    .connections
+                    .get(connection_id)
+                    .ok_or("Authenticate this companion first.")?;
+                Ok(
+                    json!({"ok":true,"type":"presence","assignments":inner.record.instances.iter().filter(|a| &a.companion_id==companion).map(|a|json!({"instanceId":a.instance_id,"publicationHash":a.publication_hash,"name":a.definition.name})).collect::<Vec<_>>()}),
+                )
+            }
             "auth" => {
                 exact(frame, &["type", "token"], &["version"])?;
                 ensure(
                     inner.connections.contains_key(connection_id)
-                        || inner.connections.len() < MAX_CLIENTS,
+                        || inner.connections.len() < MAX_CLIENTS * 2,
                     "Connected client budget exhausted.",
                 )?;
                 let token = field(frame, "token")?;
@@ -749,6 +878,11 @@ impl Hub {
                     .find(|c| equal_hash(&c.token_hash, &digest))
                     .ok_or("Installation credential is invalid or revoked.")?;
                 let companion = credential.companion_id.clone();
+                ensure(
+                    inner.connections.values().any(|c| c == &companion)
+                        || inner.connections.values().collect::<BTreeSet<_>>().len() < MAX_CLIENTS,
+                    "Connected companion budget exhausted.",
+                )?;
                 ensure(
                     inner
                         .connections

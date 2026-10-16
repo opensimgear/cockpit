@@ -89,20 +89,20 @@ impl Write for DeadlineTcp {
         self.inner.flush()
     }
 }
-struct Attempts {
+pub(crate) struct Attempts {
     since: Instant,
     total: usize,
     peers: HashMap<IpAddr, usize>,
 }
 impl Attempts {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             since: Instant::now(),
             total: 0,
             peers: HashMap::new(),
         }
     }
-    fn allow(&mut self, peer: IpAddr) -> bool {
+    pub(crate) fn allow(&mut self, peer: IpAddr) -> bool {
         if self.since.elapsed() >= Duration::from_secs(60) {
             self.since = Instant::now();
             self.total = 0;
@@ -314,9 +314,13 @@ pub struct ServerRuntime {
     path: PathBuf,
     inner: Mutex<Inner>,
     active: Arc<AtomicUsize>,
+    browser_assets: &'static [crate::browser::BrowserAsset],
 }
 impl ServerRuntime {
     pub fn new(hub: Hub, data_dir: PathBuf) -> Result<Self, String> {
+        Self::with_browser(hub, data_dir, &[])
+    }
+    pub fn with_browser(hub: Hub, data_dir: PathBuf, browser_assets: &'static [crate::browser::BrowserAsset]) -> Result<Self, String> {
         std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
         let path = data_dir.join("companion-identity.dpapi");
         let identity = NativeIdentity::load_or_create(
@@ -332,6 +336,7 @@ impl ServerRuntime {
         Ok(Self {
             hub,
             path,
+            browser_assets,
             inner: Mutex::new(Inner {
                 identity,
                 status,
@@ -384,6 +389,8 @@ impl ServerRuntime {
                 }
             }
         }
+        let browser_origin = endpoint.trim_end_matches("/companion").replacen("wss://", "https://", 1);
+        let browser_assets = self.browser_assets;
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
         let hub = self.hub.clone();
@@ -403,6 +410,7 @@ impl ServerRuntime {
                             }
                             active.fetch_add(1, Ordering::SeqCst);
                             let hub = hub.clone();
+                            let browser_origin = browser_origin.clone();
                             let tls = tls.clone();
                             let active = active.clone();
                             let stop = stopped.clone();
@@ -410,7 +418,7 @@ impl ServerRuntime {
                             workers.push(thread::spawn(move || {
                                 let id = uuid::Uuid::new_v4().to_string();
                                 let _result =
-                                    serve_connection(stream, tls, &hub, &id, &stop, &attempts);
+                                    serve_connection(stream, tls, &hub, &id, &stop, &attempts, &browser_origin, browser_assets);
                                 #[cfg(test)]
                                 if let Err(error) = _result {
                                     eprintln!("companion peer ended: {error}");
@@ -484,6 +492,19 @@ impl ServerRuntime {
         value.active_connections = self.active.load(Ordering::SeqCst);
         value
     }
+    pub fn record_error(&self, error: String) {
+        if let Ok(mut inner)=self.inner.lock(){inner.status.last_error=Some(error);}
+    }
+    pub fn browser_url(&self) -> Result<String, String> {
+        if self.browser_assets.is_empty() { return Err("Build the browser companion before building Cockpit.".into()); }
+        self.status().endpoint.map(|e|e.trim_end_matches("/companion").replacen("wss://","https://",1)+"/")
+            .ok_or("Enable the companion listener in Settings before pairing over the network.".into())
+    }
+    pub fn browser_certificate(&self) -> Result<String, String> {
+        let inner=self.inner.lock().map_err(|_|"Listener lock poisoned")?;
+        let base64=inner.identity.ca_base64();
+        Ok(format!("-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",base64.as_bytes().chunks(64).map(|c|std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join("\n")))
+    }
     pub fn pairing_payload(
         &self,
         secret: &str,
@@ -521,6 +542,8 @@ fn serve_connection(
     id: &str,
     stop: &AtomicBool,
     attempts: &Mutex<Attempts>,
+    browser_origin: &str,
+    browser_assets: &'static [crate::browser::BrowserAsset],
 ) -> Result<(), String> {
     let peer = stream.peer_addr().map_err(|error| error.to_string())?.ip();
     stream
@@ -537,11 +560,18 @@ fn serve_connection(
         .map_err(|error| error.to_string())?;
     let mut connection = ServerConnection::new(tls).map_err(|error| error.to_string())?;
     connection.set_buffer_limit(Some(65536));
-    let stream = BudgetIo::new(StreamOwned::new(connection, DeadlineTcp::new(stream)));
+    let mut stream = BudgetIo::new(StreamOwned::new(connection, DeadlineTcp::new(stream)));
+    let (http_request, header) = crate::browser::read_header(&mut stream)?;
+    if http_request.uri().path() != "/companion" && http_request.uri().path() != "/socket" {
+        return crate::browser::serve_http(&mut stream, &http_request, browser_origin, browser_assets);
+    }
+    let stream = crate::browser::Replay { prefix: std::io::Cursor::new(header), stream };
     let callback = |request: &Request, mut response: Response| -> Result<Response, ErrorResponse> {
-        if request.uri().path() != "/companion"
+        let browser = request.uri().path() == "/socket" && !browser_assets.is_empty()
+            && crate::browser::allowed(request, browser_origin);
+        let native = request.uri().path() == "/companion" && !request.headers().contains_key("origin");
+        if !(browser || native)
             || request.uri().query().is_some()
-            || request.headers().contains_key("origin")
             || request
                 .headers()
                 .get("sec-websocket-protocol")
@@ -562,14 +592,22 @@ fn serve_connection(
     let mut socket =
         tungstenite::accept_hdr_with_config(stream, callback, Some(websocket_config()))
             .map_err(|error| error.to_string())?;
-    socket.get_mut().upgraded();
-    socket.get_mut().inner.sock.upgraded();
+    socket.get_mut().stream.upgraded();
+    socket.get_mut().stream.inner.sock.upgraded();
     socket
         .get_mut()
+        .stream
         .inner
         .sock
         .set_read_timeout(Some(Duration::from_millis(100)))
         .map_err(|error| error.to_string())?;
+    serve_messages(socket, hub, id, stop, attempts, peer)
+}
+
+pub(crate) fn serve_messages<S: Read + Write>(
+    mut socket: WebSocket<S>, hub: &Hub, id: &str, stop: &AtomicBool,
+    attempts: &Mutex<Attempts>, peer: IpAddr,
+) -> Result<(), String> {
     let mut window = Instant::now();
     let mut frames = 0;
     let mut bytes = 0;
@@ -601,7 +639,7 @@ fn serve_connection(
                 last_frame = Instant::now();
                 let frame: Value =
                     serde_json::from_str(&text).map_err(|_| "Invalid companion JSON")?;
-                if frame["type"] == "pair"
+                if (frame["type"] == "pair" || frame["type"] == "pair-code")
                     && !attempts
                         .lock()
                         .map_err(|_| "Admission lock poisoned")?

@@ -267,3 +267,26 @@ mod tests {
         assert!(NativeIdentity::load_or_create(&path, "host", vec!["localhost".into()]).is_err());
     }
 }
+
+
+// Certificate authentication for code bootstrap is supplied by SPAKE2, which
+// authenticates the complete CA-bearing offer. This config is never used for auth.
+#[derive(Debug)]
+struct PairingBootstrap;
+impl rustls::client::danger::ServerCertVerifier for PairingBootstrap {
+    fn verify_server_cert(&self, _: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: &rustls_pki_types::ServerName<'_>, _: &[u8], _: rustls_pki_types::UnixTime) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &rustls::crypto::ring::default_provider().signature_verification_algorithms)
+    }
+    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &rustls::crypto::ring::default_provider().signature_verification_algorithms)
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> { rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes() }
+}
+pub(crate) fn pairing_bootstrap_config() -> Arc<ClientConfig> {
+    Arc::new(ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions().expect("TLS protocols")
+        .dangerous().with_custom_certificate_verifier(Arc::new(PairingBootstrap)).with_no_client_auth())
+}

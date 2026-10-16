@@ -8,13 +8,13 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "preview": "vite preview --host 127.0.0.1",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-check --tsconfig ./tsconfig.json && pnpm browser:check",
     "tauri": "tauri",
     "ui:dev": "vite --host 127.0.0.1",
-    "ui:build": "vite build",
+    "ui:build": "pnpm browser:build && vite build",
     "web:dev": "vite --host 127.0.0.1",
     "web:native": "vite --mode native --host 127.0.0.1",
-    "web:build": "vite build",
+    "web:build": "pnpm browser:build && vite build",
     "native:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "companion:check": "pnpm --filter @opensimgear/companion-contracts check && pnpm --filter @opensimgear/companion-designer check && pnpm --filter @opensimgear/companion-ui check && pnpm --filter @opensimgear/companion check",
     "companion:test": "pnpm --filter @opensimgear/companion-contracts coverage && pnpm --filter @opensimgear/companion-designer coverage && pnpm --filter @opensimgear/companion-ui coverage && node --experimental-test-coverage --test-coverage-include=src/lib/companion-library.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/companion-library.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/companions.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/companions.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/companion-feedback.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/companion-feedback.test.mjs && pnpm --filter @opensimgear/companion test && node --experimental-test-coverage --test-coverage-include=examples/companion/layouts.mjs --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test examples/companion/layouts.test.mjs",
@@ -33,7 +33,10 @@
     "debug:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/debug-inputs.test.mjs src/lib/dcs-test-presets.test.mjs src/lib/dcs-profile.test.mjs",
     "games:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/games.test.mjs src/lib/integration-profile.test.mjs src/lib/runtime-config.test.mjs",
     "companion:release-check": "python scripts/companion-release-check.py",
-    "notifications:test": "node --test src/lib/notifications.test.mjs"
+    "notifications:test": "node --test src/lib/notifications.test.mjs",
+    "browser:build": "vite build --config apps/browser-companion/vite.config.ts",
+    "browser:check": "svelte-check --tsconfig apps/browser-companion/tsconfig.json",
+    "browser:test": "node --test apps/browser-companion/src/*.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",

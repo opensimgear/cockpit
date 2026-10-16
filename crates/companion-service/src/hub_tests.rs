@@ -778,3 +778,131 @@ fn mapping_blueprints_require_current_assignment_authority_and_exact_publication
 mod assignment_cases;
 #[path = "hub_feedback_tests.rs"]
 mod feedback_cases;
+
+#[test]
+fn unassign_releases_only_the_selected_source_and_keeps_pairing() {
+    let sink=Arc::new(Sink::default());let h=Hub::new("host".into(),sink.clone());
+    let a=paired(&h,"a");let b=paired(&h,"b");let panel=publish(&h,fixture());
+    assign(&h,"a","one",&panel.publication_hash);assign(&h,"b","two",&panel.publication_hash);
+    let oa=connect(&h,"ca",&a,"one");let ob=connect(&h,"cb",&b,"two");
+    assert_eq!(baseline(&h,"ca",&oa,&panel)["ok"],true);assert_eq!(baseline(&h,"cb",&ob,&panel)["ok"],true);
+    operator(&h,json!({"command":"companion_unassign","instanceId":"one"}));
+    let state=operator(&h,json!({"command":"companion_status"}));
+    assert_eq!(state["instances"].as_array().unwrap().len(),1);
+    assert_eq!(state["clients"].as_array().unwrap().len(),2);
+    assert!(!sink.owners.lock().unwrap().contains_key("one"));
+    assert!(sink.owners.lock().unwrap().contains_key("two"));
+    assert_eq!(wire(&h,"ca",frame(&oa,"heartbeat","1"))["ok"],false);
+    assert_eq!(wire(&h,"cb",frame(&ob,"heartbeat","1"))["ok"],true);
+    assert!(h.command(&json!({"command":"companion_unassign","instanceId":"missing"})).is_err());
+}
+
+#[test]
+fn panel_snapshot_pruning_preserves_live_and_explicitly_pinned_panels() {
+    let h=Hub::new("host".into(),Arc::new(Sink::default()));paired(&h,"a");
+    let current=publish(&h,fixture());
+    let pinned=publish(&h,mutated(|d|d["ui"]["title"]=json!("Captured layout")));
+    let unused=publish(&h,mutated(|d|d["ui"]["title"]=json!("Unused layout")));
+    assign(&h,"a","one",&current.publication_hash);
+    let foreign=publish(&h,mutated(|d|d["ui"]["id"]=json!("foreign-panel")));
+    let result=operator(&h,json!({"command":"companion_prune","hashes":[pinned.publication_hash],"panelIds":[current.ui_id]}));
+    assert_eq!(result["removed"],1);
+    let state=operator(&h,json!({"command":"companion_status"}));
+    let hashes=state["publications"].as_array().unwrap().iter().map(|p|p["publicationHash"].as_str().unwrap()).collect::<Vec<_>>();
+    assert!(hashes.contains(&current.publication_hash.as_str()));
+    assert!(hashes.contains(&pinned.publication_hash.as_str()));
+    assert!(!hashes.contains(&unused.publication_hash.as_str()));
+    assert!(hashes.contains(&foreign.publication_hash.as_str()));
+    assert!(h.command(&json!({"command":"companion_prune","hashes":["invalid"],"panelIds":[current.ui_id]})).is_err());
+    assert_eq!(operator(&h,json!({"command":"companion_status"}))["publications"].as_array().unwrap().len(),3);
+}
+
+
+#[test]
+fn short_codes_are_bounded_cancelled_expired_and_single_use() {
+    use base64::Engine;
+    let hub=Hub::new("code-host".into(),Arc::new(NullSourceSink));
+    let offer=hub.command(&json!({"command":"companion_pair_offer","autoApprove":true,"kind":"mobile"})).unwrap();
+    let code=hub.command(&json!({"command":"companion_pair_code","payload":{"secret":offer["secret"]}})).unwrap();
+    assert_eq!(code["code"].as_str().unwrap().len(),8);
+    for _ in 0..5 {
+        let (_,message)=crate::pairing_code::start("AAAAAAAA");
+        assert_eq!(hub.handle_wire(json!({"type":"pair-code","message":base64::engine::general_purpose::STANDARD.encode(message)}),"peer",hub.now_ms())["ok"],true);
+    }
+    assert_eq!(hub.handle_wire(json!({"type":"pair-code","message":"invalid"}),"peer",hub.now_ms())["ok"],false);
+    hub.command(&json!({"command":"companion_pair_cancel"})).unwrap();
+    assert_eq!(hub.handle_wire(json!({"type":"pair","secret":offer["secret"],"companionId":"mobile","name":"Phone"}),"peer",hub.now_ms())["ok"],false);
+    let offer=hub.command(&json!({"command":"companion_pair_offer","autoApprove":true,"kind":"mobile"})).unwrap();
+    let frame=json!({"type":"pair","secret":offer["secret"],"companionId":"mobile","name":"Phone"});
+    let pending=hub.handle_wire(frame.clone(),"peer",hub.now_ms());
+    assert_eq!(pending["ok"],true);
+    assert_eq!(hub.command(&json!({"command":"companion_status"})).unwrap()["clients"][0]["kind"],"mobile");
+    assert_eq!(hub.handle_wire(frame,"peer",hub.now_ms())["ok"],false);
+    let offer=hub.command(&json!({"command":"companion_pair_offer"})).unwrap();
+    hub.command(&json!({"command":"companion_pair_code","payload":{"secret":offer["secret"]}})).unwrap();
+    let (_,message)=crate::pairing_code::start("AAAAAAAA");
+    assert_eq!(hub.handle_wire(json!({"type":"pair-code","message":base64::engine::general_purpose::STANDARD.encode(message)}),"peer",hub.now_ms()+PAIRING_MS+1)["ok"],false);
+}
+
+
+#[test]
+fn editing_companion_name_preserves_identity_credential_and_connection() {
+    let hub=Hub::new("settings-host".into(),Arc::new(NullSourceSink));
+    let offer=hub.command(&json!({"command":"companion_pair_offer","autoApprove":true})).unwrap();
+    let pending=hub.handle_wire(json!({"type":"pair","secret":offer["secret"],"companionId":"settings-screen","name":"Original"}),"settings-peer",hub.now_ms());
+    let paired=hub.handle_wire(json!({"type":"pair-status","requestId":pending["requestId"],"secret":offer["secret"]}),"settings-peer",hub.now_ms());
+    assert_eq!(hub.handle_wire(json!({"type":"auth","token":paired["token"]}),"settings-peer",hub.now_ms())["ok"],true);
+    let updated=hub.command(&json!({"command":"companion_update","companionId":"settings-screen","name":"Renamed"})).unwrap();
+    assert_eq!(updated["clients"][0]["name"],"Renamed");
+    assert_eq!(updated["clients"][0]["companionId"],"settings-screen");
+    assert_eq!(updated["clients"][0]["connected"],true);
+    assert_eq!(hub.handle_wire(json!({"type":"presence"}),"settings-peer",hub.now_ms())["ok"],true);
+    assert!(hub.command(&json!({"command":"companion_update","companionId":"unknown","name":"Other"})).is_err());
+    assert!(hub.command(&json!({"command":"companion_update","companionId":"settings-screen","name":""})).is_err());
+    assert_eq!(hub.command(&json!({"command":"companion_status"})).unwrap()["clients"][0]["name"],"Renamed");
+}
+
+#[test]
+fn browser_pairing_credential_survives_host_reload_and_is_revoked() {
+    let storage=Arc::new(Memory::default());
+    let sink=Arc::new(Sink::default());
+    let hub=Hub::with_storage(storage.clone(),sink.clone()).unwrap();
+    let offer=operator(&hub,json!({"command":"companion_pair_offer","kind":"browser","autoApprove":true}));
+    let pending=wire(&hub,"pair-link",json!({"type":"pair","secret":offer["secret"],"companionId":"browser-one","name":"Browser companion"}));
+    let credential=wire(&hub,"pair-link",json!({"type":"pair-status","secret":offer["secret"],"requestId":pending["requestId"]}));
+    let token=credential["token"].clone();assert!(token.is_string());
+    drop(hub);
+    let hub=Hub::with_storage(storage,sink).unwrap();
+    let status=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(status["clients"][0]["kind"],"browser");
+    assert_eq!(status["clients"][0]["connected"],false);
+    assert_eq!(wire(&hub,"new-window",json!({"type":"auth","token":token}))["ok"],true);
+    operator(&hub,json!({"command":"companion_revoke","companionId":"browser-one"}));
+    assert_eq!(wire(&hub,"reopened-app",json!({"type":"auth","token":token}))["ok"],false);
+}
+
+
+#[test]
+fn browser_pairing_replacement_revokes_only_the_proven_old_browser(){
+    let storage=Arc::new(Memory::default());let sink=Arc::new(Sink::default());
+    let hub=Hub::with_storage(storage.clone(),sink.clone()).unwrap();
+    let offer=operator(&hub,json!({"command":"companion_pair_offer","kind":"browser","autoApprove":true}));
+    let pending=wire(&hub,"old-link",json!({"type":"pair","secret":offer["secret"],"companionId":"old-browser","name":"Old browser"}));
+    let old=wire(&hub,"old-link",json!({"type":"pair-status","requestId":pending["requestId"],"secret":offer["secret"]}));
+    let offer=operator(&hub,json!({"command":"companion_pair_offer","kind":"browser","autoApprove":true}));
+    let invalid=wire(&hub,"bad-link",json!({"type":"pair","secret":"bad","companionId":"new-browser","name":"New browser","replaceToken":old["token"]}));
+    assert_eq!(invalid["ok"],false);
+    assert_eq!(wire(&hub,"old-session",json!({"type":"auth","token":old["token"]}))["ok"],true);
+    let pending=wire(&hub,"new-link",json!({"type":"pair","secret":offer["secret"],"companionId":"new-browser","name":"New browser","replaceToken":old["token"]}));
+    assert_eq!(pending["ok"],true);
+    let fresh=wire(&hub,"new-link",json!({"type":"pair-status","requestId":pending["requestId"],"secret":offer["secret"]}));
+    assert_eq!(wire(&hub,"revoked-old",json!({"type":"auth","token":old["token"]}))["ok"],false);
+    assert_eq!(wire(&hub,"fresh-session",json!({"type":"auth","token":fresh["token"]}))["ok"],true);
+    let state=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(state["clients"].as_array().unwrap().len(),1);
+    assert_eq!(state["clients"][0]["companionId"],"new-browser");
+    drop(hub);
+    let hub=Hub::with_storage(storage,sink).unwrap();
+    assert_eq!(wire(&hub,"restart-old",json!({"type":"auth","token":old["token"]}))["ok"],false);
+    assert_eq!(wire(&hub,"restart-new",json!({"type":"auth","token":fresh["token"]}))["ok"],true);
+}
