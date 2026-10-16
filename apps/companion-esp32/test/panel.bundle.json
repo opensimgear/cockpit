@@ -1,0 +1,251 @@
+{
+  "bundleVersion": 1,
+  "document": {
+    "schemaVersion": 2,
+    "ui": {
+      "schemaVersion": 1,
+      "id": "esp32-demo",
+      "title": "ESP32 instruments",
+      "controls": [
+        {
+          "id": "master",
+          "kind": "button",
+          "label": "Master caution"
+        }
+      ],
+      "feedbackWidgets": [
+        {
+          "id": "caution",
+          "label": "Caution",
+          "channelId": "caution-channel",
+          "kind": "indicator"
+        },
+        {
+          "id": "radio",
+          "label": "Radio",
+          "channelId": "radio-channel",
+          "kind": "text"
+        },
+        {
+          "id": "speed",
+          "label": "Speed",
+          "channelId": "speed-channel",
+          "kind": "gauge"
+        },
+        {
+          "id": "rpm",
+          "label": "RPM",
+          "channelId": "rpm-channel",
+          "kind": "gauge"
+        }
+      ],
+      "pages": [
+        {
+          "id": "main-page",
+          "title": "Flight instruments",
+          "items": [
+            {
+              "kind": "control",
+              "refId": "master",
+              "bounds": {
+                "x": 0.025,
+                "y": 0.05,
+                "width": 0.45,
+                "height": 0.38
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "caution",
+              "bounds": {
+                "x": 0.525,
+                "y": 0.05,
+                "width": 0.45,
+                "height": 0.38
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "radio",
+              "bounds": {
+                "x": 0.025,
+                "y": 0.55,
+                "width": 0.45,
+                "height": 0.38
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "speed",
+              "bounds": {
+                "x": 0.525,
+                "y": 0.55,
+                "width": 0.45,
+                "height": 0.38
+              }
+            }
+          ]
+        },
+        {
+          "id": "engine-page",
+          "title": "Engine instruments",
+          "items": [
+            {
+              "kind": "feedback",
+              "refId": "rpm",
+              "bounds": {
+                "x": 0.1,
+                "y": 0.15,
+                "width": 0.8,
+                "height": 0.7
+              }
+            }
+          ]
+        }
+      ],
+      "assets": []
+    },
+    "presentation": {
+      "widgets": [
+        {
+          "id": "master-widget",
+          "pageId": "main-page",
+          "kind": "button",
+          "label": "Master caution",
+          "bounds": {
+            "x": 0.025,
+            "y": 0.05,
+            "width": 0.45,
+            "height": 0.38
+          },
+          "controlIds": [
+            "master"
+          ],
+          "feedbackIds": [],
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "caution-widget",
+          "pageId": "main-page",
+          "kind": "indicator",
+          "label": "Caution status",
+          "bounds": {
+            "x": 0.525,
+            "y": 0.05,
+            "width": 0.45,
+            "height": 0.38
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "caution"
+          ],
+          "config": {}
+        },
+        {
+          "id": "radio-widget",
+          "pageId": "main-page",
+          "kind": "text",
+          "label": "Radio frequency",
+          "bounds": {
+            "x": 0.025,
+            "y": 0.55,
+            "width": 0.45,
+            "height": 0.38
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "radio"
+          ],
+          "config": {
+            "prefix": "COM ",
+            "suffix": " MHz"
+          }
+        },
+        {
+          "id": "speed-widget",
+          "pageId": "main-page",
+          "kind": "numeric",
+          "label": "Airspeed",
+          "bounds": {
+            "x": 0.525,
+            "y": 0.55,
+            "width": 0.45,
+            "height": 0.38
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "speed"
+          ],
+          "config": {
+            "min": 0,
+            "max": 600,
+            "precision": 1,
+            "unit": "kt"
+          }
+        },
+        {
+          "id": "rpm-widget",
+          "pageId": "engine-page",
+          "kind": "gauge",
+          "label": "Engine RPM",
+          "bounds": {
+            "x": 0.1,
+            "y": 0.15,
+            "width": 0.8,
+            "height": 0.7
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "rpm"
+          ],
+          "config": {
+            "min": 0,
+            "max": 100,
+            "precision": 0,
+            "unit": "%"
+          }
+        }
+      ],
+      "groups": [],
+      "viewports": [
+        {
+          "pageId": "main-page",
+          "width": 800,
+          "height": 480
+        },
+        {
+          "pageId": "engine-page",
+          "width": 800,
+          "height": 480
+        }
+      ],
+      "grid": {
+        "columns": 12,
+        "rows": 8,
+        "snap": true
+      }
+    },
+    "targets": [
+      {
+        "id": "panel-target",
+        "label": "Panel controller",
+        "axes": [],
+        "buttons": 1,
+        "hats": 0
+      }
+    ],
+    "bindings": [
+      {
+        "controlId": "master",
+        "targetId": "panel-target",
+        "kind": "button",
+        "index": 0
+      }
+    ]
+  },
+  "assets": []
+}

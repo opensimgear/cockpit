@@ -1,0 +1,59 @@
+name: ESP32 companion foundation
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Designer publication export compatibility and coverage
+        run: node --experimental-test-coverage --test-coverage-include=apps/companion-esp32/tools/export-panel.mjs --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test apps/companion-esp32/test/export.test.mjs
+      - name: Native network test dependency
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libssl-dev
+      - name: Network protocol, live input, lease and provisioning checks
+        run: |
+          python3 apps/companion-esp32/test/network.py
+          python3 -m unittest discover -s apps/companion-esp32/test -p "provision_test.py" -v
+      - name: Native firmware sanitizers, coverage and preview
+        run: python3 apps/companion-esp32/test/run.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-portable-evidence
+          path: |
+            .research/esp32-native/coverage.json
+            .research/esp32-native/preview.png
+            .research/esp32-network/coverage.json
+            .research/esp32-network/*-test.log
+  cross-build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [esp32, esp32s3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Cross-build network firmware with headless display with pinned SDK
+        run: |
+          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-${{ matrix.target }} -DIDF_TARGET=${{ matrix.target }} -DSDKCONFIG=build-${{ matrix.target }}/sdkconfig build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-headless-${{ matrix.target }}
+          path: |
+            apps/companion-esp32/build-${{ matrix.target }}/*.bin
+            apps/companion-esp32/build-${{ matrix.target }}/*.elf
+            apps/companion-esp32/build-${{ matrix.target }}/bootloader/*.bin
+            apps/companion-esp32/build-${{ matrix.target }}/partition_table/*.bin
+            apps/companion-esp32/build-${{ matrix.target }}/flasher_args.json
+          if-no-files-found: error
+  host-wire:
+    runs-on: windows-2022
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Shared embedded publication, baseline and isolated lease contract
+        run: cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test esp32_display

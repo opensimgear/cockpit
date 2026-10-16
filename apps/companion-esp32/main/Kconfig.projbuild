@@ -1,0 +1,10 @@
+menu "OpenSimGear companion (offline firmware foundation)"
+config OSG_SCREEN_WIDTH
+    int "Headless screen width"
+    range 64 4096
+    default 800
+config OSG_SCREEN_HEIGHT
+    int "Headless screen height"
+    range 64 4096
+    default 480
+endmenu
