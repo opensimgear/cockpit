@@ -1,0 +1,3733 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "package": "sunton/A",
+      "profile": "sunton",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 350,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 250,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "package": "sunton/B",
+      "profile": "sunton",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 350,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 250,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "package": "sunton/C",
+      "profile": "sunton",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "held",
+          "state": {
+            "page": 0,
+            "timeMs": 600,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 650,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 550,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 2100,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-held",
+          "state": {
+            "page": 0,
+            "timeMs": 2500,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-released",
+          "state": {
+            "page": 0,
+            "timeMs": 2600,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-released.rgb565.gz",
+          "elapsedMs": 600,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "package": "sunton/D",
+      "profile": "sunton",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "held",
+          "state": {
+            "page": 0,
+            "timeMs": 600,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 650,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 550,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 2100,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-held",
+          "state": {
+            "page": 0,
+            "timeMs": 2500,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-released",
+          "state": {
+            "page": 0,
+            "timeMs": 2600,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-released.rgb565.gz",
+          "elapsedMs": 600,
+          "hitTests": [
+            {
+              "x": 17,
+              "y": 97,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "package": "waveshare/A",
+      "profile": "waveshare",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 350,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 250,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "package": "waveshare/B",
+      "profile": "waveshare",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 350,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 250,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "package": "waveshare/C",
+      "profile": "waveshare",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "held",
+          "state": {
+            "page": 0,
+            "timeMs": 600,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 650,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 550,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 2100,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-held",
+          "state": {
+            "page": 0,
+            "timeMs": 2500,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-released",
+          "state": {
+            "page": 0,
+            "timeMs": 2600,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-released.rgb565.gz",
+          "elapsedMs": 600,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "package": "waveshare/D",
+      "profile": "waveshare",
+      "frames": [
+        {
+          "name": "offline",
+          "state": {
+            "page": 0,
+            "timeMs": 0,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "offline.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "live",
+          "state": {
+            "page": 0,
+            "timeMs": 100,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 37.5
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "live.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 200,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "held",
+          "state": {
+            "page": 0,
+            "timeMs": 600,
+            "connected": true,
+            "pressed": [
+              true,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 50
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 0
+              }
+            ]
+          },
+          "rgb565": "held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "confirmed",
+          "state": {
+            "page": 0,
+            "timeMs": 650,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "confirmed.rgb565.gz",
+          "elapsedMs": 550,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stale",
+          "state": {
+            "page": 0,
+            "timeMs": 800,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stale.rgb565.gz",
+          "elapsedMs": 700,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "repeat",
+          "state": {
+            "page": 0,
+            "timeMs": 1300,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "repeat.rgb565.gz",
+          "elapsedMs": 1200,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "disconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 1600,
+            "connected": false,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": false,
+                "value": 73.2
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": false,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "disconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": null
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "reconnected",
+          "state": {
+            "page": 0,
+            "timeMs": 2000,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "reconnected.rgb565.gz",
+          "elapsedMs": 0,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-pressed",
+          "state": {
+            "page": 0,
+            "timeMs": 2100,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-pressed.rgb565.gz",
+          "elapsedMs": 100,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-held",
+          "state": {
+            "page": 0,
+            "timeMs": 2500,
+            "connected": true,
+            "pressed": [
+              false,
+              true
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-held.rgb565.gz",
+          "elapsedMs": 500,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        },
+        {
+          "name": "stop-released",
+          "state": {
+            "page": 0,
+            "timeMs": 2600,
+            "connected": true,
+            "pressed": [
+              false,
+              false
+            ],
+            "feedback": [
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 2,
+                "available": true,
+                "fresh": true,
+                "value": 88.8
+              },
+              {
+                "type": 1,
+                "available": true,
+                "fresh": true,
+                "value": 1
+              }
+            ]
+          },
+          "rgb565": "stop-released.rgb565.gz",
+          "elapsedMs": 600,
+          "hitTests": [
+            {
+              "x": 33,
+              "y": 145,
+              "expected": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "expected": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,300 @@
+{
+  "boards": [
+    {
+      "application": {
+        "afterBytes": 944352,
+        "afterSha256": "7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+        "beforeBytes": 944352,
+        "beforeSha256": "7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+        "status": "unchanged",
+        "unchangedVerified": true
+      },
+      "board": "waveshare",
+      "boardProfile": "waveshare-lcd7-s3",
+      "consecutiveLiveContent": {
+        "allZero": true,
+        "byteIncrement": 0,
+        "counterRegressions": 0,
+        "measuredPairs": 259,
+        "missingCounterPairs": 0,
+        "pairs": 259,
+        "requestIncrement": 0
+      },
+      "consecutiveLiveSerialHealth": {
+        "allZero": true,
+        "counterRegressionPairs": 0,
+        "counterRegressionsByField": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "increments": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "measuredPairs": 259,
+        "missingCounterPairs": 0,
+        "pairs": 259
+      },
+      "deviceEventCounts": {
+        "arming": 2,
+        "invalid-command-json": 1,
+        "live-armed": 2,
+        "presenting-render-package": 3,
+        "refreshing-cockpit-assignment-disarmed": 1,
+        "render-package-transfer-or-validation-failed": 1,
+        "render-package-verified": 2,
+        "render-session-disarmed": 2
+      },
+      "deviceEventSequenceGaps": 0,
+      "deviceEvents": [
+        {
+          "elapsedMs": 2069,
+          "sequence": 1,
+          "status": "invalid-command-json",
+          "transportElapsedMs": 2061
+        },
+        {
+          "elapsedMs": 2177,
+          "sequence": 2,
+          "status": "render-package-transfer-or-validation-failed",
+          "transportElapsedMs": 2152
+        },
+        {
+          "elapsedMs": 78659,
+          "sequence": 3,
+          "status": "render-package-verified",
+          "transportElapsedMs": 78644
+        },
+        {
+          "elapsedMs": 78710,
+          "sequence": 4,
+          "status": "presenting-render-package",
+          "transportElapsedMs": 78666
+        },
+        {
+          "elapsedMs": 80530,
+          "sequence": 5,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 80514
+        },
+        {
+          "elapsedMs": 82498,
+          "sequence": 6,
+          "status": "arming",
+          "transportElapsedMs": 82477
+        },
+        {
+          "elapsedMs": 82549,
+          "sequence": 7,
+          "status": "live-armed",
+          "transportElapsedMs": 82499
+        },
+        {
+          "elapsedMs": 98383,
+          "sequence": 8,
+          "status": "refreshing-cockpit-assignment-disarmed",
+          "transportElapsedMs": 98369
+        },
+        {
+          "elapsedMs": 170812,
+          "sequence": 9,
+          "status": "render-package-verified",
+          "transportElapsedMs": 170789
+        },
+        {
+          "elapsedMs": 170862,
+          "sequence": 10,
+          "status": "presenting-render-package",
+          "transportElapsedMs": 170810
+        },
+        {
+          "elapsedMs": 170862,
+          "sequence": 11,
+          "status": "presenting-render-package",
+          "transportElapsedMs": 170822
+        },
+        {
+          "elapsedMs": 172679,
+          "sequence": 12,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 172668
+        },
+        {
+          "elapsedMs": 174698,
+          "sequence": 13,
+          "status": "arming",
+          "transportElapsedMs": 174660
+        },
+        {
+          "elapsedMs": 174698,
+          "sequence": 14,
+          "status": "live-armed",
+          "transportElapsedMs": 174682
+        }
+      ],
+      "feedbackRejectedCount": 0,
+      "firmwareVersions": [
+        "2026.10.17.1"
+      ],
+      "firstLiveSerialHealth": {
+        "counters": {
+          "breaks": 101,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 6,
+          "replyMismatch": 0,
+          "requestTimeouts": 1,
+          "writeFailures": 0
+        },
+        "elapsedMs": 83003,
+        "firmwareVersion": "2026.10.17.1",
+        "generation": "1",
+        "packageHash": "sha256:d9bf0c28a2fb50766fd274ca4339763803a32980e718621043fe5df88d899615",
+        "sessionId": "0504796b-e117-4881-8d7c-01cff4259a7e",
+        "sourcePublicationHash": "sha256:a0ee1c7ffd637f3b8a8e59ee86e197726a1113ff5f10d9d1763971d343fff7fe"
+      },
+      "inputEvidenceCounts": {
+        "baselines": 2,
+        "sourceLosses": 2
+      },
+      "lastContentBytes": 2190550,
+      "lastContentRequests": 1121,
+      "liveEvents": [
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.17.1",
+          "firstObservedMs": 83003,
+          "firstSerialHealth": {
+            "breaks": 101,
+            "bufferFull": 0,
+            "deferredFull": 0,
+            "fifoOverflows": 0,
+            "frameErrors": 0,
+            "frameOverflows": 0,
+            "invalidJson": 0,
+            "invalidReply": 0,
+            "parityErrors": 0,
+            "queueFullObservations": 6,
+            "replyMismatch": 0,
+            "requestTimeouts": 1,
+            "writeFailures": 0
+          },
+          "generation": "1",
+          "lastObservedMs": 98228,
+          "packageHash": "sha256:d9bf0c28a2fb50766fd274ca4339763803a32980e718621043fe5df88d899615",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "A",
+          "samples": 16,
+          "sessionId": "0504796b-e117-4881-8d7c-01cff4259a7e",
+          "sourcePublicationHash": "sha256:a0ee1c7ffd637f3b8a8e59ee86e197726a1113ff5f10d9d1763971d343fff7fe",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.17.1",
+          "firstObservedMs": 175001,
+          "firstSerialHealth": {
+            "breaks": 101,
+            "bufferFull": 0,
+            "deferredFull": 0,
+            "fifoOverflows": 0,
+            "frameErrors": 0,
+            "frameOverflows": 0,
+            "invalidJson": 0,
+            "invalidReply": 0,
+            "parityErrors": 0,
+            "queueFullObservations": 6,
+            "replyMismatch": 0,
+            "requestTimeouts": 1,
+            "writeFailures": 0
+          },
+          "generation": "1",
+          "lastObservedMs": 419025,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 245,
+          "sessionId": "387a7a17-dccf-4a3e-9101-19ed77b4f480",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        }
+      ],
+      "longestContinuousLiveMs": 244024,
+      "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+      "serialHealthCounterRegressions": 0,
+      "serialHealthMax": {
+        "breaks": 101,
+        "bufferFull": 0,
+        "deferredFull": 0,
+        "fifoOverflows": 0,
+        "frameErrors": 0,
+        "frameOverflows": 0,
+        "invalidJson": 0,
+        "invalidReply": 0,
+        "parityErrors": 0,
+        "queueFullObservations": 6,
+        "replyMismatch": 0,
+        "requestTimeouts": 1,
+        "writeFailures": 0
+      },
+      "serialHealthSamples": 417,
+      "sessionCount": 2,
+      "startupAckMaxBytes": 401,
+      "steadyAckMaxBytes": 396,
+      "targetProfileId": "waveshare-lcd7-s3-render-v1"
+    }
+  ],
+  "formatVersion": 1,
+  "inputEvidenceByInstance": {
+    "render-poc-waveshare": {
+      "baselines": 2,
+      "sourceLosses": 2
+    }
+  },
+  "inputEvidenceCounts": {
+    "baselines": 2,
+    "sourceLosses": 2
+  },
+  "liveStatus": "live-armed",
+  "maximumSampleGapMs": 2500,
+  "notEstablished": [
+    "visual quality",
+    "soak qualification",
+    "power-cut recovery",
+    "absence of unobserved serial failures or lost queue events"
+  ],
+  "records": 857,
+  "runComplete": true,
+  "scope": "Consecutive sampled runtime and full application readback evidence only.",
+  "unattributedDeviceEventCount": 0
+}

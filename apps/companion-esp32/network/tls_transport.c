@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "diagnostics.h"
 #include "esp_transport_ssl.h"
 #include "esp_transport_ws.h"
 #include "esp_timer.h"
@@ -53,6 +54,7 @@ static bool receive_frame(osg_socket *s,size_t *length,int64_t deadline){
         int64_t remaining=(deadline-esp_timer_get_time())/1000;if(remaining<=0)return false;
         const int n=esp_transport_read(s->ws,osg_transport_frame+used,(int)(OSG_FRAME_BYTES-used),(int)remaining);
         if(n<0)return false;
+        osg_diagnostics_bytes(OSG_DIAG_WS_RX,(size_t)n);
         const int opcode=esp_transport_ws_get_read_opcode(s->ws);
         if(!n&&opcode==WS_TRANSPORT_OPCODES_NONE)continue;
         const int current=esp_transport_ws_get_read_payload_len(s->ws);
@@ -81,6 +83,7 @@ bool osg_socket_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     if(!encoded){mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
     const size_t bytes=strlen(outbound);
     const int sent=esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_TEXT|WS_TRANSPORT_OPCODES_FIN,outbound,(int)bytes,500);
+    if(sent>0)osg_diagnostics_bytes(OSG_DIAG_WS_TX,(size_t)sent);
     mbedtls_platform_zeroize(outbound,sizeof(outbound));if(sent!=(int)bytes)return false;
     mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;

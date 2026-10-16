@@ -88,6 +88,8 @@ importers:
         specifier: workspace:*
         version: link:../companion-contracts
 
+  packages/companion-renderer: {}
+
   packages/companion-ui:
     dependencies:
       '@opensimgear/companion-contracts':

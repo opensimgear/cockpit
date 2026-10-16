@@ -6,7 +6,7 @@ This directory owns the portable C renderer and ESP-IDF firmware entry point. It
 
 The runtime depends only on rectangle and clipped text callbacks in core/companion.h. The included raster adapter turns them into synchronous RGB565 pixel spans with a 256-pixel (512-byte) scratch buffer. No full-screen framebuffer, heap allocation or PSRAM is required by this core. A driver can convert spans for RGB888, monochrome or a different byte order, or replace the drawing callbacks with an existing graphics library.
 
-A physical screen still needs its correct bus/controller initialization, power/backlight, pins, dimensions, rotation and touch calibration. Screen dimensions alone cannot identify those details. The user's photograph now identifies the 7-inch board as Waveshare ESP32-S3-Touch-LCD-7 Rev 1.2. Its selectable RGB/GT911 adapter and exact flash/test steps are documented in [the board guide](boards/waveshare-lcd7/README.md). Physical qualification remains open; the smaller WROOM-32 is still unidentified.
+A physical screen still needs its correct bus/controller initialization, power/backlight, pins, dimensions, rotation and touch calibration. Screen dimensions alone cannot identify those details. The user's photograph now identifies the 7-inch board as Waveshare ESP32-S3-Touch-LCD-7 Rev 1.2. Its selectable RGB/GT911 adapter and exact flash/test steps are documented in [the board guide](boards/waveshare-lcd7/README.md). The smaller WROOM-32 board is identified as the Sunton/GUITION ESP32-3248S035R and has its own [landscape SPI/resistive-touch profile](boards/sunton-3248s035r/README.md). Broader physical qualification remains open.
 
 Implement osg_board_init from boards/board.h in a board-specific C source. Return the actual dimensions, synchronous pixel writer and optional calibrated single-pointer touch poller. The application polls touch in a separate task every 20 ms; successful polls report the current released/pressed state and display-coordinate position. Driver failure returns false. Keep driver calls bounded and synchronize any shared display/touch bus in the adapter. Return false on initialization failure. Display-only adapters leave touch NULL. The core must be used under the application state mutex; marshal touch/feedback events rather than racing its state. Drawing uses an immutable snapshot outside that mutex. cJSON hooks are process-wide and reserved for the single network task; board adapters must not call this shared parser from another task.
 
@@ -34,7 +34,7 @@ The queue holds 64 edges, sends at most 16 per batch and retains each reservatio
 
 ## Build and flash
 
-This workstation has ESP-IDF v5.5.2 and its compiler/Python tools installed in WSL Ubuntu under the repository's ignored .research directory. From the repository root in PowerShell, activate it for one command with:
+Use ESP-IDF v5.5.2 with its matching compiler/Python tools. The wrapper runs the source checkout in WSL Ubuntu, including a native Windows checkout, and looks for the SDK/tools in the ignored .research directory by default. From the repository root in PowerShell, activate it for one command with:
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\apps\companion-esp32\tools\idf.ps1 --version
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\apps\companion-esp32\tools\idf.ps1 -B build-waveshare-lcd7 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-waveshare-lcd7/sdkconfig -DOSG_BOARD_PROFILE=waveshare-lcd7-s3 build
@@ -57,6 +57,8 @@ From apps/companion-esp32 with IDF exported:
     idf.py -B build-esp32s3 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-esp32s3/sdkconfig build
 
 For the identified Waveshare 7-inch S3 board, use a fresh build directory and -DOSG_BOARD_PROFILE=waveshare-lcd7-s3; see [its flash guide](boards/waveshare-lcd7/README.md). This enables the real display/touch adapter and required PSRAM configuration. Other builds still default to headless.
+
+When reusing an SDK cache outside this checkout, supply `OSG_ESP_IDF_PATH` and `IDF_TOOLS_PATH` in the WSL process environment. They are tool locations, while `idf.sh` derives the application source from its own location. For example, run `wsl --exec env OSG_ESP_IDF_PATH=/path/to/esp-idf-v5.5.2 IDF_TOOLS_PATH=/path/to/idf-tools bash /mnt/c/path/to/cockpit/apps/companion-esp32/tools/idf.sh` with the build arguments above. Existing build directories contain absolute paths; configure a fresh one after moving source. [The native Windows build evidence](../../docs/verification/companion-render-packages/2026-10-16-foundation.md) records the caches and new source path used for this checkpoint.
 
 Use -DOSG_PANEL_INCLUDE=/absolute/path/to/generated to embed another exported panel. To use a real screen, supply -DOSG_BOARD_SOURCE=/absolute/path/to/board.c and its matching dimensions/driver. Width/height menuconfig values apply to the headless adapter only. Use separate build/config paths per MCU.
 
@@ -103,11 +105,15 @@ Do not put pairing JSON or Wi-Fi passwords in command arguments, logs, UI export
 
 ## Verification
 
+Milestone 0 adds bounded, allocation-free runtime counters and a stopped-input serial diagnostics command. See [baseline capture and remaining physical measurement gates](../../docs/verification/companion-render-packages/milestone-0-baseline.md). Histograms report conservative percentile bounds; exact maxima, resource minima and lease-age peaks remain available without changing input health limits.
+
 From the repository root:
 
     node --experimental-test-coverage --test-coverage-include=apps/companion-esp32/tools/export-panel.mjs --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test apps/companion-esp32/test/export.test.mjs
     python3 apps/companion-esp32/test/run.py
     python3 apps/companion-esp32/test/network.py
+    python3 apps/companion-esp32/test/diagnostics.py
+    python3 -m unittest discover -s apps/companion-esp32/test -p baseline_test.py -v
     python3 apps/companion-esp32/test/waveshare.py
     python3 apps/companion-esp32/test/serial.py
     python3 -m unittest discover -s apps/companion-esp32/test -p provision_test.py -v

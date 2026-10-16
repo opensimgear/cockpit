@@ -237,7 +237,28 @@ static void partial_render_test(void){
         osg_raster_render(&raster,&r,d,1015);compare_render(&r,&actual,1015);
     }
 }
+/* Status refresh must never overwrite downloadable content. Exercise both
+ * board dimensions, each input-health label, partial edge tiles, and failures. */
+static void status_render_test(void){
+    for(unsigned board=0;board<2;board++){
+        int width=board?800:480,height=board?480:320;
+        surface actual={.pixels=incremental_pixels,.width=width,.height=height};
+        osg_raster raster={.context=&actual,.write=surface_write};osg_runtime r;
+        assert(osg_init(&r,&osg_demo_panel,osg_raster_display(&raster,width,height),NULL,NULL));
+        for(unsigned state=0;state<4;state++){
+            for(int i=0;i<width*height;i++)incremental_pixels[i]=0x5a5a;
+            actual.written=0;r.connected=state!=0;r.armed=state==2;r.arming=state==3;
+            osg_raster_status(&raster,&r);assert(!raster.failed&&!raster.composing&&actual.written==(size_t)width*32);
+            for(int y=24;y<height-8;y++)for(int x=0;x<width;x++)assert(incremental_pixels[y*width+x]==0x5a5a);
+            assert(incremental_pixels[0]!=0x5a5a&&incremental_pixels[(height-1)*width]!=0x5a5a);
+        }
+        actual.fail=true;osg_raster_status(&raster,&r);assert(raster.failed&&!raster.composing);
+        actual.fail=false;actual.written=0;osg_raster_status(&raster,&r);assert(!actual.written);
+        raster.failed=false;raster.write=NULL;osg_raster_status(&raster,&r);assert(raster.failed);
+    }
+}
 int main(int argc, char **argv) {
+    status_render_test();
     for(int size=0;size<2;size++){
         spy status;osg_runtime *r=setup(&status,size?800:480,size?480:320);
         const char *messages[]={"Pair this device in","Assign a panel to","Panel is not connected."};

@@ -120,6 +120,15 @@ impl Hub {
         let identity = json!({"clientId":session.client_id,"sessionId":session_id,"generation":session.token.generation.to_string(),"controllerInstanceId":session.token.source_id,"publicationHash":session.token.publication_hash});
         let mut cursor = session.feedback_cursor.clone();
         let feedback = book.deliver(&mut cursor, &identity, now);
+        if let Some((package_hash,_))=&session.render_package {
+            let package=inner.render_packages.get(package_hash).ok_or("Render feedback source is unavailable.")?;
+            // Runtime payloads are bounded independently from content chunks.
+            // A full startup snapshot is atomic; steady deltas must fit UART.
+            let budget=if feedback["mode"]=="snapshot" {3072}else{512};
+            crate::render_feedback::attach_render_feedback(reply,&feedback,&package.source_document,budget)?;
+            inner.sessions.get_mut(session_id).unwrap().feedback_cursor=cursor;
+            return Ok(());
+        }
         ensure(
             serde_json::to_vec(&feedback)
                 .map_err(|e| e.to_string())?

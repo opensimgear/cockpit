@@ -13,3 +13,6 @@ sha2 = "0.10"
 base64 = "0.22"
 zeroize = "1"
 espflash = { version = "=4.1.0", default-features = false, features = ["serialport"] }
+
+[dev-dependencies]
+md-5 = "=0.10.6"

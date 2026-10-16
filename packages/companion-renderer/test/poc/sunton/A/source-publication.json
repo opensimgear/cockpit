@@ -1,0 +1,247 @@
+{
+  "document": {
+    "schemaVersion": 2,
+    "ui": {
+      "schemaVersion": 1,
+      "id": "poc-sunton",
+      "title": "Companion systems A",
+      "controls": [
+        {
+          "id": "laser-input",
+          "kind": "button",
+          "label": "Enable laser"
+        },
+        {
+          "id": "stop-input",
+          "kind": "button",
+          "label": "Emergency stop"
+        }
+      ],
+      "feedbackWidgets": [
+        {
+          "id": "power-readout",
+          "label": "Reactor power",
+          "channelId": "reactor-power",
+          "kind": "gauge"
+        },
+        {
+          "id": "power-needle",
+          "label": "Reactor power",
+          "channelId": "reactor-power",
+          "kind": "gauge"
+        },
+        {
+          "id": "laser-state",
+          "label": "Laser state",
+          "channelId": "laser-confirmed",
+          "kind": "indicator"
+        }
+      ],
+      "assets": [],
+      "pages": [
+        {
+          "id": "systems",
+          "title": "Systems",
+          "items": [
+            {
+              "kind": "control",
+              "refId": "laser-input",
+              "bounds": {
+                "x": 0.03333333333333333,
+                "y": 0.3,
+                "width": 0.09166666666666666,
+                "height": 0.1375
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "stop-input",
+              "bounds": {
+                "x": 0.16666666666666666,
+                "y": 0.3,
+                "width": 0.09166666666666666,
+                "height": 0.1375
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "power-readout",
+              "bounds": {
+                "x": 0.3333333333333333,
+                "y": 0.275,
+                "width": 0.13333333333333333,
+                "height": 0.1
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "power-needle",
+              "bounds": {
+                "x": 0.31666666666666665,
+                "y": 0.45,
+                "width": 0.2,
+                "height": 0.125
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "laser-state",
+              "bounds": {
+                "x": 0.6,
+                "y": 0.3,
+                "width": 0.016666666666666666,
+                "height": 0.025
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "presentation": {
+      "widgets": [
+        {
+          "id": "laser-button",
+          "pageId": "systems",
+          "label": "Laser",
+          "bounds": {
+            "x": 0.03333333333333333,
+            "y": 0.3,
+            "width": 0.09166666666666666,
+            "height": 0.1375
+          },
+          "controlIds": [
+            "laser-input"
+          ],
+          "feedbackIds": [],
+          "kind": "button",
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "stop-button",
+          "pageId": "systems",
+          "label": "Emergency",
+          "bounds": {
+            "x": 0.16666666666666666,
+            "y": 0.3,
+            "width": 0.09166666666666666,
+            "height": 0.1375
+          },
+          "controlIds": [
+            "stop-input"
+          ],
+          "feedbackIds": [],
+          "kind": "button",
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "power-number",
+          "pageId": "systems",
+          "label": "Reactor power",
+          "bounds": {
+            "x": 0.3333333333333333,
+            "y": 0.275,
+            "width": 0.13333333333333333,
+            "height": 0.1
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "power-readout"
+          ],
+          "kind": "numeric",
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 1
+          }
+        },
+        {
+          "id": "power-gauge",
+          "pageId": "systems",
+          "label": "Power needle",
+          "bounds": {
+            "x": 0.31666666666666665,
+            "y": 0.45,
+            "width": 0.2,
+            "height": 0.125
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "power-needle"
+          ],
+          "kind": "gauge",
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 0
+          }
+        },
+        {
+          "id": "laser-indicator",
+          "pageId": "systems",
+          "label": "Laser state",
+          "bounds": {
+            "x": 0.6,
+            "y": 0.3,
+            "width": 0.016666666666666666,
+            "height": 0.025
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "laser-state"
+          ],
+          "kind": "indicator",
+          "config": {}
+        }
+      ],
+      "groups": [],
+      "viewports": [
+        {
+          "pageId": "systems",
+          "width": 480,
+          "height": 320
+        }
+      ],
+      "grid": {
+        "columns": 16,
+        "rows": 10,
+        "snap": false
+      }
+    },
+    "targets": [
+      {
+        "id": "ship-target",
+        "label": "Ship systems",
+        "axes": [],
+        "buttons": 2,
+        "hats": 0
+      }
+    ],
+    "bindings": [
+      {
+        "controlId": "laser-input",
+        "targetId": "ship-target",
+        "kind": "button",
+        "index": 0
+      },
+      {
+        "controlId": "stop-input",
+        "targetId": "ship-target",
+        "kind": "button",
+        "index": 1
+      }
+    ]
+  },
+  "assets": [],
+  "publicationHash": "sha256:969ed1470b386e72ebf6df88fb95cee709d0f19c197f63db71961bfe10258375",
+  "capabilityFingerprint": "sha256:09c537663b38a09726054cf11f19574a71433eeeabd1178887093fd5236cb491"
+}

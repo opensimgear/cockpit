@@ -2,9 +2,11 @@
  * Shared SPI2 bus; CPU-order RGB565 consumed synchronously, no framebuffer. */
 #include "board.h"
 #include "touch.h"
+#include "diagnostics.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -18,8 +20,11 @@
 typedef struct {spi_device_handle_t lcd,pen;SemaphoreHandle_t mutex;uint8_t pixels[64];bool failed;} sunton;
 static sunton hardware;
 static bool transfer(spi_device_handle_t device,const void *tx,void *rx,size_t bytes){
+    const int64_t started=esp_timer_get_time();
     spi_transaction_t t={.length=bytes*8,.tx_buffer=tx,.rx_buffer=rx};
-    return spi_device_polling_transmit(device,&t)==ESP_OK;
+    const bool ok=spi_device_polling_transmit(device,&t)==ESP_OK;
+    osg_diagnostics_record(device==hardware.lcd?OSG_DIAG_LCD_SPI:OSG_DIAG_TOUCH_SPI,(uint64_t)(esp_timer_get_time()-started),bytes,ok);
+    return ok;
 }
 static bool command(sunton *b,uint8_t cmd,const uint8_t *data,size_t bytes){
     gpio_set_level(2,0);if(!transfer(b->lcd,&cmd,NULL,1))return false;
@@ -29,7 +34,10 @@ static bool command(sunton *b,uint8_t cmd,const uint8_t *data,size_t bytes){
 static bool write_pixels(void *context,int x,int y,int w,int h,const uint16_t *pixels){
     sunton *b=context;
     if(b->failed||!pixels||x<0||y<0||w<=0||h<=0||w>WIDTH-x||h>HEIGHT-y)return false;
-    if(xSemaphoreTake(b->mutex,pdMS_TO_TICKS(100))!=pdTRUE)return false;
+    const int64_t started=esp_timer_get_time();
+    const bool locked=xSemaphoreTake(b->mutex,pdMS_TO_TICKS(100))==pdTRUE;
+    osg_diagnostics_record(OSG_DIAG_LCD_WAIT,(uint64_t)(esp_timer_get_time()-started),0,locked);
+    if(!locked){osg_diagnostics_record(OSG_DIAG_LCD_WRITE,(uint64_t)(esp_timer_get_time()-started),0,false);return false;}
     uint8_t col[]={(uint8_t)(x>>8),(uint8_t)x,(uint8_t)((x+w-1)>>8),(uint8_t)(x+w-1)};
     uint8_t row[]={(uint8_t)(y>>8),(uint8_t)y,(uint8_t)((y+h-1)>>8),(uint8_t)(y+h-1)};
     bool ok=command(b,0x2a,col,4)&&command(b,0x2b,row,4)&&command(b,0x2c,NULL,0);
@@ -40,7 +48,9 @@ static bool write_pixels(void *context,int x,int y,int w,int h,const uint16_t *p
         ok=transfer(b->lcd,b->pixels,NULL,n*2);pixels+=n;left-=n;
     }
     if(!ok)b->failed=true;
-    xSemaphoreGive(b->mutex);return ok;
+    xSemaphoreGive(b->mutex);
+    osg_diagnostics_record(OSG_DIAG_LCD_WRITE,(uint64_t)(esp_timer_get_time()-started),(size_t)w*h*2,ok);
+    return ok;
 }
 static bool adc(sunton *b,uint8_t cmd,int *value){
     uint8_t tx[]={cmd,0,0},rx[3]={0};
@@ -52,7 +62,11 @@ static int median(int v[5]){
 }
 static bool touch(void *context,bool *down,int *x,int *y){
     sunton *b=context;*down=false;
-    if(b->failed||xSemaphoreTake(b->mutex,pdMS_TO_TICKS(100))!=pdTRUE)return false;
+    if(b->failed)return false;
+    const int64_t started=esp_timer_get_time();
+    const bool locked=xSemaphoreTake(b->mutex,pdMS_TO_TICKS(100))==pdTRUE;
+    osg_diagnostics_record(OSG_DIAG_TOUCH_WAIT,(uint64_t)(esp_timer_get_time()-started),0,locked);
+    if(!locked)return false;
     bool ok=true;
     if(gpio_get_level(36)==0){
         int xs[5],ys[5],z1=0,z2=0,unused=0;

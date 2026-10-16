@@ -14,7 +14,7 @@ for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda"):
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g", "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048"]
 includes = ["test/include", "core", "network", "third_party/cjson", "test"]
 flags += ["-I" + str(APP / p) for p in includes]
-common = ["core/companion.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
+common = ["core/companion.c", "core/diagnostics.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
 for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c")):
     subprocess.run([*flags, *[str(APP / p) for p in common], str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
     with (OUT / (binary + ".log")).open("w") as log:
@@ -34,3 +34,22 @@ print(json.dumps(report, indent=2))
 for module, metrics in report.items():
     if any(value < 71 for value in metrics.values()):
         raise SystemExit(f"Coverage below 71%: {module}: {metrics}")
+
+# Public serial health is a fixed scalar whitelist, including maximumuint32
+# counters, and source faults distinguish transport loss from invalid ACK data.
+rows=[]
+for line in (OUT/'client-test.log').read_text().splitlines():
+    try:rows.append(json.loads(line))
+    except json.JSONDecodeError:pass
+expected={'fifoOverflows','bufferFull','frameErrors','parityErrors','breaks','queueFullObservations','requestTimeouts','invalidJson','replyMismatch','deferredFull','invalidReply','writeFailures','frameOverflows'}
+health_rows=[r for r in rows if 'serialHealth' in r]
+assert health_rows and any(r.get('requestId')=='max-health' for r in health_rows)
+for row in health_rows:
+    assert set(row['serialHealth'])==expected
+    assert all(type(v) is int and 0<=v<=4294967295 for v in row['serialHealth'].values())
+statuses={r.get('status') for r in rows}
+assert {'source-transport-failed-reconnect-required','source-host-rejected-reconnect-required','source-ack-invalid-reconnect-required'}<=statuses
+
+maximum=next(r for r in health_rows if r.get('requestId')=='r'*64)
+assert maximum['name']=='\x01'*80 and maximum['ssid']=='\x01'*32
+assert set(maximum['serialHealth'].values())=={4294967295}

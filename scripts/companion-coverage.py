@@ -38,7 +38,7 @@ def main():
     for tool in ["llvm-profdata", "llvm-cov"]:
         if not (llvm / f"{tool}{suffix}").exists():
             raise SystemExit("Install llvm-tools-preview for the pinned Rust toolchain.")
-    targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
+    targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "render_object", "render_packages", "render_feedback", "feedback", "hub", "hub_render", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
     if not options.service_only:
         targets.append(("desktop", root / "src-tauri/Cargo.toml", "companion_host::tests", [root / "src-tauri/src/companion_host.rs"]))
     summary = {}

@@ -12,9 +12,11 @@ static int fake_settimeofday(const struct timeval *,const struct timezone *);
 cJSON *osg_serial_take_command(void){return NULL;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
+void osg_serial_health_poll(void){}
+void osg_serial_health_snapshot(osg_serial_health *out){if(out)memset(out,255,sizeof(*out));}
 static uint64_t fake_ms;
 static bool network_ok=true,store_ok=true,storage_available,assigned_now=true,approved_now=true;
-static bool request_ok=true,wrong_identity,wrong_session;
+static bool request_ok=true,wrong_identity,wrong_session,negative_host,malformed_ok;
 static bool clock_ok=true,load_ok,obsolete_session;
 static osg_settings saved_settings;
 static int requests, baseline_requests, input_requests, close_requests, loss_requests;
@@ -54,9 +56,10 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
     (void)s;(void)timeout;requests++;const char *type=osg_string(v,"type");assert(type);osg_copy(requested_type,sizeof(requested_type),type);
     if(!permit_inputs)assert(strcmp(type,"baseline")&&strcmp(type,"input"));
     *out=cJSON_CreateObject();
-    if(obsolete_session&&!strcmp(type,"heartbeat")){
+    if(malformed_ok&&!strcmp(type,"heartbeat")){cJSON_AddNumberToObject(*out,"ok",1);cJSON_Delete(v);return false;}
+    if((obsolete_session||negative_host)&&!strcmp(type,"heartbeat")){
         cJSON_AddBoolToObject(*out,"ok",false);cJSON_AddStringToObject(*out,"type","error");
-        cJSON_AddStringToObject(*out,"error","Session is obsolete; explicitly reconnect.");
+        cJSON_AddStringToObject(*out,"error",obsolete_session?"Session is obsolete; explicitly reconnect.":"bench rejection");
         cJSON_Delete(v);return false;
     }
     cJSON_AddBoolToObject(*out,"ok",true);
@@ -105,7 +108,8 @@ static void live_input_tests(void){
     char stale[1024];arm_text(stale);input.epoch++;cmd(stale);assert(baseline_requests==baselines);
     osg_network_touch(true,true,100,100);char held[1024];arm_text(held);cmd(held);assert(!test_runtime.armed&&baseline_requests==baselines);
     osg_network_touch(true,false,0,0);cmd(held);assert(baseline_requests==baselines);arm_text(stale);live_arm();assert(baseline_requests==baselines+1);cmd(stale);assert(baseline_requests==baselines+1);
-    public_status("status-request");fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
+    public_status("status-request");cmd("{\"command\":\"diagnostics\",\"reset\":true}");assert(remote_armed&&test_runtime.armed);
+    fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
     int sent=input_requests;fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(input_requests==sent&&mock_button);
     fake_ms++;osg_network_touch(true,false,0,0);advance();assert(!mock_button&&input_sequence==2);
     fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(mock_button);sent=input_requests;
@@ -128,13 +132,40 @@ static void live_input_tests(void){
     live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);input_sequence=UINT64_MAX-1;advance();assert(state==FAULT&&!mock_host_armed);
     live_ready();live_arm();session.heartbeat=UINT64_MAX-1;next_request=fake_ms;advance();assert(state==FAULT);
     live_ready();live_arm();fake_ms++;osg_network_touch(false,false,0,0);advance();assert(state==FAULT&&!mock_host_armed);
+    osg_diagnostics measured;osg_diagnostics_snapshot(&measured);
+    assert(measured.metrics[OSG_DIAG_INPUT_ACK].count>0&&measured.metrics[OSG_DIAG_INPUT_ACK].failed>0&&measured.metrics[OSG_DIAG_INPUT_ACK].max_us>=250000);
+    assert(measured.pending_input_max_us>=250000&&measured.touch_age_max_us>=600000&&measured.render_age_max_us>=600000&&measured.queue_max==OSG_INPUT_QUEUE_CAPACITY);
     permit_inputs=false;stop();
+}
+static void serial_text(const char *value){for(;*value;value++)serial_byte((unsigned char)*value);}
+static void serial_fragment_tests(void){
+    /* A split status command owns the UART parser until its delimiter. */
+    setup();state=AUTH;osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    serial_text("{\"command\":\"sta");int before=requests;fake_ms+=99;work_after_serial();assert(state==AUTH&&requests==before&&serial_used&&!serial_overflow);
+    serial_text("tus\"}\n");assert(!serial_used&&!serial_overflow);work_after_serial();assert(state==OPEN&&requests==before+1);
+    /* Never renew a source lease while a partial command is pending. */
+    permit_inputs=true;live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);advance();assert(mock_button);
+    serial_text("{\"command\":\"sta");before=requests;int lost=loss_requests;uint64_t ack=input.last_ack_ms;fake_ms+=99;work_after_serial();assert(state==LIVE&&test_runtime.armed&&mock_button&&requests==before&&input.last_ack_ms==ack);
+    fake_ms++;work_after_serial();assert(state==FAULT&&!test_runtime.armed&&!remote_armed&&!mock_button&&input.count==0&&loss_requests==lost+1&&requests==before&&serial_overflow&&serial_timed_out);
+    /* A timed-out suffix cannot become a new command, even if it is valid JSON. */
+    serial_text("{\"command\":\"connect\"}\n");assert(state==FAULT&&!serial_used&&!serial_overflow&&!serial_timed_out);for(size_t i=0;i<sizeof(serial_line);i++)assert(!serial_line[i]);
+    /* Ordinary setup fragments expire after5s and remain discarded until LF. */
+    setup();state=AUTH;serial_text("{");before=requests;fake_ms+=4999;work_after_serial();assert(state==AUTH&&requests==before&&!serial_timed_out);
+    fake_ms++;work_after_serial();assert(state==AUTH&&requests==before&&serial_overflow&&serial_timed_out);serial_text("discarded\n");assert(!serial_used&&!serial_overflow);work_after_serial();assert(state==OPEN&&requests==before+1);
+    /* An overflowing record has the same100ms active-source deadline. */
+    live_ready();live_arm();for(size_t i=0;i<OSG_PROVISION_BYTES+1;i++)serial_byte('a');assert(serial_overflow);before=requests;fake_ms+=100;work_after_serial();assert(state==FAULT&&!mock_host_armed&&requests==before);serial_byte('\n');assert(!serial_overflow&&!serial_used);
+    stop();permit_inputs=false;
 }
 int main(int argc,char **argv){
     assert(argc==2);osg_json_init();char raw[OSG_REPLY_BYTES];FILE *f=fopen(argv[1],"rb");assert(f);size_t n=fread(raw,1,sizeof(raw),f);fclose(f);fixture=osg_json_parse(raw,n);assert(fixture);
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&images[0],800,480));
     assert(osg_init(&test_runtime,&images[0].panel,(osg_display){NULL,800,480,fill,label},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
+    assert(age_us(2,1)==1000&&age_us(0,1)==UINT64_MAX&&age_us(UINT64_MAX,0)==UINT64_MAX);
+    cmd("{\"command\":\"diagnostics\",\"reset\":true}");
+    osg_diagnostics_memory(100000,90000,70000);osg_diagnostics_stack(OSG_DIAG_MAIN_STACK,3000);
+    cmd("{\"command\":\"diagnostics\",\"requestId\":\"baseline-test\"}");
+    cmd("{\"command\":\"diagnostics\",\"requestId\":\"bad id\"}");
     setup();advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=false;advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=true;
     advance();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
     advance();assert(!strcmp(requested_type,"heartbeat")&&session.heartbeat==1);fake_ms+=250;wrong_session=true;advance();assert(state==FAULT&&!test_runtime.connected);
@@ -236,5 +267,13 @@ int main(int argc,char **argv){
     osg_network_render(test_runtime.panel,true,true);osg_network_touch(true,false,0,0);
     arm_when_ready();assert(remote_armed&&test_runtime.armed);
     stop();
+    serial_fragment_tests();
+    permit_inputs=true;live_ready();negative_host=true;advance();negative_host=false;assert(state==FAULT&&!remote_armed);
+    live_ready();wrong_session=true;advance();wrong_session=false;assert(state==FAULT);
+    live_ready();request_ok=false;advance();request_ok=true;assert(state==FAULT);stop();permit_inputs=false;
+    public_status("max-health");
+    permit_inputs=true;live_ready();malformed_ok=true;const char *reason=NULL;cJSON *malformed=NULL;assert(!source_request(session_message("heartbeat","1"),&malformed,700,"1",fake_ms,false,&reason)&&!strcmp(reason,"source-ack-invalid-reconnect-required"));cJSON_Delete(malformed);malformed_ok=false;stop();permit_inputs=false;
+    memset(settings.name,1,80);settings.name[80]=0;memset(settings.ssid,1,32);settings.ssid[32]=0;memset(settings.companion,'c',64);settings.companion[64]=0;memset(session.session,'s',64);session.session[64]=0;osg_copy(session.generation,sizeof(session.generation),"18446744073709551615");input.epoch=UINT64_MAX;
+    char maximum_id[65];memset(maximum_id,'r',64);maximum_id[64]=0;state=LIVE;public_status(maximum_id);state=OFF;
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

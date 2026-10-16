@@ -1,0 +1,247 @@
+{
+  "document": {
+    "schemaVersion": 2,
+    "ui": {
+      "schemaVersion": 1,
+      "id": "poc-waveshare",
+      "title": "Companion systems D",
+      "controls": [
+        {
+          "id": "laser-input",
+          "kind": "button",
+          "label": "Enable laser"
+        },
+        {
+          "id": "stop-input",
+          "kind": "button",
+          "label": "Emergency stop"
+        }
+      ],
+      "feedbackWidgets": [
+        {
+          "id": "power-readout",
+          "label": "Reactor power",
+          "channelId": "reactor-power",
+          "kind": "gauge"
+        },
+        {
+          "id": "power-needle",
+          "label": "Reactor power",
+          "channelId": "reactor-power",
+          "kind": "gauge"
+        },
+        {
+          "id": "laser-state",
+          "label": "Laser state",
+          "channelId": "laser-confirmed",
+          "kind": "indicator"
+        }
+      ],
+      "assets": [],
+      "pages": [
+        {
+          "id": "systems",
+          "title": "Systems",
+          "items": [
+            {
+              "kind": "control",
+              "refId": "laser-input",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.3,
+                "width": 0.23,
+                "height": 0.1
+              }
+            },
+            {
+              "kind": "control",
+              "refId": "stop-input",
+              "bounds": {
+                "x": 0.04,
+                "y": 0.44166666666666665,
+                "width": 0.23,
+                "height": 0.1
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "power-readout",
+              "bounds": {
+                "x": 0.48,
+                "y": 0.38333333333333336,
+                "width": 0.16,
+                "height": 0.1
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "power-needle",
+              "bounds": {
+                "x": 0.35,
+                "y": 0.6125,
+                "width": 0.325,
+                "height": 0.11666666666666667
+              }
+            },
+            {
+              "kind": "feedback",
+              "refId": "laser-state",
+              "bounds": {
+                "x": 0.75,
+                "y": 0.26666666666666666,
+                "width": 0.02,
+                "height": 0.03333333333333333
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "presentation": {
+      "widgets": [
+        {
+          "id": "laser-button",
+          "pageId": "systems",
+          "label": "Laser",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.3,
+            "width": 0.23,
+            "height": 0.1
+          },
+          "controlIds": [
+            "laser-input"
+          ],
+          "feedbackIds": [],
+          "kind": "button",
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "stop-button",
+          "pageId": "systems",
+          "label": "Emergency",
+          "bounds": {
+            "x": 0.04,
+            "y": 0.44166666666666665,
+            "width": 0.23,
+            "height": 0.1
+          },
+          "controlIds": [
+            "stop-input"
+          ],
+          "feedbackIds": [],
+          "kind": "button",
+          "config": {
+            "buttonMode": "momentary",
+            "pulseMs": 0,
+            "repeatMs": 0
+          }
+        },
+        {
+          "id": "power-number",
+          "pageId": "systems",
+          "label": "Reactor power",
+          "bounds": {
+            "x": 0.48,
+            "y": 0.38333333333333336,
+            "width": 0.16,
+            "height": 0.1
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "power-readout"
+          ],
+          "kind": "numeric",
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 1
+          }
+        },
+        {
+          "id": "power-gauge",
+          "pageId": "systems",
+          "label": "Power needle",
+          "bounds": {
+            "x": 0.35,
+            "y": 0.6125,
+            "width": 0.325,
+            "height": 0.11666666666666667
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "power-needle"
+          ],
+          "kind": "gauge",
+          "config": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "precision": 0
+          }
+        },
+        {
+          "id": "laser-indicator",
+          "pageId": "systems",
+          "label": "Laser state",
+          "bounds": {
+            "x": 0.75,
+            "y": 0.26666666666666666,
+            "width": 0.02,
+            "height": 0.03333333333333333
+          },
+          "controlIds": [],
+          "feedbackIds": [
+            "laser-state"
+          ],
+          "kind": "indicator",
+          "config": {}
+        }
+      ],
+      "groups": [],
+      "viewports": [
+        {
+          "pageId": "systems",
+          "width": 800,
+          "height": 480
+        }
+      ],
+      "grid": {
+        "columns": 16,
+        "rows": 10,
+        "snap": false
+      }
+    },
+    "targets": [
+      {
+        "id": "ship-target",
+        "label": "Ship systems",
+        "axes": [],
+        "buttons": 2,
+        "hats": 0
+      }
+    ],
+    "bindings": [
+      {
+        "controlId": "laser-input",
+        "targetId": "ship-target",
+        "kind": "button",
+        "index": 0
+      },
+      {
+        "controlId": "stop-input",
+        "targetId": "ship-target",
+        "kind": "button",
+        "index": 1
+      }
+    ]
+  },
+  "assets": [],
+  "publicationHash": "sha256:e34848719a1ffc5070997d33ff36035ff8d45a7d6adb60b5987b040e21fc4ff5",
+  "capabilityFingerprint": "sha256:a98ec1ffb51f41312ce754a23590e3455acca3ea577e3de851ccf9656da4cce5"
+}

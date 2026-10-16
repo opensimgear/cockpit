@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "controls": [
+    {
+      "id": "laser-input",
+      "kind": "button",
+      "targetId": "ship-target",
+      "targetIndex": 0,
+      "fallback": 0
+    },
+    {
+      "id": "stop-input",
+      "kind": "button",
+      "targetId": "ship-target",
+      "targetIndex": 1,
+      "fallback": 0
+    }
+  ],
+  "outputs": [
+    {
+      "id": "power-readout",
+      "channelId": "reactor-power",
+      "kind": "number",
+      "min": 0,
+      "max": 100,
+      "unit": "%",
+      "maxTextBytes": 0
+    },
+    {
+      "id": "power-needle",
+      "channelId": "reactor-power",
+      "kind": "number",
+      "min": 0,
+      "max": 100,
+      "unit": "%",
+      "maxTextBytes": 0
+    },
+    {
+      "id": "laser-state",
+      "channelId": "laser-confirmed",
+      "kind": "boolean",
+      "min": 0,
+      "max": 1,
+      "unit": "",
+      "maxTextBytes": 0
+    }
+  ],
+  "interactions": [
+    {
+      "id": "laser-button",
+      "kind": "momentary",
+      "controlIds": [
+        "laser-input"
+      ]
+    },
+    {
+      "id": "stop-button",
+      "kind": "momentary",
+      "controlIds": [
+        "stop-input"
+      ]
+    }
+  ]
+}

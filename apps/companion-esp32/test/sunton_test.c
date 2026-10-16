@@ -5,11 +5,13 @@ static bool fail_spi,fail_lock;
 static int irq=1,dc=1,z1=1000,z2=2000,raw_x=2050,raw_y=2050;
 static unsigned transmits,pixel_bytes,devices;
 static uint8_t last[512],cmd;
+static int64_t fake_us;
+int64_t esp_timer_get_time(void){return fake_us;}
 int gpio_config(const gpio_config_t *c){assert(c->pin_bit_mask);return ESP_OK;}
 int gpio_set_level(int pin,int value){if(pin==2)dc=value;return ESP_OK;}
 int gpio_get_level(int pin){assert(pin==36);return irq;}
 SemaphoreHandle_t xSemaphoreCreateMutex(void){return (void *)1;}
-int xSemaphoreTake(SemaphoreHandle_t h,unsigned ms){assert(h&&ms==100);return !fail_lock;}
+int xSemaphoreTake(SemaphoreHandle_t h,unsigned ms){assert(h&&ms==100);fake_us+=fail_lock?100000:7;return !fail_lock;}
 int xSemaphoreGive(SemaphoreHandle_t h){assert(h);return 1;}
 void vTaskDelay(unsigned ms){assert(ms==150||ms==120);}
 int spi_bus_initialize(int host,const spi_bus_config_t *c,int dma){
@@ -22,6 +24,7 @@ int spi_bus_add_device(int host,const spi_device_interface_config_t *c,spi_devic
  devices++;return ESP_OK;
 }
 int spi_device_polling_transmit(spi_device_handle_t device,spi_transaction_t *t){
+ fake_us+=device==(void *)1?20:30;
  transmits++;if(fail_spi)return -1;
  assert(t->length%8==0&&t->length<=512);
  const uint8_t *tx=t->tx_buffer;
@@ -36,6 +39,7 @@ int spi_device_polling_transmit(spi_device_handle_t device,spi_transaction_t *t)
 }
 int main(void){
  osg_board board;assert(osg_board_init(&board));assert(devices==2&&board.width==480&&board.height==320&&board.present==NULL);
+ osg_diagnostics_reset();
  const uint16_t rgb[]={0xf800,0x07e0,0x001f};
  assert(board.write(board.context,0,0,3,1,rgb));
  assert(pixel_bytes==6&&!memcmp(last,(uint8_t[]){0xf8,0,7,0xe0,0,0x1f},6));
@@ -52,8 +56,14 @@ int main(void){
  z1=1000;z2=2000;fail_spi=true;assert(!board.touch(board.context,&down,&x,&y)&&!down);
  fail_spi=false;fail_lock=true;assert(!board.touch(board.context,&down,&x,&y));assert(!board.write(board.context,0,0,1,1,rgb));
  fail_lock=false;fail_spi=true;assert(!board.write(board.context,0,0,1,1,rgb));fail_spi=false;assert(!board.write(board.context,0,0,1,1,rgb));
+ osg_diagnostics measured;osg_diagnostics_snapshot(&measured);
+ assert(measured.metrics[OSG_DIAG_LCD_SPI].bytes>=206&&measured.metrics[OSG_DIAG_LCD_SPI].failed==1);
+ assert(measured.metrics[OSG_DIAG_LCD_WRITE].count==4&&measured.metrics[OSG_DIAG_LCD_WRITE].failed==2);
+ assert(measured.metrics[OSG_DIAG_LCD_WAIT].max_us==100000&&measured.metrics[OSG_DIAG_LCD_WAIT].failed==1);
+ assert(measured.metrics[OSG_DIAG_TOUCH_WAIT].max_us==100000&&measured.metrics[OSG_DIAG_TOUCH_WAIT].failed==1);
+ assert(measured.metrics[OSG_DIAG_TOUCH_SPI].count>0&&measured.metrics[OSG_DIAG_TOUCH_SPI].failed==2);
  assert(osg_sunton_point(200,3900,200,3900,200,3900,&x,&y)&&x==0&&y==0);
  assert(osg_sunton_point(3900,200,200,3900,200,3900,&x,&y)&&x==479&&y==319);
  assert(!osg_sunton_point(2050,2050,200,200,200,3900,&x,&y));
- puts("Sunton display byte order/bounds and touch rotation/release/fault tests passed");
+ puts("Sunton display byte order/bounds, touch rotation/release/fault and baseline timing/byte tests passed");
 }

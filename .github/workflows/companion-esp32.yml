@@ -12,16 +12,39 @@ jobs:
           node-version: 24
       - name: Designer publication export compatibility and coverage
         run: node --experimental-test-coverage --test-coverage-include=apps/companion-esp32/tools/export-panel.mjs --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test apps/companion-esp32/test/export.test.mjs
+      - name: Render package contracts, profiles and golden vector coverage
+        working-directory: packages/companion-renderer
+        run: npm run coverage
+      - name: Streaming render-object ABI and golden vector checks
+        run: |
+          python3 apps/companion-esp32/test/package.py
+          python3 apps/companion-esp32/test/expressions.py
       - name: Native network test dependency
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libssl-dev
+      - name: Scene renderer, persistent store, engine and content transport
+        run: |
+          python3 apps/companion-esp32/test/scene.py
+          python3 apps/companion-esp32/test/content_store.py
+          python3 apps/companion-esp32/test/content_store_esp.py
+          python3 apps/companion-esp32/test/engine.py
+          python3 apps/companion-esp32/test/main_scene.py
+          python3 apps/companion-esp32/test/render_delivery.py
+          python3 apps/companion-esp32/test/render_feedback.py
+          python3 apps/companion-esp32/test/client_render.py
       - name: Network protocol, live input, lease and provisioning checks
         run: |
           python3 apps/companion-esp32/test/network.py
           python3 apps/companion-esp32/test/storage.py
           python3 apps/companion-esp32/test/serial.py
           python3 -m unittest discover -s apps/companion-esp32/test -p "provision_test.py" -v
+      - name: Redacted runtime proof summary pure tests
+        run: python3 -m unittest discover -s apps/companion-esp32/test -p render_proof_test.py -v
       - name: Sunton shared-SPI display and touch fault injection
         run: python3 apps/companion-esp32/test/sunton.py
+      - name: Bounded baseline diagnostics and capture checks
+        run: |
+          python3 apps/companion-esp32/test/diagnostics.py
+          python3 -m unittest discover -s apps/companion-esp32/test -p baseline_test.py -v
       - name: Waveshare driver fault injection and coverage
         run: python3 apps/companion-esp32/test/waveshare.py
       - name: Native firmware sanitizers, coverage and preview
@@ -34,6 +57,18 @@ jobs:
             .research/esp32-native/preview.png
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json
+            .research/esp32-serial-wire/coverage.json
+            .research/esp32-diagnostics/coverage.json
+            .research/esp32-render-package-native/coverage.json
+            .research/esp32-render-expressions-native/coverage.json
+            .research/esp32-render-scene-native/coverage.json
+            .research/esp32-content-store-native/coverage.json
+            .research/esp32-content-store-esp-native/coverage.json
+            .research/esp32-engine-native/coverage.json
+            .research/esp32-render-delivery-native/coverage.json
+            .research/esp32-render-feedback/coverage.json
+            .research/esp32-client-render-native/coverage.json
+            .research/esp32-main-scene-native/coverage.json
             .research/esp32-network/*-test.log
             .research/esp32-waveshare-native/coverage.json
             .research/esp32-waveshare-native/board-test.log
@@ -103,5 +138,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Shared embedded publication, baseline and isolated lease contract
         run: cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test esp32_display
+      - name: Render ABI structure and cross-language hash vectors
+        run: |
+          cargo test --locked --manifest-path crates/companion-service/Cargo.toml render_object
+          cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test render_objects
+          cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test render_delivery
+          cargo test --locked --manifest-path crates/companion-service/Cargo.toml --lib real_wss_render_management
       - name: USB serial pairing, bounded delivery and connection isolation
-        run: cargo test --locked --manifest-path crates/companion-serial/Cargo.toml
+        run: |
+          cargo test --locked --manifest-path crates/companion-serial/Cargo.toml
+          cargo test --locked --manifest-path crates/companion-serial/Cargo.toml --example install-render-engine

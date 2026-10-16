@@ -1,0 +1,5 @@
+# Downloadable object fixtures are source-controlled ABI and integrity evidence.
+!**/*.bin
+# Keep compressed pixel goldens and PNG previews, not duplicate raw frames.
+*.ppm
+*.rgb565

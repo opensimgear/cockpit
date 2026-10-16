@@ -1,5 +1,7 @@
 /* Bounded USB serial transport for the existing companion protocol. */
 #include "platform.h"
+#include "serial.h"
+#include "diagnostics.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "mbedtls/platform_util.h"
@@ -27,26 +29,32 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     cJSON *v=cJSON_CreateObject();cJSON_AddStringToObject(v,"type","serial-request");
     cJSON_AddStringToObject(v,"linkId",s->link);cJSON_AddStringToObject(v,"requestId",id);cJSON_AddItemToObject(v,"frame",request);
     bool ok=cJSON_PrintPreallocated(v,outbound,sizeof(outbound),false);cJSON_Delete(v);
-    if(!ok){mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
-    puts(outbound);fflush(stdout);mbedtls_platform_zeroize(outbound,sizeof(outbound));
+    if(!ok){osg_serial_health_failure(OSG_SERIAL_WRITE);mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
+    const size_t encoded_bytes=strlen(outbound)+1; /* Includes the LF wrapper delimiter. */
+    const bool sent=puts(outbound)>=0&&fflush(stdout)==0;
+    if(sent)osg_diagnostics_bytes(OSG_DIAG_SERIAL_TX,encoded_bytes);else osg_serial_health_failure(OSG_SERIAL_WRITE);
+    mbedtls_platform_zeroize(outbound,sizeof(outbound));
+    if(!sent)return false;
     memset(osg_transport_reply,0,OSG_REPLY_BYTES);
     osg_transfer transfer={.bytes=osg_transport_reply,.capacity=OSG_REPLY_BYTES};
-    size_t used=0;bool overflow=false;
+    size_t used=0,received=0;bool overflow=false;
+    bool failed=false;
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
     while(esp_timer_get_time()<deadline){
         int c=getchar();
-        if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(1));continue;}
+        if(c==EOF){osg_serial_health_poll();clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(1));continue;}
+        received++;if(!(received&31u))osg_serial_health_poll();
         if(c!='\r'&&c!='\n'){
             if(used<8192&&!overflow)osg_transport_frame[used++]=(char)c;else overflow=true;
             continue;
         }
         if(!used&&!overflow)continue;
-        if(overflow)break;
+        if(overflow){osg_serial_health_failure(OSG_SERIAL_FRAME);failed=true;break;}
         v=osg_json_parse(osg_transport_frame,used);used=0;
-        if(!v)break;
+        if(!v){osg_serial_health_failure(OSG_SERIAL_JSON);failed=true;break;}
         const char *command=osg_string(v,"command");
         if(!command||strcmp(command,"serial-reply")){
-            if(deferred){cJSON_Delete(v);break;}
+            if(deferred){osg_serial_health_failure(OSG_SERIAL_DEFERRED);cJSON_Delete(v);failed=true;break;}
             deferred=v;continue;
         }
         const char *link=osg_string(v,"linkId"),*reply_id=osg_string(v,"requestId");
@@ -54,15 +62,21 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
         ok=link&&reply_id&&!strcmp(link,s->link)&&!strcmp(reply_id,id)&&cJSON_IsObject(body)&&
             cJSON_PrintPreallocated(body,osg_transport_frame,OSG_FRAME_BYTES+1,false);
         cJSON_Delete(v);
-        if(!ok)break;
+        if(!ok){osg_serial_health_failure(OSG_SERIAL_IDENTITY);failed=true;break;}
         int result=osg_reply_feed(&transfer,osg_transport_frame,strlen(osg_transport_frame),osg_platform_crypto,response);
-        if(result<0)break;
+        if(result<0){osg_serial_health_failure(OSG_SERIAL_REPLY);failed=true;break;}
         if(result==1){
+            osg_serial_health_poll();
+            osg_diagnostics_bytes(OSG_DIAG_SERIAL_RX,received);
             mbedtls_platform_zeroize(osg_transport_frame,OSG_FRAME_BYTES+1);
             mbedtls_platform_zeroize(osg_transport_reply,OSG_REPLY_BYTES);
-            return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));
+            const cJSON *accepted=cJSON_GetObjectItemCaseSensitive(*response,"ok");
+            if(!cJSON_IsBool(accepted))osg_serial_health_failure(OSG_SERIAL_REPLY);
+            return cJSON_IsTrue(accepted);
         }
     }
+    osg_serial_health_poll();if(!failed)osg_serial_health_failure(OSG_SERIAL_TIMEOUT);
+    osg_diagnostics_bytes(OSG_DIAG_SERIAL_RX,received);
     mbedtls_platform_zeroize(osg_transport_frame,OSG_FRAME_BYTES+1);
     mbedtls_platform_zeroize(osg_transport_reply,OSG_REPLY_BYTES);return false;
 }

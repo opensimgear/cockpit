@@ -2,6 +2,7 @@
 #include "firmware.h"
 #include "input.h"
 #include "serial.h"
+#include "diagnostics.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "mbedtls/platform_util.h"
@@ -13,8 +14,17 @@
 #include <unistd.h>
 #include <math.h>
 #include <time.h>
+#ifdef OSG_RENDER_ENGINE
+#include "render_delivery.h"
+#include "render_feedback.h"
+#include "../render/content_store_esp.h"
+#endif
+#ifdef ESP_PLATFORM
+#include "freertos/task.h"
+#endif
 
-typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT } phase;
+typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT,
+    RENDER_TRANSFER, RENDER_PAINT, RENDER_OPEN } phase;
 static osg_network_ui ui;
 static osg_settings settings;
 static osg_socket connection;
@@ -22,21 +32,51 @@ static osg_image images[2];
 static unsigned image_index;
 static osg_live_session session;
 static osg_input input;
-static bool remote_armed, installation_saved;
+static bool remote_armed, installation_saved,ack_input_healthy;
 static uint64_t input_sequence, next_input_request;
 static phase state;
 static char pending[65], assigned[65], publication[72];
 static uint64_t next_request, pair_deadline;
+static uint64_t diagnostics_window_started;
 static char serial_line[OSG_PROVISION_BYTES+1];
-static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error"};
+static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error",
+    "downloading-render-package","presenting-render-package","opening-render-session"};
+#ifdef OSG_RENDER_ENGINE
+static osg_engine render_engine;
+static osg_render_delivery delivery;
+static osg_engine_hit_cache scene_hits;
+static bool using_scene, engine_suspended, engine_drawing, render_session, scene_presented_ready, scene_disarmed_presented, scene_drawing_connected;
+static int navigation_capture=-1,navigation_pending=-1;
+static uint16_t requested_page;
+static char requested_page_package[72];
+_Static_assert(sizeof(osg_render_delivery)+sizeof(osg_engine_hit_cache)+sizeof(osg_content_esp)+256<=1536,"Render adapter state exceeds its reserved budget");
+#endif
 static uint64_t millis(void){return (uint64_t)(esp_timer_get_time()/1000);}
 static void report(const char *status){printf("{\"status\":\"%s\"}\n",status);fflush(stdout);}
 static void disconnected(void){xSemaphoreTake(ui.mutex,portMAX_DELAY);osg_input_cancel(&input,OSG_INPUT_CANCELLED);osg_connected(ui.runtime,false);*ui.dirty=true;xSemaphoreGive(ui.mutex);}
 static void stop(void);
-static void abort_connection(void){osg_socket_close(&connection);disconnected();state=OFF;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
+static void abort_connection(void){osg_socket_close(&connection);disconnected();
+#ifdef OSG_RENDER_ENGINE
+    if(render_engine.staging)(void)osg_engine_abort(&render_engine,true);
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);engine_suspended=false;render_session=false;scene_hits.ready=false;xSemaphoreGive(ui.mutex);
+#endif
+    state=OFF;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
 static void fail(const char *reason){abort_connection();state=FAULT;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));report(reason);}
 static cJSON *message(const char *type){cJSON *v=cJSON_CreateObject();if(v)cJSON_AddStringToObject(v,"type",type);return v;}
-static bool request(cJSON *v,cJSON **reply,unsigned timeout){return osg_socket_request(&connection,v,reply,timeout);}
+static bool request(cJSON *v,cJSON **reply,unsigned timeout){
+    const int64_t started=esp_timer_get_time();
+    const bool ok=osg_socket_request(&connection,v,reply,timeout);
+    osg_diagnostics_record(OSG_DIAG_REQUEST,(uint64_t)(esp_timer_get_time()-started),0,ok);return ok;
+}
+/* Called with ui.mutex held, before monitoring or polling can reset evidence.
+ * Source ACK age is deliberately based on request start, as are the leases. */
+static uint64_t age_us(uint64_t now,uint64_t before){return now<before?UINT64_MAX:(now-before>UINT64_MAX/1000?UINT64_MAX:(now-before)*1000);}
+static void input_health(void){
+    if(input.mode!=OSG_INPUT_PREPARING&&input.mode!=OSG_INPUT_ARMED)return;
+    const uint64_t now=millis();
+    osg_diagnostics_health(input.count,input.count?age_us(now,input.queue[input.head].created_ms):0,
+        age_us(now,input.last_poll_ms),age_us(now,input.last_ack_ms),input.rendering?age_us(now,input.render_start_ms):0);
+}
 static bool equal(const char *a,const char *b){return a&&b&&!strcmp(a,b);}
 static bool identity(const cJSON *reply,const char *type){return equal(osg_string(reply,"type"),type)&&equal(osg_string(reply,"hostId"),settings.host)&&equal(osg_string(reply,"companionId"),settings.companion);}
 static cJSON *session_message(const char *type,const char *sequence){
@@ -53,15 +93,65 @@ static void stop(void){
     if(close){cJSON *reply=NULL;(void)request(session_message("close",NULL),&reply,300);cJSON_Delete(reply);}
     abort_connection();
 }
-static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
+static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started,bool input_ack){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    input_health();
     const uint64_t before=session.feedback_sequence,before_generation=session.binding_generation;const bool seen=session.feedback_seen;
-    bool ok=osg_input_monitor(&input,millis())&&osg_ack(reply,&session,sequence,ui.runtime,millis());
+    bool ok=osg_input_monitor(&input,millis());ack_input_healthy=ok;
+#ifdef OSG_RENDER_ENGINE
+    if(ok&&render_session)ok=osg_render_feedback_ack(reply,&session,sequence,ui.runtime,millis(),seen?512:3072);
+    else
+#endif
+    if(ok)ok=osg_ack(reply,&session,sequence,ui.runtime,millis());
     if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)*ui.dirty=true;}
-    xSemaphoreGive(ui.mutex);return ok;
+    xSemaphoreGive(ui.mutex);
+    const uint64_t elapsed=age_us(millis(),started);
+    osg_diagnostics_record(OSG_DIAG_SOURCE_ACK,elapsed,0,ok);
+    if(input_ack)osg_diagnostics_record(OSG_DIAG_INPUT_ACK,elapsed,0,ok);
+    return ok;
+}
+/* Transport loss and a well-formed but invalid source ACK are distinct faults.
+ * Only fixed status strings leave the device; no host error/payload is echoed. */
+static bool source_request(cJSON *value,cJSON **reply,unsigned timeout,const char *sequence,uint64_t started,bool input_ack,const char **failure){
+    if(!request(value,reply,timeout)){
+        const cJSON *accepted=cJSON_GetObjectItemCaseSensitive(*reply,"ok");
+        *failure=cJSON_IsFalse(accepted)?"source-host-rejected-reconnect-required":*reply&&!cJSON_IsTrue(accepted)?"source-ack-invalid-reconnect-required":"source-transport-failed-reconnect-required";return false;
+    }
+    if(acknowledgement(*reply,sequence,started,input_ack))return true;
+    *failure=ack_input_healthy?"source-ack-invalid-reconnect-required":"source-ack-input-unhealthy-reconnect-required";return false;
+}
+static void public_diagnostics(const cJSON *command){
+    /* Dumping several serial records can block the UART. Never put that work
+     * inside an armed source's 250/600/1000 ms lease windows. */
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    const bool active=remote_armed||input.mode==OSG_INPUT_PREPARING||input.mode==OSG_INPUT_ARMED;
+    xSemaphoreGive(ui.mutex);
+    if(active){report("diagnostics-requires-stopped-input");return;}
+    if(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(command,"reset"))){osg_diagnostics_reset();diagnostics_window_started=millis();report("diagnostics-reset");return;}
+    osg_diagnostics d;osg_diagnostics_snapshot(&d);
+    const char *id=osg_string(command,"requestId");if(!osg_stable_id(id))id="";
+    printf("{\"status\":\"diagnostics-summary\",\"version\":1,\"requestId\":\"%s\",\"boardProfile\":\"%s\",\"firmwareVersion\":\"%s\","
+        "\"sampledAtUptimeMs\":%" PRIu64 ",\"windowStartedUptimeMs\":%" PRIu64 ","
+        "\"serialRequestTxBytes\":%" PRIu64 ",\"serialRequestRxBytes\":%" PRIu64 ",\"wsTxPayloadBytes\":%" PRIu64 ",\"wsRxPayloadBytes\":%" PRIu64 ","
+        "\"memorySamples\":%" PRIu32 ",\"freeInternalBytes\":%" PRIu32 ",\"minimumInternalBytes\":%" PRIu32 ",\"largestInternalBytes\":%" PRIu32 ",\"smallestLargestInternalBytes\":%" PRIu32 ","
+        "\"stackMinBytes\":[%" PRIu32 ",%" PRIu32 ",%" PRIu32 "],\"stackSamples\":[%" PRIu32 ",%" PRIu32 ",%" PRIu32 "],"
+        "\"queueMax\":%" PRIu32 ",\"pendingInputMaxUs\":%" PRIu64 ",\"touchAgeMaxUs\":%" PRIu64 ",\"sourceAckAgeMaxUs\":%" PRIu64 ",\"renderAgeMaxUs\":%" PRIu64 "}\n",
+        id,OSG_BOARD_PROFILE,OSG_FIRMWARE_VERSION,millis(),diagnostics_window_started,d.bytes[OSG_DIAG_SERIAL_TX],d.bytes[OSG_DIAG_SERIAL_RX],d.bytes[OSG_DIAG_WS_TX],d.bytes[OSG_DIAG_WS_RX],
+        d.memory_samples,d.free_internal_bytes,d.minimum_internal_bytes,d.largest_internal_bytes,d.smallest_largest_internal_bytes,
+        d.stack_min_bytes[0],d.stack_min_bytes[1],d.stack_min_bytes[2],d.stack_samples[0],d.stack_samples[1],d.stack_samples[2],
+        d.queue_max,d.pending_input_max_us,d.touch_age_max_us,d.ack_age_max_us,d.render_age_max_us);
+    for(unsigned i=0;i<OSG_DIAG_METRIC_COUNT;i++){
+        const osg_diag_stat *s=&d.metrics[i];
+        printf("{\"status\":\"diagnostics-metric\",\"version\":1,\"requestId\":\"%s\",\"metric\":\"%s\",\"count\":%" PRIu32 ",\"failed\":%" PRIu32 ",\"dropped\":%" PRIu32
+            ",\"bytes\":%" PRIu64 ",\"totalUs\":%" PRIu64 ",\"maxUs\":%" PRIu64 ",\"p50UpperUs\":%" PRIu64 ",\"p95UpperUs\":%" PRIu64 ",\"p99UpperUs\":%" PRIu64 "}\n",
+            id,osg_diagnostics_metric_name((osg_diag_metric)i),s->count,s->failed,s->dropped,s->bytes,s->total_us,s->max_us,
+            osg_diagnostics_percentile(s,50),osg_diagnostics_percentile(s,95),osg_diagnostics_percentile(s,99));
+    }
+    printf("{\"status\":\"diagnostics-complete\",\"version\":1,\"requestId\":\"%s\"}\n",id);fflush(stdout);
 }
 static void public_status(const char *request_id){
-    cJSON *v=cJSON_CreateObject();char encoded[1024],epoch[21];
+    osg_serial_health serial;osg_serial_health_poll();osg_serial_health_snapshot(&serial);
+    cJSON *v=cJSON_CreateObject();char encoded[2048],epoch[21];
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const char *status=state==LIVE&&input.mode==OSG_INPUT_ARMED?"live-armed":phases[state];
     cJSON_AddStringToObject(v,"status",status);
@@ -75,6 +165,16 @@ static void public_status(const char *request_id){
     cJSON_AddBoolToObject(v,"setupSaved",installation_saved);
     cJSON_AddStringToObject(v,"connectionMode",settings.direct?"serial":"wifi");
     cJSON_AddStringToObject(v,"name",settings.name);
+    cJSON *health=cJSON_AddObjectToObject(v,"serialHealth");
+    const char *const keys[]={"fifoOverflows","bufferFull","frameErrors","parityErrors","breaks","queueFullObservations","requestTimeouts","invalidJson","replyMismatch","deferredFull","invalidReply","writeFailures","frameOverflows"};
+    const uint32_t values[]={serial.fifo_overflows,serial.buffer_full,serial.frame_errors,serial.parity_errors,serial.breaks,serial.queue_full_observations,serial.request_timeouts,serial.invalid_json,serial.reply_mismatch,serial.deferred_full,serial.invalid_reply,serial.write_failures,serial.frame_overflows};
+    for(unsigned i=0;i<sizeof(values)/sizeof(values[0]);i++)cJSON_AddNumberToObject(health,keys[i],values[i]);
+#ifdef OSG_RENDER_ENGINE
+    cJSON_AddBoolToObject(v,"renderStorageAvailable",render_engine.available);
+    cJSON_AddStringToObject(v,"renderPackageHash",osg_engine_current_package(&render_engine));
+    cJSON_AddNumberToObject(v,"renderBytesReceived",delivery.received);
+    cJSON_AddNumberToObject(v,"renderBytesTotal",delivery.total);
+#endif
     cJSON_AddStringToObject(v,"ssid",settings.ssid);
     cJSON_AddBoolToObject(v,"wifiPasswordSaved",settings.password[0]!=0);
     cJSON_AddBoolToObject(v,"readyForArm",state==LIVE&&!remote_armed&&osg_input_can_arm(&input,millis()));
@@ -106,7 +206,7 @@ static void arm(const cJSON *command){
     /* The host may accept even if the ACK is lost. Every failure below closes
      * this connection; this baseline is never retried or silently replayed. */
     const uint64_t started=millis();remote_armed=true;
-    bool ok=request(v,&reply,700)&&acknowledgement(reply,"0",started);
+    bool ok=request(v,&reply,700)&&acknowledgement(reply,"0",started,false);
     cJSON_Delete(reply);
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(ok)ok=osg_input_commit(&input,epoch,started,millis());
@@ -143,18 +243,58 @@ static bool choose(const cJSON *reply){
     return osg_copy(assigned,sizeof(assigned),osg_string(selected,"instanceId"))&&osg_copy(publication,sizeof(publication),osg_string(selected,"publicationHash"))&&(state=OPEN,true);
 }
 static bool open_socket(void){return connection.ws||connection.direct||osg_socket_open(&connection,&settings);}
+#ifdef OSG_RENDER_ENGINE
+static bool suspend_scene(void){
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);scene_hits.ready=false;scene_presented_ready=false;
+    if(!using_scene)engine_suspended=true;
+    xSemaphoreGive(ui.mutex);
+    const uint64_t started=millis();
+    for(;;){
+        xSemaphoreTake(ui.mutex,portMAX_DELAY);
+        const bool busy=engine_drawing||*ui.drawing_panel!=NULL;
+        const bool chrome_ready=!using_scene||scene_disarmed_presented;
+        if(!busy&&chrome_ready){engine_suspended=true;xSemaphoreGive(ui.mutex);return true;}
+        xSemaphoreGive(ui.mutex);
+        if(millis()-started>=1500)return false;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+static bool scene_panel(void){
+    osg_image *candidate=&images[1-image_index];
+    if(!osg_engine_make_panel(&render_engine,candidate))return false;
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    bool ok=osg_init(ui.runtime,&candidate->panel,ui.runtime->display,NULL,NULL);
+    if(ok){image_index=1-image_index;osg_connected(ui.runtime,false);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());
+        if(equal(requested_page_package,osg_engine_current_package(&render_engine))&&requested_page<candidate->panel.page_count)(void)osg_set_page(ui.runtime,requested_page);
+        using_scene=true;scene_hits.ready=false;scene_presented_ready=false;scene_disarmed_presented=false;remote_armed=false;input_sequence=0;navigation_capture=-1;*ui.dirty=true;}
+    engine_suspended=false;xSemaphoreGive(ui.mutex);return ok;
+}
+static bool delivery_request(void *context,cJSON *value,cJSON **reply,unsigned timeout){(void)context;return request(value,reply,timeout);}
+static void navigate_scene(void){
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);int page=navigation_pending;navigation_pending=-1;
+    bool allowed=page>=0&&using_scene&&!engine_suspended&&(unsigned)page<ui.runtime->panel->page_count;
+    xSemaphoreGive(ui.mutex);if(!allowed)return;
+    const bool reconnect=state==LIVE;stop();
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    requested_page=(uint16_t)page;osg_copy(requested_page_package,sizeof(requested_page_package),osg_engine_current_package(&render_engine));
+    (void)osg_set_page(ui.runtime,(size_t)page);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());scene_hits.ready=false;*ui.dirty=true;
+    xSemaphoreGive(ui.mutex);
+    if(reconnect){state=AUTH;next_request=millis();}report("scene-page-changed-input-stopped");
+}
+#endif
 static void advance(void){
     if(state==OFF||state==FAULT)return;
     bool send_input=false;
     if(state==LIVE){
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
+        input_health();
         bool healthy=osg_input_monitor(&input,millis());
         send_input=remote_armed&&input.mode==OSG_INPUT_ARMED&&input.count&&millis()>=next_input_request;
         xSemaphoreGive(ui.mutex);
         if(!healthy){fail("input-cancelled-or-lease-expired-reconnect-required");return;}
     }
-    if(millis()<next_request&&!send_input)return;
-    cJSON *reply=NULL,*v=NULL;bool ok=false;
+    if(millis()<next_request&&!send_input&&state!=RENDER_TRANSFER&&state!=RENDER_PAINT&&state!=RENDER_OPEN)return;
+    cJSON *reply=NULL,*v=NULL;bool ok=false;const char *live_failure=NULL;
     if(state==PAIR_BEGIN){
         if(millis()>=pair_deadline){fail("pairing-offer-expired");return;}
         if(!open_socket()){fail("host-tls-or-connection-failed");return;}
@@ -179,6 +319,15 @@ static void advance(void){
         /* Refresh through a new authenticated connection, never authenticate twice. */
         osg_socket_close(&connection);state=AUTH;next_request=millis();return;
     }else if(state==OPEN){
+#ifdef OSG_RENDER_ENGINE
+        if(render_engine.available){
+            if(!suspend_scene()||!osg_delivery_start(&delivery,&render_engine,assigned,publication)){fail("render-engine-could-not-suspend");return;}
+            state=RENDER_TRANSFER;return;
+        }
+#endif
+#ifdef OSG_RENDER_ENGINE
+legacy_open:
+#endif
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
         bool busy=*ui.drawing_panel==&images[1-image_index].panel;
         xSemaphoreGive(ui.mutex);if(busy)return;
@@ -191,21 +340,54 @@ static void advance(void){
             if(!ok){cJSON_Delete(reply);fail("panel-unsupported-corrupt-or-over-budget");return;}
             if(ok){xSemaphoreTake(ui.mutex,portMAX_DELAY);
                 ok=osg_init(ui.runtime,&candidate->panel,ui.runtime->display,NULL,NULL);
-                if(ok){image_index=1-image_index;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;}
+                if(ok){image_index=1-image_index;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;
+#ifdef OSG_RENDER_ENGINE
+                    using_scene=false;engine_suspended=false;render_session=false;
+#endif
+                }
                 xSemaphoreGive(ui.mutex);}
             if(ok){state=LIVE;next_request=millis();report("live-disarmed");}
         }
+#ifdef OSG_RENDER_ENGINE
+    }else if(state==RENDER_TRANSFER){
+        osg_delivery_phase result=osg_delivery_step(&delivery,&render_engine,delivery_request,NULL,millis(),true);
+        if(result==OSG_DELIVERY_ERROR){fail(delivery.error?delivery.error:"render-package-transfer-failed");return;}
+        if(result==OSG_DELIVERY_LEGACY){state=OPEN;goto legacy_open;}
+        if(result==OSG_DELIVERY_COMPLETE){
+            if(!scene_panel()){fail("render-package-logical-panel-rejected");return;}
+            state=RENDER_PAINT;next_request=millis()+3000;report("render-package-verified");
+        }
+        return;
+    }else if(state==RENDER_PAINT){
+        xSemaphoreTake(ui.mutex,portMAX_DELAY);bool ready=scene_presented_ready;xSemaphoreGive(ui.mutex);
+        if(!ready){if(millis()>=next_request)fail("render-package-first-presentation-failed");return;}
+        state=RENDER_OPEN;return;
+    }else if(state==RENDER_OPEN){
+        v=osg_delivery_open_request(&delivery,&render_engine);
+        ok=v&&request(v,&reply,3000)&&osg_open_identity(reply,settings.host,settings.companion,assigned,publication,&session)&&
+            equal(osg_string(reply,"packageHash"),delivery.package)&&equal(osg_string(reply,"profileHash"),osg_engine_profile_hash(&render_engine))&&
+            equal(osg_string(reply,"semanticDescriptorHash"),delivery.semantic);
+        if(ok){
+            xSemaphoreTake(ui.mutex,portMAX_DELAY);osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());
+            render_session=true;scene_hits.ready=false;scene_disarmed_presented=false;remote_armed=false;input_sequence=0;*ui.dirty=true;xSemaphoreGive(ui.mutex);
+            state=LIVE;next_request=millis();report("render-session-disarmed");
+        }
+#endif
     }else if(state==LIVE){
-        if(millis()>=next_request){
+        if(millis()>=next_request&&!send_input){
             if(session.heartbeat>=UINT64_MAX-1){fail("session-counter-exhausted");return;}
             char sequence[21];snprintf(sequence,sizeof(sequence),"%" PRIu64,++session.heartbeat);
             const uint64_t started=millis();
-            ok=request(session_message("heartbeat",sequence),&reply,700)&&acknowledgement(reply,sequence,started);
+            ok=source_request(session_message("heartbeat",sequence),&reply,700,sequence,started,false,&live_failure);
             next_request=millis()+250;
         }else if(send_input){
             osg_input_edge edges[OSG_INPUT_BATCH_EDGES];size_t count=0;uint64_t epoch=0;
             xSemaphoreTake(ui.mutex,portMAX_DELAY);
-            ok=osg_input_peek(&input,edges,OSG_INPUT_BATCH_EDGES,&count,&epoch,millis());
+            ok=osg_input_peek(&input,edges,
+#ifdef OSG_RENDER_ENGINE
+                render_session?2:
+#endif
+                OSG_INPUT_BATCH_EDGES,&count,&epoch,millis());
             xSemaphoreGive(ui.mutex);
             if(!ok||!count||input_sequence>=UINT64_MAX-1){fail("input-backlog-or-counter-invalid-reconnect-required");return;}
             char sequence[21];snprintf(sequence,sizeof(sequence),"%" PRIu64,++input_sequence);
@@ -215,7 +397,7 @@ static void advance(void){
                 cJSON_AddBoolToObject(change,"value",edges[i].down);cJSON_AddItemToArray(changes,change);
             }
             const uint64_t started=millis();
-            ok=request(v,&reply,400)&&acknowledgement(reply,sequence,started);
+            ok=source_request(v,&reply,400,sequence,started,true,&live_failure);
             xSemaphoreTake(ui.mutex,portMAX_DELAY);
             if(ok)ok=osg_input_accept(&input,epoch,count);
             xSemaphoreGive(ui.mutex);next_input_request=millis()+OSG_INPUT_BATCH_INTERVAL_MS;
@@ -227,7 +409,7 @@ static void advance(void){
         equal(osg_string(reply,"error"),"Session is obsolete; explicitly reconnect.");
     cJSON_Delete(reply);
     if(assignment_refresh){abort_connection();state=AUTH;next_request=millis()+500;report("refreshing-cockpit-assignment-disarmed");}
-    else if(!ok)fail("host-rejected-or-invalid-reply-stop-and-reconnect");
+    else if(!ok)fail(live_failure?live_failure:"host-rejected-or-invalid-reply-stop-and-reconnect");
 }
 static bool clock_from(const cJSON *command){
     const cJSON *value=cJSON_GetObjectItemCaseSensitive(command,"unixMs");
@@ -241,6 +423,7 @@ static void install_identity(void){
 }
 static void command(cJSON *v){
     const char *type=osg_string(v,"command");
+    if(equal(type,"diagnostics")){public_diagnostics(v);return;}
     if(equal(type,"status")){public_status(osg_string(v,"requestId"));return;}
     if(equal(type,"scan-wifi")){
         stop();osg_wifi_stop();cJSON *list=osg_wifi_scan(),*reply=cJSON_CreateObject();
@@ -314,13 +497,14 @@ static void command(cJSON *v){
     state=settings.token[0]?AUTH:PAIR_BEGIN;next_request=millis();report(phases[state]);
 }
 static size_t serial_used;
-static bool serial_overflow;
+static bool serial_overflow,serial_timed_out;
+static uint64_t serial_started_ms;
 static void serial_byte(int c){
     if(c=='\n'||c=='\r'){
-        if(serial_overflow){report("provisioning-line-too-large");serial_overflow=false;}
+        if(serial_overflow){if(!serial_timed_out)report("provisioning-line-too-large");}
         else if(serial_used){serial_line[serial_used]=0;cJSON *v=osg_json_parse(serial_line,serial_used);if(v){command(v);cJSON_Delete(v);}else report("invalid-command-json");}
-        mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;
-    }else if(!serial_overflow){if(serial_used<OSG_PROVISION_BYTES)serial_line[serial_used++]=(char)c;else serial_overflow=true;}
+        mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;serial_overflow=serial_timed_out=false;serial_started_ms=0;
+    }else if(!serial_overflow){if(!serial_used)serial_started_ms=millis();if(serial_used<OSG_PROVISION_BYTES)serial_line[serial_used++]=(char)c;else serial_overflow=true;}
 }
 static void update_screen(void){
     osg_screen_state screen=!settings.token[0] ? OSG_SCREEN_UNPAIRED :
@@ -329,8 +513,41 @@ static void update_screen(void){
     if(ui.runtime->screen!=screen){ui.runtime->screen=screen;*ui.dirty=true;}
     xSemaphoreGive(ui.mutex);
 }
+/* A UART EOF can split one host command. The synchronous request reader must
+ * not consume its suffix as a fresh reply record. Retain parser ownership until
+ * LF, cancel an armed source after100ms, and discard expired input until LF. */
+static void work_after_serial(void){
+    osg_serial_health_poll();
+    if(serial_used||serial_overflow){
+        if(!serial_timed_out){
+            xSemaphoreTake(ui.mutex,portMAX_DELAY);
+            const bool active=state==LIVE&&(remote_armed||input.mode==OSG_INPUT_PREPARING||input.mode==OSG_INPUT_ARMED);
+            const uint64_t now=millis();
+            const bool expired=now<serial_started_ms||now-serial_started_ms>=(active?100u:5000u);
+            if(expired&&active){input_health();osg_input_cancel(&input,OSG_INPUT_CANCELLED);*ui.dirty=true;}
+            xSemaphoreGive(ui.mutex);
+            if(expired){
+                mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;serial_overflow=serial_timed_out=true;
+                if(active)fail("serial-command-fragment-timeout-input-stopped");
+                else report("serial-command-fragment-expired");
+            }
+        }
+        update_screen();return;
+    }
+#ifdef OSG_RENDER_ENGINE
+    navigate_scene();
+#endif
+    advance();update_screen();arm_when_ready();
+}
 static void network_task(void *arg){
     (void)arg;osg_json_init();
+#ifdef OSG_RENDER_ENGINE
+    if(suspend_scene()){
+        (void)osg_engine_initialize(&render_engine,OSG_BOARD_PROFILE,ui.runtime->display.width,ui.runtime->display.height);
+        if(render_engine.active){if(!scene_panel())report("cached-render-panel-rejected");else report("cached-render-package-restored-offline");}
+        xSemaphoreTake(ui.mutex,portMAX_DELAY);engine_suspended=false;xSemaphoreGive(ui.mutex);
+    }else report("render-storage-initialization-suspend-failed");
+#endif
     if(osg_store_load(&settings)){
         installation_saved=true;
         if(settings.direct){state=AUTH;next_request=millis();}
@@ -339,17 +556,66 @@ static void network_task(void *arg){
         else {state=AUTH;next_request=millis();report("restoring-saved-setup");}
     }
     (void)fcntl(fileno(stdin),F_SETFL,O_NONBLOCK);report("serial-provisioning-ready");
-    for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);advance();update_screen();arm_when_ready();vTaskDelay(pdMS_TO_TICKS(10));}
+    for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
+        work_after_serial();
+#ifdef ESP_PLATFORM
+        static uint64_t last_stack;
+        if(millis()-last_stack>=1000){osg_diagnostics_stack(OSG_DIAG_NETWORK_STACK,(uint32_t)uxTaskGetStackHighWaterMark(NULL));last_stack=millis();}
+#endif
+        vTaskDelay(pdMS_TO_TICKS(10));}
 }
 void osg_network_touch(bool valid,bool down,int x,int y){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    input_health();
     bool was_armed=ui.runtime->armed,was_arming=ui.runtime->arming;int previous=ui.runtime->active;
+#ifdef OSG_RENDER_ENGINE
+    if(using_scene&&down){
+        bool hit=false;
+        int destination=-1;
+        if(!engine_suspended&&scene_hits.ready&&scene_hits.page==ui.runtime->page){
+            for(unsigned i=0;i<scene_hits.count;i++){
+                const osg_engine_hit *h=&scene_hits.hits[i];
+                if(h->page==ui.runtime->page&&x>=h->x&&y>=h->y&&x<h->x+h->width&&y<h->y+h->height){
+                    if(h->destination_page!=OSG_ENGINE_NONE)destination=h->destination_page;
+                    else if(h->widget!=OSG_ENGINE_NONE)hit=true;
+                    break;
+                }
+            }
+        }
+        if(!hit){x=-1;y=-1;}
+        navigation_capture=valid?destination:-1;
+    }else if(using_scene){
+        if(valid&&navigation_capture>=0&&scene_hits.ready&&!engine_suspended){navigation_pending=navigation_capture;osg_input_cancel(&input,OSG_INPUT_CANCELLED);}
+        navigation_capture=-1;
+    }
+#endif
     osg_input_poll(&input,valid,down,x,y,millis());
     if(was_armed!=ui.runtime->armed||was_arming!=ui.runtime->arming||previous!=ui.runtime->active)*ui.dirty=true;
     xSemaphoreGive(ui.mutex);
 }
+#ifdef OSG_RENDER_ENGINE
+int osg_network_scene_acquire(osg_runtime *snapshot,osg_engine **engine){
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    int result=-1;
+    if(using_scene){
+        result=0;
+        if(!engine_suspended&&render_engine.active){
+            *snapshot=*ui.runtime;*engine=&render_engine;engine_drawing=true;scene_drawing_connected=snapshot->connected;*ui.drawing_panel=snapshot->panel;*ui.dirty=false;result=1;
+        }
+    }else if(engine_suspended)result=0;
+    xSemaphoreGive(ui.mutex);return result;
+}
+void osg_network_scene_release(bool publish_hits){
+    osg_engine_hit_cache next={0};
+    bool copied=publish_hits&&osg_engine_copy_hits(&render_engine,&next);
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    if(publish_hits){if(copied)scene_hits=next;else scene_hits.ready=false;scene_presented_ready=render_engine.scene.ready&&!render_engine.failed&&!render_engine.scene.failed;scene_disarmed_presented=scene_presented_ready&&!scene_drawing_connected;}
+    engine_drawing=false;*ui.drawing_panel=NULL;xSemaphoreGive(ui.mutex);
+}
+#endif
 void osg_network_render(const osg_panel *panel,bool finished,bool success){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    input_health();
     osg_input_render(&input,panel,finished,success,millis());
     if(!success)*ui.dirty=true;
     xSemaphoreGive(ui.mutex);
