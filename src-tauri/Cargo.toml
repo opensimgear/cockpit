@@ -16,12 +16,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+osg-companion-serial = { path = "../crates/companion-serial" }
 osg-companion-service = { path = "../crates/companion-service" }
 osg-mapping-host = { path = "../crates/mapping-host" }
 osg-virtual-controller = { path = "../crates/virtual-controller" }
 osg-mapping = { path = "../crates/mapping" }
 osg-controller-input = { path = "../crates/controller-input" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde_json = "1"
@@ -35,3 +36,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
