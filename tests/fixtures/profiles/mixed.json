@@ -1,0 +1,625 @@
+{
+  "schemaVersion": 1,
+  "id": "22222222-2222-4222-8222-222222222222",
+  "name": "Mixed",
+  "revision": 1,
+  "eligibility": {
+    "gameIds": [
+      "dcs"
+    ]
+  },
+  "resources": [
+    {
+      "id": "third-party-a",
+      "name": "Third party A",
+      "kind": "device",
+      "required": true,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "Steering",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        },
+        {
+          "id": "pressed",
+          "name": "Command button",
+          "direction": "output",
+          "delivery": "event",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": null,
+          "fallback": null
+        }
+      ]
+    },
+    {
+      "id": "third-party-b",
+      "name": "Third party B",
+      "kind": "device",
+      "required": true,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "Throttle",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        }
+      ]
+    },
+    {
+      "id": "can-a",
+      "name": "OSG CAN device A",
+      "kind": "device",
+      "required": true,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "CAN axis A",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        },
+        {
+          "id": "led",
+          "name": "Module indicator action",
+          "direction": "input",
+          "delivery": "action",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": null,
+          "fallback": null
+        }
+      ]
+    },
+    {
+      "id": "can-b",
+      "name": "OSG CAN device B",
+      "kind": "device",
+      "required": false,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "CAN axis B",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        }
+      ]
+    },
+    {
+      "id": "direct-usb",
+      "name": "OSG direct USB device",
+      "kind": "device",
+      "required": false,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "Direct USB axis",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        }
+      ]
+    },
+    {
+      "id": "companion-panel",
+      "name": "Companion panel",
+      "kind": "companion",
+      "required": false,
+      "ports": [
+        {
+          "id": "switch",
+          "name": "Panel switch",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": false
+        },
+        {
+          "id": "warning",
+          "name": "Altitude warning",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": false
+        }
+      ]
+    },
+    {
+      "id": "dcs",
+      "name": "DCS game data and commands",
+      "kind": "game",
+      "required": true,
+      "ports": [
+        {
+          "id": "altitude",
+          "name": "Altitude feet",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ft",
+          "range": {
+            "min": 0,
+            "max": 60000
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        },
+        {
+          "id": "master-caution",
+          "name": "Master caution command",
+          "direction": "input",
+          "delivery": "action",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": null,
+          "fallback": null
+        }
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "id": "third-party-steering",
+      "from": {
+        "nodeId": "third-party-a",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "combined-controller",
+        "portId": "steering"
+      }
+    },
+    {
+      "id": "third-party-throttle",
+      "from": {
+        "nodeId": "third-party-b",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "combined-controller",
+        "portId": "throttle"
+      }
+    },
+    {
+      "id": "can-axis-a",
+      "from": {
+        "nodeId": "can-a",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "can-controller",
+        "portId": "axis-a"
+      }
+    },
+    {
+      "id": "can-axis-b",
+      "from": {
+        "nodeId": "can-b",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "can-controller",
+        "portId": "axis-b"
+      }
+    },
+    {
+      "id": "usb-axis",
+      "from": {
+        "nodeId": "direct-usb",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "can-controller",
+        "portId": "usb-axis"
+      }
+    },
+    {
+      "id": "companion-button",
+      "from": {
+        "nodeId": "companion-panel",
+        "portId": "switch"
+      },
+      "to": {
+        "nodeId": "combined-controller",
+        "portId": "button"
+      }
+    },
+    {
+      "id": "dcs-command-trigger",
+      "from": {
+        "nodeId": "third-party-a",
+        "portId": "pressed"
+      },
+      "to": {
+        "nodeId": "command-trigger",
+        "portId": "event"
+      }
+    },
+    {
+      "id": "dcs-command",
+      "from": {
+        "nodeId": "command-trigger",
+        "portId": "action"
+      },
+      "to": {
+        "nodeId": "dcs",
+        "portId": "master-caution"
+      }
+    },
+    {
+      "id": "module-action",
+      "from": {
+        "nodeId": "command-trigger",
+        "portId": "action"
+      },
+      "to": {
+        "nodeId": "can-a",
+        "portId": "led"
+      }
+    },
+    {
+      "id": "altitude-feet",
+      "from": {
+        "nodeId": "dcs",
+        "portId": "altitude"
+      },
+      "to": {
+        "nodeId": "feet-to-metres",
+        "portId": "feet"
+      }
+    },
+    {
+      "id": "altitude-metres",
+      "from": {
+        "nodeId": "feet-to-metres",
+        "portId": "metres"
+      },
+      "to": {
+        "nodeId": "altitude-threshold",
+        "portId": "altitude"
+      }
+    },
+    {
+      "id": "altitude-warning",
+      "from": {
+        "nodeId": "altitude-threshold",
+        "portId": "warning"
+      },
+      "to": {
+        "nodeId": "companion-panel",
+        "portId": "warning"
+      }
+    }
+  ],
+  "processingNodes": [
+    {
+      "id": "command-trigger",
+      "name": "Explicit command trigger",
+      "operation": {
+        "kind": "trigger"
+      },
+      "inputs": [
+        {
+          "id": "event",
+          "name": "Button event",
+          "direction": "input",
+          "delivery": "event",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": null,
+          "fallback": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "action",
+          "name": "Action request",
+          "direction": "output",
+          "delivery": "action",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": null,
+          "fallback": null
+        }
+      ]
+    },
+    {
+      "id": "feet-to-metres",
+      "name": "Feet to metres",
+      "operation": {
+        "kind": "scale",
+        "factor": 0.3048,
+        "offset": 0
+      },
+      "inputs": [
+        {
+          "id": "feet",
+          "name": "Altitude feet",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ft",
+          "range": {
+            "min": 0,
+            "max": 60000
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "metres",
+          "name": "Altitude metres",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "m",
+          "range": {
+            "min": 0,
+            "max": 18288
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        }
+      ]
+    },
+    {
+      "id": "altitude-threshold",
+      "name": "Altitude threshold",
+      "operation": {
+        "kind": "threshold",
+        "threshold": 3000
+      },
+      "inputs": [
+        {
+          "id": "altitude",
+          "name": "Altitude metres",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "m",
+          "range": {
+            "min": 0,
+            "max": 18288
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "warning",
+          "name": "Above threshold",
+          "direction": "output",
+          "delivery": "state",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": false
+        }
+      ]
+    }
+  ],
+  "virtualOutputs": [
+    {
+      "id": "combined-controller",
+      "name": "Combined third party controller",
+      "required": true,
+      "ports": [
+        {
+          "id": "steering",
+          "name": "Steering",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        },
+        {
+          "id": "throttle",
+          "name": "Throttle",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        },
+        {
+          "id": "button",
+          "name": "Companion button",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "boolean",
+          "unit": null,
+          "range": null,
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": false
+        }
+      ]
+    },
+    {
+      "id": "can-controller",
+      "name": "Combined OSG controller",
+      "required": false,
+      "ports": [
+        {
+          "id": "axis-a",
+          "name": "CAN axis A",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        },
+        {
+          "id": "axis-b",
+          "name": "CAN axis B",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        },
+        {
+          "id": "usb-axis",
+          "name": "Direct USB axis",
+          "direction": "input",
+          "delivery": "state",
+          "valueType": "number",
+          "unit": "ratio",
+          "range": {
+            "min": 0,
+            "max": 1
+          },
+          "enumValues": [],
+          "freshnessMs": 1000,
+          "fallback": 0
+        }
+      ]
+    }
+  ],
+  "visibility": [
+    {
+      "resourceId": "third-party-a",
+      "mode": "hidden-while-active"
+    },
+    {
+      "resourceId": "can-a",
+      "mode": "visible"
+    }
+  ],
+  "overrides": [
+    {
+      "resourceId": "can-a",
+      "enabled": true,
+      "debounceMs": 10,
+      "invertPorts": [
+        "axis"
+      ]
+    }
+  ],
+  "companionAssignments": [
+    {
+      "resourceId": "companion-panel",
+      "publicationHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "editor": {
+    "positions": [
+      {
+        "nodeId": "third-party-a",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "nodeId": "combined-controller",
+        "x": 600,
+        "y": 0
+      },
+      {
+        "nodeId": "feet-to-metres",
+        "x": 300,
+        "y": 300
+      }
+    ],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

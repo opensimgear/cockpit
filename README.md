@@ -117,6 +117,10 @@ The experimental [mapping editor](docs/mapping-profiles.md) supports drafts, exp
 
 ## Repository layout
 
+The [unified profile contracts](docs/unified-profiles.md) document the P0 model,
+fresh storage and draft/session boundaries for the planned Profiles workflow.
+The list/editor UI and live activation follow in later milestones.
+
 - `src/`: Svelte/TypeScript interface and frontend tests.
 - [src-tauri/](src-tauri/README.md): normal Rust gateway adapters, IPC permissions and protocol tests.
 - `scripts/native-gateway-bridge.mjs`: ordinary local browser development transport.

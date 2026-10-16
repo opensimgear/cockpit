@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { randomUUID } from 'node:crypto';
 
+const profileRequestLimit = 524_288 + 65_536;
+const responseEnvelopeLimit = 2_097_152;
+
 /** @returns {import('vite').Plugin} */
 export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
   let child;
@@ -39,7 +42,7 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
       let newline;
       while ((newline = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-        if (Buffer.byteLength(line) > 131_072) { failProcess(new Error('Native service response exceeds its limit.')); return; }
+        if (Buffer.byteLength(line) > responseEnvelopeLimit) { failProcess(new Error('Native service response exceeds its limit.')); return; }
         let envelope;
         try { envelope = JSON.parse(line); }
         catch { failProcess(new Error('Native service returned invalid JSON.')); return; }
@@ -47,11 +50,14 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
         if (!task || !envelope.response || typeof envelope.response !== 'object' || Array.isArray(envelope.response)) {
           failProcess(new Error('Native service returned an unmatched response.')); return;
         }
+        if (!task.profile && Buffer.byteLength(line) > 131_072) {
+          failProcess(new Error('Native service response exceeds its limit.')); return;
+        }
         pending.delete(envelope.requestId);
         clearTimeout(task.timer);
         task.resolve(envelope.response);
       }
-      if (Buffer.byteLength(buffer) > 131_072) failProcess(new Error('Native service response exceeds its limit.'));
+      if (Buffer.byteLength(buffer) > responseEnvelopeLimit) failProcess(new Error('Native service response exceeds its limit.'));
     });
   }
   function request(payload) {
@@ -62,7 +68,7 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
         const failRequestProcess = fail;
         const timer = setTimeout(() => failRequestProcess(new Error('Native gateway service did not reply.')), 130_000);
         const requestId = randomUUID();
-        pending.set(requestId, { resolve, reject, timer });
+        pending.set(requestId, { resolve, reject, timer, profile: typeof payload?.command === 'string' && payload.command.startsWith('profile_') });
         requestChild.stdin.write(`${JSON.stringify({ requestId, request: payload })}\n`, error => { if (error) failRequestProcess(error); });
       } catch (error) { reject(error); }
     });
@@ -84,10 +90,13 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
           let bodySize = 0;
           for await (const bytes of req) {
             bodySize += bytes.length;
-            if (bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
+            if (bodySize > profileRequestLimit) throw new Error('Profile request exceeds its size limit.');
             chunks.push(bytes);
           }
-          res.end(JSON.stringify(await request(JSON.parse(Buffer.concat(chunks).toString('utf8')))));
+          const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          const profile = typeof payload?.command === 'string' && payload.command.startsWith('profile_');
+          if (!profile && bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
+          res.end(JSON.stringify(await request(payload)));
         } catch (error) {
           res.statusCode = 400;
           res.end(JSON.stringify({ ok: false, error: error.message }));

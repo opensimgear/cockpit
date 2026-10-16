@@ -112,3 +112,36 @@ test('oversized native responses fail the bounded stream and reject the pending 
   assert.equal(result.status, 400); assert.match(result.body.error, /response exceeds/); assert.equal(bridge.process.killed, true);
   bridge.close();
 });
+
+test('unified profile documents have a separately bounded request and response budget', async () => {
+  const document = { schemaVersion: 1, editor: { metadata: 'x'.repeat(300_000) } };
+  const payload = { command: 'profile_save', document, expectedRevision: 1 };
+  const bridge = fixture((envelope, process) => {
+    assert.deepEqual(envelope.request, payload);
+    process.stdout.write(`${JSON.stringify({ requestId: envelope.requestId,
+      response: { ok: true, state: { profiles: { document } } } })}\n`);
+  });
+  const response = await bridge.request(payload);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.state.profiles.document, document);
+  bridge.close();
+});
+
+test('oversized unified profile requests are rejected before spawning native code', async () => {
+  const bridge = fixture(() => assert.fail('Oversized profile must not be forwarded'));
+  const response = await bridge.request({ command: 'profile_import', document: 'x'.repeat(600_000) });
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /size limit/);
+  assert.equal(bridge.starts(), 0);
+  bridge.close();
+});
+
+test('oversized unified profile replies still fail the bounded native stream', async () => {
+  const bridge = fixture((envelope, process) => process.stdout.write(`${JSON.stringify({ requestId: envelope.requestId,
+    response: { ok: true, state: { profiles: { document: 'x'.repeat(2_100_000) } } } })}\n`));
+  const response = await bridge.request({ command: 'profile_get', id: 'profile' });
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /response exceeds/);
+  assert.equal(bridge.process.killed, true);
+  bridge.close();
+});
