@@ -1,0 +1,210 @@
+name: Mobile checks, builds and releases
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/companion/**'
+      - 'packages/companion-contracts/**'
+      - 'packages/companion-designer/**'
+      - 'packages/companion-ui/**'
+      - 'crates/companion-service/**'
+      - 'crates/companion-platform/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.npmrc'
+      - '.github/workflows/companion-mobile.yml'
+      - 'scripts/companion-mobile*'
+      - 'scripts/test_companion_mobile.py'
+      - 'docs/companion-mobile-release-notes.md'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
+  pull_request:
+    paths:
+      - 'apps/companion/**'
+      - 'packages/companion-contracts/**'
+      - 'packages/companion-designer/**'
+      - 'packages/companion-ui/**'
+      - 'crates/companion-service/**'
+      - 'crates/companion-platform/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - '.npmrc'
+      - '.github/workflows/companion-mobile.yml'
+      - 'scripts/companion-mobile*'
+      - 'scripts/test_companion_mobile.py'
+      - 'docs/companion-mobile-release-notes.md'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a development prerelease (main only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: mobile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm companion:check
+      - run: pnpm --filter @opensimgear/companion check
+      - run: pnpm --filter '@opensimgear/companion-*' test
+      - run: pnpm --filter @opensimgear/companion test
+      - run: pnpm companion:ui:build
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config dbus-x11 gnome-keyring
+      - run: python3 -m unittest discover -s scripts -p test_companion_mobile.py -v
+      - name: Native protocol and client tests
+        run: |
+          # The host TLS persistence test uses the real protected Secret Service store.
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            cargo test --locked --manifest-path crates/companion-service/Cargo.toml
+          '
+
+  android:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK and Rust target
+        run: |
+          rustup target add aarch64-linux-android
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platform-tools" "build-tools;36.0.0" "ndk;28.2.13676358"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @opensimgear/companion tauri android init --ci
+      - name: Install the platform requested by the generated Tauri project
+        run: |
+          compile_sdk="$(sed -nE 's/^[[:space:]]*compileSdk = ([0-9]+).*/\1/p' apps/companion/src-tauri/gen/android/app/build.gradle.kts)"
+          test -n "$compile_sdk"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-${compile_sdk}"
+      - name: Build development APK
+        run: pnpm --filter @opensimgear/companion tauri android build --debug --apk --target aarch64 --ci -- --locked
+      - name: Collect development APK
+        run: python3 scripts/companion-mobile.py android-debug
+      - name: Build and sign release APK when a persistent key is configured
+        if: (github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish))
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            pnpm --filter @opensimgear/companion tauri android build --apk --target aarch64 --ci -- --locked
+            python3 scripts/companion-mobile.py android-sign
+          else
+            echo 'Persistent Android signing key absent; publishing a clearly labeled debug test APK.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-android
+          path: .research/mobile-release/*.apk
+          if-no-files-found: error
+  ios-simulator:
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: rustup target add aarch64-apple-ios-sim
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @opensimgear/companion tauri ios init --ci
+      - run: pnpm --filter @opensimgear/companion tauri ios build --debug --target aarch64-sim --no-sign --ci -- --locked
+      - name: Package simulator app bundle (not installable on devices)
+        run: python3 scripts/companion-mobile.py ios-simulator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ios-simulator
+          path: .research/mobile-release/*.tar.gz
+          if-no-files-found: error
+  ios-device:
+    if: (github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)) && vars.IOS_SIGNING_ENABLED == 'true'
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      APPLE_DEVELOPMENT_TEAM: ${{ vars.APPLE_DEVELOPMENT_TEAM }}
+      IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Validate signing configuration
+        run: |
+          test -n "$APPLE_DEVELOPMENT_TEAM"
+          test -n "$IOS_CERTIFICATE"
+          test -n "$IOS_CERTIFICATE_PASSWORD"
+          test -n "$IOS_MOBILE_PROVISION"
+      - run: rustup target add aarch64-apple-ios
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @opensimgear/companion tauri ios init --ci
+      - run: pnpm --filter @opensimgear/companion tauri ios build --target aarch64 --ci --export-method app-store-connect --build-number "${{ github.run_number }}" -- --locked
+      - run: python3 scripts/companion-mobile.py ios-device
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ios-device
+          path: .research/mobile-release/*.ipa
+          if-no-files-found: error
+  release:
+    if: always() && (github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)) && needs.checks.result == 'success' && needs.android.result == 'success' && needs.ios-simulator.result == 'success' && (needs.ios-device.result == 'success' || needs.ios-device.result == 'skipped')
+    needs: [checks, android, ios-simulator, ios-device]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@v4
+        with:
+          path: .research/mobile-release
+          merge-multiple: true
+          pattern: mobile-*
+      - run: python3 scripts/companion-mobile.py checksums
+      - name: Publish development prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="mobile-build-${GITHUB_RUN_NUMBER}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" .research/mobile-release/* --clobber
+          else
+            gh release create "$tag" .research/mobile-release/* --target "$GITHUB_SHA" --prerelease --latest=false --title "Mobile Companion build ${GITHUB_RUN_NUMBER}" --notes-file docs/companion-mobile-release-notes.md
+          fi

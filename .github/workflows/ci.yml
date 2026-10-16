@@ -33,11 +33,10 @@ jobs:
       - run: pnpm integration:coverage
       - run: pnpm games:coverage
       - run: pnpm ui:build
-      - name: Companion contracts, designer, renderer and lifecycle checks
+      - name: Shared companion contracts, designer, renderer and host checks
         run: |
           pnpm companion:check
           pnpm companion:test
-          pnpm companion:ui:build
       - name: Companion release-readiness validation
         run: |
           python3 -m unittest discover -s scripts -p test_companion_release_check.py -v

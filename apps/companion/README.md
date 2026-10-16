@@ -69,3 +69,44 @@ The [release matrix](../../docs/companion-release-matrix.md) and
 state and pending native qualification. No browser/Android/iOS client
 is release-qualified. Debug APKs and local fixtures do not establish signed/native upgrade, game or latency results.
 Signed distribution and cross-version trust/rollback remain #68, reusing #55/#56.
+## Mobile CI and download builds
+
+The app stays in Cockpit. [Companion mobile CI](../../.github/workflows/companion-mobile.yml)
+runs on pull requests and pushes to `main` only when mobile source, its shared
+packages/native crates, dependency configuration, toolchain, or mobile CI files change.
+Unrelated desktop, browser-only and ESP32 changes do not trigger mobile builds.
+Manual dispatch can explicitly build any branch; its `publish` option works only on `main`.
+
+Checks cover the shared frontend, app lifecycle/cache tests, frontend bundle, artifact
+packaging and native companion-service tests. Android and iOS builds run separately
+on Ubuntu and macOS after checks pass. General Cockpit CI retains shared/host tests;
+mobile app checks and bundling live in this workflow.
+
+Successful affected pushes to `main` publish a development prerelease named
+`mobile-build-<run-number>` with SHA256 checksums, an arm64 debug APK and an arm64
+iOS simulator `.app.tar.gz`. Reruns reuse the same release. These prereleases do not
+replace the repository's latest stable release. No tag-push trigger is used because
+GitHub does not apply path filters to tag pushes.
+
+The debug APK is installable for testing. CI generates a new debug signing key per
+run, so replacing an older build can require uninstalling it and losing its local
+app data. To additionally publish a consistently signed release APK, configure all
+four repository secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Keep the keystore backed up securely.
+The release APK uses the same app identifier as the debug APK; switching keys requires
+uninstalling the other build first. No signing key is generated or committed by this workflow.
+
+The simulator bundle requires an Apple Silicon Mac with Xcode. Extract the archive,
+boot an iOS simulator, then run `xcrun simctl install booted "<path-to-app>"`.
+It cannot be installed on a physical iPhone or iPad.
+
+Device IPA export is optional: set repository variables `IOS_SIGNING_ENABLED=true`
+and `APPLE_DEVELOPMENT_TEAM` to your Apple team ID, and secrets `IOS_CERTIFICATE`
+(base64 P12), `IOS_CERTIFICATE_PASSWORD`, and `IOS_MOBILE_PROVISION` (base64 App Store
+Connect provisioning profile for `org.opensimgear.companion`). Only trusted publishing
+runs use these credentials. The IPA uses the App Store Connect export method for
+TestFlight/App Store processing; CI attaches it to the prerelease and does not upload
+it to Apple or make it directly sideloadable. See [Tauri's signing guide](https://v2.tauri.app/distribute/sign/ios/).
+
+These are development artifacts. Mobile authentication remains gated pending #55/#56;
+CI builds and signing do not establish physical-device qualification.
