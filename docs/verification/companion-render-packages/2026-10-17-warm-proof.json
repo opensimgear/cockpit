@@ -1,0 +1,700 @@
+{
+  "boards": [
+    {
+      "application": {
+        "beforeBytes": 926560,
+        "beforeSha256": "e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+        "status": "missing-after",
+        "unchangedVerified": false
+      },
+      "board": "sunton",
+      "boardProfile": "sunton-3248s035r",
+      "consecutiveLiveContent": {
+        "allZero": null,
+        "byteIncrement": null,
+        "counterRegressions": 0,
+        "measuredPairs": 0,
+        "missingCounterPairs": 625,
+        "pairs": 625,
+        "requestIncrement": null
+      },
+      "deviceEventCounts": {
+        "arming": 1,
+        "live-armed": 1,
+        "render-package-verified": 1,
+        "render-session-disarmed": 1
+      },
+      "deviceEventSequenceGaps": 0,
+      "deviceEvents": [
+        {
+          "elapsedMs": 357,
+          "sequence": 1,
+          "status": "render-package-verified",
+          "transportElapsedMs": 317
+        },
+        {
+          "elapsedMs": 509,
+          "sequence": 2,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 491
+        },
+        {
+          "elapsedMs": 2531,
+          "sequence": 3,
+          "status": "arming",
+          "transportElapsedMs": 2490
+        },
+        {
+          "elapsedMs": 2631,
+          "sequence": 4,
+          "status": "live-armed",
+          "transportElapsedMs": 2582
+        }
+      ],
+      "feedbackRejectedCount": 0,
+      "inputEvidenceCounts": {
+        "baselines": 1,
+        "sourceLosses": 1
+      },
+      "lastContentBytes": null,
+      "lastContentRequests": null,
+      "liveEvents": [
+        {
+          "board": "sunton",
+          "boardProfile": "sunton-3248s035r",
+          "firstObservedMs": 4046,
+          "generation": "1",
+          "lastObservedMs": 629012,
+          "packageHash": "sha256:ce6543303e0703980853d8aea104c61b0062f92cc4a28130972daba2a72e6aa7",
+          "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+          "revision": "B",
+          "samples": 626,
+          "sessionId": "a0e09431-638f-46c0-a7fc-ec629e2a045c",
+          "sourcePublicationHash": "sha256:e868c3a26adad450cd117dcebafebbf89c2c3af72060c79af5b4b558db83f70a",
+          "targetProfileId": "sunton-3248s035r-render-v1"
+        }
+      ],
+      "longestContinuousLiveMs": 624966,
+      "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+      "serialHealthCounterRegressions": 0,
+      "serialHealthMax": null,
+      "serialHealthSamples": 0,
+      "sessionCount": 1,
+      "startupAckMaxBytes": 400,
+      "steadyAckMaxBytes": 398,
+      "targetProfileId": "sunton-3248s035r-render-v1"
+    },
+    {
+      "application": {
+        "afterBytes": 942848,
+        "afterSha256": "dda923112d55e94c733f5b49238d644abe3e9b0447d4c491e9bbfd28cec2ea6a",
+        "beforeBytes": 942848,
+        "beforeSha256": "dda923112d55e94c733f5b49238d644abe3e9b0447d4c491e9bbfd28cec2ea6a",
+        "status": "unchanged",
+        "unchangedVerified": true
+      },
+      "board": "waveshare",
+      "boardProfile": "waveshare-lcd7-s3",
+      "consecutiveLiveContent": {
+        "allZero": null,
+        "byteIncrement": null,
+        "counterRegressions": 0,
+        "measuredPairs": 0,
+        "missingCounterPairs": 570,
+        "pairs": 570,
+        "requestIncrement": null
+      },
+      "deviceEventCounts": {
+        "arming": 12,
+        "choose-or-assign-one-instance-in-cockpit": 1,
+        "host-rejected-or-invalid-reply-stop-and-reconnect": 11,
+        "invalid-command-json": 1,
+        "live-armed": 12,
+        "render-package-verified": 12,
+        "render-session-disarmed": 12
+      },
+      "deviceEventSequenceGaps": 0,
+      "deviceEvents": [
+        {
+          "elapsedMs": 2071,
+          "sequence": 1,
+          "status": "invalid-command-json",
+          "transportElapsedMs": 2042
+        },
+        {
+          "elapsedMs": 2126,
+          "sequence": 2,
+          "status": "choose-or-assign-one-instance-in-cockpit",
+          "transportElapsedMs": 2074
+        },
+        {
+          "elapsedMs": 4197,
+          "sequence": 3,
+          "status": "render-package-verified",
+          "transportElapsedMs": 4166
+        },
+        {
+          "elapsedMs": 4349,
+          "sequence": 4,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 4332
+        },
+        {
+          "elapsedMs": 6370,
+          "sequence": 5,
+          "status": "arming",
+          "transportElapsedMs": 6320
+        },
+        {
+          "elapsedMs": 6370,
+          "sequence": 6,
+          "status": "live-armed",
+          "transportElapsedMs": 6342
+        },
+        {
+          "elapsedMs": 29467,
+          "sequence": 7,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 29431
+        },
+        {
+          "elapsedMs": 30377,
+          "sequence": 8,
+          "status": "render-package-verified",
+          "transportElapsedMs": 30345
+        },
+        {
+          "elapsedMs": 30528,
+          "sequence": 9,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 30491
+        },
+        {
+          "elapsedMs": 32496,
+          "sequence": 10,
+          "status": "arming",
+          "transportElapsedMs": 32445
+        },
+        {
+          "elapsedMs": 32496,
+          "sequence": 11,
+          "status": "live-armed",
+          "transportElapsedMs": 32467
+        },
+        {
+          "elapsedMs": 74977,
+          "sequence": 12,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 74942
+        },
+        {
+          "elapsedMs": 75734,
+          "sequence": 13,
+          "status": "render-package-verified",
+          "transportElapsedMs": 75716
+        },
+        {
+          "elapsedMs": 75885,
+          "sequence": 14,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 75872
+        },
+        {
+          "elapsedMs": 77907,
+          "sequence": 15,
+          "status": "arming",
+          "transportElapsedMs": 77876
+        },
+        {
+          "elapsedMs": 77958,
+          "sequence": 16,
+          "status": "live-armed",
+          "transportElapsedMs": 77899
+        },
+        {
+          "elapsedMs": 246378,
+          "sequence": 17,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 246327
+        },
+        {
+          "elapsedMs": 247386,
+          "sequence": 18,
+          "status": "render-package-verified",
+          "transportElapsedMs": 247331
+        },
+        {
+          "elapsedMs": 247538,
+          "sequence": 19,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 247496
+        },
+        {
+          "elapsedMs": 249557,
+          "sequence": 20,
+          "status": "arming",
+          "transportElapsedMs": 249500
+        },
+        {
+          "elapsedMs": 249557,
+          "sequence": 21,
+          "status": "live-armed",
+          "transportElapsedMs": 249522
+        },
+        {
+          "elapsedMs": 293867,
+          "sequence": 22,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 293811
+        },
+        {
+          "elapsedMs": 294775,
+          "sequence": 23,
+          "status": "render-package-verified",
+          "transportElapsedMs": 294745
+        },
+        {
+          "elapsedMs": 294927,
+          "sequence": 24,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 294900
+        },
+        {
+          "elapsedMs": 296894,
+          "sequence": 25,
+          "status": "arming",
+          "transportElapsedMs": 296882
+        },
+        {
+          "elapsedMs": 296944,
+          "sequence": 26,
+          "status": "live-armed",
+          "transportElapsedMs": 296905
+        },
+        {
+          "elapsedMs": 312249,
+          "sequence": 27,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 312210
+        },
+        {
+          "elapsedMs": 312960,
+          "sequence": 28,
+          "status": "render-package-verified",
+          "transportElapsedMs": 312904
+        },
+        {
+          "elapsedMs": 313061,
+          "sequence": 29,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 313040
+        },
+        {
+          "elapsedMs": 315032,
+          "sequence": 30,
+          "status": "arming",
+          "transportElapsedMs": 314982
+        },
+        {
+          "elapsedMs": 315032,
+          "sequence": 31,
+          "status": "live-armed",
+          "transportElapsedMs": 315004
+        },
+        {
+          "elapsedMs": 434451,
+          "sequence": 32,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 434394
+        },
+        {
+          "elapsedMs": 434955,
+          "sequence": 33,
+          "status": "render-package-verified",
+          "transportElapsedMs": 434927
+        },
+        {
+          "elapsedMs": 435107,
+          "sequence": 34,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 435073
+        },
+        {
+          "elapsedMs": 437077,
+          "sequence": 35,
+          "status": "arming",
+          "transportElapsedMs": 437055
+        },
+        {
+          "elapsedMs": 437127,
+          "sequence": 36,
+          "status": "live-armed",
+          "transportElapsedMs": 437074
+        },
+        {
+          "elapsedMs": 445624,
+          "sequence": 37,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 445592
+        },
+        {
+          "elapsedMs": 446079,
+          "sequence": 38,
+          "status": "render-package-verified",
+          "transportElapsedMs": 446036
+        },
+        {
+          "elapsedMs": 446230,
+          "sequence": 39,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 446191
+        },
+        {
+          "elapsedMs": 448200,
+          "sequence": 40,
+          "status": "arming",
+          "transportElapsedMs": 448176
+        },
+        {
+          "elapsedMs": 448251,
+          "sequence": 41,
+          "status": "live-armed",
+          "transportElapsedMs": 448198
+        },
+        {
+          "elapsedMs": 500765,
+          "sequence": 42,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 500739
+        },
+        {
+          "elapsedMs": 501574,
+          "sequence": 43,
+          "status": "render-package-verified",
+          "transportElapsedMs": 501543
+        },
+        {
+          "elapsedMs": 501726,
+          "sequence": 44,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 501699
+        },
+        {
+          "elapsedMs": 503698,
+          "sequence": 45,
+          "status": "arming",
+          "transportElapsedMs": 503681
+        },
+        {
+          "elapsedMs": 503749,
+          "sequence": 46,
+          "status": "live-armed",
+          "transportElapsedMs": 503700
+        },
+        {
+          "elapsedMs": 508155,
+          "sequence": 47,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 508119
+        },
+        {
+          "elapsedMs": 508660,
+          "sequence": 48,
+          "status": "render-package-verified",
+          "transportElapsedMs": 508603
+        },
+        {
+          "elapsedMs": 508761,
+          "sequence": 49,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 508748
+        },
+        {
+          "elapsedMs": 510784,
+          "sequence": 50,
+          "status": "arming",
+          "transportElapsedMs": 510754
+        },
+        {
+          "elapsedMs": 510834,
+          "sequence": 51,
+          "status": "live-armed",
+          "transportElapsedMs": 510776
+        },
+        {
+          "elapsedMs": 609853,
+          "sequence": 52,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 609802
+        },
+        {
+          "elapsedMs": 610560,
+          "sequence": 53,
+          "status": "render-package-verified",
+          "transportElapsedMs": 610545
+        },
+        {
+          "elapsedMs": 610711,
+          "sequence": 54,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 610681
+        },
+        {
+          "elapsedMs": 612683,
+          "sequence": 55,
+          "status": "arming",
+          "transportElapsedMs": 612637
+        },
+        {
+          "elapsedMs": 612683,
+          "sequence": 56,
+          "status": "live-armed",
+          "transportElapsedMs": 612659
+        },
+        {
+          "elapsedMs": 615970,
+          "sequence": 57,
+          "status": "host-rejected-or-invalid-reply-stop-and-reconnect",
+          "transportElapsedMs": 615952
+        },
+        {
+          "elapsedMs": 616628,
+          "sequence": 58,
+          "status": "render-package-verified",
+          "transportElapsedMs": 616606
+        },
+        {
+          "elapsedMs": 616781,
+          "sequence": 59,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 616762
+        },
+        {
+          "elapsedMs": 618805,
+          "sequence": 60,
+          "status": "arming",
+          "transportElapsedMs": 618758
+        },
+        {
+          "elapsedMs": 618805,
+          "sequence": 61,
+          "status": "live-armed",
+          "transportElapsedMs": 618780
+        }
+      ],
+      "feedbackRejectedCount": 0,
+      "inputEvidenceCounts": {
+        "baselines": 12,
+        "sourceLosses": 12
+      },
+      "lastContentBytes": null,
+      "lastContentRequests": null,
+      "liveEvents": [
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 8035,
+          "generation": "1",
+          "lastObservedMs": 29010,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 22,
+          "sessionId": "e3817379-fe6d-4446-90df-bc9c22f64ebd",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 34018,
+          "generation": "1",
+          "lastObservedMs": 74017,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 41,
+          "sessionId": "ad50727e-1a0a-4879-9338-e0d772472b48",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 79018,
+          "generation": "1",
+          "lastObservedMs": 246024,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 168,
+          "sessionId": "f90eea0d-d9b4-4d18-86b5-02b11be9a42c",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 251022,
+          "generation": "1",
+          "lastObservedMs": 293008,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 43,
+          "sessionId": "af98c9b2-c933-42bf-914b-a18b908e41ac",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 298004,
+          "generation": "1",
+          "lastObservedMs": 312047,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 15,
+          "sessionId": "ed97a73e-095b-42ae-9f22-2755726b7432",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 316043,
+          "generation": "1",
+          "lastObservedMs": 434047,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 119,
+          "sessionId": "1d9263b1-8012-4873-b669-e0aa3d3c10b2",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 438036,
+          "generation": "1",
+          "lastObservedMs": 445018,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 8,
+          "sessionId": "533dc253-2334-4ae8-abe1-ec1415da6f2e",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 449007,
+          "generation": "1",
+          "lastObservedMs": 500008,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 52,
+          "sessionId": "37ac21e0-0274-47b6-9e32-cff196b41f20",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 505016,
+          "generation": "1",
+          "lastObservedMs": 508004,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 4,
+          "sessionId": "a519ee6f-11cd-4726-bee6-aaf4e55067fb",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 512047,
+          "generation": "1",
+          "lastObservedMs": 609045,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 98,
+          "sessionId": "d0bf0a7a-bd70-40cc-ac97-f162d2ae5260",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 614048,
+          "generation": "1",
+          "lastObservedMs": 615011,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 2,
+          "sessionId": "72d7cdf9-6fc9-4622-9344-2f271a4c0381",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firstObservedMs": 620018,
+          "generation": "1",
+          "lastObservedMs": 629012,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 10,
+          "sessionId": "de9ca4ef-b5f1-437b-b659-345356cc4723",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        }
+      ],
+      "longestContinuousLiveMs": 167006,
+      "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+      "serialHealthCounterRegressions": 0,
+      "serialHealthMax": null,
+      "serialHealthSamples": 0,
+      "sessionCount": 12,
+      "startupAckMaxBytes": 404,
+      "steadyAckMaxBytes": 397,
+      "targetProfileId": "waveshare-lcd7-s3-render-v1"
+    }
+  ],
+  "formatVersion": 1,
+  "inputEvidenceByInstance": {
+    "render-poc-sunton": {
+      "baselines": 1,
+      "sourceLosses": 1
+    },
+    "render-poc-waveshare": {
+      "baselines": 12,
+      "sourceLosses": 12
+    }
+  },
+  "inputEvidenceCounts": {
+    "baselines": 13,
+    "sourceLosses": 13
+  },
+  "liveStatus": "live-armed",
+  "maximumSampleGapMs": 2500,
+  "notEstablished": [
+    "visual quality",
+    "soak qualification",
+    "power-cut recovery",
+    "absence of unobserved serial failures or lost queue events"
+  ],
+  "records": 1958,
+  "runComplete": true,
+  "scope": "Consecutive sampled runtime and full application readback evidence only.",
+  "unattributedDeviceEventCount": 0
+}

@@ -12,9 +12,11 @@ static int fake_settimeofday(const struct timeval *,const struct timezone *);
 cJSON *osg_serial_take_command(void){return NULL;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
+void osg_serial_health_poll(void){}
+void osg_serial_health_snapshot(osg_serial_health *out){if(out)memset(out,255,sizeof(*out));}
 static uint64_t fake_ms;
 static bool network_ok=true,store_ok=true,storage_available,assigned_now=true,approved_now=true;
-static bool request_ok=true,wrong_identity,wrong_session;
+static bool request_ok=true,wrong_identity,wrong_session,negative_host,malformed_ok;
 static bool clock_ok=true,load_ok,obsolete_session;
 static osg_settings saved_settings;
 static int requests, baseline_requests, input_requests, close_requests, loss_requests;
@@ -54,9 +56,10 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
     (void)s;(void)timeout;requests++;const char *type=osg_string(v,"type");assert(type);osg_copy(requested_type,sizeof(requested_type),type);
     if(!permit_inputs)assert(strcmp(type,"baseline")&&strcmp(type,"input"));
     *out=cJSON_CreateObject();
-    if(obsolete_session&&!strcmp(type,"heartbeat")){
+    if(malformed_ok&&!strcmp(type,"heartbeat")){cJSON_AddNumberToObject(*out,"ok",1);cJSON_Delete(v);return false;}
+    if((obsolete_session||negative_host)&&!strcmp(type,"heartbeat")){
         cJSON_AddBoolToObject(*out,"ok",false);cJSON_AddStringToObject(*out,"type","error");
-        cJSON_AddStringToObject(*out,"error","Session is obsolete; explicitly reconnect.");
+        cJSON_AddStringToObject(*out,"error",obsolete_session?"Session is obsolete; explicitly reconnect.":"bench rejection");
         cJSON_Delete(v);return false;
     }
     cJSON_AddBoolToObject(*out,"ok",true);
@@ -265,5 +268,12 @@ int main(int argc,char **argv){
     arm_when_ready();assert(remote_armed&&test_runtime.armed);
     stop();
     serial_fragment_tests();
+    permit_inputs=true;live_ready();negative_host=true;advance();negative_host=false;assert(state==FAULT&&!remote_armed);
+    live_ready();wrong_session=true;advance();wrong_session=false;assert(state==FAULT);
+    live_ready();request_ok=false;advance();request_ok=true;assert(state==FAULT);stop();permit_inputs=false;
+    public_status("max-health");
+    permit_inputs=true;live_ready();malformed_ok=true;const char *reason=NULL;cJSON *malformed=NULL;assert(!source_request(session_message("heartbeat","1"),&malformed,700,"1",fake_ms,false,&reason)&&!strcmp(reason,"source-ack-invalid-reconnect-required"));cJSON_Delete(malformed);malformed_ok=false;stop();permit_inputs=false;
+    memset(settings.name,1,80);settings.name[80]=0;memset(settings.ssid,1,32);settings.ssid[32]=0;memset(settings.companion,'c',64);settings.companion[64]=0;memset(session.session,'s',64);session.session[64]=0;osg_copy(session.generation,sizeof(session.generation),"18446744073709551615");input.epoch=UINT64_MAX;
+    char maximum_id[65];memset(maximum_id,'r',64);maximum_id[64]=0;state=LIVE;public_status(maximum_id);state=OFF;
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

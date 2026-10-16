@@ -37,6 +37,8 @@ jobs:
           python3 apps/companion-esp32/test/storage.py
           python3 apps/companion-esp32/test/serial.py
           python3 -m unittest discover -s apps/companion-esp32/test -p "provision_test.py" -v
+      - name: Redacted runtime proof summary pure tests
+        run: python3 -m unittest discover -s apps/companion-esp32/test -p render_proof_test.py -v
       - name: Sunton shared-SPI display and touch fault injection
         run: python3 apps/companion-esp32/test/sunton.py
       - name: Bounded baseline diagnostics and capture checks
@@ -55,6 +57,7 @@ jobs:
             .research/esp32-native/preview.png
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json
+            .research/esp32-serial-wire/coverage.json
             .research/esp32-diagnostics/coverage.json
             .research/esp32-render-package-native/coverage.json
             .research/esp32-render-expressions-native/coverage.json

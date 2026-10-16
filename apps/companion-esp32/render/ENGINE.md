@@ -10,8 +10,8 @@ Manifest validation checks exact canonical bytes and package SHA-256, every immu
 | --- | ---: | ---: |
 | Native engine struct (includes manifest and scene) | 18,648 B | 22,744 B |
 | Conservative scene temporary-work allowance | 2,048 B | 2,048 B |
-| Adapter, delivery, immutable hit-cache reserve | 1,536 B | 1,536 B |
-| Admission minimum | 22,232 B | 26,328 B |
+| Adapter, delivery, immutable hit-cache and serial diagnostics reserve | 2,048 B | 2,048 B |
+| Admission minimum | 22,744 B | 26,840 B |
 | Profile ceiling | 24,576 B | 32,768 B |
 | Manifest capacity | 4,096 B | 8,192 B |
 

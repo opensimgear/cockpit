@@ -32,7 +32,7 @@ static osg_image images[2];
 static unsigned image_index;
 static osg_live_session session;
 static osg_input input;
-static bool remote_armed, installation_saved;
+static bool remote_armed, installation_saved,ack_input_healthy;
 static uint64_t input_sequence, next_input_request;
 static phase state;
 static char pending[65], assigned[65], publication[72];
@@ -97,7 +97,7 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started,b
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     input_health();
     const uint64_t before=session.feedback_sequence,before_generation=session.binding_generation;const bool seen=session.feedback_seen;
-    bool ok=osg_input_monitor(&input,millis());
+    bool ok=osg_input_monitor(&input,millis());ack_input_healthy=ok;
 #ifdef OSG_RENDER_ENGINE
     if(ok&&render_session)ok=osg_render_feedback_ack(reply,&session,sequence,ui.runtime,millis(),seen?512:3072);
     else
@@ -109,6 +109,16 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started,b
     osg_diagnostics_record(OSG_DIAG_SOURCE_ACK,elapsed,0,ok);
     if(input_ack)osg_diagnostics_record(OSG_DIAG_INPUT_ACK,elapsed,0,ok);
     return ok;
+}
+/* Transport loss and a well-formed but invalid source ACK are distinct faults.
+ * Only fixed status strings leave the device; no host error/payload is echoed. */
+static bool source_request(cJSON *value,cJSON **reply,unsigned timeout,const char *sequence,uint64_t started,bool input_ack,const char **failure){
+    if(!request(value,reply,timeout)){
+        const cJSON *accepted=cJSON_GetObjectItemCaseSensitive(*reply,"ok");
+        *failure=cJSON_IsFalse(accepted)?"source-host-rejected-reconnect-required":*reply&&!cJSON_IsTrue(accepted)?"source-ack-invalid-reconnect-required":"source-transport-failed-reconnect-required";return false;
+    }
+    if(acknowledgement(*reply,sequence,started,input_ack))return true;
+    *failure=ack_input_healthy?"source-ack-invalid-reconnect-required":"source-ack-input-unhealthy-reconnect-required";return false;
 }
 static void public_diagnostics(const cJSON *command){
     /* Dumping several serial records can block the UART. Never put that work
@@ -140,7 +150,8 @@ static void public_diagnostics(const cJSON *command){
     printf("{\"status\":\"diagnostics-complete\",\"version\":1,\"requestId\":\"%s\"}\n",id);fflush(stdout);
 }
 static void public_status(const char *request_id){
-    cJSON *v=cJSON_CreateObject();char encoded[1536],epoch[21];
+    osg_serial_health serial;osg_serial_health_poll();osg_serial_health_snapshot(&serial);
+    cJSON *v=cJSON_CreateObject();char encoded[2048],epoch[21];
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const char *status=state==LIVE&&input.mode==OSG_INPUT_ARMED?"live-armed":phases[state];
     cJSON_AddStringToObject(v,"status",status);
@@ -154,6 +165,10 @@ static void public_status(const char *request_id){
     cJSON_AddBoolToObject(v,"setupSaved",installation_saved);
     cJSON_AddStringToObject(v,"connectionMode",settings.direct?"serial":"wifi");
     cJSON_AddStringToObject(v,"name",settings.name);
+    cJSON *health=cJSON_AddObjectToObject(v,"serialHealth");
+    const char *const keys[]={"fifoOverflows","bufferFull","frameErrors","parityErrors","breaks","queueFullObservations","requestTimeouts","invalidJson","replyMismatch","deferredFull","invalidReply","writeFailures","frameOverflows"};
+    const uint32_t values[]={serial.fifo_overflows,serial.buffer_full,serial.frame_errors,serial.parity_errors,serial.breaks,serial.queue_full_observations,serial.request_timeouts,serial.invalid_json,serial.reply_mismatch,serial.deferred_full,serial.invalid_reply,serial.write_failures,serial.frame_overflows};
+    for(unsigned i=0;i<sizeof(values)/sizeof(values[0]);i++)cJSON_AddNumberToObject(health,keys[i],values[i]);
 #ifdef OSG_RENDER_ENGINE
     cJSON_AddBoolToObject(v,"renderStorageAvailable",render_engine.available);
     cJSON_AddStringToObject(v,"renderPackageHash",osg_engine_current_package(&render_engine));
@@ -279,7 +294,7 @@ static void advance(void){
         if(!healthy){fail("input-cancelled-or-lease-expired-reconnect-required");return;}
     }
     if(millis()<next_request&&!send_input&&state!=RENDER_TRANSFER&&state!=RENDER_PAINT&&state!=RENDER_OPEN)return;
-    cJSON *reply=NULL,*v=NULL;bool ok=false;
+    cJSON *reply=NULL,*v=NULL;bool ok=false;const char *live_failure=NULL;
     if(state==PAIR_BEGIN){
         if(millis()>=pair_deadline){fail("pairing-offer-expired");return;}
         if(!open_socket()){fail("host-tls-or-connection-failed");return;}
@@ -363,7 +378,7 @@ legacy_open:
             if(session.heartbeat>=UINT64_MAX-1){fail("session-counter-exhausted");return;}
             char sequence[21];snprintf(sequence,sizeof(sequence),"%" PRIu64,++session.heartbeat);
             const uint64_t started=millis();
-            ok=request(session_message("heartbeat",sequence),&reply,700)&&acknowledgement(reply,sequence,started,false);
+            ok=source_request(session_message("heartbeat",sequence),&reply,700,sequence,started,false,&live_failure);
             next_request=millis()+250;
         }else if(send_input){
             osg_input_edge edges[OSG_INPUT_BATCH_EDGES];size_t count=0;uint64_t epoch=0;
@@ -382,7 +397,7 @@ legacy_open:
                 cJSON_AddBoolToObject(change,"value",edges[i].down);cJSON_AddItemToArray(changes,change);
             }
             const uint64_t started=millis();
-            ok=request(v,&reply,400)&&acknowledgement(reply,sequence,started,true);
+            ok=source_request(v,&reply,400,sequence,started,true,&live_failure);
             xSemaphoreTake(ui.mutex,portMAX_DELAY);
             if(ok)ok=osg_input_accept(&input,epoch,count);
             xSemaphoreGive(ui.mutex);next_input_request=millis()+OSG_INPUT_BATCH_INTERVAL_MS;
@@ -394,7 +409,7 @@ legacy_open:
         equal(osg_string(reply,"error"),"Session is obsolete; explicitly reconnect.");
     cJSON_Delete(reply);
     if(assignment_refresh){abort_connection();state=AUTH;next_request=millis()+500;report("refreshing-cockpit-assignment-disarmed");}
-    else if(!ok)fail("host-rejected-or-invalid-reply-stop-and-reconnect");
+    else if(!ok)fail(live_failure?live_failure:"host-rejected-or-invalid-reply-stop-and-reconnect");
 }
 static bool clock_from(const cJSON *command){
     const cJSON *value=cJSON_GetObjectItemCaseSensitive(command,"unixMs");
@@ -502,6 +517,7 @@ static void update_screen(void){
  * not consume its suffix as a fresh reply record. Retain parser ownership until
  * LF, cancel an armed source after100ms, and discard expired input until LF. */
 static void work_after_serial(void){
+    osg_serial_health_poll();
     if(serial_used||serial_overflow){
         if(!serial_timed_out){
             xSemaphoreTake(ui.mutex,portMAX_DELAY);

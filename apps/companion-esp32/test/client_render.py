@@ -35,6 +35,10 @@ for board in ('sunton','waveshare'):
     subprocess.run([flags[0],'-fsanitize=address,undefined','--coverage',*[str(p) for p in objects],'-lm','-lcrypto','-o',str(run_root/'client-render-test')],check=True,cwd=ROOT)
     result=subprocess.run([str(run_root/'client-render-test'),str(ROOT/'packages/companion-renderer/test/poc'),board,str(APP/'test/live-publication.json')],check=False,capture_output=True,text=True,cwd=ROOT)
     (run_root/'client-render-test.log').write_text(result.stdout+result.stderr);print(board+': '+result.stdout+result.stderr,end='');result.check_returncode()
+    status_rows=[(line,json.loads(line)) for line in result.stdout.splitlines() if line.startswith('{')]
+    maximum=next((line,row) for line,row in status_rows if row.get('requestId')=='r'*64)
+    assert 1536<len(maximum[0].encode())<2048 and maximum[1]['name']=='\x01'*80 and maximum[1]['ssid']=='\x01'*32
+    assert len(maximum[1]['serialHealth'])==13 and set(maximum[1]['serialHealth'].values())=={4294967295}
     subprocess.run(['gcov','-j','-b','-c','client-render-test-client_render_test.gcno'],cwd=run_root,check=True,stdout=subprocess.DEVNULL)
     data=json.loads(gzip.decompress((run_root/'client-render-test-client_render_test.gcov.json.gz').read_bytes()));module=next(f for f in data['files'] if f['file'].replace('/../','/').endswith('/network/client.c'))
     lines=[l for l in module['lines'] if l['line_number'] in engine_lines];branches=[b for l in lines for b in l.get('branches',[])];functions=[f for f in module['functions'] if f['start_line'] in engine_lines]

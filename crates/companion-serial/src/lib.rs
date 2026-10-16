@@ -38,6 +38,29 @@ fn clear_recovered_error(state:&mut Value,status:Option<&str>){
         if let Some(state)=state.as_object_mut(){state.remove("lastHostError");}
     }
 }
+// Keep bounded, safe transition evidence: a reconnect may complete between two
+// operator polls. Never retain arbitrary device payloads or provisioning data.
+fn record_device_event(state:&mut Value,status:&str,elapsed_ms:u64){
+    if status.is_empty()||status.len()>=96||!status.bytes().all(|b|b.is_ascii_lowercase()||b==b'-'){return;}
+    let sequence=state["deviceEventSequence"].as_u64().unwrap_or(0).saturating_add(1);
+    state["deviceStatus"]=json!(status);state["deviceEventSequence"]=json!(sequence);
+    if !state["deviceEvents"].is_array(){state["deviceEvents"]=json!([]);}
+    let events=state["deviceEvents"].as_array_mut().unwrap();
+    if events.len()==32{events.remove(0);}
+    events.push(json!({"sequence":sequence,"elapsedMs":elapsed_ms,"status":status}));
+}
+fn serial_health(value:&Value)->Option<Value>{
+    const KEYS:[&str;13]=["fifoOverflows","bufferFull","frameErrors","parityErrors","breaks","queueFullObservations",
+        "requestTimeouts","invalidJson","replyMismatch","deferredFull","invalidReply","writeFailures","frameOverflows"];
+    let object=value.as_object()?;
+    if object.len()!=KEYS.len(){return None;}
+    let mut safe=serde_json::Map::new();
+    for key in KEYS{
+        let count=object.get(key)?.as_u64().filter(|n|*n<=u32::MAX as u64)?;
+        safe.insert(key.into(),json!(count));
+    }
+    Some(Value::Object(safe))
+}
 fn same_usb_candidate(candidate: &Value, current: &Value) -> bool {
     ["port", "vid", "pid", "serial"].iter().all(|key| candidate[key] == current[key])
 }
@@ -116,7 +139,9 @@ impl Manager {
         }
         let port_name = port.to_owned();
         let state = Arc::new(Mutex::new(
-            json!({"connected":true,"stage":"Connecting to device","port":port}),
+            json!({"connected":true,"stage":"Connecting to device","port":port,
+                "renderContentBytes":0,"renderContentRequests":0,
+                "startupAckMaxBytes":0,"steadyAckMaxBytes":0}),
         ));
         let (tx, rx) = mpsc::sync_channel(8);
         let public = state.clone();
@@ -624,6 +649,12 @@ fn worker(
                                     Some("serial-request") => {
                                         set(public, "lastWireRequest", v["frame"]["type"].clone());
                                         for response in wire.handle(hub, &v)? {
+                                            if response["frame"]["type"] == "ack" {
+                                                let bytes=serde_json::to_vec(&response["frame"]).map_err(|_|"Invalid source ACK.")?.len();
+                                                let key=if response["frame"]["renderFeedback"]["m"]==0{"startupAckMaxBytes"}else{"steadyAckMaxBytes"};
+                                                let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
+                                                state[key]=json!(state[key].as_u64().unwrap_or(0).max(bytes as u64));
+                                            }
                                             if response["frame"]["type"] == "render-chunk" {
                                                 let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
                                                 let bytes=state["renderContentBytes"].as_u64().unwrap_or(0)+response["frame"]["chunk"]["bytes"].as_u64().unwrap_or(0);
@@ -700,6 +731,7 @@ fn worker(
                                                     safe[key] = value.clone();
                                                 }
                                             }
+                                            if let Some(health)=serial_health(&v["serialHealth"]){safe["serialHealth"]=health;}
                                             set(public, "device", safe);
                                             set(
                                                 public,
@@ -742,13 +774,7 @@ fn worker(
                                                 let host=hub.command(&json!({"command":"companion_status"}))?;
                                                 blocked_panel=assignment_hash(&host,device["companionId"].as_str().unwrap_or(""));
                                             }
-                                            if status.len() < 96
-                                                && status
-                                                    .bytes()
-                                                    .all(|b| b.is_ascii_lowercase() || b == b'-')
-                                            {
-                                                set(public, "deviceStatus", json!(status));
-                                            }
+                                            record_device_event(&mut public.lock().unwrap_or_else(|p|p.into_inner()),status,started.elapsed().as_millis() as u64);
                                         }
                                     }
                                 }
@@ -774,6 +800,30 @@ fn worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn serial_health_retains_only_exact_bounded_public_counters(){
+        let good=json!({"fifoOverflows":1,"bufferFull":0,"frameErrors":u32::MAX,
+            "parityErrors":2,"breaks":3,"queueFullObservations":4,
+            "requestTimeouts":0,"invalidJson":0,"replyMismatch":0,"deferredFull":0,
+            "invalidReply":0,"writeFailures":0,"frameOverflows":0});
+        assert_eq!(serial_health(&good),Some(good.clone()));
+        for bad in [Value::Null,json!([]),json!({})]{assert!(serial_health(&bad).is_none());}
+        for bad in [json!(-1),json!(4294967296u64),json!(1.5),json!("secret"),Value::Null]{
+            let mut changed=good.clone();changed["frameErrors"]=bad;assert!(serial_health(&changed).is_none());
+        }
+        let mut extra=good.clone();extra["password"]=json!("secret");assert!(serial_health(&extra).is_none());
+        let mut missing=good;missing.as_object_mut().unwrap().remove("breaks");assert!(serial_health(&missing).is_none());
+    }
+    #[test]
+    fn device_event_evidence_is_bounded_and_rejects_arbitrary_payloads(){
+        let mut state=json!({});
+        for status in ["", "token=secret", "Wifi name", "BAD", "{\"password\":\"secret\"}"]{record_device_event(&mut state,status,0);}
+        assert!(state.get("deviceEvents").is_none());
+        for n in 0..40{record_device_event(&mut state,if n==20{"host-rejected-or-invalid-reply-stop-and-reconnect"}else{"live-armed"},n);}
+        let events=state["deviceEvents"].as_array().unwrap();assert_eq!(events.len(),32);assert_eq!(events[0]["sequence"],9);assert_eq!(events[31]["sequence"],40);
+        assert!(events.iter().any(|event|event["status"]=="host-rejected-or-invalid-reply-stop-and-reconnect"));
+        assert_eq!(state["deviceStatus"],"live-armed");assert!(!state.to_string().contains("secret"));
+    }
     #[test]
     fn unsupported_panel_waits_for_an_assignment_change_before_retry(){
         assert!(panel_retry_allowed(None,Some("panel-a")));

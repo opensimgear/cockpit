@@ -12,7 +12,7 @@ static uint64_t fake_ms;static unsigned mutex_depth,release_after;
 static bool network_ok=true,store_ok=true,assignment_available=true,obsolete,malformed_open,malformed_feedback;
 static unsigned opens,closes,baselines,source_inputs,auths,feedback_sequence,wire_requests;
 static bool host_armed,host_button;static host management;static cJSON *legacy_publication;
-static bool legacy_mode;
+static bool legacy_mode,maximum_health;
 static osg_runtime runtime;static bool dirty;static const osg_panel *drawing;
 static char host_session[65];
 static int fake_settimeofday(const struct timeval *v,const struct timezone *z){(void)z;return v->tv_sec>0?0:-1;}
@@ -26,6 +26,8 @@ void mbedtls_platform_zeroize(void *p,size_t n){memset(p,0,n);}
 cJSON *osg_serial_take_command(void){return NULL;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
+void osg_serial_health_poll(void){}
+void osg_serial_health_snapshot(osg_serial_health *out){if(out)memset(out,maximum_health?255:0,sizeof(*out));}
 bool osg_trusted_ca(const osg_settings *s,unsigned char *p,size_t n,size_t *out){(void)s;(void)p;(void)n;(void)out;return true;}
 bool osg_socket_open(osg_socket *s,const osg_settings *value){(void)value;assert(!mutex_depth);if(network_ok)s->ws=s;return network_ok;}
 void osg_socket_close(osg_socket *s){assert(!mutex_depth);host_armed=host_button=false;memset(s,0,sizeof(*s));}
@@ -125,5 +127,8 @@ int main(int argc,char **argv){
     connect_package(&a);advance();advance();advance();advance();assert(render_engine.staging);stop();assert(!render_engine.staging&&!runtime.armed);
     // Cached scene read failures synchronously invalidate both hit and presentation grants.
     connect_package(&b);transfer_to_paint();open_after_paint();render_engine.store.io.read=failed_read;osg_network_scene_release(true);assert(render_engine.failed&&render_engine.scene.failed&&!scene_hits.ready&&!scene_presented_ready);render_engine.store.io.read=read_flash;stop();
+    // Legal escaped names/SSID and maximum counters still fit the bounded record.
+    maximum_health=true;memset(settings.name,1,80);settings.name[80]=0;memset(settings.ssid,1,32);settings.ssid[32]=0;memset(settings.companion,'c',64);settings.companion[64]=0;memset(session.session,'s',64);session.session[64]=0;osg_copy(session.generation,sizeof(session.generation),"18446744073709551615");input.epoch=UINT64_MAX;
+    char maximum_id[65];memset(maximum_id,'r',64);maximum_id[64]=0;state=LIVE;public_status(maximum_id);state=OFF;
     cJSON_Delete(legacy_publication);assert(!mutex_depth&&!osg_json_allocated());osg_content_release(&render_engine.active_view);fixture_free(&a);fixture_free(&b);EVP_MD_CTX_free(sha);puts("Real client/engine cold-warm delivery, presentation gate, compact feedback, input, navigation, assignment refresh and failures passed");return 0;
 }

@@ -4,11 +4,12 @@ import gzip
 import json
 import os
 import subprocess
+import sys
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/companion-esp32"
 OUT = ROOT / ".research/esp32-serial"
 OUT.mkdir(parents=True, exist_ok=True)
-for counter in OUT.glob("serial-test-*.gcda"):
+for counter in OUT.glob("*.gcda"):
     counter.unlink()
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
          "-g", "-fsanitize=address,undefined", "--coverage"]
@@ -29,3 +30,5 @@ metrics = {"lines": 100 * sum(line["count"] > 0 for line in lines) / len(lines),
 print(json.dumps(metrics, indent=2))
 if any(value < 71 for value in metrics.values()):
     raise SystemExit("Serial driver coverage below 71%")
+
+subprocess.run([sys.executable,str(APP/"test/serial_wire.py")],check=True,cwd=ROOT)

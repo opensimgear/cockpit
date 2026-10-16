@@ -10,18 +10,20 @@ use std::{collections::BTreeMap, fs, path::PathBuf, sync::{Arc, Mutex}, thread, 
 #[derive(Default)]
 struct Evidence(Mutex<Value>);
 impl Evidence {
-    fn count(&self, key: &str) {
+    fn count(&self, key: &str, instance:&str) {
         let mut state=self.0.lock().unwrap();let count=state[key].as_u64().unwrap_or(0)+1;
         if !state.is_object(){*state=json!({});}state[key]=json!(count);
+        let count=state["instances"][instance][key].as_u64().unwrap_or(0)+1;
+        state["instances"][instance][key]=json!(count);
     }
 }
 impl SourceSink for Evidence {
     fn register(&self,_:SourceDefinition)->Result<(),String>{Ok(())}
-    fn baseline(&self,_:&SourceToken,_:u64,_:&[SourceChange])->Result<(),String>{self.count("baselines");Ok(())}
-    fn changes(&self,_:&SourceToken,_:u64,changes:&[SourceChange])->Result<(),String>{
-        self.count("inputBatches");let mut state=self.0.lock().unwrap();state["lastChanges"]=json!(changes);Ok(())
+    fn baseline(&self,token:&SourceToken,_:u64,_:&[SourceChange])->Result<(),String>{self.count("baselines",&token.source_id);Ok(())}
+    fn changes(&self,token:&SourceToken,_:u64,changes:&[SourceChange])->Result<(),String>{
+        self.count("inputBatches",&token.source_id);let mut state=self.0.lock().unwrap();state["lastInputInstance"]=json!(token.source_id);state["lastChanges"]=json!(changes);Ok(())
     }
-    fn loss(&self,_:&SourceToken)->Result<(),String>{self.count("sourceLosses");Ok(())}
+    fn loss(&self,token:&SourceToken)->Result<(),String>{self.count("sourceLosses",&token.source_id);Ok(())}
 }
 struct Board { name:String,port:String,instance:String,companion:Option<String>,hash:String,assigned:bool }
 fn fixture(board:&str,revision:&str)->Result<(Value,RenderPackageUpload),String>{
@@ -91,9 +93,17 @@ fn run()->Result<(),String>{
     // the child cache survives bench restarts and is always revalidated by Hub.
     let evidence=Arc::new(Evidence::default());let hub=Hub::open(&isolated,evidence.clone())?;install(&hub,&mut boards,&revision,reuse)?;
     let manager=Manager::default();for board in &boards{manager.attach(&board.port,hub.clone())?;}
-    let start=Instant::now();let mut last_print=0;let mut switched=false;let mut live_since=None;
+    let start=Instant::now();let mut last_print=0;let mut switched=false;let mut live_since=None;let mut event_cursors:BTreeMap<String,u64>=BTreeMap::new();
     while start.elapsed().as_secs()<seconds {
         let rows=manager.statuses();let mut all_live=true;
+        for row in &rows{
+            let port=row["port"].as_str().unwrap_or("");let cursor=event_cursors.entry(port.into()).or_default();
+            for event in row["deviceEvents"].as_array().into_iter().flatten(){
+                let sequence=event["sequence"].as_u64().unwrap_or(0);if sequence>*cursor{
+                    println!("{}",json!({"event":"device-event","elapsedMs":start.elapsed().as_millis(),"port":port,"sequence":sequence,"transportElapsedMs":event["elapsedMs"],"status":event["status"]}));*cursor=sequence;
+                }
+            }
+        }
         for board in &mut boards {
             let row=rows.iter().find(|row|row["port"]==board.port);
             if let Some(row)=row{
@@ -113,7 +123,7 @@ fn run()->Result<(),String>{
             revision="B".into();install(&hub,&mut boards,&revision,false)?;switched=true;live_since=None;
         }
         if start.elapsed().as_secs()>=last_print {
-            for row in &rows{println!("{}",json!({"event":"device","elapsedMs":start.elapsed().as_millis(),"revision":revision,"port":row["port"],"device":row["device"],"deviceStatus":row["deviceStatus"],"lastWireRequest":row["lastWireRequest"],"lastHostError":row["lastHostError"],"contentBytes":row["renderContentBytes"],"contentRequests":row["renderContentRequests"]}));}
+            for row in &rows{println!("{}",json!({"event":"device","elapsedMs":start.elapsed().as_millis(),"revision":revision,"port":row["port"],"device":row["device"],"deviceStatus":row["deviceStatus"],"lastWireRequest":row["lastWireRequest"],"lastHostError":row["lastHostError"],"contentBytes":row["renderContentBytes"],"contentRequests":row["renderContentRequests"],"startupAckMaxBytes":row["startupAckMaxBytes"],"steadyAckMaxBytes":row["steadyAckMaxBytes"]}));}
             println!("{}",json!({"event":"input-evidence","elapsedMs":start.elapsed().as_millis(),"counts":evidence.0.lock().unwrap().clone()}));
             last_print=start.elapsed().as_secs()+1;
         }
