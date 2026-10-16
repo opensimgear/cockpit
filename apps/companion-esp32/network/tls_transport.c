@@ -28,6 +28,7 @@ bool osg_trusted_ca(const osg_settings *s,unsigned char *der,size_t capacity,siz
     mbedtls_x509_crt_free(&crt);return ok;
 }
 bool osg_socket_open(osg_socket *socket,const osg_settings *s){
+    if(s->direct)return osg_serial_open(socket);
     char host[254];int port;memset(socket,0,sizeof(*socket));
     if(time(NULL)<1735689600||!osg_endpoint(s->endpoint,host,&port)||!osg_trusted_ca(s,socket->ca_der,sizeof(socket->ca_der),&socket->ca_bytes))return false;
     socket->tls=esp_transport_ssl_init();if(!socket->tls)return false;
@@ -40,16 +41,17 @@ bool osg_socket_open(osg_socket *socket,const osg_settings *s){
     return true;
 }
 void osg_socket_close(osg_socket *s){
-    if(s->ws){esp_transport_close(s->ws);esp_transport_destroy(s->ws);}
+    if(s->direct){osg_serial_close(s);mbedtls_platform_zeroize(s,sizeof(*s));return;}
+        if(s->ws){esp_transport_close(s->ws);esp_transport_destroy(s->ws);}
     if(s->tls)esp_transport_destroy(s->tls);
     mbedtls_platform_zeroize(s,sizeof(*s));
 }
-static char frame[OSG_FRAME_BYTES+1], reply_bytes[OSG_REPLY_BYTES];
+char osg_transport_frame[OSG_FRAME_BYTES+1], osg_transport_reply[OSG_REPLY_BYTES];
 static bool receive_frame(osg_socket *s,size_t *length,int64_t deadline){
     size_t used=0,frame_used=0;int payload=0;bool fragmented=false;
     for(;;){
         int64_t remaining=(deadline-esp_timer_get_time())/1000;if(remaining<=0)return false;
-        const int n=esp_transport_read(s->ws,frame+used,(int)(OSG_FRAME_BYTES-used),(int)remaining);
+        const int n=esp_transport_read(s->ws,osg_transport_frame+used,(int)(OSG_FRAME_BYTES-used),(int)remaining);
         if(n<0)return false;
         const int opcode=esp_transport_ws_get_read_opcode(s->ws);
         if(!n&&opcode==WS_TRANSPORT_OPCODES_NONE)continue;
@@ -58,7 +60,7 @@ static bool receive_frame(osg_socket *s,size_t *length,int64_t deadline){
         if(opcode==WS_TRANSPORT_OPCODES_CLOSE)return false;
         if(opcode==WS_TRANSPORT_OPCODES_PING||opcode==WS_TRANSPORT_OPCODES_PONG){
             if(current>125||n!=current)return false;
-            if(opcode==WS_TRANSPORT_OPCODES_PING&&esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_PONG|WS_TRANSPORT_OPCODES_FIN,frame+used,n,200)!=n)return false;
+            if(opcode==WS_TRANSPORT_OPCODES_PING&&esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_PONG|WS_TRANSPORT_OPCODES_FIN,osg_transport_frame+used,n,200)!=n)return false;
             frame_used=0;continue;
         }
         if(opcode!=WS_TRANSPORT_OPCODES_TEXT&&opcode!=WS_TRANSPORT_OPCODES_CONT)return false;
@@ -66,26 +68,27 @@ static bool receive_frame(osg_socket *s,size_t *length,int64_t deadline){
         used+=(size_t)n;frame_used+=(size_t)n;
         if(frame_used>(size_t)payload||used>OSG_FRAME_BYTES)return false;
         if(frame_used==(size_t)payload){
-            if(esp_transport_ws_get_fin_flag(s->ws)){frame[used]=0;*length=used;return used>0;}
+            if(esp_transport_ws_get_fin_flag(s->ws)){osg_transport_frame[used]=0;*length=used;return used>0;}
             fragmented=true;frame_used=0;
         }
         if(used==OSG_FRAME_BYTES)return false;
     }
 }
 bool osg_socket_request(osg_socket *s,cJSON *request,cJSON **response,unsigned timeout){
+    if(s->direct)return osg_serial_request(s,request,response,timeout);
     char outbound[4096];*response=NULL;
     const bool encoded=request&&cJSON_PrintPreallocated(request,outbound,sizeof(outbound),false);cJSON_Delete(request);
     if(!encoded){mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
     const size_t bytes=strlen(outbound);
     const int sent=esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_TEXT|WS_TRANSPORT_OPCODES_FIN,outbound,(int)bytes,500);
     mbedtls_platform_zeroize(outbound,sizeof(outbound));if(sent!=(int)bytes)return false;
-    mbedtls_platform_zeroize(reply_bytes,sizeof(reply_bytes));
+    mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
-    osg_transfer transfer={.bytes=reply_bytes,.capacity=sizeof(reply_bytes)};
-    for(;;){size_t n=0;if(!receive_frame(s,&n,deadline)){mbedtls_platform_zeroize(frame,sizeof(frame));mbedtls_platform_zeroize(reply_bytes,sizeof(reply_bytes));return false;}
-        const int result=osg_reply_feed(&transfer,frame,n,osg_platform_crypto,response);
-        mbedtls_platform_zeroize(frame,n);
-        if(result<0){mbedtls_platform_zeroize(reply_bytes,sizeof(reply_bytes));return false;}
-        if(result==1){mbedtls_platform_zeroize(reply_bytes,sizeof(reply_bytes));return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));}
+    osg_transfer transfer={.bytes=osg_transport_reply,.capacity=sizeof(osg_transport_reply)};
+    for(;;){size_t n=0;if(!receive_frame(s,&n,deadline)){mbedtls_platform_zeroize(osg_transport_frame,sizeof(osg_transport_frame));mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return false;}
+        const int result=osg_reply_feed(&transfer,osg_transport_frame,n,osg_platform_crypto,response);
+        mbedtls_platform_zeroize(osg_transport_frame,n);
+        if(result<0){mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return false;}
+        if(result==1){mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));}
     }
 }

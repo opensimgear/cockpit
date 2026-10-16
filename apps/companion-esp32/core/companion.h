@@ -50,7 +50,9 @@ typedef struct {
 /* Synchronous, bounded event sink. Live use must enqueue locally; it must never
  * wait for network I/O. Session admission/arming belongs to the network layer. */
 typedef bool (*osg_input_sink)(void *, const char *control_id, bool down, uint64_t sequence);
+typedef enum { OSG_SCREEN_PANEL, OSG_SCREEN_UNPAIRED, OSG_SCREEN_NO_PANEL, OSG_SCREEN_DISCONNECTED } osg_screen_state;
 typedef struct {
+    osg_screen_state screen;
     const osg_panel *panel;
     osg_display display;
     osg_sample samples[OSG_MAX_WIDGETS];
@@ -72,5 +74,10 @@ bool osg_set_page(osg_runtime *, size_t page);
 void osg_touch(osg_runtime *, bool down, int x, int y);
 void osg_connected(osg_runtime *, bool connected);
 bool osg_feedback(osg_runtime *, const char *channel, const osg_sample *, uint64_t now_ms);
+/* Previous is a completed draw snapshot. Publications are immutable; the caller
+ * must force full damage when replacing/reusing a publication storage slot. */
+typedef struct { bool full; uint32_t widgets; } osg_damage;
+osg_damage osg_render_damage(const osg_runtime *, const osg_runtime *previous, uint64_t now_ms, uint64_t previous_ms);
+void osg_widget_rect(const osg_runtime *, size_t index, int *x, int *y, int *width, int *height);
 void osg_render(osg_runtime *, uint64_t now_ms);
 #endif

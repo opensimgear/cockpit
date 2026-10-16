@@ -37,11 +37,11 @@ Touch uses bounded 30 ms I2C transactions and existing 20 ms application polling
 1. Flash and inspect UART logs. Expect the Waveshare RGB565/GT911 identity message and serial-provisioning-ready status, followed by the embedded panel. No HEADLESS message should appear.
 2. Check readable landscape orientation and colors. Start with large momentary buttons and simple text/numeric feedback. Keep native/game output inactive until the later recording-mode test confirms touch alignment.
 3. Follow the main firmware guide to enable Cockpit's LAN listener, generate a fresh offer, provision Wi-Fi, approve installation and assign a compatible published panel. Leave --persist off for initial tests.
-4. Run python tools/provision.py COM5 --name "Waveshare 7in" from the firmware directory. Complete approval/assignment while the helper waits; expect live-disarmed and the assigned live panel.
+4. Run python tools/provision.py COM5 --name "Waveshare 7in" --interactive from the firmware directory. Complete approval/assignment while the helper waits; expect live-disarmed and the assigned live panel.
 5. Tap and release once while disarmed. Startup deliberately needs an observed ready/released touch report before arming; successful I2C reads alone do not establish release.
-6. Run python tools/provision.py COM5 --command arm with all fingers released. Expect live-armed and LIVE INPUT only after the host accepts the neutral baseline. Start Cockpit's separate mapping session in recording mode first.
+6. At the persistent Device command prompt, enter arm with all fingers released. Expect live-armed and LIVE INPUT only after the host accepts the neutral baseline. Start Cockpit's separate mapping session in recording mode first.
 7. Check tap, several-second hold, release and all four screen areas. A stationary hold must remain pressed without stale-touch faults. Two fingers, dragging out, explicit disarm or Wi-Fi loss must cancel input. Reconnect and explicitly arm again; old gestures must not replay.
-8. Stop with python tools/provision.py COM5 --command disarm. RAM-only reboot requires fresh pairing.
+8. At the same prompt, enter disarm to stop input. Use connect followed by a fresh arm to resume, or quit to stop and close the port. Do not open a second serial helper during this session: the bridge can reset the board. RAM-only reboot requires fresh pairing.
 
 If initialization fails, keep game output inactive and capture the boot log, actual flash/PSRAM detection and any vendor-demo result. No automatic alternate pin mappings, touch address probing or calibration rewrites are attempted. Physical Wi-Fi/TLS behavior, color/orientation, hold-report cadence, frame stability under traffic, peak memory/stack and latency remain acceptance work.
 
@@ -59,3 +59,7 @@ Native tests inject SDK boundaries and gate this production adapter at 71% lines
     python3 apps/companion-esp32/test/waveshare.py
 
 They verify wiring/timings, reset/output sequencing, every initialization failure/cleanup boundary, span bounds and caller-buffer copying, frame swaps and timeout latching, touch release/hold/freshness, errors and unsupported reports. SDK cross-compilation and mocked tests do not establish physical success.
+
+## Setup and testing from Cockpit
+
+After flashing, return USB to Windows (COM5 on the current test PC), open **Companions → ESP32 companions**, connect the device and complete the setup wizard. Select Wi-Fi or direct USB; passwords and pairing records do not need a terminal. Listener enable/status controls are in **Settings**. Save a simple momentary-button panel, select it in the wizard and provision. Use the wizard's **Assign panel**, **Reconnect panel**, **Pause touch input** controls to test delivery and touch. Connection setup persists; Cockpit owns panel assignment. Touch activates automatically after each connection once the rendered panel and released touch are healthy and Cockpit acknowledges the neutral baseline. There is no manual Arm step.

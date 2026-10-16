@@ -17,7 +17,11 @@ jobs:
       - name: Network protocol, live input, lease and provisioning checks
         run: |
           python3 apps/companion-esp32/test/network.py
+          python3 apps/companion-esp32/test/storage.py
+          python3 apps/companion-esp32/test/serial.py
           python3 -m unittest discover -s apps/companion-esp32/test -p "provision_test.py" -v
+      - name: Sunton shared-SPI display and touch fault injection
+        run: python3 apps/companion-esp32/test/sunton.py
       - name: Waveshare driver fault injection and coverage
         run: python3 apps/companion-esp32/test/waveshare.py
       - name: Native firmware sanitizers, coverage and preview
@@ -29,6 +33,7 @@ jobs:
             .research/esp32-native/coverage.json
             .research/esp32-native/preview.png
             .research/esp32-network/coverage.json
+            .research/esp32-serial/coverage.json
             .research/esp32-network/*-test.log
             .research/esp32-waveshare-native/coverage.json
             .research/esp32-waveshare-native/board-test.log
@@ -60,16 +65,35 @@ jobs:
       - name: Cross-build Waveshare V1.2 display and touch firmware
         run: |
           docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-waveshare-lcd7 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-waveshare-lcd7/sdkconfig -DOSG_BOARD_PROFILE=waveshare-lcd7-s3 build
+      - name: Stage Cockpit embedded flashing package
+        run: python3 scripts/package-companion-firmware.py apps/companion-esp32/build-waveshare-lcd7
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-waveshare-lcd7-v1-2
           path: |
+            src-tauri/resources/firmware/waveshare-lcd7-s3/
             apps/companion-esp32/build-waveshare-lcd7/*.bin
             apps/companion-esp32/build-waveshare-lcd7/*.elf
             apps/companion-esp32/build-waveshare-lcd7/bootloader/*.bin
             apps/companion-esp32/build-waveshare-lcd7/partition_table/*.bin
             apps/companion-esp32/build-waveshare-lcd7/flasher_args.json
             apps/companion-esp32/build-waveshare-lcd7/sdkconfig
+          if-no-files-found: error
+  sunton:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Cross-build Sunton 3.5-inch display and resistive touch firmware
+        run: |
+          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-sunton-3248s035r -DIDF_TARGET=esp32 -DSDKCONFIG=build-sunton-3248s035r/sdkconfig -DOSG_BOARD_PROFILE=sunton-3248s035r build
+      - name: Stage Cockpit embedded flashing package
+        run: python3 scripts/package-companion-firmware.py apps/companion-esp32/build-sunton-3248s035r
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-sunton-3248s035r
+          path: |
+            src-tauri/resources/firmware/sunton-3248s035r/
+            apps/companion-esp32/build-sunton-3248s035r/flasher_args.json
           if-no-files-found: error
   host-wire:
     runs-on: windows-2022
@@ -79,3 +103,5 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Shared embedded publication, baseline and isolated lease contract
         run: cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test esp32_display
+      - name: USB serial pairing, bounded delivery and connection isolation
+        run: cargo test --locked --manifest-path crates/companion-serial/Cargo.toml

@@ -20,6 +20,10 @@ upstream library data or other separately licensed portions.
   hashes and complete upstream license notices are in
   `src-tauri/resources/dependencies/`, distributed as `dependencies/` alongside
   the application's resources.
+- Short-code pairing uses RustCrypto SPAKE2 (spake2 0.4.0, Apache-2.0 OR MIT):
+  https://github.com/RustCrypto/PAKEs/tree/master/spake2.
+- Native ESP32 installation uses espflash 4.1.0 (Apache-2.0 OR MIT):
+  https://github.com/esp-rs/espflash/tree/v4.1.0.
 - Bundled firmware and other resources must retain the notices supplied with
   their source projects.
 

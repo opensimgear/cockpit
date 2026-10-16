@@ -1,4 +1,8 @@
 menu "OpenSimGear companion (offline firmware foundation)"
+config OSG_SERIAL_BAUD
+    int "USB serial baud rate"
+    range 115200 921600
+    default 921600
 config OSG_SCREEN_WIDTH
     int "Headless screen width"
     range 64 4096
@@ -7,4 +11,20 @@ config OSG_SCREEN_HEIGHT
     int "Headless screen height"
     range 64 4096
     default 480
+config OSG_SUNTON_X_MIN
+    int "Sunton touch raw X min"
+    range 0 4094
+    default 200
+config OSG_SUNTON_X_MAX
+    int "Sunton touch raw X max"
+    range 1 4095
+    default 3900
+config OSG_SUNTON_Y_MIN
+    int "Sunton touch raw Y min"
+    range 0 4094
+    default 200
+config OSG_SUNTON_Y_MAX
+    int "Sunton touch raw Y max"
+    range 1 4095
+    default 3900
 endmenu

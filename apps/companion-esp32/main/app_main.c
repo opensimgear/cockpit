@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_idf_version.h"
+#include <string.h>
 #if ESP_IDF_VERSION != ESP_IDF_VERSION_VAL(5, 5, 2)
 #error "Use the pinned ESP-IDF v5.5.2 toolchain"
 #endif
@@ -33,19 +34,27 @@ void app_main(void) {
     if(board.touch&&xTaskCreate(touch_task,"companion-touch",8192,&board,5,NULL)!=pdPASS)
         ESP_LOGE("companion","Touch task allocation failed; live arming stays unavailable");
     uint64_t last_render=0;
+    char last_hash[72]={0};bool retry_full=false;
     for (;;) {
         uint64_t now=(uint64_t)(esp_timer_get_time()/1000);
         xSemaphoreTake(mutex,portMAX_DELAY);
         for(size_t i=0;i<runtime.panel->widget_count;i++)if(stale(&runtime.samples[i],now)!=stale(&runtime.samples[i],last_render))dirty=true;
         const bool render=dirty;
-        if(render){drawing=runtime;drawing_panel=drawing.panel;dirty=false;}
+        osg_damage damage={0};
+        if(render){
+            damage=osg_render_damage(&runtime,&drawing,now,last_render);
+            if(retry_full || strcmp(last_hash,runtime.panel->publication_hash))damage.full=true;
+            drawing=runtime;drawing_panel=drawing.panel;dirty=false;
+        }
         xSemaphoreGive(mutex);
         /* Driver waits never hold the network state mutex. An image slot in use
          * here cannot be overwritten by the download worker. */
         if(render){
             osg_network_render(drawing.panel,false,true);
-            osg_render(&drawing,now);last_render=now;
+            osg_raster_render(&raster,&drawing,damage,now);last_render=now;
             if(!raster.failed&&board.present&&!board.present(board.context))raster.failed=true;
+            retry_full=raster.failed;
+            if(!raster.failed)memcpy(last_hash,drawing.panel->publication_hash,sizeof(last_hash));
             osg_network_render(drawing.panel,true,!raster.failed);
             xSemaphoreTake(mutex,portMAX_DELAY);drawing_panel=NULL;xSemaphoreGive(mutex);
             if(raster.failed){ESP_LOGE("companion","Display flush failed; live input cancelled");raster.failed=false;}

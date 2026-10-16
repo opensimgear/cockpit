@@ -22,7 +22,7 @@ bool osg_settings_parse(const cJSON *v, osg_settings *s) {
         (instance && *instance && !osg_stable_id(instance))) return false;
     const cJSON *persist=cJSON_GetObjectItemCaseSensitive(v,"persist");
     if(persist&&!cJSON_IsBool(persist)) return false;
-    memset(s,0,sizeof(*s));s->schema=1;s->unix_ms=(uint64_t)clock->valuedouble;s->expires_ms=(uint64_t)expires->valuedouble;s->persist=cJSON_IsTrue(persist);
+    memset(s,0,sizeof(*s));s->schema=2;s->unix_ms=(uint64_t)clock->valuedouble;s->expires_ms=(uint64_t)expires->valuedouble;s->persist=!persist||cJSON_IsTrue(persist);
     return osg_copy(s->ssid,sizeof(s->ssid),ssid)&&osg_copy(s->password,sizeof(s->password),password)&&osg_copy(s->name,sizeof(s->name),name)&&
         osg_copy(s->endpoint,sizeof(s->endpoint),osg_string(pair,"endpoint"))&&osg_copy(s->ca,sizeof(s->ca),osg_string(pair,"caCertificate"))&&s->ca[0]&&
         osg_copy(s->host,sizeof(s->host),osg_string(pair,"hostId"))&&osg_copy(s->pin,sizeof(s->pin),osg_string(pair,"caSpkiSha256"))&&

@@ -2,7 +2,9 @@
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
-#include "esp_flash_encrypt.h"
+#include "esp_netif_sntp.h"
+#include <time.h>
+
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "freertos/event_groups.h"
@@ -15,7 +17,7 @@ static void changed(void *arg,esp_event_base_t base,int32_t id,void *data){
     if(base==IP_EVENT&&id==IP_EVENT_STA_GOT_IP)xEventGroupSetBits(events,1);
     if(base==WIFI_EVENT&&id==WIFI_EVENT_STA_DISCONNECTED)xEventGroupClearBits(events,1);
 }
-bool osg_wifi_start(const osg_settings *s){
+static bool wifi_init(void){
     if(!initialized){
         if(nvs_flash_init()!=ESP_OK||esp_netif_init()!=ESP_OK||esp_event_loop_create_default()!=ESP_OK)return false;
         events=xEventGroupCreate();if(!events||!esp_netif_create_default_wifi_sta())return false;
@@ -24,6 +26,10 @@ bool osg_wifi_start(const osg_settings *s){
             esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,changed,NULL)!=ESP_OK)return false;
         initialized=true;
     }
+    return true;
+}
+bool osg_wifi_start(const osg_settings *s){
+    if(!wifi_init())return false;
     /* Driver credentials are RAM-only even if ordinary NVS is available. */
     wifi_config_t cfg={0};memcpy(cfg.sta.ssid,s->ssid,strlen(s->ssid));memcpy(cfg.sta.password,s->password,strlen(s->password));
     cfg.sta.threshold.authmode=s->password[0]?WIFI_AUTH_WPA2_PSK:WIFI_AUTH_OPEN;
@@ -33,40 +39,29 @@ bool osg_wifi_start(const osg_settings *s){
     return (xEventGroupWaitBits(events,1,pdFALSE,pdTRUE,pdMS_TO_TICKS(15000))&1)!=0;
 }
 void osg_wifi_stop(void){if(initialized){esp_wifi_disconnect();esp_wifi_stop();xEventGroupClearBits(events,1);}}
-bool osg_store_available(void){
-#if CONFIG_NVS_ENCRYPTION
-    return esp_flash_encryption_enabled();
-#else
-    return false;
-#endif
+/* Time bootstrap only: TLS still validates CA, hostname, dates and the pinned
+ * Cockpit identity. Never persist a stale wall clock across power loss. */
+bool osg_wifi_clock(void){
+    esp_sntp_config_t config=ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    if(esp_netif_sntp_init(&config)!=ESP_OK)return false;
+    bool ok=esp_netif_sntp_sync_wait(pdMS_TO_TICKS(15000))==ESP_OK;
+    esp_netif_sntp_deinit();
+    time_t now=time(NULL);
+    return ok&&now>=1735689600&&now<=4102444800LL;
 }
-bool osg_store_save(const osg_settings *s){
-    if(!osg_store_available()||s->schema!=1||!osg_secret(s->token))return false;
-    osg_settings stored=*s;memset(stored.secret,0,sizeof(stored.secret));stored.unix_ms=0;stored.expires_ms=0;
-    nvs_handle_t nvs;if(nvs_open("osg_companion",NVS_READWRITE,&nvs)!=ESP_OK){mbedtls_platform_zeroize(&stored,sizeof(stored));return false;}
-    bool ok=nvs_set_blob(nvs,"installation",&stored,sizeof(stored))==ESP_OK&&nvs_commit(nvs)==ESP_OK;
-    nvs_close(nvs);mbedtls_platform_zeroize(&stored,sizeof(stored));return ok;
-}
-bool osg_store_load(osg_settings *s){
-    if(!osg_store_available()||nvs_flash_init()!=ESP_OK)return false;
-    nvs_handle_t nvs;if(nvs_open("osg_companion",NVS_READONLY,&nvs)!=ESP_OK)return false;
-    size_t n=sizeof(*s);bool ok=nvs_get_blob(nvs,"installation",s,&n)==ESP_OK&&n==sizeof(*s)&&s->schema==1;
-    nvs_close(nvs);
-    if(!ok){mbedtls_platform_zeroize(s,sizeof(*s));return false;}
-    /* Blob strings must be terminated before any credential/network use. */
-    ok=memchr(s->ssid,0,sizeof(s->ssid))&&memchr(s->password,0,sizeof(s->password))&&memchr(s->endpoint,0,sizeof(s->endpoint))&&
-       memchr(s->ca,0,sizeof(s->ca))&&memchr(s->pin,0,sizeof(s->pin))&&memchr(s->host,0,sizeof(s->host))&&
-       memchr(s->companion,0,sizeof(s->companion))&&memchr(s->name,0,sizeof(s->name))&&memchr(s->secret,0,sizeof(s->secret))&&
-       memchr(s->token,0,sizeof(s->token))&&memchr(s->instance,0,sizeof(s->instance));
-    char host[254];int port;
-    if(ok)ok=s->ssid[0]&&osg_secret(s->token)&&osg_stable_id(s->host)&&osg_stable_id(s->companion)&&osg_hash_id(s->pin)&&osg_endpoint(s->endpoint,host,&port)&&(!s->instance[0]||osg_stable_id(s->instance));
-    if(!ok)mbedtls_platform_zeroize(s,sizeof(*s));
-    return ok;
-}
-bool osg_store_forget(void){
-    if(!osg_store_available())return true;
-    if(nvs_flash_init()!=ESP_OK)return false;
-    nvs_handle_t nvs;esp_err_t status=nvs_open("osg_companion",NVS_READWRITE,&nvs);if(status!=ESP_OK)return false;
-    status=nvs_erase_key(nvs,"installation");bool ok=(status==ESP_OK||status==ESP_ERR_NVS_NOT_FOUND)&&nvs_commit(nvs)==ESP_OK;
-    nvs_close(nvs);return ok;
+cJSON *osg_wifi_scan(void){
+    if(!wifi_init()||esp_wifi_set_storage(WIFI_STORAGE_RAM)!=ESP_OK||
+       esp_wifi_set_mode(WIFI_MODE_STA)!=ESP_OK||esp_wifi_start()!=ESP_OK)return NULL;
+    wifi_scan_config_t scan={0};scan.show_hidden=false;scan.scan_time.active.min=40;scan.scan_time.active.max=120;
+    if(esp_wifi_scan_start(&scan,true)!=ESP_OK)return NULL;
+    wifi_ap_record_t records[24];uint16_t count=24;
+    if(esp_wifi_scan_get_ap_records(&count,records)!=ESP_OK)return NULL;
+    cJSON *list=cJSON_CreateArray();
+    for(unsigned i=0;i<count;i++){
+        records[i].ssid[32]=0;if(!records[i].ssid[0])continue;
+        cJSON *row=cJSON_CreateObject();cJSON_AddStringToObject(row,"ssid",(char *)records[i].ssid);
+        cJSON_AddNumberToObject(row,"rssi",records[i].rssi);
+        cJSON_AddBoolToObject(row,"secured",records[i].authmode!=WIFI_AUTH_OPEN);cJSON_AddItemToArray(list,row);
+    }
+    esp_wifi_stop();return list;
 }

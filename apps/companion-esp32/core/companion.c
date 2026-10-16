@@ -166,13 +166,43 @@ static void text(osg_runtime *r, int x, int y, int w, int h, const char *s, uint
     if (y + h > r->display.height) h = r->display.height - y;
     r->display.text(r->display.context, x, y, w, h, s, color);
 }
+void osg_widget_rect(const osg_runtime *r,size_t index,int *x,int *y,int *width,int *height){
+    geometry(r,&r->panel->widgets[index],x,y,width,height);
+}
+static bool render_stale(const osg_sample *s,uint64_t now){
+    return s->source_status==OSG_FEEDBACK_STALE || (s->available &&
+        (now<s->received_ms || s->source_age_ms>=OSG_STALE_MS ||
+         now-s->received_ms>=OSG_STALE_MS-s->source_age_ms));
+}
+osg_damage osg_render_damage(const osg_runtime *r,const osg_runtime *old,uint64_t now,uint64_t before){
+    osg_damage d={0};
+    if(!old || !old->panel || r->panel!=old->panel || r->page!=old->page ||
+       r->display.width!=old->display.width || r->display.height!=old->display.height ||
+       r->screen!=old->screen || r->connected!=old->connected || r->armed!=old->armed ||
+       r->arming!=old->arming || r->live_input!=old->live_input){d.full=true;return d;}
+    for(size_t i=0;i<r->panel->widget_count;i++){
+        const osg_widget *w=&r->panel->widgets[i];
+        if(w->page!=r->page)continue;
+        bool changed=w->kind==OSG_BUTTON
+            ? ((r->active==(int)i)!=(old->active==(int)i))
+            : (memcmp(&r->samples[i],&old->samples[i],sizeof(osg_sample))!=0 ||
+               render_stale(&r->samples[i],now)!=render_stale(&old->samples[i],before));
+        if(changed)d.widgets|=UINT32_C(1)<<i;
+    }
+    return d;
+}
 void osg_render(osg_runtime *r, uint64_t now) {
     static const char *provenance[] = {"REQUESTED", "LOCAL", "HOST ACCEPTED", "HOST SUBMITTED", "GAME CONFIRMED"};
     fill(r, 0, 0, r->display.width, r->display.height, 0x08c4);
-    char heading[180];
-    (void)snprintf(heading, sizeof(heading), "%s | %s", r->panel->pages[r->page].title,
-                   r->arming ? "ARMING - INPUT DISARMED" : r->armed ? r->live_input ? "LIVE INPUT" : "RECORDING ONLY" : r->connected ? "DISARMED" : "DISCONNECTED");
-    text(r, 4, 3, r->display.width - 8, 18, heading, 0xffff);
+    if(r->screen!=OSG_SCREEN_PANEL){
+        const char *first=r->screen==OSG_SCREEN_UNPAIRED ? "Pair this device in" :
+                          r->screen==OSG_SCREEN_NO_PANEL ? "Assign a panel to" : "Panel is not connected.";
+        const char *second=r->screen==OSG_SCREEN_UNPAIRED ? "OpenSimGear Cockpit" :
+                           r->screen==OSG_SCREEN_NO_PANEL ? "this companion in Cockpit" : "Verify OpenSimGear Cockpit status.";
+        text(r, 16, r->display.height/2-24, r->display.width-32, 20, first, 0xffff);
+        text(r, 16, r->display.height/2+4, r->display.width-32, 20, second, 0xffff);
+        return;
+    }
     for (size_t i = 0; i < r->panel->widget_count; i++) {
         const osg_widget *w = &r->panel->widgets[i]; if (w->page != r->page) continue;
         int x, y, width, height; geometry(r, w, &x, &y, &width, &height);

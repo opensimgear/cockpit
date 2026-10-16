@@ -180,7 +180,77 @@ static void preview(const char *path, int width, int height) {
     fail_write = true; osg_render(&runtime, 100); assert(raster.failed); fail_write = false;
     free(pixels);
 }
+static uint16_t incremental_pixels[800*480],reference_pixels[800*480];
+typedef struct { uint16_t *pixels; int width,height;size_t written;bool fail,limited;int x,y,w,h; } surface;
+static bool surface_write(void *ctx,int x,int y,int w,int h,const uint16_t *pixels){
+    surface *s=ctx;assert(w>0&&h>0&&w*h<=512&&x>=0&&y>=0&&x+w<=s->width&&y+h<=s->height);
+    if(s->limited)assert(x>=s->x&&y>=s->y&&x+w<=s->x+s->w&&y+h<=s->y+s->h);
+    if(s->fail)return false;
+    for(int row=0;row<h;row++)memcpy(s->pixels+(y+row)*s->width+x,pixels+row*w,(size_t)w*2);
+    s->written+=(size_t)w*h;return true;
+}
+static void compare_render(osg_runtime *r,surface *actual,uint64_t now){
+    surface expected={.pixels=reference_pixels,.width=actual->width,.height=actual->height};
+    osg_raster reference={.context=&expected,.write=surface_write};
+    osg_display original=r->display;r->display=osg_raster_display(&reference,original.width,original.height);
+    osg_render(r,now);r->display=original;
+    assert(!memcmp(actual->pixels,reference_pixels,(size_t)actual->width*actual->height*2));
+}
+static void partial_render_test(void){
+    for(int size=0;size<2;size++){
+        int width=size?800:480,height=size?480:320;
+        surface actual={.pixels=incremental_pixels,.width=width,.height=height};
+        osg_raster raster={.context=&actual,.write=surface_write};
+        osg_runtime r,old;
+        assert(osg_init(&r,&osg_demo_panel,osg_raster_display(&raster,width,height),NULL,NULL));
+        osg_damage d=osg_render_damage(&r,NULL,0,0);assert(d.full);
+        osg_raster_render(&raster,&r,d,0);compare_render(&r,&actual,0);
+        old=r;actual.written=0;
+        d=osg_render_damage(&r,&old,1,0);assert(!d.full&&!d.widgets);
+        osg_raster_render(&raster,&r,d,1);assert(!actual.written);
+        r.active=0;d=osg_render_damage(&r,&old,2,1);assert(!d.full&&d.widgets==1);
+        osg_widget_rect(&r,0,&actual.x,&actual.y,&actual.w,&actual.h);actual.limited=true;
+        osg_raster_render(&raster,&r,d,2);compare_render(&r,&actual,2);
+        assert(actual.written<(size_t)width*height/2);
+        old=r;r.active=-1;d=osg_render_damage(&r,&old,3,2);
+        osg_raster_render(&raster,&r,d,3);compare_render(&r,&actual,3);actual.limited=false;
+        old=r;r.samples[1]=(osg_sample){.available=true,.kind=OSG_BOOL,.boolean=true,.received_ms=10};
+        d=osg_render_damage(&r,&old,10,3);assert(d.widgets&(1u<<1));
+        osg_raster_render(&raster,&r,d,10);compare_render(&r,&actual,10);
+        old=r;d=osg_render_damage(&r,&old,1011,10);assert(d.widgets&(1u<<1));
+        osg_raster_render(&raster,&r,d,1011);compare_render(&r,&actual,1011);
+        old=r;r.connected=true;d=osg_render_damage(&r,&old,1012,1011);assert(d.full);
+        osg_raster_render(&raster,&r,d,1012);compare_render(&r,&actual,1012);
+        old=r;r.armed=true;assert(osg_render_damage(&r,&old,0,0).full);
+        old=r;r.arming=true;assert(osg_render_damage(&r,&old,0,0).full);
+        old=r;r.live_input=true;assert(osg_render_damage(&r,&old,0,0).full);
+        old=r;r.page=1;assert(osg_render_damage(&r,&old,0,0).full);
+        actual.fail=true;osg_raster_render(&raster,&r,(osg_damage){.full=true},1013);assert(raster.failed);
+        size_t written=actual.written;osg_raster_render(&raster,&r,(osg_damage){.full=true},1013);assert(actual.written==written);
+        actual.fail=false;raster.failed=false;
+        osg_raster_render(&raster,&r,(osg_damage){.full=true},1013);compare_render(&r,&actual,1013);
+        /* Replaying all layers inside the dirty clip must preserve an overlay. */
+        osg_widget widgets[OSG_MAX_WIDGETS];memcpy(widgets,r.panel->widgets,r.panel->widget_count*sizeof(*widgets));
+        osg_panel panel=*r.panel;panel.widgets=widgets;widgets[1].bounds=widgets[0].bounds;
+        r.panel=&panel;r.page=0;r.active=-1;osg_raster_render(&raster,&r,(osg_damage){.full=true},1014);
+        old=r;r.active=0;d=osg_render_damage(&r,&old,1015,1014);
+        osg_raster_render(&raster,&r,d,1015);compare_render(&r,&actual,1015);
+    }
+}
 int main(int argc, char **argv) {
+    for(int size=0;size<2;size++){
+        spy status;osg_runtime *r=setup(&status,size?800:480,size?480:320);
+        const char *messages[]={"Pair this device in","Assign a panel to","Panel is not connected."};
+        for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_DISCONNECTED;screen++){
+            osg_runtime previous=*r;r->screen=(osg_screen_state)screen;
+            assert(osg_render_damage(r,&previous,0,0).full);
+            status.log[0]=0;status.texts=0;osg_render(r,0);
+            assert(status.texts==2 && strstr(status.log,messages[screen-1]));
+        }
+        r->screen=OSG_SCREEN_PANEL;status.log[0]=0;osg_render(r,0);
+        assert(!strstr(status.log,"LIVE INPUT")&&!strstr(status.log,"RECORDING ONLY"));
+    }
+    partial_render_test();
     validation(); input(); feedback(); bridge_test();
     for (int i = 0; i < 3; i++) { spy s; osg_runtime *r = setup(&s, i == 0 ? 800 : i == 1 ? 320 : 480, i == 0 ? 480 : i == 1 ? 240 : 800); osg_render(r, 0); assert(s.draws && s.texts); }
     preview(argc > 1 ? argv[1] : NULL, 800, 480); preview(NULL, 320, 240); preview(NULL, 480, 800);

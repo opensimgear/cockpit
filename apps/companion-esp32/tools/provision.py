@@ -40,12 +40,19 @@ def arm_record(value):
         result[key] = item
     return result
 
-def request_status(port, timeout=5):
+def request_status(port, timeout=8):
     request_id = uuid.uuid4().hex
-    port.write(encode({"command": "status", "requestId": request_id}))
-    port.flush()
+    wire = encode({"command": "status", "requestId": request_id})
     deadline = time.monotonic() + timeout
+    next_probe = 0
+    # Only this harmless, correlated status probe may be retried. USB-UART
+    # control-line changes can reset the board as the port opens.
     while time.monotonic() < deadline:
+        now = time.monotonic()
+        if now >= next_probe:
+            port.write(wire)
+            port.flush()
+            next_probe = now + 0.5
         raw = port.readline(8193)
         if len(raw) > 8192 or not status_line(raw):
             continue
@@ -58,15 +65,82 @@ def terminal_status(command, status):
     expected = {"provision": "live-disarmed", "connect": "live-disarmed", "resume": "live-disarmed", "arm": "live-armed", "disarm": "disarmed-reconnect-required", "stop": "stopped", "forget": "forgotten", "page": "page-changed"}
     return expected.get(command) == status
 
+def run_command(port, record, timeout=90):
+    command = record["command"]
+    current = request_status(port)
+    if command == "status":
+        print(current["status"])
+        return
+    if command == "arm":
+        record = arm_record(current)
+    # Provisioning, baseline arming and other mutations are sent exactly once.
+    port.write(encode(record))
+    port.flush()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = status_line(port.readline(8193))
+        if status:
+            print(status)
+            if terminal_status(command, status):
+                return
+            if any(word in status for word in ("failed", "invalid", "rejected", "unavailable", "expired", "unsupported", "required")):
+                raise RuntimeError("Device did not complete the requested operation")
+    raise TimeoutError("Device response timed out; inspect status before retrying")
+
+def console_record(raw, instance=""):
+    parts = raw.strip().split()
+    if not parts:
+        return None
+    command = parts[0].removeprefix("screen_")
+    if command == "page" and len(parts) == 2 and parts[1].isdigit() and 0 <= int(parts[1]) < 4:
+        return {"command": "page", "page": int(parts[1])}
+    if len(parts) != 1 or command not in ("status", "arm", "disarm", "connect", "stop", "quit"):
+        raise ValueError("Unsupported console command")
+    if command == "quit":
+        return {"command": "stop"}
+    if command == "connect":
+        return {"command": command, "instanceId": instance}
+    return {"command": command}
+
+def interactive_console(port, instance=""):
+    print("Serial connection stays open. Commands: status, arm, disarm, connect, page N, stop, quit.")
+    print("Tap and release once before arm. Use Cockpit recording mode for initial touch tests.")
+    try:
+        while True:
+            raw = input("Device command> ")
+            try:
+                record = console_record(raw, instance)
+            except ValueError:
+                print("Use status, arm, disarm, connect, page N, stop or quit.")
+                continue
+            if record is None:
+                continue
+            quitting = raw.strip().removeprefix("screen_") == "quit"
+            try:
+                run_command(port, record)
+            except (ValueError, RuntimeError, TimeoutError, OSError):
+                print("Command did not complete. Check status; reconnect explicitly if required.")
+            if quitting:
+                return
+    except (EOFError, KeyboardInterrupt):
+        # Explicit console exit cancels the source before releasing the port.
+        try:
+            run_command(port, {"command": "stop"}, timeout=3)
+        except (ValueError, RuntimeError, TimeoutError, OSError):
+            pass
+        print("Console closed.")
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("port", help="Serial port, e.g. COM5 or /dev/ttyUSB0")
     parser.add_argument("--pairing", type=Path, help="Cockpit pairing JSON copied through a trusted path")
     parser.add_argument("--name", default="ESP32 screen")
     parser.add_argument("--instance", default="")
-    parser.add_argument("--persist", action="store_true", help="Require protected persistent storage; unavailable boards reject it")
+    parser.add_argument("--persist", action="store_true", default=True, help="Persist setup on the board (default)")
+    parser.add_argument("--no-persist", dest="persist", action="store_false", help="Use temporary setup until power loss")
     parser.add_argument("--command", choices=["provision", "resume", "connect", "stop", "forget", "status", "page", "arm", "disarm"], default="provision")
     parser.epilog = "arm explicitly enables live touch controls after a neutral baseline. Connection alone stays disarmed."
+    parser.add_argument("--interactive", action="store_true", help="Keep one serial connection open for provisioning and live controls")
     parser.add_argument("--page", type=int, default=0)
     args = parser.parse_args()
     record = {"command": args.command}
@@ -82,29 +156,17 @@ def main():
     if args.command == "page":
         record["page"] = args.page
     import serial
-    port = serial.Serial(baudrate=115200, timeout=0.25, write_timeout=3)
+    port = serial.Serial(baudrate=921600, timeout=0.25, write_timeout=3)
     port.dtr = False
     port.rts = False
     port.port = args.port
     port.open()
     try:
-        if args.command == "status":
-            print(request_status(port)["status"])
-            return
-        if args.command == "arm":
-            record = arm_record(request_status(port))
-        port.write(encode(record))
-        port.flush()
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            status = status_line(port.readline(8193))
-            if status:
-                print(status)
-                if terminal_status(args.command, status):
-                    return
-                if any(word in status for word in ("failed", "invalid", "rejected", "unavailable", "expired", "unsupported", "required")):
-                    raise RuntimeError("Device did not complete the requested operation")
-        raise TimeoutError("Device response timed out; inspect its status before retrying")
+        run_command(port, record)
+        record.clear()
+        if args.interactive:
+            raw = None
+            interactive_console(port, args.instance)
     finally:
         port.close()
 

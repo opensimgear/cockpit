@@ -7,7 +7,7 @@ typedef struct {
     char ssid[33], password[65], endpoint[321], ca[2049], pin[72], host[65];
     char companion[65], name[81], secret[65], token[65], instance[65];
     uint64_t unix_ms, expires_ms;
-    bool persist;
+    bool persist, direct;
 } osg_settings;
 bool osg_settings_parse(const cJSON *, osg_settings *);
 bool osg_secret(const char *);

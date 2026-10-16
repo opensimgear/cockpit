@@ -205,7 +205,7 @@ static void modern_feedback_tests(void){
 }
 static void settings_tests(void){
     char data[4096];snprintf(data,sizeof(data),"{\"ssid\":\"wifi\",\"password\":\"wifi-password\",\"name\":\"Screen\",\"instanceId\":\"instance\",\"unixMs\":1800000000000,\"pairing\":{\"version\":1,\"endpoint\":\"wss://127.0.0.1:54437/companion\",\"hostId\":\"host\",\"caCertificate\":\"Y2E=\",\"caSpkiSha256\":\"%s\",\"secret\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"expiresAtMs\":60000}}",osg_demo_panel.publication_hash);
-    cJSON *v=json(data);osg_settings settings;assert(osg_settings_parse(v,&settings));assert(!settings.persist&&!settings.token[0]);
+    cJSON *v=json(data);osg_settings settings;assert(osg_settings_parse(v,&settings));assert(settings.persist&&settings.schema==2&&!settings.token[0]);
     cJSON *pair=cJSON_GetObjectItemCaseSensitive(v,"pairing");
     num(pair,"expiresAtMs",-1);assert(!osg_settings_parse(v,&settings));num(pair,"expiresAtMs",1800000060000);
     string(pair,"endpoint","ws://host:80/companion");assert(!osg_settings_parse(v,&settings));string(pair,"endpoint","wss://host:54437/companion");

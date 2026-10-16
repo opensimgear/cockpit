@@ -1,6 +1,6 @@
 # ESP32 companion firmware foundation (#63)
 
-This directory owns the portable C renderer and ESP-IDF firmware entry point. It starts the [ESP32 companion story](https://github.com/opensimgear/cockpit/issues/63) with tested rendering and a Wi-Fi/WSS display client. It supports serial Wi-Fi provisioning, pinned-CA host-approved pairing, assigned live panel downloads and typed feedback. The default display adapter is explicitly **headless**: it builds for both ESP32 and ESP32-S3 without guessing screen pins. Live momentary touch input requires an explicit serial arm command and an acknowledged neutral baseline for the current session. Connections always start disarmed. Physical-device qualification remains open.
+This directory owns the portable C renderer and ESP-IDF firmware entry point. It starts the [ESP32 companion story](https://github.com/opensimgear/cockpit/issues/63) with tested rendering and a Wi-Fi/WSS display client. It supports serial Wi-Fi provisioning, pinned-CA host-approved pairing, assigned live panel downloads and typed feedback. The default display adapter is explicitly **headless**: it builds for both ESP32 and ESP32-S3 without guessing screen pins. Live momentary touch input activates automatically after the current panel is rendered, all touches are released and Cockpit acknowledges a fresh neutral baseline. Broader physical-device qualification remains open.
 
 ## Generic screen interface
 
@@ -26,7 +26,7 @@ Unsupported widgets (including toggle/pulse/repeat buttons, selectors, hats, enc
 
 Typed local samples validate their channel, value kind, finite range, provenance and text budget before atomic assignment to every alias. Feedback shows fresh/stale/unknown/disconnected, retains provenance and includes source age; samples become stale at 1000 ms. The network decoder validates authenticated session/generation/ACK and feedback ordering, types, ranges, units and source provenance before atomically applying samples. Repeated feedback sequence numbers do not refresh sample timestamps.
 
-Live input supports ordered momentary button edges through a bounded queue. Connecting, receiving a panel or reconnecting never arms controls. An operator must release touch and explicitly arm the current session; the firmware sends every button's neutral value in a single baseline and waits for Cockpit's matching source-accepted ACK before enabling touch. This ACK describes host source admission; it does not claim native controller submission or game confirmation. Existing Cockpit mapping/backend gates still apply.
+Live input supports ordered momentary button edges through a bounded queue. Each connection starts with input inactive, then automatically activates after the rendered panel, released touch and connection are healthy. The firmware sends every button's neutral value in one session-bound baseline and waits for Cockpit's matching source-accepted ACK before enabling touch. This ACK describes host source admission; it does not claim native controller submission or game confirmation. Existing Cockpit mapping/backend gates still apply.
 
 A touch must start inside a button; dragging into one cannot press it. Dragging out, changing page, touch/flush failure or a missed health lease cancels the session. Held buttons stay pressed while the touch and host leases remain healthy. Release edges preserve order, including press/release pairs within one input batch. Axes, hats, toggles, multitouch and gestures remain unsupported.
 
@@ -60,21 +60,29 @@ For the identified Waveshare 7-inch S3 board, use a fresh build directory and -D
 
 Use -DOSG_PANEL_INCLUDE=/absolute/path/to/generated to embed another exported panel. To use a real screen, supply -DOSG_BOARD_SOURCE=/absolute/path/to/board.c and its matching dimensions/driver. Width/height menuconfig values apply to the headless adapter only. Use separate build/config paths per MCU.
 
-Flash with the matching build's idf.py -B build-esp32s3 -p PORT flash monitor (or build-esp32). No flash or eFuse operation is performed by tests. Reflash a known-good image over serial for this milestone; Use the serial forget command to clear a protected installation. Automatic trust/config migrations and OTA remain future work. OTA is tracked in #64, broader board qualification in #65.
+Flash with the matching build's idf.py -B build-esp32s3 -p PORT flash monitor (or build-esp32). No flash or eFuse operation is performed by tests. Reflash a known-good image over serial for this milestone; Use the serial forget command to clear a saved installation. Automatic trust/config migrations and OTA remain future work. OTA is tracked in #64, broader board qualification in #65.
+
+## Cockpit USB setup
+
+Open **Companions → ESP32 companions**, select the USB serial device and click **Connect device**. Choose **Wi-Fi** to scan networks, select the SSID and enter its password; enable the companion listener in **Settings** first. Choose **Direct USB** to carry the companion protocol over USB without Wi-Fi or a network listener. Select a saved initial panel or assign one later in Cockpit, then click **Provision device**. Cockpit creates a one-time offer and approves only the installation identity it generated for this setup action. Pairing tokens and Wi-Fi passwords are never returned to the wizard.
+
+Connection settings persist on the device; assignments and publications stay in Cockpit. Connect the device in the wizard again after restarting Cockpit. The generic UART transport uses 921600 baud after boot; ROM logs remain at 115200. Keep a direct device attached. Wi-Fi can run independently once setup is saved; power-loss restart waits for a healthy panel and released touch before activating input. Use **Reconnect panel**, **Pause touch input** and **Forget saved setup** in Cockpit without terminal commands. Touch input activates automatically after the panel has rendered, touch/display health checks pass and all touches are released. Every new session still performs the session-bound neutral-baseline handshake; failed baselines are not retried. Pause touch input stops the session until Reconnect panel is selected.
+
+USB replies use ordered, SHA-256 checked chunks (2048 bytes decoded), bounded to the ESP32 reply budget. Native connection identities are freshly generated on each device link; serial link IDs never act as native authentication identities. Releasing USB or losing the port neutralizes only that direct session. No display or touch pins are part of the transport.
 
 ## Wi-Fi, pairing and live delivery
 
 The generic UI needs no provisioning widgets, keyboard or camera. Use a trusted serial cable and the helper (Python 3 plus pyserial; the IDF Python environment includes it):
 
-    python tools/provision.py COM5 --name "Cockpit screen"
+    python tools/provision.py COM5 --name "Cockpit screen" --interactive
 
 Enter the Wi-Fi SSID/password, then paste a **fresh** pairing JSON offer from Cockpit's Companion panels view. Input containing passwords/pairing material is hidden and is never printed by the helper. The helper supplies the computer's current Unix time through the cable; this is the trusted time bootstrap for certificate validity, independently of the network.
 
-In Cockpit, explicitly enable the companion listener on a reachable LAN interface, make a compatible published revision available, approve the requesting screen and assign a controller instance. If there is exactly one assignment, it is selected automatically. With several assignments, choose one using --instance when provisioning or send:
+The helper waits for a fresh device status before sending provisioning. On boards whose USB bridge resets the ESP32 when opening a port, keep --interactive enabled: use status, disarm, connect and page N at the Device command prompt without reopening the serial connection. quit stops the source and exits. One-shot commands below are intended for adapters that preserve the running device; repeated opens on the Waveshare reset the running session.
 
-    python tools/provision.py COM5 --command connect --instance INSTANCE_ID
+In Cockpit, enable the listener for Wi-Fi and complete the USB setup wizard. Assign exactly one controller instance to each ESP32; Cockpit controls its published panel. The ESP32 requests that assignment on connection and after Cockpit invalidates an obsolete session.
 
-The listener's pairing expiresAtMs belongs to the **host's monotonic clock** and is opaque to the device. Cockpit enforces expiry; the device separately limits its approval attempt to 60 seconds from provisioning. Certificate time comes only from the trusted serial clock. No unauthenticated NTP, time-check bypass or global/public CA fallback is used.
+The listener's pairing expiresAtMs belongs to the **host's monotonic clock** and is opaque to the device. Cockpit enforces expiry; the device separately limits approval to 60 seconds. Initial provisioning supplies a current serial clock. On power-cycle restore, Wi-Fi reconnect uses SNTP (pool.ntp.org) to initialize time before opening TLS. SNTP is unauthenticated; it never replaces the pinned Cockpit identity or disables certificate date/chain/hostname validation. Networks blocking DNS or NTP require Cockpit to supply a fresh clock over USB before resuming.
 
 The WSS endpoint must be explicit wss://HOST:PORT/companion, currently with a DNS name or IPv4 host. The device checks the offered CA's SPKI SHA-256 pin, CA constraints and validity before sending the secret/token. ESP-IDF then verifies the ordinary server certificate chain, time and endpoint hostname/IP against that CA. The requested WebSocket subprotocol is opensimgear-companion-v1. No redirects, plaintext fallback, arbitrary native commands or discovery-based trust are accepted.
 
@@ -82,29 +90,14 @@ Panel delivery uses the existing session-open publication and, when necessary, o
 
 A dedicated network worker validates session IDs, generation, publication identity and counters before admitting ACKs or feedback. Current feedback snapshot/delta envelopes also validate binding generation, output bindings, types, ranges, units, source status and provenance. Invalid envelopes stop the session. The renderer uses immutable snapshots so drawing and DMA waits never hold the network-state mutex. A stalled render or touch poll cannot keep a live source healthy indefinitely.
 
-After provisioning reports live-disarmed, configure the instance's controls and backend in Cockpit, release the screen and explicitly arm:
+After provisioning, touch activates automatically when the current panel has painted successfully, the touch driver reports released touch and fresh host acknowledgements are available. The automatic activation uses the current session, generation, publication and arm epoch, and sends a confirmed neutral baseline before admitting input. Headless/display-only adapters cannot activate touch. A held finger delays activation until release; touch during the baseline or an ambiguous baseline acknowledgement closes the connection without replaying it.
 
-    python tools/provision.py COM5 --command status
-    python tools/provision.py COM5 --command arm
+**Pause touch input** stops the session. **Reconnect panel** starts a fresh session and automatically repeats health, release and baseline checks. A panel assignment change also repeats these checks. Faults and revocation still require reconnecting; there is no automatic retry of a failed baseline. Legacy developer arm commands remain supported but are unnecessary for normal operation.
 
-The helper requests a fresh status using a unique request ID, then binds its one-shot arm command to sessionId, generation, publicationHash and armEpoch. The screen must have successfully painted the current panel and have fresh released touch and host acknowledgements. Headless/display-only adapters cannot arm. A touch during the baseline handshake cancels it; rejected arm tickets cannot be reused after release. Successful arming reports live-armed and the screen shows LIVE INPUT.
+Connection settings and the approved installation token persist in NVS by default. Saved records include connection mode, Wi-Fi credentials and Cockpit trust/identity; they exclude the temporary pairing offer, wall clock, panel selection, publication contents and arming state. Cockpit owns panel assignment, which is requested on connection. Storage schema 2 rejects incompatible or malformed records without erasing unrelated NVS data. Ordinary boards use unencrypted NVS, so physical flash access can expose credentials. Firmware never burns eFuses or enables flash encryption automatically.
 
-To stop input:
+After restart the device restores its connection settings and activates touch only after a fresh connection, healthy rendered panel, released touch and confirmed neutral baseline. Use Forget to erase the installation. Developer tooling supports --no-persist for temporary sessions and --command resume for supplying a fresh trusted clock.
 
-    python tools/provision.py COM5 --command disarm
-
-Disarm stops local input before requesting host closure and reports disarmed-reconnect-required. Use --command connect and then a fresh --command arm to resume. Changing page while armed also closes the session. Faults and revocation require an explicit reconnect; neither reconnect nor a page/publication change restores arming.
-
-Other commands:
-
-    python tools/provision.py COM5 --command status
-    python tools/provision.py COM5 --command page --page 1
-    python tools/provision.py COM5 --command stop
-    python tools/provision.py COM5 --command forget
-
-Wi-Fi credentials and paired tokens stay in RAM by default, including Wi-Fi driver storage. After reboot, RAM-only installations need a fresh offer/re-pairing. --persist explicitly requires NVS encryption configured **and** flash encryption already enabled on the actual board; otherwise provisioning is rejected before secret exchange. No encryption setting or eFuse is enabled automatically. Secure-board provisioning/partition/key recovery must be qualified separately; do not enable it blindly on existing boards. Stored installations contain no pairing offer secret, and resume requires a fresh trusted serial clock:
-
-    python tools/provision.py COM5 --command resume
 
 Do not put pairing JSON or Wi-Fi passwords in command arguments, logs, UI exports or source control. A copied offer file contains a short-lived secret. Connection/diagnostic output contains fixed status tokens rather than raw host errors or credential fields.
 
@@ -116,6 +109,7 @@ From the repository root:
     python3 apps/companion-esp32/test/run.py
     python3 apps/companion-esp32/test/network.py
     python3 apps/companion-esp32/test/waveshare.py
+    python3 apps/companion-esp32/test/serial.py
     python3 -m unittest discover -s apps/companion-esp32/test -p provision_test.py -v
     cargo test --locked --manifest-path crates/companion-service/Cargo.toml --test esp32_display
 
@@ -128,3 +122,7 @@ Framework references: [ESP-IDF LCD abstraction and driver operations](https://do
 The network native runner additionally needs OpenSSL development headers/libcrypto (Ubuntu libssl-dev). Its C client tests inject Wi-Fi/TLS/storage boundaries; they are not real radio or TLS-device qualification. The Rust integration test exercises the actual Cockpit Hub with the same publication fixture and proves that feedback is available without submitting input, then separately checks neutral-baseline admission, ordered live edges, isolated lease expiry, socket loss and fresh-session requirements. SDK TLS/Wi-Fi adapters are cross-compiled for both MCUs; their physical trust/storage behavior remains unqualified.
 
 Detailed local evidence: [live-input checkpoint](../../docs/verification/2026-10-16-companion-esp32-live-input.md) and [earlier network checkpoint](../../docs/verification/2026-10-16-companion-esp32-network.md).
+
+## Sunton 3.5-inch screen
+
+The ESP32-3248S035R resistive-touch board has a dedicated [display/touch profile](boards/sunton-3248s035r/README.md) and Cockpit firmware installation option. It uses the original ESP32 target, not ESP32-S3.

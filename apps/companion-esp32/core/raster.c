@@ -40,6 +40,14 @@ static uint8_t glyph(char c, int row) {
 static void solid(void *ctx, int x, int y, int width, int height, uint16_t color) {
     osg_raster *r = ctx;
     if (r->failed || !r->write || width <= 0 || height <= 0) return;
+    if(r->composing){
+        int left=x>r->tile_x?x:r->tile_x,top=y>r->tile_y?y:r->tile_y;
+        int right=x+width<r->tile_x+r->tile_width?x+width:r->tile_x+r->tile_width;
+        int bottom=y+height<r->tile_y+r->tile_height?y+height:r->tile_y+r->tile_height;
+        for(int row=top;row<bottom;row++)for(int col=left;col<right;col++)
+            r->tile[(row-r->tile_y)*r->tile_width+col-r->tile_x]=color;
+        return;
+    }
     for (size_t i = 0; i < 256; i++) r->scratch[i] = color;
     for (int row = 0; row < height && !r->failed; row++) {
         for (int col = 0; col < width; col += 256) {
@@ -62,4 +70,33 @@ static void label(void *ctx, int x, int y, int width, int height, const char *s,
 }
 osg_display osg_raster_display(osg_raster *r, uint16_t width, uint16_t height) {
     return (osg_display){ .context = r, .width = width, .height = height, .fill = solid, .text = label };
+}
+/* Compose each damaged region in bounded RGB565 tiles before the board sees
+ * any pixels. Replaying the scene under a clip preserves overlap/z-order. */
+static void region(osg_raster *r,osg_runtime *frame,int x,int y,int width,int height,uint64_t now){
+    if(x<0){width+=x;x=0;}if(y<0){height+=y;y=0;}
+    if(x+width>frame->display.width)width=frame->display.width-x;
+    if(y+height>frame->display.height)height=frame->display.height-y;
+    for(int row=y;row<y+height&&!r->failed;row+=8){
+        for(int col=x;col<x+width&&!r->failed;col+=64){
+            r->tile_x=col;r->tile_y=row;
+            r->tile_width=x+width-col<64?x+width-col:64;
+            r->tile_height=y+height-row<8?y+height-row:8;
+            r->composing=true;
+            osg_render(frame,now);
+            r->composing=false;
+            if(!r->write || !r->write(r->context,col,row,r->tile_width,r->tile_height,r->tile))r->failed=true;
+        }
+    }
+}
+void osg_raster_render(osg_raster *r,osg_runtime *runtime,osg_damage damage,uint64_t now){
+    osg_display original=runtime->display;
+    runtime->display=osg_raster_display(r,original.width,original.height);
+    if(damage.full)region(r,runtime,0,0,original.width,original.height,now);
+    else for(size_t i=0;i<runtime->panel->widget_count&&!r->failed;i++){
+        if(!(damage.widgets&(UINT32_C(1)<<i)))continue;
+        int x,y,width,height;osg_widget_rect(runtime,i,&x,&y,&width,&height);
+        region(r,runtime,x,y,width,height,now);
+    }
+    runtime->display=original;
 }
