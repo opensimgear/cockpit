@@ -76,7 +76,7 @@ test('scene rejects invalid references, unsafe bounds, geometry and spatial data
     [1,6,'Uint16',1],[1,8,'Uint16',5],[1,12,'Uint32',1],
     [2,0,'Uint16',1],[2,2,'Uint8',255],[2,3,'Uint8',2],[2,4,'Int16',-1],[2,12,'Int16',-1],[2,20,'Int16',9],[2,28,'Uint16',0],[2,30,'Uint16',1],[2,32,'Uint16',0],[2,34,'Uint16',1],[2,42,'Uint16',1],[2,44,'Uint32',1],[2,52,'Uint16',1],[2,56,'Uint32',1],
     [2,64+28,'Uint16',1],[2,64+52,'Uint16',2],[2,128+30,'Uint16',0],[2,192+32,'Uint16',NONE],[2,192+50,'Uint16',121],
-    [3,0,'Uint16',NONE],[3,2,'Uint8',2],[3,3,'Uint8',1],[3,4,'Int32',-1],[3,4,'Int32',32768],[3,12,'Int32',0],[3,18,'Uint16',1],
+    [3,0,'Uint16',NONE],[3,2,'Uint8',2],[3,3,'Uint8',5],[3,4,'Int32',-1],[3,4,'Int32',32768],[3,12,'Int32',0],[3,18,'Uint16',1],
     [4,0,'Uint16',NONE],[4,2,'Uint8',255],[4,3,'Uint8',1],[4,4,'Uint16',1],[4,6,'Uint16',0],[4,8,'Int32',1],[4,12,'Int32',65537],
     [5,0,'Uint8',255],[5,1,'Uint8',1],[5,2,'Uint16',1],[5,4,'Int32',1],[5,8,'Int32',1],
     [8,0,'Uint16',NONE],[8,2,'Uint16',NONE],[8,4,'Int16',0],[8,12,'Uint16',NONE],[8,14,'Uint16',1],
@@ -191,7 +191,7 @@ test('bounded local timelines admit boolean steps and reject fractional visibili
     const keys=new Uint8Array(16);keys.set(record(8,[[4,'Int32',0]]));keys.set(record(8,[[0,'Uint16',100],[4,'Int32',Q]]),8);sections.push({kind:7,data:keys});
   });
   const facts=inspect(objects);assert.equal(facts.counts.timelines,1);assert.ok(facts.requires.includes('scene.timeline'));
-  for(const [table,offset,type,value]of[[6,3,'Uint8',1],[6,6,'Uint16',9],[6,8,'Uint16',49],[6,10,'Uint16',1],[7,0,'Uint16',1],[7,4,'Int32',32768],[7,8,'Uint16',0],[7,10,'Uint16',1]])assert.throws(()=>inspect(change(objects,'scene',table,data=>data[`set${type}`](offset,value,true))));
+  for(const [table,offset,type,value]of[[6,3,'Uint8',1],[6,6,'Uint16',9],[6,8,'Uint16',49],[6,10,'Uint16',2],[7,0,'Uint16',1],[7,4,'Int32',32768],[7,8,'Uint16',0],[7,10,'Uint16',1]])assert.throws(()=>inspect(change(objects,'scene',table,data=>data[`set${type}`](offset,value,true))));
 });
 test('numeric text formatting precision and complete range fit are validated',()=>{
   let objects=change(fixtureObjects(),'scene',4,data=>{data.setUint16(0,3,true);data.setUint8(2,PROPERTY.number);});

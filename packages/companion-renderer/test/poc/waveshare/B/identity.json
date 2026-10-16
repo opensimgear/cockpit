@@ -1,0 +1,9 @@
+{
+  "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+  "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+  "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+  "semanticFingerprint": "sha256:a98ec1ffb51f41312ce754a23590e3455acca3ea577e3de851ccf9656da4cce5",
+  "recipeHash": "sha256:4470e3ac020f2f3856a927c7a6174bef7cf215665d08c92212ad6a26490159e3",
+  "compilerId": "osg-render-compiler",
+  "compilerVersion": "0.2.0"
+}

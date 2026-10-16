@@ -1,7 +1,7 @@
 import type { DeviceProfile, Diagnostic, Manifest, RuntimeHeadroom } from "./types.ts";
 import { assert, canonical, digest, freeze, uint } from "./validation.ts";
 
-const features = ["input.momentary", "input.navigation", "scene.image565", "scene.image565-mask4", "scene.line", "scene.mask4", "scene.polyline", "scene.rect", "scene.text", "scene.timeline"];
+const features = ["input.momentary", "input.navigation", "scene.image565", "scene.image565-mask4", "scene.line", "scene.local-state", "scene.mask4", "scene.polyline", "scene.rect", "scene.text", "scene.timeline", "scene.timeline-repeat"];
 function profile(waveshare: boolean): DeviceProfile {
   return freeze({
     profileVersion: 1, id: waveshare ? "waveshare-lcd7-s3-render-v1" : "sunton-3248s035r-render-v1", rendererAbi: 1,

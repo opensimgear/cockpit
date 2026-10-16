@@ -5,7 +5,7 @@ import type { Instruction } from "./fixed.ts";
 import type { BinaryObject, Counts, DeviceProfile, Rect } from "./types.ts";
 import { assert } from "./validation.ts";
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 function text(object: BinaryObject, sectionId: number, offset: number, length: number, max = 120): string {
   const bytes = section(object, sectionId).data; assert(length <= max, "String byte budget exceeded"); boundedRange(offset, length, bytes.length, "string");
   const value = decoder.decode(bytes.subarray(offset, offset + length)); assert(!/[\u0000-\u001f\u007f]/.test(value), "Invalid string control character"); return value;
@@ -147,11 +147,18 @@ export function inspectContent(objects: ReadonlyMap<import("./types.ts").ObjectK
   }
   let minimumSnapshotBytes = nodes.length * 16;
   for (const variable of variables) {
-    const output = outputs[variable.getUint16(0, true)]; assert(output, "Variable references unknown semantic output");
-    assert(variable.getUint8(2) === output.getUint8(6) && variable.getUint8(3) === 0, "Variable type mismatch"); zero(variable, 18, 24);
+    const ref = variable.getUint16(0, true), kind = variable.getUint8(2), source = variable.getUint8(3);
+    zero(variable, 18, 24);
     const fallback = variable.getInt32(4, true), min = variable.getInt32(8, true), max = variable.getInt32(12, true), maxText = variable.getUint16(16, true);
-    assert(min === output.getInt32(16, true) && max === output.getInt32(20, true) && maxText === output.getUint16(14, true) && fallback >= min && fallback <= max, "Variable descriptor mismatch");
-    if (variable.getUint8(2) === 1) assert(fallback === 0 || fallback === Q, "Boolean fallback must be false or true");
+    if (source === 0) {
+      const output = outputs[ref]; assert(output && kind === output.getUint8(6), "Variable type mismatch");
+      assert(min === output.getInt32(16, true) && max === output.getInt32(20, true) && maxText === output.getUint16(14, true) && fallback >= min && fallback <= max, "Variable descriptor mismatch");
+      if (kind === 1) assert(fallback === 0 || fallback === Q, "Boolean fallback must be false or true");
+    } else {
+      assert(source >= 1 && source <= 4 && kind === 1 && fallback === 0 && min === 0 && max === Q && maxText === 0, "Invalid local-state variable");
+      assert(source === 1 ? ref < interactions.length : source === 4 ? ref === NONE : ref < outputs.length, "Invalid local-state reference");
+      requires.add("scene.local-state");
+    }
     minimumSnapshotBytes += 16 + maxText;
   }
   const instructionValues: Instruction[] = exprs.map(instruction => {
@@ -201,7 +208,7 @@ export function inspectContent(objects: ReadonlyMap<import("./types.ts").ObjectK
   assert(ownedInstructions.size === exprs.length, "Unowned expression instructions");
   const ownedKeys = new Set<number>();
   for (const timeline of timelines) {
-    requires.add("scene.timeline"); zero(timeline, 10, 24); const first = timeline.getUint16(4, true), count = timeline.getUint16(6, true), duration = timeline.getUint16(8, true);
+    requires.add("scene.timeline"); const flags = timeline.getUint16(10, true); assert(flags <= 1, "Unknown timeline flags"); if (flags) requires.add("scene.timeline-repeat"); zero(timeline, 12, 24); const first = timeline.getUint16(4, true), count = timeline.getUint16(6, true), duration = timeline.getUint16(8, true);
     assert(count >= 2 && count <= 8 && duration >= 50 && duration <= 2000 && timeline.getUint8(3) <= 1, "Invalid timeline bounds"); range(first, count, keys.length);
     let previous = -1, min = 2147483647, max = -2147483648;
     for (let index = first; index < first + count; ++index) {

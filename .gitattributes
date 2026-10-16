@@ -7,3 +7,9 @@ apps/companion-esp32/tools/*.sh text eol=lf
 packages/companion-renderer/test/fixtures/*.json text eol=lf
 packages/companion-renderer/test/fixtures/*.bin -text
 apps/companion-esp32/test/panel.h text eol=lf
+
+# Exact-byte compiled PoC manifests, native source publications and pixel goldens.
+packages/companion-renderer/test/poc/**/*.json text eol=lf
+packages/companion-renderer/test/poc/**/*.bin -text
+packages/companion-renderer/test/poc/**/*.rgb565.gz -text
+packages/companion-renderer/assets/*.json text eol=lf
