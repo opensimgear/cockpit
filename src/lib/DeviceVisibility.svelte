@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
@@ -45,10 +46,10 @@
   <h3>Device visibility</h3>
   <OptionalDependencies only="hidhide" />
   <p>Visibility and input suppression are independent of virtual controllers. Saving a selection does not apply it.</p>
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if error}<Notification message={String(error)} kind="error" />{/if}
   {#if status}
     <p class="notice">{status.reason}</p>
-    {#if status.settingsError}<p class="error">Saved settings need attention: {status.settingsError}</p>{/if}
+    {#if status.settingsError}<Notification message={'Saved settings need attention: ' + String(status.settingsError)} kind="error" />{/if}
     <label class="check"><input type="checkbox" checked={status.enabled} disabled={busy || status.job?.active} onchange={event => action({ command: 'controller_visibility_enable', enabled: event.currentTarget.checked })} />Enable optional visibility controls on this computer</label>
     <div class="fields">
       <label>Saved policy<select bind:value={mode} disabled={busy || status.job?.active}>{#each status.modes as option}<option value={option.mode} disabled={!option.supported}>{option.label}{option.supported ? '' : ' · unavailable'}</option>{/each}</select></label>

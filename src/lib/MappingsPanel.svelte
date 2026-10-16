@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import MappingEditor from './MappingEditor.svelte';
   import CompanionMappings from './CompanionMappings.svelte';
@@ -182,9 +183,9 @@
 </script>
 
 <div class="page-heading"><div><div class="eyebrow">YOUR INPUTS, YOUR LAYOUT</div><h1>Controller mappings</h1><p>Map companion instances independently, or assign physical, panel and synthetic inputs to ordinary mapping profiles.</p></div><span class="quiet-tag">Experimental</span></div>
-{#if error}<p class="notice amber-notice" role="alert">{error}</p>{/if}
-{#if notice}<p class="notice" role="status">{notice}</p>{/if}
-{#if status.storageError}<p class="notice amber-notice" role="alert">Saved mapping settings need repair: {status.storageError}</p>{/if}
+{#if error}<Notification message={String(error)} kind="error" />{/if}
+{#if notice}<Notification message={String(notice)} />{/if}
+{#if status.storageError}<Notification message={'Saved mapping settings need repair: ' + String(status.storageError)} kind="error" />{/if}
 <CompanionMappings send={request} sources={companions}/>
 <section class="panel mapping-panel" aria-label="Create a direct mapping">
   <h2>New generic direct mapping</h2>
@@ -275,7 +276,7 @@
       {#if status.provisioning.active}<button class="secondary-button" disabled={busy} onclick={() => action(async () => { await request({ command: 'mapping_provision_cancel', jobId: status.provisioning?.jobId }); })}>Cancel provisioning</button>{/if}
     </div>
   {/if}
-  {#if status.provisioningRecovery?.error}<p class="notice" role="status">{status.provisioningRecovery.error}</p>{/if}
+  {#if status.provisioningRecovery?.error}<Notification message={String(status.provisioningRecovery.error)} />{/if}
   {#each status.provisioningRecovery?.pending ?? [] as operation}
     <div class="notice" role="status"><strong>Interrupted layout change for slot {operation.target}</strong>
       <p>{operation.refreshUncertain ? 'Driver refresh completion is uncertain. Inspect the driver before attempting recovery.' : 'The previous layout change needs verified recovery before creating another controller.'}</p>

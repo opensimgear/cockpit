@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import ActionControl from './ActionControl.svelte';
   import { dcsBindingValue, dcsEndpointLabel } from './dcs-profile';
   import { integrationChannels, integrationOutputActions, roleTarget, type IntegrationConfig, type IntegrationOutput, type IntegrationCatalogue, type IntegrationTarget, type IntegrationOutputStatus, type IntegrationRequest, type IntegrationFormat } from './integration-profile';
@@ -62,24 +63,17 @@
     <div class="tools"><button disabled={disabled || !target} onclick={() => target && refresh(target.gatewayId,target.module.id)}>Refresh actions</button><button {disabled} onclick={remove}>Remove binding</button></div>
   </fieldset>
   <p>Desired: {dcsBindingValue(status?.desired)} · Applied: {dcsBindingValue(status?.applied)} · {status?.owned ? 'Owned by this integration' : running ? 'Waiting for ownership' : 'Stopped'}{status?.overrideRemainingMs ? ` · override ${status.overrideRemainingMs} ms remaining` : ''}</p>
-  {#if status?.error}<p class="error" role="alert">{status.error}</p>{/if}
+  {#if status?.error}<Notification message={String(status.error)} kind="error" />{/if}
   {#if running && status?.owned && action && snapshot}
     <details><summary>Override temporarily</summary><p>The integration keeps its output claim. Expiry resumes fresh telemetry; feedback loss and Stop apply the fallback.</p><label>Override duration (ms)<input type="number" min="1" max="30000" step="1" bind:value={overrideMs} /></label>
       <ActionControl {action} {snapshot} {ready} {busy} invoke={(_action,values) => override(values)} />
       <button disabled={busy} onclick={() => request({command:'integration_override',bindingId:binding.id,resume:true})}>Resume telemetry now</button>
     </details>
   {/if}
-  {#if notice}<p class="error" role="alert">{notice}</p>{/if}
+  {#if notice}<Notification message={String(notice)} kind="error" />{/if}
 </article>
 
 <style>
-  article { margin: 12px 0; padding: 14px; border: 1px solid var(--line); border-radius: 6px; }
-  fieldset { border: 0; margin: 0; padding: 0; min-width: 0; } legend { font-size: 12px; font-weight: 600; }
-  .fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
-  label { display: block; margin-top: 8px; color: var(--soft); font-size: 11px; } input, select { display: block; width: 100%; min-width: 0; margin-top: 5px; padding: 7px; color: var(--text); background: var(--input-bg); border: 1px solid var(--line); border-radius: 4px; }
-  p, summary { font-size: 11px; line-height: 1.7; color: var(--soft); } .error { color: var(--amber); }
-  .tools, .bands > div { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin: 12px 0; } .bands label { flex: 1; }
-  button { border: 1px solid var(--line); border-radius: 4px; padding: 7px 10px; background: var(--input-bg); color: var(--text); cursor: pointer; font-size: 11px; } :disabled { opacity: .55; cursor: default; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; } details { margin-top: 12px; } summary { cursor: pointer; }
-  @media (max-width: 650px) { .fields { grid-template-columns: 1fr; } }
+  article{ margin: 12px 0; padding: 14px; border: 1px solid var(--line); border-radius: 6px; }fieldset{ border: 0; margin: 0; padding: 0; min-width: 0; }legend{ font-size: 12px; font-weight: 600; }.fields{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }label{ display: block; margin-top: 8px; color: var(--soft); font-size: 11px; }input,select{ display: block; width: 100%; min-width: 0; margin-top: 5px; padding: 7px; color: var(--text); background: var(--input-bg); border: 1px solid var(--line); border-radius: 4px; }p,summary{ font-size: 11px; line-height: 1.7; color: var(--soft); }.tools,.bands > div{ display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin: 12px 0; }.bands label{ flex: 1; }button{ border: 1px solid var(--line); border-radius: 4px; padding: 7px 10px; background: var(--input-bg); color: var(--text); cursor: pointer; font-size: 11px; }:disabled{ opacity: .55; cursor: default; }:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }details{ margin-top: 12px; }summary{ cursor: pointer; }
+  @media (max-width: 650px) {.fields{ grid-template-columns: 1fr; } }
 </style>

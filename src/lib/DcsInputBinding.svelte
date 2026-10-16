@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import { dcsTargetKey, physicalDcsControls, dcsInputInterfaces, dcsBindingValue, dcsBindingStatusLabel, type DcsInputBinding, type DcsInputKind, type DcsTarget, type DcsCatalogueControl, type DcsBindingStatus } from './dcs-profile';
   let { binding = $bindable(), targets, catalogue, disabled, status, remove, refresh }: {
     binding: DcsInputBinding; targets: DcsTarget[]; catalogue: DcsCatalogueControl[]; disabled: boolean;
@@ -48,23 +49,10 @@
     <button class="refresh" disabled={!target?.module.online} onclick={() => refresh(binding.gatewayId, binding.moduleId)}>Refresh device capabilities</button>
   </fieldset>
   <footer><span>Input readiness: {dcsBindingStatusLabel(status)}</span><span>Last value: {dcsBindingValue(status?.lastValue)}</span><span>Commands: {status?.commandsSent ?? 0}</span></footer>
-  {#if status?.error}<p class="error" role="alert">{status.error}</p>{/if}
+  {#if status?.error}<Notification message={String(status.error)} kind="error" />{/if}
 </article>
 
 <style>
-  article { margin: 12px 0; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
-  header, footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-  header strong { flex: 1; color: var(--text); font-size: 12px; }
-  header span, footer, p { color: var(--soft); font-size: 11px; line-height: 1.6; }
-  footer { margin-top: 12px; }
-  fieldset { min-width: 0; padding: 0; border: 0; }
-  label { display: block; margin-top: 12px; color: var(--soft); font-size: 11px; }
-  input, select { display: block; width: 100%; min-width: 0; margin-top: 5px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--text); font-size: 11px; }
-  .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
-  button { padding: 6px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--text); font-size: 11px; cursor: pointer; }
-  button:disabled, fieldset:disabled { opacity: .55; }
-  button:disabled { cursor: default; }
-  input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .error { color: var(--amber); }
-  @media (max-width: 700px) { .fields { grid-template-columns: 1fr; } }
+  article{ margin: 12px 0; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }header,footer{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }header strong{ flex: 1; color: var(--text); font-size: 12px; }header span,footer,p{ color: var(--soft); font-size: 11px; line-height: 1.6; }footer{ margin-top: 12px; }fieldset{ min-width: 0; padding: 0; border: 0; }label{ display: block; margin-top: 12px; color: var(--soft); font-size: 11px; }input,select{ display: block; width: 100%; min-width: 0; margin-top: 5px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--text); font-size: 11px; }.fields{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }button{ padding: 6px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--text); font-size: 11px; cursor: pointer; }button:disabled,fieldset:disabled{ opacity: .55; }button:disabled{ cursor: default; }input:focus-visible,select:focus-visible,button:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 700px) {.fields{ grid-template-columns: 1fr; } }
 </style>

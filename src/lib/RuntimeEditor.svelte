@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import { mappingFields, mappingLimits, configurationError, configEqual, resizeMappings, type RuntimeConfig, type RuntimeSnapshot, type MappingKind } from './runtime-config';
   import type { GatewayCommand } from './gateway';
   let { config = $bindable(), snapshot, editing, busy, request, automatic = false, controllerEnabled = true }: { config:RuntimeConfig; snapshot:RuntimeSnapshot; editing:boolean; busy:boolean; request:(command:GatewayCommand,config?:RuntimeConfig)=>Promise<boolean>; automatic?:boolean; controllerEnabled?:boolean } = $props();
@@ -38,7 +39,7 @@
       </details>
     {/if}
   {/each}
-  {#if error}<div class="notice amber-notice" role="alert"><p>{error}</p></div>{/if}
+  {#if error}<Notification message={String(error)} kind="error" />{/if}
   <div class="configuration-status"><span class="status-dot" class:draft-dot={dirty||unsaved}></span>{dirty?'Draft changes':unsaved?'Applied · not saved':'Saved on module'}<span>Generation {snapshot.generation}</span></div>
   <div class="save-actions">
     <button class="text-button" disabled={!editing||busy} onclick={()=>request('config_discard')}>Discard</button>

@@ -1,4 +1,7 @@
 <script lang="ts">
+  import Notifications from './lib/Notifications.svelte';
+  import { notify as showNotification } from './lib/notifications';
+  import Notification from './lib/Notification.svelte';
   import { onMount } from 'svelte';
   import HostControllers from './lib/HostControllers.svelte';
   import MappingsPanel from './lib/MappingsPanel.svelte';
@@ -74,10 +77,6 @@
   let tab = $state('setup');
   let sessionId = $state<string | null>(null);
   let sessionTransition = $state(false);
-  const notificationDuration = 5000;
-  let toast = $state('');
-  let toastSequence = $state(0);
-  let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let modal = $state<'help' | 'remove' | 'controller' | null>(null);
   let removeTarget = $state({ key: '', id: '', label: '', gatewayId: '' });
   let controllerTarget = $state({ key: '', id: '', label: '', gatewayId: '', action: 'disable' as ControllerAction });
@@ -292,18 +291,13 @@
     const gamesTimer = setInterval(() => { void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     window.addEventListener('pagehide', release);
-    return () => { release(); disposed = true; clearTimeout(toastTimer); clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); workspace?.dispose(); };
+    return () => { release(); disposed = true; clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
     if (opening) void opening.catch(error => notify(error instanceof Error ? error.message : 'This link could not be opened.'));
   }
-  function dismissNotification() { clearTimeout(toastTimer); toastTimer = undefined; toast = ''; }
-  function notify(message: string) {
-    if (disposed) return;
-    dismissNotification(); toast = message; toastSequence++;
-    toastTimer = setTimeout(dismissNotification, notificationDuration);
-  }
+  function notify(message: string) { if (!disposed) showNotification(message); }
   function log(message: string, detail: string) { events = [{ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), message, detail }, ...events]; }
   function toggleTheme() {
     light = !light;
@@ -384,6 +378,7 @@
 </script>
 
 <div class:light class="cockpit">
+  <Notifications />
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="https://www.opensimgear.org" target="_blank" rel="noreferrer" onclick={openLink}><img src={light ? '/logo-light.svg' : '/logo-dark.svg'} alt="" /><span><strong>Open</strong>SimGear<small>COCKPIT</small></span></a>
@@ -423,11 +418,11 @@
           <section class="panel dcs-profile-panel"><DcsBiosPanel bind:draft={dcsDraft} bind:selectedTarget={dcsSelectedTarget} status={dcsBios} targets={dcsTargets} busy={dcsBusy} request={sendDcs} requestGateway={sendGateway} disableController={disableDcsController} canDisable={canDisableDcs} /></section>
         {:else if view === 'gateways'}
           <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Gateways</h1><p>All your gateways stay connected and run independently.</p></div><span class="quiet-tag">{connectedGateways.length} connected</span></div>
-          {#if inventoryError}<div class="notice amber-notice" role="alert"><p>{inventoryError}</p><button class="text-button" onclick={rescan}>Retry discovery</button></div>{/if}
+          {#if inventoryError}<Notification message={String(inventoryError)} kind="error" /><button class="text-button" onclick={rescan}>Retry discovery</button>{/if}
           {#if dcsBios?.configured || dcsBios?.error}
             <section class="panel preferences-panel" aria-label="DCS-BIOS integration">
               <div class="panel-heading"><h2>DCS-BIOS · panel profile</h2><span class="quiet-tag">{dcsStatusLabel(dcsBios)}</span></div>
-              <div class="preference-row"><div><strong>{dcsBios.config?.schemaVersion === 2 ? `${dcsBios.config.inputs.length} inputs · ${dcsBios.config.outputs.length} outputs` : 'Master-caution profile'}</strong><p>{dcsBios.running ? `Running · ${dcsBios.aircraft ?? 'waiting for aircraft'}` : 'Open the profile to review bindings and start.'}</p>{#if dcsBios.error}<p class="gateway-error" role="alert">{dcsBios.error}</p>{/if}</div>
+              <div class="preference-row"><div><strong>{dcsBios.config?.schemaVersion === 2 ? `${dcsBios.config.inputs.length} inputs · ${dcsBios.config.outputs.length} outputs` : 'Master-caution profile'}</strong><p>{dcsBios.running ? `Running · ${dcsBios.aircraft ?? 'waiting for aircraft'}` : 'Open the profile to review bindings and start.'}</p>{#if dcsBios.error}<Notification message={String(dcsBios.error)} kind="error" />{/if}</div>
                 <button class="secondary-button" onclick={() => openDcsProfile()}>Open DCS-BIOS settings</button>
                 <button class="secondary-button" disabled={dcsBusy || !dcsBios.running} onclick={() => sendDcs({ command: 'dcs_stop' })}>Stop DCS-BIOS</button>
               </div>
@@ -448,13 +443,13 @@
                     <p>{entry.port.serialNumber} · {state?.port ?? entry.port.path}</p>
                     {#if state?.connected}<p class="automation-status">{automatic ? 'Connected devices enable automatically. Disabled devices stay remembered.' : canGateway ? 'This older gateway uses manual controller registration.' : 'Connected devices report their inputs independently.'}</p>
                     {:else}<p class="automation-status">{entry.present ? 'Opening this gateway’s connection.' : 'Waiting for this gateway to return. Remembered devices are retained.'}</p>{/if}
-                    {#if entry.error}<p class="gateway-error" role="alert">{entry.error}</p>{/if}
-                    {#if state?.hidNaming?.error}<p class="gateway-error" role="alert">Controller names could not be updated: {state.hidNaming.error}</p>{/if}
+                    {#if entry.error}<Notification message={String(entry.error)} kind="error" />{/if}
+                    {#if state?.hidNaming?.error}<Notification message={'Controller names could not be updated: ' + String(state.hidNaming.error)} kind="error" />{/if}
                   </div>
                   {#if !state?.connected || entry.error}<button class="secondary-button" aria-label={`Retry gateway ${entry.port.serialNumber}`} disabled={entry.busy || state?.reconnecting} onclick={() => retryGateway(entry.id)}>Retry gateway</button>{/if}
                 </div>
-                {#if automatic && state?.layoutError}<div class="notice amber-notice" role="alert"><Icon name="alert" size={17} /><p>The gateway could not update its USB controllers ({state.layoutError}). Review the device state before retrying a change.</p></div>{/if}
-                {#if automatic && state?.admissionFailure}<div class="notice amber-notice" role="alert"><Icon name="alert" size={17} /><p>Device {state.admissionFailure.identity} could not be enabled ({state.admissionFailure.error}). Limits: {state.maxModules} discovered, {state.maxRemembered ?? state.maxModules} remembered and {state.maxControllers ?? state.maxModules} enabled devices. Remove an offline remembered device to free inventory capacity.</p></div>{/if}
+                {#if automatic && state?.layoutError}<Notification message={'The gateway could not update its USB controllers (' + String(state.layoutError) + '). Review the device state before retrying a change.'} kind="error" />{/if}
+                {#if automatic && state?.admissionFailure}<Notification message={'Device ' + String(state.admissionFailure.identity) + ' could not be enabled (' + String(state.admissionFailure.error) + '). Limits: ' + String(state.maxModules) + ' discovered, ' + String(state.maxRemembered ?? state.maxModules) + ' remembered and ' + String(state.maxControllers ?? state.maxModules) + ' enabled devices. Remove an offline remembered device to free inventory capacity.'} kind="error" />{/if}
                 {#if state?.debug}<DebugDevices {state} busy={entry.busy} request={request => sendGateway(entry.id, request)} />{/if}
                 <div class="gateway-modules">
                   <div class="gateway-modules-heading"><h3>Devices <span>{gatewayDevices.length}</span></h3>{#if canGateway && state}<span class="quiet-tag">{automatic ? `${state.modules.filter(module => module.enabled).length} enabled · ${state.modules.length} / ${state.maxRemembered ?? state.maxModules} remembered` : `${state.modules.filter(module => module.registered).length} / ${state.maxModules ?? 10} registrations`}</span>{/if}</div>
@@ -534,8 +529,8 @@
           {#if lifecycle && gateway?.layoutPending}<div class="reconnect-notice" role="status"><Icon name="usb" size={19} /><div><strong>Updating USB controllers…</strong><p>The gateway saves this change and reconnects automatically.</p></div></div>
           {:else if needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>{physicalGateway ? 'Controller layout changes pending' : `${gatewayName} needs a reconnect`}</strong><p>Apply the pending controller layout to reconnect USB. Check your game bindings afterward.</p></div><button class="secondary-button" disabled={gatewayBusy || !gatewayConnected || gateway?.reconnecting || !!gateway?.claimedModules?.length} onclick={() => reconnectGateway(selected.gatewayId)}><Icon name="usb" size={15} />{physicalGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}
 
-          {#if gatewayError}<div class="notice amber-notice" role="alert"><Icon name="alert" size={17} /><p>{gatewayError}</p></div>{/if}
-          {#if lifecycle && gateway?.layoutError}<div class="notice amber-notice" role="alert"><Icon name="alert" size={17} /><p>The gateway could not update its USB controllers ({gateway.layoutError}). The previous USB controller layout remains published.</p></div>{/if}
+          {#if gatewayError}<Notification message={String(gatewayError)} kind="error" />{/if}
+          {#if lifecycle && gateway?.layoutError}<Notification message={'The gateway could not update its USB controllers (' + String(gateway.layoutError) + '). The previous USB controller layout remains published.'} kind="error" />{/if}
           <div class="device-workspace">
             <div>
                 <section class="panel device-stage"><div class="stage-title"><div><span class="eyebrow">DEVICE WORKSPACE</span><h2>{selected.name}</h2><p>{selected.subtitle}</p></div><span class="connection-badge"><span class="status-dot" class:offline={!selected.online}></span>{selected.online ? 'Connected' : 'Offline'}</span></div><div class="large-device"><DeviceIllustration kind={selected.kind} /></div><div class="stage-metadata"><div><small>STABLE IDENTITY</small><strong>{selected.id}</strong></div><div><small>ACTIVE ROUTE</small><strong>{selected.route}</strong></div><div><small>CAPABILITIES</small><strong>{selected.inputs}</strong></div></div></section>
@@ -581,15 +576,7 @@
     </div>
   </div>
 
-  {#if toast}
-    {#key toastSequence}
-      <div class="toast" role="status" style={`--toast-duration: ${notificationDuration}ms`}>
-        <span class="toast-icon"><Icon name="check" size={16} /></span><p>{toast}</p>
-        <button class="icon-button" aria-label="Dismiss notification" onclick={dismissNotification}><Icon name="close" size={15} /></button>
-        <span class="toast-countdown" aria-hidden="true"></span>
-      </div>
-    {/key}
-  {/if}
+
   {#if modal}
     <div class="modal-backdrop"><dialog class="modal" aria-labelledby="modal-title" {@attach showDialog} onclose={() => { modal = null; }}>
       <button class="modal-close icon-button" aria-label="Close dialog" onclick={() => { modal = null; }}><Icon name="close" /></button>
@@ -599,7 +586,7 @@
         <span class="modal-icon"><Icon name="alert" size={30} /></span><span class="eyebrow">USB CONTROLLER</span><h2 id="modal-title">{controllerTarget.action === 'forget' ? 'Remove' : controllerTarget.action === 'disable' ? 'Disable' : 'Update profile for'} {controllerTarget.label}?</h2>
         <p>{controllerTarget.action === 'forget' ? 'Forget this offline device. If it returns later, the gateway will enable it as a new controller at the end of the order. On-device settings remain on the module.' : controllerTarget.action === 'disable' ? 'Remove its USB controller while remembering the device and its configuration. Announcements will not enable it again. You can enable it explicitly later.' : 'Publish the device’s current controls in its existing controller position. Changed controls may affect existing bindings.'}</p>
         {#if controllerWarning(controllerModule, controllerTarget.action)}<div class="notice amber-notice"><Icon name="alert" size={18} /><p>{controllerWarning(controllerModule, controllerTarget.action)}</p></div>{/if}
-        {#if controllerTarget.action === 'forget' && controllerModule?.online}<div class="notice amber-notice" role="alert"><Icon name="alert" size={18} /><p>This device returned while the dialog was open. Disconnect it before removing its remembered identity.</p></div>{/if}
+        {#if controllerTarget.action === 'forget' && controllerModule?.online}<Notification message={'This device returned while the dialog was open. Disconnect it before removing its remembered identity.'} kind="error" />{/if}
         <div class="modal-actions"><button class="secondary-button" onclick={() => { modal = null; }}>Cancel</button><button class="primary-button" disabled={!canConfirmController} onclick={confirmControllerChange}>{controllerTarget.action === 'forget' ? 'Remove device' : controllerTarget.action === 'disable' ? 'Disable controller' : 'Update profile'}</button></div>
       {:else if modal === 'remove'}
         <span class="modal-icon"><Icon name="close" size={30} /></span><span class="eyebrow">REMOVE REGISTRATION</span><h2 id="modal-title">Remove {removeTarget.label}?</h2><p>Remove the controller registration for {removeTarget.id}. The device remains discoverable on CAN. Apply the layout to remove its published USB controller.</p><div class="modal-actions"><button class="secondary-button" onclick={() => { modal = null; }}>Cancel</button><button class="primary-button" disabled={!canRemove} onclick={removeModule}>Remove registration</button></div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import {scriptExample,scriptExamples} from './scriptExamples';
   import {gatewayRequest} from './gateway';
   import {builtins, operationPreset, draftDocument, type MappingProfile, type RuleNode, type RuleInput} from './mappings';
@@ -25,7 +26,7 @@
 <section class="panel editor" aria-label="Mapping draft editor">
   <div class="row"><h2>Draft editor</h2><span>{dirty?'Unsaved edits':'Saved draft'}</span><button class="primary-button" disabled={saving} onclick={persist}>Save draft</button></div>
   <p>Saving keeps the current run unchanged. Start a recording preview to replace it through the normal release and baseline transition.</p>
-  {#if error}<p role="alert" class="notice amber-notice">{error}</p>{/if}
+  {#if error}<Notification message={String(error)} kind="error" />{/if}
   <label>Profile name<input bind:value={draft.name} maxlength="80" oninput={changed}/></label>
   <h3>Logical target layouts</h3>
   {#each draft.targets as target,index}<fieldset><legend>{target.name}</legend><div class="row">
@@ -63,7 +64,7 @@
     <label>Named output bindings JSON<textarea rows="3" value={JSON.stringify(script.outputs,null,2)} onchange={e=>{try{script.outputs=JSON.parse(e.currentTarget.value);changed();}catch(e){error=String(e);}}}></textarea></label>
     <label>Parameters JSON<textarea rows="2" value={JSON.stringify(script.parameters,null,2)} onchange={e=>{try{script.parameters=JSON.parse(e.currentTarget.value);changed();}catch(e){error=String(e);}}}></textarea></label></fieldset>
   {/each}
-  {#if compileNotice}<p role="status">{compileNotice}</p>{/if}
+  {#if compileNotice}<Notification message={String(compileNotice)} />{/if}
   <p>Define on_start(ctx), on_event(ctx) and on_timer(ctx). Use ctx.inputs, ctx.parameters, ctx.state and the deterministic ctx.nowUs clock. Return transaction(state, outputs, timers); outputs use button, axis or hat, and timer(id, microseconds) schedules a callback. Limits: 5 ms evaluation, 100,000 operations, depth 16, 16 KiB state, 64 timers, 128 outputs and 16 log messages per second.</p>
   <label>Axis/hat writer priority JSON<textarea rows="3" value={JSON.stringify(draft.arbitration,null,2)} onchange={e=>{try{draft.arbitration=JSON.parse(e.currentTarget.value);changed();}catch(e){error=String(e);}}}></textarea></label>
   <details><summary>Full draft JSON · roles, targets and rules</summary><button class="secondary-button" onclick={()=>advanced=JSON.stringify(draft,null,2)}>Load current draft</button><textarea aria-label="Full mapping draft JSON" rows="15" bind:value={advanced}></textarea><button class="secondary-button" onclick={()=>updateJson(advanced)}>Apply JSON to draft</button></details>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
   import DeviceVisibility from './DeviceVisibility.svelte';
@@ -66,9 +67,9 @@
 <section class="host-controllers" aria-label="Host controllers">
   <div class="panel-heading"><div><h2>{topology ? 'USB controllers connected to this computer' : 'Host controllers'}</h2><p>Physical controller input · {inventory.backendStatus ?? 'Connecting'}</p></div><span class="quiet-tag">Experimental</span></div>
   {#if !topology}<OptionalDependencies />{/if}
-  {#if inventory.diagnostic}<p class="notice">{inventory.diagnostic}</p>{/if}
-  {#if error}<p class="notice amber-notice" role="alert">{error}</p>{/if}
-  {#if actionError}<p class="notice amber-notice" role="alert">{actionError}</p>{/if}
+  {#if inventory.diagnostic}<Notification message={String(inventory.diagnostic)} kind="error" />{/if}
+  {#if error}<Notification message={String(error)} kind="error" />{/if}
+  {#if actionError}<Notification message={String(actionError)} kind="error" />{/if}
   <div class="host-grid">
     {#each inventory.sources ?? [] as source (source.id)}
       <button class="host-card" class:selected={selected === source.id} class:offline={!source.online} onclick={() => select(source)}>
@@ -90,7 +91,7 @@
         <label>Role<select bind:value={role}>{#each controllerRoles as option}<option value={option}>{option}</option>{/each}</select></label>
         <button class="secondary-button" disabled={busy || !name.trim()} onclick={() => mutate({ command: 'controller_update', sourceId: source.id, name, role })}>Save local details</button>
       </div>
-      {#each detail.diagnostics ?? [] as message}<p class="notice">{message}</p>{/each}
+      {#each detail.diagnostics ?? [] as message}<p>{message}</p>{/each}
       {#if source.online && (inventory.sources ?? []).some(s => !s.online)}
         <div class="metadata"><label>Moved to another USB port?<select bind:value={remembered}><option value="">Choose a remembered offline controller</option>{#each (inventory.sources ?? []).filter(s => !s.online) as previous}<option value={previous.id}>{previous.name}</option>{/each}</select></label><button class="secondary-button" disabled={busy || !remembered} onclick={() => mutate({ command: 'controller_reassign', sourceId: remembered, observedId: source.id })}>Reassign this connection</button></div>
       {/if}

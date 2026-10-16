@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import { invoke, isTauri } from '@tauri-apps/api/core';
 
@@ -38,8 +39,8 @@
         <button class="secondary-button" disabled={!!busy} onclick={() => install(dependency)}>{busy === dependency.id ? 'Waiting for setup…' : `Set up ${dependency.name}`}</button>
       </div>
     {/each}
-    {#if message}<p role="status">{message}</p>{/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
+    {#if message}<Notification message={String(message)} />{/if}
+    {#if error}<Notification message={String(error)} kind="error" />{/if}
   </div>
 {/if}
 

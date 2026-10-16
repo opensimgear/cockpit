@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import { actionError, initialValues, integerInputValue, outputSummary, type ActionValue, type DeviceAction, type DeviceActions } from './device-actions';
   let { action, snapshot, ready, busy, invoke }: {
@@ -35,22 +36,10 @@
       <input id={fieldId} type="text" value={String(values[index] ?? '')} oninput={event => { values[index] = event.currentTarget.value; }} /><p class="field-help">Up to {parameter.maxBytes} UTF-8 bytes.</p>
     {/if}
   {/each}
-  {#if error && values.length}<p class="action-error" role="alert">{error}</p>{/if}
+  {#if error && values.length}<Notification message={String(error)} kind="error" />{/if}
   <div class="action-footer"><span role="status">{pending ? 'Applying…' : outputSummary(action, ready ? snapshot : undefined)}</span><button class="secondary-button" disabled={!!error} onclick={apply}>{action.semantics === 'setter' ? 'Apply' : 'Run action'}</button></div>
 </fieldset>
 
 <style>
-  fieldset { min-width: 0; margin: 12px 0; padding: 14px; border: 1px solid var(--line); border-radius: 5px; background: var(--input-bg); }
-  legend { padding: 0 6px; font-size: 12px; font-weight: 600; }
-  .action-kind { margin: 0 0 12px; color: var(--muted); font-size: 10px; }
-  label { display: block; margin: 10px 0 5px; color: var(--soft); font-size: 11px; }
-  input, select { width: 100%; min-height: 32px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); }
-  input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  input[type='color'] { width: 64px; height: 36px; padding: 2px; cursor: pointer; }
-  .color-value { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-  .action-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }
-  .action-footer span, .field-help, .action-error { font-size: 11px; color: var(--soft); }
-  .action-error { color: var(--amber); }
-  .secondary-button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
-  :disabled { opacity: .55; cursor: default; }
+  fieldset{ min-width: 0; margin: 12px 0; padding: 14px; border: 1px solid var(--line); border-radius: 5px; background: var(--input-bg); }legend{ padding: 0 6px; font-size: 12px; font-weight: 600; }.action-kind{ margin: 0 0 12px; color: var(--muted); font-size: 10px; }label{ display: block; margin: 10px 0 5px; color: var(--soft); font-size: 11px; }input,select{ width: 100%; min-height: 32px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); }input:focus-visible,select:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }input[type='color']{ width: 64px; height: 36px; padding: 2px; cursor: pointer; }.color-value{ display: flex; align-items: center; gap: 10px; font-size: 12px; }.action-footer{ display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }.action-footer span,.field-help{ font-size: 11px; color: var(--soft); }.secondary-button{ padding: 7px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }:disabled{ opacity: .55; cursor: default; }
 </style>
