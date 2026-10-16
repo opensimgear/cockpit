@@ -29,4 +29,5 @@ target/
 *-backups/
 src-tauri/target/
 src-tauri/gen/
+apps/companion/src-tauri/gen/
 src-tauri/resources/firmware/*.uf2

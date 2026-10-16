@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "clientId": "companion-a",
+  "sessionId": "session-a",
+  "generation": "1",
+  "publicationHash": "sha256:2ee0bd6ac1780db15d1b366182ae42b5bdfc0fb8334d7435090ca854c2b3a7b5",
+  "type": "baseline",
+  "sequence": "0",
+  "values": {
+    "steering-x": 0,
+    "steering-y": 0,
+    "primary": false,
+    "secondary": false,
+    "view-hat": -1
+  }
+}

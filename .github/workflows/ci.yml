@@ -32,6 +32,11 @@ jobs:
       - run: pnpm integration:coverage
       - run: pnpm games:coverage
       - run: pnpm ui:build
+      - name: Companion contracts, renderer and lifecycle checks
+        run: |
+          pnpm companion:check
+          pnpm companion:test
+          pnpm companion:ui:build
 
   native:
     runs-on: ubuntu-24.04
@@ -208,6 +213,9 @@ jobs:
       - name: Windows and macOS desktop compilation and regression tests
         if: runner.os != 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Windows companion shell compilation and lifecycle tests
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path apps/companion/src-tauri/Cargo.toml
       - name: Build Windows desktop and service binaries
         if: runner.os == 'Windows'
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service --bin osg-cockpit

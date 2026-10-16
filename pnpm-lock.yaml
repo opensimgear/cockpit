@@ -37,6 +37,39 @@ importers:
         specifier: ^7.3.1
         version: 7.3.7(@types/node@24.19.2)
 
+  apps/companion:
+    dependencies:
+      '@opensimgear/companion-contracts':
+        specifier: workspace:*
+        version: link:../../packages/companion-contracts
+      '@tauri-apps/api':
+        specifier: ^2.12.3
+        version: 2.12.3
+      svelte:
+        specifier: ^5.55.4
+        version: 5.57.2
+    devDependencies:
+      '@sveltejs/vite-plugin-svelte':
+        specifier: ^6.2.1
+        version: 6.2.4(svelte@5.57.2)(vite@7.3.7(@types/node@24.19.2))
+      '@tauri-apps/cli':
+        specifier: ^2.12.2
+        version: 2.12.2
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      svelte-check:
+        specifier: ^4.3.3
+        version: 4.7.6(picomatch@4.0.7)(svelte@5.57.2)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.7(@types/node@24.19.2)
+
+  packages/companion-contracts: {}
+
 packages:
 
   '@esbuild/aix-ppc64@0.28.2':
