@@ -31,7 +31,7 @@ fn object_mutation(upload:&mut RenderPackageUpload,kind:&str,change:impl FnOnce(
 }
 #[test]
 fn native_authority_accepts_both_compiled_board_revisions_and_bounds_reads() {
-    for board in ["sunton","waveshare"] {for revision in ["A","B"] {
+    for board in ["sunton","waveshare"] {for revision in ["A","B","C"] {
         let (source,upload)=fixture(board,revision);let p=RenderPackage::validate(upload,&source).unwrap();
         assert_eq!(p.manifest.source_publication_hash,source.publication_hash);
         assert_eq!(p.manifest.semantic_fingerprint,source.capability_fingerprint);

@@ -69,16 +69,20 @@ fn indirect(path:&std::path::Path)->Result<bool,String>{
     Ok(metadata.file_type().is_symlink())
 }
 fn run()->Result<(),String>{
-    let mut args=std::env::args().skip(1);let mut state_dir=None;let mut boards=Vec::new();let mut seconds=180u64;let mut switch_after=0u64;let mut revision="A".to_owned();let mut reuse=false;
+    let mut args=std::env::args().skip(1);let mut state_dir=None;let mut boards=Vec::new();let mut seconds=180u64;let mut switch_after=0u64;let mut revision="A".to_owned();let mut switch_to="B".to_owned();let mut stop_file=None;let mut reuse=false;
     while let Some(arg)=args.next(){match arg.as_str(){
         "--state-dir"=>state_dir=args.next().map(PathBuf::from),
         "--sunton"|"--waveshare"=>{let name=arg.trim_start_matches("--").to_owned();let port=args.next().ok_or("Missing port")?;boards.push(Board{instance:format!("render-poc-{name}"),name,port,companion:None,hash:String::new(),assigned:false});},
         "--seconds"=>seconds=args.next().ok_or("Missing duration")?.parse().map_err(|_|"Bad duration")?,
         "--switch-after"=>switch_after=args.next().ok_or("Missing switch duration")?.parse().map_err(|_|"Bad switch duration")?,
-        "--revision"=>revision=args.next().filter(|r|r=="A"||r=="B").ok_or("Revision must be A or B")?,
+        "--revision"=>revision=args.next().filter(|r|matches!(r.as_str(),"A"|"B"|"C")).ok_or("Revision must be A, B or C")?,
+        "--switch-to"=>switch_to=args.next().filter(|r|matches!(r.as_str(),"A"|"B"|"C")).ok_or("Switch revision must be A, B or C")?,
+        "--stop-file"=>stop_file=Some(PathBuf::from(args.next().ok_or("Missing stop file path")?)),
         "--reuse-packages"=>reuse=true,
-        _=>return Err("Usage: render-poc --state-dir COPY --sunton COM6 --waveshare COM5 [--revision A|B] [--seconds 180] [--switch-after 60] [--reuse-packages]".into()),
+        _=>return Err("Usage: render-poc --state-dir COPY --sunton COM6 --waveshare COM5 [--revision A|B|C] [--seconds 180] [--switch-after 60] [--switch-to B|C] [--stop-file PATH] [--reuse-packages]".into()),
     }}
+    if switch_after>0&&revision==switch_to{return Err("Choose a different revision for the package switch.".into());}
+    if stop_file.as_ref().is_some_and(|path|path.exists()){return Err("Choose a new stop file path before starting the bench.".into());}
     for (index,board) in boards.iter().enumerate(){
         if boards[..index].iter().any(|previous|previous.name==board.name||previous.port.eq_ignore_ascii_case(&board.port)){return Err("Choose each board profile and USB port only once.".into());}
     }
@@ -94,7 +98,7 @@ fn run()->Result<(),String>{
     let evidence=Arc::new(Evidence::default());let hub=Hub::open(&isolated,evidence.clone())?;install(&hub,&mut boards,&revision,reuse)?;
     let manager=Manager::default();for board in &boards{manager.attach(&board.port,hub.clone())?;}
     let start=Instant::now();let mut last_print=0;let mut switched=false;let mut live_since=None;let mut event_cursors:BTreeMap<String,u64>=BTreeMap::new();
-    while start.elapsed().as_secs()<seconds {
+    while start.elapsed().as_secs()<seconds&&!stop_file.as_ref().is_some_and(|path|path.exists()) {
         let rows=manager.statuses();let mut all_live=true;
         for row in &rows{
             let port=row["port"].as_str().unwrap_or("");let cursor=event_cursors.entry(port.into()).or_default();
@@ -120,7 +124,7 @@ fn run()->Result<(),String>{
         }
         if all_live {if live_since.is_none(){live_since=Some(Instant::now());}}else{live_since=None;}
         if !switched&&switch_after>0&&live_since.is_some_and(|at|at.elapsed().as_secs()>=switch_after){
-            revision="B".into();install(&hub,&mut boards,&revision,false)?;switched=true;live_since=None;
+            revision=switch_to.clone();install(&hub,&mut boards,&revision,false)?;switched=true;live_since=None;
         }
         if start.elapsed().as_secs()>=last_print {
             for row in &rows{println!("{}",json!({"event":"device","elapsedMs":start.elapsed().as_millis(),"revision":revision,"port":row["port"],"device":row["device"],"deviceStatus":row["deviceStatus"],"lastWireRequest":row["lastWireRequest"],"lastHostError":row["lastHostError"],"contentBytes":row["renderContentBytes"],"contentRequests":row["renderContentRequests"],"startupAckMaxBytes":row["startupAckMaxBytes"],"steadyAckMaxBytes":row["steadyAckMaxBytes"]}));}
@@ -129,6 +133,6 @@ fn run()->Result<(),String>{
         }
         thread::sleep(Duration::from_millis(50));
     }
-    manager.shutdown();println!("{}",json!({"event":"complete","revision":revision,"switched":switched,"counts":evidence.0.lock().unwrap().clone()}));Ok(())
+    manager.shutdown();println!("{}",json!({"event":"complete","revision":revision,"switched":switched,"stopReason":if stop_file.as_ref().is_some_and(|path|path.exists()){"operator-stop"}else{"duration"},"counts":evidence.0.lock().unwrap().clone()}));Ok(())
 }
 fn main(){if let Err(error)=run(){eprintln!("{error}");std::process::exit(1);}}

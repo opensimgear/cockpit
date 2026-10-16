@@ -101,7 +101,7 @@ test("legacy compiler derives authority only from source publication and rejects
  const axes=applyDesignerCommand(createDesignerHistory(newDocument()),{type:"add-widget",kind:"slider"});await assert.rejects(()=>publishDocument(axes.present,[]).then(p=>compileLegacyPublication(p,starter.recipe,SUNTON_PROFILE)),/momentary/);
 });
 
-test("both board A/B packages recompile deterministically and reference raster states match exact shared goldens",async()=>{
+test("both board A/B/C packages recompile deterministically and reference raster states match exact shared goldens",async()=>{
  const cases=JSON.parse(await readFile(new URL("./poc/cases.json",import.meta.url),"utf8")),fingerprints=new Map();
  for(const entry of cases.cases){
    const [board,revision]=entry.package.split("/"),profile=board==="sunton"?SUNTON_PROFILE:WAVESHARE_PROFILE,dir=new URL("./poc/"+entry.package+"/",import.meta.url);
@@ -122,4 +122,49 @@ test("both board A/B packages recompile deterministically and reference raster s
    }
  }
  const header=await readFile(new URL("../../../apps/companion-esp32/render/profiles.generated.h",import.meta.url),"utf8");assert.ok(header.includes(await profileHash(SUNTON_PROFILE)));assert.ok(header.includes(await profileHash(WAVESHARE_PROFILE)));
+});
+
+test("package-only revision C pulses each held button and leaves unpressed buttons still within existing profiles",async()=>{
+ for(const [board,profile] of [["sunton",SUNTON_PROFILE],["waveshare",WAVESHARE_PROFILE]]){
+   const dir=new URL("./poc/"+board+"/C/",import.meta.url),prior=new URL("./poc/"+board+"/B/",import.meta.url);
+   const manifestBytes=new Uint8Array(await readFile(new URL("manifest.json",dir))),manifest=JSON.parse(new TextDecoder().decode(manifestBytes));
+   const identity=JSON.parse(await readFile(new URL("identity.json",dir),"utf8")),bManifest=JSON.parse(await readFile(new URL("manifest.json",prior),"utf8"));
+   const starter=createStarter(profile,"c",fonts),objects=new Map();
+   for(const object of manifest.objects)objects.set(object.kind,new Uint8Array(await readFile(new URL(object.kind+".bin",dir))));
+   const packed={manifest,manifestBytes,objects,packageHash:identity.packageHash};
+   const renderer=await createReferenceRenderer(packed,profile),frames=JSON.parse(await readFile(new URL("states.json",dir),"utf8")).frames,rendered=new Map();
+   for(const frame of frames){
+     const state={...frame.state,feedback:frame.state.feedback.map(f=>({...f,type:f.type===1?"boolean":"number",value:f.type===1?!!f.value:f.value}))};
+     rendered.set(frame.name,renderer.update(state));
+   }
+   assert.equal(manifest.counts.timelines,3);assert.ok(manifest.counts.timelines<=profile.limits.timelines);
+   assert.equal(manifest.resources.maxDirtyPixels,bManifest.resources.maxDirtyPixels);
+   assert.equal(manifest.resources.maxLayersPerTile,bManifest.resources.maxLayersPerTile);
+   assert.equal(manifest.semanticDescriptorHash,bManifest.semanticDescriptorHash);
+   assert.equal(manifest.objects.find(o=>o.kind==="images").sha256,bManifest.objects.find(o=>o.kind==="images").sha256);
+   for(const object of manifest.objects)assert.equal(object.version,1);
+   for(const [name,bright,dim,released] of [["laser","pressed","held","confirmed"],["stop","stop-pressed","stop-held","stop-released"]]){
+     const index=starter.recipe.pages[0].nodes.findIndex(node=>node.id===name+"-pressed");
+     const node=starter.recipe.pages[0].nodes[index],timeline=node.timelines[0];
+     assert.equal(timeline.repeat,true);assert.equal(timeline.property,"color");assert.equal(timeline.interpolation,"step");
+     assert.deepEqual(timeline.keyframes.map(k=>k[0]),[0,400,800]);
+     assert.equal(rendered.get(bright).properties[index].visible,true);
+     assert.equal(rendered.get(dim).properties[index].visible,true);
+     assert.notEqual(rendered.get(bright).properties[index].color,rendered.get(dim).properties[index].color);
+     assert.equal(rendered.get(released).properties[index].visible,false);
+     const [x,y,w,h]=node.bounds;let changed=0;
+     for(let py=y;py<y+h;++py)for(let px=x;px<x+w;++px)changed+=Number(rendered.get(bright).frame[py*profile.width+px]!==rendered.get(dim).frame[py*profile.width+px]);
+     assert.ok(changed>w*h/2,board+"/"+name+" held pulse must be conspicuous");
+   }
+   // The two released frames have equal feedback; invisible color timelines
+   // cannot animate either button or alter the rest of the frame.
+   assert.deepEqual(rendered.get("reconnected").frame,rendered.get("stop-released").frame);
+   const live=frames.find(f=>f.name==="live").state;
+   const idle=createReferenceRenderer(packed,profile).then(r=>{
+     const typed={...live,feedback:live.feedback.map(f=>({...f,type:f.type===1?"boolean":"number",value:f.type===1?!!f.value:f.value}))};
+     const first=r.update({...typed,timeMs:100}).frame,second=r.update({...typed,timeMs:600}).frame;
+     assert.deepEqual(first,second);
+   });
+   await idle;
+ }
 });

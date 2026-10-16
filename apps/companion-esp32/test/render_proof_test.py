@@ -19,11 +19,11 @@ def sha(text):
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
 
 
-def catalog():
+def catalog(revisions=("A", "B")):
     return {sha(board + revision): dict(board=board, revision=revision, boardProfile=profiles[0],
         targetProfileId=profiles[1], profileHash=sha(board + "profile"), packageHash=sha(board + revision),
         sourcePublicationHash=sha(board + revision + "source"))
-        for board, profiles in proof.BOARD_PROFILES.items() for revision in ("A", "B")}
+        for board, profiles in proof.BOARD_PROFILES.items() for revision in revisions}
 
 
 def identity(board="sunton", revision="A", identities=None):
@@ -178,8 +178,8 @@ class RenderProofTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 proof.installer_record(value)
 
-    def write_fixtures(self,root):
-        for item in catalog().values():
+    def write_fixtures(self,root,revisions=("A", "B")):
+        for item in catalog(revisions).values():
             directory=root/item["board"]/item["revision"]
             directory.mkdir(parents=True)
             manifest=dict(targetProfileId=item["targetProfileId"],targetProfileHash=item["profileHash"],
@@ -211,6 +211,46 @@ class RenderProofTests(unittest.TestCase):
                 self.assertEqual(proof.main([str(path),"--fixtures",str(root),"--output",str(output)]),2)
             self.assertNotIn("secret-never-output",error.getvalue())
             (root/"sunton"/"A"/"manifest.json").write_text("{}",encoding="utf-8")
+            with self.assertRaises(ValueError):
+                proof.load_identities(root)
+
+    def test_package_c_uses_actual_hash_not_requested_label_and_preserves_ab_reports(self):
+        identities=catalog(("A","B","C"))
+        delayed=live(1000,"B","session-b",identities=identities)
+        delayed["revision"]="C"  # C requested while B is still the displayed package.
+        rows=[published(revision="B",identities=identities),live(0,"B","session-b",identities=identities),
+              published(revision="C",identities=identities),delayed,
+              live(2000,"C","session-c",2000,2,identities),
+              live(3000,"C","session-c",2000,2,identities),finish()]
+        result=proof.summarize(rows,identities)["boards"][0]
+        self.assertEqual([v["revision"] for v in result["liveEvents"]],["B","C"])
+        self.assertEqual(result["longestContinuousLiveMs"],1000)
+        self.assertTrue(result["consecutiveLiveContent"]["allZero"])
+        wrong=published(revision="B",identities=identities);wrong["revision"]="C"
+        with self.assertRaises(ValueError):
+            proof.summarize([wrong,finish()],identities)
+        unknown=published(revision="C",identities=identities);unknown["revision"]="D"
+        with self.assertRaises(ValueError):
+            proof.summarize([unknown,finish()],identities)
+        ab=[published(),live(),live(1000),finish()]
+        self.assertEqual(proof.summarize(ab,catalog()),proof.summarize(ab,identities))
+
+    def test_optional_c_manifest_is_hash_bound_and_uses_the_same_board_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)/"fixtures"
+            self.assertEqual(len(self.write_fixtures(root,("A","B","C"))),6)
+            identity_file=root/"sunton"/"C"/"identity.json"
+            manifest_file=root/"sunton"/"C"/"manifest.json"
+            original=manifest_file.read_bytes()
+            manifest_file.write_bytes(original+b" ")
+            with self.assertRaises(ValueError):
+                proof.load_identities(root)
+            manifest=json.loads(original);manifest["targetProfileHash"]=sha("different-profile")
+            raw=json.dumps(manifest,sort_keys=True,separators=(",",":")).encode()
+            manifest_file.write_bytes(raw)
+            item=json.loads(identity_file.read_text())
+            item.update(profileHash=manifest["targetProfileHash"],packageHash="sha256:"+hashlib.sha256(raw).hexdigest())
+            identity_file.write_text(json.dumps(item))
             with self.assertRaises(ValueError):
                 proof.load_identities(root)
 

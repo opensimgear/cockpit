@@ -48,6 +48,46 @@ static void permute_interactions(fixture *f){unsigned count;uint8_t *records=sec
     records=section(f,1,8,&count);for(unsigned i=0;i<count;i++)write16(records+i*24,1-read16(records+i*24));
     records=section(f,1,3,&count);for(unsigned i=0;i<count;i++)if(records[i*24+3]==1)write16(records+i*24,1-read16(records+i*24));fixture_rehash(f);
 }
+/* Locate the visual through its ABI variable/binding graph, not compiler node order. */
+static unsigned pressed_visual(osg_engine *e,unsigned interaction){
+    unsigned variable=OSG_ENGINE_NONE,node=OSG_ENGINE_NONE;uint8_t record[24],instruction[16];
+    for(unsigned i=0;i<e->scene.variables;i++){
+        assert(osg_scene_record(&e->scene,1,3,i,record,24));
+        if(record[3]==1&&read16(record)==interaction){assert(variable==OSG_ENGINE_NONE);variable=i;}
+    }
+    assert(variable!=OSG_ENGINE_NONE);
+    const osg_render_section *bindings=NULL;
+    for(unsigned i=0;i<e->scene.object[1].section_count;i++)if(e->scene.object[1].sections[i].kind==4)bindings=&e->scene.object[1].sections[i];
+    assert(bindings);
+    for(unsigned i=0;i<bindings->count;i++){
+        assert(osg_scene_record(&e->scene,1,4,i,record,16));
+        if(record[2]!=1||read16(record+6)!=1)continue;
+        assert(osg_scene_record(&e->scene,1,5,read16(record+4),instruction,16));
+        if(instruction[0]==2&&read16(instruction+2)==variable){assert(node==OSG_ENGINE_NONE);node=read16(record);}
+    }
+    assert(node!=OSG_ENGINE_NONE);return node;
+}
+static void package_c_held_pulse(osg_engine *e,const char *base,const char *board,const char *profile,unsigned width,unsigned height){
+    static osg_engine restored;fixture c=fixture_load(base,board,"C");osg_image logical;osg_runtime current;
+    assert(install(e,&c)==OSG_CONTENT_OK&&!strcmp(e->package_hash,c.hash));
+    osg_scene_usage usage;assert(osg_scene_get_usage(&e->scene,&usage)&&usage.timelines==3);
+    runtime_init(e,&logical,&current);display(e,&current,1000);
+    for(unsigned i=0;i<2;i++){
+        uint8_t control[32];assert(osg_scene_record(&e->scene,0,1,i,control,32));
+        unsigned visual=pressed_visual(e,read16(control+28));
+        assert(!e->scene.properties[e->scene.displayed][visual].visible);
+        current.armed=true;current.active=(int)e->control_widgets[i];
+        uint64_t start=1000+i*800;display(e,&current,start+200);
+        osg_scene_properties bright=e->scene.properties[e->scene.displayed][visual];assert(bright.visible);
+        display(e,&current,start+600);osg_scene_properties dim=e->scene.properties[e->scene.displayed][visual];
+        assert(dim.visible&&dim.color!=bright.color);
+        display(e,&current,start+800);assert(e->scene.properties[e->scene.displayed][visual].visible&&e->scene.properties[e->scene.displayed][visual].color==bright.color);
+        current.active=-1;display(e,&current,start+900);assert(!e->scene.properties[e->scene.displayed][visual].visible);
+    }
+    osg_engine_hit_cache hits;assert(osg_engine_copy_hits(e,&hits)&&hits.ready&&hits.count==2);
+    assert(osg_engine_initialize_io(&restored,profile,(uint16_t)width,(uint16_t)height,io())==OSG_CONTENT_OK&&!strcmp(restored.package_hash,c.hash));
+    osg_content_release(&restored.active_view);fixture_free(&c);
+}
 static void adversarial_manifest(osg_engine *e,const fixture *a){
     assert(osg_engine_begin(e,NULL,1,a->hash,true)==OSG_CONTENT_INVALID);
     assert(osg_engine_begin(e,a->manifest,0,a->hash,true)==OSG_CONTENT_INVALID);
@@ -124,8 +164,9 @@ int main(int argc,char **argv){
         osg_connected(&runtime,true);display(&engine,&runtime,300);read_failure=true;hits.count=31;
         assert(!osg_engine_copy_hits(&engine,&hits)&&!hits.count&&engine.failed&&engine.scene.failed&&!engine.ready&&!engine.scene.ready);read_failure=false;
         assert(!osg_engine_copy_hits(&engine,&hits)&&!hits.count);
-        assert(osg_engine_initialize_io(&reboot,profile,(uint16_t)width,(uint16_t)height,io())==OSG_CONTENT_OK&&!strcmp(reboot.package_hash,b.hash));osg_content_release(&reboot.active_view);osg_content_release(&engine.active_view);
+        assert(osg_engine_initialize_io(&reboot,profile,(uint16_t)width,(uint16_t)height,io())==OSG_CONTENT_OK&&!strcmp(reboot.package_hash,b.hash));osg_content_release(&reboot.active_view);
+        package_c_held_pulse(&engine,argv[1],name,profile,width,height);osg_content_release(&engine.active_view);
         fixture_free(&a);fixture_free(&b);
     }
-    assert(!osg_json_allocated());EVP_MD_CTX_free(sha);puts("Both-board A/B streamed engine install, canonical manifest/profile/resource rejection, panel shim, variable redraw, warm scan and rollback tests passed");return 0;
+    assert(!osg_json_allocated());EVP_MD_CTX_free(sha);puts("Both-board A/B/C streamed engine install, held-color pulses, canonical manifest/profile/resource rejection, panel shim, variable redraw, warm scan and rollback tests passed");return 0;
 }

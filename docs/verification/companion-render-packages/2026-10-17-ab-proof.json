@@ -2,10 +2,12 @@
   "boards": [
     {
       "application": {
+        "afterBytes": 926560,
+        "afterSha256": "e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
         "beforeBytes": 926560,
         "beforeSha256": "e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
-        "status": "missing-after",
-        "unchangedVerified": false
+        "status": "unchanged",
+        "unchangedVerified": true
       },
       "board": "sunton",
       "boardProfile": "sunton-3248s035r",

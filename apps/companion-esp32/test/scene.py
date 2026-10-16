@@ -103,6 +103,11 @@ subprocess.run([os.environ.get('CC','gcc'),'-std=c11','-Wall','-Wextra','-Werror
 result=subprocess.run([str(OUT/'scene-test'),str(OUT/'base')],cwd=ROOT,check=False,capture_output=True,text=True)
 (OUT/'scene-test.log').write_text(result.stdout+result.stderr);print(result.stdout+result.stderr,end='')
 if result.returncode:raise SystemExit(result.returncode)
+# Enumerate the actual tested catalog, including optional package-only revisions.
+# This evidence is emitted only after every native full-frame comparison passed.
+evidence={'formatVersion':1,'cases':[{'package':case['package'],'frames':len(case['frames'])} for case in cases['cases']]}
+(OUT/'poc-evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
+print('Native C/TypeScript RGB565 goldens: '+', '.join(case['package']+' ('+str(len(case['frames']))+' frames)' for case in cases['cases']))
 subprocess.run(['gcov','-j','-b','-c','scene-test-scene.gcno'],cwd=OUT,check=True)
 report=json.loads(gzip.decompress((OUT/'scene-test-scene.gcov.json.gz').read_bytes()))
 module=next(f for f in report['files'] if f['file'].endswith('/render/scene.c'))

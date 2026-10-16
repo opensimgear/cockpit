@@ -14,6 +14,7 @@ import re
 import sys
 
 MAX_LINE = 8192
+REVISIONS = ("A", "B", "C")
 MAX_FILE = 16 * 1024 * 1024
 MAX_COUNTER = 18446744073709551615
 MAX_UINT32 = 4294967295
@@ -150,8 +151,12 @@ def load_identities(root):
     catalog = {}
     for board, (board_profile, profile_id) in BOARD_PROFILES.items():
         hashes = set()
-        for revision in ("A", "B"):
+        for revision in REVISIONS:
             directory = Path(root) / board / revision
+            # Existing A/B evidence remains usable before optional C is built.
+            # A present C directory must contain valid bound identities.
+            if revision == "C" and not directory.exists():
+                continue
             identity = read_object(directory / "identity.json")
             with (directory / "manifest.json").open("rb") as source_file:
                 raw = source_file.read(MAX_LINE + 1)
@@ -250,7 +255,9 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
     def state(board):
         if board not in states:
             identities = [v for v in catalog.values() if v["board"] == board]
-            require(len(identities) == 2, "Missing board fixture identities")
+            revisions = {v["revision"] for v in identities}
+            require({"A", "B"} <= revisions <= set(REVISIONS) and
+                    len(identities) == len(revisions), "Missing or duplicate board fixture identities")
             states[board] = dict(port=None, previous=None, current=None, lastTime=None,
                                 lastBytes=None, lastReads=None, sessions=set(), events=[],
                                 pairs=0, byteIncrement=0, readIncrement=0, regressions=0,
@@ -282,7 +289,7 @@ def summarize(records, catalog, before=None, after=None, allow_running=False, ma
         event = value.get("event")
         if event == "published":
             board, revision = value.get("board"), value.get("revision")
-            require(board in BOARD_PROFILES and revision in ("A", "B"), "Unknown published board/revision")
+            require(board in BOARD_PROFILES and revision in REVISIONS, "Unknown published board/revision")
             package = digest(value.get("packageHash"))
             source = digest(value.get("publicationHash"))
             identity = catalog.get(package)

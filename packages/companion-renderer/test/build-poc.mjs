@@ -9,7 +9,7 @@ export async function buildPoc() {
   const license=await readFile(new URL("../assets/OFL.txt",import.meta.url),"utf8");
   const fonts=prepared.fonts.map(font=>({...font,license,glyphs:font.glyphs.map(glyph=>({...glyph,coverage:Uint8Array.from(glyph.coverage)}))}));
   const cases=[];
-  for(const [board,profile]of[["sunton",SUNTON_PROFILE],["waveshare",WAVESHARE_PROFILE]])for(const revision of["a","b"]){
+  for(const [board,profile]of[["sunton",SUNTON_PROFILE],["waveshare",WAVESHARE_PROFILE]])for(const revision of["a","b","c"]){
     const dir=new URL(board+"/"+revision.toUpperCase()+"/",root);await mkdir(dir,{recursive:true});
     const starter=createStarter(profile,revision,fonts),publication=await publishDocument(starter.document,[]);
     const compiled=await compileLegacyPublication(publication,starter.recipe,profile);
@@ -21,13 +21,21 @@ export async function buildPoc() {
     await writeFile(new URL("identity.json",dir),JSON.stringify({packageHash:compiled.packageHash,profileHash:compiled.manifest.targetProfileHash,sourcePublicationHash:publication.publicationHash,semanticFingerprint:publication.capabilityFingerprint,recipeHash:compiled.recipeHash,compilerId:compiled.manifest.compilerId,compilerVersion:compiled.manifest.compilerVersion},null,2)+"\n");
     console.log(board,revision,"objects",compiled.manifest.resources.objectBytes,"scene",compiled.manifest.objects.find(o=>o.kind==="scene").bytes,"dirty",compiled.manifest.resources.maxDirtyPixels,"layers",compiled.manifest.resources.maxLayersPerTile);
     const renderer=await createReferenceRenderer(compiled,profile),frames=[];
-    for(const [name,timeMs,connected,power,confirmed,pressed,fresh]of[
+    const states=[
       ["offline",0,false,0,false,false,false],["live",100,true,37.5,false,false,true],
       ["pressed",200,true,50,false,true,true],["confirmed",350,true,73.2,true,false,true],
       ["stale",800,true,73.2,true,false,false],["repeat",1300,true,73.2,true,false,false],
       ["disconnected",1600,false,73.2,true,false,false],["reconnected",2000,true,88.8,true,false,true],
-    ]){
-      const state={page:0,timeMs,connected,pressed:[pressed,false],feedback:[{type:2,available:true,fresh,value:power},{type:2,available:true,fresh,value:power},{type:1,available:true,fresh,value:confirmed?1:0}]};
+    ];
+    if(revision==="c"){
+      states[3][1]=650;
+      states.splice(3,0,["held",600,true,50,false,true,true]);
+      states.push(["stop-pressed",2100,true,88.8,true,[false,true],true],
+        ["stop-held",2500,true,88.8,true,[false,true],true],
+        ["stop-released",2600,true,88.8,true,false,true]);
+    }
+    for(const [name,timeMs,connected,power,confirmed,pressed,fresh]of states){
+      const state={page:0,timeMs,connected,pressed:Array.isArray(pressed)?pressed:[pressed,false],feedback:[{type:2,available:true,fresh,value:power},{type:2,available:true,fresh,value:power},{type:1,available:true,fresh,value:confirmed?1:0}]};
       const typed={...state,feedback:state.feedback.map(f=>({...f,type:f.type===1?"boolean":"number",value:f.type===1?!!f.value:f.value}))};
       const result=renderer.update(typed),rgb=rgb565Bytes(result.frame),rgbName=name+".rgb565.gz";
       await writeFile(new URL(rgbName,dir),gzipSync(rgb,{level:9}));
