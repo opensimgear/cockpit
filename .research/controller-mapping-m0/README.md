@@ -160,3 +160,20 @@ after provisioning, but that path has not been live-qualified in this run. Use
 a new directory for every run. No reboot is performed. General custom-layout
 editing, FFB-capable layouts, concurrent configurators and reboot recovery remain
 unqualified; this research helper is not a general provisioning service.
+
+## Windows follow-up, 15 October 2026
+
+See `docs/verification/2026-10-15-controller-mapping-m0-windows.md` for current
+results and the required reboot checkpoint. HidHideInverseProbe.cs uses a six-stage
+journal and reverse restoration, with a separate guardian; its temporary global
+policy replacement requires authorization because other hidden devices are exposed
+during the experiment. `selftest` does not open the driver. `verify <journal>` is
+read-only; `recover <journal>` restores only a recognized journal stage and refuses
+external conflicts. The `session` argument shape matches HidHideSessionProbe.
+
+probe-vjoy-custom.ps1 is a representative custom/FFB experiment, not a general
+provisioner. Its continuous-restart suite encountered a genuine Windows reboot
+requirement and remains unqualified. Do not rerun it until the reboot checkpoint is
+verified and the protocol handles multi-boot recovery. check-windows-followup.ps1
+records the Before snapshot once and verifies the After snapshot without changing
+driver settings. Run it in PowerShell 7, not legacy Windows PowerShell.
