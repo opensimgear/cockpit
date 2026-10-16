@@ -107,7 +107,13 @@ static bool present(void *context) {
         goto failed;
     for (unsigned i = 0; i < 3; i++)
         if (xSemaphoreTake(b->vsync, pdMS_TO_TICKS(80)) != pdTRUE) goto failed;
-    b->back = 1 - b->back; return true;
+    /* Partial redraws leave most pixels untouched. The recycled frame must
+     * contain the newly presented image before the next write, otherwise
+     * alternating disjoint updates restore stale pixels every other frame.
+     * The fence above must complete before writing the old scanout frame. */
+    const unsigned recycled = 1 - b->back;
+    memcpy(b->fb[recycled], b->fb[b->back], FRAME_BYTES);
+    b->back = recycled; return true;
 failed:
     b->display_failed = true;
     ESP_LOGE("lcd7", "Frame presentation failed; reboot required");

@@ -11,6 +11,10 @@ on Android, iOS or in a desktop browser; the companion is a client of Cockpit, n
 Cockpit host. All existing live-output, provisioning, hiding and script gates stay
 unchanged.
 
+The [downloadable rendering implementation plan](companion-render-packages.md)
+defines proposed ESP32 content packages, widget compatibility, device budgets
+and proof-of-concept acceptance for the Sunton and Waveshare boards.
+
 ## Ownership and code boundaries
 
 This repository owns the feature. `packages/companion-contracts` owns versioned

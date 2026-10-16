@@ -4,23 +4,32 @@
 #include <stdio.h>
 
 static uint16_t frames[2][WIDTH*HEIGHT];
+static uint16_t before_present[2][WIDTH*HEIGHT], expected_frame[WIDTH*HEIGHT];
 static unsigned operation, fail_at, bus_count, devices, panels, semaphores, waits, pending;
+static unsigned fail_wait;
 static uint64_t clock_ms;
 static size_t psram_bytes=8*1024*1024;
-static bool wait_failure, wrong_product, wrong_geometry;
+static bool check_no_reuse, wrong_product, wrong_geometry;
 static uint8_t status, point[8], outputs_seen[32];
 static unsigned outputs_count;
 static vsync_callback callback;
 static void *callback_context;
 static bool step(void) { return ++operation != fail_at; }
+static void frames_unchanged(void) {
+    if(check_no_reuse)assert(!memcmp(frames,before_present,sizeof(frames)));
+}
+static bool checked_present(osg_board *b) {
+    memcpy(before_present,frames,sizeof(frames));check_no_reuse=true;
+    bool result=b->present(b->context);check_no_reuse=false;return result;
+}
 size_t esp_psram_get_size(void){return psram_bytes;}
 int64_t esp_timer_get_time(void){return (int64_t)clock_ms*1000;}
 void vTaskDelay(unsigned ms){clock_ms+=ms;}
 SemaphoreHandle_t xSemaphoreCreateCounting(unsigned max,unsigned initial){assert(max==3&&!initial);if(!step())return NULL;semaphores++;return (void *)1;}
 int xSemaphoreTake(SemaphoreHandle_t s,unsigned ticks){
     assert(s);if(!ticks){if(pending){pending--;return pdTRUE;}return pdFALSE;}
-    assert(ticks==80);waits++;clock_ms+=ticks;
-    return wait_failure?pdFALSE:pdTRUE;
+    assert(ticks==80);frames_unchanged();waits++;clock_ms+=ticks;
+    return waits==fail_wait?pdFALSE:pdTRUE;
 }
 int xSemaphoreGiveFromISR(SemaphoreHandle_t s,BaseType_t *wake){assert(s);if(pending<3)pending++;*wake=pdTRUE;return pdTRUE;}
 void vSemaphoreDelete(SemaphoreHandle_t s){assert(s&&semaphores);semaphores--;}
@@ -83,11 +92,11 @@ esp_err_t esp_lcd_panel_reset(esp_lcd_panel_handle_t p){assert(p);return step()?
 esp_err_t esp_lcd_panel_init(esp_lcd_panel_handle_t p){assert(p);return step()?ESP_OK:-1;}
 esp_err_t esp_lcd_panel_del(esp_lcd_panel_handle_t p){assert(p&&panels);panels--;return ESP_OK;}
 esp_err_t esp_lcd_panel_draw_bitmap(esp_lcd_panel_handle_t p,int x,int y,int w,int h,const void *data){
-    assert(p&&!x&&!y&&w==800&&h==480&&data==hardware.fb[hardware.back]);return step()?ESP_OK:-1;
+    assert(p&&!x&&!y&&w==800&&h==480&&data==hardware.fb[hardware.back]);frames_unchanged();return step()?ESP_OK:-1;
 }
 static void empty(void){assert(!bus_count&&!devices&&!panels&&!semaphores);}
 static osg_board ready(void){
-    cleanup(&hardware);empty();operation=fail_at=outputs_count=pending=waits=0;wait_failure=wrong_product=wrong_geometry=false;
+    cleanup(&hardware);empty();operation=fail_at=outputs_count=pending=waits=fail_wait=0;check_no_reuse=wrong_product=wrong_geometry=false;
     psram_bytes=8*1024*1024;osg_board b;assert(osg_board_init(&b));assert(b.width==800&&b.height==480&&b.touch&&b.present&&b.write);
     assert(outputs_count==4&&outputs_seen[0]==0x30&&outputs_seen[1]==0x38&&outputs_seen[2]==0x3a&&outputs_seen[3]==0x3e);return b;
 }
@@ -108,10 +117,34 @@ int main(void){
     assert(!b.write(b.context,800,0,1,1,pixels));assert(!b.write(b.context,0,480,1,1,pixels));
     assert(!b.write(b.context,0,0,0,1,pixels));assert(!b.write(b.context,0,0,1,0,pixels));assert(!b.write(b.context,0,0,1,1,NULL));
     assert(callback(NULL,NULL,callback_context));assert(pending==1);
-    unsigned back=hardware.back;assert(b.present(b.context)&&waits==3&&hardware.back!=back);
-    assert(b.present(b.context)&&hardware.back==back);
-    fail_at=operation+1;assert(!b.present(b.context)&&hardware.display_failed);assert(!b.present(b.context)&&!b.write(b.context,0,0,1,1,pixels));
-    b=ready();wait_failure=true;back=hardware.back;assert(!b.present(b.context)&&hardware.back==back);wait_failure=false;
+    unsigned back=hardware.back;assert(checked_present(&b)&&waits==3&&hardware.back!=back&&!pending);
+    assert(!memcmp(frames[0],frames[1],FRAME_BYTES)&&frames[0][479*800+799]==4);
+    /* A full expected image proves that updates in one region never erase
+     * the previous update in a distant region, regardless of buffer parity. */
+    memcpy(expected_frame,frames[0],FRAME_BYTES);
+    for(unsigned n=0;n<12;n++){
+        int rx=n%2?731:11,ry=n%2?391:23;
+        uint16_t region[6];for(unsigned i=0;i<6;i++)region[i]=(uint16_t)(100+n*10+i);
+        assert(b.write(b.context,rx,ry,3,2,region));
+        for(unsigned row=0;row<2;row++)memcpy(expected_frame+(ry+row)*WIDTH+rx,region+row*3,3*sizeof(uint16_t));
+        memset(region,0,sizeof(region)); /* Caller scratch can be reused immediately. */
+        back=hardware.back;assert(checked_present(&b)&&hardware.back!=back);
+        assert(!memcmp(frames[0],expected_frame,FRAME_BYTES)&&!memcmp(frames[1],expected_frame,FRAME_BYTES));
+    }
+    assert(checked_present(&b)); /* An unchanged presentation stays coherent. */
+    assert(!memcmp(frames[0],expected_frame,FRAME_BYTES)&&!memcmp(frames[1],expected_frame,FRAME_BYTES));
+    assert(b.write(b.context,0,0,2,2,pixels));back=hardware.back;
+    fail_at=operation+1;unsigned before_waits=waits;
+    assert(!checked_present(&b)&&hardware.display_failed&&hardware.back==back&&waits==before_waits);
+    assert(!memcmp(frames,before_present,sizeof(frames)));
+    assert(!checked_present(&b)&&!b.write(b.context,0,0,1,1,pixels));
+    for(unsigned fence=1;fence<=3;fence++){
+        b=ready();assert(b.write(b.context,15,20,2,2,pixels));back=hardware.back;
+        fail_wait=fence;assert(!checked_present(&b)&&hardware.back==back&&waits==fence&&hardware.display_failed);
+        assert(!memcmp(frames,before_present,sizeof(frames)));
+        fail_wait=0;assert(!checked_present(&b)&&!b.write(b.context,0,0,1,1,pixels));
+        assert(!memcmp(frames,before_present,sizeof(frames)));
+    }
     b=ready();status=0;assert(!touch(&b)); /* Startup needs an observed release. */
     report(0,0,0,0);assert(touch(&b)&&!hardware.down);status=0;clock_ms+=10000;assert(touch(&b));
     report(1,799,479,2);bool down=false;int x=0,y=0;assert(b.touch(b.context,&down,&x,&y)&&down&&x==799&&y==479);
@@ -124,6 +157,6 @@ int main(void){
     for(unsigned offset=1;offset<=3;offset++){report(1,10,10,0);fail_at=operation+offset;assert(!touch(&b));fail_at=0;}
     report(0,0,0,0);assert(touch(&b));
     cleanup(&hardware);empty();assert(!touch(&b)&&!present(&hardware)&&!write_pixels(&hardware,0,0,1,1,pixels));
-    puts("Waveshare init, geometry, touch freshness, multitouch, frame fences and failure cleanup passed");
+    puts("Waveshare init, geometry, touch freshness, multitouch, disjoint frame coherence, fences, timeout no-reuse and failure cleanup passed");
     return 0;
 }
