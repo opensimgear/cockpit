@@ -182,6 +182,9 @@ impl Runtime {
     pub(crate) fn profile_acquire_transports(&self) -> Result<Hub, String> {
         Ok(self.services()?.hub.clone())
     }
+    pub(crate) fn profile_provider(&self) -> Arc<CompanionProvider> {
+        self.provider.clone()
+    }
     pub(crate) fn game_command(&self, command: &str, request: &Value) -> Result<Value, String> {
         let hub = self.hub()?;
         match command {
