@@ -171,7 +171,9 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            app.manage(NativeGateway(Arc::new(gateways::GatewayManager::new())));
+            let gateway = Arc::new(gateways::GatewayManager::new());
+            gateway.start_automatic();
+            app.manage(NativeGateway(gateway));
             desktop::setup(app)?;
             Ok(())
         })

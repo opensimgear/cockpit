@@ -70,6 +70,7 @@ fn main() {
         std::process::exit(2);
     }
     let service = Arc::new(GatewayManager::new());
+    service.start_automatic();
     let output = Arc::new(Mutex::new(io::stdout()));
     let active = Arc::new(AtomicUsize::new(0));
     let mut requests: Vec<thread::JoinHandle<()>> = Vec::new();

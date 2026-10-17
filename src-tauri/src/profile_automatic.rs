@@ -1,0 +1,601 @@
+//! Native automatic selection uses the same one-use staging and coordinator as
+//! explicit Apply. Process sessions are reverified after slow preparation.
+use super::*;
+use crate::profile_automatic_store::{Settings, Store};
+use osg_profiles::{
+    activation::{Decision, Locks, Reconciler, Rule, Target, VerifiedGame},
+    session::SelectionMode,
+};
+use std::{path::PathBuf, sync::atomic::AtomicBool};
+
+struct State {
+    settings: Settings,
+    read_only: bool,
+    epoch: u64,
+    reconciler: Reconciler,
+    status: &'static str,
+    message: String,
+    conflicts: Vec<String>,
+    target: Option<Target>,
+    last_attempt: Option<Target>,
+}
+
+pub(super) struct Runtime {
+    store: Store,
+    state: Mutex<State>,
+    // Emergency inhibition never waits for a disk write or policy-state mutex.
+    emergency: AtomicBool,
+    pending_controls: AtomicUsize,
+}
+pub(super) struct ControlRequest<'a>(&'a AtomicUsize);
+impl Drop for ControlRequest<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+impl Runtime {
+    pub(super) fn new(path: Option<PathBuf>) -> Self {
+        let store = Store::new(path);
+        let (settings, error) = match store.load() {
+            Ok(settings) => (settings.unwrap_or_default(), None),
+            Err(error) => (Settings::default(), Some(error)),
+        };
+        Self {
+            store,
+            state: Mutex::new(State {
+                settings,
+                read_only: error.is_some(),
+                epoch: 0,
+                reconciler: Reconciler::default(),
+                status: if error.is_some() {
+                    "blocked"
+                } else {
+                    "waiting"
+                },
+                message: error.unwrap_or_default(),
+                conflicts: vec![],
+                target: None,
+                last_attempt: None,
+            }),
+            emergency: AtomicBool::new(false),
+            pending_controls: AtomicUsize::new(0),
+        }
+    }
+    fn config(&self) -> (Settings, u64, bool) {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        (state.settings.clone(), state.epoch, state.read_only)
+    }
+    pub(super) fn view(&self) -> Value {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let (status, message) = if self.emergency.load(Ordering::Acquire) {
+            ("blocked","Emergency Stop prevents automatic activation. Select Automatic explicitly to clear this latch.")
+        } else {
+            (state.status, state.message.as_str())
+        };
+        json!({"schemaVersion":1,"mode":state.settings.mode,"manualProfileId":state.settings.manual_profile_id,"rules":state.settings.rules,"status":status,"message":message,"conflicts":state.conflicts,"lastAttempt":state.last_attempt,"target":state.target,"readOnly":state.read_only})
+    }
+    fn change(&self, edit: impl FnOnce(&mut Settings) -> Result<(), String>) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.read_only {
+            return Err(
+                "Repair native automatic profile settings before changing selection rules.".into(),
+            );
+        }
+        let mut next = state.settings.clone();
+        edit(&mut next)?;
+        next.validate()?;
+        self.store.save(&next)?;
+        state.epoch = state
+            .epoch
+            .checked_add(1)
+            .ok_or("Automatic profile control epoch exhausted.")?;
+        state.settings = next;
+        state.conflicts.clear();
+        state.status = if state.settings.mode == SelectionMode::Manual {
+            "manual"
+        } else {
+            "waiting"
+        };
+        state.message = if state.settings.mode == SelectionMode::Manual {
+            "Manual selection stays pinned until Automatic is selected.".into()
+        } else {
+            "Waiting for verified native game contexts.".into()
+        };
+        Ok(())
+    }
+    pub(super) fn control(&self, command: &str) {
+        if command == "profile_stop" {
+            self.emergency.store(true, Ordering::Release);
+        }
+    }
+    pub(super) fn begin_control(&self, command: &str) -> Option<ControlRequest<'_>> {
+        if !matches!(
+            command,
+            "profile_apply"
+                | "profile_select"
+                | "profile_selection_mode"
+                | "profile_game_rule_save"
+                | "profile_game_rule_remove"
+                | "profile_pause"
+                | "profile_recover"
+                | "profile_stop"
+        ) {
+            return None;
+        }
+        self.pending_controls.fetch_add(1, Ordering::AcqRel);
+        Some(ControlRequest(&self.pending_controls))
+    }
+    pub(super) fn pending(&self) -> bool {
+        self.pending_controls.load(Ordering::Acquire) != 0
+    }
+    pub(super) fn retry_event(&self) {
+        // Cancellation/admission itself uses Manager's atomic epoch. This one
+        // only permits an explicit operator event to retry an automatic intent.
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(next) = state.epoch.checked_add(1) {
+            state.epoch = next;
+        } else {
+            state.read_only = true;
+            state.status = "blocked";
+            state.message = "Automatic profile control epoch exhausted.".into();
+        }
+    }
+    fn note(&self, epoch: u64, decision: &Decision) -> Option<Target> {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.epoch != epoch || state.read_only {
+            return None;
+        }
+        match decision {
+            Decision::Hold(message) => {
+                state.status = if state.settings.mode == SelectionMode::Manual {
+                    "manual"
+                } else {
+                    "blocked"
+                };
+                state.message = message.clone();
+                state.conflicts.clear();
+                None
+            }
+            Decision::Conflict(games) => {
+                state.status = "conflict";
+                state.message="Equal highest-priority game rules conflict; the current safe selection is retained.".into();
+                state.conflicts = games.clone();
+                None
+            }
+            Decision::Select(target) => {
+                state.conflicts.clear();
+                let next = state.reconciler.next(decision, epoch)?;
+                state.target = Some(target.clone());
+                state.last_attempt = Some(target.clone());
+                state.status = "preparing";
+                state.message =
+                    "Preparing the selected saved profile through native admission.".into();
+                Some(next)
+            }
+        }
+    }
+    fn finish(&self, epoch: u64, target: Target, result: &Result<(), String>) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.epoch != epoch {
+            return;
+        }
+        state.target = Some(target);
+        state.status = if result.is_ok() { "active" } else { "failed" };
+        state.message=match result{Ok(())=>"Automatic selection applied the exact saved revision. Process polling does not replay its actions.".into(),Err(error)=>error.clone()};
+    }
+}
+
+impl GatewayManager {
+    pub(super) fn restore_automatic_selection(&self) {
+        let (settings, _, read_only) = self.profile_automatic.config();
+        if read_only {
+            return;
+        }
+        let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
+        let id = if profiles.compile_source(&settings.manual_profile_id).is_ok() {
+            settings.manual_profile_id.as_str()
+        } else {
+            osg_profiles::DEFAULT_PROFILE_ID
+        };
+        let _ = profiles
+            .request(&json!({"command":"profile_select","id":id,"selectionSource":"manual"}));
+        let _ = profiles.request(&json!({"command":"profile_selection_mode","mode":settings.mode}));
+    }
+    pub(super) fn automatic_response(&self) -> Result<Value, String> {
+        let mut response = self
+            .profiles
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .request(&json!({"command":"profile_status"}))?;
+        self.decorate_profile_session(&mut response);
+        Ok(response)
+    }
+    pub(super) fn automatic_manual_pin(&self, id: &str) -> Result<(), String> {
+        // A malformed optional automation file already blocks every automatic
+        // startup. Preserve it while permitting an explicit healthy profile to
+        // run manually; its corruption must not disable Default-only operation.
+        {
+            let mut state = self
+                .profile_automatic
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if state.read_only {
+                let mut next = state.settings.clone();
+                next.mode = SelectionMode::Manual;
+                next.manual_profile_id = id.into();
+                next.validate()?;
+                state.epoch = state
+                    .epoch
+                    .checked_add(1)
+                    .ok_or("Automatic profile control epoch exhausted.")?;
+                state.settings = next;
+                return Ok(());
+            }
+        }
+        self.profile_automatic.change(|settings| {
+            settings.mode = SelectionMode::Manual;
+            settings.manual_profile_id = id.into();
+            Ok(())
+        })
+    }
+    pub(super) fn automatic_stop_pin(&self) -> Result<(), String> {
+        // Called only after emergency neutralization, so a slow settings write
+        // cannot delay revocation or leave held outputs running.
+        let selected = self
+            .profiles
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .request(&json!({"command":"profile_status"}))?["session"]["selectedProfileId"]
+            .as_str()
+            .unwrap_or(osg_profiles::DEFAULT_PROFILE_ID)
+            .to_owned();
+        if let Err(error) = self.automatic_manual_pin(&selected) {
+            let _ = self
+                .profile_session
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .pause(true);
+            return Err(format!("Outputs were stopped, but Manual selection could not be persisted: {error}. Explicitly repair/recover before Automatic."));
+        }
+        self.profiles
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .request(&json!({"command":"profile_selection_mode","mode":"manual"}))?;
+        Ok(())
+    }
+    pub(super) fn automatic_request(&self, request: &Value) -> Result<Value, String> {
+        let command = request["command"]
+            .as_str()
+            .ok_or("Choose an automatic profile operation.")?;
+        let fields: &[&str] = match command {
+            "profile_automatic_status" => &[],
+            "profile_selection_mode" => &["mode"],
+            "profile_game_rule_save" => &["gameId", "profileId", "priority", "enabled"],
+            "profile_game_rule_remove" => &["gameId"],
+            _ => return Err("Unknown automatic profile operation.".into()),
+        };
+        if request
+            .as_object()
+            .ok_or("Automatic profile control requires an object.")?
+            .keys()
+            .any(|key| key != "command" && !fields.contains(&key.as_str()))
+        {
+            return Err("Unknown field in automatic profile request.".into());
+        }
+        match command {
+            "profile_automatic_status" => {}
+            "profile_selection_mode" => {
+                let mode: SelectionMode = serde_json::from_value(request["mode"].clone())
+                    .map_err(|_| "Choose Manual or Automatic selection.")?;
+                let selected = self
+                    .profiles
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .request(&json!({"command":"profile_status"}))?["session"]["selectedProfileId"]
+                    .as_str()
+                    .ok_or("The native selected profile identity is missing.")?
+                    .to_owned();
+                self.profile_automatic.change(|settings| {
+                    settings.mode = mode;
+                    if mode == SelectionMode::Manual {
+                        settings.manual_profile_id = selected;
+                    }
+                    Ok(())
+                })?;
+                self.profiles
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .request(request)?;
+                if mode == SelectionMode::Automatic {
+                    self.profile_automatic
+                        .emergency
+                        .store(false, Ordering::Release);
+                }
+            }
+            "profile_game_rule_save" => {
+                let game = request["gameId"]
+                    .as_str()
+                    .filter(|game| {
+                        matches!(
+                            *game,
+                            "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+                        )
+                    })
+                    .ok_or("Choose a supported game rule.")?;
+                let id = request["profileId"]
+                    .as_str()
+                    .ok_or("Choose a saved unified profile.")?;
+                let priority = request["priority"]
+                    .as_i64()
+                    .and_then(|p| i16::try_from(p).ok())
+                    .ok_or("Choose an explicit integer priority from -32768 to 32767.")?;
+                let enabled = request["enabled"]
+                    .as_bool()
+                    .ok_or("Rule enabled must be a boolean.")?;
+                let (document, _, read_only) = self
+                    .profiles
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .compile_source(id)?;
+                if read_only {
+                    return Err("Repair profile storage before saving an activation rule.".into());
+                }
+                if enabled
+                    && !document.eligibility.game_ids.is_empty()
+                    && !document.eligibility.game_ids.iter().any(|id| id == game)
+                {
+                    return Err("The saved profile is not eligible for this game.".into());
+                }
+                let (settings, _, _) = self.profile_automatic.config();
+                let identity = match self.games.profile_activation_identity(game) {
+                    Ok(identity) => identity,
+                    Err(error) if !enabled => settings
+                        .rules
+                        .iter()
+                        .find(|rule| rule.identity.game_id == game)
+                        .map(|rule| rule.identity.clone())
+                        .ok_or(error)?,
+                    Err(error) => return Err(error),
+                };
+                self.profile_automatic.change(|settings| {
+                    settings.rules.retain(|rule| rule.identity.game_id != game);
+                    settings.rules.push(Rule {
+                        identity,
+                        profile_id: id.into(),
+                        priority,
+                        enabled,
+                    });
+                    settings
+                        .rules
+                        .sort_by(|a, b| a.identity.game_id.cmp(&b.identity.game_id));
+                    Ok(())
+                })?;
+            }
+            _ => {
+                let game = request["gameId"]
+                    .as_str()
+                    .ok_or("Choose a saved game rule.")?;
+                self.profile_automatic.change(|settings| {
+                    let before = settings.rules.len();
+                    settings.rules.retain(|rule| rule.identity.game_id != game);
+                    if settings.rules.len() == before {
+                        return Err("No activation rule exists for this game.".into());
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+        self.automatic_response()
+    }
+    fn automatic_decision(&self) -> Result<(Decision, Vec<VerifiedGame>, u64), String> {
+        let (settings, epoch, read_only) = self.profile_automatic.config();
+        if read_only {
+            return Ok((
+                Decision::Hold(
+                    "Repair native automatic profile settings before activation.".into(),
+                ),
+                vec![],
+                epoch,
+            ));
+        }
+        let status = self
+            .profile_session
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .status()
+            .clone();
+        let locks = Locks {
+            paused: status.paused,
+            emergency_stopped: self.profile_automatic.emergency.load(Ordering::Acquire),
+            recovery_needed: status.state == crate::profile_session::State::RecoveryNeeded,
+            faulted: status.state == crate::profile_session::State::Faulted,
+        };
+        if settings.mode == SelectionMode::Manual
+            || locks.paused
+            || locks.emergency_stopped
+            || locks.recovery_needed
+            || locks.faulted
+        {
+            return Ok((
+                osg_profiles::activation::select(settings.mode, locks, &settings.rules, &[], &[])?,
+                vec![],
+                epoch,
+            ));
+        }
+        let observed = match self.games.profile_activation_observations() {
+            Ok(observed) => observed,
+            Err(error) => return Ok((Decision::Hold(error), vec![], epoch)),
+        };
+        let profiles = {
+            let profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
+            settings
+                .rules
+                .iter()
+                .filter(|rule| rule.enabled)
+                .filter_map(|rule| {
+                    profiles
+                        .compile_source(&rule.profile_id)
+                        .ok()
+                        .map(|(document, _, _)| document)
+                })
+                .collect::<Vec<_>>()
+        };
+        Ok((
+            osg_profiles::activation::select(
+                settings.mode,
+                locks,
+                &settings.rules,
+                &observed,
+                &profiles,
+            )?,
+            observed,
+            epoch,
+        ))
+    }
+    pub(super) fn poll_automatic(&self) {
+        if self.closed.load(Ordering::Acquire)
+            || self.profile_pending.load(Ordering::Acquire) != 0
+            || self.profile_automatic.pending()
+        {
+            return;
+        }
+        let (decision, observed, epoch) = match self.automatic_decision() {
+            Ok(decision) => decision,
+            Err(_) => return,
+        };
+        if !matches!(decision, Decision::Select(_)) {
+            self.profile_automatic.note(epoch, &decision);
+            return;
+        }
+        let previous = self.profile_pending.fetch_add(1, Ordering::AcqRel);
+        let _pending = PendingProfileApply(&self.profile_pending);
+        if previous != 0 {
+            return;
+        }
+        let (admission_epoch, target) = {
+            let _admission = self
+                .profile_admission
+                .write()
+                .unwrap_or_else(|p| p.into_inner());
+            if self.profile_pending.load(Ordering::Acquire) != 1 || self.profile_automatic.pending()
+            {
+                return;
+            }
+            let Some(target) = self.profile_automatic.note(epoch, &decision) else {
+                return;
+            };
+            self.invalidate_learning();
+            (self.profile_admission_epoch.load(Ordering::Acquire), target)
+        };
+        let result = (|| {
+            let (document, assignments, read_only) = self
+                .profiles
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .compile_source(&target.profile_id)?;
+            let proof = target
+                .game_id
+                .as_ref()
+                .and_then(|id| {
+                    observed.iter().find(|game| {
+                        &game.identity.game_id == id
+                            && Some(&game.process_session) == target.process_session.as_ref()
+                    })
+                })
+                .cloned();
+            crate::profile_session::apply_staged_admitted(
+                &self.profile_session,
+                crate::profile_session::Candidate {
+                    document,
+                    assignments,
+                    read_only,
+                    game_id: target.game_id.clone(),
+                    admission_epoch: Some(admission_epoch),
+                    stage: None,
+                },
+                |candidate| (self.profile_prepare)(candidate),
+                |candidate| {
+                    let admission = self
+                        .profile_admission
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner());
+                    let game_admission = self
+                        .game_admission
+                        .read()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if self.closed.load(Ordering::Acquire)
+                        || self.profile_admission_epoch.load(Ordering::Acquire) != admission_epoch
+                        || self.profile_pending.load(Ordering::Acquire) != 1
+                        || self.profile_automatic.pending()
+                    {
+                        return Err("Automatic profile preparation was cancelled by a newer native control.".into());
+                    }
+                    let (current, _, current_epoch) = self.automatic_decision()?;
+                    if current_epoch != epoch || current != Decision::Select(target.clone()) {
+                        return Err("Automatic profile selection changed during preparation; no stale context was activated.".into());
+                    }
+                    if let Some(proof) = &proof {
+                        self.games.validate_profile_activation(proof)?;
+                    }
+                    let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
+                    let (document, assignments, read_only) =
+                        profiles.compile_source(&target.profile_id)?;
+                    candidate
+                        .stage
+                        .as_ref()
+                        .ok_or("Automatic native preparation is missing.")?
+                        .validate(&crate::profile_session::Candidate {
+                            document,
+                            assignments,
+                            read_only,
+                            game_id: candidate.game_id.clone(),
+                            admission_epoch: candidate.admission_epoch,
+                            stage: None,
+                        })?;
+                    profiles.request(&json!({"command":"profile_select","id":target.profile_id,"selectionSource":"automatic"}))?;
+                    Ok((admission, game_admission))
+                },
+                || {
+                    self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel);
+                },
+            )
+        })();
+        self.profile_automatic.finish(epoch, target, &result);
+    }
+    /// Explicitly install the native background owner for desktop/service hosts.
+    /// A Weak reference avoids a permanent manager/worker ownership cycle.
+    pub fn start_automatic(self: &Arc<Self>) {
+        let mut worker = self
+            .profile_automatic_worker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if worker.is_some() {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        let closed = self.profile_closed.clone();
+        *worker = std::thread::Builder::new()
+            .name("profile-automatic-selection".into())
+            .spawn(move || {
+                while !closed.load(Ordering::Acquire) {
+                    let Some(manager) = weak.upgrade() else {
+                        break;
+                    };
+                    manager.poll_automatic();
+                    drop(manager);
+                    for _ in 0..5 {
+                        if closed.load(Ordering::Acquire) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
+            })
+            .ok();
+    }
+}
+
+#[cfg(test)]
+#[path = "profile_automatic_tests.rs"]
+mod tests;

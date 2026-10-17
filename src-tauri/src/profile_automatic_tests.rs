@@ -1,0 +1,555 @@
+use super::*;
+use crate::game_discovery::{Platform, ProcessIdentity};
+use std::{
+    collections::BTreeMap,
+    sync::{atomic::AtomicUsize, Barrier},
+    time::{Duration, Instant},
+};
+
+struct NoPorts;
+impl Provider for NoPorts {
+    fn ports(&self) -> Result<Vec<PortInfo>, String> {
+        Ok(vec![])
+    }
+    fn adapter(&self, _: &str) -> Arc<dyn Adapter> {
+        panic!("Automatic empty profiles must not open device endpoints")
+    }
+}
+#[derive(Default)]
+struct Games {
+    processes: Mutex<BTreeMap<String, ProcessIdentity>>,
+    invalid: AtomicBool,
+    scans: AtomicUsize,
+}
+fn executable(id: &str) -> String {
+    format!("C:\\Games\\{id}\\game.exe")
+}
+impl Platform for Games {
+    fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+        ["dcs","assetto-corsa-rally","x-plane-11","x-plane-12"].iter().map(|id|json!({"id":id,"name":id,"installed":true,"processMonitoringSupported":true,"launchSupported":true,"executable":executable(id)})).collect()
+    }
+    fn validate(&self, id: &str, path: &str) -> Result<(), String> {
+        if !self.invalid.load(Ordering::Acquire) && path == executable(id) {
+            Ok(())
+        } else {
+            Err("Native installation changed".into())
+        }
+    }
+    fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> {
+        Err("Launch is outside these watcher/admission fixtures".into())
+    }
+    fn find(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
+        self.scans.fetch_add(1, Ordering::Relaxed);
+        Ok(self
+            .processes
+            .lock()
+            .unwrap()
+            .get(game["id"].as_str().unwrap())
+            .cloned())
+    }
+    fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {
+        Ok(self
+            .processes
+            .lock()
+            .unwrap()
+            .values()
+            .any(|process| process == identity))
+    }
+}
+struct Fixture {
+    manager: GatewayManager,
+    games: Arc<Games>,
+    directory: tempfile::TempDir,
+}
+impl Fixture {
+    fn new() -> Self {
+        let mut manager = GatewayManager::with_provider(Arc::new(NoPorts));
+        let directory = tempfile::tempdir().unwrap();
+        let games = Arc::new(Games::default());
+        manager.games = Arc::new(crate::games::GamesRuntime::new(
+            Arc::new(|request| {
+                assert_eq!(
+                    request["command"], "integration_get_state",
+                    "No provider or device output is authorized by this fixture"
+                );
+                json!({"ok":true,"state":{"integration":{"running":false}}})
+            }),
+            directory.path().join("games.json"),
+            games.clone(),
+        ));
+        let resources = manager.profile_resources.clone();
+        let runtime_games = manager.games.clone();
+        let companions = manager.companion_host.clone();
+        manager.profile_prepare = Arc::new(move |candidate| {
+            crate::profile_session_host::NativeProfileHost::stage(
+                &resources,
+                &runtime_games,
+                &companions,
+                false,
+                candidate,
+            )
+        });
+        let host = crate::profile_session_host::NativeProfileHost::new(
+            manager.profile_resources.clone(),
+            manager.controllers.clone(),
+            manager.games.clone(),
+            manager.companion_host.clone(),
+            manager.profile_panels.clone(),
+            false,
+            manager.profile_admission_epoch.clone(),
+        );
+        manager.profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
+            host,
+            Some(directory.path().join("session.json")),
+        )));
+        Self {
+            manager,
+            games,
+            directory,
+        }
+    }
+    fn process(&self, id: &str, epoch: u64) {
+        self.games.processes.lock().unwrap().insert(
+            id.into(),
+            ProcessIdentity {
+                pid: 42,
+                path: executable(id),
+                epoch,
+            },
+        );
+    }
+    fn wait_game(&self, id: &str) {
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while !self
+            .manager
+            .games
+            .profile_activation_observations()
+            .is_ok_and(|games| {
+                games.iter().any(|game| {
+                    game.identity.game_id == id
+                        && self.manager.games.validate_profile_activation(game).is_ok()
+                })
+            })
+        {
+            assert!(
+                Instant::now() < deadline,
+                "Game watcher did not confirm {id}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+fn request(manager: &GatewayManager, command: &str, mut fields: Value) -> Value {
+    fields["command"] = json!(command);
+    fields["clientId"] = json!("cockpit-automatic-test");
+    manager.request(fields)
+}
+fn ok(manager: &GatewayManager, command: &str, fields: Value) -> Value {
+    let reply = request(manager, command, fields);
+    assert_eq!(reply["ok"], true, "{reply}");
+    reply["state"]["profiles"].clone()
+}
+fn create(manager: &GatewayManager, name: &str) -> String {
+    ok(manager, "profile_create", json!({"name":name}))["document"]["id"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+fn rule(manager: &GatewayManager, game: &str, id: &str, priority: i16) {
+    ok(
+        manager,
+        "profile_game_rule_save",
+        json!({"gameId":game,"profileId":id,"priority":priority,"enabled":true}),
+    );
+}
+fn mode(manager: &GatewayManager, value: &str) {
+    ok(manager, "profile_selection_mode", json!({"mode":value}));
+}
+fn owner(manager: &GatewayManager) -> Option<crate::profile_session::RunOwner> {
+    manager
+        .profile_session
+        .lock()
+        .unwrap()
+        .status()
+        .owner
+        .clone()
+}
+
+#[test]
+fn native_rules_are_strict_passive_and_stale_rules_can_be_removed_or_disabled() {
+    let fixture = Fixture::new();
+    let manager = &fixture.manager;
+    let id = create(manager, "Hardware");
+    for extra in ["executable", "pid", "processSession", "sample", "resume"] {
+        let mut fields = json!({"gameId":"dcs","profileId":id,"priority":7,"enabled":true});
+        fields[extra] = json!("forged");
+        assert_eq!(
+            request(manager, "profile_game_rule_save", fields)["ok"],
+            false
+        );
+    }
+    assert_eq!(
+        request(
+            manager,
+            "profile_game_rule_save",
+            json!({"gameId":"dcs","profileId":id,"priority":32768,"enabled":true})
+        )["ok"],
+        false
+    );
+    rule(manager, "dcs", &id, 7);
+    assert!(owner(manager).is_none());
+    assert_eq!(
+        ok(manager, "profile_automatic_status", json!({}))["automatic"]["rules"][0]["identity"]
+            ["executable"],
+        executable("dcs")
+    );
+    fixture.games.invalid.store(true, Ordering::Release);
+    assert_eq!(
+        request(
+            manager,
+            "profile_game_rule_save",
+            json!({"gameId":"dcs","profileId":id,"priority":7,"enabled":true})
+        )["ok"],
+        false
+    );
+    ok(
+        manager,
+        "profile_game_rule_save",
+        json!({"gameId":"dcs","profileId":id,"priority":7,"enabled":false}),
+    );
+    ok(manager, "profile_game_rule_remove", json!({"gameId":"dcs"}));
+    assert_eq!(
+        request(manager, "profile_game_rule_remove", json!({"gameId":"dcs"}))["ok"],
+        false
+    );
+    assert!(owner(manager).is_none());
+}
+#[test]
+fn automatic_apply_is_idempotent_and_profile_saves_do_not_reapply_the_run() {
+    let fixture = Fixture::new();
+    let manager = &fixture.manager;
+    let id = create(manager, "A");
+    rule(manager, "dcs", &id, 0);
+    fixture.process("dcs", 1);
+    fixture.wait_game("dcs");
+    manager.poll_automatic();
+    assert!(owner(manager).is_none(), "Manual remains pinned");
+    mode(manager, "automatic");
+    manager.poll_automatic();
+    let first = owner(manager).unwrap();
+    assert_eq!(first.profile_id, id);
+    assert_eq!(first.game_id.as_deref(), Some("dcs"));
+    for _ in 0..4 {
+        manager.poll_automatic();
+    }
+    assert_eq!(owner(manager), Some(first.clone()));
+    ok(
+        manager,
+        "profile_rename",
+        json!({"id":id,"expectedRevision":1,"name":"Edited saved profile"}),
+    );
+    manager.poll_automatic();
+    assert_eq!(owner(manager), Some(first));
+    fixture.games.processes.lock().unwrap().clear();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !manager
+        .games
+        .profile_activation_observations()
+        .unwrap()
+        .is_empty()
+    {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    manager.poll_automatic();
+    assert_eq!(
+        owner(manager).unwrap().profile_id,
+        osg_profiles::DEFAULT_PROFILE_ID
+    );
+}
+#[test]
+fn ties_manual_pin_pause_emergency_stop_and_explicit_automatic_resume_are_authoritative() {
+    let fixture = Fixture::new();
+    let manager = &fixture.manager;
+    let a = create(manager, "A");
+    let b = create(manager, "B");
+    rule(manager, "dcs", &a, 1);
+    rule(manager, "x-plane-12", &b, 1);
+    fixture.process("dcs", 1);
+    fixture.wait_game("dcs");
+    mode(manager, "automatic");
+    manager.poll_automatic();
+    let first = owner(manager).unwrap();
+    fixture.process("x-plane-12", 1);
+    fixture.wait_game("x-plane-12");
+    manager.poll_automatic();
+    assert_eq!(owner(manager), Some(first));
+    assert_eq!(manager.profile_automatic.view()["status"], "conflict");
+    rule(manager, "x-plane-12", &b, 2);
+    manager.poll_automatic();
+    assert_eq!(owner(manager).unwrap().profile_id, b);
+    mode(manager, "manual");
+    assert_eq!(manager.profile_automatic.view()["manualProfileId"], b);
+    manager.poll_automatic();
+    assert_eq!(owner(manager).unwrap().profile_id, b);
+    ok(
+        manager,
+        "profile_apply",
+        json!({"id":a,"expectedRevision":1}),
+    );
+    let manual = owner(manager).unwrap();
+    fixture.process("dcs", 2);
+    manager.poll_automatic();
+    assert_eq!(owner(manager), Some(manual));
+    mode(manager, "automatic");
+    manager.poll_automatic();
+    assert_eq!(owner(manager).unwrap().profile_id, b);
+    ok(manager, "profile_pause", json!({"paused":true}));
+    manager.poll_automatic();
+    assert!(owner(manager).is_none());
+    assert_eq!(manager.profile_automatic.view()["status"], "blocked");
+    ok(manager, "profile_pause", json!({"paused":false}));
+    manager.poll_automatic();
+    assert!(owner(manager).is_some());
+    ok(manager, "profile_stop", json!({}));
+    fixture.process("x-plane-12", 2);
+    manager.poll_automatic();
+    assert!(owner(manager).is_none());
+    assert_eq!(manager.profile_automatic.view()["mode"], "manual");
+    mode(manager, "automatic");
+    fixture.wait_game("x-plane-12");
+    manager.poll_automatic();
+    assert!(owner(manager).is_some());
+}
+#[test]
+fn delayed_automatic_stage_is_cancelled_by_stop_and_pending_apply_blocks_learning() {
+    let mut fixture = Fixture::new();
+    let id = create(&fixture.manager, "A");
+    rule(&fixture.manager, "dcs", &id, 0);
+    fixture.process("dcs", 1);
+    fixture.wait_game("dcs");
+    mode(&fixture.manager, "automatic");
+    let barrier = Arc::new(Barrier::new(2));
+    let gate = barrier.clone();
+    let prepare = fixture.manager.profile_prepare.clone();
+    fixture.manager.profile_prepare = Arc::new(move |candidate| {
+        let staged = prepare(candidate)?;
+        gate.wait();
+        gate.wait();
+        Ok(staged)
+    });
+    let manager = Arc::new(fixture.manager);
+    let applying = manager.clone();
+    let worker = std::thread::spawn(move || applying.poll_automatic());
+    barrier.wait();
+    let denied = request(
+        &manager,
+        "profile_input_learn_start",
+        json!({"resourceId":"untrusted","generation":"0","capabilityRevision":"bad"}),
+    );
+    assert_eq!(denied["ok"], false);
+    assert!(denied["error"]
+        .as_str()
+        .unwrap()
+        .contains("pending profile Apply"));
+    ok(&manager, "profile_stop", json!({}));
+    barrier.wait();
+    worker.join().unwrap();
+    assert!(owner(&manager).is_none());
+    assert_eq!(manager.profile_automatic.view()["mode"], "manual");
+    manager.shutdown();
+}
+#[test]
+fn final_admission_reverifies_process_even_before_cached_observer_catches_replacement() {
+    let mut fixture = Fixture::new();
+    let id = create(&fixture.manager, "A");
+    rule(&fixture.manager, "dcs", &id, 0);
+    fixture.process("dcs", 1);
+    fixture.wait_game("dcs");
+    mode(&fixture.manager, "automatic");
+    let barrier = Arc::new(Barrier::new(2));
+    let gate = barrier.clone();
+    let prepare = fixture.manager.profile_prepare.clone();
+    fixture.manager.profile_prepare = Arc::new(move |candidate| {
+        let staged = prepare(candidate)?;
+        gate.wait();
+        gate.wait();
+        Ok(staged)
+    });
+    let manager = Arc::new(fixture.manager);
+    let applying = manager.clone();
+    let worker = std::thread::spawn(move || applying.poll_automatic());
+    barrier.wait();
+    fixture.games.processes.lock().unwrap().insert(
+        "dcs".into(),
+        ProcessIdentity {
+            pid: 42,
+            path: executable("dcs"),
+            epoch: 2,
+        },
+    );
+    barrier.wait();
+    worker.join().unwrap();
+    assert!(owner(&manager).is_none());
+    assert_eq!(manager.profile_automatic.view()["status"], "failed");
+    manager.shutdown();
+}
+#[test]
+fn startup_recovery_blocks_automatic_activation_without_replaying_then_explicit_recovery_reconciles(
+) {
+    let fixture = Fixture::new();
+    let manager = &fixture.manager;
+    let id = create(manager, "A");
+    rule(manager, "dcs", &id, 0);
+    fixture.process("dcs", 1);
+    fixture.wait_game("dcs");
+    mode(manager, "automatic");
+    manager.poll_automatic();
+    assert!(owner(manager).is_some());
+    let journal = fixture.directory.path().join("session.json");
+    let bytes = std::fs::read(&journal).unwrap();
+    manager.profile_session.lock().unwrap().stop().unwrap();
+    std::fs::write(&journal, bytes).unwrap();
+    let host = || {
+        crate::profile_session_host::NativeProfileHost::new(
+            manager.profile_resources.clone(),
+            manager.controllers.clone(),
+            manager.games.clone(),
+            manager.companion_host.clone(),
+            manager.profile_panels.clone(),
+            false,
+            manager.profile_admission_epoch.clone(),
+        )
+    };
+    let empty = crate::profile_session::Coordinator::new(host(), None);
+    let previous = std::mem::replace(&mut *manager.profile_session.lock().unwrap(), empty);
+    drop(previous);
+    let recovered = crate::profile_session::Coordinator::new(host(), Some(journal));
+    assert_eq!(
+        recovered.status().state,
+        crate::profile_session::State::RecoveryNeeded
+    );
+    *manager.profile_session.lock().unwrap() = recovered;
+    manager.poll_automatic();
+    assert!(owner(manager).is_none());
+    assert_eq!(manager.profile_automatic.view()["status"], "blocked");
+    ok(manager, "profile_recover", json!({}));
+    manager.poll_automatic();
+    assert!(owner(manager).is_some());
+}
+#[test]
+fn stop_latch_does_not_wait_for_the_policy_mutex_and_background_worker_owns_no_manager_cycle() {
+    let runtime = Arc::new(Runtime::new(None));
+    let locked = runtime.state.lock().unwrap();
+    let cloned = runtime.clone();
+    let worker = std::thread::spawn(move || cloned.control("profile_stop"));
+    worker.join().unwrap();
+    assert!(runtime.emergency.load(Ordering::Acquire));
+    drop(locked);
+    let fixture = Fixture::new();
+    let manager = Arc::new(fixture.manager);
+    let weak = Arc::downgrade(&manager);
+    manager.start_automatic();
+    manager.shutdown();
+    drop(manager);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn pending_operator_policy_cannot_be_overtaken_by_a_prepared_automatic_run() {
+    let mut fixture = Fixture::new();
+    let id = create(&fixture.manager, "A");
+    rule(&fixture.manager, "dcs", &id, 0);
+    fixture.process("dcs", 1);
+    fixture.wait_game("dcs");
+    mode(&fixture.manager, "automatic");
+    let barrier = Arc::new(Barrier::new(2));
+    let gate = barrier.clone();
+    let prepare = fixture.manager.profile_prepare.clone();
+    fixture.manager.profile_prepare = Arc::new(move |candidate| {
+        let staged = prepare(candidate)?;
+        gate.wait();
+        gate.wait();
+        Ok(staged)
+    });
+    let manager = Arc::new(fixture.manager);
+    let applying = manager.clone();
+    let worker = std::thread::spawn(move || applying.poll_automatic());
+    barrier.wait();
+    let pending = manager
+        .profile_automatic
+        .begin_control("profile_selection_mode")
+        .unwrap();
+    barrier.wait();
+    worker.join().unwrap();
+    assert!(owner(&manager).is_none());
+    assert_eq!(manager.profile_automatic.view()["status"], "failed");
+    drop(pending);
+    manager.shutdown();
+}
+#[test]
+fn actual_background_worker_switches_on_external_start_and_exit_without_ui_requests() {
+    let fixture = Fixture::new();
+    let id = create(&fixture.manager, "A");
+    rule(&fixture.manager, "dcs", &id, 0);
+    mode(&fixture.manager, "automatic");
+    let manager = Arc::new(fixture.manager);
+    manager.start_automatic();
+    fixture.games.processes.lock().unwrap().insert(
+        "dcs".into(),
+        ProcessIdentity {
+            pid: 42,
+            path: executable("dcs"),
+            epoch: 1,
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !owner(&manager).is_some_and(|owner| owner.profile_id == id) {
+        assert!(
+            Instant::now() < deadline,
+            "Background apply failed: {}",
+            manager.profile_automatic.view()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let applied = owner(&manager).unwrap();
+    std::thread::sleep(Duration::from_millis(550));
+    assert_eq!(owner(&manager), Some(applied));
+    fixture.games.processes.lock().unwrap().clear();
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while !owner(&manager).is_some_and(|owner| owner.profile_id == osg_profiles::DEFAULT_PROFILE_ID)
+    {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    manager.shutdown();
+}
+
+#[test]
+fn malformed_optional_automation_storage_blocks_automatic_but_preserves_explicit_manual_use() {
+    let mut fixture = Fixture::new();
+    let path = fixture.directory.path().join("automatic.json");
+    std::fs::write(&path, b"{").unwrap();
+    fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
+    let id = create(&fixture.manager, "Manual hardware");
+    ok(
+        &fixture.manager,
+        "profile_apply",
+        json!({"id":id,"expectedRevision":1}),
+    );
+    assert_eq!(owner(&fixture.manager).unwrap().profile_id, id);
+    assert_eq!(std::fs::read(&path).unwrap(), b"{");
+    assert_eq!(
+        request(
+            &fixture.manager,
+            "profile_selection_mode",
+            json!({"mode":"automatic"})
+        )["ok"],
+        false
+    );
+    fixture.manager.poll_automatic();
+    assert_eq!(owner(&fixture.manager).unwrap().profile_id, id);
+    ok(&fixture.manager, "profile_stop", json!({}));
+    assert!(owner(&fixture.manager).is_none());
+    assert_eq!(std::fs::read(path).unwrap(), b"{");
+}

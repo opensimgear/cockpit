@@ -22,6 +22,8 @@ type ProfilePrepare = Arc<dyn Fn(&crate::profile_session::Candidate) -> Result<A
 #[path = "profile_session_panels_io.rs"]
 mod profile_panels_io;
 pub(crate) use profile_panels_io::ProfilePanelIo;
+#[path = "profile_automatic.rs"]
+mod automatic;
 
 trait Adapter: Send + Sync {
     fn output_activity(&self)->bool{false}
@@ -126,7 +128,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 /// catalogue and editor reads must not keep cancelling the native learner.
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
-    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset");}
+    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove");}
     if command=="mapping_companion_route"{return !matches!(request["companion"]["action"].as_str(),Some("inspect"|"recording"));}
     if command=="companion_feedback_routes"{return request["companion"]["action"]!="inspect";}
     if command.starts_with("mapping_")||command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
@@ -156,6 +158,8 @@ pub struct GatewayManager {
     retired_output_until:Mutex<Option<std::time::Instant>>,
     profile_closed: Arc<AtomicBool>,
     profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    profile_automatic: automatic::Runtime,
+    profile_automatic_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     module_usb: Arc<crate::module_usb_fleet::Fleet>,
     provider: Arc<dyn Provider>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
@@ -408,6 +412,8 @@ impl GatewayManager {
             profile_learning,
             profile_closed,
             profile_worker: Mutex::new(profile_worker),
+            profile_automatic: automatic::Runtime::new(native.then(||crate::dcs_runtime::config_path().with_file_name("profiles-activation-v1.json"))),
+            profile_automatic_worker: Mutex::new(None),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
                 crate::dcs_runtime::config_path().with_file_name("profiles-v2")
             }))),
@@ -429,6 +435,7 @@ impl GatewayManager {
             companion_feedback,
         };
         manager.attach_panel_capture();
+        manager.restore_automatic_selection();
         manager
     }
     fn attach_panel_capture(&self) {
@@ -464,6 +471,7 @@ impl GatewayManager {
             for key in ["state", "paused", "appliedSnapshot", "fault"] { session.insert(key.into(), status[key].clone()); }
         }
         response["profileSession"] = status;
+        response["automatic"] = self.profile_automatic.view();
     }
     fn profile_session_request(&self, request: &Value) -> Result<Value, String> {
         let command = request["command"].as_str().ok_or("Choose a profile session operation.")?;
@@ -485,6 +493,8 @@ impl GatewayManager {
                 if document.revision != expected { return Err("The saved profile changed. Reload its revision before applying.".into()); }
                 let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
+                self.automatic_manual_pin(id)?;
+                self.profiles.lock().unwrap_or_else(|p|p.into_inner()).request(&json!({"command":"profile_selection_mode","mode":"manual"}))?;
                 crate::profile_session::apply_staged_admitted(
                     &self.profile_session,
                     crate::profile_session::Candidate { document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
@@ -508,9 +518,9 @@ impl GatewayManager {
                     || { self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); },
                 )?;
             },
-            "profile_pause" => self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).pause(request["paused"].as_bool().ok_or("paused must be a boolean.")?)?,
-            "profile_stop" => self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop()?,
-            "profile_recover" => self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).recover()?,
+            "profile_pause" => {let result=self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).pause(request["paused"].as_bool().ok_or("paused must be a boolean.")?);self.profile_automatic.retry_event();result?;},
+            "profile_stop" => {let stopped=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).stop();let pinned=self.automatic_stop_pin();stopped.and(pinned)?;},
+            "profile_recover" => {let result=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).recover();self.profile_automatic.retry_event();result?;},
             _ => unreachable!(),
         }
         let mut response = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&json!({"command":"profile_status"}))?;
@@ -561,7 +571,7 @@ impl GatewayManager {
     }
     fn invalidate_learning(&self){self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");}
     fn guard_learning(&self)->Result<(),String>{
-        if self.profile_pending.load(Ordering::Acquire)!=0{return Err("Wait for pending profile Apply to finish before input learning.".into());}
+        if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile Apply or selection control to finish before input learning.".into());}
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("mapping_preview_start")?;
         self.mapping_host.guard_capture_only()?;
         let adapters=self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values().cloned().collect::<Vec<_>>();
@@ -591,7 +601,9 @@ impl GatewayManager {
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
-        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_stop" | "profile_pause" | "profile_recover" | "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let _policy=self.profile_automatic.begin_control(request["command"].as_str().unwrap_or(""));
+        self.profile_automatic.control(request["command"].as_str().unwrap_or(""));
         let staging = request["command"] == "profile_apply";
         let learning_start=request["command"]=="profile_input_learn_start";
         let learning_passive=matches!(request["command"].as_str(),Some("profile_input_learn_status"|"profile_input_learn_cancel"));
@@ -745,6 +757,9 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if matches!(command.as_str(),"profile_automatic_status"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_selection_mode"){
+                return match self.automatic_request(&request){Ok(profiles)=>json!({"ok":true,"state":{"profiles":profiles}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
+            }
             if matches!(command.as_str(), "profile_apply" | "profile_stop" | "profile_pause" | "profile_recover") {
                 return match self.profile_session_request(&request) {
                     Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
@@ -757,7 +772,12 @@ impl GatewayManager {
                 .unwrap_or_else(|p| p.into_inner())
                 .request(&request);
             return match result {
-                Ok(mut profiles) => { self.decorate_profile_session(&mut profiles); json!({"ok":true,"state":{"profiles":profiles}}) },
+                Ok(mut profiles) => {
+                    if command=="profile_select"&&request["selectionSource"]=="manual"{
+                        if let Err(error)=self.automatic_manual_pin(request["id"].as_str().unwrap_or("")){return json!({"ok":false,"error":error});}
+                    }
+                    self.decorate_profile_session(&mut profiles); json!({"ok":true,"state":{"profiles":profiles}})
+                },
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
@@ -1028,6 +1048,9 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
+        self.profile_closed.store(true,Ordering::Release);
+        if let Some(worker)=self.profile_automatic_worker.lock().unwrap_or_else(|p|p.into_inner()).take(){if worker.thread().id()!=std::thread::current().id(){let _=worker.join();}}
         self.profile_learning.shutdown();
         self.profile_closed.store(true, Ordering::Release);
         if let Some(worker) = self.profile_worker.lock().unwrap_or_else(|p| p.into_inner()).take() { let _ = worker.join(); }
