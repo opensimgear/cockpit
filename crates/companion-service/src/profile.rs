@@ -164,3 +164,18 @@ pub(super) fn feedback_access(
         )
     }
 }
+pub(super) fn feedback_clear_access(
+    inner: &Inner,
+    instance: &str,
+    receipt: Option<&AssignmentReceipt>,
+) -> Result<(), String> {
+    if let Some(receipt) = receipt {
+        ensure(
+            receipt.instance_id() == instance,
+            "Wrongly routed profile feedback ownership.",
+        )?;
+        owned::validate_stamp(inner, receipt)
+    } else {
+        feedback_access(inner, instance, None)
+    }
+}

@@ -128,7 +128,7 @@ impl Hub {
         receipt: Option<&profile::AssignmentReceipt>,
     ) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        profile::feedback_access(&inner, instance, receipt)?;
+        profile::feedback_clear_access(&inner, instance, receipt)?;
         self.expire(&mut inner, now_ms)?;
         ensure(
             inner

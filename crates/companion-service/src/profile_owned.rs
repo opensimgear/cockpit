@@ -131,8 +131,21 @@ fn publication(inner: &Inner, assignment: &Assignment) -> Result<(), String> {
         "The immutable assignment source descriptor changed.",
     )
 }
-pub(super) fn validate_owned(inner: &Inner, receipt: &AssignmentReceipt) -> Result<(), String> {
+pub(super) fn validate_stamp(inner: &Inner, receipt: &AssignmentReceipt) -> Result<(), String> {
     shape(receipt)?;
+    ensure(
+        inner
+            .record
+            .instances
+            .iter()
+            .any(|assignment| reference(assignment) == receipt.desired)
+            && installation(inner, &receipt.desired.companion_id)?
+                == receipt.installation_fingerprint,
+        "This profile no longer owns the exact companion assignment revision.",
+    )
+}
+pub(super) fn validate_owned(inner: &Inner, receipt: &AssignmentReceipt) -> Result<(), String> {
+    validate_stamp(inner, receipt)?;
     let desired = reconstruct(inner, &receipt.desired)?;
     let baseline = reconstruct(inner, &receipt.baseline)?;
     ensure(
@@ -259,6 +272,15 @@ impl Hub {
         let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         validate_owned(&inner, receipt)
     }
+    /// Neutralization can verify its protected owner without a panel cache.
+    /// This grants no publication, baseline, or feedback delivery capability.
+    pub fn validate_profile_assignment_owner(
+        &self,
+        receipt: &AssignmentReceipt,
+    ) -> Result<(), String> {
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        validate_stamp(&inner, receipt)
+    }
     /// Recovery never acquires, rearms input, or reinstalls the profile panel.
     pub fn restore_profile_assignment(
         &self,
@@ -274,9 +296,10 @@ impl Hub {
         {
             return Ok(AssignmentRestore::AlreadyBaseline);
         }
-        if validate_owned(&inner, receipt).is_err() {
+        if validate_stamp(&inner, receipt).is_err() {
             return Ok(AssignmentRestore::OwnershipLost);
         }
+        validate_owned(&inner, receipt)?;
         let baseline = reconstruct(&inner, &receipt.baseline)?;
         publication(&inner, &baseline)?;
         self.replace_profile_assignment(&mut inner, &baseline)?;

@@ -519,3 +519,55 @@ fn maximum_native_panel_uses_compact_bounded_journal_references_and_keeps_baseli
         baseline.publication_hash
     );
 }
+
+#[test]
+fn missing_panel_cache_preserves_owned_recovery_intent_and_still_allows_neutralization() {
+    let storage = Arc::new(Memory::default());
+    let hub = Hub::with_storage(storage.clone(), Arc::new(Sink::default())).unwrap();
+    paired(&hub, "screen");
+    let original = publish(&hub, fixture());
+    let desired = publish(
+        &hub,
+        mutated(|document| document["ui"]["title"] = json!("Owned revision")),
+    );
+    assign(&hub, "screen", "instance", &original.publication_hash);
+    let receipt = capture(&hub, &desired, None);
+    hub.acquire_profile_assignment(&receipt).unwrap();
+    let restarted = Hub::with_existing_storage(storage.clone(), Arc::new(Sink::default()))
+        .unwrap()
+        .unwrap();
+    let before = storage.value.lock().unwrap().clone();
+    restarted
+        .validate_profile_assignment_owner(&receipt)
+        .unwrap();
+    assert!(restarted.validate_profile_assignment(&receipt).is_err());
+    assert!(
+        restarted.restore_profile_assignment(&receipt).is_err(),
+        "A missing panel must retain RecoveryNeeded rather than pretend ownership was lost"
+    );
+    assert_eq!(*storage.value.lock().unwrap(), before);
+    restarted
+        .clear_profile_feedback(&receipt, restarted.now_ms())
+        .unwrap();
+    assert!(restarted.configure_profile_feedback(&receipt, &[]).is_err());
+    publish(&restarted, fixture());
+    assert!(
+        restarted.restore_profile_assignment(&receipt).is_err(),
+        "Both current and original immutable descriptors must be verified"
+    );
+    publish(
+        &restarted,
+        mutated(|document| document["ui"]["title"] = json!("Owned revision")),
+    );
+    assert_eq!(
+        restarted.restore_profile_assignment(&receipt).unwrap(),
+        profile::AssignmentRestore::Restored
+    );
+    assert_eq!(
+        restarted
+            .assigned_publication("instance")
+            .unwrap()
+            .publication_hash,
+        original.publication_hash
+    );
+}
