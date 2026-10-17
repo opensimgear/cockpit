@@ -24,6 +24,18 @@ const notifications=[],cache=new Map();async function component(name){if(cache.h
 const Overview=await component('./OverviewPanel.svelte'),Manual=await component('./ManualActions.svelte');
 const overview=(profileState,extra={})=>render(Overview,{props:{games:games(),profileState,profiles,gateways:1,onlineDevices:3,totalDevices:4,inventoryError:'',openGames:noRequest,openProfiles:noRequest,openIntegrations:noRequest,openDevices:noRequest,...extra}}).body;
 
+test('overview distinguishes a successful empty Windows detection from missing status and actual process scan failures',()=>{
+ const empty={...games(),detectedGames:[],detectionErrors:[]};
+ empty.catalogue.push({...modules.get('./games').supportedGames[3],installed:false,profileContext:{status:'not-installed'}});
+ const html=overview(view(stopped()),{games:empty});
+ assert.ok(html.includes('No game running'));assert.ok(!html.includes('Detection unavailable'));
+ const failed={...empty,detectionErrors:['Cannot inspect game process: access denied']};notifications.length=0;
+ assert.ok(overview(view(stopped()),{games:failed}).includes('Detection unavailable'));
+ assert.ok(notifications.includes(failed.detectionErrors[0]));
+ assert.ok(overview(view(stopped()),{games:{catalogue:[]}}).includes('Detection unavailable'));
+ assert.ok(overview(view(stopped()),{games:undefined}).includes('Checking games…'));
+});
+
 test('actual overview reads the native applied revision and exact profile identity rather than selected, saved-latest or retired game profile state',()=>{
  const html=overview(view(running()));assert.ok(html.includes('Applied saved rig'));assert.ok(html.includes('applied revision 3'));assert.ok(!html.includes('applied revision 9'));assert.ok(!html.includes('Unapplied editor selection'));assert.ok(html.includes('Open profiles'));assert.ok(html.includes('Native process detected'));assert.ok(!html.includes('PID'));
  assert.ok(html.includes('Matching game context verified'));assert.ok(html.includes('Context readiness does not confirm fresh telemetry'));assert.ok(!html.includes('Receiving telemetry'));

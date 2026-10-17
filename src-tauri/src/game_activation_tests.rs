@@ -3,11 +3,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Fake {
     current: Mutex<Result<Option<ProcessIdentity>, String>>,
     scans: AtomicUsize,
+    catalogue: Mutex<Vec<Value>>,
 }
 impl Platform for Fake {
     // Deliberately leaves integration_setup_supported false.
     fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
-        vec![game()]
+        self.catalogue.lock().unwrap().clone()
     }
     fn validate(&self, _: &str, path: &str) -> Result<(), String> {
         if path == "C:\\Games\\DCS\\bin\\DCS.exe" {
@@ -48,7 +49,71 @@ fn fake() -> Fake {
     Fake {
         current: Mutex::new(Ok(None)),
         scans: AtomicUsize::new(0),
+        catalogue: Mutex::new(vec![game()]),
     }
+}
+#[test]
+fn uninstalled_supported_games_are_not_process_detection_failures() {
+    let platform = fake();
+    let observer = Observer::default();
+    let missing = json!({"id":"x-plane-12","installed":false,"processMonitoringSupported":true});
+    observer.observe(&platform, &[game(), missing.clone()]);
+    assert_eq!(observer.view("dcs")["status"], "not-running");
+    assert_eq!(observer.view("x-plane-12")["status"], "not-installed");
+    assert!(observer.snapshot().unwrap().is_empty());
+    assert_eq!(platform.scans.load(Ordering::Relaxed), 1);
+    assert!(identity(&platform, &missing).is_err());
+    *platform.current.lock().unwrap() = Ok(Some(running(1)));
+    observer.observe(&platform, &[game()]);
+    observer.observe(&platform, &[game()]);
+    assert_eq!(observer.snapshot().unwrap().len(), 1);
+    let mut removed = game();
+    removed["installed"] = json!(false);
+    observer.observe(&platform, &[removed]);
+    assert_eq!(observer.view("dcs")["status"], "not-installed");
+    assert!(observer.snapshot().unwrap().is_empty());
+}
+
+#[test]
+fn native_games_status_separates_missing_installations_from_real_scan_errors() {
+    let platform = std::sync::Arc::new(fake());
+    let mut catalogue = vec![game()];
+    for id in ["assetto-corsa-rally", "x-plane-11", "x-plane-12"] {
+        catalogue.push(json!({"id":id,"installed":false,"processMonitoringSupported":true}));
+    }
+    *platform.catalogue.lock().unwrap() = catalogue;
+    let directory = crate::test_directory();
+    let runtime = crate::games::GamesRuntime::new(
+        std::sync::Arc::new(|_| panic!("Detection cannot call device/provider output")),
+        crate::games::Paths::in_directory(directory.path()),
+        platform.clone(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while runtime.profile_activation_observations().is_err() {
+        assert!(Instant::now() < deadline, "Native observer did not publish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let status = runtime.status();
+    assert_eq!(status["detectedGames"], json!([]));
+    assert_eq!(status["detectionErrors"], json!([]));
+    assert!(status["catalogue"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .skip(1)
+        .all(|game| game["profileContext"]["status"] == "not-installed"));
+    *platform.current.lock().unwrap() = Err("Cannot inspect game process: access denied".into());
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let status = runtime.status();
+        if status["detectionErrors"] == json!(["Cannot inspect game process: access denied"]) {
+            assert_eq!(status["detectedGames"], json!([]));
+            break;
+        }
+        assert!(Instant::now() < deadline, "Actual scan failure was hidden");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    runtime.shutdown();
 }
 #[test]
 fn background_capture_needs_no_integration_setup_and_status_reads_never_scan() {
@@ -171,7 +236,8 @@ fn actual_games_runtime_detects_external_start_and_exit_without_ui_or_provider_s
                 recovery: fixture_metadata_path.with_extension("recovery.json"),
             }
         },
-        platform.clone());
+        platform.clone(),
+    );
     assert_eq!(
         runtime.profile_activation_identity("dcs").unwrap(),
         identity(platform.as_ref(), &game()).unwrap()

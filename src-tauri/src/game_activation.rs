@@ -74,8 +74,12 @@ impl Observer {
                 let id = game["id"].as_str().unwrap_or("").to_owned();
                 let result = if !seen.insert(id.clone()) || games.len() > 4 {
                     Err("The native game catalogue is ambiguous or exceeds its bound.".into())
+                } else if game["installed"] == false && game["processMonitoringSupported"] == true {
+                    // Supported catalogue entries need not all be installed.
+                    // Their absence is not a failed Windows process scan.
+                    Ok(None)
                 } else {
-                    process(platform, game)
+                    process(platform, game).map(Some)
                 };
                 (id, result)
             })
@@ -90,7 +94,7 @@ impl Observer {
                 message: String::new(),
             });
             match result {
-                Ok((identity, Some(process))) => {
+                Ok(Some((identity, Some(process)))) => {
                     if entry
                         .confirmed
                         .as_ref()
@@ -114,11 +118,19 @@ impl Observer {
                         entry.message = "Waiting for a second verified observation of this exact executable and creation epoch.".into();
                     }
                 }
-                Ok((_, None)) => {
+                Ok(Some((_, None))) => {
                     entry.pending = None;
                     entry.confirmed = None;
                     entry.status = "not-running".into();
                     entry.message.clear();
+                }
+                Ok(None) => {
+                    entry.pending = None;
+                    entry.confirmed = None;
+                    entry.status = "not-installed".into();
+                    entry.message =
+                        "Choose an installed executable in game details to monitor this game."
+                            .into();
                 }
                 Err(error) => {
                     entry.pending = None;
