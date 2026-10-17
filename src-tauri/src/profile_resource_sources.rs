@@ -18,27 +18,31 @@ use std::{
 
 pub(crate) type Gateways = Arc<dyn Fn() -> Vec<(String, Value)> + Send + Sync>;
 pub(crate) type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
+#[derive(Clone)]
+struct GameCatalogue {
+    setup_revision: String,
+    catalogue_revision: String,
+    ports: PortUpdate,
+}
 struct Sources {
     session: String,
     controllers: Arc<osg_controller_input::ControllerService>,
     companions: Arc<osg_mapping_host::companions::CompanionProvider>,
     host: Arc<crate::companion_host::Runtime>,
     games: Arc<crate::games::GamesRuntime>,
-    integration: Arc<crate::integration_runtime::IntegrationRuntime>,
     gateways: Gateways,
     panel: Panel,
     native: bool,
     usb: Arc<crate::module_usb_fleet::Fleet>,
     can_scopes: BTreeSet<String>,
     refreshing: Arc<Mutex<BTreeSet<String>>>,
-    catalogues: BTreeMap<String, (Instant, Result<PortUpdate, String>)>,
+    catalogues: BTreeMap<String, (Instant, String, Result<GameCatalogue, String>)>,
 }
 pub(crate) fn collector(
     controllers: Arc<osg_controller_input::ControllerService>,
     companions: Arc<osg_mapping_host::companions::CompanionProvider>,
     host: Arc<crate::companion_host::Runtime>,
     games: Arc<crate::games::GamesRuntime>,
-    integration: Arc<crate::integration_runtime::IntegrationRuntime>,
     gateways: Gateways,
     panel: Panel,
     usb: Arc<crate::module_usb_fleet::Fleet>,
@@ -50,7 +54,6 @@ pub(crate) fn collector(
         companions,
         host,
         games,
-        integration,
         gateways,
         panel,
         native,
@@ -251,31 +254,100 @@ impl Sources {
                 ("provider", provider.into()),
                 ("installed", game["installed"].to_string()),
             ]);
-            resource.diagnostics.push("Waiting for matching verified game context; profile integration activation follows in P3/P4.".into());
-            if self
-                .catalogues
-                .get(provider)
-                .is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(5))
-            {
+            let setup_revision = game["integrationSetup"]["providerSetupRevision"]
+                .as_str()
+                .unwrap_or("");
+            for (attribute, value) in [
+                ("providerSetupRevision", setup_revision),
+                (
+                    "catalogueRevision",
+                    game["integrationSetup"]["catalogueRevision"]
+                        .as_str()
+                        .unwrap_or(""),
+                ),
+                (
+                    "setupStatus",
+                    game["integrationSetup"]["state"]
+                        .as_str()
+                        .unwrap_or("unknown"),
+                ),
+                (
+                    "gameContextStatus",
+                    game["integrationContext"]["status"]
+                        .as_str()
+                        .unwrap_or("waiting-for-game"),
+                ),
+            ] {
+                if !value.is_empty() {
+                    resource.attributes.insert(attribute.into(), value.into());
+                }
+            }
+            // Catalogue presence and a discovered process never authorize input
+            // consumption or commands. P4 admits a freshly captured profile run.
+            resource.diagnostics.push(
+                "Waiting for an applied profile in its matching verified game context.".into(),
+            );
+            if self.catalogues.get(id).is_none_or(|(at, revision, _)| {
+                revision != setup_revision || at.elapsed() >= Duration::from_secs(5)
+            }) {
                 self.catalogues.insert(
-                    provider.into(),
+                    id.into(),
                     (
                         Instant::now(),
-                        self.integration
-                            .resource_catalogue(provider)
-                            .and_then(|catalogue| ports::integration(&catalogue))
-                            .and_then(PortUpdate::complete),
+                        setup_revision.into(),
+                        self.games
+                            .resource_integration_catalogue(id)
+                            .and_then(|catalogue| {
+                                let revision = |field: &str| {
+                                    catalogue[field]
+                                        .as_str()
+                                        .filter(|value| {
+                                            !value.is_empty()
+                                                && value.len() <= 256
+                                                && !value.chars().any(char::is_control)
+                                        })
+                                        .map(str::to_owned)
+                                        .ok_or_else(|| {
+                                            format!("The game-owned {field} is missing.")
+                                        })
+                                };
+                                Ok(GameCatalogue {
+                                    setup_revision: revision("providerSetupRevision")?,
+                                    catalogue_revision: revision("catalogueRevision")?,
+                                    ports: PortUpdate::complete(ports::integration(&catalogue)?)?,
+                                })
+                            }),
                     ),
                 );
             }
-            match self.catalogues[provider].1.clone() {
-                Ok(ports) => resource.ports = Some(ports),
+            match self.catalogues[id].2.clone() {
+                Ok(catalogue) => {
+                    resource
+                        .attributes
+                        .insert("providerSetupRevision".into(), catalogue.setup_revision);
+                    resource
+                        .attributes
+                        .insert("catalogueRevision".into(), catalogue.catalogue_revision);
+                    resource.ports = Some(catalogue.ports);
+                }
                 Err(error) => resource.diagnostics.push(error),
             }
             resource.route = Some(Route {
                 id: scope.clone(),
                 transport: Transport::Integration,
-                provider_generation: "dormant".into(),
+                provider_generation: format!(
+                    "{}:{}",
+                    resource
+                        .attributes
+                        .get("providerSetupRevision")
+                        .map(String::as_str)
+                        .unwrap_or("unconfigured"),
+                    resource
+                        .attributes
+                        .get("catalogueRevision")
+                        .map(String::as_str)
+                        .unwrap_or("unavailable")
+                ),
                 attributes: BTreeMap::new(),
                 baseline_ready: false,
                 writable: false,

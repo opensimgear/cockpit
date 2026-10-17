@@ -260,6 +260,9 @@ impl GatewayManager {
                 }
             } else if command.starts_with("integration_") || command.starts_with("dcs_") {
                 let _guard = game_gate.lock().unwrap_or_else(|p| p.into_inner());
+                if matches!(command, "integration_start" | "dcs_start") {
+                    return json!({"ok":false,"error":"A retired game integration cannot restart independently. Apply a unified profile with its matching verified game context.","state":{"integration":game_integration.status(),"dcsBios":game_dcs.status()}});
+                }
                 let result = if command.starts_with("integration_") {
                     if command == "integration_start" && game_dcs.status()["running"] == true {
                         Err("Stop DCS-BIOS before starting another integration.".into())
@@ -304,7 +307,7 @@ impl GatewayManager {
         let resource_ports = provider.clone();
         let module_usb = Arc::new(crate::module_usb_fleet::Fleet::new(Arc::new(move || resource_ports.ports()), native));
         let collect = crate::profile_resource_sources::collector(
-            controllers.clone(), companion_provider, companion_host.clone(), games.clone(), integration.clone(),
+            controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
             Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.cached_state())).collect()),
             Arc::new(move |request| {
                 let adapter = resource_requests.lock().unwrap_or_else(|p| p.into_inner()).get(request["gatewayId"].as_str().unwrap_or("")).cloned();
@@ -546,6 +549,9 @@ impl GatewayManager {
             };
         }
         if command.starts_with("game_") {
+            if let Err(error) = self.games.guard_unified_integration_request(&request) {
+                return self.error(&error, None);
+            }
             if matches!(command.as_str(), "game_activate" | "game_launch")
                 && (self.mapping_host.provisioning_active() || self.controllers.visibility_active())
             {
@@ -616,6 +622,9 @@ impl GatewayManager {
             } else {
                 None
             };
+        if let Err(error) = crate::game_context::guard_public_provider_request(&command) {
+            return self.error(&error, None);
+        }
         if command.starts_with("integration_") {
             if command == "integration_start" && self.dcs.status()["running"] == true {
                 return self.error("Stop DCS-BIOS before starting another integration.", None);
@@ -1282,7 +1291,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_gateway_selection_does_not_deadlock_a_starting_dcs_profile() {
+    fn rejected_gateway_selection_does_not_deadlock_native_dcs_preparation() {
         let (mut manager, _) = setup();
         let sessions = manager.sessions.clone();
         let entered = Arc::new(AtomicBool::new(false));
@@ -1312,17 +1321,18 @@ mod tests {
             );
         }
         let config = json!({"schemaVersion":1,"cataloguePath":PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios"),"gatewayId":FIRST,"moduleId":"00112233445566778899aabbccddeeff","button":0,"ledActionId":"led.boolean"});
-        assert_eq!(
-            request(&manager, "dcs_configure", None, json!({"dcsConfig":config}))["ok"],
-            true
-        );
+        // Qualify the retained native adapter's lock behavior directly. Its
+        // retired independent configuration/start IPC is separately rejected.
+        manager
+            .dcs
+            .request(&json!({"command":"dcs_configure","dcsConfig":config}))
+            .unwrap();
         let (sender, receiver) = mpsc::channel();
         let pending_manager = manager.clone();
         let started = sender.clone();
         let start = std::thread::spawn(move || {
-            started
-                .send(request(&pending_manager, "dcs_start", None, json!({})))
-                .unwrap();
+            let result = pending_manager.dcs.request(&json!({"command":"dcs_start"}));
+            started.send(json!({"ok":result.is_ok()})).unwrap();
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
         while !entered.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
@@ -1412,6 +1422,43 @@ mod tests {
             false
         );
         std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn independent_provider_mutations_cannot_bypass_profile_context_with_forged_browser_fields() {
+        let (manager, provider) = setup();
+        for command in [
+            "dcs_configure",
+            "dcs_start",
+            "integration_save",
+            "integration_validate",
+            "integration_start",
+            "integration_override",
+            "integration_simulate",
+        ] {
+            let reply = request(
+                &manager,
+                command,
+                None,
+                json!({"contextSession":"forged","profileOwner":{"session":"browser"},"processIdentity":{"pid":1,"epoch":1,"path":"DCS.exe"}}),
+            );
+            assert_eq!(reply["ok"], false, "{command}");
+            assert!(
+                reply["error"].as_str().unwrap().contains("applied profile"),
+                "{command}: {reply}"
+            );
+            assert_eq!(reply["state"]["integration"]["running"], false);
+            assert_eq!(reply["state"]["dcsBios"]["running"], false);
+        }
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        assert_eq!(
+            request(&manager, "integration_get_state", None, json!({}))["ok"],
+            true
+        );
+        assert_eq!(
+            request(&manager, "integration_stop", None, json!({}))["ok"],
+            true
+        );
+        manager.shutdown();
     }
     #[test]
     fn shutdown_during_discovery_cannot_create_a_late_adapter() {

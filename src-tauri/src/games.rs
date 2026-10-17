@@ -373,6 +373,9 @@ struct Inner {
     path: PathBuf,
     journal_path: PathBuf,
     setup: crate::game_integration_setup::GameIntegrationSetup,
+    contexts: Mutex<crate::game_context::Broker>,
+    admitted_context: Mutex<Option<crate::game_context::ContextToken>>,
+    context_setup_check: Mutex<Option<Instant>>,
     settings: Mutex<Settings>,
     state: Mutex<Value>,
     busy: AtomicBool,
@@ -383,7 +386,10 @@ pub(crate) struct GamesRuntime {
     inner: Arc<Inner>,
     admission: Mutex<()>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    observer: Mutex<Option<JoinHandle<()>>>,
 }
+#[path = "game_context_runtime.rs"]
+mod context_runtime;
 impl GamesRuntime {
     pub(crate) fn new(panel: Panel, path: PathBuf, platform: Arc<dyn Platform>) -> Self {
         let (saved, mut error) =
@@ -408,12 +414,15 @@ impl GamesRuntime {
             json!({"phase":"idle","error":null})
         };
         let catalogue = platform.catalogue(&saved.manual);
-        Self {
+        let runtime = Self {
             inner: Arc::new(Inner {
                 setup: crate::game_integration_setup::GameIntegrationSetup::new(
                     path.with_extension("integration-setup.json"),
                     platform.integration_setup_supported(),
                 ),
+                contexts: Mutex::new(crate::game_context::Broker::default()),
+                admitted_context: Mutex::new(None),
+                context_setup_check: Mutex::new(None),
                 panel,
                 platform,
                 path,
@@ -431,7 +440,10 @@ impl GamesRuntime {
             }),
             admission: Mutex::new(()),
             worker: Mutex::new(None),
-        }
+            observer: Mutex::new(None),
+        };
+        runtime.start_context_observer();
+        runtime
     }
     pub(crate) fn status(&self) -> Value {
         self.status_with_telemetry(&Value::Null, &Value::Null)
@@ -439,7 +451,18 @@ impl GamesRuntime {
     /// Retained installation metadata only. Inventory must not launch discovery,
     /// perform setup checks or activate the independently scoped game runtime.
     pub(crate) fn resource_catalogue(&self) -> Vec<Value> {
-        self.inner.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone()
+        let mut catalogue = self
+            .inner
+            .settings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .catalogue
+            .clone();
+        self.inner
+            .setup
+            .decorate(&mut catalogue, &Value::Null, &Value::Null);
+        self.decorate_game_contexts(&mut catalogue);
+        catalogue
     }
     pub(crate) fn status_with_telemetry(&self, integration: &Value, dcs: &Value) -> Value {
         let s = self
@@ -452,6 +475,7 @@ impl GamesRuntime {
             .setup
             .auto_check(&catalogue, self.inner.platform.clone(), integration);
         self.inner.setup.decorate(&mut catalogue, integration, dcs);
+        self.decorate_game_contexts(&mut catalogue);
         // Detection is independent of profile activation and observes games
         // launched outside Cockpit without changing their session or settings.
         let mut detected = Vec::new();
@@ -611,12 +635,17 @@ impl GamesRuntime {
                         .into(),
                 );
             }
-            return self.inner.setup.request(
+            let result = self.inner.setup.request(
                 request,
                 &game,
                 self.inner.platform.clone(),
                 &self.inner.panel,
             );
+            if result.is_ok() {
+                self.inner.refresh_game_contexts(true);
+                self.inner.enforce_integration_context();
+            }
+            return result;
         }
         if command == "game_deactivate" {
             if self.inner.busy.load(Ordering::Acquire) {
@@ -828,8 +857,16 @@ impl GamesRuntime {
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
-        self.inner.setup.shutdown();
         self.inner.cancel.store(true, Ordering::Release);
+        if let Some(observer) = self
+            .observer
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            let _ = observer.join();
+        }
+        self.inner.setup.shutdown();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
@@ -1233,6 +1270,13 @@ impl Inner {
             return Ok(());
         }
         let mut config = journal["desiredIntegration"].clone();
+        if config["document"]["provider"] == "dcs-bios" {
+            let process = process
+                .ok_or("Start the selected DCS installation before activating its integration.")?;
+            if !self.platform.alive(process)? {
+                return Err("The verified DCS process exited before provider attachment.".into());
+            }
+        }
         if config["document"]["provider"] == crate::xplane::PROVIDER {
             let process = process.ok_or(
                 "Start the selected X-Plane installation before activating live telemetry.",
@@ -1278,10 +1322,7 @@ impl Inner {
                 self.call("_game_mapping_arm", json!({"mapping":j["mapping"]}))?;
                 self.step("Captured mapping armed with fresh input baselines.");
             }
-            let delayed = j["desiredIntegration"]["document"]["provider"]
-                == crate::xplane::PROVIDER
-                || (j["desiredIntegration"]["document"]["provider"] == "assetto-corsa-rally"
-                    && j["desiredIntegration"]["connection"]["source"] == "shared-memory");
+            let delayed = !j["desiredIntegration"].is_null();
             if !delayed {
                 self.start_integration(j, None)?;
             }

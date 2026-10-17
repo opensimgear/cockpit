@@ -24,10 +24,6 @@ fn sources() -> (Sources, tempfile::TempDir) {
         temporary.path().join("games.json"),
         Arc::new(crate::game_discovery::NativePlatform),
     ));
-    let integration = Arc::new(crate::integration_runtime::IntegrationRuntime::new(
-        panel.clone(),
-        temporary.path().join("integration.json"),
-    ));
     (
         Sources {
             session: "provider-session".into(),
@@ -35,7 +31,6 @@ fn sources() -> (Sources, tempfile::TempDir) {
             companions,
             host,
             games,
-            integration,
             gateways: Arc::new(|| vec![]),
             panel,
             native: false,
@@ -505,9 +500,21 @@ fn restored_host_metadata_remains_a_distinct_offline_controller_without_guessing
 #[test]
 fn dormant_game_catalogue_failure_recovers_without_starting_an_integration() {
     let (mut sources, _temporary) = sources();
+    let games = sources.games.resource_catalogue();
+    let setup_revision = games
+        .iter()
+        .find(|game| game["id"] == "x-plane-11")
+        .unwrap()["integrationSetup"]["providerSetupRevision"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
     sources.catalogues.insert(
-        "x-plane".into(),
-        (Instant::now(), Err("Catalogue unavailable".into())),
+        "x-plane-11".into(),
+        (
+            Instant::now(),
+            setup_revision,
+            Err("Catalogue unavailable".into()),
+        ),
     );
     let batches = sources.collect(1);
     let games = batches
@@ -523,7 +530,7 @@ fn dormant_game_catalogue_failure_recovers_without_starting_an_integration() {
                 .diagnostics
                 .iter()
                 .any(|d| d == "Catalogue unavailable")));
-    sources.catalogues.get_mut("x-plane").unwrap().0 = Instant::now() - Duration::from_secs(6);
+    sources.catalogues.get_mut("x-plane-11").unwrap().0 = Instant::now() - Duration::from_secs(6);
     let batches = sources.collect(2);
     assert!(batches
         .into_iter()
@@ -532,6 +539,49 @@ fn dormant_game_catalogue_failure_recovers_without_starting_an_integration() {
         .any(|game| game.attributes["provider"] == "x-plane"
             && game.ports.is_some()
             && !game.route.unwrap().writable));
+}
+#[test]
+fn game_catalogue_cache_is_scoped_by_game_and_invalidates_changed_setup_revisions() {
+    let (mut sources, _temporary) = sources();
+    let first = sources.collect(1);
+    let game = |batches: Vec<(String, Result<ProviderBatch, String>)>, id: &str| {
+        batches
+            .into_iter()
+            .find(|(scope, _)| scope == &format!("game:{id}"))
+            .unwrap()
+            .1
+            .unwrap()
+            .observations
+            .remove(0)
+    };
+    let initial = game(first, "x-plane-11");
+    assert!(initial.ports.as_ref().unwrap().total > 0);
+    assert_ne!(
+        sources.catalogues["x-plane-11"].1,
+        sources.catalogues["x-plane-12"].1
+    );
+    // A cached error for one installation never suppresses another version's
+    // read-only authoring catalogue, even though both use the same provider.
+    sources.catalogues.get_mut("x-plane-11").unwrap().2 = Err("Old catalogue failed".into());
+    let second = sources.collect(2);
+    let xplane11 = game(second.clone(), "x-plane-11");
+    let xplane12 = game(second, "x-plane-12");
+    assert!(xplane11.ports.is_none());
+    assert!(xplane12.ports.as_ref().unwrap().total > 0);
+    sources.catalogues.get_mut("x-plane-11").unwrap().1 = "old-setup-revision".into();
+    let refreshed = game(sources.collect(3), "x-plane-11");
+    assert!(refreshed.ports.as_ref().unwrap().total > 0);
+    assert_eq!(
+        refreshed.attributes["providerSetupRevision"],
+        initial.attributes["providerSetupRevision"]
+    );
+    assert_eq!(
+        refreshed.attributes["catalogueRevision"],
+        initial.attributes["catalogueRevision"]
+    );
+    assert!(refreshed.attributes["providerSetupRevision"].starts_with("sha256:"));
+    assert!(!refreshed.route.as_ref().unwrap().baseline_ready);
+    assert!(!refreshed.route.unwrap().writable);
 }
 #[test]
 fn capability_refresh_uses_only_bounded_read_commands_and_deduplicates_inflight_gateway() {
@@ -585,7 +635,6 @@ fn retained_collector_preserves_provider_sessions_across_read_only_refreshes() {
         sources.companions,
         sources.host,
         sources.games,
-        sources.integration,
         sources.gateways,
         sources.panel,
         sources.usb,
