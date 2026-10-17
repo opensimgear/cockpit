@@ -16,6 +16,8 @@ mod staging;
 pub(crate) use staging::{apply_staged, apply_staged_admitted, Stage};
 #[path = "profile_session_inspection.rs"]
 pub(crate) mod inspection;
+#[path = "profile_session_topology.rs"]
+pub(crate) mod topology;
 #[path = "profile_session_launch.rs"]
 mod launch;
 
@@ -168,6 +170,9 @@ pub(crate) trait Host: Send {
     }
     fn inspect(&self, _: &OwnedRun, _: &inspection::Request) -> Result<inspection::Page, String> {
         Err("This native profile adapter has no applied-port inspector.".into())
+    }
+    fn inspect_topology(&self, _: &OwnedRun, _: &topology::Request) -> Result<topology::Page, String> {
+        Err("This native profile adapter has no applied topology projection.".into())
     }
     fn discard_preparation(&mut self, owner: &RunOwner);
 }

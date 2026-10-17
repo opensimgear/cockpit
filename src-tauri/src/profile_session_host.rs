@@ -467,6 +467,14 @@ impl NativeProfileHost {
     }
 }
 impl Host for NativeProfileHost {
+    fn inspect_topology(&self, run: &OwnedRun, request: &crate::profile_session::topology::Request) -> Result<crate::profile_session::topology::Page, String> {
+        self.fence(&run.owner)?;
+        let state=self.prepared.get(&key(&run.owner)).filter(|state|state.owner==run.owner)
+            .ok_or("The applied native profile is no longer available.")?;
+        let reducer=state.reducer.as_ref().filter(|reducer|reducer.active())
+            .ok_or("The applied native reducer is stopped.")?;
+        crate::profile_session::topology::capture(&state.document,reducer,run,request)
+    }
     fn inspect(&self, run: &OwnedRun, request: &crate::profile_session::inspection::Request) -> Result<crate::profile_session::inspection::Page, String> {
         self.fence(&run.owner)?;
         let state = self.prepared.get(&key(&run.owner)).filter(|state| state.owner == run.owner)

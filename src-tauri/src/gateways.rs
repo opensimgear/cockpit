@@ -758,6 +758,12 @@ impl GatewayManager {
                 Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
             };
         }
+        if command == "profile_runtime_topology" {
+            request.as_object_mut().unwrap().remove("clientId");
+            let result = crate::profile_session::topology::Request::parse(&request)
+                .and_then(|request| self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).inspect_topology(&request));
+            return match result { Ok(page)=>json!({"ok":true,"state":{"profileTopology":page}}), Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()}) };
+        }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
             if matches!(command.as_str(),"profile_companion_catalogue"|"profile_companion_inspect"){

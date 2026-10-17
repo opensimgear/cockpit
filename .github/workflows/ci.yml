@@ -41,6 +41,8 @@ jobs:
       - run: pnpm profile-runtime-controller:coverage
       - run: pnpm profile-inspection:coverage
       - run: pnpm profile-inspection-controller:coverage
+      - run: pnpm profile-activity:coverage
+      - run: pnpm profile-activity-controller:coverage
       - run: pnpm profile-learning:coverage
       - run: pnpm profile-learning-controller:coverage
       - run: pnpm profile-automatic:coverage

@@ -5,6 +5,7 @@
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
   import ProfileAutomaticControls from './ProfileAutomaticControls.svelte';
   import ProfileLiveInspector from './ProfileLiveInspector.svelte';
+  import ProfilePathActivity from './ProfilePathActivity.svelte';
   import { gatewayRequest } from './gateway';
   import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument, type ProfileLocalAssignment } from './profiles';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
@@ -15,6 +16,8 @@
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
   import {ProfileInspectorClient}from'./profile-inspection';
   import {ProfileInspectionController}from'./profile-inspection-controller';
+  import {ProfileTopologyClient}from'./profile-activity';
+  import {ProfileActivityController}from'./profile-activity-controller';
   import {ProfileLearningClient}from'./profile-learning';
   import type {DeepReadonly} from './profiles';
   import type { GameId } from './games';
@@ -34,7 +37,9 @@
     return status;
   }));
   let runtimeState=$state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
-  const inspection=new ProfileInspectionController(new ProfileInspectorClient(async request=>{const result=(await gatewayRequest(request)).profileInspection;if(!result)throw new Error('Native applied port inspection is unavailable. Reconnect the service.');return result;}));
+  const inspectionClient=new ProfileInspectorClient(async request=>{const result=(await gatewayRequest(request)).profileInspection;if(!result)throw new Error('Native applied port inspection is unavailable. Reconnect the service.');return result;});
+  const inspection=new ProfileInspectionController(inspectionClient);
+  const activity=new ProfileActivityController(new ProfileTopologyClient(async request=>{const result=(await gatewayRequest(request)).profileTopology;if(!result)throw new Error('Native applied topology is unavailable. Reconnect the service.');return result;}),inspectionClient);
   const learningClient=new ProfileLearningClient(async request=>{const result=(await gatewayRequest(request)).profileLearning;if(!result)throw new Error('Native input learning is unavailable. Reconnect the service.');return result;});
   let routingSelection=$state('');
   const navigationGuard = new ProfileNavigationGuard(store);
@@ -58,7 +63,7 @@
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next);if(workspace.view==='list')void store.refresh();if(!workspace.inventoryLoaded)void store.refreshInventory();return stop; });
-  onDestroy(() => { runtimeReplyEpoch++;runtime.dispose();inspection.dispose();if(!supplied)store.dispose(); });
+  onDestroy(() => { runtimeReplyEpoch++;runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
   function report(operation:()=>void) { notice='';try{operation();workspace=store.state;}catch(error){notice=error instanceof Error?error.message:String(error);} }
   async function add() { notice='';if(!workspace.inventoryLoaded){await store.refreshInventory();workspace=store.state;}if(workspace.inventory.length>64){creatingSelection=true;inventorySelection=[];return;}report(()=>store.beginBlank()); }
@@ -90,6 +95,7 @@
   <div class="profile-session" aria-label="Runtime profile status"><span><strong>Runtime selection</strong> {runtimeName}</span><span>{runtimeState.status?.state??workspace.session?.state??'Loading status'}</span><span><strong>Applied revision</strong> {appliedSnapshot?`${appliedName} · ${appliedSnapshot.revision}`:'None'}</span><p>Opening and saving an editor leaves runtime selection and applied revision unchanged.</p></div>
   <ProfileRuntimeControls controller={runtime} editor={runtimeTarget} profiles={workspace.profiles} gameIds={editor?.document.eligibility.gameIds??[]} {active} onState={next=>runtimeState=next}/>
   <ProfileLiveInspector controller={inspection} owner={runtimeState.stale?null:runtimeState.status?.owner??null} {active} selectedId={routingSelection} editorProfileId={editor?.document.id} editorRevision={editor?.document.revision} editorDirty={dirty} profileName={appliedName}/>
+  <ProfilePathActivity controller={activity} owner={runtimeState.stale?null:runtimeState.status?.owner??null} {active} selectedId={routingSelection} editorProfileId={editor?.document.id}/>
   {#if workspace.diagnostics.length}<div class="profile-diagnostics" role="status">{#each workspace.diagnostics as diagnostic,index (index)}<p>{diagnostic}</p>{/each}</div>{/if}
   {#if workspace.readOnly}<p class="workspace-error" role="status">This library is read-only. Resolve its diagnostics before making changes.</p>{/if}
   {#if notice||workspace.error}<p class="workspace-error" role="alert">{notice||workspace.error}</p>{/if}

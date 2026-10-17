@@ -86,6 +86,13 @@ test('read-only applied inspection neither waits for nor blocks profile controls
   assert.deepEqual(api.calls[0].args.request.owner,owner);
   pending.resolve();await inspecting;
 });
+test('applied topology metadata is an independent read lane and cannot delay samples, edits or emergency controls',async()=>{
+  const pending=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='profile_runtime_topology')await pending.promise;return{ok:true,state};}});
+  const owner={session:'owner-session',generation:1,profileId:'profile',profileRevision:3,gameId:null};
+  const reading=api.gatewayRequest({command:'profile_runtime_topology',owner,section:'edges',offset:0,limit:64});await tick();
+  await api.gatewayRequest({command:'profile_runtime_inspect',owner,nodeId:'source',offset:0,limit:32});await api.gatewayRequest({command:'profile_stop'});await api.gatewayRequest({command:'profile_save',document:{id:'profile',revision:3},expectedRevision:3});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_runtime_topology','profile_runtime_inspect','profile_stop','profile_save']);assert.deepEqual(api.calls[0].args.request,{command:'profile_runtime_topology',owner,section:'edges',offset:0,limit:64,clientId:'test-client-uuid'});pending.resolve();await reading;
+});
 test('learning cached status and priority cancel bypass a blocked start, and controls cancel unsent starts',async()=>{
   for(const command of ['profile_input_learn_cancel','profile_apply','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','mapping_preview_start','action_invoke']){
     const wait=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='profile_input_learn_start')await wait.promise;return{ok:true,state};}});
