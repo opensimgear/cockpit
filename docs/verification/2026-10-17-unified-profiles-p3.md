@@ -53,6 +53,11 @@ game client tests pass. Main/browser Svelte checks report zero errors/warnings;
 browser and desktop UI builds pass. Render tests execute actual Svelte server
 components; an interactive browser was unavailable in this session.
 
+After combining P3 with P2's compiler/contracts, the complete Windows native suite
+passes **496 tests** with three existing tests ignored. All **181** transport tests
+and the combined main/browser type checks pass. The shared gateway request type
+retains both compiler paging and game-settings revision fields.
+
 ## Boundaries
 
 P4 has not yet installed live ProfileSession ownership or compiled adapters, so
