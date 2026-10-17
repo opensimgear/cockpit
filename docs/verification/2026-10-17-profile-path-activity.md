@@ -45,7 +45,7 @@ applied block again. The existing port table remains the detailed alternative.
 | Topology/path client tests | 4 passed |
 | Fenced activity controller tests | 7 passed |
 | Actual Svelte activity SSR/handler tests | 7 passed |
-| Complete profile UI SSR/handler suite | 58 passed |
+| Complete profile UI SSR/handler suite | 59 passed |
 | Gateway queue/transport tests | 32 passed |
 | Main and browser Svelte checks | 0 errors, 0 warnings |
 | Browser companion production build | Passed, 128 modules |
@@ -65,7 +65,12 @@ token and pending effects. The source-stamped native gate passes 141/170
 production lines (82.94%) for the topology module; its original 71% threshold
 is unchanged. Evidence is retained under `.research/profile-composed-hosts-coverage`.
 
-This evidence covers SSR, actual component handlers, native projection contracts
-and frontend builds. It does not establish browser pointer/focus acceptance or
-actual driver, device or game delivery. No hardware output was started for these
-checks; assembled physical/native acceptance remains open in #87.
+The additional `tests/ui/unified-profiles.mjs` browser fixture verifies keyboard
+Add, Save, Back, reopening, dirty Keep/Discard and clean Cancel, with an unchanged
+applied owner. It also checks that list/Add/Stop are visible before runtime
+details and that opening inspection is explicit. Every native IPC is intercepted;
+no actual service, driver, device or game is used.
+
+This evidence covers SSR, actual component handlers, native projection contracts,
+frontend builds and the scoped browser navigation fixture. No hardware output
+was started; assembled physical/native acceptance remains open in #87.
