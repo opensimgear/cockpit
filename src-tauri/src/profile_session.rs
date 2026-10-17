@@ -350,10 +350,14 @@ impl<H: Host> Coordinator<H> {
             .unwrap();
         let mut next = self.manifest.clone();
         next.active = Some(run.clone());
+        let retired = next.pending.as_ref().and_then(|transition| transition.outgoing.as_ref()).map(|run| run.owner.clone());
         next.pending = None;
         if let Err(error) = self.persist(next) {
             return self.fail_transition(error);
         }
+        // Durable ownership has moved. Keep the outgoing adapters through all
+        // compensation paths, then release their stopped readers and buffers.
+        if let Some(retired) = retired { self.host.discard_preparation(&retired); }
         self.active_candidate = Some(candidate);
         self.status = Status {
             state: if prepared.admission.optional_unavailable.is_empty() {

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Default)]
 struct Probe {
     calls: Vec<String>,
+    discarded: Vec<RunOwner>,
     fail: Option<String>,
     owner: Option<RunOwner>,
     value: u32,
@@ -115,8 +116,10 @@ impl Host for Fake {
         checkpoint(&mut probe, "health".into())?;
         Ok(probe.health.clone())
     }
-    fn discard_preparation(&mut self, _: &RunOwner) {
-        self.0.lock().unwrap().calls.push("discard".into());
+    fn discard_preparation(&mut self, owner: &RunOwner) {
+        let mut probe=self.0.lock().unwrap();
+        probe.calls.push("discard".into());
+        probe.discarded.push(owner.clone());
     }
 }
 fn candidate() -> Candidate {
@@ -174,6 +177,21 @@ fn prepare_capture_and_initial_journal_failures_preserve_previous_run() {
             .iter()
             .any(|call| call == "revoke"));
     }
+}
+#[test]
+fn successful_takeover_discards_only_the_retired_owner_after_durable_commit() {
+    let (mut runtime,probe)=coordinator(None);
+    runtime.apply(candidate()).unwrap();
+    let old=runtime.status().owner.clone().unwrap();
+    assert!(probe.lock().unwrap().discarded.is_empty());
+    runtime.apply(candidate()).unwrap();
+    let current=runtime.status().owner.clone().unwrap();
+    assert_eq!(probe.lock().unwrap().discarded,vec![old]);
+    assert!(runtime.validates(&current));
+    runtime.store.fail_save=true;
+    assert!(runtime.apply(candidate()).is_err());
+    assert!(runtime.validates(&current));
+    assert!(!probe.lock().unwrap().discarded.contains(&current));
 }
 #[test]
 fn every_uncertain_activation_phase_is_compensated_and_never_replayed() {
