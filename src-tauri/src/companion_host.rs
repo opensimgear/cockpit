@@ -674,6 +674,67 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    fn usb_operator_requests_require_a_current_selection_and_ready_device() {
+        let runtime = runtime();
+        let before = call(&runtime, "companion_status", json!({})).unwrap();
+        // With no paired clients this only enumerates ports; it cannot probe a UART.
+        let ports = call(&runtime, "companion_usb_ports", json!({})).unwrap();
+        assert!(ports["usbPorts"].is_array());
+        assert_eq!(ports["firmwareProfiles"].as_array().unwrap().len(), 2);
+        assert_eq!(ports["usb"]["connected"], false);
+        for (payload, expected) in [
+            (json!({}), "Choose a paired companion."),
+            (json!({"companionId":"unpaired"}), "Choose a paired ESP32 companion."),
+        ] {
+            assert_eq!(call(&runtime, "companion_usb_update_prepare", payload).unwrap_err(), expected);
+        }
+        assert_eq!(
+            call(&runtime, "companion_usb_flash", json!({"profile":"unknown"})).unwrap_err(),
+            "Choose a supported board profile."
+        );
+        for profile in ["waveshare-lcd7-s3", "sunton-3248s035r"] {
+            assert_eq!(
+                call(&runtime, "companion_usb_flash", json!({"profile":profile})).unwrap_err(),
+                "Choose a USB device."
+            );
+            // A path which was never enumerated cannot reach firmware installation,
+            // including the update path with an unverified companion identity.
+            let absent = format!("absent-test-port-{}", uuid::Uuid::new_v4());
+            for companion in [Value::Null, json!("unpaired")] {
+                assert!(call(&runtime, "companion_usb_flash", json!({
+                    "profile":profile,"port":absent,"companionId":companion
+                })).unwrap_err().contains("USB selection changed"));
+            }
+        }
+        assert_eq!(
+            call(&runtime, "companion_usb_connect", json!({})).unwrap_err(),
+            "Select a USB device."
+        );
+        for command in [
+            "companion_usb_scan", "companion_usb_arm", "companion_usb_disarm",
+            "companion_usb_forget", "companion_usb_reconnect",
+        ] {
+            assert_eq!(call(&runtime, command, json!({})).unwrap_err(), "Connect a USB device first.");
+        }
+        assert_eq!(
+            call(&runtime, "companion_usb_provision", json!({
+                "name":"Never provisioned","mode":"serial"
+            })).unwrap_err(),
+            "Wait for the USB device to be ready."
+        );
+        let disconnected = call(&runtime, "companion_usb_disconnect", json!({})).unwrap();
+        assert_eq!(disconnected["usb"]["connected"], false);
+        assert_eq!(call(&runtime, "companion_usb_status", json!({})).unwrap(), disconnected);
+        let after = call(&runtime, "companion_status", json!({})).unwrap();
+        for key in ["clients", "instances", "publications"] {
+            assert_eq!(after["host"][key], before["host"][key]);
+        }
+        assert_eq!(after["listener"]["enabled"], false);
+        assert_eq!(after["usb"]["devices"], json!([]));
+        runtime.shutdown();
+    }
+    #[cfg(windows)]
+    #[test]
     fn listener_configuration_restores_after_restart_and_disable_removes_it() {
         let directory=std::env::temp_dir().join(format!("osg-browser-listener-test-{}",uuid::Uuid::new_v4()));
         let make=|| {
@@ -823,6 +884,22 @@ mod tests {
             fixture["publicationHash"].as_str().unwrap()
         );
         assert!(runtime.assigned_publication("unknown-instance").is_err());
+        let mut capture = call(&runtime, "companion_game_capture", json!({"instanceIds":["saved-panel"]})).unwrap()["capture"].clone();
+        capture["assignments"][0]["instanceId"] = json!("game-panel");
+        let mut journal = runtime.game_command("_game_companion_snapshot", &json!({"capture":capture})).unwrap();
+        assert_eq!(journal["taken"], false);
+        assert!(runtime.assigned_publication("game-panel").is_err());
+        assert!(runtime.game_command("_game_companion_take", &json!({"companions":journal})).is_err());
+        journal["taken"] = json!(true);
+        runtime.game_command("_game_companion_take", &json!({"companions":journal})).unwrap();
+        assert_eq!(runtime.assigned_publication("game-panel").unwrap().publication_hash, fixture["publicationHash"]);
+        runtime.game_command("_game_companion_restore", &json!({"companions":journal,"recovery":true})).unwrap();
+        assert!(runtime.assigned_publication("game-panel").is_err());
+        assert!(runtime.assigned_publication("saved-panel").is_ok());
+        assert_eq!(runtime.game_command("_game_companion_abandon", &json!({"companions":journal})).unwrap(), json!({"abandoned":true}));
+        assert!(runtime.game_command("_game_companion_unknown", &json!({})).is_err());
+        assert!(call(&runtime, "companion_status", json!({})).unwrap()["host"]["instances"]
+            .as_array().unwrap().iter().all(|instance| instance["armed"] == false));
         assert!(call(
             &runtime,
             "companion_approve",

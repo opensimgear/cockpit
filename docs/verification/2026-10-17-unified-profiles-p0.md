@@ -34,7 +34,9 @@ a module action. It is a contract fixture, not an executed simulator scenario.
 | Frontend and browser type checks | Zero errors and warnings |
 | Transport regression suite | 173 passed |
 | Browser companion and Cockpit UI builds | Passed; existing bundle-size/import warnings remain |
-| Windows desktop library tests | 375 passed, 3 existing live-hardware/game tests ignored |
+| Windows desktop library tests | 376 passed, 3 existing live-hardware/game tests ignored |
+| Windows companion host coverage regression tests | 7 passed |
+| Windows companion host production coverage | 334 / 445 lines, 75.06% |
 | Native browser-service framing | 1 passed |
 
 The restricted Windows sandbox cannot supply the DPAPI context required by two
@@ -77,4 +79,22 @@ The mapping-host lockfile includes its existing companion-service dependencies;
 67 tests and all eight module coverage gates pass with locked dependencies.
 Mobile setup now uses the published Android 37.0 SDK and invokes the installed
 Node/Tauri CLI directly from generated Xcode hooks. Five configuration helper
-tests pass; native Android and iOS build results must come from CI.
+tests pass. [Mobile CI run 39009235477](https://github.com/opensimgear/cockpit/actions/runs/39009235477)
+completed successfully on `474390b`: checks, Android and iOS simulator builds all
+passed. The signed iOS device and release jobs were skipped by their existing
+conditions; simulator success does not qualify a physical mobile device.
+
+The Windows companion host coverage gate exposed untested native request routes
+(278 / 445 lines, 62.47%) despite the passing desktop suite. A new USB operator
+test verifies that setup, firmware installation and control requests cannot pass
+without a current selection and ready connection. Enumeration uses an empty
+paired-client set, so it does not probe UARTs; firmware tests supply only paths
+which were never enumerated. The existing operator test now exercises trusted
+game capture, snapshot, checkpointed assignment, restoration and abandonment
+through the host entry points, preserving the original assignment and leaving
+every instance unarmed. The unchanged `scripts/companion-coverage.py` gate passes:
+73 service tests and 7 host tests pass; all twelve measured production modules
+exceed 71%, with the host at 334 / 445 lines (75.06%). Local reports are in
+`.research/p0-companion-coverage-fix/`. The full instrumented desktop library
+rerun passed all 376 tests, with the same three existing live-hardware/game
+tests ignored.
