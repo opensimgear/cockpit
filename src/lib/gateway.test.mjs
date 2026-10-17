@@ -69,6 +69,24 @@ test('unified profile writes remain ordered without blocking gateway discovery o
   assert.deepEqual(api.calls[0].args.request.document, document);
 });
 
+test('read-only applied inspection neither waits for nor blocks profile controls, Apply or saved edits', async () => {
+  const pending=deferred();
+  const api=transport({invokeResults:async(_command,request)=>{
+    if(request.command==='profile_runtime_inspect')await pending.promise;
+    return {ok:true,state};
+  }});
+  const owner={session:'owner-session',generation:1,profileId:'profile',profileRevision:3,gameId:null};
+  const inspecting=api.gatewayRequest({command:'profile_runtime_inspect',owner,nodeId:'input',offset:0,limit:32});
+  await tick();
+  await api.gatewayRequest({command:'profile_stop'});
+  await api.gatewayRequest({command:'profile_status'});
+  await api.gatewayRequest({command:'profile_save',document:{id:'profile',revision:3},expectedRevision:3});
+  await api.gatewayRequest({command:'profile_apply',id:'profile',expectedRevision:4});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_runtime_inspect','profile_stop','profile_status','profile_save','profile_apply']);
+  assert.deepEqual(api.calls[0].args.request.owner,owner);
+  pending.resolve();await inspecting;
+});
+
 test('profile runtime controls and status bypass slow Apply while older unsent Apply is cancelled',async()=>{
   const active=deferred();
   const api=transport({invokeResults:async(_command,request)=>{
