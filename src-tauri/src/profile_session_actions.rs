@@ -12,6 +12,7 @@ use osg_mapping::{
     signal::{ActionSemantics, PortContract},
 };
 use osg_profiles::compiler_models::{ExecutionPlan, PlanReadiness, SinkAdapter, SinkPlan};
+use osg_profiles::resources::ResourceToken;
 use std::{
     collections::{BTreeSet, VecDeque},
     sync::{
@@ -71,6 +72,7 @@ impl Driver for Lease {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
+    Dormant,
     Prepared,
     Acquiring,
     Claimed,
@@ -118,12 +120,14 @@ struct Slot {
     endpoint: Option<(String, String)>,
     sink_id: String,
     required: bool,
+    dormant: bool,
     one_shot: bool,
     contract: Option<PortContract>,
     receipt: Receipt,
     driver: Option<Box<dyn Driver>>,
     shared: Arc<Shared>,
     bind_queued: bool,
+    requested_token: Option<ResourceToken>,
     sequence: u64,
     at: u64,
 }
@@ -140,6 +144,7 @@ pub(crate) struct PanelActions {
     slots: Vec<Slot>,
     owner: RunOwner,
     unavailable: Vec<String>,
+    program: Vec<u8>,
     cancelled: Arc<AtomicBool>,
     active: Arc<AtomicBool>,
     acquired: bool,
@@ -181,9 +186,6 @@ impl PanelActions {
                 .iter()
                 .find(|b| b.sink == sink.endpoint)
                 .ok_or("Physical action sink has no exact compiled branch.")?;
-            if sink.readiness == PlanReadiness::Dormant {
-                continue;
-            }
             let mut make = || {
                 if sink.adapter != SinkAdapter::PhysicalAction
                     || sink.readiness != PlanReadiness::Ready
@@ -228,12 +230,24 @@ impl PanelActions {
                 endpoint: Some(logical),
                 sink_id: selected[0].id.clone(),
                 required: branch.required,
+                dormant: branch.readiness == PlanReadiness::Dormant,
                 one_shot,
                 contract: Some(sink.contract.clone()),
                 receipt: driver.receipt(),
                 driver: Some(driver),
-                shared: Arc::default(),
+                shared: Arc::new(Shared {
+                    state: Mutex::new(State {
+                        stage: if branch.readiness == PlanReadiness::Dormant {
+                            Stage::Dormant
+                        } else {
+                            Stage::Prepared
+                        },
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
                 bind_queued: false,
+                requested_token: None,
                 sequence: 0,
                 at: 0,
             });
@@ -245,6 +259,7 @@ impl PanelActions {
             slots,
             owner: owner.clone(),
             unavailable,
+            program: serde_json::to_vec(&plan.program).map_err(|e| e.to_string())?,
             cancelled: Arc::default(),
             active: Arc::default(),
             acquired: false,
@@ -271,12 +286,14 @@ impl PanelActions {
                 endpoint: None,
                 sink_id: String::new(),
                 required: true,
+                dormant: false,
                 one_shot: false,
                 contract: None,
                 receipt: r.clone(),
                 driver: Some(Box::new(driver)),
                 shared: Arc::default(),
                 bind_queued: false,
+                requested_token: None,
                 sequence: 0,
                 at: 0,
             });
@@ -288,6 +305,7 @@ impl PanelActions {
             slots,
             owner: run.owner.clone(),
             unavailable: vec![],
+            program: vec![],
             cancelled: Arc::default(),
             active: Arc::default(),
             acquired: false,
@@ -300,22 +318,111 @@ impl PanelActions {
     pub(crate) fn optional_unavailable(&self) -> &[String] {
         &self.unavailable
     }
+    pub(crate) fn owns_endpoint(&self, endpoint: &osg_profiles::Endpoint) -> bool {
+        self.slots.iter().any(|s| {
+            s.endpoint.as_ref() == Some(&(endpoint.node_id.clone(), endpoint.port_id.clone()))
+        })
+    }
     pub(crate) fn capture_receipts(&self) -> Vec<Receipt> {
         self.slots.iter().map(|s| s.receipt.clone()).collect()
     }
-    /// One worker per endpoint; reservation is atomic across all live runs.
+    /// One worker per ready endpoint; anticipated dormant endpoints already
+    /// have sealed receipts but cannot acquire output until explicit admission.
     pub(crate) fn acquire(&mut self) -> Result<(), String> {
         if self.acquired || self.cancelled.load(Ordering::Acquire) {
             return Err("Prepare a fresh physical action owner before acquisition.".into());
         }
-        let permits = Permit::reserve(self.slots.len())?;
+        let indices = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| (!s.dormant).then_some(i))
+            .collect();
+        self.spawn_indices(indices)
+    }
+    /// Launch-context admission only, before Start. Never creates a driver,
+    /// receipt or endpoint, and never reclaims a failed/retired lease.
+    pub(crate) fn acquire_ready(&mut self, plan: &ExecutionPlan) -> Result<(), String> {
+        if !self.acquired
+            || self.recovery
+            || self.active.load(Ordering::Acquire)
+            || self.cancelled.load(Ordering::Acquire)
+            || serde_json::to_vec(&plan.program).map_err(|e| e.to_string())? != self.program
+        {
+            return Err("Late physical output admission requires the unchanged journaled program before Start; prepare a fresh Apply.".into());
+        }
+        let mut indices = vec![];
+        for (i, slot) in self.slots.iter().enumerate() {
+            if !slot.dormant {
+                continue;
+            }
+            if slot.shared.revoked.load(Ordering::Acquire) {
+                if !slot.required {
+                    continue;
+                }
+                return Err(
+                    "A retired physical endpoint cannot be reclaimed by late launch admission."
+                        .into(),
+                );
+            }
+            let branch = plan
+                .branches
+                .iter()
+                .find(|b| Some((b.sink.node_id.clone(), b.sink.port_id.clone())) == slot.endpoint)
+                .ok_or("The late physical output branch changed; prepare a fresh Apply.")?;
+            if branch.readiness == PlanReadiness::Ready {
+                indices.push(i);
+            } else if branch.readiness != PlanReadiness::Dormant && branch.required {
+                return Err("The anticipated required physical output is unavailable; prepare a fresh Apply.".into());
+            }
+        }
+        self.spawn_indices(indices)
+    }
+    /// Permanently withdraw an optional endpoint whose native delivery proof
+    /// was lost before Start. Existing workers clean up; inert slots never claim.
+    pub(crate) fn revoke_optional(
+        &mut self,
+        endpoint: &osg_profiles::Endpoint,
+        diagnostic: String,
+    ) -> Result<(), String> {
+        if self.recovery
+            || self.active.load(Ordering::Acquire)
+            || self.cancelled.load(Ordering::Acquire)
+        {
+            return Err(
+                "Optional acquisition can be withdrawn only before physical output Start.".into(),
+            );
+        }
+        let slot = self
+            .slots
+            .iter_mut()
+            .find(|slot| {
+                slot.endpoint.as_ref()
+                    == Some(&(endpoint.node_id.clone(), endpoint.port_id.clone()))
+            })
+            .ok_or("The optional physical endpoint was not sealed for this run.")?;
+        if slot.required {
+            return Err("A required physical endpoint must block admission when its native delivery proof is lost.".into());
+        }
+        slot.shared.fail(diagnostic);
+        if slot.driver.is_some() {
+            let mut state = slot.shared.state.lock().unwrap_or_else(|p| p.into_inner());
+            state.stage = Stage::Stopped;
+            state.cleanup_done = true;
+        }
+        Ok(())
+    }
+    fn spawn_indices(&mut self, indices: Vec<usize>) -> Result<(), String> {
+        let permits = Permit::reserve(indices.len())?;
         self.acquired = true;
         let mut spawn_failed = false;
-        for (slot, permit) in self.slots.iter_mut().zip(permits) {
+        for (index, permit) in indices.into_iter().zip(permits) {
+            let slot = &mut self.slots[index];
             let driver = slot
                 .driver
                 .take()
                 .ok_or("Physical action worker was already consumed.")?;
+            slot.dormant = false;
             slot.shared
                 .state
                 .lock()
@@ -354,34 +461,46 @@ impl PanelActions {
         Ok(())
     }
     pub(crate) fn bind_delivery(&mut self, plan: &ExecutionPlan) -> Result<bool, String> {
-        if !self.acquired || self.recovery || self.cancelled.load(Ordering::Acquire) {
-            return Err("Physical output delivery cannot bind this owner.".into());
+        if !self.acquired
+            || self.recovery
+            || self.cancelled.load(Ordering::Acquire)
+            || self.active.load(Ordering::Acquire)
+        {
+            return Err(
+                "Physical output delivery can bind only its acquired owner before Start.".into(),
+            );
         }
         for slot in &mut self.slots {
-            let s = slot.shared.state.lock().unwrap_or_else(|p| p.into_inner());
-            if s.error.is_some() || slot.shared.revoked.load(Ordering::Acquire) {
+            if slot.dormant {
+                continue;
+            }
+            let mut state = slot.shared.state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.error.is_some() || slot.shared.revoked.load(Ordering::Acquire) {
                 if slot.required {
                     return Err("A required physical output failed during acquisition.".into());
                 }
                 continue;
             }
-            let ready = s.stage == Stage::Claimed;
-            drop(s);
-            if !slot.bind_queued && ready {
-                let matches = plan
-                    .sinks
-                    .iter()
-                    .filter(|sink| Some(endpoint(sink)) == slot.endpoint)
-                    .collect::<Vec<_>>();
-                if matches.len() != 1 {
-                    return Err("Physical delivery plan changed its selected endpoint.".into());
-                }
-                slot.shared
-                    .state
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .bind = Some(matches[0].clone());
+            let matches = plan
+                .sinks
+                .iter()
+                .filter(|sink| Some(endpoint(sink)) == slot.endpoint)
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return Err("Physical delivery plan changed its selected endpoint.".into());
+            }
+            let sink = matches[0];
+            let first = !slot.bind_queued && state.stage == Stage::Claimed;
+            let refresh = slot.bind_queued
+                && state.stage == Stage::Bound
+                && slot.requested_token != sink.token;
+            if first || refresh {
+                // Renew the same exact lease after a real native token refresh.
+                // This cannot claim/reclaim an endpoint or run after activation.
+                state.stage = Stage::Claimed;
+                state.bind = Some(sink.clone());
                 slot.bind_queued = true;
+                slot.requested_token = sink.token.clone();
                 slot.shared.wake.notify_all();
             }
         }
@@ -423,6 +542,9 @@ impl PanelActions {
                         effect.endpoint.port_id.clone(),
                     ))
             }) {
+                if slot.dormant {
+                    continue;
+                }
                 if matches!(
                     effect.reason,
                     ReportReason::SourceLost | ReportReason::Stop | ReportReason::Overflow
@@ -445,6 +567,15 @@ impl PanelActions {
             }) else {
                 continue;
             };
+            if slot.dormant {
+                if matches!(
+                    &effect.sample,
+                    SignalSample::Known(SignalValue::ActionPack(_))
+                ) {
+                    return Err("The physical endpoint is dormant; fresh native launch admission is required before Start.".into());
+                }
+                continue;
+            }
             if slot.shared.revoked.load(Ordering::Acquire) {
                 continue;
             }
@@ -498,9 +629,10 @@ impl PanelActions {
         for slot in &self.slots {
             let s = slot.shared.state.lock().unwrap_or_else(|p| p.into_inner());
             let failed = s.error.is_some() || slot.shared.revoked.load(Ordering::Acquire);
-            result.acquired &=
-                matches!(s.stage, Stage::Claimed | Stage::Bound) || !slot.required && failed;
-            result.bound &= s.stage == Stage::Bound || !slot.required && failed;
+            result.acquired &= matches!(s.stage, Stage::Dormant | Stage::Claimed | Stage::Bound)
+                || !slot.required && failed;
+            result.bound &=
+                matches!(s.stage, Stage::Dormant | Stage::Bound) || !slot.required && failed;
             result.stopped &= s.stage == Stage::Stopped;
             result.cleanup_complete &= s.stage == Stage::Stopped && s.cleanup_done;
             result.required_failed |= slot.required && failed;
@@ -522,14 +654,14 @@ impl PanelActions {
         for s in &self.slots {
             s.shared.revoke();
         }
-        if !self.acquired {
-            for s in &self.slots {
-                let mut state = s.shared.state.lock().unwrap_or_else(|p| p.into_inner());
+        for slot in &self.slots {
+            if slot.driver.is_some() {
+                let mut state = slot.shared.state.lock().unwrap_or_else(|p| p.into_inner());
                 state.stage = Stage::Stopped;
                 state.cleanup_done = true;
             }
-            self.acquired = true;
         }
+        self.acquired = true;
         Ok(self.poll())
     }
 }
@@ -639,4 +771,4 @@ fn worker(
 }
 #[cfg(test)]
 #[path = "profile_session_actions_tests.rs"]
-mod tests;
+pub(crate) mod tests;

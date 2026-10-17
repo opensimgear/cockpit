@@ -31,7 +31,7 @@ impl Block {
     }
 }
 #[derive(Default)]
-struct Probe {
+pub(crate) struct Probe {
     calls: Mutex<Vec<(String, Vec<NamedArgument>)>>,
     block: Mutex<Option<(String, Arc<Block>)>>,
     fail: Mutex<Option<String>>,
@@ -57,7 +57,10 @@ impl Probe {
         }
         Ok(())
     }
-    fn count(&self, c: &str) -> usize {
+    pub(crate) fn fail_command(&self, command: &str) {
+        *self.fail.lock().unwrap() = Some(command.into());
+    }
+    pub(crate) fn count(&self, c: &str) -> usize {
         self.calls
             .lock()
             .unwrap()
@@ -521,4 +524,187 @@ fn unbounded_or_wrongly_named_tuples_are_rejected_before_queue_copy() {
         stopped(&mut a);
         assert_eq!(probes[0].count("invoke"), 0);
     }
+}
+
+#[test]
+fn dormant_branches_are_sealed_without_claim_and_late_ready_admits_only_original_endpoint_before_start(
+) {
+    let _serial = SERIAL.lock().unwrap();
+    let mut p = plan(1, false);
+    p.branches[0].readiness = PlanReadiness::Dormant;
+    let o = owner();
+    let probe = Arc::new(Probe::default());
+    let mut a = PanelActions::prepare_with(&p, &o, |_| {
+        Ok(Box::new(Fake {
+            key: "anticipated".into(),
+            probe: probe.clone(),
+        }))
+    })
+    .unwrap();
+    let original = serde_json::to_value(a.capture_receipts()).unwrap();
+    a.acquire().unwrap();
+    assert!(a.poll().acquired && a.poll().bound);
+    assert_eq!(probe.count("claim"), 0);
+    a.acquire_ready(&p).unwrap();
+    assert_eq!(probe.count("claim"), 0);
+    let mut changed = p.clone();
+    changed.program.sinks[0].from.node_id = "new-program".into();
+    assert!(a.acquire_ready(&changed).is_err());
+    assert_eq!(probe.count("claim"), 0);
+    p.branches[0].readiness = PlanReadiness::Ready;
+    a.acquire_ready(&p).unwrap();
+    eventually(|| a.poll().acquired);
+    eventually(|| a.bind_delivery(&p).unwrap());
+    a.acquire_ready(&p).unwrap();
+    assert_eq!(probe.count("claim"), 1);
+    assert_eq!(
+        serde_json::to_value(a.capture_receipts()).unwrap(),
+        original
+    );
+    a.start().unwrap();
+    assert!(a.acquire_ready(&p).is_err());
+    a.dispatch(&[effect(&o, 0, 1, true)]).unwrap();
+    eventually(|| probe.count("invoke") == 1);
+    stopped(&mut a);
+}
+#[test]
+fn dormant_required_unsupported_blocks_before_spawn_and_inert_stop_never_claims() {
+    let _serial = SERIAL.lock().unwrap();
+    let mut p = plan(1, false);
+    p.branches[0].readiness = PlanReadiness::Dormant;
+    let o = owner();
+    assert!(
+        PanelActions::prepare_with(&p, &o, |_| Err("unsupported anticipated endpoint".into()))
+            .is_err()
+    );
+    let probe = Arc::new(Probe::default());
+    let mut a = PanelActions::prepare_with(&p, &o, |_| {
+        Ok(Box::new(Fake {
+            key: "anticipated".into(),
+            probe: probe.clone(),
+        }))
+    })
+    .unwrap();
+    a.acquire().unwrap();
+    a.start().unwrap();
+    let mut absent = effect(&o, 0, 1, false);
+    absent.reason = ReportReason::SourceLost;
+    absent.sample = SignalSample::Unavailable;
+    a.dispatch(&[absent]).unwrap();
+    assert!(
+        !a.poll().required_failed,
+        "an absent game cannot fault a deliberately dormant endpoint"
+    );
+    assert!(a.dispatch(&[effect(&o, 0, 2, true)]).is_err());
+    stopped(&mut a);
+    assert_eq!(probe.count("claim"), 0);
+    assert_eq!(probe.count("release"), 0);
+}
+
+fn fresh_token(generation: &str) -> osg_profiles::resources::ResourceToken {
+    osg_profiles::resources::ResourceToken {
+        inventory_session: "native".into(),
+        resource_id: "resource".into(),
+        generation: generation.into(),
+        capability_revision: "catalogue".into(),
+        route_id: "exact-route".into(),
+        provider_session: "provider".into(),
+        provider_generation: "exact-boot-config".into(),
+        port_id: "action:set".into(),
+        contract_hash: "exact-hash".into(),
+        access: osg_profiles::resources::Access::Invoke,
+    }
+}
+#[test]
+fn pre_start_real_token_refresh_rebinds_and_renews_same_lease_once_without_reclaim() {
+    let _serial = SERIAL.lock().unwrap();
+    let (mut p, _, mut a, probes) = fixture(1, false);
+    a.acquire().unwrap();
+    eventually(|| a.poll().acquired);
+    eventually(|| a.bind_delivery(&p).unwrap());
+    assert!(a.owns_endpoint(&p.sinks[0].endpoint));
+    p.sinks[0].token = Some(fresh_token("2"));
+    assert!(!a.bind_delivery(&p).unwrap());
+    eventually(|| a.bind_delivery(&p).unwrap());
+    assert_eq!(probes[0].count("claim"), 1);
+    assert_eq!(probes[0].count("bind"), 2);
+    assert_eq!(probes[0].count("renew"), 2);
+    a.bind_delivery(&p).unwrap();
+    assert_eq!(probes[0].count("bind"), 2);
+    a.start().unwrap();
+    p.sinks[0].token = Some(fresh_token("3"));
+    assert!(a.bind_delivery(&p).is_err());
+    stopped(&mut a);
+}
+#[test]
+fn failed_token_rebind_revokes_and_releases_without_reclaim_or_output() {
+    let _serial = SERIAL.lock().unwrap();
+    let (mut p, _, mut a, probes) = fixture(1, false);
+    a.acquire().unwrap();
+    eventually(|| a.poll().acquired);
+    eventually(|| a.bind_delivery(&p).unwrap());
+    *probes[0].fail.lock().unwrap() = Some("bind".into());
+    p.sinks[0].token = Some(fresh_token("changed"));
+    a.bind_delivery(&p).unwrap();
+    eventually(|| a.poll().stopped);
+    assert!(a.poll().required_failed && a.poll().cleanup_complete);
+    assert_eq!(probes[0].count("claim"), 1);
+    assert_eq!(probes[0].count("invoke"), 0);
+    assert!(a.bind_delivery(&p).is_err());
+}
+
+/// An isolated test driver, never a provider or production sealing fallback.
+pub(crate) fn prepared_probe(
+    plan: &ExecutionPlan,
+    owner: &RunOwner,
+) -> (PanelActions, Vec<Arc<Probe>>) {
+    let probes = (0..plan.sinks.len())
+        .map(|_| Arc::new(Probe::default()))
+        .collect::<Vec<_>>();
+    let mut n = 0;
+    let actions = PanelActions::prepare_with(plan, owner, |sink| {
+        let index = n;
+        n += 1;
+        Ok(Box::new(Fake {
+            key: format!("{}:{}", sink.endpoint.node_id, sink.endpoint.port_id),
+            probe: probes[index].clone(),
+        }))
+    })
+    .unwrap();
+    (actions, probes)
+}
+
+#[test]
+fn withdrawn_optional_dormant_slot_never_claims_during_late_admission() {
+    let _serial = SERIAL.lock().unwrap();
+    let mut p = plan(1, false);
+    p.branches[0].required = false;
+    p.branches[0].readiness = PlanReadiness::Dormant;
+    let o = owner();
+    let (mut a, probes) = prepared_probe(&p, &o);
+    let receipts = a.capture_receipts();
+    a.acquire().unwrap();
+    a.revoke_optional(
+        &p.sinks[0].endpoint,
+        "Native optional proof was lost".into(),
+    )
+    .unwrap();
+    p.branches[0].readiness = PlanReadiness::Ready;
+    a.acquire_ready(&p).unwrap();
+    assert!(a.bind_delivery(&p).unwrap());
+    a.start().unwrap();
+    assert!(a.dispatch(&[effect(&o, 0, 1, true)]).is_err());
+    stopped(&mut a);
+    assert_eq!(probes[0].count("claim"), 0);
+    assert_eq!(probes[0].count("release"), 0);
+    assert_eq!(probes[0].count("invoke"), 0);
+    assert_eq!(
+        serde_json::to_value(a.capture_receipts()).unwrap(),
+        serde_json::to_value(receipts).unwrap()
+    );
+    let (p, _, mut required, _) = fixture(1, false);
+    assert!(required
+        .revoke_optional(&p.sinks[0].endpoint, "lost".into())
+        .is_err());
+    stopped(&mut required);
 }
