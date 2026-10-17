@@ -30,6 +30,8 @@ mod companion_authoring;
 mod companion_retention;
 #[path = "profile_retired_game_io.rs"]
 mod retired_game_io;
+#[path = "profile_recovery_transport.rs"]
+pub(crate) mod recovery_transport;
 
 trait Adapter: Send + Sync {
     fn publication(&self,_request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{Err("This transport does not support native controller publication overrides.".into())}
@@ -563,11 +565,17 @@ impl GatewayManager {
             return json!({"ok":false,"error":"Independent mapping authoring, starts and companion feedback routes are retired. Use unified Profiles; retained ownership cleanup remains explicit."});
         }
         if command.starts_with("profile_input_learn_"){return match self.learning_request(&request){Ok(learning)=>json!({"ok":true,"state":{"profileLearning":learning}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};}
-        if let Some(operation) = profile_guard_operation(&command) {
-            if let Err(error) = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).guard_request(operation) {
-                return self.error(&error, None);
-            }
-        }
+        let recovery_transport = if let Some(operation) = profile_guard_operation(&command) {
+            let coordinator = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
+            if let Err(error) = coordinator.guard_request(operation) {
+                if recovery_transport::operation(&command).is_some()
+                    && recovery_transport::recovery_only(coordinator.status()) {
+                    Some(coordinator.status().clone())
+                } else {
+                    return self.error(&error, None);
+                }
+            } else { None }
+        } else { None };
         if matches!(command.as_str(), "integration_stop" | "dcs_stop" | "controller_visibility_restore") {
             if let Err(error) = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop() { return self.error(&error, None); }
         }
@@ -753,6 +761,22 @@ impl GatewayManager {
             .is_some_and(|(id, b)| id.split_once(':').unwrap().0 != b)
         {
             return self.error("Gateway identity and backend do not match.", id.as_deref());
+        }
+        if let Some(recovery_status) = recovery_transport {
+            // Connect holds the configuration gate above. A new cleanup read
+            // cannot replace a live adapter or release any of its claims.
+            // The profile admission read lock retains this recovery-only state
+            // through dispatch; never invert configuration -> coordinator locks.
+            let adapter = id.as_ref().and_then(|id| self.sessions.lock()
+                .unwrap_or_else(|p| p.into_inner()).get(id).cloned());
+            let transport = adapter.map(|adapter| recovery_transport::Transport {
+                connected: adapter.cached_state()["connected"].as_bool(),
+                configuration_claims: !adapter.configuration_claims().is_empty(),
+                output_activity: adapter.output_activity(),
+            });
+            if let Err(error) = recovery_transport::admit(&recovery_status, &request, transport) {
+                return self.error(&error, id.as_deref());
+            }
         }
         if command == "ports" {
             return match self.discover() {

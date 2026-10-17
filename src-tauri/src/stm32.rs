@@ -2380,6 +2380,9 @@ impl Drop for Stm32Service {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod recovery_transport {
+        include!("profile_recovery_transport_stm32_tests.rs");
+    }
     use std::{
         collections::VecDeque,
         io::{Read, Write},
