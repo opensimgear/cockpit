@@ -3,8 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const playwrightModule = process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright';
@@ -18,9 +19,32 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const blank = () => ({schemaVersion:2,id:defaultId,name:'Default',revision:1,eligibility:{gameIds:[]},resources:[],bindings:[],processingNodes:[],virtualOutputs:[],visibility:[],overrides:[],companionAssignments:[],editor:{positions:[],viewport:{x:0,y:0,zoom:1}}});
 
 test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact applied run', {timeout:60000}, async () => {
+  await mkdir(artifacts,{recursive:true});
+  const driver = await readFile(new URL(import.meta.url)), driverSha256 = createHash('sha256').update(driver).digest('hex');
+  await writeFile(resolve(artifacts,'driver-source.mjs'),driver);
   const browser = await chromium.launch({headless:true,...(process.env.OSG_BROWSER_CHANNEL ? {channel:process.env.OSG_BROWSER_CHANNEL} : {})});
   const page = await browser.newPage({viewport:{width:1440,height:1100}});
-  const documents = new Map([[defaultId, blank()]]), requests = [], unexpected = [], errors = [];
+  const documents = new Map([[defaultId, blank()]]), requests = [], unexpected = [], errors = [], keyboard = [];
+  async function activateByTab(target, name, key) {
+    await expect(target).toBeVisible();await expect(target).toBeEnabled();
+    const visibleStops = await page.evaluate(()=>{
+      const root=document.querySelector('dialog[open]')??document;
+      return [...root.querySelectorAll('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable="true"]')]
+        .filter(node=>node.tabIndex>=0&&!node.matches(':disabled')&&!node.closest('[inert]')&&node.getClientRects().length&&getComputedStyle(node).visibility==='visible').length;
+    });
+    assert.ok(visibleStops>0,'The visible DOM must expose native keyboard stops');
+    // Always use a real Tab, even when showModal initially focuses the target.
+    // Counting visible stops bounds one full cycle; no focus API moves focus.
+    for(let tabs=1;tabs<=visibleStops+2;tabs++){
+      await page.keyboard.press('Tab');
+      if(await target.evaluate(node=>node===document.activeElement)){
+        await expect(target).toBeFocused();
+        keyboard.push({name,key,tabs,visibleStops});
+        await page.keyboard.press(key);return;
+      }
+    }
+    throw new Error(`Keyboard Tab did not reach ${name} within ${visibleStops+2} visible-DOM stops`);
+  }
   const applied = {profileId:defaultId,revision:1,semanticHash:hash};
   const owner = {session:'11111111-1111-4111-8111-111111111111',generation:7,profileId:defaultId,profileRevision:1,gameId:null};
   const profileSession = {state:'running',paused:false,appliedSnapshot:applied,owner,degradation:[],fault:null};
@@ -45,6 +69,7 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     }
     if(request.command==='profile_runtime_topology')return {ok:true,state:{profileTopology:{schemaVersion:1,owner,appliedSnapshot:applied,programHash:hash,capturedUs:'0',section:request.section,offset:0,total:0,items:[]}}};
     if(request.command==='profile_runtime_inspect')return {ok:true,state:{profileInspection:{schemaVersion:1,owner,appliedSnapshot:applied,programHash:hash,capturedUs:'0',offset:0,total:0,ports:[]}}};
+    if(request.command==='profile_retired_recovery_status')return {ok:true,state:{retiredRecovery:{required:false,outputs:[],provisioning:[],job:null,diagnostics:[],outputQualified:false,provisioningQualified:false}}};
     if(request.command.startsWith('profile_')){
       unexpected.push(request.command);
       return {ok:false,error:`No native effects in browser fixture: ${request.command}`};
@@ -74,42 +99,67 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await expect(inspection).not.toBeVisible();
 
     const add = page.getByRole('button',{name:'Add profile',exact:true});
-    await add.focus();await page.keyboard.press('Enter');
+    await activateByTab(add,'Add profile','Enter');
     await expect(page.getByRole('heading',{name:'New profile',exact:true})).toBeVisible();
     await page.getByLabel('Profile name',{exact:true}).fill('Browser rig');
     const save = page.getByRole('button',{name:'Save profile',exact:true});
-    await save.focus();await page.keyboard.press('Enter');
+    await activateByTab(save,'Save new profile','Enter');
     await expect(page.getByText('Saved revision 1 · Editing this profile does not activate it.',{exact:true})).toBeVisible();
     const savedId = [...documents.keys()].find(id=>id!==defaultId);
     assert.ok(savedId);
-    await page.getByRole('button',{name:'Back to Profiles',exact:false}).click();
+    const back = page.getByRole('button',{name:'Back to Profiles',exact:false});
+    await activateByTab(back,'Back from saved editor','Enter');
     const row = page.getByRole('button',{name:'Edit Browser rig',exact:true});
-    await row.focus();await page.keyboard.press('Enter');
+    await activateByTab(row,'Open exact saved profile','Enter');
     await expect(page.getByRole('heading',{name:'Browser rig',exact:true})).toBeVisible();
     await page.getByLabel('Profile name',{exact:true}).fill('Unsaved rig');
-    await page.getByRole('button',{name:'Back to Profiles',exact:false}).click();
+    await activateByTab(back,'Back with unsaved edits','Space');
     const dialog = page.getByRole('alertdialog',{name:'Keep your unsaved changes?'});
     await expect(dialog).toBeVisible();
-    await dialog.getByRole('button',{name:'Keep editing',exact:true}).click();
+    await activateByTab(dialog.getByRole('button',{name:'Keep editing',exact:true}),'Keep unsaved edits','Enter');
+    await expect(dialog).not.toBeVisible();
     await expect(page.getByLabel('Profile name',{exact:true})).toHaveValue('Unsaved rig');
-    await page.getByRole('button',{name:'Back to Profiles',exact:false}).click();
-    await dialog.getByRole('button',{name:'Discard and continue',exact:true}).click();
+    await activateByTab(back,'Back before discard','Enter');
+    await activateByTab(dialog.getByRole('button',{name:'Discard and continue',exact:true}),'Discard unsaved edits','Space');
     await expect(row).toBeVisible();
     assert.equal(documents.get(savedId).name,'Browser rig');
 
-    await add.click();
-    await page.getByRole('button',{name:'Cancel creation',exact:true}).click();
-    await expect(page.getByRole('list',{name:'Saved profiles'}).getByRole('button')).toHaveCount(2);
+    await activateByTab(add,'Add cancelled draft','Space');
+    await page.getByLabel('Profile name',{exact:true}).fill('Cancelled keyboard draft');
+    await activateByTab(page.getByRole('button',{name:'Cancel creation',exact:true}),'Cancel new draft','Space');
+    await expect(page.getByRole('list',{name:'Saved profiles'}).getByRole('listitem')).toHaveCount(2);
+    assert.deepEqual(await page.getByRole('list',{name:'Saved profiles'}).getByRole('button',{name:/^Edit /}).evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label'))),['Edit Default','Edit Browser rig']);
     await expect(runtime).toContainText('Default · 1');
     assert.equal(requests.filter(request=>request.command==='profile_editor_save').length,1);
+
+    // A separate dirty departure proves the modal Save choice, in addition to
+    // keeping/discarding. This deliberately adds exactly one revisioned save.
+    await activateByTab(row,'Reopen before guarded save','Space');
+    await page.getByLabel('Profile name',{exact:true}).fill('Browser rig saved by keyboard');
+    await activateByTab(back,'Back before guarded save','Space');
+    await activateByTab(dialog.getByRole('button',{name:'Save and continue',exact:true}),'Save unsaved edits and leave','Enter');
+    const savedRow = page.getByRole('button',{name:'Edit Browser rig saved by keyboard',exact:true});
+    await expect(savedRow).toBeVisible();await expect(dialog).not.toBeVisible();
+    assert.equal(documents.get(savedId).name,'Browser rig saved by keyboard');
+    assert.equal(documents.get(savedId).revision,2);
+    assert.deepEqual(requests.filter(request=>request.command==='profile_editor_save').map(request=>request.expectedRevision),[null,1]);
+    assert.deepEqual(requests.filter(request=>request.command==='profile_assignments_get').map(request=>request.id),[savedId,savedId]);
+    await expect(runtime).toContainText('Default · 1');
     assert.ok(requests.filter(request=>request.command==='profile_runtime_topology').every(request=>JSON.stringify(request.owner)===JSON.stringify(owner)));
     assert.deepEqual(unexpected,[]);
     assert.deepEqual(errors,[]);
     assert.equal(documents.size,2);
     assert.equal(session.selectedProfileId,defaultId);
     assert.deepEqual(profileSession.owner,owner);
-    await mkdir(artifacts,{recursive:true});
+    assert.deepEqual(profileSession.appliedSnapshot,applied);
+    assert.equal(documents.get(defaultId).revision,1);
+    assert.equal(createHash('sha256').update(await readFile(new URL(import.meta.url))).digest('hex'),driverSha256,'Driver source stayed unchanged during the browser proof');
     await page.screenshot({path:resolve(artifacts,'profiles-list.png'),fullPage:true});
     await writeFile(resolve(artifacts,'fixture-requests.json'),JSON.stringify(requests,null,2));
+    await writeFile(resolve(artifacts,'keyboard-evidence.json'),JSON.stringify({result:'passed',recordedAt:new Date().toISOString(),driverSha256,browserVersion:browser.version(),browserChannel:process.env.OSG_BROWSER_CHANNEL??'chromium',scope:'Frontend-only actual browser; every native IPC intercepted, HTTP gateway fallback forbidden, no native profile effects.',keyboard,saveExpectedRevisions:[null,1],owner,appliedSnapshot:applied,selectedProfileId:session.selectedProfileId,unexpected,errors},null,2));
+  } catch(error) {
+    await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true}).catch(()=>{});
+    await writeFile(resolve(artifacts,'failure.json'),JSON.stringify({error:error.stack,keyboard,requests,unexpected,errors,body:await page.locator('body').innerText().catch(()=> '')},null,2));
+    throw error;
   } finally {await browser.close();}
 });

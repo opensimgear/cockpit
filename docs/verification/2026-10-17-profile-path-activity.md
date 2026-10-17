@@ -65,11 +65,49 @@ token and pending effects. The source-stamped native gate passes 141/170
 production lines (82.94%) for the topology module; its original 71% threshold
 is unchanged. Evidence is retained under `.research/profile-composed-hosts-coverage`.
 
-The additional `tests/ui/unified-profiles.mjs` browser fixture verifies keyboard
-Add, Save, Back, reopening, dirty Keep/Discard and clean Cancel, with an unchanged
-applied owner. It also checks that list/Add/Stop are visible before runtime
-details and that opening inspection is explicit. Every native IPC is intercepted;
-no actual service, driver, device or game is used.
+The earlier `tests/ui/unified-profiles.mjs` browser run used Enter for Add,
+Save and reopening an exact saved profile; Back, dirty Keep/Discard and Cancel
+were mouse actions. That run did not prove keyboard access to those remaining
+controls.
+
+The current P9 navigation check closes that evidence gap with actual Tab presses
+followed by native Enter/Space activation. Its 13 recorded activations cover
+Add, Save, exact-profile reopening, clean and dirty Back, dirty Keep editing,
+Discard and continue, Save and continue, and Cancel creation after editing a new
+draft. The Tab search is bounded by visible DOM focus stops (within the native
+modal when open); neither a locator focus method nor JavaScript moves focus.
+The test also checks that list/Add/Stop are visible before runtime details and
+that opening inspection is explicit. It does not claim a full application or
+assistive-technology accessibility audit.
+
+The accepted Edge `155.0.4283.62` run passed **1 browser test** in 3.66 seconds
+against the existing frontend at `127.0.0.1:1420`, with product sources held at
+`f55b623279abe1dce18bd50c3dc81b80e85e6061`. Evidence is retained in
+`.research/p9-keyboard-navigation/verified-run-3`: the exact driver copy,
+`keyboard-evidence.json`, intercepted requests, final screenshot and a source
+stability record. The driver, ProfilesPanel, editor store and App hashes stayed
+unchanged during the run. Driver SHA-256 is
+`f80a2233c42341d95c8a4d9d1cb889d956752cc702e25954880eccc9e3d0dc68`;
+keyboard evidence SHA-256 is
+`e18dbfd60e7d0b68668d03b8618bb90562e95080eddd4a9cb386ef6a4516bd1c`.
+Node syntax validation passed, and no browser page error or unexpected profile
+command was recorded.
+
+Exactly one save has occurred after creation, Keep/Discard and Cancel; a separate
+dirty Save-and-continue path adds exactly one revisioned save, with expected
+revisions `[null, 1]`. The saved list contains only Default and the exact new
+profile; cancellation creates no third entry. Runtime selection, owner, applied
+Default revision and stored Default remain unchanged. Every native IPC is
+intercepted and HTTP gateway fallback is forbidden; no actual service, driver,
+device, game or native profile effect is used.
+
+The two preceding attempts remain in `verified-run-1` and `verified-run-2`.
+They exposed stale fixture assumptions: counting every row button as a profile
+(current rows also contain Export/Delete), and rejecting the current passive
+retired-cleanup status request. The test now counts actual profile list entries
+and exact editor rows, and supplies only the existing clean/unqualified status
+reply. Its strict unexpected-effect, saved-ID/revision and runtime-isolation
+assertions remain. No application implementation was changed.
 
 This evidence covers SSR, actual component handlers, native projection contracts,
 frontend builds and the scoped browser navigation fixture. No hardware output
