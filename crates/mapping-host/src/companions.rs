@@ -834,43 +834,7 @@ fn native_token(token: &osg_companion_service::SourceToken) -> InputToken {
 }
 impl osg_companion_service::SourceSink for CompanionProvider {
     fn register(&self, definition: osg_companion_service::SourceDefinition) -> Result<(), String> {
-        use osg_companion_service::{AxisMode, SourceKind};
-        let controls = definition
-            .controls
-            .into_iter()
-            .map(|control| {
-                let (kind, fallback) = match control.kind {
-                    SourceKind::Button => (Kind::Button, Value::Button(false)),
-                    SourceKind::Hat => (Kind::Hat, Value::Hat(None)),
-                    SourceKind::Axis {
-                        axis_mode,
-                        fallback,
-                    } => (
-                        Kind::Axis {
-                            range: if axis_mode == AxisMode::Bipolar {
-                                profile::AxisRange::Bipolar
-                            } else {
-                                profile::AxisRange::Unipolar
-                            },
-                        },
-                        Value::Axis(osg_companion_service::quantize_axis(
-                            fallback, axis_mode, fallback,
-                        )?),
-                    ),
-                };
-                Ok(ControlDefinition {
-                    id: control.id,
-                    kind,
-                    fallback,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        self.register_definition(Definition {
-            source_id: definition.source_id,
-            name: definition.name,
-            publication_hash: definition.publication_hash,
-            controls,
-        })
+        self.register_definition(native_definition(definition)?)
     }
     fn baseline(
         &self,
@@ -904,6 +868,10 @@ impl osg_companion_service::SourceSink for CompanionProvider {
         self.loss_native(&native_token(token))
     }
 }
+
+#[path = "companion_native.rs"]
+mod native;
+pub use native::{native_definition, NativeFeed, NativeSelection};
 
 #[cfg(test)]
 #[path = "companion_tests.rs"]

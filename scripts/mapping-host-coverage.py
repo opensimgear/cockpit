@@ -26,11 +26,12 @@ def main():
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     profiles = Path(tempfile.mkdtemp(prefix='profiles-', dir=output))
-    env = dict(os.environ, CARGO_TARGET_DIR=str(output / 'target'), RUSTFLAGS='-C instrument-coverage',
+    target = Path(os.environ.get('CARGO_TARGET_DIR', str(output / 'target')))
+    env = dict(os.environ, CARGO_TARGET_DIR=str(target), RUSTFLAGS='-C instrument-coverage',
                LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
     run(['cargo', 'build', '--locked', '--bin', 'osg-logic', '--manifest-path',
          root / 'crates/logic/Cargo.toml'], root, env)
-    env['OSG_TEST_LOGIC_WORKER'] = str(output / 'target/debug' / ('osg-logic.exe' if os.name == 'nt' else 'osg-logic'))
+    env['OSG_TEST_LOGIC_WORKER'] = str(target / 'debug' / ('osg-logic.exe' if os.name == 'nt' else 'osg-logic'))
     artifacts = run(['cargo', 'test', '--locked', '--lib', '--no-run', '--message-format=json',
                      '--manifest-path', root / 'crates/mapping-host/Cargo.toml'], root, env)
     binaries = [entry['executable'] for line in artifacts.splitlines()
@@ -59,7 +60,7 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *host_profiles, '-o', profile], root)
-    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game', 'companions', 'companion_runs', 'typed_sources']]
+    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game', 'companions', 'companion_native', 'companion_runs', 'typed_sources']]
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
