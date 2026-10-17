@@ -139,11 +139,32 @@ fn assert_mh6_commondata_only(path: &Path) {
 
     // A user cannot turn a known MH-6J reader into the incompatible older
     // command module by editing the alias after its immutable capture.
+    let alias_signature = catalogue_file(&alias_path).unwrap();
     aliases["MH-6J"] = json!(["CommonData", "AH-6J"]);
-    fs::write(alias_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
-    assert!(guard.validate(true).is_err());
+    let changed_aliases = serde_json::to_vec(&aliases).unwrap();
+    assert_eq!(
+        changed_aliases.len() as u64,
+        alias_signature.as_ref().unwrap().length
+    );
+    fs::write(&alias_path, changed_aliases).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&alias_path)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new().set_modified(alias_signature.as_ref().unwrap().modified.unwrap()),
+        )
+        .unwrap();
+    assert_eq!(catalogue_file(&alias_path).unwrap(), alias_signature);
+    // A forced check observes metadata, not an unconditional content digest.
+    // Keep this deterministic when Windows preserves a same-size write's time.
+    guard.full_checked = Instant::now();
+    guard.validate(true).unwrap();
     assert!(guarded_telemetry_sources(path, "MH-6J", &rows(), revision).is_err());
     assert!(resource_catalogue(&request).is_err());
+    guard.checked -= Duration::from_millis(251);
+    guard.full_checked -= Duration::from_secs(3);
+    assert!(guard.validate(false).is_err());
 }
 
 #[test]
