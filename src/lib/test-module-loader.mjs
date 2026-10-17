@@ -12,8 +12,9 @@ export async function loadModules(names) {
     const exports = {};
     const code = ts.transpileModule(await readFile(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
     vm.runInNewContext(code, { exports, TextEncoder, require(name) {
-      if (!exportsByName.has(name)) throw new Error(`Load dependency ${name} before its consumer.`);
-      return exportsByName.get(name);
+      const key=name.replace(/\.ts$/,'');
+      if (!exportsByName.has(key)) throw new Error(`Load dependency ${name} before its consumer.`);
+      return exportsByName.get(key);
     } }, { filename });
     exportsByName.set(name, exports);
   }
