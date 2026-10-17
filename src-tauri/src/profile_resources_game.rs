@@ -1,0 +1,248 @@
+//! A native acquired game reader publishes delivery separately from catalogue
+//! metadata. No browser request can publish samples or acquire this authority.
+use super::*;
+use osg_profiles::{
+    compiler_models::{ExecutionPlan, PlanReadiness},
+    resources::{EvidenceKind, ResourceType, Transport},
+};
+
+pub(super) fn game_metadata_valid(item: &Observation, game: &str) -> bool {
+    item.key == game
+        && item.resource_type == ResourceType::GameIntegration
+        && item.attributes.get("gameId").map(String::as_str) == Some(game)
+        && item.attributes.get("processVerified").map(String::as_str) == Some("true")
+        && matches!(
+            item.attributes.get("gameContextStatus").map(String::as_str),
+            Some("ready" | "waiting-profile")
+        )
+        && ["providerSetupRevision", "catalogueRevision"]
+            .iter()
+            .all(|field| item.attributes.get(*field).is_some_and(|s| !s.is_empty()))
+        && item
+            .evidence
+            .iter()
+            .any(|e| e.kind == EvidenceKind::GameScope && e.value == game)
+        && item.route.as_ref().is_some_and(|r| {
+            r.id == format!("game:{game}")
+                && r.transport == Transport::Integration
+                && !r.baseline_ready
+                && !r.writable
+        })
+        && item
+            .ports
+            .as_ref()
+            .is_some_and(|p| p.complete && p.validate().is_ok())
+}
+
+pub(super) fn validate_game_delivery(
+    batch: &ProviderBatch,
+    metadata: &Observation,
+) -> Result<(), String> {
+    batch.validate()?;
+    let game = metadata.key.as_str();
+    if !game_metadata_valid(metadata, game)
+        || batch.scope != format!("profile-game:{game}")
+        || !batch.complete
+        || batch.observations.len() != 1
+    {
+        return Err("Fresh game delivery requires one complete native game observation and current verified metadata.".into());
+    }
+    let item = &batch.observations[0];
+    if item.key != game
+        || item.resource_type != ResourceType::GameIntegration
+        || item.evidence != metadata.evidence
+        || item.attributes.get("gameId") != metadata.attributes.get("gameId")
+        || item.attributes.get("gamePreparationSession") != Some(&batch.session)
+        || ["providerSetupRevision", "catalogueRevision"]
+            .iter()
+            .any(|field| item.attributes.get(*field) != metadata.attributes.get(*field))
+    {
+        return Err(
+            "Game delivery identity, preparation owner, setup or catalogue changed.".into(),
+        );
+    }
+    let route = item
+        .route
+        .as_ref()
+        .ok_or("Game delivery needs its actual native route.")?;
+    if route.id != batch.scope
+        || route.transport != Transport::Integration
+        || route.priority != 100
+        || (route.writable && !route.baseline_ready)
+        || [
+            "gameId",
+            "providerSetupRevision",
+            "catalogueRevision",
+            "gamePreparationSession",
+        ]
+        .iter()
+        .any(|field| route.attributes.get(*field) != item.attributes.get(*field))
+    {
+        return Err("Game delivery route does not match the acquired native reader.".into());
+    }
+    let ports = item
+        .ports
+        .as_ref()
+        .filter(|p| p.complete)
+        .ok_or("Game delivery needs its exact complete selected-port catalogue.")?;
+    let current = &metadata.ports.as_ref().unwrap().ports;
+    for port in &ports.ports {
+        let native = current
+            .iter()
+            .find(|p| p.id == port.id)
+            .ok_or("Game delivery contains a port absent from the current native catalogue.")?;
+        if native.contract_hash()? != port.contract_hash()? {
+            return Err(
+                "Game delivery port contract changed; reconcile its local assignment.".into(),
+            );
+        }
+    }
+    Ok(())
+}
+impl Runtime {
+    pub(crate) fn publish_profile_game_delivery(&self, batch: ProviderBatch) -> Result<(), String> {
+        let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.read_only {
+            return Err("Repair retained inventory before acquiring game delivery.".into());
+        }
+        let game = batch
+            .scope
+            .strip_prefix("profile-game:")
+            .ok_or("Game delivery needs its dedicated native scope.")?
+            .to_owned();
+        let validation = state
+            .game_metadata
+            .get(&game)
+            .ok_or_else(|| "The game has no current verified native metadata.".to_owned())
+            .and_then(|metadata| validate_game_delivery(&batch, metadata));
+        if let Err(error) = validation {
+            if state
+                .game_deliveries
+                .get(&game)
+                .is_some_and(|old| old.session == batch.session)
+            {
+                state.game_deliveries.remove(&game);
+                state.registry.provider_failed(
+                    &batch.scope,
+                    "The acquired game reader lost validated sample metadata.",
+                );
+                Self::persist_locked(&mut state);
+            }
+            return Err(error);
+        }
+        state.registry.reconcile(batch.clone())?;
+        state.game_deliveries.insert(game, batch);
+        Self::persist_locked(&mut state);
+        Ok(())
+    }
+    /// An outgoing run cannot revoke the incoming run's independently acquired reader.
+    pub(crate) fn withdraw_profile_game_delivery(
+        &self,
+        game: &str,
+        provider_session: &str,
+    ) -> Result<(), String> {
+        let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(old) = state
+            .game_deliveries
+            .get(game)
+            .filter(|batch| batch.session == provider_session)
+            .cloned()
+        {
+            state.game_deliveries.remove(game);
+            state
+                .registry
+                .provider_failed(&old.scope, "The native profile game reader stopped.");
+            Self::persist_locked(&mut state);
+        }
+        Ok(())
+    }
+    /// Acquire only current read tokens. Command admission remains a later Start
+    /// phase; pending command sinks are deliberately untouched.
+    pub(crate) fn bind_delivery_reads(
+        &self,
+        prepared: &ExecutionPlan,
+    ) -> Result<ExecutionPlan, String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.read_only {
+            return Err("Repair retained inventory before acquiring native delivery.".into());
+        }
+        let mut plan = prepared.clone();
+        for source in &mut plan.sources {
+            if source.readiness != PlanReadiness::Ready {
+                continue;
+            }
+            let pin = source.preparation.as_ref().ok_or(
+                "A native source preparation pin is required before baseline acquisition.",
+            )?;
+            let expected = pin.resolved();
+            if pin.access() != Access::Read
+                || pin.inventory_session() != state.registry.session()
+                || source.inventory_resource_id.as_deref() != Some(expected.resource_id.as_str())
+                || source.observed_port_id.as_deref() != Some(expected.port.id.as_str())
+            {
+                return Err(
+                    "The prepared source identity no longer matches this inventory capture.".into(),
+                );
+            }
+            let token =
+                state
+                    .registry
+                    .token(&expected.resource_id, &expected.port.id, Access::Read)?;
+            let current = state
+                .registry
+                .validate_token(&token, &expected.port.id, Access::Read)?;
+            if token.contract_hash != expected.port.contract_hash()? {
+                return Err("The source contract changed before its baseline.".into());
+            }
+            if let Some(game) = expected.scope.strip_prefix("game:") {
+                let metadata = state
+                    .game_metadata
+                    .get(game)
+                    .ok_or("Game metadata was revoked before baseline acquisition.")?;
+                let delivery = state
+                    .game_deliveries
+                    .get(game)
+                    .ok_or("Acquire an advancing native game sample before its baseline.")?;
+                validate_game_delivery(delivery, metadata)?;
+                if current.scope != delivery.scope
+                    || token.provider_session != delivery.session
+                    || metadata.route.as_ref() != Some(&expected.route)
+                    || expected.key != game
+                {
+                    return Err("The native game reader does not match the prepared game setup and catalogue.".into());
+                }
+            } else {
+                let mut route = current.route.clone();
+                route.baseline_ready = expected.route.baseline_ready;
+                if current.scope != expected.scope
+                    || current.key != expected.key
+                    || route != expected.route
+                    || token.capability_revision != pin.capability_revision()
+                    || token.provider_session != pin.provider_session()
+                {
+                    return Err(
+                        "The hardware route or catalogue changed during source acquisition.".into(),
+                    );
+                }
+            }
+            source.token = Some(token);
+            source.route = Some(current.route);
+        }
+        Ok(plan)
+    }
+}
+
+#[cfg(test)]
+#[path = "profile_resources_game_tests.rs"]
+mod tests;

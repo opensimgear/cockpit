@@ -420,3 +420,79 @@ fn read_only_hardware_ties_restarts_and_retained_catalogues_cannot_prepare_outpu
         )
         .is_err());
 }
+
+#[test]
+fn game_acquisition_selects_metadata_even_when_an_outgoing_reader_is_live() {
+    let mut registry = Registry::new();
+    let mut item = observation(true, false, false);
+    item.key = "dcs".into();
+    item.route.as_mut().unwrap().id = "game:dcs".into();
+    item.evidence = vec![IdentityEvidence {
+        kind: EvidenceKind::GameScope,
+        value: "dcs".into(),
+    }];
+    registry
+        .reconcile(ProviderBatch {
+            scope: "game:dcs".into(),
+            session: "catalogue".into(),
+            revision: 1,
+            complete: true,
+            observations: vec![item.clone()],
+        })
+        .unwrap();
+    let id = registry.list(0, 1).unwrap().resources[0].id.clone();
+    let hash = item.ports.as_ref().unwrap().ports[0]
+        .contract_hash()
+        .unwrap();
+    let mut active = item.clone();
+    let route = active.route.as_mut().unwrap();
+    route.id = "profile-game:dcs".into();
+    route.priority = 100;
+    route.baseline_ready = true;
+    route.writable = true;
+    registry
+        .reconcile(ProviderBatch {
+            scope: "profile-game:dcs".into(),
+            session: "old-profile".into(),
+            revision: 1,
+            complete: true,
+            observations: vec![active],
+        })
+        .unwrap();
+    assert_eq!(
+        registry
+            .prepare_port(&id, "button:0", &hash, Access::Read)
+            .unwrap()
+            .resolved()
+            .scope,
+        "profile-game:dcs"
+    );
+    let pin = registry
+        .prepare_game_metadata_port(&id, "button:0", &hash, Access::Read, "dcs")
+        .unwrap();
+    assert_eq!(pin.resolved().scope, "game:dcs");
+    assert!(pin.requires_baseline());
+    assert!(registry.validate_preparation(&pin).is_ok());
+    registry.provider_failed("profile-game:dcs", "The outgoing reader stopped.");
+    assert!(registry.validate_preparation(&pin).is_ok());
+    let mut changed = item.clone();
+    changed.route.as_mut().unwrap().provider_generation = "setup-2:catalogue-2".into();
+    registry
+        .reconcile(ProviderBatch {
+            scope: "game:dcs".into(),
+            session: "catalogue".into(),
+            revision: 2,
+            complete: true,
+            observations: vec![changed],
+        })
+        .unwrap();
+    assert!(registry.validate_preparation(&pin).is_err());
+    assert!(registry
+        .prepare_game_metadata_port(&id, "button:0", &hash, Access::Read, "wrong-game")
+        .is_err());
+    let hardware = seeded_registry(false, true, true);
+    let id = hardware.list(0, 1).unwrap().resources[0].id.clone();
+    assert!(hardware
+        .prepare_game_metadata_port(&id, "button:0", &hash, Access::Read, "dcs")
+        .is_err());
+}

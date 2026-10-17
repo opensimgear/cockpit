@@ -9,3 +9,22 @@ Read preparation can wait for a baseline; it cannot deliver a known value. Hardw
 The native inventory `snapshot_for_preparation` captures the compile snapshot and selected pins under one cached lock. `validate_delivery` rechecks the actual `ResourceToken` against the cached registry and returns its exact route. Neither method invokes discovery or changes a baseline flag. `refresh_native` is an explicit coordinator capture operation; background and deliberate refreshes serialize collection/adoption with one monotonic revision source.
 
 After acknowledged provider acquisition, the coordinator refreshes actual provider state and recompiles normally with fresh delivery tokens. A pending baseline, stale token, changed boot/configuration or failed provider cannot supply data or receive effects. The coordinator must compare the prepared and delivery program identities and enforce subsystem-specific acquisition receipts before delivery. Optional offline and dormant game branches remain distinct from required setup failures.
+
+
+Native game delivery is a separate `profile-game:<gameId>` sighting joined to
+`game:<gameId>` metadata by exact GameIntegration-only GameScope evidence. Only
+native acquired readers can publish it. Publication requires a verified running
+process, matching game/setup/catalogue revisions, exact selected port contracts,
+and a current native preparation session. Background metadata never publishes a
+sample. A loss publication removes baseline readiness; metadata failure, process
+loss or revision change withdraws delivery before cached token validation.
+Outgoing withdrawal compares the reader session and cannot revoke a newer owner.
+
+Game preflight explicitly pins the metadata scope even while an outgoing reader
+is live. Its own provider session, route, full catalogue revision and contract
+remain pinned; unrelated delivery sightings cannot invalidate that acquisition.
+`Runtime::bind_delivery_reads` binds real current Read tokens after acquisition,
+leaving command sinks untouched until Start obtains actual command admission.
+Hardware binding permits a baseline becoming ready on the exact selected route;
+provider session, route generation, attributes and catalogue stay pinned. No
+browser request invokes publication, withdrawal, read binding or provider I/O.

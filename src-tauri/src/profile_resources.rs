@@ -26,6 +26,8 @@ struct State {
     read_only: bool,
     fingerprints: BTreeMap<String, String>,
     pending_save: bool,
+    game_metadata: BTreeMap<String, Observation>,
+    game_deliveries: BTreeMap<String, ProviderBatch>,
 }
 pub(crate) struct Runtime {
     state: Arc<Mutex<State>>,
@@ -221,12 +223,36 @@ impl Runtime {
                         (_, osg_profiles::PortContract::Action { .. }) => Access::Invoke,
                         _ => Access::Write,
                     };
-                    match state.registry.prepare_port(
-                        &assignment.source_id,
-                        &expected.observed_port_id,
-                        &expected.expected_contract_hash,
-                        access,
-                    ) {
+                    let captured = snapshot
+                        .resources
+                        .iter()
+                        .find(|r| r.summary.id == assignment.source_id)
+                        .unwrap();
+                    let preparation = if captured.summary.resource_type
+                        == osg_profiles::resources::ResourceType::GameIntegration
+                    {
+                        captured
+                            .game_id
+                            .as_deref()
+                            .ok_or_else(|| "Game metadata has no exact game identity.".to_owned())
+                            .and_then(|game| {
+                                state.registry.prepare_game_metadata_port(
+                                    &assignment.source_id,
+                                    &expected.observed_port_id,
+                                    &expected.expected_contract_hash,
+                                    access,
+                                    game,
+                                )
+                            })
+                    } else {
+                        state.registry.prepare_port(
+                            &assignment.source_id,
+                            &expected.observed_port_id,
+                            &expected.expected_contract_hash,
+                            access,
+                        )
+                    };
+                    match preparation {
                         Ok(pin) => {
                             if fingerprints.insert(pin.fingerprint()?) {
                                 preparations.push(pin)
@@ -294,6 +320,8 @@ impl Runtime {
             read_only,
             fingerprints: BTreeMap::new(),
             pending_save: false,
+            game_metadata: BTreeMap::new(),
+            game_deliveries: BTreeMap::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let local_revision = Arc::new(AtomicU64::new(0));
@@ -365,7 +393,15 @@ impl Runtime {
         let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
         let mut changed = false;
         for (scope, batch) in batches {
+            let metadata = batch.as_ref().ok().and_then(|batch| {
+                scope
+                    .strip_prefix("game:")
+                    .map(|id| (id.to_owned(), batch.clone()))
+            });
             let result = batch.and_then(|batch| {
+                if batch.scope != scope {
+                    return Err("Provider scope does not match its envelope.".into());
+                }
                 use sha2::{Digest, Sha256};
                 let fingerprint = format!(
                     "{:x}",
@@ -382,6 +418,31 @@ impl Runtime {
                 changed = true;
                 Ok(())
             });
+            if scope.starts_with("game:") {
+                let game = scope.trim_start_matches("game:");
+                let item = metadata.filter(|_| result.is_ok()).and_then(|(_, batch)| {
+                    batch
+                        .observations
+                        .into_iter()
+                        .find(|item| item.key == game && game_metadata_valid(item, game))
+                });
+                if let Some(item) = item {
+                    state.game_metadata.insert(game.into(), item);
+                } else {
+                    state.game_metadata.remove(game);
+                }
+                if state.game_deliveries.get(game).is_some_and(|batch| {
+                    state
+                        .game_metadata
+                        .get(game)
+                        .is_none_or(|metadata| validate_game_delivery(batch, metadata).is_err())
+                }) {
+                    let overlay = state.game_deliveries.remove(game).unwrap();
+                    state.registry.provider_failed(&overlay.scope, "Game process, setup or catalogue changed; acquire a fresh native baseline.");
+                    state.fingerprints.remove(&overlay.scope);
+                    changed = true;
+                }
+            }
             if let Err(error) = result {
                 state.fingerprints.remove(&scope);
                 state.registry.provider_failed(&scope, &error);
@@ -391,6 +452,9 @@ impl Runtime {
         if !changed && !state.pending_save {
             return;
         }
+        Self::persist_locked(&mut state);
+    }
+    fn persist_locked(state: &mut State) {
         let saved =
             serde_json::to_string(&state.registry.saved()).expect("inventory metadata JSON");
         if saved != state.saved && !state.read_only {
@@ -551,6 +615,10 @@ pub(crate) fn attributes<const N: usize>(fields: [(&str, String); N]) -> BTreeMa
         .map(|(key, value)| (key.into(), value))
         .collect()
 }
+
+#[path = "profile_resources_game.rs"]
+mod game_delivery;
+use game_delivery::{game_metadata_valid, validate_game_delivery};
 
 #[cfg(test)]
 #[path = "profile_resources_tests.rs"]
