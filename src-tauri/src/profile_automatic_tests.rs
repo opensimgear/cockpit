@@ -555,3 +555,32 @@ fn malformed_optional_automation_storage_blocks_automatic_but_preserves_explicit
     assert!(owner(&fixture.manager).is_none());
     assert_eq!(std::fs::read(path).unwrap(), b"{");
 }
+#[test]
+fn failed_manual_pin_storage_inhibits_automatic_events_after_explicit_selection() {
+    let mut fixture = Fixture::new();
+    let path = fixture.directory.path().join("automatic.json");
+    fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
+    mode(&fixture.manager, "automatic");
+    let id = create(&fixture.manager, "Manual choice");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert_eq!(
+        request(
+            &fixture.manager,
+            "profile_select",
+            json!({"id":id,"selectionSource":"manual"})
+        )["ok"],
+        false
+    );
+    fixture.manager.poll_automatic();
+    assert!(owner(&fixture.manager).is_none());
+    assert!(fixture
+        .manager
+        .profile_automatic
+        .emergency
+        .load(Ordering::Acquire));
+    assert_eq!(
+        fixture.manager.profile_automatic.view()["status"],
+        "blocked"
+    );
+}

@@ -68,7 +68,7 @@ impl Runtime {
     pub(super) fn view(&self) -> Value {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let (status, message) = if self.emergency.load(Ordering::Acquire) {
-            ("blocked","Emergency Stop prevents automatic activation. Select Automatic explicitly to clear this latch.")
+            ("blocked","Stop or a failed Manual selection prevents automatic activation. Resolve any storage error, then select Automatic explicitly to resume.")
         } else {
             (state.status, state.message.as_str())
         };
@@ -233,11 +233,17 @@ impl GatewayManager {
                 return Ok(());
             }
         }
-        self.profile_automatic.change(|settings| {
+        let result = self.profile_automatic.change(|settings| {
             settings.mode = SelectionMode::Manual;
             settings.manual_profile_id = id.into();
             Ok(())
-        })
+        });
+        if result.is_err() {
+            self.profile_automatic
+                .emergency
+                .store(true, Ordering::Release);
+        }
+        result
     }
     pub(super) fn automatic_stop_pin(&self) -> Result<(), String> {
         // Called only after emergency neutralization, so a slow settings write
