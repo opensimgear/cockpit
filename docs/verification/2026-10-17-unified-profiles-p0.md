@@ -1,0 +1,100 @@
+# Unified profiles P0 implementation evidence
+
+Scope: [P0 #80](https://github.com/opensimgear/cockpit/issues/80) of the
+[unified profiles plan #79](https://github.com/opensimgear/cockpit/issues/79).
+Implemented from `origin/main` at `78328a0` on the isolated
+`feat/unified-profiles-p0` branch. This record accompanies the implementation.
+
+## Delivered boundary
+
+- Strict shared portable graph contracts and Default/Blank/Mixed JSON fixtures.
+- Protected editable Default, independent named documents, optimistic revisions,
+  separate local resource assignments and a fresh `profiles-v1` library.
+- Bounded atomic persistence, corrupt-source preservation and explicit reset.
+- Separate editor drafts, selected profile metadata, immutable captured revisions,
+  manual/automatic mode and pause/fault state. Manual selection pins manual mode.
+- Native/browser IPC and a typed client. Profile requests have separate bounds and
+  ordering; ordinary gateway requests retain their previous bounds.
+- No legacy document migration or hardware activation. `profile_apply` returns a
+  P4-unavailable error; captured snapshots are data, not evidence of executed
+  device effects. Discovery/compiler/runtime/UI milestones remain separate.
+
+The mixed fixture includes third-party A/B into a virtual output, CAN and direct
+USB logical sources, a second virtual output, explicit event-to-command routing,
+game telemetry through visible conversion/threshold nodes, companion feedback and
+a module action. It is a contract fixture, not an executed simulator scenario.
+
+## Local checks
+
+| Check | Result |
+| --- | --- |
+| Native profile crate tests | 29 passed |
+| Frontend profile tests | 17 passed |
+| Frontend profile coverage | 100% lines, 99.17% branches, 100% functions |
+| Frontend and browser type checks | Zero errors and warnings |
+| Transport regression suite | 173 passed |
+| Browser companion and Cockpit UI builds | Passed; existing bundle-size/import warnings remain |
+| Windows desktop library tests | 376 passed, 3 existing live-hardware/game tests ignored |
+| Windows companion host coverage regression tests | 7 passed |
+| Windows companion host production coverage | 334 / 445 lines, 75.06% |
+| Native browser-service framing | 1 passed |
+
+The restricted Windows sandbox cannot supply the DPAPI context required by two
+existing companion tests. The full native library rerun with the Windows user
+context passed. This does not qualify physical controller, vJoy, HidHide or game
+execution.
+
+Native coverage measured by `scripts/profiles-coverage.py`:
+
+| Production module | Covered lines | Coverage |
+| --- | --- | --- |
+| library constructors | 8 / 8 | 100.00% |
+| model | 43 / 44 | 97.73% |
+| validation | 320 / 354 | 90.40% |
+| session | 76 / 76 | 100.00% |
+| store | 145 / 152 | 95.39% |
+| service | 248 / 251 | 98.80% |
+
+Each module exceeds the 71% production line gate. Shared fixtures, strict
+unknown-field rejection, reference/type validation, limits, corruption, failed
+atomic replacement, copy/import isolation, restart, manual selection, Pause,
+faults and immutable snapshots are exercised. Frontend regressions also cover
+editing during an in-flight save and reopening/switching editors before a reply.
+Draft creation and updates validate before JSON cloning, so invalid non-finite
+nullable values cannot silently become null and clear saved override intent.
+
+CI adds the native profile coverage job on Windows, Linux and macOS, plus the
+frontend profile coverage gate. Local evidence above is Windows evidence; results
+from other platforms must be recorded from their own CI/native runs.
+
+## CI repairs
+
+The initial run exposed macOS temporary-path aliases in store fixtures, a stale
+mapping-host dependency lockfile, and mobile build setup failures. Fixtures now
+canonicalize their temporary parent while the production store still rejects
+symlinks. Windows profile tests and 31 Unix profile tests passed locally; the
+updated CI profile jobs also pass on macOS, Windows and Linux.
+
+The mapping-host lockfile includes its existing companion-service dependencies;
+67 tests and all eight module coverage gates pass with locked dependencies.
+Mobile setup now uses the published Android 37.0 SDK and invokes the installed
+Node/Tauri CLI directly from generated Xcode hooks. Five configuration helper
+tests pass. [Mobile CI run 39009235477](https://github.com/opensimgear/cockpit/actions/runs/39009235477)
+completed successfully on `474390b`: checks, Android and iOS simulator builds all
+passed. The signed iOS device and release jobs were skipped by their existing
+conditions; simulator success does not qualify a physical mobile device.
+
+The Windows companion host coverage gate exposed untested native request routes
+(278 / 445 lines, 62.47%) despite the passing desktop suite. A new USB operator
+test verifies that setup, firmware installation and control requests cannot pass
+without a current selection and ready connection. Enumeration uses an empty
+paired-client set, so it does not probe UARTs; firmware tests supply only paths
+which were never enumerated. The existing operator test now exercises trusted
+game capture, snapshot, checkpointed assignment, restoration and abandonment
+through the host entry points, preserving the original assignment and leaving
+every instance unarmed. The unchanged `scripts/companion-coverage.py` gate passes:
+73 service tests and 7 host tests pass; all twelve measured production modules
+exceed 71%, with the host at 334 / 445 lines (75.06%). Local reports are in
+`.research/p0-companion-coverage-fix/`. The full instrumented desktop library
+rerun passed all 376 tests, with the same three existing live-hardware/game
+tests ignored.

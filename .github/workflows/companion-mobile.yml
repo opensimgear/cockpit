@@ -17,7 +17,7 @@ on:
       - '.npmrc'
       - '.github/workflows/companion-mobile.yml'
       - 'scripts/companion-mobile*'
-      - 'scripts/test_companion_mobile.py'
+      - 'scripts/test_companion_mobile*.py'
       - 'docs/companion-mobile-release-notes.md'
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
@@ -37,7 +37,7 @@ on:
       - '.npmrc'
       - '.github/workflows/companion-mobile.yml'
       - 'scripts/companion-mobile*'
-      - 'scripts/test_companion_mobile.py'
+      - 'scripts/test_companion_mobile*.py'
       - 'docs/companion-mobile-release-notes.md'
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
@@ -70,7 +70,7 @@ jobs:
       - run: pnpm --filter @opensimgear/companion test
       - run: pnpm companion:ui:build
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config dbus-x11 gnome-keyring
-      - run: python3 -m unittest discover -s scripts -p test_companion_mobile.py -v
+      - run: python3 -m unittest discover -s scripts -p 'test_companion_mobile*.py' -v
       - name: Native protocol and client tests
         run: |
           # The host TLS persistence test uses the real protected Secret Service store.
@@ -103,9 +103,9 @@ jobs:
       - run: pnpm --filter @opensimgear/companion tauri android init --ci
       - name: Install the platform requested by the generated Tauri project
         run: |
-          compile_sdk="$(sed -nE 's/^[[:space:]]*compileSdk = ([0-9]+).*/\1/p' apps/companion/src-tauri/gen/android/app/build.gradle.kts)"
-          test -n "$compile_sdk"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-${compile_sdk}"
+          platform="$(python3 scripts/companion-mobile-build.py android-platform)"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$platform" "platforms;android-36"
+          test -f "$ANDROID_HOME/platforms/${platform#*;}/android.jar"
       - name: Build development APK
         run: pnpm --filter @opensimgear/companion tauri android build --debug --apk --target aarch64 --ci -- --locked
       - name: Collect development APK
@@ -143,6 +143,8 @@ jobs:
       - run: rustup target add aarch64-apple-ios-sim
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @opensimgear/companion tauri ios init --ci
+      - name: Use the installed CLI directly in the generated Xcode Rust hook
+        run: python3 scripts/companion-mobile-build.py ios-rust-hook
       - run: pnpm --filter @opensimgear/companion tauri ios build --debug --target aarch64-sim --no-sign --ci -- --locked
       - name: Package simulator app bundle (not installable on devices)
         run: python3 scripts/companion-mobile.py ios-simulator
@@ -177,6 +179,8 @@ jobs:
       - run: rustup target add aarch64-apple-ios
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @opensimgear/companion tauri ios init --ci
+      - name: Use the installed CLI directly in the generated Xcode Rust hook
+        run: python3 scripts/companion-mobile-build.py ios-rust-hook
       - run: pnpm --filter @opensimgear/companion tauri ios build --target aarch64 --ci --export-method app-store-connect --build-number "${{ github.run_number }}" -- --locked
       - run: python3 scripts/companion-mobile.py ios-device
       - uses: actions/upload-artifact@v4

@@ -10,9 +10,9 @@ use std::{
     thread,
 };
 
-// GatewayManager limits the normalized request to 64 KiB. The transport must
-// also allow its correlation envelope (an 80-byte ID can require JSON escapes).
-const REQUEST_ENVELOPE_LIMIT: usize = 65_536 + 1_024;
+// Profile documents have a separately bounded envelope. GatewayManager still
+// enforces the original 64 KiB bound for unrelated commands after parsing.
+const REQUEST_ENVELOPE_LIMIT: usize = osg_cockpit::gateways::PROFILE_REQUEST_LIMIT + 1_024;
 
 // Read incrementally; an oversized line is discarded without retaining it.
 fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Result<Vec<u8>, ()>>> {

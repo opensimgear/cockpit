@@ -26,6 +26,7 @@ jobs:
       - run: pnpm browser:test
       - run: pnpm controllers:coverage
       - run: pnpm mappings:coverage
+      - run: pnpm profiles:coverage
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage
       - run: pnpm dcs-profile:coverage
@@ -47,6 +48,33 @@ jobs:
         with:
           name: companion-release-readiness
           path: .research/companion-c6/release-readiness.json
+
+  profiles-contracts:
+    name: Unified profile contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install profile coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Profile contracts, storage and session coverage
+        run: python scripts/profiles-coverage.py
+      - name: Upload profile contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-coverage-${{ matrix.os }}
+          path: |
+            .research/profiles-coverage/summary.json
+            .research/profiles-coverage/*-lines.txt
+            .research/profiles-coverage/tests.log
 
   native:
     runs-on: ubuntu-24.04

@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+osg-profiles = { path = "../crates/profiles" }
 osg-companion-serial = { path = "../crates/companion-serial" }
 osg-companion-service = { path = "../crates/companion-service" }
 osg-mapping-host = { path = "../crates/mapping-host" }

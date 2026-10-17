@@ -50,6 +50,25 @@ test('desktop routes the complete explicitly scoped request through one native m
   ]);
 });
 
+test('unified profile writes remain ordered without blocking gateway discovery or capture', async () => {
+  const waiting = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'profile_save') await waiting.promise;
+    return { ok: true, state: { profiles: { document: request.document } } };
+  } });
+  const document = { id: 'profile', revision: 1 };
+  const save = api.gatewayRequest({ command: 'profile_save', document, expectedRevision: 1 });
+  const rename = api.gatewayRequest({ command: 'profile_rename', id: 'profile', name: 'Changed', expectedRevision: 2 });
+  const inventory = api.gatewayRequest({ command: 'ports' });
+  const controllers = api.gatewayRequest({ command: 'controller_list' });
+  await tick();
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['profile_save', 'ports', 'controller_list']);
+  waiting.resolve();
+  await Promise.all([save, rename, inventory, controllers]);
+  assert.equal(api.calls.at(-1).args.request.command, 'profile_rename');
+  assert.deepEqual(api.calls[0].args.request.document, document);
+});
+
 test('native game file selection returns the absolute path or cancellation and does not change installations', async () => {
   const path = String.raw`D:\Games\X-Plane 12\X-Plane.exe`;
   const api = transport({invokeResults: command => command === 'pick_game_executable' ? path : null});

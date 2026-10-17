@@ -13,6 +13,9 @@ use std::{
     },
 };
 
+/// Complete profile graphs have a separate budget from 64 KiB gateway commands.
+pub const PROFILE_REQUEST_LIMIT: usize = osg_profiles::MAX_PROFILE_BYTES + 65_536;
+
 trait Adapter: Send + Sync {
     fn request(&self, request: Value) -> Value;
     fn shutdown(&self);
@@ -96,6 +99,7 @@ fn empty_state() -> Value {
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 pub struct GatewayManager {
+    profiles: Mutex<osg_profiles::service::Service>,
     provider: Arc<dyn Provider>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
@@ -275,6 +279,9 @@ impl GatewayManager {
             Arc::new(crate::game_discovery::NativePlatform),
         );
         let manager = Self {
+            profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
+                crate::dcs_runtime::config_path().with_file_name("profiles-v1")
+            }))),
             provider,
             sessions,
             inventory: Mutex::new(Vec::new()),
@@ -387,7 +394,15 @@ impl GatewayManager {
         if self.closed.load(Ordering::Acquire) {
             return self.error("Cockpit gateway manager has closed.", None);
         }
-        if !request.is_object() || request.to_string().len() > 65_536 {
+        let profile_request = request["command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("profile_"));
+        let request_limit = if profile_request {
+            PROFILE_REQUEST_LIMIT
+        } else {
+            65_536
+        };
+        if !request.is_object() || request.to_string().len() > request_limit {
             return self.error("Invalid gateway request.", None);
         }
         if !request["clientId"]
@@ -402,6 +417,20 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        // Profile documents are independent of gateway inventory and legacy game
+        // ownership. Their service never starts an output or restores old stores.
+        if profile_request {
+            request.as_object_mut().unwrap().remove("clientId");
+            let result = self
+                .profiles
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .request(&request);
+            return match result {
+                Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
+            };
+        }
         if command.starts_with("companion_") {
             if let Err(error) = self.games.guard_request(&request) {
                 return json!({"ok":false,"error":error});
@@ -773,6 +802,36 @@ mod tests {
             request[key] = value.clone();
         }
         manager.request(request)
+    }
+    #[test]
+    fn unified_profile_documents_do_not_discover_gateways_or_activate_outputs() {
+        let (manager, provider) = setup();
+        let listed = request(&manager, "profile_list", None, json!({}));
+        assert_eq!(listed["ok"], true);
+        assert_eq!(listed["state"]["profiles"]["profiles"].as_array().unwrap().len(), 1);
+        assert!(listed["state"].get("modules").is_none());
+        let created = request(&manager, "profile_create", None, json!({"name":"Flight"}));
+        assert_eq!(created["ok"], true);
+        let document = &created["state"]["profiles"]["document"];
+        let opened = request(&manager, "profile_get", None, json!({"id":document["id"]}));
+        assert_eq!(opened["state"]["profiles"]["document"], *document);
+        let status = request(&manager, "profile_status", None, json!({}));
+        assert_eq!(status["state"]["profiles"]["session"]["selectedProfileId"], osg_profiles::DEFAULT_PROFILE_ID);
+        assert_eq!(status["state"]["profiles"]["session"]["state"], "stopped");
+        assert!(status["state"]["profiles"]["session"]["appliedSnapshot"].is_null());
+        assert_eq!(request(&manager, "profile_apply", None, json!({"id":document["id"]}))["ok"], false);
+        assert!(provider.adapters.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn profile_request_budget_does_not_expand_gateway_command_budget() {
+        let (manager, _) = setup();
+        let oversized_legacy = request(&manager, "status", None, json!({"payload":"x".repeat(70_000)}));
+        assert_eq!(oversized_legacy["error"], "Invalid gateway request.");
+        let profile = request(&manager, "profile_apply", None, json!({"payload":"x".repeat(70_000)}));
+        assert_eq!(profile["ok"], false);
+        assert_ne!(profile["error"], "Invalid gateway request.");
+        let oversized_profile = request(&manager, "profile_import", None, json!({"payload":"x".repeat(PROFILE_REQUEST_LIMIT)}));
+        assert_eq!(oversized_profile["error"], "Invalid gateway request.");
     }
     #[test]
     fn controller_status_is_independent_of_gateway_inventory_and_rejects_invalid_edits() {

@@ -3242,6 +3242,7 @@ dependencies = [
  "osg-controller-input",
  "osg-mapping",
  "osg-mapping-host",
+ "osg-profiles",
  "osg-virtual-controller",
  "serde",
  "serde_json",
@@ -3353,6 +3354,17 @@ dependencies = [
  "osg-virtual-controller",
  "serde",
  "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "osg-profiles"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
  "uuid",
 ]
