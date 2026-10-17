@@ -847,56 +847,122 @@ fn blocked_gateway_output_does_not_stall_another_gateways_ordered_input() {
 fn slow_event_read_across_feedback_loss_discards_press_and_releases_prior_press_once() {
     let fixture = Fixture::new();
     let mock = Mock::new();
-    let run = Running::start(fixture.compile(vec![button()], vec![], 200), &mock);
-    fixture.send(&frame(1, None, None, None));
-    run.armed("ack");
-    mock.delay_once(A, "events_read", 450);
+    let profile = fixture.compile(vec![button()], vec![], 200);
+    let transport = fixture.transport(&profile);
+    let controls = Controls::default();
+    let cancel = AtomicBool::new(false);
+    let mut meter = Meter::default();
+    let mut export = ExportSession::new(&profile);
+    export.feed(&frame(1, None, None, None), 0);
+    let fresh = export.snapshot(0);
+    let shared = Arc::new(Mutex::new(Shared {
+        require_ownership: false,
+        export: fresh.clone(),
+        updated: Instant::now(),
+        inputs: BTreeMap::new(),
+        outputs: BTreeMap::new(),
+        meters: BTreeMap::new(),
+        gaps: 0,
+        overflow: 0,
+    }));
+    let mut device = Device {
+        prepared: prepare_one(&profile, &mock.panel(), &profile.inputs[0].binding.target).unwrap(),
+        inputs: profile
+            .inputs
+            .iter()
+            .cloned()
+            .map(InputState::new)
+            .collect(),
+        cursor: None,
+        epoch: 0,
+        was_fresh: false,
+        available: false,
+    };
+    let poll =
+        |device: &mut Device, panel: &Panel, snapshot: &ExportSnapshot, meter: &mut Meter| {
+            device
+                .poll(
+                    &profile,
+                    panel,
+                    Some(&transport),
+                    snapshot,
+                    snapshot.fresh,
+                    meter,
+                    &shared,
+                    &cancel,
+                    &controls,
+                )
+                .unwrap();
+        };
+    poll(&mut device, &mock.panel(), &fresh, &mut meter);
+    assert_eq!(device.inputs[0].report(true)["ready"], true);
     mock.device(A, |d| {
         d.edge(0, true);
         d.edge(0, false);
     });
-    wait("slow event read", || {
-        mock.entered.load(Ordering::Acquire) > 0
+
+    // Model the exact I/O interleaving: this poll captured fresh feedback, then
+    // feedback expired while its event read was in flight. Advancing the actual
+    // export parser clock and invalidating Shared before returning the reply
+    // tests the post-I/O guard without a transient 450 ms flag or a 200 ms race
+    // to reach the read on a loaded native runner.
+    export.tick(201);
+    let stale = export.snapshot(201);
+    assert!(!stale.fresh);
+    let panel = mock.panel();
+    let invalidated = shared.clone();
+    let blocked_panel: Panel = Arc::new(move |request| {
+        let reply = panel(request.clone());
+        if request["command"] == "events_read" {
+            sync_desired_controlled(
+                &mut invalidated.lock().unwrap(),
+                stale.clone(),
+                Instant::now(),
+                &Controls::default(),
+            );
+        }
+        reply
     });
-    wait("feedback invalidated", || {
-        run.value()["feedbackFresh"] == false
-    });
-    assert_eq!(run.value()["inputs"][0]["ready"], false);
-    assert_eq!(run.value()["inputs"][0]["armed"], false);
-    assert_eq!(run.value()["inputs"][0]["needsBaseline"], true);
-    wait("slow read completed", || {
-        mock.entered.load(Ordering::Acquire) == 0
-    });
-    wait("worker disarmed", || {
-        run.value()["inputs"][0]["ready"] == false
-    });
+    poll(&mut device, &blocked_panel, &fresh, &mut meter);
+    let report = device.inputs[0].report(device.available);
+    assert_eq!(report["ready"], false);
+    assert_eq!(report["armed"], false);
+    assert_eq!(report["needsBaseline"], true);
+    assert!(device.cursor.is_none());
+    assert_eq!(meter.events, 0);
+    assert_eq!(meter.commands, 0);
     assert!(fixture.commands().is_empty());
-    let baselines = mock
-        .fake
-        .lock()
-        .unwrap()
-        .calls
-        .iter()
-        .filter(|c| c["command"] == "events_state")
-        .count();
-    fixture.send(&frame(2, None, None, None));
-    wait("new route baseline", || {
-        mock.fake
-            .lock()
-            .unwrap()
-            .calls
-            .iter()
-            .filter(|c| c["command"] == "events_state")
-            .count()
-            > baselines
-    });
-    run.armed("ack");
+
+    // A new fresh baseline skips the discarded press/release history.
+    export.feed(&frame(2, None, None, None), 210);
+    let fresh = export.snapshot(210);
+    sync_desired_controlled(
+        &mut shared.lock().unwrap(),
+        fresh.clone(),
+        Instant::now(),
+        &controls,
+    );
+    poll(&mut device, &mock.panel(), &fresh, &mut meter);
+    assert_eq!(device.inputs[0].report(true)["ready"], true);
+    assert_eq!(device.cursor, Some((1, 2)));
     mock.device(A, |d| d.edge(0, true));
-    wait("new press sent", || run.value()["commandsSent"] == 1);
+    poll(&mut device, &mock.panel(), &fresh, &mut meter);
+    assert_eq!(meter.commands, 1);
     fixture.expect(&["UFC_MASTER_CAUTION 1\n"]);
-    wait("stale neutral release", || run.value()["commandsSent"] == 2);
+
+    export.tick(411);
+    let stale = export.snapshot(411);
+    sync_desired_controlled(
+        &mut shared.lock().unwrap(),
+        stale.clone(),
+        Instant::now(),
+        &controls,
+    );
+    for _ in 0..3 {
+        poll(&mut device, &mock.panel(), &stale, &mut meter);
+    }
+    assert_eq!(meter.commands, 2);
     fixture.expect(&["UFC_MASTER_CAUTION 0\n"]);
-    thread::sleep(Duration::from_millis(70));
     assert!(fixture.commands().is_empty());
 }
 
