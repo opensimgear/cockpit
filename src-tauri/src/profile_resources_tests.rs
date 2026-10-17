@@ -544,3 +544,194 @@ fn native_inventory_reads_never_call_a_second_discovery_or_acquire_writer() {
     assert_eq!(calls.load(Ordering::Acquire), 1);
     runtime.shutdown();
 }
+
+#[test]
+fn preparation_is_cached_and_fresh_delivery_requires_a_real_provider_baseline() {
+    use osg_profiles::{resources::PortExpectation, store::LocalAssignment};
+    let calls = Arc::new(AtomicU64::new(0));
+    let counted = calls.clone();
+    let ready = Arc::new(AtomicBool::new(false));
+    let provider_ready = ready.clone();
+    let runtime = Runtime::new(
+        None,
+        Arc::new(move |revision| {
+            counted.fetch_add(1, Ordering::AcqRel);
+            let mut item = observed(1);
+            item.route.as_mut().unwrap().baseline_ready = provider_ready.load(Ordering::Acquire);
+            vec![(
+                "host".into(),
+                Ok(batch("host", "provider", revision, vec![item])),
+            )]
+        }),
+        false,
+    );
+    runtime.refresh_native().unwrap();
+    let details = runtime.state.lock().unwrap().registry.list(0, 1).unwrap();
+    let id = details.resources[0].id.clone();
+    let hash = runtime
+        .state
+        .lock()
+        .unwrap()
+        .registry
+        .inspect(&id, 0, 1)
+        .unwrap()
+        .ports[0]
+        .contract_hash
+        .clone();
+    let assignments = vec![LocalAssignment {
+        resource_id: "stick".into(),
+        source_id: id.clone(),
+        ports: vec![PortExpectation {
+            profile_port_id: "pressed".into(),
+            observed_port_id: "button:0".into(),
+            expected_contract_hash: hash,
+        }],
+    }];
+    let (snapshot, pins) = runtime
+        .snapshot_for_preparation(assignments.clone())
+        .unwrap();
+    assert_eq!(pins.len(), 1);
+    assert!(pins[0].requires_baseline());
+    assert!(snapshot.resources[0].tokens.is_empty());
+    assert!(
+        !runtime
+            .validate_preparation(&pins[0])
+            .unwrap()
+            .baseline_ready
+    );
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+    ready.store(true, Ordering::Release);
+    runtime.refresh_native().unwrap();
+    assert!(runtime.validate_preparation(&pins[0]).is_err());
+    let fresh = runtime.snapshot_for_compile(assignments.clone()).unwrap();
+    let delivery = fresh.resources[0].tokens[0].clone();
+    assert!(runtime.validate_delivery(&delivery).unwrap().baseline_ready);
+    assert_eq!(calls.load(Ordering::Acquire), 2);
+    ready.store(false, Ordering::Release);
+    runtime.refresh_native().unwrap();
+    assert!(runtime.validate_delivery(&delivery).is_err());
+    assert_eq!(calls.load(Ordering::Acquire), 3);
+    runtime.state.lock().unwrap().read_only = true;
+    let (snapshot, pins) = runtime.snapshot_for_preparation(assignments).unwrap();
+    assert!(snapshot.read_only && pins.is_empty());
+    assert!(runtime
+        .snapshot_for_preparation(vec![
+            LocalAssignment {
+                resource_id: "huge".into(),
+                source_id: id,
+                ports: vec![]
+            };
+            65
+        ])
+        .is_err());
+    runtime.shutdown();
+    assert!(runtime.refresh_native().is_err());
+    assert!(runtime.validate_delivery(&delivery).is_err());
+    assert!(runtime.snapshot_for_preparation(vec![]).is_err());
+}
+#[test]
+fn acquisition_read_only_failures_never_reuse_writable_delivery_or_preparation() {
+    use osg_profiles::{resources::PortExpectation, store::LocalAssignment};
+    let runtime = Runtime::new(
+        None,
+        Arc::new(|_| panic!("cached validation must not collect")),
+        false,
+    );
+    let mut item = observed(1);
+    item.route.as_mut().unwrap().writable = true;
+    item.ports = Some(
+        PortUpdate::complete(vec![PortDescriptor {
+            id: "set".into(),
+            name: "Set".into(),
+            direction: Direction::Input,
+            contract: PortContract::Action {
+                endpoint: "led".into(),
+                parameters: vec![],
+                semantics: ActionSemantics::Setter,
+                readable: true,
+                display: None,
+                ownership: None,
+            },
+        }])
+        .unwrap(),
+    );
+    Runtime::adopt(
+        &runtime.state,
+        vec![("host".into(), Ok(batch("host", "provider", 1, vec![item])))],
+    );
+    let state = runtime.state.lock().unwrap();
+    let id = state.registry.list(0, 1).unwrap().resources[0].id.clone();
+    let details = state.registry.inspect(&id, 0, 1).unwrap();
+    let hash = details.ports[0].contract_hash.clone();
+    let token = state.registry.token(&id, "set", Access::Invoke).unwrap();
+    let pin = state
+        .registry
+        .prepare_port(&id, "set", &hash, Access::Invoke)
+        .unwrap();
+    drop(state);
+    runtime.state.lock().unwrap().read_only = true;
+    assert!(runtime.validate_preparation(&pin).is_err());
+    assert!(runtime.validate_delivery(&token).is_err());
+    runtime.state.lock().unwrap().read_only = false;
+    let assignment = LocalAssignment {
+        resource_id: "panel".into(),
+        source_id: id,
+        ports: vec![PortExpectation {
+            profile_port_id: "set".into(),
+            observed_port_id: "set".into(),
+            expected_contract_hash: "sha256:changed".into(),
+        }],
+    };
+    let (_, pins) = runtime.snapshot_for_preparation(vec![assignment]).unwrap();
+    assert!(pins.is_empty());
+    runtime.shutdown();
+    assert!(runtime.validate_preparation(&pin).is_err());
+}
+#[test]
+fn concurrent_coordinator_refreshes_keep_provider_revision_and_adoption_in_order() {
+    use std::sync::mpsc;
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release = Mutex::new(release_rx);
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let observed_order = order.clone();
+    let runtime = Arc::new(Runtime::new(
+        None,
+        Arc::new(move |revision| {
+            observed_order.lock().unwrap().push(revision);
+            if revision == 1 {
+                entered_tx.send(()).unwrap();
+                release.lock().unwrap().recv().unwrap();
+            }
+            vec![(
+                "host".into(),
+                Ok(batch(
+                    "host",
+                    "provider",
+                    revision,
+                    vec![observed(revision)],
+                )),
+            )]
+        }),
+        false,
+    ));
+    let first = runtime.clone();
+    let first = thread::spawn(move || first.refresh_native());
+    entered_rx.recv().unwrap();
+    let second = runtime.clone();
+    let second = thread::spawn(move || second.refresh_native());
+    release_tx.send(()).unwrap();
+    first.join().unwrap().unwrap();
+    second.join().unwrap().unwrap();
+    assert_eq!(*order.lock().unwrap(), vec![1, 2]);
+    assert_eq!(runtime.local_revision.load(Ordering::Acquire), 2);
+    let state = runtime.state.lock().unwrap();
+    assert_eq!(
+        state.registry.list(0, 1).unwrap().resources[0].connections[0]
+            .route
+            .provider_generation,
+        "2"
+    );
+    drop(state);
+    runtime.shutdown();
+}

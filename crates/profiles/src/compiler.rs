@@ -1,7 +1,7 @@
 //! Pure graph compilation over one immutable native capture. This module has no
 //! provider callbacks, filesystem access, controller handles or submission API.
 pub use crate::compiler_models::*;
-use crate::resources::{ResourceToken, Route};
+use crate::resources::{PortPreparation, ResourceToken, Route};
 use crate::resources_ports::PortContract;
 use crate::{Binding, Direction, Endpoint, ProfileDocument, ResourceKind};
 use osg_mapping::profile::OutputControl;
@@ -19,6 +19,22 @@ mod capture;
 mod conflicts;
 
 pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> CompilationReport {
+    compile_mode(document, snapshot, None)
+}
+/// Native acquisition preflight only. Fresh delivery tokens must be captured
+/// and compiled normally after acquiring the providers and their baselines.
+pub fn compile_for_preparation(
+    document: &ProfileDocument,
+    snapshot: &CompileSnapshot,
+    preparations: &[PortPreparation],
+) -> CompilationReport {
+    compile_mode(document, snapshot, Some(preparations))
+}
+fn compile_mode(
+    document: &ProfileDocument,
+    snapshot: &CompileSnapshot,
+    preparations: Option<&[PortPreparation]>,
+) -> CompilationReport {
     let mut report = CompilationReport {
         schema_version: 1,
         profile_id: document.id.clone(),
@@ -31,6 +47,31 @@ pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> Compil
         diagnostics: vec![],
         plan: None,
     };
+    if let Some(preparations) = preparations {
+        let fingerprint = (|| {
+            if preparations.len() > 1024 {
+                return Err("Preparation exceeds 1024 exact ports.".to_owned());
+            }
+            let mut pins = preparations
+                .iter()
+                .map(PortPreparation::fingerprint)
+                .collect::<Result<Vec<_>, String>>()?;
+            pins.sort();
+            hash(&(report.capture_fingerprint.clone(), pins))
+        })();
+        match fingerprint {
+            Ok(value) => report.capture_fingerprint = value,
+            Err(message) => {
+                error(
+                    &mut report.diagnostics,
+                    "invalidPreparation",
+                    &message,
+                    GraphLocation::default(),
+                );
+                return finish(report);
+            }
+        }
+    }
     let ports = document
         .resources
         .iter()
@@ -180,8 +221,14 @@ pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> Compil
                 port_id: port.id.clone(),
             };
             let edges = related_edges(&endpoint, &bindings);
-            let resolved =
-                capture::resolve(resource, port, snapshot, &mut report.diagnostics, edges);
+            let resolved = capture::resolve(
+                resource,
+                port,
+                snapshot,
+                &mut report.diagnostics,
+                edges,
+                preparations,
+            );
             runtime_sources.push(SourcePort {
                 endpoint: runtime_endpoint(&endpoint),
                 contract: port.contract.clone(),
@@ -192,6 +239,7 @@ pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> Compil
                 observed_port_id: resolved.observed_id,
                 contract: port.contract.clone(),
                 token: resolved.token,
+                preparation: resolved.preparation,
                 route: resolved.route,
                 readiness: resolved.readiness,
             });
@@ -224,6 +272,7 @@ pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> Compil
                 snapshot,
                 &mut report.diagnostics,
                 vec![binding.id.clone()],
+                preparations,
             );
             let (adapter, runtime_adapter) = match resource.kind {
                 ResourceKind::Game => (
@@ -255,6 +304,7 @@ pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> Compil
                 observed_port_id: resolved.observed_id,
                 contract: port.contract.clone(),
                 token: resolved.token,
+                preparation: resolved.preparation,
                 route: resolved.route,
                 readiness: resolved.readiness,
             });
@@ -286,6 +336,7 @@ pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> Compil
                 observed_port_id: None,
                 contract: port.contract.clone(),
                 token: None,
+                preparation: None,
                 route: None,
                 readiness: controller_readiness(
                     controller,

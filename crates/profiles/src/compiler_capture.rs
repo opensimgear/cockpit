@@ -8,6 +8,7 @@ pub(super) struct ResolvedPort {
     pub inventory_id: Option<String>,
     pub observed_id: Option<String>,
     pub token: Option<ResourceToken>,
+    pub preparation: Option<PortPreparation>,
     pub route: Option<Route>,
     pub readiness: PlanReadiness,
 }
@@ -133,6 +134,7 @@ pub(super) fn resolve(
     snapshot: &CompileSnapshot,
     diagnostics: &mut Vec<CompileDiagnostic>,
     edge_ids: Vec<String>,
+    preparations: Option<&[PortPreparation]>,
 ) -> ResolvedPort {
     let location = GraphLocation {
         resource_id: Some(logical.id.clone()),
@@ -144,6 +146,7 @@ pub(super) fn resolve(
         inventory_id: None,
         observed_id: None,
         token: None,
+        preparation: None,
         route: None,
         readiness: PlanReadiness::Blocked,
     };
@@ -250,6 +253,38 @@ pub(super) fn resolve(
     } else {
         Access::Write
     };
+    if let Some(preparations) = preparations {
+        let mut selected = preparations
+            .iter()
+            .filter(|preparation| {
+                preparation.matches_capture(
+                    &snapshot.inventory_session,
+                    &resource.summary,
+                    observed,
+                    access,
+                )
+            })
+            .collect::<Vec<_>>();
+        selected.sort_by(|left, right| {
+            right
+                .resolved()
+                .route
+                .priority
+                .cmp(&left.resolved().route.priority)
+                .then(left.resolved().route.id.cmp(&right.resolved().route.id))
+        });
+        if selected.len() == 1 {
+            result.preparation = Some(selected[0].clone());
+            result.route = Some(selected[0].resolved().route.clone());
+        } else {
+            warn("routeNotPrepared","This exact port lacks one current unambiguous native acquisition pin; setup, identity, capabilities and route conflicts must be resolved before takeover.");
+            if readiness != PlanReadiness::Dormant {
+                readiness = PlanReadiness::Blocked;
+            }
+        }
+        result.readiness = readiness;
+        return result;
+    }
     let mut tokens = resource
         .tokens
         .iter()

@@ -2,7 +2,7 @@
 //!
 //! Captures are assembled by the native owner under its inventory lock. They are
 //! data, not a discovery callback, an ownership lease, or permission to submit.
-use crate::resources::{ObservedPort, ResourceSummary, ResourceToken, Route};
+use crate::resources::{ObservedPort, PortPreparation, ResourceSummary, ResourceToken, Route};
 use crate::resources_ports::PortContract;
 use crate::store::LocalAssignment;
 use crate::{CompanionAssignment, Endpoint, RuntimeOverride, VisibilityMode};
@@ -161,6 +161,9 @@ pub struct SourcePlan {
     pub observed_port_id: Option<String>,
     pub contract: PortContract,
     pub token: Option<ResourceToken>,
+    /// Native acquisition pin; never a browser or delivery capability.
+    #[serde(skip_serializing)]
+    pub preparation: Option<PortPreparation>,
     pub route: Option<Route>,
     pub readiness: PlanReadiness,
 }
@@ -184,6 +187,9 @@ pub struct SinkPlan {
     pub observed_port_id: Option<String>,
     pub contract: PortContract,
     pub token: Option<ResourceToken>,
+    /// Native acquisition pin; never a browser or delivery capability.
+    #[serde(skip_serializing)]
+    pub preparation: Option<PortPreparation>,
     pub route: Option<Route>,
     pub readiness: PlanReadiness,
 }
