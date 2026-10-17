@@ -131,6 +131,7 @@ test('failed guarded saves stay in the editor and show the native error before r
 test('newer edits during guarded save stay dirty and a busy navigation cannot replace its pending destination',async()=>{
   const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const guard=new ProfileNavigationGuard(h.store);let original=0,replacement=0;guard.request(()=>original++);
   const save=h.api.editorSave,pending=deferred();h.api.editorSave=()=>pending.promise;const saving=guard.save();assert.equal(guard.request(()=>replacement++),'busy');assert.equal(await guard.save(),false);
+  const current=h.store.state.editor;assert.equal(guard.discard(),false);assert.equal(h.store.state.editor,current);assert.equal(h.store.state.busy,true);assert.equal(original,0);
   const newer=plain(h.store.state.editor.document);newer.name='Newer edits';h.store.update(newer);pending.resolve({...savedResult({...newer,name:'New profile',revision:1}),assignments:plain(h.store.state.editor.assignments)});assert.equal(await saving,false);assert.equal(original,0);assert.equal(replacement,0);assert.equal(h.store.state.editor.document.name,'Newer edits');assert.equal(h.store.state.editor.baseRevision,1);
   h.api.editorSave=save;assert.equal(await guard.save(),true);assert.equal(original,1);assert.equal(replacement,0);
 });

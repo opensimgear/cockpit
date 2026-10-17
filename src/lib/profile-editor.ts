@@ -129,6 +129,7 @@ export class ProfileEditorStore {
     constructor(private api: ProfileEditorApi, private inventory: Pick<ProfileInventoryClient, 'listAll'>, private newId: () => string = () => globalThis.crypto.randomUUID()) { }
     get state(): DeepReadonly<ProfileWorkspaceState> { return freeze(this.value); }
     get editorEpoch(): number { return this.epoch; }
+    get inventoryRevision(): number { return this.inventoryEpoch; }
     subscribe(listener: (state: DeepReadonly<ProfileWorkspaceState>) => void): () => void { this.listeners.add(listener); listener(this.state); return () => { this.listeners.delete(listener); }; }
     private set(patch: Partial<ProfileWorkspaceState>) { this.value = { ...this.value, ...patch }; for (const listener of this.listeners)
         listener(this.state); }
@@ -257,9 +258,11 @@ export class ProfileNavigationGuard {
         return 'left';
     }
     keepEditing(): void { this.pending = null; }
-    discard(): void {
+    discard(): boolean {
+        if (this.store.state.busy) return false;
         this.store.back(true);
         this.complete();
+        return true;
     }
     async save(): Promise<boolean> {
         const pending = this.pending;

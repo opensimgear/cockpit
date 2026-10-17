@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';import test from 'node:test';import{loadModules}from'./test-module-loader.mjs';
+import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import{loadModules}from'./test-module-loader.mjs';
 const modules=await loadModules(['./profiles','./profile-inventory','./profile-graph','./profile-processing']);
 const {processingTemplate:make,processingNodeError:error,processingActionPack:pack,processingSummary:summary,processingUnitConversion:conversion,PROCESSING_PRESETS}=modules.get('./profile-processing');
 const plain=value=>JSON.parse(JSON.stringify(value));const bool={type:'boolean'};const number=(min=-100,max=100,unit=null)=>({type:'number',min,max,unit});const integer=(min=-32768,max=32767)=>({type:'integer',min,max,unit:null});const state=(schema=bool)=>({delivery:'state',schema,freshnessMs:500,fallback:null});const event=(schema=bool)=>({delivery:'event',schema});
@@ -57,4 +57,10 @@ test('declared port and builtin bounds remain consistent with native validation'
   const macro=make('macro','macro');macro.operation.rule.steps[1].pressed=true;assert.ok(error(macro));
   const enumNode=make('event-to-state','enum',event({type:'enum',values:['one','two']}));enumNode.outputs[0].contract.schema.values.reverse();assert.ok(error(enumNode));
   assert.equal(PROCESSING_PRESETS.length,27);
+});
+test('native-validated fixed authoring fixture retains the exact generated preset and atomic invocation contracts',async()=>{
+  const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profile-authoring/visible-presets.json',import.meta.url),'utf8'));
+  assert.equal(fixture.processingNodes.length,29);assert.equal(fixture.bindings.length,66);
+  for(const node of fixture.processingNodes){let generated;const kind=node.id.slice('preset-'.length);if(kind==='action-pack'||kind==='set-on-change'){const binding=fixture.bindings.find(binding=>binding.from.nodeId===node.id),sink=fixture.resources.find(resource=>resource.id===binding.to.nodeId).ports.find(port=>port.id===binding.to.portId);generated=pack(node.id,sink.contract,kind);}else generated=make(kind,node.id,node.inputs[0]?.contract??node.outputs[0].contract);assert.deepEqual(plain(generated),node);assertValid(node);}
+  assert.ok(!fixture.processingNodes.find(node=>node.operation.kind==='script').operation.source.includes('on_timer'));
 });

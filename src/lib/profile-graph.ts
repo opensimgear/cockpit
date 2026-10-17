@@ -82,6 +82,8 @@ function portableContract(contract: DeepReadonly<ProfilePortContract>): ProfileP
   const next=clone(contract);if(next.delivery==='action'||next.delivery==='invocation')for(const parameter of next.parameters)parameter.name=parameter.id;return next;
 }
 const canonical=(value:unknown):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a<b?-1:a>b?1:0)):item);
+/** Conservative preview invalidation; this metadata is never execution authority. */
+export function graphInventorySignature(inventory:readonly DeepReadonly<ResourceSummary>[]):string{return canonical(inventory.map(resource=>({id:resource.id,resourceType:resource.resourceType,availability:resource.availability,generation:resource.generation,capabilityRevision:resource.capabilityRevision,portCount:resource.portCount,cachedPortCount:resource.cachedPortCount,attributes:resource.attributes,diagnostics:resource.diagnostics,connections:[...resource.connections].sort((a,b)=>canonical([a.scope,a.key,a.route.id]).localeCompare(canonical([b.scope,b.key,b.route.id])))})).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0));}
 function portSelection(existing: DeepReadonly<ProfilePort>, observed: DeepReadonly<ObservedResourcePort>): void {
   if(resourcePortError(observed.descriptor)||!hash(observed.contractHash))throw new Error('Choose an advertised port with its exact native contract hash.');
   if(existing.direction!==observed.descriptor.direction||canonical(portableContract(existing.contract))!==canonical(portableContract(observed.descriptor.contract)))throw new Error('The selected provider contract differs from the saved logical port. Select a matching port or explicitly replace its graph declaration.');

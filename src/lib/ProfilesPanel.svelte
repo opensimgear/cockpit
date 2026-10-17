@@ -1,19 +1,23 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
-  import ProfileCanvas from './ProfileCanvas.svelte';
+  import ProfileRoutingEditor from './ProfileRoutingEditor.svelte';
   import { gatewayRequest } from './gateway';
-  import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument } from './profiles';
+  import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument, type ProfileLocalAssignment } from './profiles';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
-  import { ProfileEditorStore, ProfileNavigationGuard, profileCategory, profileEditorDirty } from './profile-editor';
+  import { ProfileEditorStore, ProfileNavigationGuard, addProfileResources, profileCategory, profileEditorDirty } from './profile-editor';
+  import {ProfileEditorUndo}from'./profile-graph-history';
+  import {ProfileCompilerClient}from'./profile-compilation';
   import type { GameId } from './games';
   let { editorStore: suppliedStore, resourceClient: suppliedResources, openGameSettings }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
   const profiles = new ProfilesClient(async request => { const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Profiles are unavailable. Reconnect the native service.');return result; });
   const store = supplied ?? new ProfileEditorStore(profiles,resources);
+  const compiler=new ProfileCompilerClient(async request=>{const result=(await gatewayRequest(request)).profileCompilation;if(!result)throw new Error('Native compilation is unavailable. Reconnect the service.');return result;});
   const navigationGuard = new ProfileNavigationGuard(store);
   let workspace = $state.raw(store.state);
+  const history=new ProfileEditorUndo(store);
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
   let inventoryOpen = $state(false), inventorySelection = $state<string[]>([]), creatingSelection = $state(false);
   const editor = $derived(workspace.editor);
@@ -24,14 +28,16 @@
   const available = $derived(workspace.inventory.filter(resource=>!assignedIds.has(resource.id)));
   const runtimeName = $derived(workspace.profiles.find(row=>row.id===workspace.session?.selectedProfileId)?.name??workspace.session?.selectedProfileId??'Not loaded');
   const appliedName = $derived(workspace.profiles.find(row=>row.id===workspace.session?.appliedSnapshot?.profileId)?.name??workspace.session?.appliedSnapshot?.profileId);
+  const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next);if(workspace.view==='list')void store.refresh();if(!workspace.inventoryLoaded)void store.refreshInventory();return stop; });
   onDestroy(() => { if(!supplied)store.dispose(); });
   function report(operation:()=>void) { notice='';try{operation();workspace=store.state;}catch(error){notice=error instanceof Error?error.message:String(error);} }
   async function add() { notice='';if(!workspace.inventoryLoaded){await store.refreshInventory();workspace=store.state;}if(workspace.inventory.length>64){creatingSelection=true;inventorySelection=[];return;}report(()=>store.beginBlank()); }
   function beginSelected() { report(()=>store.beginBlank(workspace.inventory.filter(resource=>inventorySelection.includes(resource.id))));if(!notice){creatingSelection=false;inventorySelection=[];} }
   function showConfirmation(node:HTMLDialogElement) { node.showModal();return()=>node.close(); }
-  function change(document:ProfileDocument) { report(()=>store.update(document)); }
-  function name(value:string) { if(!editor)return;const next=JSON.parse(JSON.stringify(editor.document)) as ProfileDocument;next.name=value;change(next); }
+  function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph') { report(()=>history.edit(document,assignments,label)); }
+  function name(value:string) { if(!editor)return;const next=JSON.parse(JSON.stringify(editor.document)) as ProfileDocument;next.name=value;change(next,undefined,'Rename profile'); }
+  function historyStep(direction:'undo'|'redo'){report(()=>{history.step(direction);});}
   export function requestNavigation(continueNavigation:()=>void):void {
     notice='';
     const result=navigationGuard.request(continueNavigation);
@@ -43,11 +49,11 @@
   function back() { requestNavigation(()=>{}); }
   function keepEditing() { navigationGuard.keepEditing();leaveDialog=false; }
   async function save(backAfter=false) { notice='';if(backAfter){await navigationGuard.save();leaveDialog=navigationGuard.awaitingChoice;}else await store.save();workspace=store.state; }
-  function cancel() { navigationGuard.discard();workspace=store.state;notice='';leaveDialog=false;inventoryOpen=false; }
+  function cancel() { if(!navigationGuard.discard())return;workspace=store.state;notice='';leaveDialog=false;inventoryOpen=false; }
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
   async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank());else{await store.beginCopy(id);workspace=store.state;} }
   function toggleResource(id:string,checked:boolean) { inventorySelection=checked?[...inventorySelection,id]:inventorySelection.filter(value=>value!==id); }
-  function addSelected() { report(()=>store.addResources(available.filter(resource=>inventorySelection.includes(resource.id))));if(!notice){inventorySelection=[];inventoryOpen=false;} }
+  function addSelected() { if(!editor)return;report(()=>{const next=addProfileResources(JSON.parse(JSON.stringify(editor.document)),JSON.parse(JSON.stringify(editor.assignments)),available.filter(resource=>inventorySelection.includes(resource.id)));change(next.document,next.assignments,'Add resource blocks');});if(!notice){inventorySelection=[];inventoryOpen=false;} }
   function gameSettings(gameId:GameId,returnState?:unknown) { openGameSettings?.(gameId,{editorStore:store,profileId:editor?.document.id,selection:returnState}); }
 </script>
 
@@ -68,9 +74,9 @@
     <div class="editor-basics panel"><label>Profile name<input class="text-input" value={editor.document.name} readonly={editor.document.id===DEFAULT_PROFILE_ID} disabled={workspace.readOnly} oninput={event=>name(event.currentTarget.value)} maxlength="80"/></label>{#if editor.baseRevision===null}<fieldset class="draft-source"><legend>Start from</legend><button class="secondary-button" disabled={workspace.busy||workspace.readOnly||!workspace.inventoryLoaded} onclick={()=>source('blank')}>Blank · seed all resources</button><label>Copy saved profile<select aria-label="Copy source profile" bind:value={copyId} disabled={workspace.busy}>{#each rows as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label><button class="secondary-button" disabled={workspace.busy||workspace.readOnly||!copyId} onclick={()=>source(copyId)}>Use copy</button><p>Copies retain the graph and layout with a new identity. Select devices for the copy; machine assignments are excluded.</p></fieldset>{/if}{#if error}<p class="workspace-error">{error}</p>{/if}</div>
     <div class="inventory-heading"><p>Resources remain on the canvas when they disconnect. New discoveries are added only when selected.</p><button class="secondary-button" disabled={workspace.readOnly||workspace.busy} onclick={()=>inventoryOpen=!inventoryOpen}><Icon name="plus" size={13}/> Add from inventory</button></div>
     {#if inventoryOpen}<section class="inventory-picker panel" aria-label="Add resource blocks"><div><h2>Available inventory resources</h2><button class="text-button" disabled={workspace.inventoryBusy} onclick={()=>store.refreshInventory()}>Refresh inventory</button></div>{#if workspace.inventoryError}<p class="workspace-error">{workspace.inventoryError}</p>{/if}<p class="inventory-help">{editor.document.resources.length} of 64 resource blocks used. Port catalogues remain paged; adding a block creates no routes.</p><div class="inventory-choices">{#each available as resource (resource.id)}<label><input type="checkbox" checked={inventorySelection.includes(resource.id)} onchange={event=>toggleResource(resource.id,event.currentTarget.checked)}/><span><strong>{resource.name}</strong><small>{profileCategory(resource)} · {resource.availability} · {resource.portCount} advertised ports</small></span></label>{:else}<p>All current inventory resources already have assigned blocks.</p>{/each}</div><button class="secondary-button" disabled={!inventorySelection.length||workspace.readOnly||workspace.busy} onclick={addSelected}>Add {inventorySelection.length} selected resources</button></section>{/if}
-    {#key editor.document.id}<ProfileCanvas document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} readOnly={workspace.readOnly} {change} openGameSettings={openGameSettings?gameSettings:undefined}/>{/key}
+    {#key editor.document.id}<ProfileRoutingEditor document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}
   {/if}
-  {#if leaveDialog}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="leave-profile-title" onclose={keepEditing} {@attach showConfirmation}><h2 id="leave-profile-title">Keep your unsaved changes?</h2><p>Save this profile before leaving, or discard this draft. Runtime selection stays unchanged.</p>{#if workspace.error}<p class="workspace-error" role="alert">{workspace.error}</p>{/if}<div><button class="secondary-button" onclick={keepEditing}>Keep editing</button><button class="secondary-button" onclick={cancel}>Discard and continue</button><button class="primary-button" disabled={!!error||workspace.readOnly||workspace.busy} onclick={()=>save(true)}>Save and continue</button></div></dialog>{/if}
+  {#if leaveDialog}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="leave-profile-title" onclose={keepEditing} {@attach showConfirmation}><h2 id="leave-profile-title">Keep your unsaved changes?</h2><p>Save this profile before leaving, or discard this draft. Runtime selection stays unchanged.</p>{#if workspace.error}<p class="workspace-error" role="alert">{workspace.error}</p>{/if}<div><button class="secondary-button" onclick={keepEditing}>Keep editing</button><button class="secondary-button" disabled={workspace.busy} onclick={cancel}>Discard and continue</button><button class="primary-button" disabled={!!error||workspace.readOnly||workspace.busy} onclick={()=>save(true)}>Save and continue</button></div></dialog>{/if}
   {#if replaceSource}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="replace-profile-title" onclose={()=>replaceSource=null} {@attach showConfirmation}><h2 id="replace-profile-title">Replace this new draft?</h2><p>Your unsaved edits will be discarded before starting from {replaceSource==='blank'?'the current inventory':'the selected copy'}.</p><div><button class="secondary-button" onclick={()=>replaceSource=null}>Keep this draft</button><button class="primary-button" onclick={()=>replace(replaceSource!)}>Replace draft</button></div></dialog>{/if}
 </section>
 

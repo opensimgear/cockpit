@@ -2907,7 +2907,7 @@
       "name": "Script with declared ports",
       "operation": {
         "kind": "script",
-        "source": "fn on_start(ctx) { transaction(ctx.state, #{}, []) }\nfn on_event(ctx) { transaction(ctx.state, #{}, []) }\nfn on_timer(ctx) { transaction(ctx.state, #{}, []) }",
+        "source": "fn on_start(ctx) { transaction(ctx.state, #{}, []) }\nfn on_event(ctx) { transaction(ctx.state, #{}, []) }",
         "parameters": {}
       },
       "inputs": [

@@ -60,7 +60,7 @@ export function processingTemplate(preset:ProcessingPreset,id:string,input:DeepR
     case 'toggle':case 'pulse':case 'tap':case 'hold':case 'double-tap':case 'macro':{
       requireState();requireBoolean();const rule=preset==='toggle'?{kind:'toggle' as const}:preset==='pulse'?{kind:'pulse' as const,durationUs:100000,repeatUs:0}:preset==='macro'?{kind:'macro' as const,steps:[{afterUs:0,pressed:true},{afterUs:100000,pressed:false}]}:{kind:'gesture' as const,gesture:preset,holdUs:500000,doubleUs:250000,pulseUs:100000};operation={kind:'builtin',rule,inputs:['in']};break;
     }
-    case 'script':operation={kind:'script',source:'fn on_start(ctx) { transaction(ctx.state, #{}, []) }\nfn on_event(ctx) { transaction(ctx.state, #{}, []) }\nfn on_timer(ctx) { transaction(ctx.state, #{}, []) }',parameters:{}};break;
+    case 'script':operation={kind:'script',source:'fn on_start(ctx) { transaction(ctx.state, #{}, []) }\nfn on_event(ctx) { transaction(ctx.state, #{}, []) }',parameters:{}};break;
     default:throw new Error('Choose a supported visible transformation.');
   }
   const node=clone<ProfileProcessingNode>({id,name:PROCESSING_PRESETS.find(([kind])=>kind===preset)![1],operation,inputs,outputs:[port('out','output',output)]});

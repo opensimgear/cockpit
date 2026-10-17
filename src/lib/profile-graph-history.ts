@@ -1,5 +1,7 @@
 import { graphDraft, type ProfileGraphDraft } from './profile-graph';
 import type { DeepReadonly } from './profiles';
+import type { ProfileDocument, ProfileLocalAssignment } from './profiles';
+import type { ProfileEditorStore } from './profile-editor';
 
 type Entry={label:string;value:ProfileGraphDraft};
 const frozen=<T>(value:T):DeepReadonly<T>=>{if(value&&typeof value==='object'){Object.values(value).forEach(frozen);Object.freeze(value);}return value as DeepReadonly<T>;};
@@ -33,5 +35,32 @@ export class ProfileGraphHistory {
   rebaseRevision(revision:number):void{
     if(!Number.isSafeInteger(revision)||revision<this.current.document.revision)throw new Error('Use the current or a newer saved revision.');
     this.entries=this.entries.map(entry=>({...entry,value:graphDraft({...entry.value,document:{...entry.value.document,revision}})}));
+  }
+}
+
+/** One editor epoch owns history; saved revisions never become an undoable activation. */
+export class ProfileEditorUndo {
+  private history:ProfileGraphHistory|null=null;
+  private identity='';
+  constructor(private store:Pick<ProfileEditorStore,'state'|'editorEpoch'|'update'>){}
+  private sync():ProfileGraphHistory|null{
+    const editor=this.store.state.editor;
+    if(!editor){this.history=null;this.identity='';return null;}
+    const identity=`${editor.document.id}/${this.store.editorEpoch}`,value=graphDraft({document:editor.document,assignments:editor.assignments});
+    if(identity!==this.identity||!this.history){this.identity=identity;this.history=new ProfileGraphHistory(value);return this.history;}
+    if(this.history.current.document.revision!==editor.document.revision)this.history.rebaseRevision(editor.document.revision);
+    if(JSON.stringify(this.history.current)!==JSON.stringify(value))this.history.commit(value,'Edit profile graph');
+    return this.history;
+  }
+  get status():{canUndo:boolean;canRedo:boolean;undoLabel:string;redoLabel:string}{const history=this.sync();return{canUndo:history?.canUndo??false,canRedo:history?.canRedo??false,undoLabel:history?.undoLabel??'',redoLabel:history?.redoLabel??''};}
+  edit(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph'):void{
+    const history=this.sync();if(!history)throw new Error('Open a profile before editing its history.');
+    const value=graphDraft({document,assignments:assignments??this.store.state.editor!.assignments});
+    this.store.update(value.document,value.assignments);history.commit(value,label);
+  }
+  step(direction:'undo'|'redo'):boolean{
+    if(this.store.state.readOnly||this.store.state.busy)return false;
+    const history=this.sync();if(!history||!(direction==='undo'?history.canUndo:history.canRedo))return false;
+    const value=graphDraft(direction==='undo'?history.undo():history.redo());this.store.update(value.document,value.assignments);return true;
   }
 }

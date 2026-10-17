@@ -1,4 +1,4 @@
-# Profiles list and resource canvas (P6)
+# Profiles list, resource canvas and graph authoring (P6/P7)
 
 Profiles opens to the saved profile list, including the editable built-in
 Default and **Add profile**. Profile rows are native buttons, so pointer,
@@ -67,8 +67,63 @@ connection settings are not duplicated in the graph inspector.
 
 `ProfileEditorStore` accepts only list, exact document/assignment reads and
 atomic editor-save capabilities. The canvas's provider client exposes only
-inspection. Neither component invokes selection, Apply or action dispatch.
-Exact connection authoring and live execution controls are subsequent scopes.
+inspection. Editor navigation, graph edits and Save do not invoke selection,
+Apply or action dispatch.
+
+## Exact routing and visible processing
+
+Select a resource and choose **Use this exact port** in its paged provider
+catalogue. This saves one typed logical declaration and its exact machine-local
+port/hash expectation. Cached contracts can be authored while offline; native
+preflight determines their current availability. Copied resources require an
+explicit inventory choice and a matching provider port for every saved logical
+port before assigning the block.
+
+Drag **Outputs** onto another block's **Inputs / actions**, use those buttons
+with the keyboard, or open **Connect exact ports**. Choose a concrete source
+output and destination input. Different types, units, numeric ranges and
+state/event delivery require an explicit conversion node. An input has one
+writer; OR and priority are visible nodes for intentional fan-in. Reverse
+feedback is another directed route.
+
+**Add virtual controller** creates a logical output block. Its inspector edits
+stable button, axis and hat IDs, required policy, native axis ranges and neutral
+fallbacks. The graph supports eight native targets and up to 128 total controls
+per controller, including at most 16 axes and four hats. Removing a bound
+control first requires removing its route. Raw source ranges are preserved;
+normalization requires a visible range mapping.
+
+Transformations include unit/range conversion, scaling, deadzones, curves,
+comparisons/hysteresis, gates, boolean logic, explicit priority, state/event
+conversion, selection, formatting, fallback, timing and declared-port scripts.
+Their parameters are edited on the same visible graph objects. The bindings
+table exposes every exact edge, supports retargeting and inserting a compatible
+transformation, and provides a keyboard alternative to the canvas. Compatible
+linear chains can be reordered; removing a single-input/output transformation
+can join its route only when the resulting direct contracts fit.
+
+An action receives a complete ordered invocation. **Action pack** has a separate
+event-trigger input and a state input for each native argument. **Set on change**
+is limited to setter actions. Sources and visible Constant nodes supply argument
+values through explicit edges; no trigger, argument mapping or output is
+inferred. Script nodes declare their typed ports and parameters, use the
+[typed helper contract](typed-script-helper.md), and start with empty outputs.
+
+Undo/redo covers graph semantics, exact local pins, names, policies and canvas
+layout. A Save rebases history to the new saved revision while retaining newer
+edits and keeping the applied session snapshot separate. Opening another editor
+resets its history. Discard cannot race a Save already in flight.
+
+## Native preflight
+
+**Inspect draft preflight** captures the unsaved document and its current local
+assignments in a read-only request. It does not save, select or Apply the profile.
+Native diagnostics identify exact blocks and edges. A changed graph, changed
+inventory metadata or an inventory refresh marks the captured result stale;
+stale diagnostics no longer decorate the current canvas. Inventory invalidation
+is conservative and also covers unrelated resource changes. An overall Ready
+result with optional unavailable branches does not grant those branches delivery
+tokens. Apply must independently capture current native authority.
 
 ## Validation
 
@@ -76,7 +131,8 @@ The pure editor, canvas geometry, catalogue paging and actual Svelte SSR
 rendering tests cover list entry, Default, Add/Copy/Save/Cancel/Back, exact
 opening, complete category seeding, capacity errors, large catalogues, offline
 retention, transport attributes, preserved layouts/session snapshots, actual
-App navigation, browser-history settings return and Save/continue races.
+App navigation, browser-history settings return, Save/continue races, exact
+route authoring, typed action arguments, visible transformations and undo/redo.
 Frontend coverage gates retain the repository's 71% thresholds.
 
 These tests establish authoring/navigation behavior. They do not establish
