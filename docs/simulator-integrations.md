@@ -1,5 +1,12 @@
 # Simulator profiles and telemetry outputs
 
+Current configuration belongs in [game details](games.md#integration-setup-and-readiness)
+and the unified profile graph. The independent Integrations/DCS-BIOS editors,
+configuration saves and Start paths described by the retained adapter reference
+below are retired at the native gateway boundary. P3 supplies verified game-context
+admission; P4 supplies applied-profile execution. The decoding, ownership and
+qualification evidence below remains a reference for those reused adapters.
+
 The `x-plane` provider adds X-Plane 11/12 RREF UDP telemetry through the same
 portable bindings, endpoint leases and fallback runtime. See the [X-Plane guide](x-plane.md)
 for setup, typed channels, example bindings and explicit qualification limits.

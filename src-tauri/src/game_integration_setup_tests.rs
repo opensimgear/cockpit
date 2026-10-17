@@ -319,6 +319,35 @@ fn existing_compatible_install_is_configured_without_network_or_profile_writes()
     decorate(&restarted, &mut catalogue, &panel(false));
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "setup-required");
 }
+
+#[test]
+fn installer_preserves_game_owned_aircraft_and_never_imports_retired_connection_settings() {
+    let scratch = Scratch::new();
+    let target = scratch.0.join("DCS");
+    fs::create_dir(&target).unwrap();
+    crate::dcs_setup::fixture_module(&target);
+    let path = scratch.0.join("setup.json");
+    let runtime = GameIntegrationSetup::new(path.clone(), true);
+    let mut connection = dcs_connection(&target.join("Scripts/DCS-BIOS/doc/json"));
+    connection["freshnessMs"] = json!(2200);
+    runtime.save_provider_settings(&json!({"command":"game_integration_settings_save","expectedSetupRevision":runtime.provider_setup_revision("dcs"),"userFolder":target,"connection":connection,"aircraftModule":"A-10C"}),&game()).unwrap();
+    let obsolete: Panel = Arc::new(
+        move |_| json!({"ok":true,"state":{"integration":{"running":false,"config":{"document":{"provider":"dcs-bios"},"connection":{"commandPort":9000,"freshnessMs":9999}}},"dcsBios":{"running":false}}}),
+    );
+    runtime
+        .request(
+            &json!({"command":"game_integration_setup","userFolder":target}),
+            &game(),
+            Arc::new(FakePlatform(false)),
+            &obsolete,
+        )
+        .unwrap();
+    wait_setup(&runtime);
+    let saved = read_settings(&path).unwrap();
+    assert_eq!(saved["games"]["dcs"]["aircraftModule"], "A-10C");
+    assert_eq!(saved["games"]["dcs"]["connection"]["commandPort"], 7778);
+    assert_eq!(saved["games"]["dcs"]["connection"]["freshnessMs"], 2200);
+}
 #[test]
 fn incompatible_udp_overrides_are_preserved_and_never_reported_ready() {
     let scratch = Scratch::new();

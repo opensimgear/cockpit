@@ -36,6 +36,7 @@ jobs:
       - run: pnpm debug:coverage
       - run: pnpm integration:coverage
       - run: pnpm games:coverage
+      - run: pnpm game-provider:coverage
       - run: pnpm ui:build
       - name: Shared companion contracts, designer, renderer and host checks
         run: |
@@ -170,6 +171,7 @@ jobs:
             .research/integration-coverage/native-tests.log
             .research/integration-coverage/lines.txt
             .research/setup-coverage/setup-summary.json
+            .research/setup-coverage/source-hashes.json
             .research/setup-coverage/native-tests.log
             .research/setup-coverage/lines.txt
           if-no-files-found: ignore

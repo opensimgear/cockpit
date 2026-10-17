@@ -22,10 +22,13 @@ struct Inner {
     auto_attempt: Mutex<Option<std::time::Instant>>,
     saved: Mutex<Value>,
     states: Mutex<BTreeMap<String, Value>>,
+    catalogues: Mutex<provider_settings::CatalogueCache>,
     cancel: AtomicBool,
     busy: AtomicBool,
     closed: AtomicBool,
 }
+#[path = "game_provider_settings.rs"]
+mod provider_settings;
 pub(crate) struct GameIntegrationSetup {
     inner: Arc<Inner>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -39,12 +42,22 @@ fn read_settings(path: &Path) -> Result<Value, String> {
     if !path.exists() {
         return Ok(json!({"schemaVersion":1,"games":{}}));
     }
-    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|e| e.to_string())?
+        .take(MAX_SETTINGS as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
     if bytes.len() > MAX_SETTINGS {
         return Err("Integration setup settings exceed their size limit.".into());
     }
     let value: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    if value["schemaVersion"] != 1
+    if value.as_object().is_none_or(|object| {
+        object
+            .keys()
+            .any(|key| !["schemaVersion", "games"].contains(&key.as_str()))
+    }) || value["schemaVersion"] != 1
         || !value["games"].is_object()
         || value["games"].as_object().unwrap().keys().any(|k| {
             !matches!(
@@ -63,6 +76,7 @@ fn read_settings(path: &Path) -> Result<Value, String> {
             return Err("Invalid saved integration setup record.".into());
         }
         validate_connection(game, &record["connection"])?;
+        provider_settings::validate_saved_record(game, record)?;
         if game == "dcs" {
             absolute_folder(&record["userFolder"])?;
         }
@@ -210,6 +224,7 @@ impl GameIntegrationSetup {
                 auto_attempt: Mutex::new(None),
                 saved: Mutex::new(loaded.unwrap_or(json!({"schemaVersion":1,"games":{}}))),
                 states: Mutex::new(states),
+                catalogues: Mutex::new(BTreeMap::new()),
                 cancel: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
@@ -291,6 +306,7 @@ impl GameIntegrationSetup {
             if id == "dcs" {
                 status["version"] = json!(crate::dcs_setup::VERSION);
             }
+            self.decorate_provider_settings(id, &mut status);
             game["integrationSetup"] = status;
         }
     }
@@ -327,12 +343,15 @@ impl GameIntegrationSetup {
             return Err("Wait for integration setup or cancel it first.".into());
         }
         let id = game["id"].as_str().ok_or("Choose a supported game.")?;
+        if command == "game_integration_settings_save" {
+            return self.save_provider_settings(request, game);
+        }
         if command == "game_integration_check"
             && id == "assetto-corsa-rally"
             && self.inner.native
             && self.inner.settings_error.is_none()
         {
-            return self.begin_acr(request, game, platform, false, None);
+            return self.begin_acr(request, game, platform, false);
         }
         if command == "game_integration_check" {
             let status = self.inner.inspect(game, request.get("userFolder"));
@@ -414,13 +433,7 @@ impl GameIntegrationSetup {
             return Ok(());
         }
         if command == "game_integration_setup" && id == "assetto-corsa-rally" {
-            return self.begin_acr(
-                request,
-                game,
-                platform,
-                true,
-                Some(&state["state"]["integration"]["config"]),
-            );
+            return self.begin_acr(request, game, platform, true);
         }
         if command != "game_integration_setup" || id != "dcs" {
             return Err("Automatic setup for this game is not yet available.".into());
@@ -446,17 +459,6 @@ impl GameIntegrationSetup {
             for (k, v) in previous {
                 if k != "cataloguePath" {
                     connection[k] = v.clone();
-                }
-            }
-        }
-        // A saved matching provider carries the user's connection overrides.
-        let current = &state["state"]["integration"]["config"];
-        if current["document"]["provider"] == "dcs-bios" {
-            if let Some(previous) = current["connection"].as_object() {
-                for (k, v) in previous {
-                    if k != "cataloguePath" {
-                        connection[k] = v.clone();
-                    }
                 }
             }
         }
@@ -506,7 +508,9 @@ impl GameIntegrationSetup {
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .clone();
-                draft["games"]["dcs"] = json!({"userFolder":target,"connection":connection});
+                let record=&mut draft["games"]["dcs"];
+                if !record.is_object(){*record=json!({});}
+                record["userFolder"]=json!(target);record["connection"]=connection;
                 write_settings(&inner.path, &draft)?;
                 *inner.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
                 Ok(())
@@ -531,7 +535,6 @@ impl GameIntegrationSetup {
         game: &Value,
         platform: Arc<dyn Platform>,
         configure: bool,
-        current: Option<&Value>,
     ) -> Result<(), String> {
         if game["installed"] != true {
             return Err("Find the ACR installation before setting up telemetry.".into());
@@ -545,13 +548,6 @@ impl GameIntegrationSetup {
             json!({"source":"shared-memory","freshnessMs":1500})
         };
         if configure {
-            if let Some(current) =
-                current.filter(|v| v["document"]["provider"] == "assetto-corsa-rally")
-            {
-                if current["connection"]["freshnessMs"].is_number() {
-                    connection["freshnessMs"] = current["connection"]["freshnessMs"].clone();
-                }
-            }
             if let Some(overrides) = request.get("connection") {
                 for (k, v) in overrides
                     .as_object()
@@ -702,7 +698,7 @@ impl GameIntegrationSetup {
         }
         if let Some(game) = catalogue.iter().find(|g| g["id"] == "assetto-corsa-rally") {
             *attempted = Some(std::time::Instant::now());
-            let _ = self.begin_acr(&json!({}), game, platform, false, None);
+            let _ = self.begin_acr(&json!({}), game, platform, false);
         }
     }
     pub(crate) fn preflight(&self, profile: &Value, game: &Value) -> Result<(), String> {

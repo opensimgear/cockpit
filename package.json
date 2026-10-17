@@ -36,6 +36,7 @@
     "dcs:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/dcs-bios.test.mjs",
     "dcs-profile:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/dcs-profile.test.mjs",
     "integration:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/integration-profile.test.mjs",
+    "game-provider:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/game-provider-settings.ts --test-coverage-include=src/lib/game-settings-navigation.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/game-provider-settings.test.mjs src/lib/game-settings-navigation.test.mjs src/lib/game-provider-ui.test.mjs",
     "e2e": "python3 tests/e2e/run.py",
     "debug:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/debug-inputs.test.mjs src/lib/dcs-test-presets.test.mjs src/lib/dcs-profile.test.mjs",
     "games:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/games.test.mjs src/lib/integration-profile.test.mjs src/lib/runtime-config.test.mjs",
