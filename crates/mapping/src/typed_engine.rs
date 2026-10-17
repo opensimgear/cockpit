@@ -121,6 +121,7 @@ pub struct Phase {
     active: bool,
     fault: Option<String>,
     sequence: u64,
+    report_sequence: u64,
     sources: BTreeMap<String, SourceState>,
     values: BTreeMap<Endpoint, PortState>,
     states: BTreeMap<String, NodeState>,
@@ -175,6 +176,26 @@ pub fn accepts(contract: &PortContract, value: &SignalValue) -> bool {
 }
 impl Phase {
     pub fn new(program: Program, generation: Counter, session: String) -> Result<Self, String> {
+        Self::initialize(program, generation, session, 0)
+    }
+    /// Start a live phase on the shared native capture clock before emitting output.
+    pub fn new_at(
+        program: Program,
+        generation: Counter,
+        session: String,
+        now: Counter,
+    ) -> Result<Self, String> {
+        if now.0 == 0 || now.0 > u64::MAX - 600_000_000 {
+            return Err("A live typed mapping needs a nonzero bounded capture clock.".into());
+        }
+        Self::initialize(program, generation, session, now.0)
+    }
+    fn initialize(
+        program: Program,
+        generation: Counter,
+        session: String,
+        clock: u64,
+    ) -> Result<Self, String> {
         if generation.0 == 0
             || uuid::Uuid::parse_str(&session)
                 .ok()
@@ -220,10 +241,11 @@ impl Phase {
                 session,
                 generation,
             },
-            clock: 0,
+            clock,
             active: true,
             fault: None,
             sequence: 0,
+            report_sequence: 0,
             sources,
             values,
             states,
@@ -1742,13 +1764,13 @@ impl Phase {
                 }
             }
             if force || self.last_controllers.get(&controller.id) != Some(&state) {
-                self.sequence = self.sequence.saturating_add(1);
+                self.report_sequence = self.report_sequence.saturating_add(1);
                 self.last_controllers
                     .insert(controller.id.clone(), state.clone());
                 self.reports.push_back(Report {
                     session: self.run.session.clone(),
                     run_generation: self.run.generation,
-                    sequence: Counter(self.sequence),
+                    sequence: Counter(self.report_sequence),
                     at_us: Counter(self.clock),
                     target: controller.id,
                     reason,

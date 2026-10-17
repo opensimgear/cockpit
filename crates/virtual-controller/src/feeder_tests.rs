@@ -7,6 +7,8 @@ struct State {
     fail: String,
     calls: Vec<String>,
     busy: u8,
+    slot: Option<Slot>,
+    positions: Vec<Position>,
 }
 #[derive(Clone, Default)]
 struct Fake(Arc<Mutex<State>>);
@@ -22,6 +24,9 @@ impl Driver for Fake {
         let state = self.0.lock().unwrap();
         if state.fail == "inspect" {
             return Err("inspect failed".into());
+        }
+        if let Some(actual) = state.slot.as_ref().filter(|actual| actual.id == slot) {
+            return Ok(actual.clone());
         }
         let status = if slot == state.busy {
             Status::Busy
@@ -59,6 +64,7 @@ impl Driver for Fake {
     }
     fn submit(&mut self, slot: u8, position: &Position) -> Result<(), String> {
         let mut state = self.0.lock().unwrap();
+        state.positions.push(position.clone());
         state
             .calls
             .push(format!("submit:{slot}:{}", position.words[18]));
@@ -71,6 +77,263 @@ impl Driver for Fake {
     fn release(&mut self, slot: u8) {
         self.0.lock().unwrap().calls.push(format!("release:{slot}"));
     }
+}
+
+#[test]
+fn typed_native_start_recording_reaches_the_strict_feeder_without_rewriting_reports() {
+    use crate::session::{Channel, Factory, Session};
+    use osg_mapping::{
+        engine::{typed, Reason},
+        profile::{Axis as LayoutAxis, AxisRange, Layout, OutputControl},
+        program::{
+            ControllerAxis, ControllerLayout, Endpoint, Program, Sink, SinkKind, SourcePort,
+            VirtualController,
+        },
+        runtime::RecordingSink,
+        signal::{PortContract, PortValue, ScalarSchema},
+    };
+    struct ActualFeeder {
+        feeder: Feeder<Fake>,
+        messages: Arc<Mutex<Vec<Message>>>,
+        now: u64,
+    }
+    impl Channel for ActualFeeder {
+        fn request(&mut self, message: &Message) -> Result<(), String> {
+            self.messages.lock().unwrap().push(message.clone());
+            self.now += 1;
+            self.feeder.receive(message.clone(), self.now)
+        }
+        fn alive(&mut self) -> bool {
+            true
+        }
+        fn terminate(&mut self) {
+            self.feeder.stop();
+        }
+    }
+    let driver = Fake::default();
+    driver.0.lock().unwrap().slot = Some(Slot {
+        id: 3,
+        status: Status::Free,
+        owner_pid: None,
+        buttons: 16,
+        axes: [48, 49, 50]
+            .into_iter()
+            .map(|usage| Axis {
+                usage,
+                min: 0,
+                max: 32767,
+            })
+            .collect(),
+        continuous_hats: 2,
+        discrete_hats: 0,
+        force_feedback: false,
+    });
+    let binding = Binding {
+        target: "combined".into(),
+        slot: 3,
+        axes: vec![48, 49, 50],
+        layout: Layout {
+            buttons: 16,
+            axes: [16384, 16384, 0]
+                .into_iter()
+                .map(|fallback| LayoutAxis {
+                    range: AxisRange::Unipolar,
+                    fallback,
+                })
+                .collect(),
+            hats: 2,
+        },
+    };
+    let endpoint = |node: &str, port: &str| Endpoint {
+        node_id: node.into(),
+        port_id: port.into(),
+    };
+    let contract = PortContract::State {
+        schema: ScalarSchema::Integer {
+            min: 0,
+            max: 32767,
+            unit: None,
+        },
+        freshness_ms: 1000,
+        fallback: None,
+    };
+    let program = Program {
+        sources: vec![SourcePort {
+            endpoint: endpoint("stick", "axis"),
+            contract: contract.clone(),
+        }],
+        nodes: vec![],
+        sinks: vec![Sink {
+            id: "roll".into(),
+            endpoint: endpoint("combined", "roll"),
+            from: endpoint("stick", "axis"),
+            contract,
+            kind: SinkKind::Virtual {
+                controller_id: "combined".into(),
+                control: OutputControl::Axis { index: 0 },
+            },
+        }],
+        controllers: vec![VirtualController {
+            id: "combined".into(),
+            layout: ControllerLayout {
+                buttons: (0..16).map(|i| format!("reserved-{i}")).collect(),
+                axes: ["roll", "pitch", "collective"]
+                    .into_iter()
+                    .zip([16384, 16384, 0])
+                    .map(|(port, fallback)| ControllerAxis {
+                        port_id: port.into(),
+                        range: AxisRange::Unipolar,
+                        fallback,
+                    })
+                    .collect(),
+                hats: vec!["right-view".into(), "left-view".into()],
+            },
+        }],
+    };
+    let run = token();
+    let mut phase =
+        typed::Phase::new_at(program, run.generation, run.session.clone(), Counter(10000)).unwrap();
+    let mut effects = phase.drain();
+    let mut recording = RecordingSink::default();
+    recording.record(phase.drain_reports());
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let captured = messages.clone();
+    let actual = driver.clone();
+    let factory: Factory = Arc::new(move || {
+        Ok(Box::new(ActualFeeder {
+            feeder: Feeder::new(actual.clone()),
+            messages: captured.clone(),
+            now: 1,
+        }))
+    });
+    let mut output =
+        Session::start(factory, run.clone(), vec![binding.clone()], Counter(0)).unwrap();
+    output
+        .poll(&recording)
+        .expect("the native typed constructor's first complete report must pass the actual feeder");
+    phase
+        .accept(typed::Frame {
+            source: "stick".into(),
+            generation: Counter(1),
+            sequence: Counter(1),
+            captured_us: Counter(9000),
+            reason: Reason::Baseline,
+            changes: vec![typed::Change {
+                port_id: "axis".into(),
+                sample: osg_mapping::program::SignalSample::scalar(PortValue::Number(23456.0)),
+            }],
+        })
+        .unwrap();
+    recording.record(phase.drain_reports());
+    effects.extend(phase.drain());
+    output.poll(&recording).unwrap();
+    phase.advance(Counter(10500)).unwrap();
+    recording.record(phase.drain_reports());
+    assert!(
+        phase.drain().is_empty(),
+        "Unchanged time must not replay effects"
+    );
+    output.poll(&recording).unwrap();
+    let reports = || {
+        messages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|message| match message {
+                Message::Report { report, .. } => Some(report.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let delivered = reports();
+    assert_eq!(delivered.len(), 2);
+    assert_eq!(
+        delivered.iter().map(|r| r.sequence.0).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert!(delivered.iter().all(|report| report.at_us.0 > 0
+        && report.session == run.session
+        && report.run_generation == run.generation));
+    assert_eq!(delivered[0].reason, ReportReason::Start);
+    assert_eq!(delivered[0].at_us, Counter(10000));
+    assert_eq!(delivered[0].state, binding.fallback());
+    assert_eq!(delivered[1].reason, ReportReason::Baseline);
+    assert_eq!(delivered[1].at_us, Counter(10000));
+    assert_eq!(delivered[1].state.axes, vec![23456, 16384, 0]);
+    assert_eq!(delivered[1].state.buttons, vec![false; 16]);
+    assert_eq!(delivered[1].state.hats, vec![None, None]);
+    assert_eq!(
+        phase
+            .inspected_sample(&endpoint("stick", "axis"))
+            .unwrap()
+            .1,
+        Some(Counter(9000))
+    );
+    phase.stop();
+    effects.extend(phase.drain());
+    recording.record(phase.drain_reports());
+    output.poll(&recording).unwrap();
+    output.stop().unwrap();
+    assert_eq!(
+        reports()
+            .iter()
+            .map(|report| report.sequence.0)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(reports()[2].state, binding.fallback());
+    assert_eq!(
+        effects
+            .iter()
+            .map(|effect| effect.sequence.0)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        effects
+            .iter()
+            .map(|effect| effect.reason)
+            .collect::<Vec<_>>(),
+        vec![
+            ReportReason::Start,
+            ReportReason::Baseline,
+            ReportReason::Stop
+        ]
+    );
+    assert!(matches!(
+        effects[0].sample,
+        osg_mapping::program::SignalSample::Unknown
+    ));
+    assert_eq!(
+        effects[1].sample,
+        osg_mapping::program::SignalSample::scalar(PortValue::Number(23456.0))
+    );
+    assert!(matches!(
+        effects[2].sample,
+        osg_mapping::program::SignalSample::Unavailable
+    ));
+    let state = driver.0.lock().unwrap();
+    assert_eq!(
+        state
+            .calls
+            .iter()
+            .filter(|call| call.as_str() == "acquire:3")
+            .count(),
+        1
+    );
+    assert_eq!(
+        state
+            .calls
+            .iter()
+            .filter(|call| call.as_str() == "release:3")
+            .count(),
+        1
+    );
+    assert_eq!(state.positions.len(), 5); // acquire fallback, Start, Baseline, Stop report, release fallback
+    assert_eq!(
+        state.positions[2],
+        binding.report(&delivered[1].state).unwrap()
+    );
 }
 fn token() -> RunToken {
     RunToken {

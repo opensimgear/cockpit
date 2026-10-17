@@ -837,11 +837,15 @@ impl Host for NativeProfileHost {
                 state.delivery = Some(delivery);
                 dcs_hid::validate(state, &resources, &panels_io)?;
                 Self::check_epoch(&admission_epoch,state.admission_epoch)?;
-                let mut reducer = Phase::new(
+                let started = Instant::now();
+                let origin = controllers.stream_page("", 0).captured_us;
+                let mut reducer = Phase::new_at(
                     prepared.plan.program.clone(),
                     Counter(run.owner.generation),
                     run.owner.session.clone(),
+                    Counter(origin),
                 )?;
+                state.clock_origin = origin;
                 for baseline in state.baselines.drain(..) {
                     state.clock_origin = state.clock_origin.max(baseline.captured_us.0);
                     reducer.accept(baseline)?;
@@ -855,7 +859,7 @@ impl Host for NativeProfileHost {
                 state.reducer = Some(reducer);
                 Self::check_epoch(&admission_epoch,state.admission_epoch)?;
                 action::start(state)?;
-                state.started = Instant::now();
+                state.started = started;
                 let _physical_diagnostics = action::dispatch(state,&effects);
                 let diagnostics = Self::dispatch_game(&resources, &games, state, &panels_io, effects)?;
                 if !diagnostics.is_empty() { return Err(diagnostics.join("; ")); }

@@ -147,6 +147,92 @@ fn scalar_output(engine: &Phase) -> f64 {
 }
 
 #[test]
+fn live_constructor_validates_its_clock_before_evaluating_startup() {
+    let program = unary(Operation::Not {}, boolean_contract(), boolean_contract());
+    let session = uuid::Uuid::new_v4().to_string();
+    for invalid in [0, u64::MAX - 600_000_000 + 1, u64::MAX] {
+        let result = Phase::new_at(
+            program.clone(),
+            Counter(1),
+            session.clone(),
+            Counter(invalid),
+        );
+        assert!(
+            matches!(result, Err(error) if error == "A live typed mapping needs a nonzero bounded capture clock.")
+        );
+    }
+    for now in [1, u64::MAX - 600_000_000] {
+        let mut engine =
+            Phase::new_at(program.clone(), Counter(1), session.clone(), Counter(now)).unwrap();
+        assert_eq!(engine.at_us(), Counter(now));
+        assert!(engine
+            .drain()
+            .iter()
+            .all(|effect| effect.at_us == Counter(now)));
+        assert_eq!(
+            engine.inspected_sample(&endpoint("source", "value")),
+            Some((&SignalSample::Unknown, None))
+        );
+    }
+    assert_eq!(phase(program).at_us(), Counter(0));
+}
+
+#[test]
+fn live_constructor_preserves_actual_source_age_including_zero_time() {
+    let mut engine = Phase::new_at(
+        unary(
+            Operation::Identity {},
+            boolean_contract(),
+            boolean_contract(),
+        ),
+        Counter(1),
+        uuid::Uuid::new_v4().to_string(),
+        Counter(2_000_000),
+    )
+    .unwrap();
+    engine.drain();
+    feed(&mut engine, 1, 0, pressed(true));
+    assert_eq!(engine.at_us(), Counter(2_000_000));
+    assert_eq!(
+        engine.inspected_sample(&endpoint("source", "value")),
+        Some((&SignalSample::Stale, Some(Counter(0))))
+    );
+    assert_eq!(output(&engine), SignalSample::Stale);
+    assert!(engine
+        .drain()
+        .iter()
+        .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
+    engine
+        .accept(frame(
+            "source",
+            1,
+            2,
+            1_999_990,
+            Reason::Baseline,
+            vec![("value", pressed(false))],
+        ))
+        .unwrap();
+    assert_eq!(output(&engine), pressed(false));
+    engine.advance(Counter(2_000_005)).unwrap();
+    assert_eq!(
+        engine.inspected_sample(&endpoint("source", "value")),
+        Some((&pressed(false), Some(Counter(1_999_990))))
+    );
+    assert!(engine
+        .accept(frame(
+            "source",
+            1,
+            3,
+            u64::MAX,
+            Reason::Change,
+            vec![("value", pressed(true))]
+        ))
+        .is_err());
+    assert_eq!(engine.at_us(), Counter(2_000_005));
+    assert_eq!(output(&engine), SignalSample::Unknown);
+}
+
+#[test]
 fn inspected_samples_keep_unobserved_and_zero_time_distinct_without_mutating_execution() {
     let mut engine = Phase::new(
         unary(Operation::Not {}, boolean_contract(), boolean_contract()),
@@ -539,19 +625,50 @@ fn raw_numeric_ranges_and_multiple_virtual_layouts_are_preserved() {
         });
     }
     let mut engine = phase(program);
-    engine.drain_reports();
+    let initial = engine.drain_reports();
+    assert_eq!(
+        initial
+            .iter()
+            .map(|report| (report.target.as_str(), report.sequence.0))
+            .collect::<Vec<_>>(),
+        vec![("vjoy-a", 1), ("vjoy-b", 2)]
+    );
+    let mut effects = engine.drain();
     feed(&mut engine, 1, 0, sample(32768.0));
     assert_eq!(scalar_output(&engine), 16384.0);
     let reports = engine.drain_reports();
     assert_eq!(reports.len(), 2);
+    assert_eq!(
+        reports
+            .iter()
+            .map(|report| report.sequence.0)
+            .collect::<Vec<_>>(),
+        vec![3, 4]
+    );
     assert!(reports.iter().all(|report| report.state.axes == [16384]));
+    effects.extend(engine.drain());
+    engine.advance(Counter(1)).unwrap();
+    assert!(engine.drain_reports().is_empty());
+    assert!(engine.drain().is_empty());
     engine.stop();
-    assert!(engine
-        .drain_reports()
-        .iter()
-        .all(|report| report.state.axes == [42]));
-    assert!(engine
-        .drain()
+    let stopped = engine.drain_reports();
+    assert_eq!(
+        stopped
+            .iter()
+            .map(|report| report.sequence.0)
+            .collect::<Vec<_>>(),
+        vec![5, 6]
+    );
+    assert!(stopped.iter().all(|report| report.state.axes == [42]));
+    effects.extend(engine.drain());
+    assert_eq!(
+        effects
+            .iter()
+            .map(|effect| effect.sequence.0)
+            .collect::<Vec<_>>(),
+        (1..=9).collect::<Vec<_>>()
+    );
+    assert!(effects
         .iter()
         .any(|effect| effect.sample == SignalSample::Unavailable));
 }
