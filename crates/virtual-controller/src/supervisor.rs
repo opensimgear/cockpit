@@ -12,6 +12,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+const RESPONSE_DEADLINE_ERROR: &str = "Output helper exited or exceeded its response deadline.";
 pub struct Worker {
     child: Child,
     outgoing: Option<SyncSender<Vec<u8>>>,
@@ -76,7 +77,7 @@ impl Worker {
             activation_timeout: timeout,
             hello: Value::Null,
         };
-        let hello = worker.reply(timeout)?;
+        let hello = worker.reply_before(Instant::now() + timeout)?;
         if hello["ok"] != true || hello["backend"] != backend || hello["protocol"] != 1 {
             return Err("Output helper handshake does not match the expected backend.".into());
         }
@@ -89,19 +90,40 @@ impl Worker {
     pub fn handshake(&self) -> &Value {
         &self.hello
     }
-    fn reply(&mut self, timeout: Duration) -> Result<Value, String> {
-        match self.incoming.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(_) => Err("Output helper exited or exceeded its response deadline.".into()),
+    fn reply_before(&mut self, deadline: Instant) -> Result<Value, String> {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or(RESPONSE_DEADLINE_ERROR)?;
+        let result = self
+            .incoming
+            .recv_timeout(remaining)
+            .map_err(|_| RESPONSE_DEADLINE_ERROR)?;
+        // recv_timeout can return an already queued reply after this caller was
+        // descheduled. A queued acknowledgement does not extend its deadline.
+        if Instant::now() >= deadline {
+            return Err(RESPONSE_DEADLINE_ERROR.into());
         }
+        result
     }
     pub fn request(&mut self, message: &Message) -> Result<(), String> {
+        // Include serialization, enqueueing and any scheduler delay in one
+        // absolute budget. Native acquisition retains its separate startup limit.
+        let timeout = if matches!(message, Message::Start { .. } | Message::Recover { .. }) {
+            self.activation_timeout.max(self.timeout)
+        } else {
+            self.timeout
+        };
+        let deadline = Instant::now() + timeout;
         let mut bytes = serde_json::to_vec(message).map_err(|e| e.to_string())?;
         if bytes.len() > FRAME_LIMIT {
             return Err("Output helper request exceeds its frame limit.".into());
         }
         bytes.push(b'\n');
         let result = (|| {
+            if Instant::now() >= deadline {
+                return Err(RESPONSE_DEADLINE_ERROR.into());
+            }
             self.outgoing
                 .as_ref()
                 .ok_or("Output helper has stopped.")?
@@ -110,12 +132,7 @@ impl Worker {
             // Native slot acquisition can exceed the report/renewal budget even
             // when the driver is healthy. Keep Start/Recover bounded by the
             // original startup budget; steady-state reports retain the short lease budget.
-            let timeout = if matches!(message, Message::Start { .. } | Message::Recover { .. }) {
-                self.activation_timeout.max(self.timeout)
-            } else {
-                self.timeout
-            };
-            let response = self.reply(timeout)?;
+            let response = self.reply_before(deadline)?;
             if response["token"]
                 != serde_json::to_value(message.token()).map_err(|e| e.to_string())?
             {
@@ -128,6 +145,9 @@ impl Worker {
                     .chars()
                     .take(256)
                     .collect());
+            }
+            if Instant::now() >= deadline {
+                return Err(RESPONSE_DEADLINE_ERROR.into());
             }
             Ok(())
         })();

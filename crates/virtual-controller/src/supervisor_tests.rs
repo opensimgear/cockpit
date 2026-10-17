@@ -28,6 +28,20 @@ fn message() -> Message {
     }
 }
 #[test]
+fn a_queued_acknowledgement_cannot_extend_an_expired_response_deadline() {
+    let mut child = spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport time\ntime.sleep(2)\n").unwrap();
+    let (replies, incoming) = mpsc::sync_channel(1);
+    child.incoming = incoming;
+    replies.send(Ok(serde_json::json!({"ok":true}))).unwrap();
+    // Model a caller resumed after its deadline with the acknowledgement already
+    // queued. This is deterministic and does not rely on scheduler timing.
+    let expired = Instant::now() - Duration::from_millis(1);
+    assert!(child.reply_before(expired).is_err());
+    assert_eq!(child.incoming.try_recv().unwrap().unwrap()["ok"], true);
+    child.terminate();
+    assert!(!child.alive());
+}
+#[test]
 fn native_activation_has_a_separate_bounded_budget_from_lease_traffic() {
     let hello = "print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\n";
     let code = format!("{hello}import sys,json,time\nfor line in sys.stdin:\n msg=json.loads(line)\n time.sleep(0.15)\n print(json.dumps({{'ok':True,'token':msg['token']}}),flush=True)\n");
