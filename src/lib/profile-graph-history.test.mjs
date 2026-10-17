@@ -7,6 +7,15 @@ const {ProfileEditorStore}=modules.get('./profile-editor');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const initial=()=>({document:{schemaVersion:2,id:'11111111-1111-4111-8111-111111111111',name:'Graph',revision:1,eligibility:{gameIds:[]},resources:[],bindings:[],processingNodes:[],virtualOutputs:[],visibility:[],overrides:[],companionAssignments:[],editor:{positions:[],viewport:{x:0,y:0,zoom:1}}},assignments:[]});
 
+test('groups, collapsed categories and deleting their last member remain undoable across saved revisions',()=>{
+ const value=initial();value.document.resources=['a','b'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));
+ const history=new ProfileGraphHistory(value),grouped=plain(history.current);grouped.document.editor.groups=[{id:'controls',name:'Controls',members:['a','b']}];history.commit(grouped,'Group controls');
+ const collapsed=plain(history.current);collapsed.document.editor.collapsedPortGroups=[{nodeId:'a',group:'outputs'},{nodeId:'b',group:'actions'}];history.commit(collapsed,'Collapse categories');history.rebaseRevision(2);
+ assert.equal(history.undo().document.editor.collapsedPortGroups,undefined);assert.equal(history.current.document.revision,2);assert.equal(history.undo().document.editor.groups,undefined);assert.equal(history.redo().document.editor.groups[0].name,'Controls');history.redo();
+ const {graphRemoveNode}=modules.get('./profile-graph'),removed=graphRemoveNode(history.current,'a');history.commit(removed,'Remove first member');assert.deepEqual(plain(history.current.document.editor.groups[0].members),['b']);assert.deepEqual(plain(history.current.document.editor.collapsedPortGroups),[{nodeId:'b',group:'actions'}]);
+ history.commit(graphRemoveNode(history.current,'b'),'Remove last member');assert.equal(history.current.document.editor.groups,undefined);assert.equal(history.current.document.editor.collapsedPortGroups,undefined);history.undo();assert.equal(history.current.document.editor.groups.length,1);assert.equal(history.current.document.resources.length,1);history.undo();assert.deepEqual(plain(history.current.document.editor),collapsed.document.editor);history.redo();assert.equal(history.current.document.resources.length,1);
+});
+
 test('history undoes and redoes independent semantic and layout changes with readable labels',()=>{
   const history=new ProfileGraphHistory(initial());assert.equal(history.canUndo,false);assert.equal(history.canRedo,false);assert.equal(history.undoLabel,'');assert.equal(history.redoLabel,'');
   const renamed=plain(history.current);renamed.document.name='Renamed';history.commit(renamed,'Rename profile');const moved=plain(history.current);moved.document.editor.viewport={x:40,y:-10,zoom:.5};history.commit(moved,'Move canvas');

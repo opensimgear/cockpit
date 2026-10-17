@@ -36,6 +36,8 @@ impl ProfileDocument {
             companion_assignments: vec![],
             editor: EditorLayout {
                 positions: vec![],
+                groups: vec![],
+                collapsed_port_groups: vec![],
                 viewport: Viewport {
                     x: 0.0,
                     y: 0.0,
@@ -105,6 +107,9 @@ impl ProfileDocument {
             || document.overrides.len() > 64
             || document.companion_assignments.len() > 64
             || document.editor.positions.len() > 336
+            || document.editor.groups.len() > 32
+            || document.editor.groups.iter().any(|group| group.members.len() > 336)
+            || document.editor.collapsed_port_groups.len() > 1008
             || ports
                 .iter()
                 .any(|count| *count > crate::validation::MAX_PORTS_PER_NODE)
@@ -228,6 +233,30 @@ pub struct CompanionAssignment {
 pub struct EditorLayout {
     pub positions: Vec<NodePosition>,
     pub viewport: Viewport,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<EditorGroup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collapsed_port_groups: Vec<CollapsedPortGroup>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorGroup {
+    pub id: String,
+    pub name: String,
+    pub members: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollapsedPortGroup {
+    pub node_id: String,
+    pub group: EditorPortGroup,
+}
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EditorPortGroup {
+    Outputs,
+    Inputs,
+    Actions,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

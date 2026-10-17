@@ -88,8 +88,8 @@ jobs:
         run: rustup component add llvm-tools-preview
       - name: Profile contracts, storage and session coverage
         run: python scripts/profiles-coverage.py
-      - name: Complete profile rig through registry, compiler and reducer
-        run: cargo test --locked --manifest-path crates/profiles/Cargo.toml --test complete_rig
+      - name: Complete profile rig and persistent editor metadata
+        run: cargo test --locked --manifest-path crates/profiles/Cargo.toml --test complete_rig --test editor_metadata
       - name: Upload profile contract evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,4 +1,4 @@
-import type { DeepReadonly, ProfileDocument, ProfileLocalAssignment, ProfilePortContract, ProfileScalarSchema } from './profiles';
+import { profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileEditorGroup, type ProfileLocalAssignment, type ProfilePortContract, type ProfilePortGroup, type ProfileScalarSchema } from './profiles';
 import type { ResourceSummary } from './profile-inventory';
 import type { GameId } from './games';
 import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout, profileCategory } from './profile-editor';
@@ -33,6 +33,28 @@ export function canvasFit(nodes:readonly Pick<CanvasNode,'position'>[],width:num
 export function canvasMove(document:DeepReadonly<ProfileDocument>,nodeId:string,position:CanvasPoint):ProfileDocument{
   if(![position.x,position.y].every(finite)||![...document.resources,...document.processingNodes,...document.virtualOutputs].some(node=>node.id===nodeId))throw new Error('Move an existing block to finite coordinates.');
   const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;next.editor.positions=next.editor.positions.filter(p=>p.nodeId!==nodeId);next.editor.positions.push({nodeId,x:clamp(position.x,-1e6,1e6),y:clamp(position.y,-1e6,1e6)});return next;
+}
+export type CanvasGroup = DeepReadonly<ProfileEditorGroup> & {x:number;y:number;width:number;height:number};
+/** Frames follow member positions; groups never change graph identity or routes. */
+export function canvasGroups(document:DeepReadonly<ProfileDocument>,nodes:readonly CanvasNode[]):CanvasGroup[]{
+  return(document.editor.groups??[]).flatMap(group=>{const members=nodes.filter(node=>group.members.includes(node.id));if(!members.length)return[];const x=Math.min(...members.map(node=>node.position.x))-20,y=Math.min(...members.map(node=>node.position.y))-44;return[{...group,x,y,width:Math.max(...members.map(node=>node.position.x+PROFILE_BLOCK_WIDTH))-x+20,height:Math.max(...members.map(node=>node.position.y+PROFILE_BLOCK_HEIGHT))-y+20}];});
+}
+function checkedLayout(document:ProfileDocument):ProfileDocument{const error=profileDocumentError(document);if(error)throw new Error(error);return document;}
+export function canvasSaveGroup(document:DeepReadonly<ProfileDocument>,name:string,members:readonly string[],id?:string):ProfileDocument{
+  const next=JSON.parse(JSON.stringify(document)) as ProfileDocument,groups=next.editor.groups??[];
+  if(id&&!groups.some(group=>group.id===id))throw new Error('Choose an existing editor group.');
+  if(!id){for(let n=1;n<=4096;n++)if(!groups.some(group=>group.id===`group-${n}`)){id=`group-${n}`;break;}}
+  next.editor.groups=[...groups.filter(group=>group.id!==id),{id:id!,name:name.trim(),members:[...members]}];return checkedLayout(next);
+}
+export function canvasDeleteGroup(document:DeepReadonly<ProfileDocument>,id:string):ProfileDocument{
+  const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;if(!next.editor.groups?.some(group=>group.id===id))throw new Error('Choose an existing editor group.');
+  next.editor.groups=next.editor.groups.filter(group=>group.id!==id);if(!next.editor.groups.length)delete next.editor.groups;return checkedLayout(next);
+}
+export function canvasPortCollapsed(document:DeepReadonly<ProfileDocument>,nodeId:string,group:ProfilePortGroup):boolean{return document.editor.collapsedPortGroups?.some(pair=>pair.nodeId===nodeId&&pair.group===group)??false;}
+export function canvasTogglePorts(document:DeepReadonly<ProfileDocument>,nodeId:string,group:ProfilePortGroup):ProfileDocument{
+  const next=JSON.parse(JSON.stringify(document)) as ProfileDocument,collapsed=canvasPortCollapsed(document,nodeId,group);
+  next.editor.collapsedPortGroups=(next.editor.collapsedPortGroups??[]).filter(pair=>pair.nodeId!==nodeId||pair.group!==group);
+  if(!collapsed)next.editor.collapsedPortGroups.push({nodeId,group});if(!next.editor.collapsedPortGroups.length)delete next.editor.collapsedPortGroups;return checkedLayout(next);
 }
 export function canvasStatus(node:CanvasNode):string{return node.kind==='processing'?'Explicit transformation':node.kind==='virtual'?'Profile output':!node.assignment?'Unassigned':node.observation?.availability==='online'?'Online':node.observation?.availability==='unavailable'?'Unavailable / dormant':'Offline · saved block retained';}
 export function canvasTransports(node:CanvasNode):string[]{return[...new Set(node.observation?.connections.map(connection=>connection.route.transport.toUpperCase())??[])];}

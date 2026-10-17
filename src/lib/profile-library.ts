@@ -2,7 +2,7 @@ import {DEFAULT_PROFILE_ID,MAX_PROFILES,parseProfileDocument,exportProfileDocume
 export type ProfileLibraryClient=Pick<ProfilesClient,'delete'|'import'|'export'>;
 export type SavedProfileTarget={id:string;name:string;revision:number};
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
-const canonical=(value:unknown):string=>JSON.stringify(value&&typeof value==='object'?Array.isArray(value)?value.map(v=>JSON.parse(canonical(v))):Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,v])=>[key,JSON.parse(canonical(v))])):value);
+const canonical=(value:unknown):string=>JSON.stringify(value&&typeof value==='object'?Array.isArray(value)?value.map(v=>JSON.parse(canonical(v))):Object.fromEntries(Object.entries(value).filter(([key,v])=>!(['groups','collapsedPortGroups'].includes(key)&&Array.isArray(v)&&v.length===0)).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,v])=>[key,JSON.parse(canonical(v))])):value);
 export function savedProfileTarget(value:DeepReadonly<ProfileSummary>|SavedProfileTarget):Readonly<SavedProfileTarget>{if(!uuid(value.id)||!Number.isSafeInteger(value.revision)||value.revision<1||typeof value.name!=='string'||!value.name.trim())throw Error('Choose an exact saved profile revision.');return Object.freeze({id:value.id,name:value.name,revision:value.revision});}
 export function profileImportNameError(name:string):string{return !name.trim()||[...name.trim()].length>80||/[\u0000-\u001f\u007f-\u009f]/.test(name)||name.trim()==='Default'?'Choose a name of 1–80 characters other than the protected Default name.':'';}
 export async function deleteSavedProfile(client:ProfileLibraryClient,value:SavedProfileTarget,readOnly:boolean):Promise<void>{

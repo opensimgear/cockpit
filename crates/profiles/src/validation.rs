@@ -377,6 +377,27 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
             "Editor coordinates are invalid.",
         )?;
     }
+    check(document.editor.groups.len() <= 32, "A canvas supports at most 32 editor groups.")?;
+    let mut group_ids = BTreeSet::new();
+    let mut grouped = BTreeSet::new();
+    for group in &document.editor.groups {
+        id(&group.id)?;
+        label(&group.name)?;
+        check(group_ids.insert(&group.id), "Duplicate editor group identifier.")?;
+        check(!group.members.is_empty() && group.members.len() <= MAX_RESOURCES + MAX_PROCESSING_NODES + MAX_VIRTUAL_OUTPUTS,
+            "An editor group needs 1-336 known member nodes.")?;
+        for member in &group.members {
+            check(nodes.contains_key(member.as_str()) && grouped.insert(member),
+                "Editor group member is unknown or belongs to more than one group.")?;
+        }
+    }
+    check(document.editor.collapsed_port_groups.len() <= 3 * (MAX_RESOURCES + MAX_PROCESSING_NODES + MAX_VIRTUAL_OUTPUTS),
+        "Too many collapsed editor port groups.")?;
+    let mut collapsed = BTreeSet::new();
+    for category in &document.editor.collapsed_port_groups {
+        check(nodes.contains_key(category.node_id.as_str()) && collapsed.insert(category),
+            "Collapsed editor port group is unknown or duplicated.")?;
+    }
     let v = &document.editor.viewport;
     check(
         coordinate(v.x) && coordinate(v.y) && v.zoom.is_finite() && (0.1..=4.0).contains(&v.zoom),

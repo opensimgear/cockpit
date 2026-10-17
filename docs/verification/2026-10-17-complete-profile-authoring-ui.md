@@ -1,5 +1,14 @@
 # Complete profile rig through the browser UI
 
+The extended run also creates, renames, changes membership and deletes editor
+groups, focuses a canvas frame, collapses port categories, and checks Undo/Redo
+and Save/reopen. The exported browser-authored document and its local assignments
+pass the actual native parser and assignment validator: nine resources and 17
+bindings. All 102 portable profile unit tests, four complete-rig tests and five
+editor-metadata tests pass; all 15 native profile coverage gates exceed 71%.
+The additional native validation exercises storage and schema, without activating
+the authored graph or qualifying its hardware routes.
+
 This is frontend fixture evidence for #79, #87 and #89. Microsoft Edge ran the production UI from the existing frontend on port 1420. The fixture intercepts every IPC before navigation and rejects unexpected commands and HTTP gateway fallbacks. It starts no service, native session, driver, device or game. Its Apply reply and sample pages are authored fixture captures, not proof of native activation, reduction, delivery or device acknowledgements. Qualification flags are unchanged.
 
 `tests/ui/complete-profile-authoring.mjs` supplies only advertised inventory and retained-panel port metadata. It does **not** inject a final document, seed graph edges or bypass the authoring controls. Starting with Add, the browser:

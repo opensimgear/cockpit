@@ -25,12 +25,38 @@ Default has a fixed identity and cannot be deleted. Its graph can be edited.
 Fresh startup selects Default without starting an output session. An untouched
 Default works without custom profiles or optional hiding/output dependencies.
 
+## Import, export and delete
+
+Use **Import profile** from the list or editor to paste portable JSON or choose
+a file up to 512 KiB. Import creates a new identity and needs explicit local
+resource assignments. It never applies the graph. A library contains at most
+32 profiles including Default.
+
+**Export** reads the current saved revision, leaving unsaved editor edits alone.
+The dialog offers selectable JSON and a download. It excludes local assignments,
+credentials and backend slots. **Delete** is available for named profiles and
+confirms the exact saved revision. A concurrent edit requires refreshing before
+trying again. A captured applied revision remains independent of deletion.
+Import and Delete from a dirty editor first offer Save, Discard or Keep editing.
+
 ## Connect the rig
 
 Each graph line is a directed signal connection between exact declared ports.
 USB, CAN and gateway attachment appear as resource attributes. They do not become
 signal wires. A verified device observed through USB and CAN can retain both
 connections while native route selection chooses its current input authority.
+
+Expand **Editor groups** to name a frame and select its member blocks. Use the
+group picker to rename it or change its members, **Delete group** to remove the
+frame, and **Focus** to fit its blocks in the canvas. A profile supports 32 groups;
+each block belongs to at most one group. Removing a block removes its membership
+and removes an empty group.
+
+The selected block's **Source outputs**, **Destination inputs** and **Destination
+actions** sections each have a collapse button. Group membership and collapsed
+sections follow Save, reopening, copies, portable import/export and Undo/Redo.
+These editor preferences leave the profile's semantic and compiled program
+identity unchanged.
 
 Select an output and an input/action using the canvas or **Connect exact ports**.
 Different units, types, ranges or delivery kinds require a visible processing

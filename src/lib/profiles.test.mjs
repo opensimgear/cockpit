@@ -16,6 +16,28 @@ const resource = () => ({ id: 'wheel', name: 'Wheel', kind: 'device', required: 
 const withResource = () => ({ ...blank(), resources: [resource()] });
 const invalid = document => assert.ok(profileDocumentError(document));
 
+test('editor groups and collapsed categories are optional, bounded and reject stale or ambiguous membership', () => {
+  const document=withResource();document.resources.push({...resource(),id:'pedals',name:'Pedals'});
+  const editor={...document.editor,groups:[{id:'controls',name:'Driving controls',members:['wheel','pedals']}],collapsedPortGroups:[{nodeId:'wheel',group:'outputs'},{nodeId:'wheel',group:'inputs'},{nodeId:'wheel',group:'actions'}]};
+  document.editor=editor;assert.equal(profileDocumentError(document),'');assert.deepEqual(parseProfileDocument(exportProfileDocument(document)),document);
+  assert.equal(profileDocumentError({...document,editor:{...editor,groups:[],collapsedPortGroups:[]}}),'');
+  for(const patch of [
+    {groups:null},{groups:{}},{groups:Array(1)},{groups:[{id:'controls',name:'Controls',members:Array(1)}]},{groups:[{id:'controls',name:'',members:['wheel']}]},{groups:[{id:'bad id',name:'Controls',members:['wheel']}]},
+    {groups:[{id:'controls',name:'Controls',members:[]}]},{groups:[{id:'controls',name:'Controls',members:['missing']}]},
+    {groups:[{id:'controls',name:'Controls',members:['wheel','wheel']}]},{groups:[{id:'controls',name:'Controls',members:['wheel'],extra:true}]},
+    {groups:[{id:'controls',name:'Controls',members:['wheel']},{id:'other',name:'Other',members:['wheel']}]},
+    {groups:[{id:'same',name:'Controls',members:['wheel']},{id:'same',name:'Other',members:['pedals']}]},
+    {groups:[{id:'controls',name:'x'.repeat(81),members:['wheel']}]},{groups:[{id:'controls',name:'Controls',members:Array(337).fill('wheel')}]},
+    {collapsedPortGroups:null},{collapsedPortGroups:Array(1)},{collapsedPortGroups:[{nodeId:'missing',group:'outputs'}]},{collapsedPortGroups:[{nodeId:'wheel',group:'unknown'}]},{collapsedPortGroups:[{nodeId:'wheel',group:{toString(){return 'outputs';}}}]},
+    {collapsedPortGroups:[{nodeId:'wheel',group:'outputs',extra:false}]},{collapsedPortGroups:[{nodeId:'wheel',group:'outputs'},{nodeId:'wheel',group:'outputs'}]},
+    {collapsedPortGroups:Array(1009).fill({nodeId:'wheel',group:'outputs'})},{unexpected:[]},
+    {positions:[{nodeId:'missing',x:0,y:0}]},{positions:[{nodeId:'wheel',x:0,y:0},{nodeId:'wheel',x:1,y:1}]},
+  ])invalid({...document,editor:{...editor,...patch}});
+  const many={...document,resources:Array.from({length:33},(_,index)=>({...resource(),id:`node-${index}`}))};
+  many.editor={...document.editor,positions:[],groups:many.resources.slice(0,32).map(node=>({id:`group-${node.id}`,name:node.name,members:[node.id]})),collapsedPortGroups:many.resources.flatMap(node=>['outputs','inputs','actions'].map(group=>({nodeId:node.id,group})))};
+  assert.equal(profileDocumentError(many),'');many.editor.groups.push({id:'last-group',name:'Last group',members:['node-32']});invalid(many);
+});
+
 test('saved display summaries are bounded immutable metadata and reject runtime or editor fields', () => {
   const rows=[{id:DEFAULT_PROFILE_ID,name:'Default',revision:1,isDefault:true,semanticHash:'sha256:'+'a'.repeat(64)}];
   const captured=captureProfileSummaries(rows);rows[0].name='Newer label';assert.equal(captured[0].name,'Default');assert.ok(Object.isFrozen(captured));assert.ok(Object.isFrozen(captured[0]));

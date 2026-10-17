@@ -51,13 +51,15 @@ export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 
   | { kind: 'script'; source: string; parameters: Record<string, Exclude<ProfileValue, null>> };
 export type ProfileProcessingNode = { id: string; name: string; operation: ProfileOperation; inputs: ProfilePort[]; outputs: ProfilePort[] };
 export type ProfileVirtualOutput = { id: string; name: string; required: boolean; ports: ProfilePort[]; layout: ProfileControllerLayout };
+export type ProfileEditorGroup = { id: string; name: string; members: string[] };
+export type ProfilePortGroup = 'outputs' | 'inputs' | 'actions';
 export type ProfileDocument = {
   schemaVersion: 2; id: string; name: string; revision: number; eligibility: { gameIds: string[] };
   resources: ProfileResource[]; bindings: ProfileBinding[]; processingNodes: ProfileProcessingNode[];
   virtualOutputs: ProfileVirtualOutput[]; visibility: { resourceId: string; mode: 'visible' | 'hidden-while-active' }[];
   overrides: { resourceId: string; enabled: boolean }[];
   companionAssignments: { resourceId: string; publicationHash: string }[];
-  editor: { positions: { nodeId: string; x: number; y: number }[]; viewport: { x: number; y: number; zoom: number } };
+  editor: { positions: { nodeId: string; x: number; y: number }[]; viewport: { x: number; y: number; zoom: number }; groups?: ProfileEditorGroup[]; collapsedPortGroups?: { nodeId: string; group: ProfilePortGroup }[] };
 };
 export type ProfilePortExpectation = { profilePortId: string; observedPortId: string; expectedContractHash: string };
 export type ProfileLocalAssignment = { resourceId: string; sourceId: string; ports: ProfilePortExpectation[] };
@@ -209,7 +211,14 @@ export function profileDocumentError(value: unknown): string {
   if (!list(value.visibility, 64) || !value.visibility.every(row => exact(row, ['resourceId', 'mode']) && identifier(row.resourceId) && ['visible', 'hidden-while-active'].includes(String(row.mode)))) return 'Use logical visibility policies.';
   if (!list(value.overrides, 64) || !value.overrides.every(row => exact(row, ['resourceId', 'enabled']) && identifier(row.resourceId) && typeof row.enabled === 'boolean')) return 'Use bounded logical runtime overrides.';
   if (!list(value.companionAssignments, 64) || !value.companionAssignments.every(row => exact(row, ['resourceId', 'publicationHash']) && identifier(row.resourceId) && typeof row.publicationHash === 'string' && /^sha256:[0-9a-f]{64}$/.test(row.publicationHash))) return 'Use logical companion publication assignments.';
-  if (!exact(value.editor, ['positions', 'viewport']) || !list(value.editor.positions, 336) || !value.editor.positions.every(row => exact(row, ['nodeId', 'x', 'y']) && identifier(row.nodeId) && coordinate(row.x) && coordinate(row.y)) || !exact(value.editor.viewport, ['x', 'y', 'zoom']) || !coordinate(value.editor.viewport.x) || !coordinate(value.editor.viewport.y) || !finite(value.editor.viewport.zoom) || value.editor.viewport.zoom < 0.1 || value.editor.viewport.zoom > 4) return 'Use bounded editor positions and viewport.';
+  const nodeIds = new Set(nodes.map(row => row.id));
+  if (!object(value.editor) || !Object.hasOwn(value.editor, 'positions') || !Object.hasOwn(value.editor, 'viewport') || Object.keys(value.editor).some(key => !['positions', 'viewport', 'groups', 'collapsedPortGroups'].includes(key)) || !list(value.editor.positions, 336) || !value.editor.positions.every(row => exact(row, ['nodeId', 'x', 'y']) && identifier(row.nodeId) && nodeIds.has(row.nodeId) && coordinate(row.x) && coordinate(row.y)) || new Set(value.editor.positions.map(row => (row as {nodeId:string}).nodeId)).size !== value.editor.positions.length || !exact(value.editor.viewport, ['x', 'y', 'zoom']) || !coordinate(value.editor.viewport.x) || !coordinate(value.editor.viewport.y) || !finite(value.editor.viewport.zoom) || value.editor.viewport.zoom < 0.1 || value.editor.viewport.zoom > 4) return 'Use bounded editor positions and viewport.';
+  const groups = Object.hasOwn(value.editor, 'groups') ? value.editor.groups : [];
+  if (!list(groups, 32) || !Array.from(groups).every(row => exact(row, ['id', 'name', 'members']) && identifier(row.id) && text(row.name) && list(row.members, 336) && row.members.length > 0 && Array.from(row.members).every(member => identifier(member) && nodeIds.has(member))) || new Set(groups.map(row => (row as ProfileEditorGroup).id)).size !== groups.length) return 'Use at most 32 named editor groups with existing block members.';
+  const members = groups.flatMap(row => (row as ProfileEditorGroup).members);
+  if (new Set(members).size !== members.length) return 'Each block can belong to only one editor group.';
+  const collapsed = Object.hasOwn(value.editor, 'collapsedPortGroups') ? value.editor.collapsedPortGroups : [];
+  if (!list(collapsed, 1008) || !Array.from(collapsed).every(row => exact(row, ['nodeId', 'group']) && identifier(row.nodeId) && nodeIds.has(row.nodeId) && typeof row.group === 'string' && ['outputs', 'inputs', 'actions'].includes(row.group)) || new Set(collapsed.map(row => { const pair=row as {nodeId:string;group:string}; return `${pair.nodeId}/${pair.group}`; })).size !== collapsed.length) return 'Use unique collapsed port categories for existing blocks.';
   return '';
 }
 export function parseProfileDocument(source: string): ProfileDocument {
