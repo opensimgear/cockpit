@@ -334,8 +334,6 @@ impl GatewayManager {
         let configuration_gate = Arc::new(Mutex::new(()));
         let closed = Arc::new(AtomicBool::new(false));
         let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
-        let native_panels = profile_panels.clone();
-        let profile_panel = Arc::new(move |request| native_panels.can(request));
         let collect = crate::profile_resource_sources::collector(
             controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
             Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.cached_state())).collect()),
@@ -353,7 +351,7 @@ impl GatewayManager {
         });
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
-            crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), module_usb.clone(), profile_panel, native, profile_admission_epoch.clone()),
+            crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone()),
             native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-session-v1.json")),
         )));
         let profile_closed = Arc::new(AtomicBool::new(false));
@@ -1063,7 +1061,15 @@ mod tests {
                 state["moduleConfigs"][request["moduleId"].as_str().unwrap()] =
                     request["config"].clone();
             }
-            json!({"ok":request["command"] != "fail","state":state.clone()})
+            let mut reply=state.clone();
+            if request["command"] == "events_read" {
+                let id=request["moduleId"].as_str().unwrap();
+                let events=&mut reply["moduleEvents"][id];
+                let after=request["after"].as_u64().unwrap();
+                events["events"]=json!(events["events"].as_array().unwrap().iter().filter(|event|event["sequence"].as_u64().unwrap()>after).cloned().collect::<Vec<_>>());
+                events["after"]=json!(after);events["next"]=events["head"].clone();events["more"]=json!(false);
+            }
+            json!({"ok":request["command"] != "fail","state":reply})
         }
         fn shutdown(&self) {
             self.closed.store(true, Ordering::Release);
@@ -1235,7 +1241,7 @@ mod tests {
         let panels = manager.profile_panels.clone();
         let mut host = crate::profile_session_host::NativeProfileHost::new(
             manager.profile_resources.clone(),manager.controllers.clone(),manager.games.clone(),
-            manager.companion_host.clone(),manager.module_usb.clone(),Arc::new(move |request|panels.can(request)),
+            manager.companion_host.clone(),panels,
             false,manager.profile_admission_epoch.clone(),
         );
         let owner = RunOwner {
@@ -1318,6 +1324,58 @@ mod tests {
         let mut wrong=owner.clone();wrong["generation"]=json!(999);assert_eq!(request(&manager,"profile_runtime_inspect",None,json!({"owner":wrong}))["ok"],false);
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
         assert_eq!(request(&manager,"profile_runtime_inspect",None,json!({"owner":owner}))["ok"],false);
+    }
+
+    #[test]
+    fn native_profile_acquires_can_inputs_and_disarms_changed_routes_without_output_writes() {
+        use osg_profiles::{Port,Resource,ResourceKind,ProcessingNode,Direction,Binding,Endpoint};
+        let(manager,provider)=setup();
+        assert_eq!(request(&manager,"connect",Some(FIRST),json!({"port":"COM1"}))["ok"],true);
+        let adapter=provider.adapters.lock().unwrap()[0].clone();
+        let route=json!([1,5,3,2]);
+        let events=json!({"ok":true,"schemaVersion":1,"stream":7,"head":0,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"contactButtonCount":1,"maintainedButtons":[0],"encoderButtons":[],"selectorButtons":[],"axisCount":0,"axes":[],"axisNeutral":[],"axisUsage":[],"axisAvailable":[],"sampledAtMs":10,"route":route,"configurationGeneration":4,"events":[]});
+        {
+            let mut state=adapter.state.lock().unwrap();
+            state["epoch"]=json!(1);state["canProtocol"]=json!(3);
+            state["modules"]=json!([{"id":"module","name":"Panel","online":true,"node":5,"lease":3,"boot":2,"configurationGeneration":4,"canConfigure":false}]);
+            state["moduleEvents"]=json!({"module":events});
+            state["moduleActions"]=json!({"module":{"status":"unsupported","route":route,"configurationGeneration":4}});
+        }
+        manager.profile_resources.refresh_native().unwrap();
+        let listed=manager.profile_resources.request(&json!({"command":"profile_resources_list","offset":0,"limit":128})).unwrap();
+        let resource=listed["resources"].as_array().unwrap().iter().find(|r|r["resourceType"]=="osg-module").expect("actual CAN resource");
+        let details=manager.profile_resources.request(&json!({"command":"profile_resources_inspect","resourceId":resource["id"],"offset":0,"limit":128})).unwrap();
+        let observed=details["ports"].as_array().unwrap().iter().find(|p|p["descriptor"]["id"]=="button:0").unwrap();
+        let contract:osg_profiles::PortContract=serde_json::from_value(observed["descriptor"]["contract"].clone()).unwrap();
+        let mut document=osg_profiles::default_document();
+        document.resources.push(Resource{id:"panel".into(),name:"Panel".into(),kind:ResourceKind::Device,required:true,ports:vec![Port{id:"pressed".into(),name:"Pressed".into(),direction:Direction::Output,contract:contract.clone()}]});
+        document.processing_nodes.push(ProcessingNode{id:"invert".into(),name:"Readout".into(),operation:osg_mapping::program::Operation::Not{},inputs:vec![Port{id:"input".into(),name:"Input".into(),direction:Direction::Input,contract:contract.clone()}],outputs:vec![Port{id:"output".into(),name:"Output".into(),direction:Direction::Output,contract}]});
+        document.bindings.push(Binding{id:"to-readout".into(),from:Endpoint{node_id:"panel".into(),port_id:"pressed".into()},to:Endpoint{node_id:"invert".into(),port_id:"input".into()}});
+        let assignments=json!([{"resourceId":"panel","sourceId":resource["id"],"ports":[{"profilePortId":"pressed","observedPortId":"button:0","expectedContractHash":observed["contractHash"]}]}]);
+        assert_eq!(request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":assignments}))["ok"],true);
+        let applied=request(&manager,"profile_apply",None,json!({"id":document.id,"expectedRevision":2}));assert_eq!(applied["ok"],true,"{applied}");
+        let owner=applied["state"]["profiles"]["profileSession"]["owner"].clone();
+        {
+            let mut state=adapter.state.lock().unwrap();let events=&mut state["moduleEvents"]["module"];
+            events["head"]=json!(1);events["held"]=json!([true]);events["sampledAtMs"]=json!(11);events["events"]=json!([{"sequence":1,"control":0,"pressed":true}]);
+        }
+        let deadline=std::time::Instant::now()+Duration::from_secs(2);
+        loop {
+            manager.profile_session.lock().unwrap().poll().unwrap();
+            let inspected=request(&manager,"profile_runtime_inspect",None,json!({"owner":owner,"nodeId":"panel"}));assert_eq!(inspected["ok"],true,"{inspected}");
+            if inspected["state"]["profileInspection"]["ports"][0]["sample"]["value"]["value"]==true {break;}
+            assert!(std::time::Instant::now()<deadline,"{inspected}");std::thread::sleep(Duration::from_millis(10));
+        }
+        adapter.state.lock().unwrap()["modules"][0]["boot"]=json!(99);
+        let deadline=std::time::Instant::now()+Duration::from_secs(2);
+        loop {
+            manager.profile_session.lock().unwrap().poll().unwrap();
+            let status=request(&manager,"profile_status",None,json!({}));
+            if status["state"]["profiles"]["profileSession"]["state"]=="degraded" {break;}
+            assert!(std::time::Instant::now()<deadline,"{status}");std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
+        assert!(adapter.calls.lock().unwrap().iter().all(|r|matches!(r["command"].as_str(),Some("connect"|"events_state"|"events_read"))));
     }
 
     #[test]

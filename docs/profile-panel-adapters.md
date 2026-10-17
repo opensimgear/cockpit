@@ -54,3 +54,15 @@ and discards late replies without waiting for transport timeouts. The read-only
 worker claims no configuration writer or action lease and has no restoration
 receipts. Owned Setter dispatch and HID publication overrides remain separate,
 blocked adapters until their actual advertised restoration guarantees are met.
+
+The native Host now composes this reader into actual profile activation. Acquire
+uses the controller service's monotonic timeline. Both initial and final
+baselines check the real reader with bounded, cancellable waits while keeping
+any acquired virtual feeder alive. Start admits subsequent panel frames, and
+native health drains route-checked frames before timers or output effects.
+Neutralization and preparation disposal revoke the reader immediately.
+
+An actual Manager test acquires a retained CAN input, observes its value through
+the applied graph inspector, then changes its native boot and verifies degraded
+source authority without configuration or action writes. This uses deterministic
+native adapters and does not establish physical hardware qualification.

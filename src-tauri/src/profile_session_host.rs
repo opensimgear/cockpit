@@ -12,10 +12,9 @@ use osg_profiles::{
     compiler_models::{CompilationReport, ExecutionPlan, PlanReadiness, SinkAdapter},
     resources::{ResourceToken, Transport},
 };
-use serde_json::{json, Value};
+use serde_json::json;
 use std::{collections::BTreeMap, sync::{Arc, atomic::{AtomicU64, Ordering}}, time::Instant};
 
-type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
 struct NativePreparation {
     prepared: Prepared,
     report: CompilationReport,
@@ -34,6 +33,7 @@ struct NativeRun {
     backend: osg_profiles::compiler_models::BackendCapabilities,
     delivery: Option<ExecutionPlan>,
     inputs: Option<crate::profile_session_inputs::HidInputs>,
+    panels: crate::profile_session_panels_inputs::PanelInputs,
     baselines: Vec<osg_mapping::engine::typed::Frame>,
     reducer: Option<Phase>,
     recording: RecordingSink,
@@ -50,8 +50,7 @@ pub(crate) struct NativeProfileHost {
     controllers: Arc<osg_controller_input::ControllerService>,
     games: Arc<crate::games::GamesRuntime>,
     companions: Arc<crate::companion_host::Runtime>,
-    usb: Arc<crate::module_usb_fleet::Fleet>,
-    panel: Panel,
+    panels: Arc<crate::gateways::ProfilePanelIo>,
     native: bool,
     admission_epoch: Arc<AtomicU64>,
     authority: Option<RunOwner>,
@@ -66,8 +65,7 @@ impl NativeProfileHost {
         controllers: Arc<osg_controller_input::ControllerService>,
         games: Arc<crate::games::GamesRuntime>,
         companions: Arc<crate::companion_host::Runtime>,
-        usb: Arc<crate::module_usb_fleet::Fleet>,
-        panel: Panel,
+        panels: Arc<crate::gateways::ProfilePanelIo>,
         native: bool,
         admission_epoch: Arc<AtomicU64>,
     ) -> Self {
@@ -76,8 +74,7 @@ impl NativeProfileHost {
             controllers,
             games,
             companions,
-            usb,
-            panel,
+            panels,
             native,
             admission_epoch,
             authority: None,
@@ -89,6 +86,22 @@ impl NativeProfileHost {
             .get_mut(&key(owner))
             .filter(|run| run.owner == *owner)
             .ok_or_else(|| "The native prepared run expired; capture a fresh profile plan.".into())
+    }
+    fn panel_baseline(&mut self, owner: &RunOwner, delivery: &ExecutionPlan) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
+        let resources = self.resources.clone();
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            self.check_transition(owner)?;
+            let state = self.run(owner)?;
+            if let Some(frames) = state.panels.baseline(delivery, |token| Self::validate_token(&resources, token))? {
+                return Ok(frames);
+            }
+            if Instant::now() >= deadline {
+                return Err("The selected native panels did not supply fresh baselines before activation.".into());
+            }
+            if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
     fn check_epoch(epoch: &AtomicU64, expected: u64) -> Result<(), String> {
         if epoch.load(Ordering::Acquire) != expected {
@@ -122,6 +135,8 @@ impl NativeProfileHost {
             if source.readiness == PlanReadiness::Ready
                 && source.route.as_ref().is_some_and(|route| {
                     !matches!(route.transport, Transport::Hid | Transport::Integration)
+                        && !(route.transport == Transport::Usb && route.id.starts_with("usb:"))
+                        && !(route.transport == Transport::Can && route.id.starts_with("can:"))
                 })
             {
                 blockers.push(AdmissionBlocker {
@@ -436,9 +451,10 @@ impl Host for NativeProfileHost {
         let NativePreparation {prepared, report, backend, bindings, scripts, game, game_preparation} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
+        let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
         self.prepared.insert(key(owner), NativeRun {
             owner: owner.clone(), admission_epoch, report, assignments: candidate.assignments.clone(),
-            document: candidate.document.clone(), backend, delivery: None, inputs: None,
+            document: candidate.document.clone(), backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, scripts, game, game_preparation,
         });
@@ -538,6 +554,7 @@ impl Host for NativeProfileHost {
             }
             state.scripts.stop();
             state.game.stop();
+            state.panels.stop();
             let withdrawal = Self::withdraw_game(&resources, state);
             let mut output_result = Ok(());
             if let Some(output) = state.output.as_mut() {
@@ -560,7 +577,10 @@ impl Host for NativeProfileHost {
             ApplyPhase::Overrides => Ok(()),
             ApplyPhase::Acquire => {
                 let native = self.native;
+                let origin = self.controllers.stream_page("", 0).captured_us;
                 let state = self.run(&run.owner)?;
+                state.clock_origin = origin;
+                state.panels.acquire(origin)?;
                 if !state.bindings.is_empty() {
                     if !native || !osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED {
                         return Err(osg_mapping_host::service::QUALIFICATION.into());
@@ -617,6 +637,7 @@ impl Host for NativeProfileHost {
                 }
                 self.check_transition(&run.owner)?;
                 let delivery = resources.bind_delivery_reads(&prepared.plan)?;
+                let panel_frames = self.panel_baseline(&run.owner, &delivery)?;
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
                     self.controllers.as_ref(),
@@ -626,6 +647,7 @@ impl Host for NativeProfileHost {
                 state.inputs = Some(inputs);
                 state.baselines = baselines;
                 state.baselines.extend(game_frames);
+                state.baselines.extend(panel_frames);
                 state.delivery = Some(delivery);
                 Ok(())
             }
@@ -672,6 +694,7 @@ impl Host for NativeProfileHost {
                 let delivery = delivery
                     .plan
                     .ok_or("The compiler did not produce the final native delivery plan.")?;
+                let panel_frames = self.panel_baseline(&run.owner, &delivery)?;
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
                     controllers.as_ref(),
@@ -689,6 +712,7 @@ impl Host for NativeProfileHost {
                 state.inputs = Some(inputs);
                 state.baselines = baselines;
                 state.baselines.extend(game_baseline.frames);
+                state.baselines.extend(panel_frames);
                 state.delivery = Some(delivery);
                 let mut reducer = Phase::new(
                     prepared.plan.program.clone(),
@@ -703,6 +727,7 @@ impl Host for NativeProfileHost {
                 state.recording.record(reducer.drain_reports());
                 let effects = reducer.drain();
                 state.reducer = Some(reducer);
+                state.panels.start()?;
                 state.started = Instant::now();
                 let diagnostics = Self::dispatch_game(&resources, &games, state, effects)?;
                 if !diagnostics.is_empty() { return Err(diagnostics.join("; ")); }
@@ -749,11 +774,13 @@ impl Host for NativeProfileHost {
         // emit effects, withdrawing only branches that depend on that game.
         let game = Self::game_poll(&resources, &games, state, controllers.stream_page("", 0).captured_us)?;
         degraded.extend(game.diagnostics);
+        let panels = state.panels.poll(|token| Self::validate_token(&resources, token))?;
+        degraded.extend(panels.diagnostics);
         let reducer = state
             .reducer
             .as_mut()
             .ok_or("The profile reducer is stopped.")?;
-        for frame in frames.into_iter().chain(game.frames) {
+        for frame in frames.into_iter().chain(game.frames).chain(panels.frames) {
             reducer.accept(frame)?;
         }
         let elapsed = u64::try_from(state.started.elapsed().as_micros())
@@ -783,6 +810,7 @@ impl Host for NativeProfileHost {
         if let Some(mut state) = self.prepared.remove(&key(owner)) {
             state.scripts.stop();
             state.game.stop();
+            state.panels.stop();
             let _ = Self::withdraw_game(&self.resources, &state);
         }
     }
