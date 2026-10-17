@@ -65,6 +65,41 @@ pub(crate) struct Visibility {
     job: Option<String>,
     session: Option<String>,
 }
+/// An unowned native capture. Binding a coordinator owner performs no I/O.
+pub(crate) struct StagedVisibility {
+    io: Arc<dyn VisibilityIo>,
+    captured: Option<(Vec<String>, String, Value)>,
+}
+impl StagedVisibility {
+    pub(crate) fn bind(self, owner: &RunOwner) -> Result<Visibility, String> {
+        if !owner_valid(owner) {
+            return Err("Invalid profile visibility owner.".into());
+        }
+        let (receipt, prepared) = match self.captured {
+            Some((source_ids, preparation_hash, prepared)) => (
+                Some(RecoveryReceipt {
+                    schema_version: 1,
+                    owner: owner.clone(),
+                    visibility_owner: uuid::Uuid::new_v4().to_string(),
+                    source_ids,
+                    preparation_hash,
+                }),
+                Some(prepared),
+            ),
+            None => (None, None),
+        };
+        Ok(Visibility {
+            io: self.io,
+            receipt,
+            prepared,
+            attempted: false,
+            stopping: false,
+            restored: false,
+            job: None,
+            session: None,
+        })
+    }
+}
 fn uuid(value: &str) -> bool {
     uuid::Uuid::parse_str(value)
         .ok()
@@ -106,15 +141,11 @@ impl RecoveryReceipt {
     }
 }
 impl Visibility {
-    pub(crate) fn prepare(
+    pub(crate) fn stage(
         plan: &ExecutionPlan,
         snapshot: &CompileSnapshot,
-        owner: &RunOwner,
         io: Arc<dyn VisibilityIo>,
-    ) -> Result<Self, String> {
-        if !owner_valid(owner) {
-            return Err("Invalid profile visibility owner.".into());
-        }
+    ) -> Result<StagedVisibility, String> {
         let mut selected = BTreeMap::new();
         let mut logical = BTreeSet::new();
         for intent in &plan.visibility {
@@ -173,16 +204,7 @@ impl Visibility {
                 );
             }
         }
-        let mut result = Self {
-            io,
-            receipt: None,
-            prepared: None,
-            attempted: false,
-            stopping: false,
-            restored: false,
-            job: None,
-            session: None,
-        };
+        let mut result = StagedVisibility { io, captured: None };
         if selected.is_empty() {
             return Ok(result);
         }
@@ -247,19 +269,16 @@ impl Visibility {
             "sha256:{:x}",
             Sha256::digest(serde_json::to_vec(&prepared).map_err(|e| e.to_string())?)
         );
-        result.receipt = Some(RecoveryReceipt {
-            schema_version: 1,
-            owner: owner.clone(),
-            visibility_owner: uuid::Uuid::new_v4().to_string(),
-            source_ids: ids,
-            preparation_hash: digest,
-        });
-        result.prepared = Some(prepared);
+        result.captured = Some((ids, digest, prepared));
         Ok(result)
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.receipt.is_none()
     }
+    pub(crate) fn needs_cleanup(&self) -> bool {
+        self.receipt.is_some() && self.attempted && !self.restored
+    }
+
     pub(crate) fn receipts(&self) -> Result<Vec<Receipt>, String> {
         self.receipt
             .as_ref()
@@ -381,9 +400,19 @@ impl Visibility {
             return Ok(Progress::Restored);
         }
         let operation = if self.stopping { "poll" } else { "stop" };
-        let value = self.request(operation, false)?;
+        // A lost reply may already have started restoration. Retain that
+        // disposition so a retry polls instead of cancelling the worker.
         self.stopping = true;
-        let progress = self.status(&value)?;
+        let value = self.request(operation, false)?;
+        let mut progress = self.status(&value)?;
+        if operation == "poll" && progress == Progress::Active {
+            // A definite rejection may have preceded restoration (for example,
+            // another owner was present). Only a fresh exact-owner active
+            // observation permits initiating Stop again. Pending restoration
+            // is always polled, never cancelled and restarted.
+            let value = self.request("stop", false)?;
+            progress = self.status(&value)?;
+        }
         if progress == Progress::Restored {
             if operation == "poll" {
                 let value = self.request("stop", false)?;
@@ -436,5 +465,19 @@ impl Visibility {
     }
 }
 #[cfg(test)]
+impl Visibility {
+    fn prepare(
+        plan: &ExecutionPlan,
+        snapshot: &CompileSnapshot,
+        owner: &RunOwner,
+        io: Arc<dyn VisibilityIo>,
+    ) -> Result<Self, String> {
+        if !owner_valid(owner) {
+            return Err("Invalid profile visibility owner.".into());
+        }
+        Self::stage(plan, snapshot, io)?.bind(owner)
+    }
+}
+#[cfg(test)]
 #[path = "profile_session_visibility_tests.rs"]
-mod tests;
+pub(crate) mod tests;

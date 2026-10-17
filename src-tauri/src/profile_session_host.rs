@@ -2,6 +2,8 @@
 //! coordinator owner; durable manifests contain only compare/restore receipts.
 #[path = "profile_session_companion_host.rs"]
 mod companion;
+#[path = "profile_session_visibility_host.rs"]
+mod visibility;
 
 use crate::profile_session::{
     Admission, AdmissionBlocker, ApplyPhase, BlockerKind, Candidate, Health, Host, OwnedRun,
@@ -28,6 +30,7 @@ struct NativePreparation {
     game_preparation: Option<crate::games::PreparedGame>,
     companions: crate::profile_session_companions::CompanionSources,
     companion_catalogues: Vec<crate::profile_resources::CompanionCatalogue>,
+    visibility: crate::profile_session_visibility::StagedVisibility,
 }
 struct NativeRun {
     owner: RunOwner,
@@ -52,6 +55,7 @@ struct NativeRun {
     companions: crate::profile_session_companions::CompanionSources,
     companion_catalogues: Vec<crate::profile_resources::CompanionCatalogue>,
     companion_retry: Option<u64>,
+    visibility: crate::profile_session_visibility::Visibility,
 }
 pub(crate) struct NativeProfileHost {
     resources: Arc<crate::profile_resources::Runtime>,
@@ -63,6 +67,7 @@ pub(crate) struct NativeProfileHost {
     admission_epoch: Arc<AtomicU64>,
     authority: Option<RunOwner>,
     prepared: BTreeMap<String, NativeRun>,
+    recovery_visibility: BTreeMap<String, crate::profile_session_visibility::Visibility>,
 }
 fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
@@ -87,6 +92,7 @@ impl NativeProfileHost {
             admission_epoch,
             authority: None,
             prepared: BTreeMap::new(),
+            recovery_visibility: BTreeMap::new(),
         }
     }
     fn run(&mut self, owner: &RunOwner) -> Result<&mut NativeRun, String> {
@@ -173,11 +179,8 @@ impl NativeProfileHost {
                 });
             }
         }
-        if !plan.runtime_overrides.is_empty() {
-            blockers.push(AdmissionBlocker {
-                kind: BlockerKind::Backend,
-                message: "Owned configuration adapters are still being installed.".into(),
-            });
+        if let Err(message)=crate::profile_session_overrides::validate(plan) {
+            blockers.push(AdmissionBlocker {kind:BlockerKind::Backend,message});
         }
         if plan.program.nodes.iter().any(|node| {
             matches!(
@@ -319,6 +322,7 @@ impl NativeProfileHost {
         resources: &crate::profile_resources::Runtime,
         games: &crate::games::GamesRuntime,
         companions: &crate::companion_host::Runtime,
+        controllers: Arc<osg_controller_input::ControllerService>,
         native: bool,
         candidate: &Candidate,
     ) -> Result<Arc<crate::profile_session::Stage>, String> {
@@ -337,6 +341,13 @@ impl NativeProfileHost {
         };
         let (mut snapshot, preparations) = resources.snapshot_for_preparation_with_companions(initial.assignments, &companion_catalogues)?;
         Self::game_capture(&mut snapshot, game_preparation.as_ref());
+        if candidate.document.visibility.iter().any(|intent|intent.mode==osg_profiles::VisibilityMode::HiddenWhileActive) {
+            let status=controllers.request(&json!({"command":"controller_visibility_status"}))?;
+            snapshot.backend.visibility_available=native && cfg!(windows) && status["visibility"]["modes"].as_array()
+                .is_some_and(|modes|modes.iter().any(|mode|mode["mode"]=="hide-all"&&mode["supported"]==true));
+            snapshot.backend.visibility_qualified=native && status["visibility"]["qualified"]==true;
+        }
+
         let slots = if !candidate.document.virtual_outputs.is_empty() && native {
             osg_virtual_controller::inspection::current().ok()
         } else {
@@ -448,9 +459,10 @@ impl NativeProfileHost {
             game_preparation.clone(),
         )?;
         let companions = crate::profile_session_companions::CompanionSources::prepare(&prepared.plan, companion_bindings)?;
+        let visibility=crate::profile_session_visibility::Visibility::stage(&prepared.plan,&snapshot,controllers)?;
         crate::profile_session::Stage::new(candidate, NativePreparation {
             prepared, report, backend: snapshot.backend, bindings, scripts, game, game_preparation,
-            companions, companion_catalogues,
+            companions, companion_catalogues, visibility,
         })
     }
 }
@@ -466,16 +478,17 @@ impl Host for NativeProfileHost {
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
-        let NativePreparation {prepared, report, backend, bindings, scripts, game, game_preparation, companions, companion_catalogues} = candidate.stage.as_ref()
+        let NativePreparation {prepared, report, backend, bindings, scripts, game, game_preparation, companions, companion_catalogues, visibility} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
+        let visibility=visibility.bind(owner)?;
         self.prepared.insert(key(owner), NativeRun {
             owner: owner.clone(), admission_epoch, report, assignments: candidate.assignments.clone(),
             document: candidate.document.clone(), backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, scripts, game, game_preparation,
-            companions, companion_catalogues, companion_retry: None,
+            companions, companion_catalogues, companion_retry: None, visibility,
         });
         self.validate_prepared(&prepared, owner)?;
         Ok(prepared)
@@ -532,6 +545,7 @@ impl Host for NativeProfileHost {
         let mut receipts = if !state.companions.is_empty() || companion::has_receipts(previous) {
             companion::capture(&runtime.profile_metadata()?, &state.companions, previous)?
         } else { vec![] };
+        receipts.extend(state.visibility.receipts()?);
         if !state.bindings.is_empty() {
             receipts.push(Receipt { kind: "virtual-output".into(), resource_id:"virtual-output".into(),
                 state: json!({"journal":crate::profile_session_virtual::journal_name(owner)?}) });
@@ -570,6 +584,7 @@ impl Host for NativeProfileHost {
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
         let resources = self.resources.clone();
         let companions = self.companions.clone();
+        let mut adapter_result=Ok(());
         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
             if let Some(reducer) = state.reducer.as_mut() {
                 reducer.stop();
@@ -587,9 +602,10 @@ impl Host for NativeProfileHost {
                 let stop = output.stop();
                 output_result = flush.and(stop);
             }
-            withdrawal.and(output_result).and(companion_stop)?;
+            adapter_result=withdrawal.and(output_result).and(companion_stop);
         }
-        Ok(())
+        let visibility_result=self.restore_visibility(run);
+        adapter_result.and(visibility_result)
     }
     fn enter(
         &mut self,
@@ -684,7 +700,7 @@ impl Host for NativeProfileHost {
                 state.delivery = Some(delivery);
                 Ok(())
             }
-            ApplyPhase::Visibility => Ok(()),
+            ApplyPhase::Visibility => self.start_visibility(&run.owner),
             ApplyPhase::Start => {
                 self.check_transition(&run.owner)?;
                 self.fence(&run.owner)?;
@@ -767,6 +783,7 @@ impl Host for NativeProfileHost {
                     state.clock_origin = state.clock_origin.max(baseline.captured_us.0);
                     reducer.accept(baseline)?;
                 }
+                visibility::active(&mut state.visibility)?;
                 state.companions.arm(reducer.run_token())?;
                 state.scripts.poll(&mut reducer);
                 state.recording.record(reducer.drain_reports());
@@ -788,13 +805,15 @@ impl Host for NativeProfileHost {
             Self::withdraw_game(&self.resources, state)?;
         }
         let captured = companion::receipts(&run.receipts)?;
+        let visibility_receipt=crate::profile_session_visibility::Visibility::from_receipts(run,self.controllers.clone())?;
         for receipt in &run.receipts {
-            if companion::has_receipts(std::slice::from_ref(receipt)) { continue; }
+            if companion::has_receipts(std::slice::from_ref(receipt)) || receipt.kind=="controller-visibility" && visibility_receipt.is_some() { continue; }
             if receipt.kind != "virtual-output" || receipt.resource_id != "virtual-output"
                 || receipt.state != json!({"journal":crate::profile_session_virtual::journal_name(&run.owner)?}) {
                 return Err("Unknown native recovery receipts require inspection; external state was preserved.".into());
             }
         }
+        self.restore_visibility(run)?;
         if run.attempted.contains(&ApplyPhase::Acquire) {
             if run.receipts.iter().any(|r|r.kind=="virtual-output") { crate::profile_session_virtual::recover(&run.owner)?; }
             if !captured.is_empty() { companion::restore(&self.companions.profile_metadata()?, &captured, false)?; }
@@ -809,6 +828,7 @@ impl Host for NativeProfileHost {
         let games = self.games.clone();
         let companions = self.companions.clone();
         let state = self.run(&run.owner)?;
+        visibility::active(&mut state.visibility)?;
         let (frames, mut degraded) = state
             .inputs
             .as_mut()
@@ -865,6 +885,7 @@ impl Host for NativeProfileHost {
             state.panels.stop();
             let _ = state.companions.stop_native(&self.companions);
             let _ = Self::withdraw_game(&self.resources, &state);
+            if state.visibility.needs_cleanup() { self.recovery_visibility.insert(key(owner),state.visibility); }
         }
     }
 }

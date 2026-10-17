@@ -80,11 +80,13 @@ impl Fixture {
         let resources = manager.profile_resources.clone();
         let runtime_games = manager.games.clone();
         let companions = manager.companion_host.clone();
+        let controllers = manager.controllers.clone();
         manager.profile_prepare = Arc::new(move |candidate| {
             crate::profile_session_host::NativeProfileHost::stage(
                 &resources,
                 &runtime_games,
                 &companions,
+                controllers.clone(),
                 false,
                 candidate,
             )

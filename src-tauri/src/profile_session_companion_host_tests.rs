@@ -567,6 +567,7 @@ impl NativeFixture {
                 &self.resources,
                 &self.games,
                 &self.companions,
+                self.controllers.clone(),
                 false,
                 &candidate,
             )

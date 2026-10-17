@@ -375,8 +375,9 @@ impl GatewayManager {
         let prepare_resources = profile_resources.clone();
         let prepare_games = games.clone();
         let prepare_companions = companion_host.clone();
+        let prepare_controllers = controllers.clone();
         let profile_prepare: ProfilePrepare = Arc::new(move |candidate| {
-            crate::profile_session_host::NativeProfileHost::stage(&prepare_resources, &prepare_games, &prepare_companions, native, candidate)
+            crate::profile_session_host::NativeProfileHost::stage(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate)
         });
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
         let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());

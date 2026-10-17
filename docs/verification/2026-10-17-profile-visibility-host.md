@@ -1,0 +1,9 @@
+# Profile visibility Host integration — 2026-10-17
+
+The native Host composes the existing visibility worker and durable compare-fenced journal. Native capture/preflight occurs in the off-lock Stage; owner binding is pure. Capture persists a compact recovery reference before effects. Visibility admission waits for the exact Active worker before reducer Start, checks cancellation while pending, and renews acquired virtual outputs. Health validates the visibility owner before processing timers or scripts. Neutralize, rollback and recovery restore only the retained owner and preserve cleanup progress on errors.
+
+Regression coverage uses the real visibility journal against a temporary compare-fenced driver. It covers unowned staging, I/O-free owner binding, explicit saved scope, native qualification, owner/worker replacement, one-use Start, lost Stop replies, asynchronous restoration, cancellation after application, renewal failure, external changes, and an actual NativeProfileHost cleanup-cache retry. Default/Visible plans do not initialize optional visibility services.
+
+The final combined source-stamped native run passed all 71 selected tests, including eleven visibility adapter and six Host visibility tests. The unchanged per-module 71% gate passed: visibility adapter 334/351 production lines (95.16%); Host visibility helper 64/80 (80%). Existing companion Host and automatic-selection fixtures also compile with the real controller dependency passed into Stage.
+
+Physical visibility remains unqualified. Hidden-to-hidden preflight remains explicitly blocked while another native visibility session is active; a protected handoff proof is a separate required follow-up. Temporary controller enable overrides remain unsupported until the transport advertises a real nonpersistent owned lease. No durable firmware enable command simulates that capability.

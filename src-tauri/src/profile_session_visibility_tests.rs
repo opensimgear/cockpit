@@ -6,7 +6,7 @@ use osg_controller_input::visibility::{
 use osg_profiles::{compiler_models::*, resources::*, store::LocalAssignment};
 use std::sync::Mutex;
 const PHYSICAL: &str = "11111111-1111-4111-8111-111111111111";
-fn owner() -> RunOwner {
+pub(crate) fn owner() -> RunOwner {
     RunOwner {
         session: uuid::Uuid::new_v4().to_string(),
         generation: 1,
@@ -15,7 +15,7 @@ fn owner() -> RunOwner {
         game_id: None,
     }
 }
-fn snapshot() -> CompileSnapshot {
+pub(crate) fn snapshot() -> CompileSnapshot {
     CompileSnapshot {
         inventory_session: uuid::Uuid::new_v4().to_string(),
         inventory_revision: "1".into(),
@@ -65,7 +65,7 @@ fn snapshot() -> CompileSnapshot {
         read_only: false,
     }
 }
-fn plan(snapshot: &CompileSnapshot) -> ExecutionPlan {
+pub(crate) fn plan(snapshot: &CompileSnapshot) -> ExecutionPlan {
     let mut empty = snapshot.clone();
     empty.assignments.clear();
     empty.resources.clear();
@@ -80,7 +80,7 @@ fn plan(snapshot: &CompileSnapshot) -> ExecutionPlan {
     }];
     plan
 }
-fn owned_run(owner: RunOwner, receipts: Vec<Receipt>) -> OwnedRun {
+pub(crate) fn owned_run(owner: RunOwner, receipts: Vec<Receipt>) -> OwnedRun {
     OwnedRun {
         owner,
         snapshot:
@@ -116,21 +116,23 @@ impl Backend for Driver {
         Ok(())
     }
 }
-struct Fake {
+pub(crate) struct Fake {
     root: tempfile::TempDir,
-    driver: Arc<Mutex<State>>,
-    calls: Mutex<Vec<(String, Value)>>,
-    owned: Mutex<Option<String>>,
+    pub(crate) driver: Arc<Mutex<State>>,
+    pub(crate) calls: Mutex<Vec<(String, Value)>>,
+    pub(crate) owned: Mutex<Option<String>>,
     job: String,
     session: String,
     intent: Mutex<Intent>,
     ambiguous: Mutex<bool>,
-    asynchronous: Mutex<bool>,
+    pub(crate) asynchronous: Mutex<bool>,
+    pub(crate) start_pending: Mutex<bool>,
+    ambiguous_stop: Mutex<bool>,
     restoring: Mutex<bool>,
     malformed: Mutex<Option<Value>>,
 }
 impl Fake {
-    fn new() -> Arc<Self> {
+    pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             root: tempfile::tempdir().unwrap(),
             driver: Arc::new(Mutex::new(state())),
@@ -141,6 +143,8 @@ impl Fake {
             intent: Mutex::new(Intent::HideAll),
             ambiguous: Mutex::new(false),
             asynchronous: Mutex::new(false),
+            start_pending: Mutex::new(false),
+            ambiguous_stop: Mutex::new(false),
             restoring: Mutex::new(false),
             malformed: Mutex::new(None),
         })
@@ -225,7 +229,11 @@ impl VisibilityIo for Fake {
                 if *self.ambiguous.lock().unwrap() {
                     return Err("Ambiguous native Start reply".into());
                 }
-                Ok(self.status("active"))
+                Ok(self.status(if *self.start_pending.lock().unwrap() {
+                    "applying"
+                } else {
+                    "active"
+                }))
             }
             "stop" | "poll" => {
                 let owner = value["owner"].as_str().unwrap();
@@ -243,6 +251,9 @@ impl VisibilityIo for Fake {
                 }
                 if operation == "stop" && *self.asynchronous.lock().unwrap() {
                     *self.restoring.lock().unwrap() = true;
+                    if std::mem::take(&mut *self.ambiguous_stop.lock().unwrap()) {
+                        return Err("Lost restoration reply".into());
+                    }
                     return Ok(self.status("restoring"));
                 }
                 self.restore(owner)
@@ -510,4 +521,62 @@ fn stopping_an_unstarted_preparation_permanently_prevents_late_hiding() {
         .unwrap()
         .iter()
         .all(|(operation, _)| operation != "start"));
+}
+
+#[test]
+fn staging_is_unowned_and_binding_does_not_repeat_native_preflight() {
+    let io = Fake::new();
+    let snapshot = snapshot();
+    let before = io.driver.lock().unwrap().clone();
+    let staged = Visibility::stage(&plan(&snapshot), &snapshot, io.clone()).unwrap();
+    assert_eq!(*io.driver.lock().unwrap(), before);
+    assert!(io.owned.lock().unwrap().is_none());
+    let calls = io.calls.lock().unwrap().len();
+    let owner = owner();
+    let mut visibility = staged.bind(&owner).unwrap();
+    assert_eq!(io.calls.lock().unwrap().len(), calls);
+    assert_eq!(
+        visibility.receipts().unwrap()[0].state["owner"],
+        json!(owner)
+    );
+    assert!(!visibility.needs_cleanup());
+    visibility.start().unwrap();
+    assert!(visibility.needs_cleanup());
+    visibility.stop().unwrap();
+    assert!(!visibility.needs_cleanup());
+
+    let staged = Visibility::stage(&plan(&snapshot), &snapshot, io.clone()).unwrap();
+    let calls = io.calls.lock().unwrap().len();
+    let mut invalid = owner;
+    invalid.generation = 0;
+    assert!(staged.bind(&invalid).is_err());
+    assert_eq!(io.calls.lock().unwrap().len(), calls);
+}
+
+#[test]
+fn lost_first_stop_reply_retains_restoration_instead_of_recancelling() {
+    let io = Fake::new();
+    let snapshot = snapshot();
+    let mut visibility = Visibility::stage(&plan(&snapshot), &snapshot, io.clone())
+        .unwrap()
+        .bind(&owner())
+        .unwrap();
+    visibility.start().unwrap();
+    *io.asynchronous.lock().unwrap() = true;
+    *io.ambiguous_stop.lock().unwrap() = true;
+    assert!(visibility
+        .stop()
+        .unwrap_err()
+        .contains("Lost restoration reply"));
+    assert!(visibility.needs_cleanup());
+    *io.asynchronous.lock().unwrap() = false;
+    assert_eq!(visibility.stop().unwrap(), Progress::Restored);
+    assert_eq!(*io.driver.lock().unwrap(), state());
+    let calls = io.calls.lock().unwrap();
+    let first_stop = calls
+        .iter()
+        .position(|(operation, _)| operation == "stop")
+        .unwrap();
+    assert_eq!(calls[first_stop + 1].0, "poll");
+    assert!(!visibility.needs_cleanup());
 }
