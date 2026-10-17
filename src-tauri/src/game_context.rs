@@ -32,9 +32,28 @@ pub(crate) struct ContextToken {
     pub provider_setup_revision: String,
     pub catalogue_revision: String,
 }
+/// Read-only preparation evidence. It can authorize native source acquisition,
+/// never a simulator command or an applied-profile owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GamePreparation {
+    pub session: String,
+    pub game_id: String,
+    pub process: ProcessIdentity,
+    pub provider_setup_revision: String,
+    pub catalogue_revision: String,
+}
+impl ContextToken {
+    pub(crate) fn matches_preparation(&self, prepared: &GamePreparation) -> bool {
+        self.game_id == prepared.game_id
+            && self.process == prepared.process
+            && self.provider_setup_revision == prepared.provider_setup_revision
+            && self.catalogue_revision == prepared.catalogue_revision
+    }
+}
 struct Record {
     observation: Observation,
     token: Option<ContextToken>,
+    preparation: Option<GamePreparation>,
 }
 #[derive(Default)]
 pub(crate) struct Broker {
@@ -111,6 +130,7 @@ impl Broker {
         {
             if let Some(record) = self.games.get_mut(id) {
                 record.token = None;
+                record.preparation = None;
                 record.observation.process = None;
                 record.observation.catalogue_revision = None;
                 record.observation.error=Some("Native game observation could not be validated. Reacquire verified identity and provider revisions.".into());
@@ -125,8 +145,55 @@ impl Broker {
             return Ok(());
         }
         let token = Self::mint(self.owner.as_ref(), id, &observation);
-        self.games.insert(id.into(), Record { observation, token });
+        let preparation =
+            if observation.supported && observation.setup_ready && observation.error.is_none() {
+                observation
+                    .process
+                    .as_ref()
+                    .zip(observation.catalogue_revision.as_ref())
+                    .map(|(process, catalogue)| GamePreparation {
+                        session: uuid::Uuid::new_v4().to_string(),
+                        game_id: id.into(),
+                        process: process.clone(),
+                        provider_setup_revision: observation.provider_setup_revision.clone(),
+                        catalogue_revision: catalogue.clone(),
+                    })
+            } else {
+                None
+            };
+        self.games.insert(
+            id.into(),
+            Record {
+                observation,
+                token,
+                preparation,
+            },
+        );
         Ok(())
+    }
+    pub(crate) fn preparation(&self, id: &str) -> Result<Option<GamePreparation>, String> {
+        if !supported(id) {
+            return Err("Choose a supported game context.".into());
+        }
+        Ok(self
+            .games
+            .get(id)
+            .and_then(|record| record.preparation.clone()))
+    }
+    pub(crate) fn validate_preparation(&self, proof: &GamePreparation) -> Result<(), String> {
+        if self.preparation(&proof.game_id)?.as_ref() == Some(proof) {
+            Ok(())
+        } else {
+            Err("The verified game preparation changed; acquire a fresh process/setup/catalogue proof.".into())
+        }
+    }
+    pub(crate) fn invalidate(&mut self, id: &str, reason: String) {
+        if let Some(record) = self.games.get_mut(id) {
+            record.token = None;
+            record.preparation = None;
+            record.observation.process = None;
+            record.observation.error = Some(reason);
+        }
     }
     fn mint(
         owner: Option<&ProfileOwner>,
@@ -213,6 +280,42 @@ mod tests {
             catalogue_revision: Some(format!("sha256:{}", "b".repeat(64))),
             error: None,
         }
+    }
+    #[test]
+    fn preparation_proves_observation_without_granting_applied_authority() {
+        let mut broker = Broker::default();
+        broker.observe("dcs", observed()).unwrap();
+        let proof = broker.preparation("dcs").unwrap().unwrap();
+        assert!(broker.token("dcs").is_err());
+        assert!(broker.validate_preparation(&proof).is_ok());
+        broker.set_owner(Some(owner(Some("x-plane-12")))).unwrap();
+        assert!(broker.token("dcs").is_err());
+        assert!(broker.validate_preparation(&proof).is_ok());
+        broker.set_owner(Some(owner(Some("dcs")))).unwrap();
+        let token = broker.token("dcs").unwrap();
+        assert!(token.matches_preparation(&proof));
+        broker.set_owner(None).unwrap();
+        assert!(broker.token("dcs").is_err());
+        assert!(broker.validate_preparation(&proof).is_ok());
+    }
+    #[test]
+    fn preparation_rejects_forgery_replacement_and_failed_new_evidence() {
+        let mut broker = Broker::default();
+        broker.observe("dcs", observed()).unwrap();
+        let proof = broker.preparation("dcs").unwrap().unwrap();
+        let mut forged = proof.clone();
+        forged.session = uuid::Uuid::new_v4().to_string();
+        assert!(broker.validate_preparation(&forged).is_err());
+        let mut replacement = observed();
+        replacement.process.as_mut().unwrap().epoch += 1;
+        broker.observe("dcs", replacement).unwrap();
+        assert!(broker.validate_preparation(&proof).is_err());
+        let new = broker.preparation("dcs").unwrap().unwrap();
+        let mut malformed = observed();
+        malformed.provider_setup_revision = "bad".into();
+        assert!(broker.observe("dcs", malformed).is_err());
+        assert!(broker.validate_preparation(&new).is_err());
+        assert!(broker.preparation("unknown").is_err());
     }
     #[test]
     fn closed_wrong_and_unapplied_game_contexts_cannot_mint_capabilities() {

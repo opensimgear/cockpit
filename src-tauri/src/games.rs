@@ -390,6 +390,7 @@ pub(crate) struct GamesRuntime {
 }
 #[path = "game_context_runtime.rs"]
 mod context_runtime;
+pub(crate) use context_runtime::PreparedGame;
 impl GamesRuntime {
     pub(crate) fn new(panel: Panel, path: PathBuf, platform: Arc<dyn Platform>) -> Self {
         let (saved, mut error) =

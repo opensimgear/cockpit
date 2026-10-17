@@ -1,8 +1,131 @@
 //! Process observation is native background work. UI reads do not authorize an
 //! applied profile, start a provider, or turn an installation into live identity.
 use super::*;
-use crate::game_context::{ContextToken, Observation, ProfileOwner};
+use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwner};
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedGame {
+    pub proof: GamePreparation,
+    pub connection: Value,
+    pub catalogue: Value,
+    pub aircraft_module: Option<String>,
+}
 impl GamesRuntime {
+    pub(crate) fn prepare_profile_game_context(
+        &self,
+        id: &str,
+    ) -> Result<Option<PreparedGame>, String> {
+        self.inner.refresh_game_contexts(true);
+        self.inner.enforce_integration_context();
+        let Some(proof) = self
+            .inner
+            .contexts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .preparation(id)?
+        else {
+            return Ok(None);
+        };
+        let (connection, revision, aircraft_module) =
+            self.inner.setup.provider_connection_snapshot(id)?;
+        let catalogue = self.inner.setup.resource_integration_catalogue(id)?;
+        if revision != proof.provider_setup_revision
+            || catalogue["providerSetupRevision"] != revision
+            || catalogue["catalogueRevision"] != proof.catalogue_revision
+        {
+            return Err(
+                "The game provider settings changed during preparation; prepare it again.".into(),
+            );
+        }
+        self.validate_game_preparation(&proof)?;
+        Ok(Some(PreparedGame {
+            proof,
+            connection,
+            catalogue,
+            aircraft_module,
+        }))
+    }
+    pub(crate) fn validate_game_preparation(&self, proof: &GamePreparation) -> Result<(), String> {
+        let result: Result<(), String> = (|| {
+            self.inner
+                .contexts
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .validate_preparation(proof)?;
+            let game = self
+                .inner
+                .settings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .catalogue
+                .iter()
+                .find(|game| game["id"] == proof.game_id)
+                .cloned()
+                .ok_or("The selected game installation changed.")?;
+            if self.inner.platform.find(&game)?.as_ref() != Some(&proof.process)
+                || !self.inner.platform.alive(&proof.process)?
+            {
+                return Err(
+                    "The prepared game process exited, was replaced or became ambiguous.".into(),
+                );
+            }
+            if self.inner.setup.provider_setup_revision(&proof.game_id)
+                != proof.provider_setup_revision
+                || self
+                    .inner
+                    .setup
+                    .current_catalogue_revision(&proof.game_id)
+                    .as_ref()
+                    != Some(&proof.catalogue_revision)
+            {
+                return Err("The prepared provider setup or catalogue changed.".into());
+            }
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            self.inner
+                .contexts
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .invalidate(&proof.game_id, error.clone());
+        }
+        result
+    }
+    pub(crate) fn admit_prepared_game_context(
+        &self,
+        proof: &GamePreparation,
+    ) -> Result<ContextToken, String> {
+        self.validate_game_preparation(proof)?;
+        let token = self
+            .inner
+            .contexts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .token(&proof.game_id)?;
+        if !token.matches_preparation(proof) {
+            return Err("The applied context does not match its native game preparation.".into());
+        }
+        self.inner
+            .contexts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .validate(&token)?;
+        Ok(token)
+    }
+    pub(crate) fn validate_admitted_game_context(
+        &self,
+        token: &ContextToken,
+        proof: &GamePreparation,
+    ) -> Result<(), String> {
+        self.validate_game_preparation(proof)?;
+        if !token.matches_preparation(proof) {
+            return Err("The delivered game context differs from its preparation.".into());
+        }
+        self.inner
+            .contexts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .validate(token)
+    }
     pub(crate) fn guard_unified_integration_request(&self, request: &Value) -> Result<(), String> {
         if request["command"] == "game_profile_save"
             && !request["gameProfile"]["integration"].is_null()
@@ -377,6 +500,84 @@ mod tests {
         assert_eq!(token.process.pid, 42);
         assert_eq!(token.process.epoch, 10);
         assert!(runtime.validate_profile_game_context(&token).is_ok());
+        runtime.shutdown();
+    }
+    #[test]
+    fn preparation_is_native_read_only_and_admission_requires_matching_applied_owner() {
+        let scratch = Scratch::new();
+        let (runtime, _, _, calls) = runtime(&scratch);
+        let prepared = runtime
+            .prepare_profile_game_context("x-plane-12")
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.proof.process.pid, 42);
+        assert_eq!(prepared.connection["version"], 12);
+        assert!(runtime.profile_game_context("x-plane-12").is_err());
+        assert!(runtime
+            .admit_prepared_game_context(&prepared.proof)
+            .is_err());
+        runtime
+            .set_profile_context_owner(Some(owner(Some("dcs"))))
+            .unwrap();
+        assert!(runtime
+            .admit_prepared_game_context(&prepared.proof)
+            .is_err());
+        runtime
+            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
+            .unwrap();
+        let token = runtime
+            .admit_prepared_game_context(&prepared.proof)
+            .unwrap();
+        assert!(runtime
+            .validate_admitted_game_context(&token, &prepared.proof)
+            .is_ok());
+        assert!(!calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call == "integration_start" || call == "dcs_start"));
+        runtime.shutdown();
+    }
+    #[test]
+    fn preparation_loss_revokes_before_dispatch_without_waiting_for_observer() {
+        let scratch = Scratch::new();
+        let (runtime, platform, _, _) = runtime(&scratch);
+        let prepared = runtime
+            .prepare_profile_game_context("x-plane-12")
+            .unwrap()
+            .unwrap();
+        runtime
+            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
+            .unwrap();
+        let token = runtime
+            .admit_prepared_game_context(&prepared.proof)
+            .unwrap();
+        platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
+        assert!(runtime
+            .validate_admitted_game_context(&token, &prepared.proof)
+            .is_err());
+        assert!(runtime
+            .inner
+            .contexts
+            .lock()
+            .unwrap()
+            .token("x-plane-12")
+            .is_err());
+        let fresh = runtime
+            .prepare_profile_game_context("x-plane-12")
+            .unwrap()
+            .unwrap();
+        assert_ne!(fresh.proof.session, prepared.proof.session);
+        let revision = runtime.inner.setup.provider_setup_revision("x-plane-12");
+        let mut connection = crate::xplane::defaults(12);
+        connection["freshnessMs"] = json!(2000);
+        runtime.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":revision,"connection":connection})).unwrap();
+        assert!(runtime.validate_game_preparation(&fresh.proof).is_err());
+        *platform.process.lock().unwrap() = None;
+        assert!(runtime
+            .prepare_profile_game_context("x-plane-12")
+            .unwrap()
+            .is_none());
         runtime.shutdown();
     }
     #[test]

@@ -92,6 +92,42 @@ impl GameIntegrationSetup {
     pub(crate) fn provider_setup_revision(&self, id: &str) -> String {
         self.provider_snapshot(id).1
     }
+    pub(crate) fn provider_connection_snapshot(
+        &self,
+        id: &str,
+    ) -> Result<(Value, String, Option<String>), String> {
+        if let Some(error) = &self.inner.settings_error {
+            return Err(error.clone());
+        }
+        let (record, revision) = self.provider_snapshot(id);
+        let connection = if record["connection"].is_object() {
+            record["connection"].clone()
+        } else {
+            defaults(id)
+        };
+        validate_connection(id, &connection)?;
+        Ok((
+            connection,
+            revision,
+            if id == "dcs" {
+                aircraft(&record["aircraftModule"])?
+            } else {
+                None
+            },
+        ))
+    }
+    pub(crate) fn current_catalogue_revision(&self, id: &str) -> Option<String> {
+        let setup = self.provider_setup_revision(id);
+        self.inner
+            .catalogues
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(id)
+            .filter(|(_, revision, _)| *revision == setup)
+            .and_then(|(_, _, result)| result.as_ref().ok())
+            .and_then(|catalogue| catalogue["catalogueRevision"].as_str())
+            .map(str::to_owned)
+    }
     pub(super) fn decorate_provider_settings(&self, id: &str, status: &mut Value) {
         let (saved, setup_revision) = self.provider_snapshot(id);
         status["providerSetupRevision"] = json!(setup_revision);
