@@ -86,7 +86,7 @@ impl GamesRuntime {
                 .contexts
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .invalidate(&proof.game_id, error.clone());
+                .invalidate_preparation(proof, error.clone());
         }
         result
     }
@@ -578,6 +578,25 @@ mod tests {
             .prepare_profile_game_context("x-plane-12")
             .unwrap()
             .is_none());
+        runtime.shutdown();
+    }
+    #[test]
+    fn late_old_stage_failure_preserves_the_admitted_replacement_process_and_owner() {
+        let scratch=Scratch::new();let (runtime,platform,_,_)=runtime(&scratch);
+        let old=runtime.prepare_profile_game_context("x-plane-12").unwrap().unwrap();
+        runtime.set_profile_context_owner(Some(owner(Some("x-plane-12")))).unwrap();
+        platform.process.lock().unwrap().as_mut().unwrap().epoch+=1;
+        let current=runtime.prepare_profile_game_context("x-plane-12").unwrap().unwrap();
+        let mut next=owner(Some("x-plane-12"));next.run_generation+=1;
+        runtime.set_profile_context_owner(Some(next.clone())).unwrap();
+        let token=runtime.admit_prepared_game_context(&current.proof).unwrap();
+        assert_eq!(token.owner,next);
+        assert!(runtime.validate_game_preparation(&old.proof).is_err());
+        runtime.validate_admitted_game_context(&token,&current.proof).unwrap();
+        assert_eq!(runtime.profile_game_context("x-plane-12").unwrap(),token);
+        *platform.process.lock().unwrap()=None;
+        assert!(runtime.validate_game_preparation(&current.proof).is_err());
+        assert!(runtime.inner.contexts.lock().unwrap().token("x-plane-12").is_err());
         runtime.shutdown();
     }
     #[test]

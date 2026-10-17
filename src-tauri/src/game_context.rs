@@ -195,6 +195,15 @@ impl Broker {
             record.observation.error = Some(reason);
         }
     }
+    /// A late reader/preflight failure only retires its own still-current
+    /// proof. A replacement observation or owner must retain its capability.
+    pub(crate) fn invalidate_preparation(&mut self, proof:&GamePreparation, reason:String)->bool {
+        if self.games.get(&proof.game_id).and_then(|record|record.preparation.as_ref())!=Some(proof) {
+            return false;
+        }
+        self.invalidate(&proof.game_id,reason);
+        true
+    }
     fn mint(
         owner: Option<&ProfileOwner>,
         id: &str,
@@ -316,6 +325,23 @@ mod tests {
         assert!(broker.observe("dcs", malformed).is_err());
         assert!(broker.validate_preparation(&new).is_err());
         assert!(broker.preparation("unknown").is_err());
+    }
+    #[test]
+    fn late_preparation_failure_cannot_revoke_replacement_owner_but_current_failure_does() {
+        let mut broker=Broker::default();broker.observe("dcs",observed()).unwrap();
+        let old=broker.preparation("dcs").unwrap().unwrap();
+        let mut replacement=observed();replacement.process.as_mut().unwrap().epoch+=1;
+        broker.observe("dcs",replacement).unwrap();
+        let current=broker.preparation("dcs").unwrap().unwrap();
+        let mut next=owner(Some("dcs"));next.run_generation+=1;broker.set_owner(Some(next)).unwrap();
+        let token=broker.token("dcs").unwrap();
+        assert!(!broker.invalidate_preparation(&old,"Old preflight failed".into()));
+        assert!(broker.validate(&token).is_ok());
+        let mut forged=current.clone();forged.provider_setup_revision=format!("sha256:{}","f".repeat(64));
+        assert!(!broker.invalidate_preparation(&forged,"Wrong setup".into()));
+        assert!(broker.validate(&token).is_ok());
+        assert!(broker.invalidate_preparation(&current,"Current process inspection failed".into()));
+        assert!(broker.validate(&token).is_err());assert!(broker.preparation("dcs").unwrap().is_none());
     }
     #[test]
     fn closed_wrong_and_unapplied_game_contexts_cannot_mint_capabilities() {
