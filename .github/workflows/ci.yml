@@ -149,11 +149,18 @@ jobs:
         run: |
           rustup component add llvm-tools-preview
           python3 -m unittest discover -s scripts -p test_action_coverage.py -v
-          python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
-          python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
-          python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
+            python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
+            python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"
+          '
       - name: USB, inventory and compiler preview coverage at least 71 percent
-        run: python3 scripts/module-usb-coverage.py
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 scripts/module-usb-coverage.py
+          '
       - name: Game integration setup coverage at least 71 percent
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/.research/setup-coverage-target
@@ -164,7 +171,10 @@ jobs:
             --max-filesize 8234988 \
             --output "$OSG_DCS_SETUP_ARCHIVE" \
             'https://github.com/DCS-Skunkworks/dcs-bios/releases/download/v0.11.7/DCS-BIOS_v0.11.7.zip'
-          python3 scripts/setup-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/setup-coverage"
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 scripts/setup-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/setup-coverage"
+          '
       - name: Bootstrap behavior tests
         run: |
           python3 -m unittest discover -s tests/e2e -p 'test_*.py'
