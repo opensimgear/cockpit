@@ -94,7 +94,16 @@ const requestQueues = new Map<string, Promise<unknown>>();
 // leave an ever-growing epoch map behind.
 const companionRoutes = new Map<string, { epoch: number; pending: number }>();
 const usbRoutes = new Map<string, { epoch: number; pending: number }>();
+// One native ProfileSession owns every profile. An opaque identity cancels
+// unsent Apply requests without accumulating per-profile cancellation state.
+let profileApplyEpoch = {};
+let profileControlBarrier: Promise<void> = Promise.resolve();
 function queuedRequest(request: GatewayRequest, operation: () => Promise<GatewayState>): Promise<GatewayState> {
+  const profileApply = request.command === 'profile_apply';
+  const profileControl = ['profile_stop', 'profile_pause', 'profile_recover'].includes(request.command);
+  const profileInterrupt = ['profile_stop', 'profile_pause', 'profile_recover', 'mapping_stop', 'integration_stop', 'dcs_stop', 'controller_visibility_restore'].includes(request.command);
+  if (profileInterrupt) profileApplyEpoch = {};
+  const applyEpoch = profileApplyEpoch;
   const route = request.command === 'mapping_companion_route';
   const instance = typeof request.companion?.instanceId === 'string' ? request.companion.instanceId : 'invalid';
   const action = request.companion?.action;
@@ -116,16 +125,18 @@ function queuedRequest(request: GatewayRequest, operation: () => Promise<Gateway
     if (request.command === 'module_usb_disconnect') usbTicket.epoch++;
   }
   const usbEpoch = usbTicket?.epoch;
-  const key = usb ? `module-usb:${usbEndpoint}` : request.command.startsWith('module_usb_') ? 'module-usb-inventory' : route ? `companion-route:${instance}:${action === 'stop' ? 'stop' : 'requests'}` : request.command.startsWith('profile_resources_') ? 'profile-resources' : request.command.startsWith('profile_') ? 'profiles' : request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command === 'mapping_stop' ? 'mapping-stop' : request.command === 'mapping_virtual_inspect' ? 'mapping-inspect' : request.command.startsWith('mapping_') ? 'mapping' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
+  const key = profileControl ? 'profile-control' : profileApply ? 'profile-apply' : request.command === 'profile_status' ? 'profile-status' : usb ? `module-usb:${usbEndpoint}` : request.command.startsWith('module_usb_') ? 'module-usb-inventory' : route ? `companion-route:${instance}:${action === 'stop' ? 'stop' : 'requests'}` : request.command.startsWith('profile_resources_') ? 'profile-resources' : request.command.startsWith('profile_') ? 'profiles' : request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command === 'mapping_stop' ? 'mapping-stop' : request.command === 'mapping_virtual_inspect' ? 'mapping-inspect' : request.command.startsWith('mapping_') ? 'mapping' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
   const previous = requestQueues.get(key) ?? Promise.resolve();
   const stopping = route && action === 'start' ? requestQueues.get(`companion-route:${instance}:stop`) : undefined;
-  const before = stopping ? Promise.all([previous, stopping]) : previous;
+  const before = profileApply ? Promise.all([previous, requestQueues.get('profiles'), profileControlBarrier]) : stopping ? Promise.all([previous, stopping]) : previous;
   const pending = before.catch(() => {}).then(() => {
     if (action === 'start' && ticket && epoch !== ticket.epoch) throw new GatewayError('Companion Start was cancelled by Stop; start explicitly again.');
     if (usbTicket && request.command !== 'module_usb_disconnect' && usbEpoch !== usbTicket.epoch) throw new GatewayError('USB request was cancelled by Disconnect; refresh and request it explicitly again.');
+    if (profileApply && applyEpoch !== profileApplyEpoch) throw new GatewayError('Profile Apply was cancelled by Stop, Pause or recovery; apply explicitly again.');
     return operation();
   });
   const settled = pending.then(() => {}, () => {});
+  if (profileInterrupt) profileControlBarrier = Promise.all([profileControlBarrier, settled]).then(() => {});
   requestQueues.set(key, settled);
   void settled.then(() => {
     if (requestQueues.get(key) === settled) requestQueues.delete(key);

@@ -69,6 +69,46 @@ test('unified profile writes remain ordered without blocking gateway discovery o
   assert.deepEqual(api.calls[0].args.request.document, document);
 });
 
+test('profile runtime controls and status bypass slow Apply while older unsent Apply is cancelled',async()=>{
+  const active=deferred();
+  const api=transport({invokeResults:async(_command,request)=>{
+    if(request.command==='profile_apply')await active.promise;
+    return{ok:true,state:{profiles:{}}};
+  }});
+  const firstApply=api.gatewayRequest({command:'profile_apply',id:'first',expectedRevision:1});
+  const queuedApply=api.gatewayRequest({command:'profile_apply',id:'old-queued',expectedRevision:1});
+  const rejected=assert.rejects(queuedApply,/cancelled by Stop, Pause or recovery/);
+  await tick();
+  await api.gatewayRequest({command:'profile_status'});
+  await api.gatewayRequest({command:'profile_stop'});
+  await api.gatewayRequest({command:'profile_editor_save',document:{id:'draft'},expectedRevision:1,assignments:[]});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_apply','profile_status','profile_stop','profile_editor_save']);
+  active.resolve();await Promise.all([firstApply,rejected]);
+  assert.equal(api.calls.filter(call=>call.args.request.command==='profile_apply').length,1);
+});
+
+test('new explicit Apply waits for prior Save and priority control completion without replaying cancelled requests',async()=>{
+  for(const command of ['profile_stop','profile_pause','profile_recover','mapping_stop','integration_stop','dcs_stop','controller_visibility_restore']){
+    const saved=deferred(),stopping=deferred();
+    const api=transport({invokeResults:async(_name,request)=>{
+      if(request.command==='profile_editor_save')await saved.promise;
+      if(request.command===command)await stopping.promise;
+      return{ok:true,state};
+    }});
+    const save=api.gatewayRequest({command:'profile_editor_save',document:{id:'draft'},expectedRevision:1,assignments:[]});
+    const old=api.gatewayRequest({command:'profile_apply',id:'cancelled',expectedRevision:2});
+    const rejected=assert.rejects(old,/cancelled by Stop, Pause or recovery/);
+    const stop=api.gatewayRequest({command,...(command==='profile_pause'?{paused:true}:{})});
+    const fresh=api.gatewayRequest({command:'profile_apply',id:'fresh',expectedRevision:2});
+    await api.gatewayRequest({command:'profile_status'});
+    assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_editor_save',command,'profile_status']);
+    saved.resolve();await Promise.all([save,rejected]);await tick();
+    assert.equal(api.calls.some(call=>call.args.request.id==='fresh'),false);
+    stopping.resolve();await Promise.all([stop,fresh]);
+    assert.deepEqual(api.calls.filter(call=>call.args.request.command==='profile_apply').map(call=>call.args.request.id),['fresh']);
+  }
+});
+
 test('compiler previews follow profile edits without blocking independent inventory or activating', async () => {
   const waiting = deferred();
   const api = transport({ invokeResults: async (_command, request) => {
