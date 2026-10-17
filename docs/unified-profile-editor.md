@@ -125,6 +125,26 @@ is conservative and also covers unrelated resource changes. An overall Ready
 result with optional unavailable branches does not grant those branches delivery
 tokens. Apply must independently capture current native authority.
 
+## Native runtime controls
+
+The runtime card shows the native session state, applied profile/revision,
+current run generation and game context, degradation and recovery faults.
+These remain separate from the profile draft. Read-only status refreshes do not
+replace the editor or reset its history. Polling pauses while game settings hide
+the retained editor and while the document is hidden.
+
+**Apply saved revision** sends only the exact saved profile identity/revision
+and an explicitly selected optional game context. Unsaved documents and local
+assignment changes cannot be applied. Native performs a fresh admission check;
+a successful read-only preflight never grants activation authority. Stop and
+Pause remain available during an in-flight Apply. Delayed replies from an older
+Apply or status read cannot replace a newer Stop/Pause result.
+
+**Pause** persists the pause latch and stops the run. **Clear pause** clears only
+that latch; starting again requires a separate explicit Apply. **Recover outputs**
+uses native recovery and reports its actual result. Failed effect requests are
+never retried automatically. Leaving the editor does not stop an applied run.
+
 ## Validation
 
 The pure editor, canvas geometry, catalogue paging and actual Svelte SSR
@@ -135,5 +155,6 @@ App navigation, browser-history settings return, Save/continue races, exact
 route authoring, typed action arguments, visible transformations and undo/redo.
 Frontend coverage gates retain the repository's 71% thresholds.
 
-These tests establish authoring/navigation behavior. They do not establish
-real driver submission, device ownership or simulator qualification.
+These tests establish authoring, navigation and runtime-control request/status
+behavior. They do not establish real driver submission, device ownership or
+simulator qualification.

@@ -2,19 +2,33 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import ProfileRoutingEditor from './ProfileRoutingEditor.svelte';
+  import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
   import { gatewayRequest } from './gateway';
   import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument, type ProfileLocalAssignment } from './profiles';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
   import { ProfileEditorStore, ProfileNavigationGuard, addProfileResources, profileCategory, profileEditorDirty } from './profile-editor';
   import {ProfileEditorUndo}from'./profile-graph-history';
   import {ProfileCompilerClient}from'./profile-compilation';
+  import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
+  import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
+  import type {DeepReadonly} from './profiles';
   import type { GameId } from './games';
-  let { editorStore: suppliedStore, resourceClient: suppliedResources, openGameSettings }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void } = $props();
+  let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, openGameSettings, active=true }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
   const profiles = new ProfilesClient(async request => { const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Profiles are unavailable. Reconnect the native service.');return result; });
   const store = supplied ?? new ProfileEditorStore(profiles,resources);
   const compiler=new ProfileCompilerClient(async request=>{const result=(await gatewayRequest(request)).profileCompilation;if(!result)throw new Error('Native compilation is unavailable. Reconnect the service.');return result;});
+  let runtimeReplyEpoch=0;
+  let runtimeSelection=$state.raw<{selectedProfileId:string;selectionMode:'manual'|'automatic'}|null>(null);
+  const runtime=new ProfileRuntimeController(untrack(()=>suppliedRuntime)??new ProfileRuntimeClient(async request=>{
+    const epoch=++runtimeReplyEpoch,result=(await gatewayRequest(request)).profiles;
+    const status=nativeProfileStatus(result?.profileSession);
+    const selection=result?.session;
+    if(epoch===runtimeReplyEpoch&&selection&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(selection.selectedProfileId)&&(selection.selectionMode==='manual'||selection.selectionMode==='automatic'))runtimeSelection={selectedProfileId:selection.selectedProfileId,selectionMode:selection.selectionMode};
+    return status;
+  }));
+  let runtimeState=$state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
   const navigationGuard = new ProfileNavigationGuard(store);
   let workspace = $state.raw(store.state);
   const history=new ProfileEditorUndo(store);
@@ -26,11 +40,14 @@
   const rows = $derived([...workspace.profiles].sort((a,b)=>a.isDefault?-1:b.isDefault?1:a.name.localeCompare(b.name)));
   const assignedIds = $derived(new Set(editor?.assignments.map(assignment=>assignment.sourceId)??[]));
   const available = $derived(workspace.inventory.filter(resource=>!assignedIds.has(resource.id)));
-  const runtimeName = $derived(workspace.profiles.find(row=>row.id===workspace.session?.selectedProfileId)?.name??workspace.session?.selectedProfileId??'Not loaded');
-  const appliedName = $derived(workspace.profiles.find(row=>row.id===workspace.session?.appliedSnapshot?.profileId)?.name??workspace.session?.appliedSnapshot?.profileId);
+  const selectedProfileId=$derived(runtimeSelection?.selectedProfileId??workspace.session?.selectedProfileId);
+  const appliedSnapshot=$derived(runtimeState.status?runtimeState.status.appliedSnapshot:workspace.session?.appliedSnapshot);
+  const runtimeName = $derived(workspace.profiles.find(row=>row.id===selectedProfileId)?.name??selectedProfileId??'Not loaded');
+  const appliedName = $derived(workspace.profiles.find(row=>row.id===appliedSnapshot?.profileId)?.name??appliedSnapshot?.profileId);
+  const runtimeTarget=$derived(editor?{id:editor.document.id,revision:editor.document.revision,baseRevision:editor.baseRevision,dirty,readOnly:workspace.readOnly||workspace.busy||!!error}:null);
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next);if(workspace.view==='list')void store.refresh();if(!workspace.inventoryLoaded)void store.refreshInventory();return stop; });
-  onDestroy(() => { if(!supplied)store.dispose(); });
+  onDestroy(() => { runtimeReplyEpoch++;runtime.dispose();if(!supplied)store.dispose(); });
   function report(operation:()=>void) { notice='';try{operation();workspace=store.state;}catch(error){notice=error instanceof Error?error.message:String(error);} }
   async function add() { notice='';if(!workspace.inventoryLoaded){await store.refreshInventory();workspace=store.state;}if(workspace.inventory.length>64){creatingSelection=true;inventorySelection=[];return;}report(()=>store.beginBlank()); }
   function beginSelected() { report(()=>store.beginBlank(workspace.inventory.filter(resource=>inventorySelection.includes(resource.id))));if(!notice){creatingSelection=false;inventorySelection=[];} }
@@ -58,7 +75,8 @@
 </script>
 
 <section class="profiles-workspace" aria-label="Profiles">
-  <div class="profile-session" aria-label="Runtime profile status"><span><strong>Runtime selection</strong> {runtimeName}</span><span>{workspace.session?.state??'Loading status'}</span><span><strong>Applied revision</strong> {workspace.session?.appliedSnapshot?`${appliedName} · ${workspace.session.appliedSnapshot.revision}`:'None'}</span><p>Opening and saving an editor leaves runtime selection and applied revision unchanged.</p></div>
+  <div class="profile-session" aria-label="Runtime profile status"><span><strong>Runtime selection</strong> {runtimeName}</span><span>{runtimeState.status?.state??workspace.session?.state??'Loading status'}</span><span><strong>Applied revision</strong> {appliedSnapshot?`${appliedName} · ${appliedSnapshot.revision}`:'None'}</span><p>Opening and saving an editor leaves runtime selection and applied revision unchanged.</p></div>
+  <ProfileRuntimeControls controller={runtime} editor={runtimeTarget} profiles={workspace.profiles} gameIds={editor?.document.eligibility.gameIds??[]} {active} onState={next=>runtimeState=next}/>
   {#if workspace.diagnostics.length}<div class="profile-diagnostics" role="status">{#each workspace.diagnostics as diagnostic,index (index)}<p>{diagnostic}</p>{/each}</div>{/if}
   {#if workspace.readOnly}<p class="workspace-error" role="status">This library is read-only. Resolve its diagnostics before making changes.</p>{/if}
   {#if notice||workspace.error}<p class="workspace-error" role="alert">{notice||workspace.error}</p>{/if}
@@ -66,7 +84,7 @@
     <div class="page-heading"><div><div class="eyebrow">YOUR OPERATING SETUPS</div><h1>Profiles</h1><p>Edit Default or create an independent profile for your rig.</p></div><button class="primary-button" disabled={workspace.busy||workspace.inventoryBusy||workspace.readOnly} onclick={add}><Icon name="plus" size={14}/> Add profile</button></div>
     <div class="list-tools"><span>{rows.length} {rows.length===1?'profile':'profiles'} · {workspace.inventory.length} inventory resources</span><button class="text-button" disabled={workspace.busy} onclick={()=>store.refresh()}>Refresh profiles</button></div>
     {#if creatingSelection}<section class="inventory-picker panel" aria-label="Choose resources for new profile"><h2>Choose up to 64 resource blocks</h2><p class="inventory-help">The inventory has {workspace.inventory.length} resources. This exceeds the profile's 64-block capacity; select the resources for this draft explicitly. Nothing has been saved or omitted automatically.</p><div class="inventory-choices">{#each workspace.inventory as resource (resource.id)}<label><input type="checkbox" checked={inventorySelection.includes(resource.id)} onchange={event=>toggleResource(resource.id,event.currentTarget.checked)}/><span><strong>{resource.name}</strong><small>{profileCategory(resource)} · {resource.availability}</small></span></label>{/each}</div><button class="text-button" onclick={()=>creatingSelection=false}>Cancel creation</button><button class="secondary-button" disabled={!inventorySelection.length||inventorySelection.length>64} onclick={beginSelected}>Open draft with {inventorySelection.length} selected resources</button></section>{/if}
-    <ul class="profile-list" aria-label="Saved profiles">{#each rows as profile (profile.id)}<li><button class="profile-row" disabled={workspace.busy} onclick={()=>store.open(profile.id)} aria-label={`Edit ${profile.name}`}><span class="profile-mark"><Icon name="network" size={22}/></span><span class="profile-copy"><strong>{profile.name}{#if profile.isDefault}<small>Built-in · editable</small>{/if}</strong><span>Saved revision {profile.revision}</span></span><span class="profile-badges">{#if workspace.session?.selectedProfileId===profile.id}<span>Selected for runtime</span>{/if}{#if workspace.session?.appliedSnapshot?.profileId===profile.id}<span>Applied revision {workspace.session?.appliedSnapshot?.revision}</span>{/if}</span><Icon name="chevron" size={16}/></button></li>{:else}<li class="empty-profiles">{workspace.busy?'Loading profiles…':'No profile list is available. Refresh profiles to load Default.'}</li>{/each}</ul>
+    <ul class="profile-list" aria-label="Saved profiles">{#each rows as profile (profile.id)}<li><button class="profile-row" disabled={workspace.busy} onclick={()=>store.open(profile.id)} aria-label={`Edit ${profile.name}`}><span class="profile-mark"><Icon name="network" size={22}/></span><span class="profile-copy"><strong>{profile.name}{#if profile.isDefault}<small>Built-in · editable</small>{/if}</strong><span>Saved revision {profile.revision}</span></span><span class="profile-badges">{#if selectedProfileId===profile.id}<span>Selected for runtime</span>{/if}{#if appliedSnapshot?.profileId===profile.id}<span>Applied revision {appliedSnapshot.revision}</span>{/if}</span><Icon name="chevron" size={16}/></button></li>{:else}<li class="empty-profiles">{workspace.busy?'Loading profiles…':'No profile list is available. Refresh profiles to load Default.'}</li>{/each}</ul>
     {#if workspace.inventoryError}<p class="workspace-error" role="status">{workspace.inventoryError}</p><button class="secondary-button" disabled={workspace.inventoryBusy} onclick={()=>store.refreshInventory()}>Refresh resource inventory</button>{/if}
   {:else if editor}
     <button class="text-button back-profiles" disabled={workspace.busy} onclick={back}>← Back to Profiles</button>
