@@ -88,7 +88,7 @@ class ReleaseReadinessTests(unittest.TestCase):
                 if name == "mobile-authentication":
                     changed = original.replace("if mobile {\n        Some(", "if mobile {\n        None.or(", 1)
                 elif name == "host-live-output":
-                    changed = original.replace("osg_virtual_controller::entry::factory(),\n            false,", "osg_virtual_controller::entry::factory(),\n            true,", 1)
+                    changed = original.replace("LIVE_OUTPUT_QUALIFIED: bool = false", "LIVE_OUTPUT_QUALIFIED: bool = true", 1)
                 elif name == "live-scripts":
                     changed = original.replace("SCRIPT_LIVE_QUALIFIED: bool = false", "SCRIPT_LIVE_QUALIFIED: bool = true", 1)
                 else:
@@ -98,6 +98,22 @@ class ReleaseReadinessTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, name):
                     release.validate(self.matrix, root)
                 target.write_text(original, encoding="utf-8")
+
+    def test_host_constructor_cannot_bypass_a_disabled_live_output_constant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative, _ in release.GATES.values():
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(release.ROOT / relative, target)
+            target = root / release.GATES['host-live-output'][0]
+            source = target.read_text(encoding='utf-8')
+            changed = source.replace('osg_virtual_controller::entry::factory(),\n            LIVE_OUTPUT_QUALIFIED,',
+                                     'osg_virtual_controller::entry::factory(),\n            true,', 1)
+            self.assertNotEqual(changed, source)
+            target.write_text(changed, encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'host-live-output'):
+                release.validate(self.matrix, root)
 
     def test_matrix_reader_rejects_duplicates_oversize_invalid_and_symlink(self):
         with tempfile.TemporaryDirectory() as directory:

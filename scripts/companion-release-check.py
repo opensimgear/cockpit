@@ -24,7 +24,7 @@ BUDGETS = {
 # These are repository consistency checks, not runtime/native qualification.
 GATES = {
     "host-live-output": ("crates/mapping-host/src/service.rs",
-        r"pub fn new\([\s\S]*?Self::with_output\([\s\S]*?osg_virtual_controller::entry::factory\(\),\s*false,\s*\)"),
+        r"^pub const LIVE_OUTPUT_QUALIFIED: bool = false;$[\s\S]*?pub fn new\([\s\S]*?Self::with_output\([\s\S]*?osg_virtual_controller::entry::factory\(\),\s*LIVE_OUTPUT_QUALIFIED,\s*\)"),
     "windows-provisioning": ("crates/virtual-controller/src/windows_launcher.rs", r"^pub const QUALIFIED: bool = false;$"),
     "windows-hiding": ("crates/controller-input/src/visibility/windows.rs", r"^pub const QUALIFIED: bool = false;$"),
     "live-scripts": ("crates/mapping-host/src/service.rs", r"^pub const SCRIPT_LIVE_QUALIFIED: bool = false;$"),
