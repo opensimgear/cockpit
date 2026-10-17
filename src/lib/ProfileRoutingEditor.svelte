@@ -4,6 +4,7 @@
   import ProfileProcessingEditor from './ProfileProcessingEditor.svelte';
   import ProfileVirtualEditor from './ProfileVirtualEditor.svelte';
   import ProfileInputLearning from './ProfileInputLearning.svelte';
+  import ProfileCompanionEditor from './ProfileCompanionEditor.svelte';
   import {ProfileLearningController}from'./profile-learning-controller';
   import type{ProfileLearningClient}from'./profile-learning';
   import {canvasNodes,portContractLabel,type CanvasNode} from './profile-canvas';
@@ -14,10 +15,11 @@
   import type{DeepReadonly,ProfileDocument,ProfileLocalAssignment,ProfilePortContract,ProfileProcessingNode,ProfileVirtualOutput}from'./profiles';
   import type{ObservedResourcePort,ProfileInventoryClient,ResourceDetails,ResourceSummary}from'./profile-inventory';
   import type{GameId}from'./games';
-  let{document,assignments,inventory,inventoryClient,compilerClient,learningClient,editorContext='',active=true,runtimeIdle=false,inventoryRevision=0,readOnly=false,selectedId=$bindable(''),change,openGameSettings,undo,redo,canUndo=false,canRedo=false,undoLabel='',redoLabel=''}:{
+  import type{ProfileCompanionAuthoringClient}from'./profile-companion-authoring';
+  let{document,assignments,inventory,inventoryClient,compilerClient,learningClient,companionClient,editorContext='',active=true,runtimeIdle=false,inventoryRevision=0,readOnly=false,selectedId=$bindable(''),change,openGameSettings,undo,redo,canUndo=false,canRedo=false,undoLabel='',redoLabel=''}:{
     document:DeepReadonly<ProfileDocument>;assignments:readonly DeepReadonly<ProfileLocalAssignment>[];inventory:readonly DeepReadonly<ResourceSummary>[];inventoryClient:Pick<ProfileInventoryClient,'inspect'>;compilerClient?:Pick<ProfileCompilerClient,'compile'|'inspect'>;inventoryRevision?:number;readOnly?:boolean;selectedId?:string;
     change:(draft:ProfileGraphDraft,label:string)=>void;openGameSettings?:(gameId:GameId,returnState?:unknown)=>void;undo?:()=>void;redo?:()=>void;canUndo?:boolean;canRedo?:boolean;undoLabel?:string;redoLabel?:string;
-    learningClient?:Pick<ProfileLearningClient,'start'|'status'|'cancel'>;editorContext?:string;active?:boolean;runtimeIdle?:boolean;
+    companionClient?:Pick<ProfileCompanionAuthoringClient,'catalogue'|'inspect'>;learningClient?:Pick<ProfileLearningClient,'start'|'status'|'cancel'>;editorContext?:string;active?:boolean;runtimeIdle?:boolean;
   }=$props();
   const copy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value));
   let message=$state(''),routeOpen=$state(false),fromNode=$state(''),fromPort=$state(''),toNode=$state(''),toPort=$state(''),editingRoute=$state(''),highlighted=$state<string[]>([]),preset=$state<ProcessingPreset>('identity'),chainOrder=$state<string[]>([]);
@@ -75,7 +77,7 @@
     {#if sourceContract}<p>{portContractLabel(sourceContract)}</p>{/if}{#if targetAction}<p>{portContractLabel(targetAction)}</p>{/if}<p class:connection-problem={!!connectionError} role="status">{connectionError||'Compatible exact port contracts.'}</p><button class="primary-button" disabled={readOnly||!!connectionError} onclick={connect}>{editingRoute?'Update exact route':'Create exact route'}</button>
     {#if targetAction?.delivery==='action'}<div class="argument-actions"><button class="secondary-button" disabled={readOnly} onclick={()=>actionPack('action-pack')}>Add event-triggered argument pack</button>{#if targetAction.semantics==='setter'}<button class="secondary-button" disabled={readOnly} onclick={()=>actionPack('set-on-change')}>Add setter on argument change</button>{/if}<p>Map each named argument into the new node, then connect its invocation output to this action. No argument or trigger is inferred.</p></div>{/if}
   </section>{/if}
-  <ProfileCanvas {document} {assignments} {inventory} {inventoryClient} {readOnly} bind:selectedId {openGameSettings} change={next=>change({document:next,assignments:copy(assignments) as ProfileLocalAssignment[]},'Edit canvas layout')} {connectBlocks} connectionFrom={source} connectionTo={destination} selectProviderPort={selectPort} removeProviderPort={(nodeId,portId)=>apply(()=>graphRemovePort(graph,nodeId,portId),'Remove selected port and routes')} highlightedEdges={highlighted} diagnostics={previewCurrent?diagnostics:[]} {undo} {redo}>
+  <ProfileCanvas companionAuthoring {document} {assignments} {inventory} {inventoryClient} {readOnly} bind:selectedId {openGameSettings} change={next=>change({document:next,assignments:copy(assignments) as ProfileLocalAssignment[]},'Edit canvas layout')} {connectBlocks} connectionFrom={source} connectionTo={destination} selectProviderPort={selectPort} removeProviderPort={(nodeId,portId)=>apply(()=>graphRemovePort(graph,nodeId,portId),'Remove selected port and routes')} highlightedEdges={highlighted} diagnostics={previewCurrent?diagnostics:[]} {undo} {redo}>
     {#snippet inspector(node)}
       <fieldset class="authoring-inspector" disabled={readOnly}>
         {#if node.resource}<details open={!node.assignment}><summary>Resource assignment and policy</summary><label>Block label<input value={node.resource.name} maxlength="80" onchange={event=>resourcePolicy(node,'name',event.currentTarget.value)}/></label><label class="check"><input type="checkbox" checked={node.resource.required} onchange={event=>resourcePolicy(node,'required',event.currentTarget.checked)}/> Required resource</label>
@@ -88,6 +90,7 @@
         {#if node.virtual}<ProfileVirtualEditor output={node.virtual} change={updateVirtual}/>{/if}
         <p class="remove-help">Removing this block also removes {document.bindings.filter(binding=>binding.from.nodeId===node.id||binding.to.nodeId===node.id).length} exact routes.</p><button class="text-button" onclick={()=>removeNode(node.id)}>Remove block and its routes</button>
       </fieldset>
+      {#if node.resource?.kind==='companion'}<ProfileCompanionEditor {graph} {inventory} resourceId={node.id} {readOnly} {active} client={companionClient} {change}/>{/if}
       {#if learning&&node.resource&&node.assignment&&node.observation?.resourceType==='host-controller'}<ProfileInputLearning controller={learning} resource={node.observation} context={`${editorContext}/${node.id}/${node.assignment.sourceId}`} {active} disabled={readOnly} {runtimeIdle} choose={port=>selectPort(node.id,port)}/>{/if}
     {/snippet}
   </ProfileCanvas>

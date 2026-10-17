@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./runtime-config','./panel-input-metadata','./integration-profile','./games','./profile-inventory','./profile-graph','./profile-graph-history','./profile-processing','./profile-learning','./profile-learning-controller','./profile-compilation','./profile-editor','./profile-canvas','./profile-port-browser']);
+const modules=await loadModules(['./profiles','./runtime-config','./panel-input-metadata','./integration-profile','./games','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-learning','./profile-learning-controller','./profile-compilation','./profile-editor','./profile-canvas','./profile-port-browser']);
 const graph=modules.get('./profile-graph'),processing=modules.get('./profile-processing'),plain=value=>JSON.parse(JSON.stringify(value));
 const noRequest=()=>{throw new Error('SSR/authoring must not issue an effect or native request.');};
 const bool={type:'boolean'},integer=(min=0,max=32767)=>({type:'integer',min,max,unit:null}),state=(schema=bool)=>({delivery:'state',schema,freshnessMs:1000,fallback:null}),event=()=>({delivery:'event',schema:bool});
@@ -17,6 +17,12 @@ const renderRouting=(value,props={})=>render(Routing,{props:{...value,inventory:
 // These invoke the real Svelte handlers inside an SSR closure. They do not simulate DOM pointer capture.
 async function harness(value,seed={},props={}){let handlers;const component=await components({seed,capture:value=>handlers=value}),Component=await component('./ProfileRoutingEditor.svelte'),edits=[];const body=render(Component,{props:{...plain(value),inventory:[],inventoryClient:{inspect:noRequest},change:(next,label)=>edits.push({next,label}),...props}}).body;return{body,handlers,edits};}
 const connect=async(value,fromNode,fromPort,toNode,toPort)=>{const h=await harness(value,{fromNode,fromPort,toNode,toPort});h.handlers.connect();assert.equal(h.handlers.state.message,'');assert.equal(h.edits.length,1);return plain(h.edits[0].next);};
+
+test('selected companion uses its profile-owned immutable panel picker rather than the currently installed generic catalogue',()=>{
+  const value=draft(),hash=`sha256:${'1'.repeat(64)}`,source={id:'native-paired-instance',name:'Explicit companion',resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash,portCount:3,cachedPortCount:3,connections:[],attributes:{publicationHash:hash},diagnostics:[]};
+  value.assignments=[{resourceId:'companion',sourceId:source.id,ports:[{profilePortId:'indicator',observedPortId:'current-indicator',expectedContractHash:hash}]}];
+  const body=renderRouting(value,{selectedId:'companion',inventory:[source],companionClient:{catalogue:noRequest,inspect:noRequest}});assert.ok(body.includes('Profile companion panel selection'));assert.ok(body.includes('Paired companion resource'));assert.ok(body.includes('Browse retained panels'));assert.ok(!body.includes('Provider catalogue ·'));assert.ok(body.includes('Connection metadata'));
+});
 
 test('actual routing UI exposes exact mappings, virtual controllers, visible transforms, history and a dense accessible bindings table',()=>{
   const body=renderRouting(draft());for(const label of ['Connect exact ports','Add virtual controller','Visible transformation','Add transformation','Undo','Redo','Exact signal bindings','No routes yet.','Choose a row'])assert.ok(body.includes(label),label);
