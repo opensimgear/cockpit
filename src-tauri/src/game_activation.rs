@@ -1,0 +1,190 @@
+//! Background process identity capture for unified profile selection. No provider
+//! setup, traffic, hardware effect, profile selection or UI polling is involved.
+use crate::game_discovery::{Platform, ProcessIdentity};
+use osg_profiles::activation::{GameIdentity, VerifiedGame};
+use serde_json::{json, Value};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
+const MAX_AGE: Duration = Duration::from_secs(2);
+#[derive(Clone)]
+struct Proof {
+    identity: GameIdentity,
+    process: ProcessIdentity,
+    session: String,
+}
+struct Entry {
+    pending: Option<(GameIdentity, ProcessIdentity)>,
+    confirmed: Option<Proof>,
+    status: String,
+    message: String,
+}
+#[derive(Default)]
+struct State {
+    at: Option<Instant>,
+    entries: BTreeMap<String, Entry>,
+}
+#[derive(Default)]
+pub(crate) struct Observer(Mutex<State>);
+
+pub(crate) fn identity(platform: &dyn Platform, game: &Value) -> Result<GameIdentity, String> {
+    if game["installed"] != true || game["processMonitoringSupported"] != true {
+        return Err("The selected installation has no native process monitoring support.".into());
+    }
+    let identity = GameIdentity {
+        game_id: game["id"]
+            .as_str()
+            .ok_or("The native game identity is missing.")?
+            .into(),
+        executable: game["executable"]
+            .as_str()
+            .ok_or("Choose a validated game executable.")?
+            .into(),
+    };
+    identity.validate()?;
+    platform.validate(&identity.game_id, &identity.executable)?;
+    Ok(identity)
+}
+fn process(
+    platform: &dyn Platform,
+    game: &Value,
+) -> Result<(GameIdentity, Option<ProcessIdentity>), String> {
+    let identity = identity(platform, game)?;
+    let process = platform.find(game)?;
+    if let Some(process) = &process {
+        ProcessIdentity::parse(&process.value())?;
+        if !platform.alive(process)? {
+            return Ok((identity, None));
+        }
+    }
+    Ok((identity, process))
+}
+impl Observer {
+    pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
+        // Native catalogue bounds are four games; reject duplicates rather than
+        // allowing a second observation in one scan to satisfy debounce.
+        let mut seen = BTreeSet::new();
+        let scans = games
+            .iter()
+            .take(5)
+            .map(|game| {
+                let id = game["id"].as_str().unwrap_or("").to_owned();
+                let result = if !seen.insert(id.clone()) || games.len() > 4 {
+                    Err("The native game catalogue is ambiguous or exceeds its bound.".into())
+                } else {
+                    process(platform, game)
+                };
+                (id, result)
+            })
+            .collect::<Vec<_>>();
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        state.entries.retain(|id, _| seen.contains(id));
+        for (id, result) in scans {
+            let entry = state.entries.entry(id).or_insert_with(|| Entry {
+                pending: None,
+                confirmed: None,
+                status: "not-running".into(),
+                message: String::new(),
+            });
+            match result {
+                Ok((identity, Some(process))) => {
+                    if entry
+                        .confirmed
+                        .as_ref()
+                        .is_some_and(|proof| proof.identity == identity && proof.process == process)
+                    {
+                        entry.status = "verified".into();
+                        entry.message.clear();
+                    } else if entry.pending.as_ref() == Some(&(identity.clone(), process.clone())) {
+                        entry.confirmed = Some(Proof {
+                            identity,
+                            process,
+                            session: uuid::Uuid::new_v4().to_string(),
+                        });
+                        entry.pending = None;
+                        entry.status = "verified".into();
+                        entry.message.clear();
+                    } else {
+                        entry.confirmed = None;
+                        entry.pending = Some((identity, process));
+                        entry.status = "settling".into();
+                        entry.message = "Waiting for a second verified observation of this exact executable and creation epoch.".into();
+                    }
+                }
+                Ok((_, None)) => {
+                    entry.pending = None;
+                    entry.confirmed = None;
+                    entry.status = "not-running".into();
+                    entry.message.clear();
+                }
+                Err(error) => {
+                    entry.pending = None;
+                    entry.confirmed = None;
+                    entry.status = "unavailable".into();
+                    entry.message = error;
+                }
+            }
+        }
+        state.at = Some(Instant::now());
+    }
+    pub(crate) fn snapshot(&self) -> Result<Vec<VerifiedGame>, String> {
+        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+            return Err("Native game process observations are stale; automatic activation is waiting for the watcher.".into());
+        }
+        Ok(state
+            .entries
+            .values()
+            .filter_map(|entry| {
+                entry.confirmed.as_ref().map(|proof| VerifiedGame {
+                    identity: proof.identity.clone(),
+                    process_session: proof.session.clone(),
+                })
+            })
+            .collect())
+    }
+    pub(crate) fn validate(
+        &self,
+        platform: &dyn Platform,
+        game: &Value,
+        expected: &VerifiedGame,
+    ) -> Result<(), String> {
+        let proof = {
+            let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+                return Err("The automatic game observation expired during preparation.".into());
+            }
+            state
+                .entries
+                .get(&expected.identity.game_id)
+                .and_then(|entry| entry.confirmed.clone())
+                .filter(|proof| {
+                    proof.identity == expected.identity && proof.session == expected.process_session
+                })
+                .ok_or("The verified game context changed during profile preparation.")?
+        };
+        if process(platform, game)? != (proof.identity, Some(proof.process)) {
+            return Err("The prepared game exited, changed executable or was replaced; no profile was activated.".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn view(&self, id: &str) -> Value {
+        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let fresh = state.at.is_some_and(|at| at.elapsed() <= MAX_AGE);
+        match state.entries.get(id).filter(|_| fresh) {
+            Some(entry) => {
+                json!({"status":entry.status,"message":entry.message,"processSession":entry.confirmed.as_ref().map(|proof| &proof.session)})
+            }
+            None => {
+                json!({"status":"waiting","message":"Waiting for current native process observations.","processSession":null})
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "game_activation_tests.rs"]
+mod tests;

@@ -376,6 +376,7 @@ struct Inner {
     contexts: Mutex<crate::game_context::Broker>,
     admitted_context: Mutex<Option<crate::game_context::ContextToken>>,
     context_setup_check: Mutex<Option<Instant>>,
+    activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
     state: Mutex<Value>,
     busy: AtomicBool,
@@ -387,9 +388,12 @@ pub(crate) struct GamesRuntime {
     admission: Mutex<()>,
     worker: Mutex<Option<JoinHandle<()>>>,
     observer: Mutex<Option<JoinHandle<()>>>,
+    activation_observer: Mutex<Option<JoinHandle<()>>>,
 }
 #[path = "game_context_runtime.rs"]
 mod context_runtime;
+#[path = "game_activation_runtime.rs"]
+mod activation_runtime;
 pub(crate) use context_runtime::PreparedGame;
 impl GamesRuntime {
     pub(crate) fn new(panel: Panel, path: PathBuf, platform: Arc<dyn Platform>) -> Self {
@@ -424,6 +428,7 @@ impl GamesRuntime {
                 contexts: Mutex::new(crate::game_context::Broker::default()),
                 admitted_context: Mutex::new(None),
                 context_setup_check: Mutex::new(None),
+                activation: crate::game_activation::Observer::default(),
                 panel,
                 platform,
                 path,
@@ -442,8 +447,10 @@ impl GamesRuntime {
             admission: Mutex::new(()),
             worker: Mutex::new(None),
             observer: Mutex::new(None),
+            activation_observer: Mutex::new(None),
         };
         runtime.start_context_observer();
+        runtime.start_activation_observer();
         runtime
     }
     pub(crate) fn status(&self) -> Value {
@@ -463,6 +470,7 @@ impl GamesRuntime {
             .setup
             .decorate(&mut catalogue, &Value::Null, &Value::Null);
         self.decorate_game_contexts(&mut catalogue);
+        for game in &mut catalogue { game["profileContext"] = self.inner.activation.view(game["id"].as_str().unwrap_or("")); }
         catalogue
     }
     pub(crate) fn status_with_telemetry(&self, integration: &Value, dcs: &Value) -> Value {
@@ -477,6 +485,7 @@ impl GamesRuntime {
             .auto_check(&catalogue, self.inner.platform.clone(), integration);
         self.inner.setup.decorate(&mut catalogue, integration, dcs);
         self.decorate_game_contexts(&mut catalogue);
+        for game in &mut catalogue { game["profileContext"] = self.inner.activation.view(game["id"].as_str().unwrap_or("")); }
         // Detection is independent of profile activation and observes games
         // launched outside Cockpit without changing their session or settings.
         let mut detected = Vec::new();
@@ -859,6 +868,7 @@ impl GamesRuntime {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
         self.inner.cancel.store(true, Ordering::Release);
+        if let Some(observer) = self.activation_observer.lock().unwrap_or_else(|p| p.into_inner()).take() { let _ = observer.join(); }
         if let Some(observer) = self
             .observer
             .lock()

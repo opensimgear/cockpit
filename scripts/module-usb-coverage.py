@@ -12,8 +12,8 @@ import tempfile
 
 
 MODULES = ["output_leases", "module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
-           "profile_resources", "profile_resources_game", "profile_session_panels_io", "profile_session_panels_inputs", "profile_session_inspection", "profile_resource_sources", "profile_resource_ports", "profile_compilation", "profile_input_learning", "profile_session_companions"]
-TEST_FILTERS = ["input_learning", "output_leases", "module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "stm32::tests::guarded_restoration", "stm32::tests::endpoint_lease", "profile_panels_io", "profile_session_panels_inputs", "profile_session::inspection", "gateways::tests::applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate", "profile_session_companions::tests"]
+           "profile_resources", "profile_resources_game", "profile_session_panels_io", "profile_session_panels_inputs", "profile_session_inspection", "profile_resource_sources", "profile_resource_ports", "profile_compilation", "profile_input_learning", "profile_session_companions", "game_activation", "game_activation_runtime"]
+TEST_FILTERS = ["input_learning", "output_leases", "module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "stm32::tests::guarded_restoration", "stm32::tests::endpoint_lease", "profile_panels_io", "profile_session_panels_inputs", "profile_session::inspection", "gateways::tests::applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate", "profile_session_companions::tests", "game_activation"]
 
 
 def source_stamp(paths, root):

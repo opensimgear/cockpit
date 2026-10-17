@@ -10,6 +10,7 @@ mod dcs_runtime;
 mod dcs_setup;
 mod desktop;
 mod game_discovery;
+mod game_activation;
 mod game_context;
 mod game_integration_setup;
 mod game_telemetry;
