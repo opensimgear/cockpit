@@ -36,6 +36,7 @@ jobs:
       - run: pnpm profile-graph:coverage
       - run: pnpm profile-graph-history:coverage
       - run: pnpm profile-processing:coverage
+      - run: pnpm profile-runtime:coverage
       - run: pnpm module-usb:coverage
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage

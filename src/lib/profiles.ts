@@ -64,11 +64,11 @@ export type ProfileLocalAssignment = { resourceId: string; sourceId: string; por
 export type ProfileSelectionMode = 'manual' | 'automatic';
 export type AppliedProfileSnapshot = { profileId: string; revision: number; semanticHash: string };
 export type ProfileSession = {
-  selectedProfileId: string; selectionMode: ProfileSelectionMode; state: 'stopped' | 'paused' | 'faulted';
+  selectedProfileId: string; selectionMode: ProfileSelectionMode; state: 'stopped' | 'running' | 'degraded' | 'paused' | 'faulted' | 'recovery-needed' | 'transitioning';
   appliedSnapshot: AppliedProfileSnapshot | null; fault: string | null;
 };
 export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string };
-export type ProfileCommand = 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_pause' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
+export type ProfileCommand = 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_pause' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
 export type ProfileRequest =
   | { command: 'profile_list' | 'profile_status' }
   | { command: 'profile_get' | 'profile_export' | 'profile_assignments_get'; id: string }
@@ -81,10 +81,12 @@ export type ProfileRequest =
   | { command: 'profile_editor_save'; document: ProfileDocument; expectedRevision: number | null; assignments: ProfileLocalAssignment[] }
   | { command: 'profile_import'; document: ProfileDocument; name?: string }
   | { command: 'profile_select'; id: string; selectionSource: ProfileSelectionMode }
+  | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: 'dcs' | 'x-plane-11' | 'x-plane-12' | 'assetto-corsa-rally' }
+  | { command: 'profile_stop' | 'profile_recover' }
   | { command: 'profile_pause'; paused: boolean }
   | { command: 'profile_selection_mode'; mode: ProfileSelectionMode }
   | { command: 'profile_reset'; confirm: true };
-export type ProfileResult = { document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
+export type ProfileResult = { document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; profileSession?: import('./profile-runtime').NativeProfileStatus; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
 export type ProfileEditorSaveResult = { document: ProfileDocument; assignments: ProfileLocalAssignment[]; profiles: ProfileSummary[]; session: ProfileSession };
 export type ProfileSend = (request: ProfileRequest) => Promise<ProfileResult>;
 export type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
