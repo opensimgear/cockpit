@@ -744,6 +744,26 @@ fn registry_and_counter_exhaustion_fail_closed_and_stale_batches_do_not_release_
 }
 #[test]
 fn service_clock_consumes_companion_events_without_frontend_polling_or_optional_drivers() {
+    fn wait_cached(
+        service: &crate::service::Service,
+        request: serde_json::Value,
+        expected: &str,
+        predicate: impl Fn(&serde_json::Value) -> bool,
+    ) -> serde_json::Value {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            // These requests only inspect cached state; they never pump input.
+            let observed = service.request(&request).unwrap();
+            if predicate(&observed) {
+                return observed;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Independent service clock did not observe {expected}: {observed}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
     let root = tempfile::tempdir().unwrap();
     let (profile, assignments, _) = fixture(false);
     let store = osg_mapping::store::Store::new(root.path().into());
@@ -807,32 +827,77 @@ fn service_clock_consumes_companion_events_without_frontend_polling_or_optional_
             ],
         )
         .unwrap();
-    // The worker advances independently; no UI request transports these events.
-    std::thread::sleep(std::time::Duration::from_millis(35));
-    let records = service
-        .request(&json!({"command":"mapping_recording","after":"0"}))
-        .unwrap();
-    let buttons = records["records"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|record| record["report"]["target"] == "main")
-        .map(|record| record["report"]["state"]["buttons"][0].as_bool().unwrap())
-        .collect::<Vec<_>>();
-    assert!(buttons.windows(2).any(|pair| pair == [true, false]));
-    provider.loss_native(&token("left", 1)).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(15));
-    assert_eq!(
-        service
-            .request(&json!({"command":"mapping_status"}))
-            .unwrap()["running"],
-        true
+    // The worker advances independently; fixed sleeps do not establish that it
+    // has consumed the queued events on a loaded or instrumented runner.
+    let records = wait_cached(
+        &service,
+        json!({"command":"mapping_recording","after":"0"}),
+        "the complete press/release edge",
+        |records| {
+            let buttons = records["records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|record| record["report"]["target"] == "main")
+                .map(|record| record["report"]["state"]["buttons"][0].as_bool().unwrap())
+                .collect::<Vec<_>>();
+            buttons.windows(2).any(|pair| pair == [true, false])
+        },
     );
+    // Hold a fresh contribution so only consumption of the explicit loss can
+    // produce the later SourceLost neutral report for this exact run.
+    provider
+        .changes_native(
+            &token("left", 1),
+            2,
+            &[change("trigger", Value::Button(true))],
+        )
+        .unwrap();
+    let held = wait_cached(
+        &service,
+        json!({"command":"mapping_recording","after":records["next"]}),
+        "the held contribution before loss",
+        |records| {
+            records["records"].as_array().unwrap().iter().any(|record| {
+                record["report"]["target"] == "main"
+                    && record["report"]["reason"] == "change"
+                    && record["report"]["state"]["buttons"][0] == true
+            })
+        },
+    );
+    let ready = service
+        .request(&json!({"command":"mapping_status"}))
+        .unwrap();
+    assert_eq!(ready["running"], true);
+    assert_eq!(ready["ready"], true);
+    assert!(ready["fault"].is_null(), "{ready}");
+    provider.loss_native(&token("left", 1)).unwrap();
+    let lost = wait_cached(
+        &service,
+        json!({"command":"mapping_recording","after":held["next"]}),
+        "the explicit loss releasing the held contribution",
+        |records| {
+            records["records"].as_array().unwrap().iter().any(|record| {
+                record["report"]["target"] == "main"
+                    && record["report"]["reason"] == "source-lost"
+                    && record["report"]["session"] == ready["token"]["session"]
+                    && record["report"]["runGeneration"] == ready["token"]["generation"]
+                    && record["report"]["state"]["buttons"][0] == false
+            })
+        },
+    );
+    assert!(!lost["gap"].as_bool().unwrap());
+    let status = service
+        .request(&json!({"command":"mapping_status"}))
+        .unwrap();
+    assert_eq!(status["running"], true);
+    assert_eq!(status["ready"], false);
+    assert_eq!(status["token"], ready["token"]);
+    assert!(status["fault"].is_null(), "{status}");
     assert_eq!(
-        service
-            .request(&json!({"command":"mapping_status"}))
-            .unwrap()["ready"],
-        false
+        provider.list().unwrap()["companionSources"][0]["fault"],
+        "Companion session stopped.",
+        "Freshness expiry must not substitute for the explicit loss"
     );
     service.request(&json!({"command":"mapping_stop"})).unwrap();
     service.shutdown();
