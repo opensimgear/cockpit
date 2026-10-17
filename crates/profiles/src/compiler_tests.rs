@@ -11,6 +11,28 @@ fn mixed() -> ProfileDocument {
     ))
     .unwrap()
 }
+
+#[test]
+fn visible_authoring_presets_use_native_contracts_and_compile_without_fake_readiness() {
+    let document = ProfileDocument::parse(include_bytes!(
+        "../../../tests/fixtures/profile-authoring/visible-presets.json"
+    ))
+    .expect("the editor's complete preset fixture must satisfy native contracts");
+    assert_eq!(document.processing_nodes.len(), 29);
+    assert_eq!(document.bindings.len(), 66);
+    let mut capture = snapshot(&document);
+    capture.assignments.clear();
+    capture.resources.clear();
+    capture.game_context = None;
+    capture.backend = BackendCapabilities::default();
+    let report = compile(&document, &capture);
+    assert_ne!(report.readiness, PlanReadiness::Invalid, "{:?}", report.diagnostics);
+    let plan = report.plan.expect("unassigned ports retain the derived graph");
+    assert_eq!(plan.program.nodes.len(), 29);
+    assert!(plan.branches.iter().all(|branch| branch.readiness != PlanReadiness::Ready));
+    assert!(plan.sources.iter().all(|source| source.token.is_none()));
+    assert!(plan.sinks.iter().all(|sink| sink.token.is_none()));
+}
 fn snapshot(document: &ProfileDocument) -> CompileSnapshot {
     let mut result = CompileSnapshot {
         inventory_session: "fixture-inventory".into(),
