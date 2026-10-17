@@ -242,6 +242,20 @@ impl<H: Host> Coordinator<H> {
             && self.status.owner.as_ref() == Some(owner)
             && !self.status.paused
     }
+    /// Native-only provenance for off-lock visibility preparation. The adapter
+    /// must still prove its exact receipt and driver state before takeover.
+    pub(crate) fn visibility_handoff_source(&self) -> Result<Option<OwnedRun>, String> {
+        self.check_apply()?;
+        let Some(run) = self.manifest.active.as_ref() else {
+            return Ok(None);
+        };
+        if !self.validates(&run.owner)
+            || self.status.applied_snapshot.as_ref() != Some(&run.snapshot)
+        {
+            return Err("The outgoing native profile no longer has an exact active owner.".into());
+        }
+        Ok(Some(run.clone()))
+    }
     pub(crate) fn apply(&mut self, candidate: Candidate) -> Result<(), String> {
         self.apply_mode(candidate, false)
     }

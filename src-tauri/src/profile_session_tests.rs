@@ -582,3 +582,37 @@ fn staged_apply_rechecks_pause_and_drops_unarmed_payloads() {
     apply_staged(&runtime, candidate(), |candidate| Stage::new(candidate, ())).unwrap();
     assert_eq!(runtime.lock().unwrap().status().state, State::Running);
 }
+
+#[test]
+fn visibility_handoff_source_is_passive_exact_active_provenance_and_never_pending_recovery() {
+    let (mut runtime, probe) = coordinator(None);
+    assert!(runtime.visibility_handoff_source().unwrap().is_none());
+    runtime.apply(candidate()).unwrap();
+    let calls = probe.lock().unwrap().calls.clone();
+    let mut captured = runtime.visibility_handoff_source().unwrap().unwrap();
+    assert_eq!(captured.owner, runtime.status().owner.clone().unwrap());
+    assert_eq!(captured.snapshot, runtime.status().applied_snapshot.clone().unwrap());
+    captured.receipts.clear();
+    assert!(!runtime.visibility_handoff_source().unwrap().unwrap().receipts.is_empty());
+    assert_eq!(probe.lock().unwrap().calls, calls);
+    runtime.status.state = State::Degraded;
+    assert!(runtime.visibility_handoff_source().unwrap().is_some());
+    runtime.status.owner.as_mut().unwrap().generation += 1;
+    assert!(runtime.visibility_handoff_source().is_err());
+    runtime.status.owner = Some(captured.owner.clone());
+    runtime.status.applied_snapshot = None;
+    assert!(runtime.visibility_handoff_source().is_err());
+    runtime.status.applied_snapshot = Some(captured.snapshot.clone());
+    runtime.manifest.pending = Some(journal::Transition {
+        incoming: None, outgoing: runtime.manifest.active.clone(),
+    });
+    assert!(runtime.visibility_handoff_source().is_err());
+    runtime.manifest.pending = None;
+    runtime.status.state = State::RecoveryNeeded;
+    assert!(runtime.visibility_handoff_source().is_err());
+    runtime.status.state = State::Running;
+    runtime.pause(true).unwrap();
+    assert!(runtime.visibility_handoff_source().is_err());
+    runtime.pause(false).unwrap();
+    assert!(runtime.visibility_handoff_source().unwrap().is_none());
+}
