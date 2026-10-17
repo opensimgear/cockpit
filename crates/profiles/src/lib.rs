@@ -23,3 +23,22 @@ pub fn new_document(name: &str) -> Result<ProfileDocument, String> {
     validate_document(&document)?;
     Ok(document)
 }
+
+// macOS commonly exposes its temporary directory through /var -> /private/var.
+// Fixtures use a canonical temporary parent so valid-store tests do not ask the
+// production store to follow that alias. Store itself must keep rejecting links.
+#[cfg(test)]
+fn test_directory() -> tempfile::TempDir {
+    test_directory_in(&std::env::temp_dir())
+}
+
+#[cfg(test)]
+fn test_directory_in(parent: &std::path::Path) -> tempfile::TempDir {
+    #[cfg(unix)]
+    let parent = parent
+        .canonicalize()
+        .expect("canonical test temporary parent");
+    #[cfg(not(unix))]
+    let parent = parent.to_owned();
+    tempfile::tempdir_in(parent).expect("test temporary directory")
+}

@@ -3,7 +3,7 @@ use crate::new_document;
 
 #[test]
 fn fresh_library_round_trips_and_replace_failures_preserve_old_bytes() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let store = Store::new(temp.path().join("profiles-v1"));
     assert!(store.load().unwrap().is_none());
     let original = Library::default();
@@ -26,7 +26,7 @@ fn fresh_library_round_trips_and_replace_failures_preserve_old_bytes() {
 
 #[test]
 fn malformed_unknown_and_oversize_envelopes_are_rejected() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let store = Store::new(temp.path().to_owned());
     let path = temp.path().join("library.json");
     std::fs::write(&path, "not json").unwrap();
@@ -122,7 +122,7 @@ fn local_assignments_are_bounded_and_refer_to_existing_logical_resources() {
 #[test]
 fn relative_parent_and_nonregular_paths_are_rejected() {
     assert!(Store::new("profiles-v1".into()).load().is_err());
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     assert!(
         Store::new(temp.path().join("..absolutely-not-a-parent").join(".."))
             .load()
@@ -139,7 +139,7 @@ fn relative_parent_and_nonregular_paths_are_rejected() {
 #[test]
 fn symlinked_library_or_parent_is_never_followed() {
     use std::os::unix::fs::symlink;
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let real = temp.path().join("real");
     std::fs::create_dir(&real).unwrap();
     let link = temp.path().join("link");
@@ -151,4 +151,30 @@ fn symlinked_library_or_parent_is_never_followed() {
     let store = Store::new(real);
     assert!(store.load().is_err());
     assert!(store.save(&Library::default()).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_temporary_fixture_works_but_the_alias_stays_rejected() {
+    use std::os::unix::fs::symlink;
+    let temp = crate::test_directory();
+    let real_parent = temp.path().join("real-temporary-parent");
+    std::fs::create_dir(&real_parent).unwrap();
+    let alias = temp.path().join("aliased-temporary-parent");
+    symlink(&real_parent, &alias).unwrap();
+
+    // Models an OS temp directory such as macOS /var/folders. Canonicalizing is
+    // a fixture choice, not a change to Store's no-symlink contract.
+    let fixture = crate::test_directory_in(&alias);
+    assert!(fixture.path().starts_with(&real_parent));
+    let root = fixture.path().join("profiles-v1");
+    let store = Store::new(root);
+    store.save(&Library::default()).unwrap();
+    assert_eq!(store.load().unwrap().unwrap().profiles.len(), 1);
+
+    let alias_root = alias
+        .join(fixture.path().file_name().unwrap())
+        .join("profiles-v1");
+    assert!(Store::new(alias_root.clone()).load().is_err());
+    assert!(Store::new(alias_root).save(&Library::default()).is_err());
 }

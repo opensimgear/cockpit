@@ -10,8 +10,18 @@ import sys
 import tempfile
 
 
-def run(args, root, env=None):
-    return subprocess.check_output([str(arg) for arg in args], cwd=root, env=env, text=True, encoding="utf-8")
+def run(args, root, env=None, log=None):
+    result = subprocess.run([str(arg) for arg in args], cwd=root, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8")
+    if log is not None:
+        log.write_text(result.stdout + result.stderr, encoding='utf-8')
+    if result.returncode:
+        print(result.stdout + result.stderr, file=sys.stderr, flush=True)
+        result.check_returncode()
+    elif result.stderr:
+        print(result.stderr, file=sys.stderr, end='', flush=True)
+    return result.stdout
 
 
 def main():
@@ -31,7 +41,7 @@ def main():
                 and entry.get('executable') and entry.get('profile', {}).get('test')]
     if len(binaries) != 1:
         raise RuntimeError('Expected one profiles library test executable.')
-    (output / 'tests.log').write_text(run([binaries[0]], root, env), encoding='utf-8')
+    run([binaries[0]], root, env, output / 'tests.log')
     sysroot = Path(run(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', run(['rustc', '-vV'], root), re.M).group(1)
     suffix = '.exe' if os.name == 'nt' else ''

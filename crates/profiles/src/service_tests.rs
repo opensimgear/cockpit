@@ -21,7 +21,7 @@ fn resource() -> Resource {
 
 #[test]
 fn crud_restarts_with_independent_identity_and_revision_conflicts() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let root = temp.path().join("profiles-v1");
     let mut service = Service::new(Some(root.clone()));
     let document = create(&mut service, "  Flight  ");
@@ -112,7 +112,7 @@ fn duplicate_import_are_portable_deep_copies_and_never_copy_assignments() {
 
 #[test]
 fn corrupted_library_requires_explicit_reset_and_never_overwrites_evidence() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("library.json");
     std::fs::write(&path, "{corrupt").unwrap();
     let mut service = Service::new(Some(temp.path().to_owned()));
@@ -255,7 +255,7 @@ fn bounded_library_rejects_thirty_third_profile_and_max_names_duplicate() {
 
 #[test]
 fn failed_persistence_keeps_memory_revision_and_document_unchanged() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let root = temp.path().join("profiles-v1");
     let mut service = Service::new(Some(root.clone()));
     let document = create(&mut service, "Flight");
