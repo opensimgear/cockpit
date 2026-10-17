@@ -1,16 +1,16 @@
-# Games and hardware profiles
+# Games and unified profiles
 
-X-Plane 11 and 12 have separate game identities and profiles. Their read-only RREF
-provider shares the existing output runtime. See [X-Plane setup, channels and
+X-Plane 11 and 12 have separate game identities. Their read-only RREF provider
+exposes typed telemetry ports to the unified profile graph. See [X-Plane setup, channels and
 qualification limits](x-plane.md). Native launch/telemetry currently requires
 Windows; live simulator and physical hardware qualification remains pending.
 
-Open **Games** to discover DCS World and Assetto Corsa Rally, select a hardware
-profile and launch a game. The initial view shows found installations. The
+Open **Games** to discover supported installations, edit provider settings and
+launch a game with the saved unified-profile selection. The initial view shows found installations. The
 **Show all supported** switch reveals muted, unavailable games; their details
 remain accessible for installation setup. Launch appears on hover or keyboard
 focus. Native game launch and process monitoring target Windows; other platforms
-can edit profiles and exercise the interface and synthetic integration sources.
+can edit profiles and exercise the interface and portable fixtures.
 
 ## Discovery
 
@@ -67,26 +67,23 @@ known competing Assetto processes are rejected during checks and ongoing reads.
 
 ## Profiles
 
-Each game has a default hardware profile. Create additional named profiles and
-choose which one Launch uses. A profile can leave a controller unchanged, enable
-it or disable it, and capture a connected peripheral's current configuration for
-editing. Device assignments use both gateway and module identity. Identical
-module identities on different gateways remain separate peripherals.
+Open **Profiles** for Default, saved profiles and **Add profile**. A row opens its
+editor; **Back to Profiles** returns to the list. The graph owns physical input,
+virtual layouts, visibility intent, companion publication selection, simulator
+commands/telemetry and visible processing. Saving or navigating never activates
+it. Copies exclude machine assignments and do not modify the source or Default.
+See the [Profiles guide](profiles-guide.md) for the complete rig workflow.
 
-Captured settings are copies: editing or saving a game profile does not apply
-settings to a peripheral. Activation uses runtime Apply without saving device
-flash. USB controller enable/disable changes use the existing firmware lifecycle,
-which persists controller publication. Descriptor changes can affect bindings or
-require a game restart. Review and acknowledge that consequence before activation.
-Re-enabling a controller appends it to the firmware's controller order; restoring
-enabled states does not guarantee unchanged descriptor positions.
+Game details own installation/provider settings and automatic selection rules.
+Manual retains an explicit saved profile pin; Automatic uses matching verified
+running games, unique priority and Default fallback. There is no separate per-game
+hardware-profile editor. Game/provider requirements belong to the graph and its
+native admission, separate from permanent device setup and calibration.
 
-The unified profile graph owns simulator command/channel bindings and their
-visible processing. Provider settings belong only in game details. Independent
-DCS-BIOS/integration editing, save and start commands are retired at the native
-gateway boundary; a captured integration in an old game hardware profile cannot
-be launched through that alternate path. Existing hardware coordination and
-explicit recovery remain available during the remaining profile cutover.
+Physical connectivity, HID publication, visibility and signal routing remain
+separate properties. Unsupported temporary publication overrides are rejected;
+profiles cannot simulate them by writing persistent firmware settings. Descriptor
+changes may require restarting a game or revisiting its controller bindings.
 
 ## Unified integration context
 
@@ -111,36 +108,39 @@ an integration, and settings saves revoke an affected old context before returni
 
 ## Activation, launch and recovery
 
-Cockpit reads the affected peripherals and records their previous settings before
-applying a game hardware profile. It applies the selected hardware setup and
-launches the game when requested. A provider cannot attach before actual matching
-process verification. The native coordinator monitors the process independently of the
-Games view. Game exit, failed launch and **Deactivate** restore the previous setup.
-Deactivation does not close the game.
+**Launch** uses the saved Manual pin or Automatic rule/default. Native prepares a
+saved hardware-only candidate, writes ownership/recovery intent and holds its
+hardware neutral before one process spawn. Process waiting happens off-lock;
+**Stop profile** and passive native status stay available. The independent watcher
+must confirm the exact executable, PID and process creation identity before a
+fresh native context can start the graph. Browser process fields cannot grant it.
+An already running external process prevents a duplicate spawn.
 
-A recovery journal is written before hardware changes. If Cockpit closes or
-crashes mid-session, **Recover** reconciles that journal against current hardware
-readback. Offline devices or conflicting external edits leave recovery pending
-with a visible error. Reconnect affected peripherals and review the error before
-retrying recovery. Ambiguous writes are not blindly replayed. Device-side output
-leases still apply their fallbacks if the host disappears.
+Optional provider setup is needed only for the selected graph's matching branches.
+A hardware-only profile can launch while optional integrations remain dormant. A
+higher-priority verified running game can retain the selected profile context
+while another game is launched. The returned state shows that actual decision.
 
-If an external edit or a new device boot makes restoration inappropriate, use
-**Keep current setup** and confirm that choice. Cockpit archives the recovery
-record and releases the session's settings guard without changing peripherals or
-integration settings. The archived record remains beside the settings file.
+Stop cancels pending launch and releases owned output without terminating the
+game. An uncertain spawn or failed post-spawn admission is not replayed; a game
+may remain open while its profile requires cleanup. Pause retains its latch.
+Automatic selection is inhibited by Stop, Pause, recovery and faults until the
+corresponding explicit controls are resolved. Game/context loss revokes affected
+integration authority; Automatic reevaluates saved rules and Default fallback.
 
-Settings and the journal live beside Cockpit's integration configuration. For
-isolated development, `OSG_GAMES_CONFIG` selects the game settings file and
-`OSG_DCS_BIOS_CONFIG` selects the existing integration configuration directory.
-Imported or saved settings do not automatically activate a game or integration.
+Use **Profiles → Recover outputs** for unified session recovery. It restores
+retained ownership and never restarts commands, scripts, timers or hiding from a
+saved run. Offline devices and conflicting external edits can leave recovery
+pending. Reconnect and inspect the reported exact blocker before trying again.
+The game details recovery banner is for retained sessions from the retired
+coordinator; it is separate from the active unified ProfileSession.
 
 ## Validation
 
 `pnpm games:coverage` gates game helper lines, branches and functions above 70%.
-Native discovery and coordinator tests use authored installation/process and
-peripheral fixtures to exercise successful activation, exit, launch failure,
-offline recovery, stale identity and interrupted sessions. The native integration
+Native discovery, profile launch and coordinator tests use authored
+installation/process and peripheral fixtures to exercise activation, exit, launch
+failure, offline recovery, stale identity and interrupted sessions. The native integration
 coverage script also gates the new production modules above 70% line coverage.
 These checks do not qualify installed Windows games, USB enumeration or assembled
 hardware. Live game and physical hardware qualification remain separate work.
