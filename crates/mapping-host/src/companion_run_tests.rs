@@ -1172,3 +1172,10 @@ fn submission_inspection_is_nonblocking_while_the_route_worker_owns_its_router()
     assert!(unchanged);
     assert_eq!(f.submission("panel")["confirmed"], false);
 }
+#[test]
+fn capture_only_guard_checks_cached_reservations_and_recovery_without_provider_calls(){
+    let (service,_root,_profile,_assignments,calls)=super::super::tests::setup();assert!(service.guard_capture_only().is_ok());
+    {let mut manager=service.companion_runs.lock().unwrap();manager.pending=Some((1,Resources::default()));}assert!(service.guard_capture_only().is_err());service.companion_runs.lock().unwrap().pending=None;
+    {let mut manager=service.companion_runs.lock().unwrap();manager.orphaned.insert("lost".into(),Resources::default());}assert!(service.guard_capture_only().is_err());service.companion_runs.lock().unwrap().orphaned.clear();
+    service.companion_runs.lock().unwrap().error=Some("Unknown preserved recovery".into());assert!(service.guard_capture_only().is_err());service.companion_runs.lock().unwrap().error=None;assert!(service.guard_capture_only().is_ok());assert_eq!(calls.load(Ordering::Relaxed),0);
+}

@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, RwLock,
     },
 };
@@ -119,6 +119,24 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
     Some(command)
 }
+/// Only explicit writes/control changes interrupt a capture. Ordinary status,
+/// catalogue and editor reads must not keep cancelling the native learner.
+fn learning_interrupt(request:&Value)->bool{
+    let command=request["command"].as_str().unwrap_or("");
+    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset");}
+    if command=="mapping_companion_route"{return !matches!(request["companion"]["action"].as_str(),Some("inspect"|"recording"));}
+    if command=="companion_feedback_routes"{return request["companion"]["action"]!="inspect";}
+    if command.starts_with("mapping_")||command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
+        return !matches!(command,
+            "mapping_profiles"|"mapping_get"|"mapping_export"|"mapping_status"|"mapping_targets_get"|"mapping_assignments_get"|"mapping_trace_export"|"mapping_script_validate"|"mapping_panel_sources"|"mapping_panel_inspect"|"mapping_companion_sources"|"mapping_companion_inspect"|"mapping_virtual_inspect"|"mapping_recording"
+            |"module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
+            |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"companion_status"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate");
+    }
+    matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
+}
+struct PendingProfileApply<'a>(&'a AtomicUsize);
+impl Drop for PendingProfileApply<'_>{fn drop(&mut self){self.0.fetch_sub(1,Ordering::AcqRel);}}
 
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
@@ -130,6 +148,8 @@ pub struct GatewayManager {
     profile_admission: RwLock<()>,
     profile_prepare: ProfilePrepare,
     profile_admission_epoch: Arc<AtomicU64>,
+    profile_pending: AtomicUsize,
+    profile_learning: crate::profile_input_learning::Runtime,
     profile_closed: Arc<AtomicBool>,
     profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     module_usb: Arc<crate::module_usb_fleet::Fleet>,
@@ -350,6 +370,7 @@ impl GatewayManager {
             crate::profile_session_host::NativeProfileHost::stage(&prepare_resources, &prepare_games, native, candidate)
         });
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
+        let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone()),
             native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-session-v1.json")),
@@ -377,6 +398,8 @@ impl GatewayManager {
             profile_admission: RwLock::new(()),
             profile_prepare,
             profile_admission_epoch,
+            profile_pending:AtomicUsize::new(0),
+            profile_learning,
             profile_closed,
             profile_worker: Mutex::new(profile_worker),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
@@ -530,15 +553,47 @@ impl GatewayManager {
     fn error(&self, message: &str, id: Option<&str>) -> Value {
         self.decorate(json!({"ok":false,"error":message}), id)
     }
+    fn invalidate_learning(&self){self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");}
+    fn guard_learning(&self)->Result<(),String>{
+        if self.profile_pending.load(Ordering::Acquire)!=0{return Err("Wait for pending profile Apply to finish before input learning.".into());}
+        self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("mapping_preview_start")?;
+        self.mapping_host.guard_capture_only()?;
+        if self.games.active()||self.integration.running()||self.integration.status()["running"]==true||self.dcs.status()["running"]==true{return Err("Stop active or pending game/integration output before input learning.".into());}
+        let visibility=self.controllers.request(&json!({"command":"controller_visibility_status"}))?;
+        if self.controllers.visibility_active()||visibility["visibility"]["recovery"]["required"]!=false{return Err("Restore active/pending device visibility and its recovery before input learning.".into());}
+        if !self.configuration_claims().is_empty()||!self.module_usb.configuration_claims().is_empty(){return Err("Release independent device configuration ownership before input learning.".into());}
+        Ok(())
+    }
+    fn learning_request(&self,request:&Value)->Result<Value,String>{
+        let command=request["command"].as_str().ok_or("Choose an input-learning operation.")?;
+        let fields:&[&str]=match command{"profile_input_learn_start"=>&["resourceId","generation","capabilityRevision"],"profile_input_learn_status"|"profile_input_learn_cancel"=>&["learnId"],_=>return Err("Unknown input-learning operation.".into())};
+        if request.as_object().ok_or("Input learning requires an object.")?.keys().any(|key|key!="command"&&key!="clientId"&&!fields.contains(&key.as_str())){return Err("Unknown field in input-learning request.".into());}
+        let text=|key:&str|request[key].as_str().ok_or_else(||format!("Input learning requires {key}."));
+        match command{
+            "profile_input_learn_start"=>{
+                let epoch={let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());if self.closed.load(Ordering::Acquire){return Err("Cockpit has closed.".into());}self.guard_learning()?;self.profile_admission_epoch.load(Ordering::Acquire)};
+                self.profile_learning.start_at(text("resourceId")?,text("generation")?,text("capabilityRevision")?,epoch)
+            },
+            "profile_input_learn_status"=>self.profile_learning.status(text("learnId")?),
+            _=>self.profile_learning.cancel(text("learnId")?),
+        }
+    }
     pub fn request(&self, request: Value) -> Value {
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
         let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_stop" | "profile_pause" | "profile_recover" | "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         let staging = request["command"] == "profile_apply";
-        if profile_mutation && !staging { self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); }
+        let learning_start=request["command"]=="profile_input_learn_start";
+        let learning_passive=matches!(request["command"].as_str(),Some("profile_input_learn_status"|"profile_input_learn_cancel"));
+        let _pending=if staging{self.profile_pending.fetch_add(1,Ordering::AcqRel);Some(PendingProfileApply(&self.profile_pending))}else{None};
+        let interrupt=learning_interrupt(&request);
+        if interrupt{self.invalidate_learning();}
+        if staging{let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());self.invalidate_learning();}
+        if learning_start||learning_passive{return self.request_inner(request);}
         let _profile_write = (profile_mutation && !staging).then(|| self.profile_admission.write().unwrap_or_else(|p| p.into_inner()));
         let _profile_read = (!profile_mutation).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
+        if interrupt&&!staging{self.invalidate_learning();}
         // Slow read-only staging holds neither admission lock. Final takeover
         // acquires profile then game admission together in the established order.
         if staging { return self.request_inner(request); }
@@ -591,6 +646,7 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if command.starts_with("profile_input_learn_"){return match self.learning_request(&request){Ok(learning)=>json!({"ok":true,"state":{"profileLearning":learning}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};}
         if let Some(operation) = profile_guard_operation(&command) {
             if let Err(error) = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).guard_request(operation) {
                 return self.error(&error, None);
@@ -962,6 +1018,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.profile_learning.shutdown();
         self.profile_closed.store(true, Ordering::Release);
         if let Some(worker) = self.profile_worker.lock().unwrap_or_else(|p| p.into_inner()).take() { let _ = worker.join(); }
         let _ = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop();
@@ -1295,6 +1352,21 @@ mod tests {
         assert_eq!(request(&manager,"mapping_status",None,json!({}))["ok"],true);
         assert_eq!(request(&manager,"module_usb_list",None,json!({}))["ok"],true);
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
+    }
+    fn learning_manager(gate:Option<Arc<std::sync::Barrier>>)->(GatewayManager,Value){let (manager,_)=setup();let mut manager=Arc::try_unwrap(manager).ok().unwrap();let(runtime,source)=crate::profile_input_learning::manager_fixture(manager.profile_admission_epoch.clone(),gate);manager.profile_learning=runtime;(manager,source)}
+    #[test]
+    fn input_learning_manager_start_is_strict_passive_and_controls_invalidate_before_effects(){
+        let(manager,source)=learning_manager(None);let started=request(&manager,"profile_input_learn_start",None,source.clone());assert_eq!(started["ok"],true,"{started}");let id=started["state"]["profileLearning"]["learnId"].as_str().unwrap();
+        for command in ["profile_status","controller_list","profile_list"]{assert_eq!(request(&manager,command,None,json!({}))["ok"],true);assert_eq!(request(&manager,"profile_input_learn_status",None,json!({"learnId":id}))["state"]["profileLearning"]["phase"],"listening");}
+        let mut forged=source.clone();for key in ["owner","sample","token","resume"]{forged[key]=json!(true);assert_eq!(request(&manager,"profile_input_learn_start",None,forged.clone())["ok"],false);forged.as_object_mut().unwrap().remove(key);}
+        let applied=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));assert_eq!(applied["ok"],true,"{applied}");let owner=applied["state"]["profiles"]["profileSession"]["owner"].clone();assert_eq!(request(&manager,"profile_input_learn_status",None,json!({"learnId":id}))["state"]["profileLearning"]["phase"],"stopped");
+        let denied=request(&manager,"profile_input_learn_start",None,source.clone());assert_eq!(denied["ok"],false);assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["owner"],owner);
+        request(&manager,"profile_stop",None,json!({}));let newer=request(&manager,"profile_input_learn_start",None,source);assert_eq!(newer["ok"],true,"{newer}");let newer_id=&newer["state"]["profileLearning"]["learnId"];assert_eq!(request(&manager,"profile_input_learn_cancel",None,json!({"learnId":id}))["ok"],false);assert_eq!(request(&manager,"profile_input_learn_status",None,json!({"learnId":newer_id}))["state"]["profileLearning"]["phase"],"listening");request(&manager,"action_invoke",None,json!({}));assert_eq!(request(&manager,"profile_input_learn_status",None,json!({"learnId":newer_id}))["state"]["profileLearning"]["phase"],"stopped");
+    }
+    #[test]
+    fn input_learning_pending_apply_and_late_baseline_cannot_overlap_new_output(){
+        let (manager,source)=learning_manager(None);manager.profile_pending.store(1,Ordering::Release);let blocked=request(&manager,"profile_input_learn_start",None,source);assert_eq!(blocked["ok"],false);assert!(blocked["error"].as_str().unwrap().contains("pending profile Apply"));manager.profile_pending.store(0,Ordering::Release);
+        let gate=Arc::new(std::sync::Barrier::new(2));let(manager,source)=learning_manager(Some(gate.clone()));let manager=Arc::new(manager);let learning=manager.clone();let pending=std::thread::spawn(move||request(&learning,"profile_input_learn_start",None,source));gate.wait();let applied=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));assert_eq!(applied["ok"],true,"{applied}");gate.wait();let late=pending.join().unwrap();assert_eq!(late["ok"],false,"{late}");assert!(late["error"].as_str().unwrap().contains("cancelled"));assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["state"],"running");
     }
 
     #[test]

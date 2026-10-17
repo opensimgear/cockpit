@@ -26,6 +26,7 @@ mod module_usb_fleet;
 mod module_configuration_routes;
 mod profile_resources;
 mod profile_compilation;
+mod profile_input_learning;
 mod profile_session;
 mod profile_session_games;
 mod profile_session_inputs;

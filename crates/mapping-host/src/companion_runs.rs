@@ -730,6 +730,20 @@ fn author(id: &str, p: &Publication) -> Result<Configuration, String> {
 }
 
 impl Service {
+    /// Cached execution/reservation and durable recovery checks only. This does
+    /// not prepare a companion/provider, poll input, stop output or acquire it.
+    pub fn guard_capture_only(&self) -> Result<(), String> {
+        {
+            let router=self.router.lock().unwrap_or_else(|p|p.into_inner());
+            if router.runtime.token().is_ok()||router.status()["recoveryRequired"]==true{return Err("Stop mapping and recover its output ownership before capture-only learning.".into());}
+        }
+        if self.game_lease.lock().unwrap_or_else(|p|p.into_inner()).is_some()||self.provisioning_active()||self.manual_recovery_resources()?.is_some(){return Err("Finish mapping/game/provisioning ownership recovery before input learning.".into());}
+        #[cfg(windows)]
+        {let recovery=self.provisioning_recovery();if recovery.get("error").is_some()||recovery["pending"].as_array().is_none_or(|pending|!pending.is_empty()){return Err("Recover pending virtual-controller provisioning before input learning.".into());}}
+        let routes={let manager=self.companion_runs.lock().unwrap_or_else(|p|p.into_inner());if manager.error.is_some()||manager.pending.is_some()||!manager.orphaned.is_empty(){return Err("Recover pending companion/mapping reservations before input learning.".into());}manager.routes.values().cloned().collect::<Vec<_>>()};
+        for route in routes{if route.starting.load(Ordering::Acquire)||route.reserved.load(Ordering::Acquire)||route.recovery.load(Ordering::Acquire)||route.router.lock().unwrap_or_else(|p|p.into_inner()).runtime.token().is_ok(){return Err("Stop companion mapping and finish its output recovery before input learning.".into());}}
+        Ok(())
+    }
     fn manual_recovery_resources(&self) -> Result<Option<Resources>, String> {
         let Some(root) = &self.root else {
             return Ok(None);
