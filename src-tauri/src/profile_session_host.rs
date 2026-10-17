@@ -286,7 +286,7 @@ impl NativeProfileHost {
         panels: &crate::gateways::ProfilePanelIo,
         effects: Vec<osg_mapping::engine::typed::Effect>,
     ) -> Result<Vec<String>, String> {
-        let mut diagnostics = vec![];
+        let mut diagnostics = std::collections::BTreeSet::new();
         for effect in effects {
             let sink = state.delivery.as_ref().and_then(|plan| plan.sinks.iter().find(|sink|
                 sink.endpoint.node_id == effect.endpoint.node_id && sink.endpoint.port_id == effect.endpoint.port_id)).cloned();
@@ -299,7 +299,7 @@ impl NativeProfileHost {
             if !matches!(effect.sample, osg_mapping::program::SignalSample::Known(_)) {
                 continue;
             }
-            diagnostics.extend(dcs_hid::refresh(state, resources, panels));
+            dcs_hid::append_diagnostics(&mut diagnostics, dcs_hid::refresh(state, resources, panels));
             if state.dcs_hid.blocked(&effect.endpoint) { continue; }
             let result = (|| {
                 let stale = sink.readiness != PlanReadiness::Ready || sink.token.as_ref()
@@ -327,7 +327,7 @@ impl NativeProfileHost {
             })();
             if let Err(error) = result {
                 let loss = state.game.fail(effect.at_us.0, error);
-                diagnostics.extend(loss.diagnostics);
+                dcs_hid::append_diagnostics(&mut diagnostics, loss.diagnostics);
                 Self::withdraw_game(resources, state)?;
                 if let Some(reducer) = state.reducer.as_mut() {
                     for frame in loss.frames { reducer.accept(frame)?; }
@@ -339,7 +339,7 @@ impl NativeProfileHost {
                 break;
             }
         }
-        Ok(diagnostics)
+        Ok(diagnostics.into_iter().collect())
     }
     pub(crate) fn stage(
         resources: &crate::profile_resources::Runtime,
@@ -948,7 +948,7 @@ impl Host for NativeProfileHost {
             output.poll(&state.recording)?;
         }
         Ok(Health {
-            degraded,
+            degraded: dcs_hid::unique_diagnostics(degraded),
             stop,
         })
     }

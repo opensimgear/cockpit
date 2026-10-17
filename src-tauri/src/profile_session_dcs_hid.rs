@@ -7,6 +7,18 @@ use serde_json::{json, Value};
 
 const LOST: &str = "An OSG input's direct or gateway HID publication changed or is unverified; the DCS command branch was withdrawn. Apply a fresh profile after disabling every publisher.";
 
+pub(super) fn append_diagnostics(
+    retained: &mut std::collections::BTreeSet<String>,
+    messages: impl IntoIterator<Item = String>,
+) {
+    retained.extend(messages);
+}
+pub(super) fn unique_diagnostics(messages: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut retained = std::collections::BTreeSet::new();
+    append_diagnostics(&mut retained, messages);
+    retained.into_iter().collect()
+}
+
 #[derive(Clone, Default)]
 pub(super) struct Guard {
     // Collected even for dormant DCS branches, then enforced only when that
@@ -92,7 +104,7 @@ impl Guard {
         })
     }
     fn diagnostics(&self) -> Vec<String> {
-        self.revoked.values().cloned().collect()
+        unique_diagnostics(self.revoked.values().cloned())
     }
     fn observe(
         &mut self,

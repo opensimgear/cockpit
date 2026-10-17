@@ -294,3 +294,64 @@ fn current_capture_cannot_adopt_a_changed_input_lease_or_usb_publisher() {
     slot.snapshot.config.as_mut().unwrap()["layout"]["reportBytes"] = json!(1);
     assert!(validate_snapshots(&guard, &plan, &snapshot, &[], &[slot], |_, _| Ok(())).is_err());
 }
+
+#[test]
+fn thirty_two_revoked_command_branches_keep_bounded_diagnostics_across_repeated_dispatch() {
+    let (mut plan, snapshot, gateways) = fixture();
+    let sink = plan.sinks[0].clone();
+    let branch = plan.branches[0].clone();
+    plan.sinks.clear();
+    plan.branches.clear();
+    for index in 0..32 {
+        let mut sink = sink.clone();
+        sink.endpoint.port_id = format!("command-{index}");
+        let mut branch = branch.clone();
+        branch.sink = sink.endpoint.clone();
+        branch.edge_ids = vec![format!("edge-{index}")];
+        plan.sinks.push(sink);
+        plan.branches.push(branch);
+    }
+    assert!(plan.branches.len() < 512);
+    let mut guard = Guard::capture(&plan, &snapshot);
+    let lost = guard.observe(
+        &plan,
+        &Err("Native publication observation lost".into()),
+        |_, _| Ok(()),
+    );
+    assert_eq!(lost.len(), 32);
+    assert_eq!(guard.revoked.len(), 32);
+    assert_eq!(
+        guard.diagnostics(),
+        vec!["Native publication observation lost"]
+    );
+    let mut dispatch = std::collections::BTreeSet::new();
+    for _ in 0..32 {
+        append_diagnostics(&mut dispatch, guard.diagnostics());
+    }
+    let health = unique_diagnostics(
+        guard
+            .diagnostics()
+            .into_iter()
+            .chain(dispatch)
+            .chain(vec!["Ordinary source is available".into()]),
+    );
+    assert_eq!(health.len(), 2);
+    assert!(
+        health.len() <= 1024,
+        "The existing native status bound remains valid without truncation"
+    );
+    assert!(guard
+        .observe(&plan, &Ok((snapshot, gateways, vec![])), |_, _| Ok(()))
+        .is_empty());
+    assert!(!guard.needs_observation(&plan));
+    for endpoint in lost {
+        assert!(guard.blocked(&osg_mapping::program::Endpoint {
+            node_id: endpoint.node_id,
+            port_id: endpoint.port_id
+        }));
+    }
+    assert_eq!(
+        guard.diagnostics(),
+        vec!["Native publication observation lost"]
+    );
+}
