@@ -15,6 +15,8 @@ use std::{
 
 /// Complete profile graphs have a separate budget from 64 KiB gateway commands.
 pub const PROFILE_REQUEST_LIMIT: usize = osg_profiles::MAX_PROFILE_BYTES + 65_536;
+/// One editor transaction includes the portable graph and exact machine-local pins.
+pub const PROFILE_EDITOR_REQUEST_LIMIT: usize = osg_profiles::MAX_EDITOR_REQUEST_BYTES;
 
 trait Adapter: Send + Sync {
     fn request(&self, request: Value) -> Value;
@@ -439,7 +441,9 @@ impl GatewayManager {
         let profile_request = request["command"]
             .as_str()
             .is_some_and(|command| command.starts_with("profile_"));
-        let request_limit = if profile_request {
+        let request_limit = if request["command"] == "profile_editor_save" {
+            PROFILE_EDITOR_REQUEST_LIMIT
+        } else if profile_request {
             PROFILE_REQUEST_LIMIT
         } else {
             65_536
@@ -972,6 +976,23 @@ mod tests {
         assert_ne!(profile["error"], "Invalid gateway request.");
         let oversized_profile = request(&manager, "profile_import", None, json!({"payload":"x".repeat(PROFILE_REQUEST_LIMIT)}));
         assert_eq!(oversized_profile["error"], "Invalid gateway request.");
+    }
+    include!("../../tests/fixtures/profiles/editor-boundary.rs");
+    #[test]
+    fn atomic_editor_save_accepts_legal_combined_payload_without_device_discovery() {
+        let (manager, provider) = setup();
+        let mut payload = editor_boundary_request();
+        payload["clientId"] = json!(CLIENT);
+        assert!(payload.to_string().len() > PROFILE_REQUEST_LIMIT);
+        assert!(payload.to_string().len() < PROFILE_EDITOR_REQUEST_LIMIT);
+        let result = manager.request(payload.clone());
+        assert_eq!(result["ok"], true, "{}", result["error"]);
+        assert_eq!(result["state"]["profiles"]["assignments"].as_array().unwrap().len(), 16);
+        assert_eq!(result["state"]["profiles"]["document"]["revision"], 1);
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        payload["command"] = json!("profile_import");
+        assert_eq!(manager.request(payload)["error"], "Invalid gateway request.");
+        assert_eq!(request(&manager, "profile_editor_save", None, json!({"payload":"x".repeat(PROFILE_EDITOR_REQUEST_LIMIT)}))["error"], "Invalid gateway request.");
     }
     #[test]
     fn graph_compilation_and_paged_inspection_never_select_save_or_open_a_device() {

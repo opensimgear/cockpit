@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
   DEFAULT_PROFILE_ID, MAX_PROFILE_BYTES, ProfilesClient, captureProfileSession,
-  exportProfileDocument, parseProfileDocument, profileDocumentError, profileDraft, profileDraftDirty, profileContractError, profileScalarValid, profileScalarAccepts, profileAssignmentsError, profilePortIdValid,
+  exportProfileDocument, parseProfileDocument, profileDocumentError, profileDraft, profileDraftDirty, profileContractError, profileScalarValid, profileScalarAccepts, profileAssignmentsError, profilePortIdValid, profileDocumentAssignmentsError,
 } from './profiles.ts';
 
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -378,4 +378,43 @@ test('retained script static budgets match the actual evaluator envelope', () =>
     {operation:{...node.operation,parameters:{text:'é'.repeat(2045)}}},
     {operation:{...node.operation,parameters:{numeric:Number.MAX_SAFE_INTEGER+1}}}]) invalid({...document,processingNodes:[{...node,...change}]});
   assert.equal(profileDocumentError({...document,processingNodes:[{...node,operation:{...node.operation,parameters:{text:'é'.repeat(2000)}}}]}),'');
+});
+
+
+const editorSummaries = document => [{id:DEFAULT_PROFILE_ID,name:'Default',revision:document.id===DEFAULT_PROFILE_ID?document.revision:1,isDefault:true,semanticHash:'sha256:'+'a'.repeat(64)},...(document.id===DEFAULT_PROFILE_ID?[]:[{id:document.id,name:document.name,revision:document.revision,isDefault:false,semanticHash:'sha256:'+'b'.repeat(64)}])];
+
+test('editor save commits graph and local pins in one typed request without selecting or changing drafts', async () => {
+  const pins=[{resourceId:'wheel',sourceId:'native:opaque',ports:[{profilePortId:'button',observedPortId:'button:0',expectedContractHash:'sha256:'+'a'.repeat(64)}]}];
+  const created={...withResource(),id:'4bef570c-7bfa-4fac-85d4-e84b4239bd3d',name:'Flight'}, calls=[];
+  const client=new ProfilesClient(async request=>{calls.push(clone(request));const saved={...clone(request.document),revision:request.expectedRevision===null?1:request.expectedRevision+1};return {document:saved,assignments:clone(request.assignments),profiles:editorSummaries(saved),session:nativeSession()};});
+  const first=await client.editorSave(created,null,pins);assert.equal(first.document.revision,1);assert.deepEqual(first.assignments,pins);assert.equal(first.profiles.find(p=>p.id===created.id).semanticHash,"sha256:"+"b".repeat(64));assert.equal(client.editor,null);
+  first.assignments[0].sourceId='mutated';assert.equal(pins[0].sourceId,'native:opaque');
+  const second=await client.editorSave({...created,name:'Edited graph'},1,pins);assert.equal(second.document.revision,2);
+  assert.deepEqual(calls.map(call=>call.command),['profile_editor_save','profile_editor_save']);assert.equal(calls[0].expectedRevision,null);assert.equal(calls[1].expectedRevision,1);assert.equal(client.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(client.session.state,'stopped');assert.equal(exportProfileDocument(second.document).includes('native:opaque'),false);
+  const zero={...created,resources:[{...resource(),ports:[]}]};assert.equal(profileDocumentAssignmentsError(zero,[{resourceId:'wheel',sourceId:'native:seed',ports:[]}]),'');assert.equal(profileDocumentAssignmentsError(created,[]),'');
+});
+
+test('atomic editor save rejects incomplete pins, invalid revisions and protected builtin labels before transport', async () => {
+  let calls=0;const client=new ProfilesClient(async()=>{calls++;return {}});const document=withResource();
+  const pins=[{resourceId:'wheel',sourceId:'native:opaque',ports:[{profilePortId:'button',observedPortId:'button:0',expectedContractHash:'sha256:'+'a'.repeat(64)}]}];
+  for(const value of [null,[{...pins[0],ports:[]}],[{...pins[0],resourceId:'missing'}],[{...pins[0],ports:[{...pins[0].ports[0],profilePortId:'missing'}]}]]) await assert.rejects(client.editorSave(document,1,value));
+  for(const revision of [0,2,true,'1',NaN,Number.MAX_SAFE_INTEGER+1]) await assert.rejects(client.editorSave(document,revision,pins));
+  await assert.rejects(client.editorSave(document,null,pins));await assert.rejects(client.editorSave({...document,revision:2,id:'4bef570c-7bfa-4fac-85d4-e84b4239bd3d'},null,pins));await assert.rejects(client.editorSave({...document,name:'Renamed builtin'},1,pins));await assert.rejects(client.editorSave({...document,schemaVersion:1},1,pins));assert.equal(calls,0);
+});
+
+test('atomic editor save validates complete native acknowledgement and preserves session after failures', async () => {
+  const document={...withResource(),id:'4bef570c-7bfa-4fac-85d4-e84b4239bd3d'}, pins=[];
+  let reply={document,assignments:pins,session:nativeSession()}, fail=false;
+  const client=new ProfilesClient(async request=>{if(fail) throw Error('revision conflict');return request.command==='profile_status'?{session:nativeSession()}:reply});await client.status();const session=client.session;
+  for(const bad of [{assignments:pins,session:nativeSession()},{document,session:nativeSession()},{document,assignments:pins},{document:{...document,id:DEFAULT_PROFILE_ID},assignments:pins,session:nativeSession()},{document:{...document,revision:2},assignments:pins,session:nativeSession()}]){reply=bad;await assert.rejects(client.editorSave(document,null,pins));assert.deepEqual(client.session,session);}
+  fail=true;await assert.rejects(client.editorSave(document,null,pins),/revision conflict/);assert.deepEqual(client.session,session);assert.equal(client.editor,null);
+});
+
+
+test('atomic save requires bounded real matching native profile summaries', async () => {
+  const document={...withResource(),id:'4bef570c-7bfa-4fac-85d4-e84b4239bd3d',name:'Flight'};
+  const valid={document,assignments:[],profiles:editorSummaries(document),session:nativeSession()};
+  let reply=valid;const client=new ProfilesClient(async()=>reply);
+  assert.equal((await client.editorSave(document,null,[])).profiles.length,2);
+  for(const profiles of [undefined,[],[valid.profiles[0]],Array(33).fill(valid.profiles[0]),[valid.profiles[0],{...valid.profiles[1],name:'Different'}],[valid.profiles[0],{...valid.profiles[1],revision:2}],[valid.profiles[0],{...valid.profiles[1],isDefault:true}],[valid.profiles[0],{...valid.profiles[1],semanticHash:''}],[valid.profiles[0],valid.profiles[1],valid.profiles[1]]]) {reply={...valid,profiles};await assert.rejects(client.editorSave(document,null,[]));}
 });

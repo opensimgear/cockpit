@@ -53,6 +53,13 @@ impl Library {
         if !ids.contains(DEFAULT_PROFILE_ID) {
             return Err("The profile library is missing its protected Default profile.".into());
         }
+        if self
+            .profiles
+            .iter()
+            .any(|document| document.id == DEFAULT_PROFILE_ID && document.name != "Default")
+        {
+            return Err("The built-in Default profile keeps its protected name.".into());
+        }
         if self.local_assignments.len() > self.profiles.len() {
             return Err("Too many local assignment groups.".into());
         }
@@ -120,7 +127,7 @@ impl Library {
         self.validate()?;
         let bytes = serde_json::to_vec(self).map_err(|e| e.to_string())?;
         if bytes.len() > MAX_LIBRARY_BYTES {
-            return Err("The profile library exceeds 17 MiB.".into());
+            return Err("The profile library exceeds 17 MiB; remove an unused profile or reduce its saved graph and local assignment data.".into());
         }
         Ok(bytes)
     }
@@ -148,7 +155,7 @@ impl Store {
             .read_to_end(&mut bytes)
             .map_err(|e| format!("Cannot read profile library: {e}"))?;
         if bytes.len() > MAX_LIBRARY_BYTES {
-            return Err("The profile library exceeds 17 MiB.".into());
+            return Err("The profile library exceeds 17 MiB; remove an unused profile or reduce its saved graph and local assignment data.".into());
         }
         let library: Library = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Cannot parse profile library: {e}"))?;

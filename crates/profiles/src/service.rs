@@ -43,10 +43,15 @@ impl Service {
     }
 
     pub fn request(&mut self, request: &Value) -> Result<Value, String> {
+        let request_limit = if request["command"] == "profile_editor_save" {
+            crate::MAX_EDITOR_REQUEST_BYTES
+        } else {
+            crate::MAX_PROFILE_BYTES + 64 * 1024
+        };
         if serde_json::to_vec(request)
             .map_err(|e| e.to_string())?
             .len()
-            > crate::MAX_PROFILE_BYTES + 64 * 1024
+            > request_limit
         {
             return Err("Profile request exceeds its size limit.".into());
         }
@@ -63,6 +68,7 @@ impl Service {
             "profile_duplicate" => &["id", "name"],
             "profile_delete" => &["id", "expectedRevision"],
             "profile_save" => &["document", "expectedRevision"],
+            "profile_editor_save" => &["document", "expectedRevision", "assignments"],
             "profile_import" => &["document", "name"],
             "profile_select" => &["id", "selectionSource"],
             "profile_pause" => &["paused"],
@@ -158,6 +164,62 @@ impl Service {
     fn mutate(&mut self, command: &str, request: &Value) -> Result<Value, String> {
         let mut library = self.library.clone();
         let output = match command {
+            "profile_editor_save" => {
+                let mut document = decode_document(&request["document"])?;
+                let assignments: Vec<LocalAssignment> =
+                    serde_json::from_value(request["assignments"].clone())
+                        .map_err(|error| format!("Invalid local assignments: {error}"))?;
+                match request.get("expectedRevision") {
+                    Some(Value::Null) => {
+                        if library
+                            .profiles
+                            .iter()
+                            .any(|stored| stored.id == document.id)
+                        {
+                            return Err("A new editor profile requires a fresh identity; this profile already exists.".into());
+                        }
+                        if document.revision != 1 {
+                            return Err("A new editor profile must start at revision 1.".into());
+                        }
+                        self.ensure_room()?;
+                        library.profiles.push(document.clone());
+                    }
+                    Some(_) => {
+                        let expected = expected_revision(request)?;
+                        let stored = library
+                            .profiles
+                            .iter_mut()
+                            .find(|stored| stored.id == document.id)
+                            .ok_or("Profile not found.")?;
+                        check_revision(stored, expected)?;
+                        if document.revision != expected {
+                            return Err("The document revision must match expectedRevision.".into());
+                        }
+                        document.revision = next_revision(expected)?;
+                        *stored = document.clone();
+                    }
+                    None => {
+                        return Err(
+                            "An explicit null or numeric expectedRevision is required.".into()
+                        )
+                    }
+                }
+                // Validate the complete graph and exact assignment set together,
+                // then perform one bounded atomic replacement. Memory and the
+                // session remain unchanged if validation or persistence fails.
+                library
+                    .local_assignments
+                    .insert(document.id.clone(), assignments.clone());
+                let profiles = library.profiles.iter().map(|profile| {
+                    Ok(json!({"id":profile.id,"name":profile.name,"revision":profile.revision,
+                        "isDefault":profile.id == DEFAULT_PROFILE_ID,"semanticHash":semantic_hash(profile)?}))
+                }).collect::<Result<Vec<Value>, String>>()?;
+                self.persist(&library)?;
+                self.library = library;
+                return Ok(
+                    json!({"document":document,"assignments":assignments,"profiles":profiles,"session":self.session.status()}),
+                );
+            }
             "profile_create" => {
                 self.ensure_room()?;
                 let document = new_document(required_text(request, "name")?)?;
@@ -374,3 +436,7 @@ fn decode_document(value: &Value) -> Result<ProfileDocument, String> {
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service_editor_tests.rs"]
+mod editor_tests;

@@ -145,3 +145,16 @@ test('oversized unified profile replies still fail the bounded native stream', a
   assert.equal(bridge.process.killed, true);
   bridge.close();
 });
+
+
+test('atomic editor body and reply retain combined graph and exact pins above ordinary profile cap', async () => {
+  const resources=Array.from({length:16},(_,resource)=>({id:`device-${resource}`,name:`Device ${resource}`,kind:'device',required:false,ports:Array.from({length:64},(_,port)=>({id:`port-${String(port).padStart(2,'0')}${'p'.repeat(73)}`,name:'Port'.repeat(20),direction:'output',contract:{delivery:'event',schema:{type:'boolean'}}}))}));
+  const assignments=resources.map((resource,index)=>({resourceId:resource.id,sourceId:`native:${index}${'s'.repeat(1000)}`,ports:resource.ports.map((port,index)=>({profilePortId:port.id,observedPortId:`button-${String(index).padStart(2,'0')}${'x'.repeat(247)}`,expectedContractHash:'sha256:'+'a'.repeat(64)}))}));
+  const document={schemaVersion:2,id:'0cda9ec2-85fd-4938-aa17-091131874af9',name:'Large editor boundary',revision:1,eligibility:{gameIds:[]},resources,bindings:[],processingNodes:[],virtualOutputs:[],visibility:[],overrides:[],companionAssignments:[],editor:{positions:[],viewport:{x:0,y:0,zoom:1}}};
+  const payload={command:'profile_editor_save',document,expectedRevision:null,assignments};
+  assert.ok(Buffer.byteLength(JSON.stringify(document))<524288);assert.ok(Buffer.byteLength(JSON.stringify(payload))>524288+65536);
+  const bridge=fixture((envelope,process)=>{assert.deepEqual(envelope.request,payload);process.stdout.write(`${JSON.stringify({requestId:envelope.requestId,response:{ok:true,state:{profiles:{document,assignments}}}})}\n`);});
+  const response=await bridge.request(payload);assert.equal(response.status,200);assert.deepEqual(response.body.state.profiles,{document,assignments});
+  const rejected=await bridge.request({...payload,command:'profile_save'});assert.equal(rejected.status,400);assert.match(rejected.body.error,/size limit/);assert.equal(bridge.starts(),1);bridge.close();
+  const oversized=fixture(()=>assert.fail('oversized editor must not be forwarded'));const over=await oversized.request({...payload,document:'x'.repeat(2097152)});assert.equal(over.status,400);assert.equal(oversized.starts(),0);oversized.close();
+});

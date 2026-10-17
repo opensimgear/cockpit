@@ -29,6 +29,10 @@ jobs:
       - run: pnpm profiles:coverage
       - run: pnpm profile-inventory:coverage
       - run: pnpm profile-compilation:coverage
+      - run: pnpm profile-editor:coverage
+      - run: pnpm profile-canvas:coverage
+      - run: pnpm profile-port-browser:coverage
+      - run: pnpm profile-workspace:test
       - run: pnpm module-usb:coverage
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage

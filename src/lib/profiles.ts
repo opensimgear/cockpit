@@ -68,7 +68,7 @@ export type ProfileSession = {
   appliedSnapshot: AppliedProfileSnapshot | null; fault: string | null;
 };
 export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string };
-export type ProfileCommand = 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_pause' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save';
+export type ProfileCommand = 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_pause' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
 export type ProfileRequest =
   | { command: 'profile_list' | 'profile_status' }
   | { command: 'profile_get' | 'profile_export' | 'profile_assignments_get'; id: string }
@@ -78,12 +78,14 @@ export type ProfileRequest =
   | { command: 'profile_duplicate'; id: string; name?: string }
   | { command: 'profile_delete'; id: string; expectedRevision: number }
   | { command: 'profile_save'; document: ProfileDocument; expectedRevision: number }
+  | { command: 'profile_editor_save'; document: ProfileDocument; expectedRevision: number | null; assignments: ProfileLocalAssignment[] }
   | { command: 'profile_import'; document: ProfileDocument; name?: string }
   | { command: 'profile_select'; id: string; selectionSource: ProfileSelectionMode }
   | { command: 'profile_pause'; paused: boolean }
   | { command: 'profile_selection_mode'; mode: ProfileSelectionMode }
   | { command: 'profile_reset'; confirm: true };
 export type ProfileResult = { document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
+export type ProfileEditorSaveResult = { document: ProfileDocument; assignments: ProfileLocalAssignment[]; profiles: ProfileSummary[]; session: ProfileSession };
 export type ProfileSend = (request: ProfileRequest) => Promise<ProfileResult>;
 export type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 export type ProfileEditorState = { document: ProfileDocument; baseDocument: ProfileDocument; baseRevision: number };
@@ -233,6 +235,19 @@ function freeze<T>(value: T): DeepReadonly<T> {
   return value as DeepReadonly<T>;
 }
 /** Capture native session state without sharing mutable document or transport objects. */
+function validProfileSummaries(value: unknown): value is ProfileSummary[] {
+  return list(value, MAX_PROFILES) && value.length > 0 && value.every(summary => exact(summary, ['id', 'name', 'revision', 'isDefault', 'semanticHash']) && uuid(summary.id) && text(summary.name) && whole(summary.revision, 1, Number.MAX_SAFE_INTEGER) && summary.isDefault === (summary.id === DEFAULT_PROFILE_ID) && typeof summary.semanticHash === 'string' && /^sha256:[0-9a-f]{64}$/.test(summary.semanticHash)) && new Set(value.map(summary => (summary as ProfileSummary).id)).size === value.length && value.some(summary => (summary as ProfileSummary).id === DEFAULT_PROFILE_ID);
+}
+/** Local pins are separate from portable JSON and complete for every assigned resource. */
+export function profileDocumentAssignmentsError(document: ProfileDocument, assignments: unknown): string {
+  const error = profileAssignmentsError(assignments);
+  if (error) return error;
+  for (const assignment of assignments as ProfileLocalAssignment[]) {
+    const resource = document.resources.find(resource => resource.id === assignment.resourceId);
+    if (!resource || resource.ports.length !== assignment.ports.length || !resource.ports.every(port => assignment.ports.some(expected => expected.profilePortId === port.id))) return 'Local assignments must pin every declared port of an existing logical resource exactly.';
+  }
+  return '';
+}
 export function captureProfileSession(session: ProfileSession): DeepReadonly<ProfileSession> {
   return freeze(clone(session));
 }
@@ -284,6 +299,21 @@ export class ProfilesClient {
     if (error) throw new Error(error);
     const checked = parseProfileDocument(JSON.stringify(document));
     return documentResult(await this.request({ command: 'profile_save', document: checked, expectedRevision }));
+  }
+  /** Commit one editor graph and local pin set without changing runtime selection. */
+  async editorSave(document: ProfileDocument, expectedRevision: number | null, assignments: ProfileLocalAssignment[]): Promise<ProfileEditorSaveResult> {
+    const error = profileDocumentError(document) || profileDocumentAssignmentsError(document, assignments);
+    if (error) throw new Error(error);
+    if (expectedRevision === null ? document.revision !== 1 || document.id === DEFAULT_PROFILE_ID : !whole(expectedRevision, 1, Number.MAX_SAFE_INTEGER) || document.revision !== expectedRevision) throw new Error('Keep the saved revision, or use a fresh profile identity at revision 1.');
+    if (document.id === DEFAULT_PROFILE_ID && document.name !== 'Default') throw new Error('The built-in Default profile keeps its protected name.');
+    const checked = parseProfileDocument(JSON.stringify(document));
+    const result = clone(await this.send({ command: 'profile_editor_save', document: checked, expectedRevision, assignments: clone(assignments) }));
+    const saved = documentResult(result);
+    if (saved.id !== document.id || saved.revision !== (expectedRevision === null ? 1 : expectedRevision + 1) || profileDocumentAssignmentsError(saved, result.assignments) || !result.session || !validProfileSummaries(result.profiles)) throw new Error('Malformed atomic editor save response.');
+    const summary = result.profiles.find(summary => summary.id === saved.id);
+    if (!summary || summary.name !== saved.name || summary.revision !== saved.revision || summary.isDefault !== (saved.id === DEFAULT_PROFILE_ID)) throw new Error('Atomic editor save summary does not match its saved document.');
+    this.currentSession = captureProfileSession(result.session);
+    return { document: saved, assignments: clone(result.assignments!), profiles: clone(result.profiles), session: clone(result.session) };
   }
   async saveDraft(): Promise<ProfileDocument> {
     const editor = this.currentEditor;
