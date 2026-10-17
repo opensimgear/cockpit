@@ -119,6 +119,7 @@ test('every explicit operation has a strict portable shape and no hidden process
   const operations=[
     ...['identity','not','invert','gate','any','all','event-to-state'].map(kind=>({kind})),
     {kind:'constant',value:1},{kind:'scale',factor:2,offset:1},
+    {kind:'declare-quantity',quantity:'Provider-reported altitude MSL',unit:'ft'},
     {kind:'range-map',inputMin:0,inputMax:1,outputMin:0,outputMax:32767,rounding:'nearest'},
     {kind:'unit-convert',from:'ft',to:'m',rounding:'none'},
     {kind:'deadzone',center:0,radius:1,rounding:'nearest'},{kind:'curve',points:[{input:0,output:0},{input:1,output:1}],rounding:'none'},
@@ -144,6 +145,14 @@ test('every explicit operation has a strict portable shape and no hidden process
   invalid({...document,overrides:[{resourceId:'wheel',enabled:true,debounceMs:10,invertPorts:[]}]});
   assert.equal(profileDocumentError({...document,overrides:[{resourceId:'wheel',enabled:false}]}),'');
   invalid({...document,overrides:[{resourceId:'wheel',enabled:null}]});
+});
+
+test('quantity declarations use a strict portable shape and trimmed UTF-8 byte limits on both author-supplied fields',()=>{
+  const node={id:'quantity',name:'Quantity',operation:{kind:'declare-quantity',quantity:'é'.repeat(64),unit:'ü'.repeat(64)},inputs:[{...port('in'),direction:'input'}],outputs:[port('out')]};
+  const document={...withResource(),processingNodes:[node]};assert.equal(profileDocumentError(document),'');
+  for(const field of ['quantity','unit'])for(const value of [undefined,null,1,'',' ',' untrimmed','untrimmed ','\u00a0trimmed','line\nbreak','bad\u007f','é'.repeat(65)])invalid({...document,processingNodes:[{...node,operation:{...node.operation,[field]:value}}]});
+  invalid({...document,processingNodes:[{...node,operation:{...node.operation,factor:1}}]});
+  assert.deepEqual(parseProfileDocument(exportProfileDocument(document)),document);
 });
 
 test('graph structure, explicit layouts and editor metadata stay bounded', () => {

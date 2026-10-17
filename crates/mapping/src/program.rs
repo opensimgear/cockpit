@@ -85,6 +85,10 @@ pub struct CurvePoint {
 )]
 pub enum Operation {
     Identity {},
+    DeclareQuantity {
+        quantity: String,
+        unit: String,
+    },
     Constant {
         value: PortValue,
     },

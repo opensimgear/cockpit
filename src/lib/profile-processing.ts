@@ -2,7 +2,7 @@ import { profileContractError, profileDocumentError, profilePortIdValid, profile
 import { graphContractError, graphScalarFits } from './profile-graph';
 
 export const PROCESSING_PRESETS = [
-  ['identity','Identity'],['not','Boolean NOT'],['invert','Invert numeric value'],['scale','Scale and offset'],['range-map','Map numeric range'],['unit-convert','Convert units'],['deadzone','Deadzone'],['curve','Curve'],['compare','Compare'],['hysteresis','Condition with hysteresis'],['gate','Gate'],['any','Boolean OR'],['all','Boolean AND'],['priority','Explicit input priority'],['event-edge','State to event edge'],['event-to-state','Event to state'],['select','Choose values'],['format','Format text'],['fallback','Explicit unknown/stale fallback'],['constant','Constant value'],['toggle','Toggle'],['pulse','Pulse'],['tap','Tap'],['hold','Hold'],['double-tap','Double tap'],['macro','Timed macro'],['script','Script with declared ports'],
+  ['identity','Identity'],['declare-quantity','Interpret raw quantity'],['not','Boolean NOT'],['invert','Invert numeric value'],['scale','Scale and offset'],['range-map','Map numeric range'],['unit-convert','Convert units'],['deadzone','Deadzone'],['curve','Curve'],['compare','Compare'],['hysteresis','Condition with hysteresis'],['gate','Gate'],['any','Boolean OR'],['all','Boolean AND'],['priority','Explicit input priority'],['event-edge','State to event edge'],['event-to-state','Event to state'],['select','Choose values'],['format','Format text'],['fallback','Explicit unknown/stale fallback'],['constant','Constant value'],['toggle','Toggle'],['pulse','Pulse'],['tap','Tap'],['hold','Hold'],['double-tap','Double tap'],['macro','Timed macro'],['script','Script with declared ports'],
 ] as const;
 export type ProcessingPreset = typeof PROCESSING_PRESETS[number][0];
 type ScalarContract = Extract<ProfilePortContract,{delivery:'state'|'event'}>;
@@ -39,6 +39,7 @@ export function processingSummary(node:DeepReadonly<ProfileProcessingNode>):stri
   const op=node.operation;
   if(op.kind==='script')return `Script · ${node.inputs.length} declared inputs → ${node.outputs.length} outputs`;
   if(op.kind==='action-pack'||op.kind==='set-on-change')return `${op.kind==='action-pack'?'On explicit event':'On argument change'} · ${op.arguments.length} ordered arguments`;
+  if(op.kind==='declare-quantity')return boundedSummary(`${op.quantity} · declared ${op.unit} · value unchanged`);
   if(op.kind==='unit-convert')return `${op.from} → ${op.to} · ${op.rounding}`;
   if(op.kind==='range-map')return `${op.inputMin}…${op.inputMax} → ${op.outputMin}…${op.outputMax} · ${op.rounding}`;
   if(op.kind==='scale')return `× ${op.factor} + ${op.offset}`;
@@ -58,6 +59,7 @@ export function processingTemplate(preset:ProcessingPreset,id:string,input:DeepR
   const requireState=()=>{if(source.delivery!=='state')throw new Error('This transformation requires state. Add an explicit Event to state node first.');};
   switch(preset){
     case 'identity':operation={kind:'identity'};break;
+    case 'declare-quantity':{const from=requireNumeric();if(from.unit!==null)throw new Error('Interpret raw quantity requires a unitless source. Use Convert units for an existing declared unit.');operation={kind:'declare-quantity',quantity:'Raw count',unit:'count'};output=sameDelivery({...from,unit:'count'});break;}
     case 'not':requireBoolean();operation={kind:'not'};break;
     case 'invert':requireNumeric();operation={kind:'invert'};break;
     case 'scale':requireNumeric();operation={kind:'scale',factor:1,offset:0};break;
@@ -135,6 +137,7 @@ export function processingNodeError(node:DeepReadonly<ProfileProcessingNode>):st
   switch(op.kind){
     case 'constant':return !node.inputs.length&&node.outputs.length===1&&output.delivery==='state'&&!!b&&profileScalarAccepts(b as ProfileScalarSchema,op.value)?'':fail;
     case 'identity':return same?'':fail;
+    case 'declare-quantity':return sameDelivery&&numeric(a)&&numeric(b)&&a.unit===null&&a.type===b.type&&a.min===b.min&&a.max===b.max&&b.unit===op.unit?'':'Interpret raw quantity requires one unitless numeric input and the same output type, bounds and delivery with exactly the declared unit.';
     case 'not':return same&&booleanInputs?'':fail;
     case 'invert':return same&&numeric(a)?'':fail;
     case 'event-to-state':return one&&input.delivery==='event'&&output.delivery==='state'&&equalSchema(a,b)?'':fail;

@@ -918,7 +918,9 @@ impl Phase {
                 state.rule = crate::rules::State::default();
                 missing.unwrap()
             }
-            Operation::Identity {} | Operation::EventToState {} => {
+            Operation::Identity {}
+            | Operation::DeclareQuantity { .. }
+            | Operation::EventToState {} => {
                 fire = !baseline
                     && !events.is_empty()
                     && matches!(

@@ -18,8 +18,8 @@ fn visible_authoring_presets_use_native_contracts_and_compile_without_fake_readi
         "../../../tests/fixtures/profile-authoring/visible-presets.json"
     ))
     .expect("the editor's complete preset fixture must satisfy native contracts");
-    assert_eq!(document.processing_nodes.len(), 29);
-    assert_eq!(document.bindings.len(), 66);
+    assert_eq!(document.processing_nodes.len(), 30);
+    assert_eq!(document.bindings.len(), 68);
     let mut capture = snapshot(&document);
     capture.assignments.clear();
     capture.resources.clear();
@@ -28,7 +28,7 @@ fn visible_authoring_presets_use_native_contracts_and_compile_without_fake_readi
     let report = compile(&document, &capture);
     assert_ne!(report.readiness, PlanReadiness::Invalid, "{:?}", report.diagnostics);
     let plan = report.plan.expect("unassigned ports retain the derived graph");
-    assert_eq!(plan.program.nodes.len(), 29);
+    assert_eq!(plan.program.nodes.len(), 30);
     assert!(plan.branches.iter().all(|branch| branch.readiness != PlanReadiness::Ready));
     assert!(plan.sources.iter().all(|source| source.token.is_none()));
     assert!(plan.sinks.iter().all(|sink| sink.token.is_none()));

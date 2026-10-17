@@ -195,6 +195,30 @@ pub fn validate_operation(
             Ok(())
         }
         Operation::Identity {} if same => Ok(()),
+        Operation::DeclareQuantity { quantity, unit } if same_delivery => {
+            crate::signal::text(quantity, 128)?;
+            crate::signal::text(unit, 128)?;
+            if quantity.trim() != quantity || unit.trim() != unit {
+                return fail();
+            }
+            let Some(mut declared) = input.cloned() else {
+                return fail();
+            };
+            match &mut declared {
+                ScalarSchema::Integer { unit: source, .. }
+                | ScalarSchema::Number { unit: source, .. }
+                    if source.is_none() =>
+                {
+                    *source = Some(unit.clone());
+                }
+                _ => return fail(),
+            }
+            if output == Some(&declared) {
+                Ok(())
+            } else {
+                fail()
+            }
+        }
         Operation::Not {} if same && bool_inputs => Ok(()),
         Operation::EventToState {}
             if one

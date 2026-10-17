@@ -1006,6 +1006,22 @@
             "display": null,
             "ownership": null
           }
+        },
+        {
+          "id": "output-68",
+          "name": "Interpret raw quantity: out",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": -100,
+              "max": 100,
+              "unit": "count"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
         }
       ]
     }
@@ -1735,6 +1751,28 @@
       "to": {
         "nodeId": "example-destinations",
         "portId": "output-66"
+      }
+    },
+    {
+      "id": "route-67",
+      "from": {
+        "nodeId": "example-inputs",
+        "portId": "input-1"
+      },
+      "to": {
+        "nodeId": "preset-declare-quantity",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-68",
+      "from": {
+        "nodeId": "preset-declare-quantity",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "example-destinations",
+        "portId": "output-68"
       }
     }
   ],
@@ -3148,6 +3186,51 @@
               }
             ],
             "semantics": "setter"
+          }
+        }
+      ]
+    },
+    {
+      "id": "preset-declare-quantity",
+      "name": "Interpret raw quantity",
+      "operation": {
+        "kind": "declare-quantity",
+        "quantity": "Raw count",
+        "unit": "count"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": -100,
+              "max": 100,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": -100,
+              "max": 100,
+              "unit": "count"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
           }
         }
       ]

@@ -278,6 +278,228 @@ fn unit_conversion_hysteresis_and_missing_status_replay() {
 }
 
 #[test]
+fn declared_raw_quantity_keeps_values_and_missing_status_through_explicit_conversion() {
+    let raw = integer_contract(0, 65535);
+    let feet = state(ScalarSchema::Integer {
+        min: 0,
+        max: 65535,
+        unit: Some("ft".into()),
+    });
+    let metres = number_contract(0.0, 65535.0 * 0.3048, Some("m"));
+    let mut program = unary(
+        Operation::DeclareQuantity {
+            quantity: "DCS-BIOS reported MSL altitude".into(),
+            unit: "ft".into(),
+        },
+        raw,
+        feet.clone(),
+    );
+    program.nodes.push(Node {
+        id: "metres".into(),
+        inputs: vec![input("input", "processor", "output", feet)],
+        outputs: vec![descriptor("output", Direction::Output, metres.clone())],
+        operation: Operation::UnitConvert {
+            from: "ft".into(),
+            to: "m".into(),
+            rounding: Rounding::None,
+        },
+    });
+    program.nodes.push(Node {
+        id: "threshold".into(),
+        inputs: vec![input("input", "metres", "output", metres)],
+        outputs: vec![descriptor("output", Direction::Output, boolean_contract())],
+        operation: Operation::Hysteresis {
+            comparison: Comparison::GreaterEqual,
+            press: 3000.0,
+            release: 2900.0,
+        },
+    });
+    let mut engine = phase(program);
+    feed(&mut engine, 1, 0, SignalSample::Unknown);
+    assert_eq!(output(&engine), SignalSample::Unknown);
+    for (sequence, raw, expected) in [(2, 10000.0, true), (3, 9600.0, true), (4, 9500.0, false)] {
+        feed(&mut engine, sequence, sequence, sample(raw));
+        assert_eq!(scalar_output(&engine), raw);
+        assert_eq!(
+            engine.sample(&endpoint("metres", "output")),
+            Some(&sample(raw * 0.3048))
+        );
+        assert_eq!(
+            engine.sample(&endpoint("threshold", "output")),
+            Some(&pressed(expected))
+        );
+    }
+    engine.advance(Counter(1_000_005)).unwrap();
+    for id in ["processor", "metres", "threshold"] {
+        assert_eq!(
+            engine.sample(&endpoint(id, "output")),
+            Some(&SignalSample::Stale)
+        );
+    }
+    feed(&mut engine, 5, 1_000_006, SignalSample::Unknown);
+    assert_eq!(output(&engine), SignalSample::Unknown);
+    engine
+        .accept(frame("source", 1, 6, 1_000_007, Reason::Disconnect, vec![]))
+        .unwrap();
+    for id in ["processor", "metres", "threshold"] {
+        assert_eq!(
+            engine.sample(&endpoint(id, "output")),
+            Some(&SignalSample::Unavailable)
+        );
+    }
+}
+
+#[test]
+fn quantity_declarations_cannot_hide_scaling_type_changes_or_existing_units() {
+    let raw = integer_contract(0, 65535);
+    let feet = state(ScalarSchema::Integer {
+        min: 0,
+        max: 65535,
+        unit: Some("ft".into()),
+    });
+    let declaration = Operation::DeclareQuantity {
+        quantity: "Reported MSL altitude".into(),
+        unit: "ft".into(),
+    };
+    assert!(operation_valid(
+        declaration.clone(),
+        vec![raw.clone()],
+        feet.clone()
+    ));
+    assert!(operation_valid(
+        declaration.clone(),
+        vec![number_contract(-100.0, 100.0, None)],
+        number_contract(-100.0, 100.0, Some("ft"))
+    ));
+    for invalid in [
+        feet.clone(),
+        boolean_contract(),
+        number_contract(0.0, 65535.0, None),
+    ] {
+        assert!(!operation_valid(
+            declaration.clone(),
+            vec![invalid],
+            feet.clone()
+        ));
+    }
+    for invalid in [
+        integer_contract(0, 65535),
+        state(ScalarSchema::Integer {
+            min: 0,
+            max: 65534,
+            unit: Some("ft".into()),
+        }),
+        state(ScalarSchema::Integer {
+            min: 0,
+            max: 65535,
+            unit: Some("m".into()),
+        }),
+        number_contract(0.0, 65535.0, Some("ft")),
+    ] {
+        assert!(!operation_valid(
+            declaration.clone(),
+            vec![raw.clone()],
+            invalid
+        ));
+    }
+    for text in [
+        "".to_owned(),
+        " ".into(),
+        " padded ".into(),
+        "line\nbreak".into(),
+        "x".repeat(129),
+    ] {
+        assert!(!operation_valid(
+            Operation::DeclareQuantity {
+                quantity: text.clone(),
+                unit: "ft".into()
+            },
+            vec![raw.clone()],
+            feet.clone()
+        ));
+        assert!(!operation_valid(
+            Operation::DeclareQuantity {
+                quantity: "Altitude".into(),
+                unit: text
+            },
+            vec![raw.clone()],
+            feet.clone()
+        ));
+    }
+    assert!(!operation_valid(
+        Operation::Scale {
+            factor: 1.0,
+            offset: 0.0
+        },
+        vec![raw.clone()],
+        feet.clone()
+    ));
+    assert!(!operation_valid(
+        Operation::RangeMap {
+            input_min: 0.0,
+            input_max: 65535.0,
+            output_min: 0.0,
+            output_max: 65535.0,
+            rounding: Rounding::None
+        },
+        vec![raw],
+        feet
+    ));
+    let original = unary(
+        declaration,
+        integer_contract(0, 65535),
+        state(ScalarSchema::Integer {
+            min: 0,
+            max: 65535,
+            unit: Some("ft".into()),
+        }),
+    );
+    let mut relabelled = original.clone();
+    if let Operation::DeclareQuantity { quantity, .. } = &mut relabelled.nodes[0].operation {
+        *quantity = "Reported AGL altitude".into();
+    }
+    assert_ne!(
+        original.compile().unwrap().hash,
+        relabelled.compile().unwrap().hash
+    );
+}
+
+#[test]
+fn raw_quantity_events_preserve_occurrences_without_replaying_baselines() {
+    let raw = PortContract::Event {
+        schema: ScalarSchema::Integer {
+            min: 0,
+            max: 65535,
+            unit: None,
+        },
+    };
+    let feet = PortContract::Event {
+        schema: ScalarSchema::Integer {
+            min: 0,
+            max: 65535,
+            unit: Some("ft".into()),
+        },
+    };
+    let mut engine = phase(unary(
+        Operation::DeclareQuantity {
+            quantity: "Reported altitude".into(),
+            unit: "ft".into(),
+        },
+        raw,
+        feet,
+    ));
+    engine.drain();
+    feed(&mut engine, 1, 0, sample(10000.0));
+    assert!(engine.drain().is_empty());
+    for sequence in 2..=3 {
+        feed(&mut engine, sequence, sequence, sample(10000.0));
+        let effects = engine.drain();
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].sample, sample(10000.0));
+    }
+}
+
+#[test]
 fn raw_numeric_ranges_and_multiple_virtual_layouts_are_preserved() {
     let raw = integer_contract(0, 65535);
     let axis = integer_contract(0, 32767);

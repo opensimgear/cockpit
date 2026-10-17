@@ -199,6 +199,10 @@ fn request_is_strict_bounded_and_has_no_browser_graph_token_or_sample_fields() {
 #[test]
 fn transform_summaries_are_bounded_even_for_extreme_numbers_and_never_expose_text() {
     let operations = [
+        Operation::DeclareQuantity {
+            quantity: "é".repeat(64),
+            unit: "m".repeat(128),
+        },
         Operation::RangeMap {
             input_min: -1e300,
             input_max: 1e300,
@@ -239,6 +243,13 @@ fn transform_summaries_are_bounded_even_for_extreme_numbers_and_never_expose_tex
     }
     assert_eq!(number(0.25), "0.25");
     assert_eq!(number(0.0), "0");
+    assert_eq!(
+        summary(&Operation::DeclareQuantity {
+            quantity: "Reported MSL altitude".into(),
+            unit: "ft".into(),
+        }),
+        "Quantity Reported MSL altitude [ft]"
+    );
 }
 
 #[test]

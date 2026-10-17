@@ -235,6 +235,7 @@ fn builtin_summary(rule: &osg_mapping::rules::Rule, inputs: &[String]) -> String
 fn summary(operation: &Operation) -> String {
     match operation {
         Operation::Identity{}=>"Identity".into(),Operation::Not{}=>"Boolean NOT".into(),Operation::Invert{}=>"Invert numeric value".into(),
+        Operation::DeclareQuantity{quantity,unit}=>bounded_summary(format!("Quantity {quantity} [{unit}]")),
         Operation::Gate{}=>"Explicit gate".into(),Operation::Any{}=>"Boolean OR".into(),Operation::All{}=>"Boolean AND".into(),
         Operation::EventToState{}=>"Event to state".into(),Operation::Constant{value}=>format!("Constant {}",scalar(value)),
         Operation::Scale{factor,offset}=>format!("Scale × {} + {}",number(*factor),number(*offset)),

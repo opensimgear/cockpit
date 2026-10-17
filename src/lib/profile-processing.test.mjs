@@ -27,11 +27,31 @@ test('built-in summaries remain bounded UTF-8 previews with complete parameters 
 });
 
 test('numeric presets preserve raw ranges and expose every conversion, condition and formatting parameter',()=>{
-  const numeric=['identity','invert','scale','range-map','unit-convert','deadzone','curve','compare','hysteresis','format','fallback','constant','script'];
+  const numeric=['identity','declare-quantity','invert','scale','range-map','unit-convert','deadzone','curve','compare','hysteresis','format','fallback','constant','script'];
   for(const kind of numeric){const node=make(kind,`node-${kind}`,state(number(-100,100,kind==='unit-convert'?'ft':null)));assertValid(node);assert.equal(node.outputs.length,1);assert.equal(node.inputs.length,kind==='constant'?0:1);assert.ok(summary(node).length>0);}
   const range=make('range-map','axis-normalization',state(number(0,65535)),state(integer(0,32767)));assert.deepEqual(plain(range.operation),{kind:'range-map',inputMin:0,inputMax:65535,outputMin:0,outputMax:32767,rounding:'nearest'});assert.equal(range.outputs[0].contract.schema.type,'integer');assert.ok(summary(range).includes('65535'));
   const units=make('unit-convert','altitude',state(number(0,100000,'ft')),state(number(0,30480,'m')));assert.equal(units.operation.from,'ft');assert.equal(units.operation.to,'m');assert.ok(summary(units).includes('ft → m'));assertValid(units);
   const independent=make('range-map','independent',state(number(0,10)));independent.outputs[0].contract.schema.unit='m';assert.equal(independent.inputs[0].contract.schema.unit,null);assert.equal(make('constant','next').outputs[0].contract.schema.type,'boolean');
+});
+
+test('quantity declaration is explicit and preserves raw numeric type, bounds and delivery without inferring a physical unit',()=>{
+  for(const schema of [integer(0,65535),number(-123.5,30000.25)])for(const contract of [state(schema),event(schema)]){
+    const before=plain(contract),node=make('declare-quantity','declared',contract,state(number(0,100,'ft')));
+    assertValid(node);assert.deepEqual(plain(node.operation),{kind:'declare-quantity',quantity:'Raw count',unit:'count'});
+    assert.deepEqual(plain(node.inputs[0].contract),before);assert.deepEqual(plain(node.outputs[0].contract.schema),{...schema,unit:'count'});assert.equal(node.outputs[0].contract.delivery,contract.delivery);
+    assert.deepEqual(plain(contract),before);assert.ok(summary(node).includes('Raw count · declared count · value unchanged'));
+  }
+  const declared=make('declare-quantity','altitude',state(integer(0,65535)));declared.operation.quantity='Provider-reported altitude MSL';declared.operation.unit='ft';declared.outputs[0].contract.schema.unit='ft';assertValid(declared);
+  assertValid(make('unit-convert','metres',declared.outputs[0].contract));assert.ok(summary(declared).includes('altitude MSL'));
+  assert.throws(()=>make('declare-quantity','existing-unit',state(number(0,100,'ft'))),/unitless source/);assert.throws(()=>make('declare-quantity','boolean',state()),/integer or number/);
+});
+
+test('quantity declaration rejects changed values, delivery, typed units and malformed bounded author interpretations',()=>{
+  const original=make('declare-quantity','raw',state(integer(0,65535)));
+  for(const mutate of [node=>node.inputs[0].contract.schema.unit='count',node=>node.outputs[0].contract.schema.unit=null,node=>node.outputs[0].contract.schema.unit='ft',node=>node.outputs[0].contract.schema.min=1,node=>node.outputs[0].contract.schema.max=65536,node=>node.outputs[0].contract.schema.type='number',node=>node.outputs[0].contract.delivery='event',node=>node.inputs[0].contract.schema={type:'boolean'},node=>node.inputs.push({...plain(node.inputs[0]),id:'extra'})]){const node=plain(original);mutate(node);assert.ok(error(node),JSON.stringify(node));}
+  for(const field of ['quantity','unit'])for(const value of ['', ' ', ' trimmed', 'trimmed ', '\u00a0trimmed', 'line\nbreak','bad\u007f', 'é'.repeat(65)]){const node=plain(original);node.operation[field]=value;if(field==='unit')node.outputs[0].contract.schema.unit=value;assert.ok(error(node),JSON.stringify({field,value}));}
+  const bounded=plain(original);bounded.operation.quantity='é'.repeat(64);bounded.operation.unit='ü'.repeat(64);bounded.outputs[0].contract.schema.unit=bounded.operation.unit;assertValid(bounded);assert.ok(new TextEncoder().encode(summary(bounded)).length<=255);assert.ok(!summary(bounded).includes('�'));
+  const scale=make('scale','scale',state(integer(0,65535)));scale.outputs[0].contract.schema.unit='ft';assert.match(error(scale),/units/);assert.throws(()=>make('unit-convert','raw-conversion',original.inputs[0].contract),/declared source unit/);
 });
 test('boolean logic and timing presets are explicit typed nodes with deterministic named ports and no implicit wires',()=>{
   for(const kind of ['not','gate','any','all','priority','event-edge','select','toggle','pulse','tap','hold','double-tap','macro']){const node=make(kind,`node-${kind}`);assertValid(node);assert.equal(node.inputs.every(port=>port.direction==='input'),true);assert.equal(node.outputs.every(port=>port.direction==='output'),true);}
@@ -77,11 +97,11 @@ test('declared port and builtin bounds remain consistent with native validation'
   const pulse=make('pulse','pulse');pulse.operation.rule.repeatUs=pulse.operation.rule.durationUs;assert.ok(error(pulse));pulse.operation.rule.repeatUs=200000;assertValid(pulse);
   const macro=make('macro','macro');macro.operation.rule.steps[1].pressed=true;assert.ok(error(macro));
   const enumNode=make('event-to-state','enum',event({type:'enum',values:['one','two']}));enumNode.outputs[0].contract.schema.values.reverse();assert.ok(error(enumNode));
-  assert.equal(PROCESSING_PRESETS.length,27);
+  assert.equal(PROCESSING_PRESETS.length,28);
 });
 test('native-validated fixed authoring fixture retains the exact generated preset and atomic invocation contracts',async()=>{
   const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profile-authoring/visible-presets.json',import.meta.url),'utf8'));
-  assert.equal(fixture.processingNodes.length,29);assert.equal(fixture.bindings.length,66);
+  assert.equal(fixture.processingNodes.length,30);assert.equal(fixture.bindings.length,68);
   for(const node of fixture.processingNodes){let generated;const kind=node.id.slice('preset-'.length);if(kind==='action-pack'||kind==='set-on-change'){const binding=fixture.bindings.find(binding=>binding.from.nodeId===node.id),sink=fixture.resources.find(resource=>resource.id===binding.to.nodeId).ports.find(port=>port.id===binding.to.portId);generated=pack(node.id,sink.contract,kind);}else generated=make(kind,node.id,node.inputs[0]?.contract??node.outputs[0].contract);assert.deepEqual(plain(generated),node);assertValid(node);}
   assert.ok(!fixture.processingNodes.find(node=>node.operation.kind==='script').operation.source.includes('on_timer'));
 });

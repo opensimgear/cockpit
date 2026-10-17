@@ -85,6 +85,11 @@ Different units, types, ranges or delivery kinds require a visible processing
 node. Use the bindings table as a keyboard alternative. Its diagnostics identify
 the exact resource, port or edge that needs attention.
 
+For a raw numeric port, add **Interpret raw quantity** to name what its numbers
+represent and declare their unit. Then use **Convert units** for a physical unit
+conversion. Keep any range calibration in a separate visible node. The
+[quantity guide](profile-quantities.md) explains the contracts and freshness.
+
 For a combined rig:
 
 1. Add a virtual controller, declare its logical buttons/axes/hats and neutral

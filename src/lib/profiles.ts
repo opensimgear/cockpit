@@ -33,6 +33,7 @@ export type ProfileResource = { id: string; name: string; kind: 'device' | 'comp
 export type ProfileEndpoint = { nodeId: string; portId: string };
 export type ProfileBinding = { id: string; from: ProfileEndpoint; to: ProfileEndpoint };
 export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 'any' | 'all' | 'event-to-state' }
+  | { kind: 'declare-quantity'; quantity: string; unit: string }
   | { kind: 'constant'; value: Exclude<ProfileValue, null> }
   | { kind: 'scale'; factor: number; offset: number }
   | { kind: 'range-map'; inputMin: number; inputMax: number; outputMin: number; outputMax: number; rounding: ProfileRounding }
@@ -168,6 +169,7 @@ function operation(value: unknown): boolean {
   if (!object(value)) return false;
   const kind = value.kind;
   if (['identity', 'not', 'invert', 'gate', 'any', 'all', 'event-to-state'].includes(String(kind))) return exact(value, ['kind']);
+  if (kind === 'declare-quantity') return exact(value, ['kind', 'quantity', 'unit']) && boundedText(value.quantity, 128) && value.quantity.trim() === value.quantity && boundedText(value.unit, 128) && value.unit.trim() === value.unit;
   if (kind === 'constant') return exact(value, ['kind', 'value']) && scalarValue(value.value);
   if (kind === 'scale') return exact(value, ['kind', 'factor', 'offset']) && coefficient(value.factor) && coefficient(value.offset);
   if (kind === 'range-map') return exact(value, ['kind', 'inputMin', 'inputMax', 'outputMin', 'outputMax', 'rounding']) && [value.inputMin, value.inputMax, value.outputMin, value.outputMax].every(coefficient) && rounding(value.rounding);
