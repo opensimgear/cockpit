@@ -194,6 +194,70 @@ pub struct ResolvedRoute {
     pub route: Route,
     pub port: PortDescriptor,
 }
+/// Native-only acquisition pin. This is deliberately neither serializable nor
+/// a delivery token: it can prepare a provider without manufacturing a sample.
+#[derive(Clone, Debug)]
+pub struct PortPreparation {
+    pin: PreparationPin,
+    resolved: ResolvedRoute,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct PreparationPin {
+    inventory_session: String,
+    resource_id: String,
+    generation: String,
+    capability_revision: String,
+    provider_session: String,
+    scope: String,
+    key: String,
+    route: Route,
+    port_id: String,
+    contract_hash: String,
+    access: Access,
+}
+impl PortPreparation {
+    pub fn resolved(&self) -> &ResolvedRoute {
+        &self.resolved
+    }
+    pub fn access(&self) -> Access {
+        self.pin.access
+    }
+    pub fn requires_baseline(&self) -> bool {
+        self.pin.access == Access::Read && !self.resolved.route.baseline_ready
+    }
+    pub fn requires_provider_acquisition(&self) -> bool {
+        self.pin.access != Access::Read && !self.resolved.route.writable
+    }
+    pub fn fingerprint(&self) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        Ok(format!(
+            "sha256:{:x}",
+            Sha256::digest(serde_json::to_vec(&self.pin).map_err(|error| error.to_string())?)
+        ))
+    }
+    pub(crate) fn matches_capture(
+        &self,
+        session: &str,
+        resource: &ResourceSummary,
+        port: &ObservedPort,
+        access: Access,
+    ) -> bool {
+        self.pin.inventory_session == session
+            && self.pin.resource_id == resource.id
+            && self.pin.generation == resource.generation
+            && self.pin.capability_revision == resource.capability_revision
+            && self.pin.port_id == port.descriptor.id
+            && self.pin.contract_hash == port.contract_hash
+            && self.pin.access == access
+            && port.current
+            && port.route_ids.contains(&self.pin.route.id)
+            && resource.connections.iter().any(|connection| {
+                connection.scope == self.resolved.scope
+                    && connection.key == self.resolved.key
+                    && connection.route == self.pin.route
+            })
+    }
+}
 #[derive(Clone, Debug)]
 pub struct ValidatedInvocation {
     token: ResourceToken,
@@ -565,17 +629,28 @@ impl Registry {
         }
         let mut selected = BTreeMap::new();
         for expected in expectations {
-            let Some(variants) = by_id.get(expected.observed_port_id.as_str()) else { continue };
+            let Some(variants) = by_id.get(expected.observed_port_id.as_str()) else {
+                continue;
+            };
             // Prefer the current exact variant, then a changed current variant
             // so the compiler reports a changed contract rather than silence.
-            let port = variants.iter().copied().find(|port| {
-                port.current && port.contract_hash == expected.expected_contract_hash
-            }).or_else(|| variants.iter().copied().find(|port| port.current))
-              .or_else(|| variants.iter().copied().find(|port| {
-                  port.contract_hash == expected.expected_contract_hash
-              })).or_else(|| variants.first().copied());
+            let port = variants
+                .iter()
+                .copied()
+                .find(|port| port.current && port.contract_hash == expected.expected_contract_hash)
+                .or_else(|| variants.iter().copied().find(|port| port.current))
+                .or_else(|| {
+                    variants
+                        .iter()
+                        .copied()
+                        .find(|port| port.contract_hash == expected.expected_contract_hash)
+                })
+                .or_else(|| variants.first().copied());
             if let Some(port) = port {
-                selected.insert((port.descriptor.id.clone(), port.contract_hash.clone()), port.clone());
+                selected.insert(
+                    (port.descriptor.id.clone(), port.contract_hash.clone()),
+                    port.clone(),
+                );
             }
         }
         let mut evidence = Vec::new();
@@ -615,6 +690,60 @@ impl Registry {
             contract_hash: resolved.port.contract_hash()?,
             access,
         })
+    }
+    /// Current identity/catalogue admission only. Game provider setup and native
+    /// process authority must still be checked by its acquisition adapter.
+    pub fn prepare_port(
+        &self,
+        id: &str,
+        port_id: &str,
+        expected_contract_hash: &str,
+        access: Access,
+    ) -> Result<PortPreparation, String> {
+        let entry = self.entry(id)?;
+        let resolved = self.choose_mode(entry, port_id, access, true)?;
+        let hash = resolved.port.contract_hash()?;
+        if hash != expected_contract_hash {
+            return Err("Resource contract changed before preparation; reconcile its exact local port expectation.".into());
+        }
+        let live = entry
+            .live
+            .get(&(resolved.scope.clone(), resolved.key.clone()))
+            .unwrap();
+        Ok(PortPreparation {
+            pin: PreparationPin {
+                inventory_session: self.session.clone(),
+                resource_id: entry.saved.id.clone(),
+                generation: entry.generation.to_string(),
+                capability_revision: capability_revision(entry)?,
+                provider_session: live.provider_session.clone(),
+                scope: resolved.scope.clone(),
+                key: resolved.key.clone(),
+                route: resolved.route.clone(),
+                port_id: port_id.into(),
+                contract_hash: hash,
+                access,
+            },
+            resolved,
+        })
+    }
+    pub fn validate_preparation(
+        &self,
+        preparation: &PortPreparation,
+    ) -> Result<ResolvedRoute, String> {
+        let current = self.prepare_port(
+            &preparation.pin.resource_id,
+            &preparation.pin.port_id,
+            &preparation.pin.contract_hash,
+            preparation.pin.access,
+        )?;
+        if current.pin != preparation.pin {
+            return Err(
+                "Resource identity, route, catalogue or generation changed after preparation."
+                    .into(),
+            );
+        }
+        Ok(current.resolved)
     }
     pub fn validate_token(
         &self,
@@ -844,6 +973,15 @@ impl Registry {
         port_id: &str,
         access: Access,
     ) -> Result<ResolvedRoute, String> {
+        self.choose_mode(entry, port_id, access, false)
+    }
+    fn choose_mode(
+        &self,
+        entry: &Entry,
+        port_id: &str,
+        access: Access,
+        preparing: bool,
+    ) -> Result<ResolvedRoute, String> {
         if access != Access::Read {
             if let Some(reason) = write_conflict(entry) {
                 return Err(reason.into());
@@ -865,19 +1003,23 @@ impl Registry {
             else {
                 continue;
             };
+            let may_acquire_game = preparing
+                && entry.saved.resource_type == ResourceType::GameIntegration
+                && live.route.transport == Transport::Integration;
             let allowed = match access {
                 Access::Read => {
                     port.direction == crate::Direction::Output
                         && !matches!(port.contract, PortContract::Action { .. })
-                        && live.route.baseline_ready
+                        && (live.route.baseline_ready || preparing)
                 }
                 Access::Write => {
                     port.direction == crate::Direction::Input
                         && !matches!(port.contract, PortContract::Action { .. })
-                        && live.route.writable
+                        && (live.route.writable || may_acquire_game)
                 }
                 Access::Invoke => {
-                    matches!(port.contract, PortContract::Action { .. }) && live.route.writable
+                    matches!(port.contract, PortContract::Action { .. })
+                        && (live.route.writable || may_acquire_game)
                 }
             };
             if allowed {
@@ -911,7 +1053,11 @@ impl Registry {
         let ports = observed_ports(entry)?;
         self.summary_with_port_count(entry, ports.len())
     }
-    fn summary_with_port_count(&self, entry: &Entry, cached_port_count: usize) -> Result<ResourceSummary, String> {
+    fn summary_with_port_count(
+        &self,
+        entry: &Entry,
+        cached_port_count: usize,
+    ) -> Result<ResourceSummary, String> {
         let mut attributes = BTreeMap::new();
         let mut diagnostics = Vec::new();
         for sighting in &entry.saved.sightings {
@@ -1320,3 +1466,7 @@ fn adopt_ports(
 #[cfg(test)]
 #[path = "resources_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "resources_preparation_tests.rs"]
+mod preparation_tests;

@@ -1,10 +1,12 @@
 //! Native inventory cache. Provider discovery runs independently of UI requests;
 //! reads below cannot start a profile, claim a writer or submit an action.
-use osg_profiles::resources::{Access, Observation, ProviderBatch, Registry, ResourceToken};
+use osg_profiles::resources::{
+    Access, Observation, PortPreparation, ProviderBatch, Registry, ResourceToken, Route,
+};
 use osg_profiles::resources_store::Store;
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -30,20 +32,16 @@ pub(crate) struct Runtime {
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
     collect: Collect,
-    local_revision: AtomicU64,
+    local_revision: Arc<AtomicU64>,
+    capture_gate: Arc<Mutex<()>>,
 }
 impl Runtime {
     /// Capture only cached descriptors and exact local port assignments. This
     /// method performs no provider I/O and never changes inventory authority.
     pub(crate) fn snapshot_for_compile(
         &self,
-        mut assignments: Vec<osg_profiles::store::LocalAssignment>,
+        assignments: Vec<osg_profiles::store::LocalAssignment>,
     ) -> Result<osg_profiles::compiler_models::CompileSnapshot, String> {
-        use osg_profiles::compiler_models::{
-            BackendCapabilities, CapturedResource, CompileSnapshot,
-        };
-        use osg_profiles::resources_ports::PortContract;
-        use osg_profiles::Direction;
         if self.stop.load(Ordering::Acquire) {
             return Err("Resource inventory has stopped.".into());
         }
@@ -57,6 +55,17 @@ impl Runtime {
             return Err("The compiler capture exceeds the profile resource/port limit.".into());
         }
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        Self::snapshot_locked(&state, assignments)
+    }
+    fn snapshot_locked(
+        state: &State,
+        mut assignments: Vec<osg_profiles::store::LocalAssignment>,
+    ) -> Result<osg_profiles::compiler_models::CompileSnapshot, String> {
+        use osg_profiles::compiler_models::{
+            BackendCapabilities, CapturedResource, CompileSnapshot,
+        };
+        use osg_profiles::resources_ports::PortContract;
+        use osg_profiles::Direction;
         let mut resources: Vec<CapturedResource> = Vec::new();
         let mut diagnostics = state.diagnostics.clone();
         for assignment in &mut assignments {
@@ -166,6 +175,100 @@ impl Runtime {
             read_only: state.read_only,
         })
     }
+    /// Deliberately distinct from delivery capture; no token or sample is fabricated.
+    pub(crate) fn snapshot_for_preparation(
+        &self,
+        assignments: Vec<osg_profiles::store::LocalAssignment>,
+    ) -> Result<
+        (
+            osg_profiles::compiler_models::CompileSnapshot,
+            Vec<PortPreparation>,
+        ),
+        String,
+    > {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        if assignments.len() > 64 || assignments.iter().map(|a| a.ports.len()).sum::<usize>() > 1024
+        {
+            return Err("Preparation capture exceeds bounded assignments.".into());
+        }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut snapshot = Self::snapshot_locked(&state, assignments)?;
+        let mut preparations = Vec::new();
+        let mut fingerprints = BTreeSet::new();
+        if !state.read_only {
+            for assignment in &snapshot.assignments {
+                for expected in &assignment.ports {
+                    let Some(observed) = snapshot
+                        .resources
+                        .iter()
+                        .find(|r| r.summary.id == assignment.source_id)
+                        .and_then(|resource| {
+                            resource.ports.iter().find(|p| {
+                                p.descriptor.id == expected.observed_port_id
+                                    && p.contract_hash == expected.expected_contract_hash
+                            })
+                        })
+                    else {
+                        continue;
+                    };
+                    let access = match (
+                        &observed.descriptor.direction,
+                        &observed.descriptor.contract,
+                    ) {
+                        (osg_profiles::Direction::Output, _) => Access::Read,
+                        (_, osg_profiles::PortContract::Action { .. }) => Access::Invoke,
+                        _ => Access::Write,
+                    };
+                    match state.registry.prepare_port(
+                        &assignment.source_id,
+                        &expected.observed_port_id,
+                        &expected.expected_contract_hash,
+                        access,
+                    ) {
+                        Ok(pin) => {
+                            if fingerprints.insert(pin.fingerprint()?) {
+                                preparations.push(pin)
+                            }
+                        }
+                        Err(error) => snapshot.inventory_diagnostics.push(format!(
+                            "Resource {} port {} cannot prepare: {error}",
+                            assignment.resource_id, expected.profile_port_id
+                        )),
+                    }
+                }
+            }
+        }
+        Ok((snapshot, preparations))
+    }
+    /// Cached delivery check only. Calling this never discovers/acquires a provider.
+    pub(crate) fn validate_delivery(&self, token: &ResourceToken) -> Result<Route, String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.read_only && token.access != Access::Read {
+            return Err("Repair retained inventory before output delivery.".into());
+        }
+        Ok(state
+            .registry
+            .validate_token(token, &token.port_id, token.access)?
+            .route)
+    }
+    pub(crate) fn validate_preparation(
+        &self,
+        preparation: &PortPreparation,
+    ) -> Result<Route, String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.read_only {
+            return Err("Repair retained inventory before acquisition.".into());
+        }
+        Ok(state.registry.validate_preparation(preparation)?.route)
+    }
 
     pub(crate) fn new(root: Option<PathBuf>, collect: Collect, native: bool) -> Self {
         let store = root.map(Store::new);
@@ -193,18 +296,31 @@ impl Runtime {
             pending_save: false,
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        let local_revision = Arc::new(AtomicU64::new(0));
+        let capture_gate = Arc::new(Mutex::new(()));
         let worker = if native {
             let state = state.clone();
             let stopped = stop.clone();
             let collect = collect.clone();
+            let revisions = local_revision.clone();
+            let gate = capture_gate.clone();
             Some(
                 thread::Builder::new()
                     .name("profile-resource-inventory".into())
                     .spawn(move || {
-                        let mut revision = 0u64;
                         while !stopped.load(Ordering::Acquire) {
-                            revision += 1;
-                            Self::adopt(&state, collect(revision));
+                            {
+                                let _capture = gate.lock().unwrap_or_else(|p| p.into_inner());
+                                if stopped.load(Ordering::Acquire) {
+                                    break;
+                                }
+                                let revision = revisions.fetch_add(1, Ordering::AcqRel) + 1;
+                                let batches = collect(revision);
+                                if stopped.load(Ordering::Acquire) {
+                                    break;
+                                }
+                                Self::adopt(&state, batches);
+                            }
                             for _ in 0..20 {
                                 if stopped.load(Ordering::Acquire) {
                                     break;
@@ -223,8 +339,27 @@ impl Runtime {
             stop,
             worker: Mutex::new(worker),
             collect,
-            local_revision: AtomicU64::new(0),
+            local_revision,
+            capture_gate,
         }
+    }
+    /// Explicit native coordinator refresh. Cached capture/validation and native
+    /// browser reads never call this; acquisitions opt into bounded provider I/O.
+    pub(crate) fn refresh_native(&self) -> Result<(), String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let revision = self.local_revision.fetch_add(1, Ordering::AcqRel) + 1;
+        let batches = (self.collect)(revision);
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        Self::adopt(&self.state, batches);
+        Ok(())
     }
     fn adopt(state: &Mutex<State>, batches: Vec<(String, Result<ProviderBatch, String>)>) {
         let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
@@ -301,8 +436,7 @@ impl Runtime {
             .unwrap_or_else(|p| p.into_inner())
             .is_none()
         {
-            let revision = self.local_revision.fetch_add(1, Ordering::AcqRel) + 1;
-            Self::adopt(&self.state, (self.collect)(revision));
+            self.refresh_native()?;
         }
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let text = |key: &str| {
