@@ -1,4 +1,4 @@
-import { supportsDeviceContracts } from './gateway-capabilities';
+import { supportsDeviceContracts } from './gateway-capabilities.ts';
 import type { GatewayModule, GatewayState } from './gateway';
 
 export type ActionValue = boolean | number | string;
@@ -11,9 +11,27 @@ export type DeviceAction = {
   readable: boolean; parameters: ActionParameter[];
   display?: { columns: number; rows: number; encoding: 'ascii' | 'utf8' };
 };
+export type ActionOwnershipCapability = {
+  schemaVersion: 1; scope: 'endpoint'; maxLeaseMs: 5000; restorePolicy?: 'if-unchanged';
+};
+/** Advertised restoration capability only; live output still needs native qualification and ownership. */
+export function actionOwnershipValid(value: unknown): value is ActionOwnershipCapability {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return ['schemaVersion', 'scope', 'maxLeaseMs'].every(key => Object.hasOwn(entry, key))
+    && entry.schemaVersion === 1 && entry.scope === 'endpoint' && entry.maxLeaseMs === 5000
+    && Object.keys(entry).every(key => ['schemaVersion', 'scope', 'maxLeaseMs', 'restorePolicy'].includes(key))
+    && (!Object.hasOwn(entry, 'restorePolicy') || entry.restorePolicy === 'if-unchanged');
+}
+export function guardedSetterRestorationAdvertised(action: DeviceAction, snapshot?: DeviceActions): boolean {
+  return action.readable === true && action.semantics === 'setter' && snapshot?.status === 'ready'
+    && actionOwnershipValid(snapshot.ownership) && snapshot.ownership.restorePolicy === 'if-unchanged'
+    && snapshot.actions.some(current => current.id === action.id && current.endpoint === action.endpoint && current.readable === true && current.semantics === 'setter');
+}
 export type DeviceActions = {
   boot: number; catalogueRevision?: number; actions: DeviceAction[];
   states: { id: string; values: ActionValue[] }[];
+  ownership?: ActionOwnershipCapability | null;
   status: 'ready' | 'unsupported' | 'unknown' | 'error' | 'uncertain'; error?: string | null;
 };
 

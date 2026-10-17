@@ -262,3 +262,34 @@ fn malformed_integration_catalogues_fail_as_a_whole_instead_of_publishing_partia
         assert!(integration(&catalogue).is_err(), "{catalogue}");
     }
 }
+
+#[test]
+fn exact_guarded_restoration_survives_action_projection_and_legacy_remains_visible() {
+    let setter = action(
+        "led",
+        "setter",
+        true,
+        json!([{"id":"on","label":"On","type":"boolean"}]),
+    );
+    let mut cache = json!({"ownership":{"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000},"actions":[setter]});
+    let legacy = actions(&cache).unwrap();
+    assert_eq!(legacy.len(), 1);
+    assert!(!legacy[0].contract.supports_guarded_setter());
+    cache["ownership"]["restorePolicy"] = json!("if-unchanged");
+    let guarded = actions(&cache).unwrap();
+    assert!(guarded[0].contract.supports_guarded_setter());
+    assert_ne!(
+        legacy[0].contract_hash().unwrap(),
+        guarded[0].contract_hash().unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&guarded[0]).unwrap()["contract"]["ownership"]["restorePolicy"],
+        "if-unchanged"
+    );
+    cache["actions"][0]["readable"] = json!(false);
+    assert!(!actions(&cache).unwrap()[0]
+        .contract
+        .supports_guarded_setter());
+    cache["ownership"]["restorePolicy"] = json!("always");
+    assert!(actions(&cache).is_err());
+}

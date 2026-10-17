@@ -63,6 +63,8 @@ struct Device {
     response_override: Option<(String, Value)>,
     action_revision: u32,
     ownership: bool,
+    guarded_restore: bool,
+    last_owned: Option<bool>,
     actions_supported: bool,
     events_supported: bool,
 }
@@ -93,6 +95,8 @@ impl Default for Device {
             response_override: None,
             action_revision: 1,
             ownership: true,
+            guarded_restore: false,
+            last_owned: None,
             actions_supported: true,
             events_supported: true,
         }
@@ -111,6 +115,9 @@ impl Device {
             json!({"ok":true,"schemaVersion":1,"catalogueRevision":self.action_revision});
         if self.ownership {
             value["ownership"] = json!({"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000});
+            if self.guarded_restore {
+                value["ownership"]["restorePolicy"] = json!("if-unchanged");
+            }
         }
         value
     }
@@ -255,6 +262,7 @@ impl Device {
                         }
                         self.token = Some(args[3].into());
                         self.fallback = args[5] == "1";
+                        self.last_owned = Some(self.led);
                         result["leaseId"] = json!(self.lease);
                         result["endpoint"] = json!("led.boolean");
                         result["remainingMs"] = json!(args[4].parse::<u32>().unwrap());
@@ -268,7 +276,15 @@ impl Device {
                         result["endpoint"] = json!("led.boolean");
                         if args[0] == "release" {
                             self.token = None;
-                            self.led = self.fallback;
+                            let preserve =
+                                self.guarded_restore && self.last_owned != Some(self.led);
+                            if !preserve {
+                                self.led = self.fallback;
+                            }
+                            if self.guarded_restore {
+                                result["fallbackStatus"] =
+                                    json!(if preserve { "preserved" } else { "applied" });
+                            }
                             result["released"] = json!(true);
                         } else {
                             result["remainingMs"] = json!(args[3].parse::<u32>().unwrap());
@@ -280,6 +296,7 @@ impl Device {
                         result = json!({"ok":false,"error":"outputNotOwned"});
                     } else {
                         self.led = args[5] == "1";
+                        self.last_owned = Some(self.led);
                         result["id"] = json!(args[4]);
                         result["values"] = json!([self.led]);
                     }
@@ -1256,4 +1273,72 @@ fn malformed_or_timed_out_capability_replies_are_never_classified_as_unsupported
         assert!(snapshot.actions.is_none());
         assert!(snapshot.events.is_none());
     }
+}
+
+#[test]
+fn guarded_policy_and_preserved_receipt_survive_actual_usb_worker_without_replaying_release() {
+    let (service, device) = setup();
+    device.lock().unwrap().guarded_restore = true;
+    let route = connect(&service).route.unwrap();
+    let described = actions(&service, &route);
+    assert_eq!(
+        described.actions.as_ref().unwrap()["ownership"]["restorePolicy"],
+        "if-unchanged"
+    );
+    let projected =
+        crate::profile_resource_ports::actions(described.actions.as_ref().unwrap()).unwrap();
+    assert!(projected[0].contract.supports_guarded_setter());
+    let claimed = service
+        .request(UsbRequest::Action {
+            route: route.clone(),
+            action: ActionRequest::Claim {
+                catalogue_revision: 1,
+                action_id: "led.boolean.set_enabled".into(),
+                values: vec![json!(true)],
+                token: TOKEN.into(),
+                ttl_ms: 5000,
+            },
+        })
+        .unwrap();
+    let lease_id = claimed.actions.as_ref().unwrap()["lastLease"]["leaseId"]
+        .as_u64()
+        .unwrap() as u32;
+    service
+        .request(UsbRequest::Action {
+            route: route.clone(),
+            action: ActionRequest::InvokeOwned {
+                catalogue_revision: 1,
+                action_id: "led.boolean.set_enabled".into(),
+                values: vec![json!(true)],
+                token: TOKEN.into(),
+                lease_id,
+            },
+        })
+        .unwrap();
+    device.lock().unwrap().led = false;
+    let released = service
+        .request(UsbRequest::Action {
+            route,
+            action: ActionRequest::Release {
+                token: TOKEN.into(),
+                lease_id,
+            },
+        })
+        .unwrap();
+    assert_eq!(
+        released.actions.as_ref().unwrap()["lastLease"]["fallbackStatus"],
+        "preserved"
+    );
+    assert!(!device.lock().unwrap().led);
+    assert!(!serde_json::to_string(&released).unwrap().contains(TOKEN));
+    assert_eq!(
+        device
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .filter(|line| line.starts_with("action release "))
+            .count(),
+        1
+    );
 }

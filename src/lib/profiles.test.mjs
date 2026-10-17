@@ -418,3 +418,11 @@ test('atomic save requires bounded real matching native profile summaries', asyn
   assert.equal((await client.editorSave(document,null,[])).profiles.length,2);
   for(const profiles of [undefined,[],[valid.profiles[0]],Array(33).fill(valid.profiles[0]),[valid.profiles[0],{...valid.profiles[1],name:'Different'}],[valid.profiles[0],{...valid.profiles[1],revision:2}],[valid.profiles[0],{...valid.profiles[1],isDefault:true}],[valid.profiles[0],{...valid.profiles[1],semanticHash:''}],[valid.profiles[0],valid.profiles[1],valid.profiles[1]]]) {reply={...valid,profiles};await assert.rejects(client.editorSave(document,null,[]));}
 });
+
+test('canonical action contracts preserve an explicit restoration policy without changing legacy shape', () => {
+  const contract={delivery:'action',parameters:[],semantics:'setter',endpoint:'lamp',readable:true,display:null,ownership:{scope:'endpoint',maxLeaseMs:5000}};
+  assert.equal(profileContractError(contract,'input'),'');
+  assert.equal(profileContractError({...contract,ownership:{...contract.ownership,restorePolicy:'if-unchanged'}},'input'),'');
+  for(const restorePolicy of [null,undefined,'always',true]) assert.match(profileContractError({...contract,ownership:{...contract.ownership,restorePolicy}},'input'),/ownership/);
+  assert.match(profileContractError({...contract,ownership:{...contract.ownership,restorePolicy:'if-unchanged',secret:'no'}},'input'),/ownership/);
+});

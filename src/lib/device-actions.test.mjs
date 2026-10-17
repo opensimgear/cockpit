@@ -1,18 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
-import ts from 'typescript';
-const capabilities = {};
-vm.runInNewContext(ts.transpileModule(await readFile(new URL('./gateway-capabilities.ts', import.meta.url), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports: capabilities });
-const require = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
-const exported = {};
-vm.runInNewContext(ts.transpileModule(await readFile(new URL('./device-actions.ts', import.meta.url), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports: exported, TextEncoder, require }, { filename: new URL('./device-actions.ts', import.meta.url).pathname });
-const { actionReady, nextActionRead, initialValues, integerInputValue, actionError, outputSummary } = exported;
+import {loadModules} from './test-module-loader.mjs';
+const loaded=await loadModules(['./gateway-capabilities','./device-actions']);
+const exported=loaded.get('./device-actions');
+const { actionReady, nextActionRead, initialValues, integerInputValue, actionError, outputSummary, actionOwnershipValid, guardedSetterRestorationAdvertised } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
 const module = { id: 'device', online: true, boot: 100, active: false, enabled: false, directUsb: true };
 const state = { backend: 'stm32', connected: true, modules: [module] };
@@ -78,4 +69,15 @@ test('readback labels are explicit about unknown and unreadable states', () => {
   assert.match(outputSummary({ ...action, readable: false }, ready), /does not provide/);
   const empty = { ...action, parameters: [] };
   assert.equal(outputSummary(empty, { ...ready, states: [{ id: action.id, values: [] }] }), 'Applied.');
+});
+
+test('guarded restoration is an explicit advertised capability and never inferred for legacy endpoints', () => {
+  const legacy={schemaVersion:1,scope:'endpoint',maxLeaseMs:5000}, guarded={...legacy,restorePolicy:'if-unchanged'};
+  assert.equal(actionOwnershipValid(legacy),true); assert.equal(actionOwnershipValid(guarded),true);
+  for(const invalid of [null,[],{}, {...legacy,schemaVersion:2},{...legacy,scope:'device'},{...legacy,maxLeaseMs:5001},{...legacy,restorePolicy:null},{...legacy,restorePolicy:'always'},{...guarded,ownershipToken:'secret'}]) assert.equal(actionOwnershipValid(invalid),false);
+  assert.equal(guardedSetterRestorationAdvertised(action,{...ready,ownership:legacy}),false);
+  assert.equal(guardedSetterRestorationAdvertised(action,{...ready,ownership:guarded}),true);
+  assert.equal(guardedSetterRestorationAdvertised(action),false);
+  for(const patch of [{status:'uncertain'},{actions:[]},{actions:[{...action,endpoint:'other'}]}]) assert.equal(guardedSetterRestorationAdvertised(action,{...ready,ownership:guarded,...patch}),false);
+  for(const patch of [{readable:false},{semantics:'oneShot'}]) assert.equal(guardedSetterRestorationAdvertised({...action,...patch},{...ready,ownership:guarded}),false);
 });

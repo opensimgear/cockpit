@@ -821,7 +821,7 @@ impl Worker {
                 {
                     return Err(crate::actions::INVALID.into());
                 }
-                cache["lastLease"] = json!({"leaseId":reply["leaseId"],"endpoint":reply["endpoint"],"remainingMs":reply["remainingMs"],"released":reply["released"]});
+                cache["lastLease"] = crate::output_leases::lease_receipt(&reply);
             } else {
                 if invocation && reply["id"] != request["actionId"] {
                     return Err(crate::actions::INVALID.into());

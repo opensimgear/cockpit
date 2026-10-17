@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::json;
+use serde_json::{json, Value};
 
 fn action(parameters: Vec<ActionParameter>) -> PortDescriptor {
     PortDescriptor {
@@ -15,6 +15,7 @@ fn action(parameters: Vec<ActionParameter>) -> PortDescriptor {
             ownership: Some(OwnershipCapability {
                 scope: "endpoint".into(),
                 max_lease_ms: 5000,
+                restore_policy: None,
             }),
         },
     }
@@ -483,4 +484,47 @@ fn bounded_pages_and_exact_contracts_never_admit_oversized_or_malformed_metadata
         ownership.as_mut().unwrap().max_lease_ms = 0;
     }
     assert!(invalid.validate().is_err());
+}
+
+#[test]
+fn guarded_restore_is_explicit_strict_and_part_of_the_exact_contract_identity() {
+    let legacy = action(vec![]);
+    let old_hash = legacy.contract_hash().unwrap();
+    let value = serde_json::to_value(&legacy).unwrap();
+    assert!(value["contract"]["ownership"]
+        .get("restorePolicy")
+        .is_none());
+    assert!(!legacy.contract.supports_guarded_setter());
+    let mut guarded = value.clone();
+    guarded["contract"]["ownership"]["restorePolicy"] = json!("if-unchanged");
+    let port: PortDescriptor = serde_json::from_value(guarded.clone()).unwrap();
+    port.validate().unwrap();
+    assert!(port.contract.supports_guarded_setter());
+    assert_ne!(port.contract_hash().unwrap(), old_hash);
+    assert_eq!(serde_json::to_value(&port).unwrap(), guarded);
+    for bad in [Value::Null, json!("always"), json!(true), json!(1)] {
+        let mut invalid = guarded.clone();
+        invalid["contract"]["ownership"]["restorePolicy"] = bad;
+        assert!(serde_json::from_value::<PortDescriptor>(invalid).is_err());
+    }
+    for (field, bad) in [("readable", json!(false)), ("semantics", json!("one-shot"))] {
+        let mut restricted = guarded.clone();
+        restricted["contract"][field] = bad;
+        let port: PortDescriptor = serde_json::from_value(restricted).unwrap();
+        assert!(!port.contract.supports_guarded_setter());
+    }
+    for (scope, max_lease_ms) in [("device", 5000), ("endpoint", 0), ("endpoint", 60001)] {
+        assert!(!OwnershipCapability {
+            scope: scope.into(),
+            max_lease_ms,
+            restore_policy: Some(RestorePolicy::IfUnchanged)
+        }
+        .supports_guarded_restore());
+    }
+    let state = PortContract::State {
+        schema: ScalarSchema::Boolean {},
+        freshness_ms: 10,
+        fallback: None,
+    };
+    assert!(!state.supports_guarded_setter());
 }

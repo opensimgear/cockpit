@@ -80,11 +80,37 @@ pub struct DisplayConstraints {
     pub encoding: TextEncoding,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestorePolicy {
+    IfUnchanged,
+}
+fn optional_restore_policy<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<RestorePolicy>, D::Error> {
+    RestorePolicy::deserialize(deserializer).map(Some)
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OwnershipCapability {
     pub scope: String,
     pub max_lease_ms: u32,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "optional_restore_policy"
+    )]
+    pub restore_policy: Option<RestorePolicy>,
+}
+impl OwnershipCapability {
+    /// Advertised capability only. Native qualification and the exact live lease
+    /// remain separate admission requirements for physical output execution.
+    pub fn supports_guarded_restore(&self) -> bool {
+        self.scope == "endpoint"
+            && self.max_lease_ms > 0
+            && self.max_lease_ms <= 60_000
+            && self.restore_policy == Some(RestorePolicy::IfUnchanged)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -393,6 +419,12 @@ where
 }
 
 impl PortContract {
+    /// Whether this exact port advertises reversible owned Setter behavior.
+    /// This never qualifies a native backend or acquires an endpoint lease.
+    pub fn supports_guarded_setter(&self) -> bool {
+        matches!(self, Self::Action { semantics:ActionSemantics::Setter, readable:true, ownership:Some(capability), .. } if capability.supports_guarded_restore())
+    }
+
     /// Validates a graph contract without turning an invocation into a provider capability.
     pub fn validate_graph(&self, direction: Direction) -> Result<(), String> {
         if let Self::Invocation { parameters, .. } = self {

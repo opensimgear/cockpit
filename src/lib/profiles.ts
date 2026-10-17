@@ -15,7 +15,7 @@ export type ProfilePortContract = { delivery: 'state'; schema: ProfileScalarSche
   | { delivery: 'invocation'; parameters: ProfileActionParameter[]; semantics: ProfileActionSemantics }
   | { delivery: 'action'; parameters: ProfileActionParameter[]; semantics: ProfileActionSemantics; endpoint: string; readable: boolean;
       display: { columns: number; rows: number; encoding: 'utf8' | 'ascii' } | null;
-      ownership: { scope: 'endpoint'; maxLeaseMs: number } | null };
+      ownership: { scope: 'endpoint'; maxLeaseMs: number; restorePolicy?: 'if-unchanged' } | null };
 export type ProfilePort = { id: string; name: string; direction: 'input' | 'output'; contract: ProfilePortContract };
 export type ProfileControllerLayout = { buttons: string[]; axes: { portId: string; range: 'bipolar' | 'unipolar'; fallback: number }[]; hats: string[] };
 export type ProfileRounding = 'none' | 'nearest' | 'floor' | 'ceil' | 'truncate';
@@ -137,7 +137,7 @@ export function profileContractError(value: unknown, direction: 'input' | 'outpu
     const schema = (value.parameters as ProfileActionParameter[])[0]?.schema;
     if (value.semantics !== 'setter' || !value.readable || value.parameters.length !== 1 || schema?.type !== 'text' || schema.maxBytes < value.display.columns * value.display.rows || schema.encoding !== value.display.encoding) return 'Display does not match its action argument.';
   }
-  if (value.ownership !== null && (!exact(value.ownership, ['scope', 'maxLeaseMs']) || value.ownership.scope !== 'endpoint' || !whole(value.ownership.maxLeaseMs, 1, 60000))) return 'Malformed ownership capability.';
+  if (value.ownership !== null && (!object(value.ownership) || !exact(value.ownership, Object.hasOwn(value.ownership,'restorePolicy') ? ['scope','maxLeaseMs','restorePolicy'] : ['scope','maxLeaseMs']) || value.ownership.scope !== 'endpoint' || !whole(value.ownership.maxLeaseMs, 1, 60000) || Object.hasOwn(value.ownership,'restorePolicy') && value.ownership.restorePolicy !== 'if-unchanged')) return 'Malformed ownership capability.';
   return '';
 }
 function port(value: unknown): boolean {

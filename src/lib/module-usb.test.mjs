@@ -175,3 +175,15 @@ test('malformed inventories and capabilities fail without manufacturing a curren
     await assert.rejects(new ModuleUsbClient(async () => ({ module: invalid })).status(key), /unknown/);
   }
 });
+
+test('USB action captures preserve optional guarded restoration and reject invented policies', async () => {
+  for(const ownership of [null,{schemaVersion:1,scope:'endpoint',maxLeaseMs:5000},{schemaVersion:1,scope:'endpoint',maxLeaseMs:5000,restorePolicy:'if-unchanged'}]) {
+    const supplied=module();supplied.snapshot.actions.ownership=ownership;
+    const captured=await new ModuleUsbClient(async()=>({module:supplied})).status(key);
+    assert.deepEqual(captured.snapshot.actions.ownership,ownership);
+  }
+  for(const restorePolicy of [null,'always',true,1]) {
+    const supplied=module();supplied.snapshot.actions.ownership={schemaVersion:1,scope:'endpoint',maxLeaseMs:5000,restorePolicy};
+    await assert.rejects(new ModuleUsbClient(async()=>({module:supplied})).status(key),/unknown/);
+  }
+});

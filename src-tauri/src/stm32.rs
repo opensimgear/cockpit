@@ -1419,7 +1419,7 @@ impl Gateway {
                     {
                         return Err(crate::actions::INVALID.into());
                     }
-                    cached["lastLease"] = json!({"leaseId":reply["leaseId"],"endpoint":reply["endpoint"],"remainingMs":reply["remainingMs"],"released":reply["released"]});
+                    cached["lastLease"] = crate::output_leases::lease_receipt(&reply);
                 }
                 return Ok(());
             }
@@ -4360,6 +4360,19 @@ mod tests {
             service.request(json!({"command":"status","clientId":CLIENT}))["ok"],
             false
         );
+    }
+    #[test]
+    fn guarded_restoration_capability_and_release_receipt_survive_can_adapter() {
+        let (mut gateway,context)=action_harness();connect(&mut gateway);
+        let capability=json!({"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000,"restorePolicy":"if-unchanged"});
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":capability,"total":1,"next":null,"actions":[{"id":"led.set_enabled","label":"LED","endpoint":"led","semantics":"setter","readable":true,"parameters":[{"id":"enabled","label":"Enabled","type":"boolean"}]}]}));
+        let described=request(&mut gateway,"action_describe",json!({"moduleId":MODULE}));assert_eq!(described["ok"],true,"{described}");
+        let cache=&described["state"]["moduleActions"][MODULE];assert_eq!(cache["ownership"]["restorePolicy"],"if-unchanged");assert!(crate::profile_resource_ports::actions(cache).unwrap()[0].contract.supports_guarded_setter());
+        let secret="00112233-4455-6677-8899-aabbccddeeff";
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":capability,"leaseId":7,"endpoint":"led","released":true,"fallbackStatus":"preserved"}));
+        let released=request(&mut gateway,"action_release",json!({"moduleId":MODULE,"boot":100,"ownershipToken":secret,"leaseId":7}));assert_eq!(released["ok"],true,"{released}");
+        assert_eq!(released["state"]["moduleActions"][MODULE]["lastLease"]["fallbackStatus"],"preserved");assert!(!released.to_string().contains(secret));
+        assert_eq!(context.lock().unwrap().writes.iter().filter(|line|line.contains("action")&&line.contains("release")).count(),1);
     }
     #[test]
     fn endpoint_lease_commands_are_boot_guarded_secret_and_never_retry_mutations() {

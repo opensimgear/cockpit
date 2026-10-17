@@ -66,3 +66,21 @@ An actual Manager test acquires a retained CAN input, observes its value through
 the applied graph inspector, then changes its native boot and verifies degraded
 source authority without configuration or action writes. This uses deterministic
 native adapters and does not establish physical hardware qualification.
+
+
+Guarded restoration is an explicit optional capability. Native action caches,
+canonical `OwnershipCapability`, profile ports and frontend validators preserve
+`restorePolicy: "if-unchanged"`; missing legacy policy stays omitted and retains
+its existing contract identity. Adding the policy changes the exact advertised
+contract hash and requires reconciling an assignment that pinned the old contract.
+`PortContract::supports_guarded_setter()` requires a readable Setter and this
+explicit policy. It reports advertised behavior only; native qualification and a
+current exact endpoint lease remain independent requirements.
+
+Upgraded release replies must explicitly report `fallbackStatus: "applied"` or
+`"preserved"`. Native USB/CAN caches retain that bounded public receipt and never
+retain its secret ownership token. Public ownership pages accept `preserved`
+only for a relinquished, nonzero lease with no remaining TTL. Legacy endpoints
+and release replies remain discoverable; they cannot imply reversible profile
+owned writes. Unknown or malformed restoration policies fail closed. No hardware
+qualification flag or execution gate changes as a result of this metadata.

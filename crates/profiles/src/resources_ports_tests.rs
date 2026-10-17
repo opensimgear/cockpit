@@ -15,6 +15,7 @@ fn action(parameters: Vec<ActionParameter>) -> PortDescriptor {
             ownership: Some(OwnershipCapability {
                 scope: "endpoint".into(),
                 max_lease_ms: 5000,
+                restore_policy: None,
             }),
         },
     }

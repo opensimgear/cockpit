@@ -1,6 +1,7 @@
 /** Explicit standalone USB operations. Native code owns the wire handshake and writer claim. */
 import { configurationError } from './runtime-config.ts';
 import type { RuntimeConfig, RuntimeSnapshot } from './runtime-config';
+import { actionOwnershipValid } from './device-actions.ts';
 import type { DeviceAction, DeviceActions, ActionValue } from './device-actions';
 import type { PanelInputState } from './dcs-profile';
 import type { DeepReadonly } from './profiles';
@@ -9,7 +10,7 @@ export type UsbRouteToken = { moduleId: string; serial: string; connectionGenera
 export type UsbIdentity = { model: 'device-template'; board: string; profile: string; moduleId: string; serial: string; protocol: 3; buttonCount: number; axisCount: number; hatCount: number };
 export type UsbPortInfo = { path: string; serialNumber?: string; vendorId?: string; productId?: string; manufacturer?: string; friendlyName?: string };
 export type UsbUnsupported = { boot: number; route: UsbRouteToken; status: 'unsupported' };
-export type UsbActions = DeviceActions & { route: UsbRouteToken; ownership?: { schemaVersion: 1; scope: 'endpoint'; maxLeaseMs: number } | null };
+export type UsbActions = DeviceActions & { route: UsbRouteToken };
 export type UsbEvents = PanelInputState & { ok: true; schemaVersion: 1; route: UsbRouteToken; oldest: number; overflow: number;
   after?: number; next?: number; more?: boolean; events?: { sequence: number; control: number; pressed: boolean }[] };
 export type UsbObservation = { connected: boolean; port: string | null; identity: UsbIdentity | null; route: UsbRouteToken | null;
@@ -90,7 +91,7 @@ function actionValues(descriptor: DeviceAction, values: readonly ActionValue[]):
 function capability(value: unknown, kind: 'actions' | 'events'): boolean {
   if (!object(value) || !uint(value.boot, 0xffffffff, 1) || !route(value.route) || value.route.boot !== value.boot) return false;
   if (value.status === 'unsupported') return true;
-  if (kind === 'actions') return ['ready', 'unknown', 'error', 'uncertain'].includes(String(value.status)) && uint(value.catalogueRevision, 0xffffffff, 1) && rows(value.actions, 32) && value.actions.every(action) && rows(value.states, 32) && value.states.every(state => object(state) && text(state.id) && rows(state.values, 4) && state.values.every(entry => typeof entry === 'boolean' || typeof entry === 'string' || typeof entry === 'number' && Number.isFinite(entry)));
+  if (kind === 'actions') return (value.ownership === undefined || value.ownership === null || actionOwnershipValid(value.ownership)) && ['ready', 'unknown', 'error', 'uncertain'].includes(String(value.status)) && uint(value.catalogueRevision, 0xffffffff, 1) && rows(value.actions, 32) && value.actions.every(action) && rows(value.states, 32) && value.states.every(state => object(state) && text(state.id) && rows(state.values, 4) && state.values.every(entry => typeof entry === 'boolean' || typeof entry === 'string' || typeof entry === 'number' && Number.isFinite(entry)));
   return value.ok === true && value.schemaVersion === 1 && uint(value.stream, 0xffffffff, 1) && uint(value.head) && uint(value.oldest, 0xffffffff, 1) && uint(value.overflow) && uint(value.buttonCount, 128) && rows(value.held, 128) && value.held.length === value.buttonCount && value.held.every(entry => typeof entry === 'boolean') && rows(value.encoderButtons, 64) && value.encoderButtons.every(entry => uint(entry, 127))
     && (value.axisCount === undefined || uint(value.axisCount, 8) && ['axes', 'axisNeutral', 'axisUsage', 'axisAvailable'].every(key => rows(value[key], 8) && value[key].length === value.axisCount && value[key].every(entry => key === 'axisAvailable' ? typeof entry === 'boolean' : uint(entry, 65535))))
     && (value.events === undefined || uint(value.after) && uint(value.next) && typeof value.more === 'boolean' && rows(value.events, 16) && value.events.every(event => object(event) && uint(event.sequence, 0xffffffff, 1) && uint(event.control, value.buttonCount as number - 1) && typeof event.pressed === 'boolean'));
