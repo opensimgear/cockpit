@@ -28,6 +28,21 @@ fn message() -> Message {
     }
 }
 #[test]
+fn worker_identity_comes_from_the_retained_child_and_does_not_send_requests() {
+    let mut worker = spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport sys\nfor line in sys.stdin:\n raise RuntimeError('identity inspection must not write to the child')\n").unwrap();
+    let original = worker.child.id();
+    assert_ne!(original, 0);
+    for _ in 0..3 {
+        assert!(worker.alive());
+        assert_eq!(worker.process_id(), original);
+        assert_eq!(crate::session::Channel::process_id(&worker), Some(original));
+        assert!(worker.incoming.try_recv().is_err());
+    }
+    worker.terminate();
+    assert!(!worker.alive());
+    assert_eq!(worker.process_id(), original); // Identity alone never proves liveness.
+}
+#[test]
 fn a_queued_acknowledgement_cannot_extend_an_expired_response_deadline() {
     let mut child = spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport time\ntime.sleep(2)\n").unwrap();
     let (replies, incoming) = mpsc::sync_channel(1);

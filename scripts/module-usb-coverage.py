@@ -22,9 +22,11 @@ TEST_FILTERS.append("stm32::publication::tests")
 # The overrides module is a declaration-only facade; gate its actual native
 # ownership actor and Coordinator integration, with their real shared fixtures.
 MODULES.remove("profile_session_overrides")
-MODULES.extend(["profile_publication", "profile_session_publication_host"])
+MODULES.extend(["profile_publication", "profile_session_publication_host", "profile_session_virtual"])
+TEST_FILTERS.extend(["profile_session_virtual::tests", "profile_session_host::output_handoff_tests"])
 TEST_FILTERS.append("profile_session_overrides::publication")
 MODULE_TEST_SOURCES = {
+    "profile_session_virtual": ["profile_session_output_handoff_tests"],
     "profile_publication": ["profile_publication_tests", "profile_publication_rebind_tests",
                             "profile_publication_action_tests"],
     "profile_session_publication_host": ["profile_publication_tests",
@@ -121,7 +123,7 @@ def main():
     # Preview semantics depend on the exact portable compiler and signal engine.
     # Record those sources/tests too, so changes during this measurement cannot
     # leave apparently current native-preview evidence behind.
-    for crate in ["mapping", "profiles"]:
+    for crate in ["mapping", "profiles", "virtual-controller"]:
         crate_root = root / "crates" / crate
         tracked.extend(sorted((crate_root / "src").glob("*.rs")))
         tracked.extend([crate_root / "Cargo.toml", crate_root / "Cargo.lock"])

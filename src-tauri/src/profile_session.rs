@@ -126,6 +126,14 @@ pub(crate) struct OwnedRun {
     /// An attempted phase may have changed hardware despite an uncertain reply.
     pub attempted: Vec<ApplyPhase>,
 }
+/// Volatile native provenance for one exact outgoing worker. Never serialized
+/// into the recovery manifest or accepted from an IPC request.
+#[derive(Clone)]
+pub(crate) struct HandoffSource {
+    pub run: OwnedRun,
+    pub admission_epoch: u64,
+    pub output: Option<osg_virtual_controller::session::RunningOutput>,
+}
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Health {
     pub degraded: Vec<String>,
@@ -140,6 +148,7 @@ pub(crate) struct Health {
 /// freshness. restore(recovery=true) may neutralize/unhide/restore still-owned
 /// setup, but must never rehide or replay input, commands, scripts or macros.
 pub(crate) trait Host: Send {
+    fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String>;
     fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String>;
     fn capture(
@@ -264,6 +273,17 @@ impl<H: Host> Coordinator<H> {
             return Err("The outgoing native profile no longer has an exact active owner.".into());
         }
         Ok(Some(run.clone()))
+    }
+    /// Capture under the coordinator lock before slow read-only preparation.
+    /// The host must revalidate this volatile proof against the same active run
+    /// at capture, before the outgoing worker is quiesced.
+    pub(crate) fn native_handoff_source(&mut self, candidate: &Candidate) -> Result<Option<HandoffSource>, String> {
+        self.store.verify()?;
+        let Some(run) = self.visibility_handoff_source()? else { return Ok(None); };
+        let admission_epoch = candidate.admission_epoch.ok_or("Native handoff requires the candidate cancellation fence.")?;
+        let output = if candidate.document.virtual_outputs.is_empty() { None }
+            else { self.host.output_handoff(&run, admission_epoch)? };
+        Ok(Some(HandoffSource { run, admission_epoch, output }))
     }
     pub(crate) fn apply(&mut self, candidate: Candidate) -> Result<(), String> {
         self.apply_mode(candidate, false)

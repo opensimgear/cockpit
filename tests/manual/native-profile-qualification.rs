@@ -734,6 +734,13 @@ struct GuardedHost {
     controllers: Arc<osg_controller_input::ControllerService>,
 }
 impl Host for GuardedHost {
+    fn output_handoff(
+        &mut self,
+        run: &OwnedRun,
+        admission_epoch: u64,
+    ) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> {
+        self.inner.output_handoff(run, admission_epoch)
+    }
     fn prepare(&mut self, c: &Candidate, o: &RunOwner) -> Result<Prepared, String> {
         self.inner.prepare(c, o)
     }
@@ -1197,8 +1204,8 @@ impl Application {
             .coordinator
             .lock()
             .map_err(err)?
-            .visibility_handoff_source()?;
-        candidate.stage = Some(NativeProfileHost::stage_with_handoff(
+            .native_handoff_source(&candidate)?;
+        candidate.stage = Some(NativeProfileHost::stage_with_output_handoff(
             &self.components.resources,
             &self.components.games,
             &self.components.companions,

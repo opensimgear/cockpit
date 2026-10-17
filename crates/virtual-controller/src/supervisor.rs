@@ -159,6 +159,11 @@ impl Worker {
     pub fn alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
+    /// PID of the original retained child, never an independently reopened process.
+    /// Callers must separately verify liveness on this same worker.
+    pub fn process_id(&self) -> u32 {
+        self.child.id()
+    }
     pub fn terminate(&mut self) {
         self.outgoing.take();
         if self.alive() {

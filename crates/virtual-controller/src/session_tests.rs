@@ -10,6 +10,7 @@ struct State {
     fail: &'static str,
     fail_spawn: bool,
     observe: Option<std::path::PathBuf>,
+    process_id: Option<u32>,
 }
 struct Child {
     state: Arc<Mutex<State>>,
@@ -44,6 +45,9 @@ impl Channel for Child {
     }
     fn alive(&mut self) -> bool {
         !self.state.lock().unwrap().dead
+    }
+    fn process_id(&self) -> Option<u32> {
+        self.state.lock().unwrap().process_id
     }
     fn terminate(&mut self) {
         self.state.lock().unwrap().terminated.push(self.id);
@@ -94,6 +98,144 @@ fn recording(token: &RunToken, count: u64) -> RecordingSink {
             .collect(),
     );
     sink
+}
+#[test]
+fn handoff_proof_requires_the_same_live_confirmed_owner_without_sending_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let (factory, state) = factory();
+    state.lock().unwrap().process_id = Some(73);
+    let run = token();
+    let bindings = vec![crate::vjoy::tests::binding()];
+    let mut session = Session::start_with_journal(
+        factory,
+        run.clone(),
+        bindings.clone(),
+        Counter(0),
+        Some(path.clone()),
+    )
+    .unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let proof = session.handoff_snapshot().unwrap().unwrap();
+    assert_eq!(proof.token(), &run);
+    assert_eq!(proof.process_id(), 73);
+    assert_eq!(serde_json::to_vec(proof.bindings()).unwrap(), serde_json::to_vec(&bindings).unwrap());
+    assert!(proof.clone().same_as(&session.handoff_snapshot().unwrap().unwrap()));
+
+    session.token.generation = Counter(run.generation.0 + 1);
+    assert!(session.handoff_snapshot().is_err());
+    session.token = run;
+    session.bindings[0].slot += 1;
+    assert!(session.handoff_snapshot().is_err());
+    session.bindings = bindings;
+    state.lock().unwrap().process_id = Some(74);
+    assert!(!proof.same_as(&session.handoff_snapshot().unwrap().unwrap()));
+    for pid in [None, Some(0)] {
+        state.lock().unwrap().process_id = pid;
+        assert!(session.handoff_snapshot().unwrap().is_none());
+    }
+    state.lock().unwrap().process_id = Some(73);
+    state.lock().unwrap().dead = true;
+    assert!(session.handoff_snapshot().is_err());
+    state.lock().unwrap().dead = false;
+    assert!(proof.same_as(&session.handoff_snapshot().unwrap().unwrap()));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    {
+        let state = state.lock().unwrap();
+        assert_eq!(state.spawned, 1);
+        assert!(matches!(state.messages.as_slice(), [Message::Start { .. }]));
+        assert!(state.terminated.is_empty());
+    }
+    session.persist_phase(Phase::Releasing).unwrap();
+    assert!(session.handoff_snapshot().is_err());
+    session.stop().unwrap();
+    assert!(session.handoff_snapshot().unwrap().is_none());
+}
+
+#[test]
+fn anonymous_unjournaled_or_unresolved_sessions_cannot_authorize_handoff() {
+    struct Anonymous(Child);
+    impl Channel for Anonymous {
+        fn request(&mut self, message: &Message) -> Result<(), String> {
+            self.0.request(message)
+        }
+        fn alive(&mut self) -> bool {
+            self.0.alive()
+        }
+        fn terminate(&mut self) {
+            self.0.terminate()
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(Mutex::new(State::default()));
+    let shared = state.clone();
+    let anonymous: Factory = Arc::new(move || {
+        let mut state = shared.lock().unwrap();
+        state.spawned += 1;
+        Ok(Box::new(Anonymous(Child { state: shared.clone(), id: state.spawned })))
+    });
+    let mut session = Session::start_with_journal(
+        anonymous, token(), vec![crate::vjoy::tests::binding()], Counter(0),
+        Some(dir.path().join("anonymous.json")),
+    ).unwrap();
+    assert!(session.handoff_snapshot().unwrap().is_none());
+    assert_eq!(state.lock().unwrap().messages.len(), 1);
+    session.stop().unwrap();
+
+    let (factory, state) = factory();
+    state.lock().unwrap().process_id = Some(73);
+    let mut session = Session::start(
+        factory.clone(), token(), vec![crate::vjoy::tests::binding()], Counter(0),
+    ).unwrap();
+    assert!(session.handoff_snapshot().unwrap().is_none());
+    assert_eq!(state.lock().unwrap().messages.len(), 1);
+    session.stop().unwrap();
+    let mut session = Session::start_with_journal(
+        factory, token(), vec![crate::vjoy::tests::binding()], Counter(0),
+        Some(dir.path().join("failed.json")),
+    ).unwrap();
+    state.lock().unwrap().dead = true;
+    state.lock().unwrap().fail = "recover";
+    assert!(session.keep_alive().is_err());
+    assert!(session.recovery_required());
+    let before = state.lock().unwrap().messages.len();
+    assert!(session.handoff_snapshot().is_err());
+    assert_eq!(state.lock().unwrap().messages.len(), before);
+    state.lock().unwrap().fail = "";
+    state.lock().unwrap().dead = false;
+    session.recover().unwrap();
+    assert!(session.handoff_snapshot().unwrap().is_none());
+}
+
+#[test]
+fn handoff_rejects_changed_or_missing_confirmed_journal_without_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let (factory, state) = factory();
+    state.lock().unwrap().process_id = Some(73);
+    let mut session = Session::start_with_journal(
+        factory, token(), vec![crate::vjoy::tests::binding()], Counter(0), Some(path.clone()),
+    ).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let record = crate::output_journal::inspect(&path).unwrap().unwrap();
+    let mut changed = vec![record.clone(); 3];
+    changed[0].token.generation = Counter(record.token.generation.0 + 1);
+    changed[1].bindings[0].slot += 1;
+    changed[2].phase = Phase::Clean;
+    let mut candidates = vec![b"external".to_vec()];
+    candidates.extend(changed.iter().map(|r| serde_json::to_vec(r).unwrap()));
+    for bytes in candidates {
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(session.handoff_snapshot().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    std::fs::remove_file(&path).unwrap();
+    assert!(session.handoff_snapshot().is_err());
+    assert!(!path.exists());
+    assert!(matches!(state.lock().unwrap().messages.as_slice(), [Message::Start { .. }]));
+    assert_eq!(state.lock().unwrap().spawned, 1);
+    std::fs::write(&path, original).unwrap();
+    session.stop().unwrap();
 }
 #[test]
 fn prepared_output_renews_without_reports_and_helper_loss_releases_it() {

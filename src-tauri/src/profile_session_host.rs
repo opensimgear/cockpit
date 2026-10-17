@@ -33,6 +33,7 @@ struct NativePreparation {
     report: CompilationReport,
     backend: osg_profiles::compiler_models::BackendCapabilities,
     bindings: Vec<osg_virtual_controller::vjoy::Binding>,
+    output_handoff: Option<crate::profile_session_virtual::PreparedHandoff>,
     scripts: crate::profile_session_scripts::Scripts,
     game: crate::profile_session_games::GameSources,
     game_preparation: Option<crate::games::PreparedGame>,
@@ -60,6 +61,7 @@ struct NativeRun {
     clock_origin: u64,
     bindings: Vec<osg_virtual_controller::vjoy::Binding>,
     output: Option<osg_virtual_controller::session::Session>,
+    output_handoff: Option<crate::profile_session_virtual::PreparedHandoff>,
     scripts: crate::profile_session_scripts::Scripts,
     game: crate::profile_session_games::GameSources,
     game_preparation: Option<crate::games::PreparedGame>,
@@ -360,6 +362,34 @@ impl NativeProfileHost {
         candidate:&Candidate,
         outgoing:Option<OwnedRun>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
+        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,None,&osg_virtual_controller::inspection::current)
+    }
+    pub(crate) fn stage_with_output_handoff(
+        resources:&crate::profile_resources::Runtime,
+        games:&crate::games::GamesRuntime,
+        companions:&crate::companion_host::Runtime,
+        controllers:Arc<osg_controller_input::ControllerService>,
+        native:bool,
+        candidate:&Candidate,
+        source:Option<crate::profile_session::HandoffSource>,
+    )->Result<Arc<crate::profile_session::Stage>,String> {
+        if source.as_ref().is_some_and(|source|Some(source.admission_epoch)!=candidate.admission_epoch) {
+            return Err("The outgoing virtual proof belongs to another admission epoch.".into());
+        }
+        let outgoing=source.as_ref().map(|source|source.run.clone());
+        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,source,&osg_virtual_controller::inspection::current)
+    }
+    fn stage_internal(
+        resources:&crate::profile_resources::Runtime,
+        games:&crate::games::GamesRuntime,
+        companions:&crate::companion_host::Runtime,
+        controllers:Arc<osg_controller_input::ControllerService>,
+        native:bool,
+        candidate:&Candidate,
+        outgoing:Option<OwnedRun>,
+        source:Option<crate::profile_session::HandoffSource>,
+        inspect:&dyn Fn()->Result<Vec<osg_virtual_controller::vjoy::Slot>,String>,
+    )->Result<Arc<crate::profile_session::Stage>,String> {
         let game_preparation = match candidate.game_id.as_deref() {
             Some(id) => games.prepare_profile_game_context(id)?,
             None => None,
@@ -383,7 +413,7 @@ impl NativeProfileHost {
         }
 
         let slots = if !candidate.document.virtual_outputs.is_empty() && native {
-            osg_virtual_controller::inspection::current().ok()
+            inspect().ok()
         } else {
             None
         };
@@ -442,12 +472,14 @@ impl NativeProfileHost {
             })
             .map(|source| format!("{}:{}", source.endpoint.node_id, source.endpoint.port_id))
             .collect();
+        let mut reuses_output = false;
         let bindings = if !plan.program.controllers.is_empty() && slots.is_some() {
-            match crate::profile_session_virtual::bindings(
+            match crate::profile_session_virtual::select(
                 &plan.program.controllers,
                 slots.as_deref().unwrap(),
+                source.as_ref().and_then(|source|source.output.as_ref()),
             ) {
-                Ok(bindings) => bindings,
+                Ok(selection) => { reuses_output = selection.reused; selection.bindings },
                 Err(message) => {
                     admission.blockers.push(AdmissionBlocker {
                         kind: BlockerKind::Layout,
@@ -496,13 +528,42 @@ impl NativeProfileHost {
         let companions = crate::profile_session_companions::CompanionSources::prepare(&prepared.plan, companion_bindings)?;
         let visibility=crate::profile_session_visibility::Visibility::stage_with_handoff(&prepared.plan,&snapshot,controllers,outgoing.as_ref())?;
         let dcs_hid = dcs_hid::Guard::capture(&prepared.plan, &snapshot);
+        // Final off-lock I/O follows every slow catalogue/script/visibility
+        // preparation. Never block the outgoing health worker under the
+        // coordinator lock while an isolated driver inspector starts.
+        let output_handoff = if reuses_output {
+            let source=source.ok_or("The retiring virtual output proof disappeared.")?;
+            let observed=Instant::now();
+            let slots=inspect()?;
+            let captured=crate::profile_session_virtual::PreparedHandoff { source, slots, observed };
+            captured.validate(Some(&captured.source.run),captured.source.output.as_ref(),&bindings,
+                candidate.admission_epoch.ok_or("Missing native admission epoch.")?,Some(&captured.source.run.owner))?;
+            Some(captured)
+        } else { None };
         crate::profile_session::Stage::new(candidate, NativePreparation {
-            prepared, report, backend: snapshot.backend, bindings, scripts, game, game_preparation,
+            prepared, report, backend: snapshot.backend, bindings, output_handoff, scripts, game, game_preparation,
             companions, companion_catalogues, visibility, publication, dcs_hid,
         })
     }
 }
 impl Host for NativeProfileHost {
+    fn output_handoff(&mut self, run: &OwnedRun, admission_epoch: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> {
+        Self::check_epoch(&self.admission_epoch, admission_epoch)?;
+        self.fence(&run.owner)?;
+        let journal=crate::profile_session_virtual::journal_name(&run.owner)?;
+        let state = self.run(&run.owner)?;
+        if state.bindings.is_empty() { return Ok(None); }
+        let proof = state.output.as_mut().ok_or("The outgoing virtual output has no live Session.")?
+            .handoff_snapshot()?.ok_or("The outgoing virtual output has no proved native worker.")?;
+        if proof.token().session != run.owner.session || proof.token().generation.0 != run.owner.generation
+            || serde_json::to_vec(proof.bindings()).map_err(|e|e.to_string())? != serde_json::to_vec(&state.bindings).map_err(|e|e.to_string())?
+            || !run.receipts.iter().any(|receipt|receipt.kind=="virtual-output" && receipt.resource_id=="virtual-output"
+                && receipt.state==json!({"journal":journal}))
+        {
+            return Err("The outgoing virtual output does not match its exact native owner and receipt.".into());
+        }
+        Ok(Some(proof))
+    }
     fn inspect_topology(&self, run: &OwnedRun, request: &crate::profile_session::topology::Request) -> Result<crate::profile_session::topology::Page, String> {
         self.fence(&run.owner)?;
         let state=self.prepared.get(&key(&run.owner)).filter(|state|state.owner==run.owner)
@@ -522,7 +583,7 @@ impl Host for NativeProfileHost {
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
-        let NativePreparation {mut prepared, report, backend, bindings, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid} = candidate.stage.as_ref()
+        let NativePreparation {mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
@@ -534,7 +595,7 @@ impl Host for NativeProfileHost {
             owner: owner.clone(), admission_epoch, report, assignments: candidate.assignments.clone(),
             document: candidate.document.clone(), backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
-            started: Instant::now(), clock_origin: 0, bindings, output: None, scripts, game, game_preparation,
+            started: Instant::now(), clock_origin: 0, bindings, output: None, output_handoff, scripts, game, game_preparation,
             child_game_owner: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_retry: None, visibility,
             actions,
@@ -590,6 +651,13 @@ impl Host for NativeProfileHost {
         previous: Option<&OwnedRun>,
     ) -> Result<Vec<Receipt>, String> {
         self.validate_prepared(prepared, owner)?;
+        if let Some(captured)=self.run(owner)?.output_handoff.clone() {
+            let previous=previous.ok_or("The retiring virtual output no longer has an active run.")?;
+            let current=self.output_handoff(previous,captured.source.admission_epoch)?;
+            let bindings=self.run(owner)?.bindings.clone();
+            captured.validate(Some(previous),current.as_ref(),&bindings,
+                self.admission_epoch.load(Ordering::Acquire),self.authority.as_ref())?;
+        }
         let runtime = self.companions.clone();
         let state = self.run(owner)?;
         state.visibility.validate_handoff(previous)?;
@@ -653,9 +721,7 @@ impl Host for NativeProfileHost {
             let companion_stop = state.companions.stop_native(&companions);
             let mut output_result = Ok(());
             if let Some(output) = state.output.as_mut() {
-                let flush = output.poll(&state.recording);
-                let stop = output.stop();
-                output_result = flush.and(stop);
+                output_result = crate::profile_session_virtual::neutralize_output(output, &state.recording);
             }
             adapter_result=withdrawal.and(output_result).and(companion_stop);
         }
@@ -888,7 +954,12 @@ impl Host for NativeProfileHost {
         self.restore_actions(run,recovery)?;
         self.restore_publication(run)?;
         if run.attempted.contains(&ApplyPhase::Acquire) {
-            if run.receipts.iter().any(|r|r.kind=="virtual-output") { crate::profile_session_virtual::recover(&run.owner)?; }
+            if run.receipts.iter().any(|r|r.kind=="virtual-output") {
+                if let Some(output) = self.prepared.get_mut(&key(&run.owner)).and_then(|state|state.output.as_mut()) {
+                    crate::profile_session_virtual::restore_retained_output(output, &run.owner, recovery)?;
+                }
+                crate::profile_session_virtual::recover(&run.owner)?;
+            }
             if !captured.is_empty() { companion::restore(&self.companions.profile_metadata()?, &captured, false)?; }
         }
         self.prepared.remove(&key(&run.owner));
@@ -975,3 +1046,7 @@ impl Host for NativeProfileHost {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "profile_session_output_handoff_tests.rs"]
+mod output_handoff_tests;

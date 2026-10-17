@@ -1,0 +1,23 @@
+# Owned virtual output handoff and repeatable cleanup
+
+The selected Windows rig exposed two lifecycle defects after its first successful hardware/browser Apply. Native staging considered only free vJoy slots, preventing replacement when the only matching slot belonged to the current profile. Actual Stop and one warm Recover both failed with `Virtual output is stopped.` because native compensation polled a Session already stopped by its first neutralization pass. Source review also found that cold output recovery held a Store lock while opening the same Store again. The actual rig is fully restored; its cleanup record is in `2026-10-17-native-profile-rig-preflight.md`.
+
+## Resulting behavior
+
+A live Session can now export an opaque, volatile proof of its acknowledged worker: exact run token, complete bindings, unchanged confirmed journal and original retained child identity. Unknown identities, stopped workers, missing or changed journals and unresolved recovery grant no proof. The proof is never serialized or reconstructed from a PID or recovery record.
+
+Native staging may select a busy slot only when its PID and complete old layout match that proof and its complete new layout also matches. It prefers a compatible slot already used by the same logical target. Final inspection happens after slow preparation, outside the Coordinator lock, and expires under the existing 250 ms bound. Capture rederives the exact live proof and verifies current authority, candidate epoch and the complete outgoing run before retirement. The feeder still requires fresh free status and an exact layout at actual acquisition. A foreign acquisition after release therefore fails without touching that owner. Held reports are not carried into the new run.
+
+Neutralization skips an inactive Session. Explicit recovery first uses any retained exact Session and its existing lock. Cold recovery passively inspects the journal, then rechecks the complete record under the recovery lock; it never holds a second nested Store lock. Clean or absent records are no-ops; ambiguous intent still requires inspection. Recovery does not start a profile or replay input.
+
+Both the ordinary native preparation path and the manual qualification wrapper use the handoff API. Original backend qualification flags remain false. The manual wrapper still needs a fresh source-pinned build before another actual rig run.
+
+## Verification and limits
+
+The source-stamped native executable passes five new composed tests, three virtual selector tests, eighteen Coordinator tests and eleven ActionHost tests. The five new tests compose the real Session/Feeder with an in-memory driver and cover release-before-acquire, held-input non-replay, foreign-owner preservation, owner/epoch/worker/layout/age fences, repeated neutralization, retained recovery and cold journal recovery. An actual NativeHost passive stage/capture test retains the unqualified-backend blocker and performs no native acquisition. The primary agent independently reruns the five composed tests successfully. Four coverage-runner tests pass.
+
+The low-level executable passes twelve Session, five output-journal and four supervisor tests. The primary agent independently reruns these filters successfully with a private temporary directory and the explicit Python fixture interpreter. An initial supervisor rerun used the unavailable Windows Python alias and failed before fixture startup; the explicit interpreter resolves that environment failure. The changed production modules measure 93.61% Session, 97.96% output journal, 90.23% supervisor and 95.21% native virtual helper coverage, above the unchanged 71% threshold.
+
+The broader virtual-controller suite is pending CI. Its local sandbox attempt has existing filesystem/HKCU permission failures; automatic approval review rejected the elevated whole-suite attempt because authorization covered pure fixture tests, not broader privileged environment changes. That rejected action was not retried. Focused tests run within the sandbox; no Manager, native service, hardware Apply, policy mutation or qualification change occurs in these regressions. Full CI and a fresh actual replacement/Stop/game run remain required.
+
+Private source manifests, copied executables, before-failure evidence and coverage reports are retained under `.research/p9-vjoy-owned-handoff/` and `.research/p9-mh6-commondata/output-handoff-native-2-20261018/`. The native executable SHA-256 is `61aad6009d857f47697abe2e532cb258b0bccdbee61bd2f67edb9b91179a98fd`; the low-level executable is `10d87cb546d9783b3859c6e2263ce82fab981574b3550db9f068b4f628aebddf`. All 386 native build input hashes match the frozen verification manifest.

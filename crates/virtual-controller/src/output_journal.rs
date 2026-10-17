@@ -133,6 +133,13 @@ impl Store {
     pub fn record(&self) -> Option<&Record> {
         self.record.as_ref()
     }
+    /// Read-only comparison while this Store still holds the ownership lock.
+    pub fn verify_current(&self) -> Result<(), String> {
+        if bytes(&self.path)? != self.expected {
+            return Err("Output recovery record changed externally; preserving it.".into());
+        }
+        Ok(())
+    }
     fn save(&mut self, record: Record) -> Result<(), String> {
         record.validate()?;
         if bytes(&self.path)? != self.expected {

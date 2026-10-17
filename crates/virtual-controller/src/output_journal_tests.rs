@@ -9,6 +9,31 @@ fn token() -> RunToken {
 fn binding() -> Binding {
     crate::vjoy::tests::binding()
 }
+#[test]
+fn read_only_verification_checks_locked_current_bytes_without_rewriting_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let mut store = Store::open(path.clone()).unwrap();
+    store.verify_current().unwrap();
+    store.begin(token(), vec![binding()]).unwrap();
+    store.transition(Phase::Confirmed).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    store.verify_current().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert!(Store::open(path.clone()).is_err());
+    std::fs::write(&path, b"external").unwrap();
+    assert!(store.verify_current().unwrap_err().contains("externally"));
+    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+    assert_eq!(store.record().unwrap().phase, Phase::Confirmed);
+    std::fs::remove_file(&path).unwrap();
+    assert!(store.verify_current().is_err());
+    std::fs::create_dir(&path).unwrap();
+    assert!(store.verify_current().is_err());
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::write(&path, &original).unwrap();
+    store.verify_current().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
 
 #[test]
 fn journal_orders_ownership_and_refuses_competing_sessions_or_stale_acknowledgements() {

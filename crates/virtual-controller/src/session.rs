@@ -14,6 +14,10 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 pub trait Channel: Send {
     fn request(&mut self, message: &Message) -> Result<(), String>;
     fn alive(&mut self) -> bool;
+    /// Identity of this retained child only; unknown channels grant no handoff proof.
+    fn process_id(&self) -> Option<u32> {
+        None
+    }
     fn terminate(&mut self);
 }
 impl Channel for Worker {
@@ -23,11 +27,41 @@ impl Channel for Worker {
     fn alive(&mut self) -> bool {
         Worker::alive(self)
     }
+    fn process_id(&self) -> Option<u32> {
+        Some(Worker::process_id(self))
+    }
     fn terminate(&mut self) {
         Worker::terminate(self)
     }
 }
 pub type Factory = Arc<dyn Fn() -> Result<Box<dyn Channel>, String> + Send + Sync>;
+
+/// Volatile evidence from an acknowledged, still-live owned output worker.
+/// This is never serialized or reconstructed from a journal/PID after restart.
+#[derive(Clone)]
+pub struct RunningOutput {
+    token: RunToken,
+    bindings: Vec<Binding>,
+    binding_identity: Vec<u8>,
+    process_id: u32,
+}
+impl RunningOutput {
+    pub fn token(&self) -> &RunToken {
+        &self.token
+    }
+    pub fn bindings(&self) -> &[Binding] {
+        &self.bindings
+    }
+    pub fn process_id(&self) -> u32 {
+        self.process_id
+    }
+    /// A stored clone does not prove liveness; compare it with a newly captured proof.
+    pub fn same_as(&self, current: &Self) -> bool {
+        self.token == current.token
+            && self.process_id == current.process_id
+            && self.binding_identity == current.binding_identity
+    }
+}
 
 pub struct Session {
     factory: Factory,
@@ -207,6 +241,40 @@ impl Session {
     }
     pub fn token(&self) -> &RunToken {
         &self.token
+    }
+    /// Inspect the same retained worker and its locked, confirmed journal without
+    /// spawning, renewing, submitting reports or changing output ownership.
+    pub fn handoff_snapshot(&mut self) -> Result<Option<RunningOutput>, String> {
+        if self.recovery_required {
+            return Err("Virtual output requires recovery; no live handoff is authorized.".into());
+        }
+        let Some(worker) = self.worker.as_mut() else {
+            return Ok(None);
+        };
+        let Some(journal) = self.journal.as_ref() else {
+            return Ok(None);
+        };
+        journal.verify_current()?;
+        let record = journal.record().ok_or("No confirmed output journal exists.")?;
+        let binding_identity = serde_json::to_vec(&self.bindings).map_err(|e| e.to_string())?;
+        if record.phase != Phase::Confirmed
+            || record.token != self.token
+            || serde_json::to_vec(&record.bindings).map_err(|e| e.to_string())? != binding_identity
+        {
+            return Err("The confirmed output journal does not match this live run.".into());
+        }
+        if !worker.alive() {
+            return Err("The owned output worker is no longer alive.".into());
+        }
+        let Some(process_id) = worker.process_id().filter(|pid| *pid != 0) else {
+            return Ok(None);
+        };
+        Ok(Some(RunningOutput {
+            token: self.token.clone(),
+            bindings: self.bindings.clone(),
+            binding_identity,
+            process_id,
+        }))
     }
     /// Consume at most 128 ordered reports per turn. A journal gap fails closed.
     pub fn poll(&mut self, recording: &RecordingSink) -> Result<(), String> {

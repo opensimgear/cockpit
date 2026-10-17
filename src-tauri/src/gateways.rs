@@ -274,8 +274,8 @@ impl GatewayManager {
         let prepare_controllers = controllers.clone();
         let prepare_session = profile_session.clone();
         let profile_prepare: ProfilePrepare = Arc::new(move |candidate| {
-            let outgoing = prepare_session.lock().unwrap_or_else(|p| p.into_inner()).visibility_handoff_source()?;
-            crate::profile_session_host::NativeProfileHost::stage_with_handoff(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate, outgoing)
+            let outgoing = prepare_session.lock().unwrap_or_else(|p| p.into_inner()).native_handoff_source(candidate)?;
+            crate::profile_session_host::NativeProfileHost::stage_with_output_handoff(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate, outgoing)
         });
         let profile_closed = Arc::new(AtomicBool::new(false));
         let profile_worker = native.then(|| {
