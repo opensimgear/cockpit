@@ -11,6 +11,7 @@ struct Probe {
     value: u32,
     hidden: bool,
     health: Health,
+    reject_admission: bool,
 }
 struct Fake(Arc<Mutex<Probe>>);
 fn checkpoint(probe: &mut Probe, name: String) -> Result<(), String> {
@@ -39,7 +40,18 @@ impl Host for Fake {
         let report = osg_profiles::compiler::compile(&candidate.document, &snapshot);
         Ok(Prepared {
             plan: report.plan.unwrap(),
-            admission: Admission::default(),
+            admission: Admission {
+                blockers: if probe.reject_admission {
+                    vec![AdmissionBlocker {
+                        kind: BlockerKind::RequiredResource,
+                        message: "The native preflight found an unavailable required device."
+                            .into(),
+                    }]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            },
             program_hash: report.program_hash.unwrap(),
             capture_fingerprint: report.capture_fingerprint,
         })
@@ -113,6 +125,7 @@ fn candidate() -> Candidate {
         assignments: vec![],
         read_only: false,
         game_id: None,
+        stage: None,
     }
 }
 fn coordinator(path: Option<PathBuf>) -> (Coordinator<Fake>, Arc<Mutex<Probe>>) {
@@ -419,4 +432,133 @@ fn pause_revokes_workers_and_hiding_even_when_durable_storage_fails() {
     runtime.store.fail_save = false;
     runtime.recover().unwrap();
     assert_eq!(runtime.status().state, State::Paused);
+}
+
+#[test]
+fn native_stage_is_bound_to_the_complete_candidate_and_consumed_once() {
+    let original = candidate();
+    let mutations: Vec<Box<dyn Fn(&mut Candidate)>> = vec![
+        Box::new(|value| value.document.name = "Changed draft".into()),
+        Box::new(|value| value.document.revision += 1),
+        Box::new(|value| value.read_only = true),
+        Box::new(|value| value.game_id = Some("dcs".into())),
+        Box::new(|value| {
+            value
+                .assignments
+                .push(osg_profiles::store::LocalAssignment {
+                    resource_id: "logical".into(),
+                    source_id: "physical".into(),
+                    ports: vec![],
+                })
+        }),
+    ];
+    for mutate in mutations {
+        let stage = Stage::new(&original, 42u64).unwrap();
+        let mut changed = original.clone();
+        mutate(&mut changed);
+        assert!(stage.take::<u64>(&changed).is_err());
+        assert_eq!(stage.take::<u64>(&original).unwrap(), 42);
+        assert!(stage.take::<u64>(&original).is_err());
+    }
+    let stage = Stage::new(&original, 42u64).unwrap();
+    assert!(stage.take::<String>(&original).is_err());
+    assert!(stage.take::<u64>(&original).is_err());
+    let mut invalid = original.clone();
+    invalid.document.name.clear();
+    assert!(Stage::new(&invalid, ()).is_err());
+    assert!(!format!("{stage:?}").contains("42"));
+}
+
+#[test]
+fn blocked_native_preflight_does_not_block_active_health_or_change_the_owner() {
+    use std::{sync::mpsc, time::Duration};
+    let (mut runtime, probe) = coordinator(None);
+    runtime.apply(candidate()).unwrap();
+    let owner = runtime.status().owner.clone().unwrap();
+    let runtime = Arc::new(Mutex::new(runtime));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let staged = runtime.clone();
+    let job = std::thread::spawn(move || {
+        apply_staged(&staged, candidate(), |candidate| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            Stage::new(candidate, ())
+        })
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    // Separate bounded thread proves the health path acquires the mutex while
+    // preflight is still blocked, instead of only after it eventually returns.
+    let (renewed_tx, renewed_rx) = mpsc::channel();
+    let polling = runtime.clone();
+    let poll_owner = owner.clone();
+    let poll = std::thread::spawn(move || {
+        for _ in 0..3 {
+            let mut runtime = polling.lock().unwrap();
+            runtime.poll().unwrap();
+            assert!(runtime.validates(&poll_owner));
+        }
+        renewed_tx.send(()).unwrap();
+    });
+    let renewed = renewed_rx.recv_timeout(Duration::from_secs(2));
+    probe.lock().unwrap().reject_admission = true;
+    release_tx.send(()).unwrap();
+    assert!(job.join().unwrap().is_err());
+    poll.join().unwrap();
+    assert!(
+        renewed.is_ok(),
+        "Health must renew before slow preflight is released."
+    );
+    assert!(runtime.lock().unwrap().validates(&owner));
+    assert_eq!(probe.lock().unwrap().owner.as_ref(), Some(&owner));
+    assert_eq!(
+        probe
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|call| *call == "health")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn staged_apply_rechecks_pause_and_drops_unarmed_payloads() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Unarmed(Arc<AtomicUsize>);
+    impl Drop for Unarmed {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let (mut runtime, probe) = coordinator(None);
+    runtime.apply(candidate()).unwrap();
+    let runtime = Mutex::new(runtime);
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let result = apply_staged(&runtime, candidate(), |candidate| {
+        let stage = Stage::new(candidate, Unarmed(dropped.clone()))?;
+        // Pause can arrive from an internal emergency-stop path after staging
+        // began; the later lock must not install the prepared owner.
+        runtime.lock().unwrap().pause(true)?;
+        Ok(stage)
+    });
+    assert!(result.is_err());
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    assert!(runtime.lock().unwrap().status().paused);
+    assert!(probe.lock().unwrap().owner.is_none());
+    assert!(apply_staged(&runtime, candidate(), |_| panic!("Paused must not stage")).is_err());
+    let (runtime, _) = coordinator(None);
+    let runtime = Mutex::new(runtime);
+    let mut read_only = candidate();
+    read_only.read_only = true;
+    assert!(apply_staged(&runtime, read_only, |_| panic!("Read-only must not stage")).is_err());
+    let mut reused = candidate();
+    reused.stage = Some(Stage::new(&reused, ()).unwrap());
+    assert!(apply_staged(&runtime, reused, |_| panic!(
+        "A supplied stage must not replay"
+    ))
+    .is_err());
+    apply_staged(&runtime, candidate(), |candidate| Stage::new(candidate, ())).unwrap();
+    assert_eq!(runtime.lock().unwrap().status().state, State::Running);
 }

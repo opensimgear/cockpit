@@ -12,8 +12,8 @@ import tempfile
 
 
 MODULES = ["module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
-           "profile_resources", "profile_resources_game", "profile_resource_sources", "profile_resource_ports", "profile_compilation"]
-TEST_FILTERS = ["module_", "profile_resource", "profile_compilation", "stm32::tests::events_"]
+           "profile_resources", "profile_resources_game", "profile_session_panels_io", "profile_resource_sources", "profile_resource_ports", "profile_compilation"]
+TEST_FILTERS = ["module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "profile_panels_io", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate"]
 
 
 def source_stamp(paths, root):
@@ -45,7 +45,10 @@ def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=root / ".research/module-usb-coverage")
+    parser.add_argument("--module", action="append", choices=MODULES,
+                        help="Focused local measurement only; CI's default still gates every module.")
     args = parser.parse_args()
+    measured = args.module or MODULES
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     # Never leave a previous successful summary behind after a failed rerun.
@@ -54,6 +57,10 @@ def main():
     tracked = [root / f"src-tauri/src/{module}{suffix}.rs"
                for module in MODULES for suffix in ["", "_tests"]]
     tracked.extend([root / "src-tauri/src/stm32.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
+    if not args.module:
+        # The full gate also pins Manager construction/admission. A focused
+        # production-module report is explicitly not whole-Manager evidence.
+        tracked.append(root / "src-tauri/src/gateways.rs")
     # Preview semantics depend on the exact portable compiler and signal engine.
     # Record those sources/tests too, so changes during this measurement cannot
     # leave apparently current native-preview evidence behind.
@@ -104,7 +111,7 @@ def main():
     profile = output / "coverage.profdata"
     run([llvm / f"llvm-profdata{suffix}", "merge", "-sparse", *evidence, "-o", profile], root)
     summary = {}
-    for module in MODULES:
+    for module in measured:
         source = root / f"src-tauri/src/{module}.rs"
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0],
                          f"-instr-profile={profile}", "-show-line-counts-or-regions", source], root)
@@ -126,7 +133,7 @@ def main():
         summary[module] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
         print(f"{module}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
     (output / "evidence.json").write_text(json.dumps({"sources": final_stamp, "testFilters": TEST_FILTERS,
-        "rustc": run(["rustc", "-vV"], root)}, indent=2) + "\n", encoding="utf-8")
+        "measuredModules": measured, "focused": bool(args.module), "rustc": run(["rustc", "-vV"], root)}, indent=2) + "\n", encoding="utf-8")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if any(item["percent"] < 71 for item in summary.values()):
         raise SystemExit("Every native USB/inventory/compiler module requires at least 71% production line coverage.")

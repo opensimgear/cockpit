@@ -321,6 +321,46 @@ impl Fleet {
             })
             .collect()
     }
+    /// Native profile-only typed access to the existing worker. It cannot open,
+    /// disconnect, save flash, reset settings or replay a failed command. The
+    /// Manager's ProfilePanelIo owns cross-transport policy and serialization.
+    pub(crate) fn request_native(
+        &self,
+        key: &str,
+        operation: UsbRequest,
+    ) -> Result<UsbSnapshot, String> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err("USB module fleet has stopped.".into());
+        }
+        let route = match &operation {
+            UsbRequest::ConfigRead { route } | UsbRequest::Claim { route, .. }
+            | UsbRequest::Release { route, .. } | UsbRequest::Action { route, .. }
+            | UsbRequest::EventsState { route } | UsbRequest::EventsRead { route, .. }
+            | UsbRequest::ConfigChange { route, change: ConfigChange::Apply { save: false, .. }, .. } => route,
+            _ => return Err("Native profile USB operations must use an exact live route and cannot persist device settings.".into()),
+        };
+        let (service, _busy) = self.endpoint(key, "native-profile")?;
+        let snapshot = service.snapshot();
+        if self.closed.load(Ordering::Acquire)
+            || !snapshot.connected
+            || snapshot.route.as_ref() != Some(route)
+        {
+            return Err(
+                "The native USB route changed before dispatch; acquire a fresh baseline.".into(),
+            );
+        }
+        let result = service.request(operation);
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(slot) = state.slots.get_mut(key).filter(|slot| {
+            slot.service
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &service))
+        }) {
+            // An uncertain write must be visible to the next native capture too.
+            slot.cached = service.snapshot();
+        }
+        result
+    }
     pub(crate) fn request(&self, request: &Value) -> Result<Value, String> {
         if self.closed.load(Ordering::Acquire) {
             return Err("USB module fleet has stopped.".into());

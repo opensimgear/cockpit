@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
     },
 };
@@ -17,6 +17,11 @@ use std::{
 pub const PROFILE_REQUEST_LIMIT: usize = osg_profiles::MAX_PROFILE_BYTES + 65_536;
 /// One editor transaction includes the portable graph and exact machine-local pins.
 pub const PROFILE_EDITOR_REQUEST_LIMIT: usize = osg_profiles::MAX_EDITOR_REQUEST_BYTES;
+type ProfilePrepare = Arc<dyn Fn(&crate::profile_session::Candidate) -> Result<Arc<crate::profile_session::Stage>, String> + Send + Sync>;
+
+#[path = "profile_session_panels_io.rs"]
+mod profile_panels_io;
+pub(crate) use profile_panels_io::ProfilePanelIo;
 
 trait Adapter: Send + Sync {
     fn request(&self, request: Value) -> Value;
@@ -103,19 +108,37 @@ fn candidate(port: &PortInfo) -> Option<(&'static str, String)> {
 fn empty_state() -> Value {
     json!({"connected":false,"running":false,"needsReconnect":false,"reconnecting":false,"modules":[],"port":null,"ports":[]})
 }
+fn profile_guard_operation(command: &str) -> Option<&str> {
+    if matches!(command,
+        "mapping_profiles" | "mapping_get" | "mapping_export" | "mapping_status" | "mapping_targets_get" | "mapping_assignments_get" | "mapping_trace_export" | "mapping_script_validate"
+        | "mapping_panel_sources" | "mapping_panel_inspect" | "mapping_companion_sources" | "mapping_companion_inspect" | "mapping_virtual_inspect"
+        | "companion_status" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
+        | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
+        | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_integration_settings_save"
+        | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
+    if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
+    Some(command)
+}
 
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 pub struct GatewayManager {
     profiles: Mutex<osg_profiles::service::Service>,
-    profile_resources: crate::profile_resources::Runtime,
+    profile_resources: Arc<crate::profile_resources::Runtime>,
     profile_compilation: crate::profile_compilation::Runtime,
+    profile_session: Arc<Mutex<crate::profile_session::Coordinator<crate::profile_session_host::NativeProfileHost>>>,
+    profile_admission: RwLock<()>,
+    profile_prepare: ProfilePrepare,
+    profile_admission_epoch: AtomicU64,
+    profile_closed: Arc<AtomicBool>,
+    profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     module_usb: Arc<crate::module_usb_fleet::Fleet>,
     provider: Arc<dyn Provider>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
-    configuration_gate: Mutex<()>,
-    closed: AtomicBool,
+    configuration_gate: Arc<Mutex<()>>,
+    profile_panels: Arc<ProfilePanelIo>,
+    closed: Arc<AtomicBool>,
     integration_gate: Arc<Mutex<()>>,
     dcs: Arc<crate::dcs_runtime::DcsRuntime>,
     integration: Arc<crate::integration_runtime::IntegrationRuntime>,
@@ -308,6 +331,11 @@ impl GatewayManager {
         let resource_requests = sessions.clone();
         let resource_ports = provider.clone();
         let module_usb = Arc::new(crate::module_usb_fleet::Fleet::new(Arc::new(move || resource_ports.ports()), native));
+        let configuration_gate = Arc::new(Mutex::new(()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
+        let native_panels = profile_panels.clone();
+        let profile_panel = Arc::new(move |request| native_panels.can(request));
         let collect = crate::profile_resource_sources::collector(
             controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
             Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.cached_state())).collect()),
@@ -317,19 +345,50 @@ impl GatewayManager {
             }),
             module_usb.clone(), native,
         );
-        let profile_resources = crate::profile_resources::Runtime::new(native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-resources-v1")), collect, native);
+        let profile_resources = Arc::new(crate::profile_resources::Runtime::new(native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-resources-v1")), collect, native));
+        let prepare_resources = profile_resources.clone();
+        let prepare_games = games.clone();
+        let profile_prepare: ProfilePrepare = Arc::new(move |candidate| {
+            crate::profile_session_host::NativeProfileHost::stage(&prepare_resources, &prepare_games, native, candidate)
+        });
+        let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
+            crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), module_usb.clone(), profile_panel, native),
+            native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-session-v1.json")),
+        )));
+        let profile_closed = Arc::new(AtomicBool::new(false));
+        let profile_worker = native.then(|| {
+            let runtime = profile_session.clone();
+            let closed = profile_closed.clone();
+            std::thread::spawn(move || {
+                while !closed.load(Ordering::Acquire) {
+                    let active = {
+                        let mut runtime = runtime.lock().unwrap_or_else(|p| p.into_inner());
+                        let _ = runtime.poll();
+                        runtime.status().owner.is_some()
+                    };
+                    std::thread::sleep(std::time::Duration::from_millis(if active { 5 } else { 100 }));
+                }
+            })
+        });
         let manager = Self {
             module_usb,
             profile_resources,
             profile_compilation: crate::profile_compilation::Runtime::default(),
+            profile_session,
+            profile_admission: RwLock::new(()),
+            profile_prepare,
+            profile_admission_epoch: AtomicU64::new(0),
+            profile_closed,
+            profile_worker: Mutex::new(profile_worker),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
                 crate::dcs_runtime::config_path().with_file_name("profiles-v2")
             }))),
             provider,
             sessions,
             inventory: Mutex::new(Vec::new()),
-            configuration_gate: Mutex::new(()),
-            closed: AtomicBool::new(false),
+            configuration_gate,
+            profile_panels,
+            closed,
             integration_gate,
             dcs,
             integration,
@@ -370,6 +429,65 @@ impl GatewayManager {
                 }),
                 clock: self.controllers.clone(),
             }));
+    }
+    fn decorate_profile_session(&self, response: &mut Value) {
+        let status = serde_json::to_value(self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).status()).unwrap();
+        if let Some(session) = response.get_mut("session").and_then(Value::as_object_mut) {
+            for key in ["state", "paused", "appliedSnapshot", "fault"] { session.insert(key.into(), status[key].clone()); }
+        }
+        response["profileSession"] = status;
+    }
+    fn profile_session_request(&self, request: &Value) -> Result<Value, String> {
+        let command = request["command"].as_str().ok_or("Choose a profile session operation.")?;
+        let fields: &[&str] = match command {
+            "profile_apply" => &["id", "expectedRevision", "gameId"],
+            "profile_pause" => &["paused"],
+            "profile_stop" | "profile_recover" => &[],
+            _ => return Err("Unknown profile session operation.".into()),
+        };
+        if request.as_object().ok_or("A profile session request must be an object.")?.keys().any(|key| key != "command" && !fields.contains(&key.as_str())) {
+            return Err("Unknown field in profile session request.".into());
+        }
+        match command {
+            "profile_apply" => {
+                let admission_epoch = self.profile_admission_epoch.load(Ordering::Acquire);
+                let id = request["id"].as_str().ok_or("Choose a saved profile to apply.")?;
+                let expected = request["expectedRevision"].as_u64().filter(|revision| *revision > 0 && *revision <= osg_profiles::MAX_REVISION).ok_or("Apply requires the current saved expectedRevision.")?;
+                let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
+                if document.revision != expected { return Err("The saved profile changed. Reload its revision before applying.".into()); }
+                let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
+                if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
+                crate::profile_session::apply_staged_admitted(
+                    &self.profile_session,
+                    crate::profile_session::Candidate { document, assignments, read_only, game_id, stage: None },
+                    |candidate| (self.profile_prepare)(candidate),
+                    |candidate| {
+                        let admission = self.profile_admission.write().unwrap_or_else(|p| p.into_inner());
+                        let game_admission = self.game_admission.read().unwrap_or_else(|p| p.into_inner());
+                        if self.closed.load(Ordering::Acquire)
+                            || self.profile_admission_epoch.load(Ordering::Acquire) != admission_epoch {
+                            return Err("Profile Apply was cancelled by Stop, Pause, recovery or a newer activation. Apply again explicitly.".into());
+                        }
+                        let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
+                        let (document, assignments, read_only) = profiles.compile_source(id)?;
+                        let saved = crate::profile_session::Candidate {
+                            document, assignments, read_only, game_id: candidate.game_id.clone(), stage: None,
+                        };
+                        candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
+                        profiles.request(&json!({"command":"profile_select","id":id,"selectionSource":"manual"}))?;
+                        Ok((admission, game_admission))
+                    },
+                    || { self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); },
+                )?;
+            },
+            "profile_pause" => self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).pause(request["paused"].as_bool().ok_or("paused must be a boolean.")?)?,
+            "profile_stop" => self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop()?,
+            "profile_recover" => self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).recover()?,
+            _ => unreachable!(),
+        }
+        let mut response = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&json!({"command":"profile_status"}))?;
+        self.decorate_profile_session(&mut response);
+        Ok(response)
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
         let mut ports = BTreeMap::<String, Value>::new();
@@ -414,6 +532,17 @@ impl GatewayManager {
         self.decorate(json!({"ok":false,"error":message}), id)
     }
     pub fn request(&self, request: Value) -> Value {
+        // An admitted independent write and a profile takeover cannot overlap.
+        // The native host addresses its existing owners directly after this
+        // boundary; it never re-enters Manager while holding the writer lock.
+        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_stop" | "profile_pause" | "profile_recover" | "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let staging = request["command"] == "profile_apply";
+        if profile_mutation && !staging { self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); }
+        let _profile_write = (profile_mutation && !staging).then(|| self.profile_admission.write().unwrap_or_else(|p| p.into_inner()));
+        let _profile_read = (!profile_mutation).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
+        // Slow read-only staging holds neither admission lock. Final takeover
+        // acquires profile then game admission together in the established order.
+        if staging { return self.request_inner(request); }
         // Starting a game waits for manual requests admitted before it. Normal
         // requests share this lock, preserving independent gateway workers.
         // Coordinator callbacks address adapters directly after admission.
@@ -463,6 +592,14 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if let Some(operation) = profile_guard_operation(&command) {
+            if let Err(error) = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).guard_request(operation) {
+                return self.error(&error, None);
+            }
+        }
+        if matches!(command.as_str(), "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore") {
+            if let Err(error) = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop() { return self.error(&error, None); }
+        }
         // Hold the ownership check and its actual worker dispatch together.
         // Numeric firmware owner IDs may match on USB/CAN for one UI client;
         // that does not authorize transferring its existing draft or route.
@@ -535,13 +672,19 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if matches!(command.as_str(), "profile_apply" | "profile_stop" | "profile_pause" | "profile_recover") {
+                return match self.profile_session_request(&request) {
+                    Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
+                    Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
+                };
+            }
             let result = self
                 .profiles
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .request(&request);
             return match result {
-                Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
+                Ok(mut profiles) => { self.decorate_profile_session(&mut profiles); json!({"ok":true,"state":{"profiles":profiles}}) },
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
@@ -811,6 +954,10 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.profile_closed.store(true, Ordering::Release);
+        if let Some(worker) = self.profile_worker.lock().unwrap_or_else(|p| p.into_inner()).take() { let _ = worker.join(); }
+        let _ = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop();
+        self.profile_panels.close();
         self.profile_resources.shutdown();
         self.module_usb.shutdown();
         self.companion_feedback.stop();
@@ -975,6 +1122,151 @@ mod tests {
         assert_eq!(request(&manager, "profile_apply", None, json!({"id":document["id"]}))["ok"], false);
         assert!(provider.adapters.lock().unwrap().is_empty());
     }
+    #[test]
+    fn slow_profile_preflight_keeps_status_and_stop_responsive_without_late_rearm() {
+        for operation in ["profile_stop", "profile_pause", "profile_recover"] {
+            let (mut manager, _) = setup();
+            let fields = json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1});
+            assert_eq!(request(&manager,"profile_apply",None,fields.clone())["ok"],true);
+            let prepare = manager.profile_prepare.clone();
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let release = Mutex::new(release_rx);
+            Arc::get_mut(&mut manager).unwrap().profile_prepare = Arc::new(move |candidate| {
+                entered_tx.send(()).unwrap();
+                release.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+                prepare(candidate)
+            });
+            let pending = manager.clone();
+            let apply = std::thread::spawn(move || request(&pending,"profile_apply",None,fields));
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let (completed_tx, completed_rx) = mpsc::channel();
+            let control = manager.clone();
+            let control = std::thread::spawn(move || {
+                let status = request(&control,"profile_status",None,json!({}));
+                // Legacy game-profile writes take the real game writer before
+                // the active unified owner rejects their independent mutation.
+                let settings = request(&control,"game_profile_save",None,json!({}));
+                assert_eq!(settings["ok"],false);
+                let fields = if operation == "profile_pause" { json!({"paused":true}) } else { json!({}) };
+                let stopped = request(&control,operation,None,fields);
+                completed_tx.send((status,stopped)).unwrap();
+            });
+            let completed = completed_rx.recv_timeout(Duration::from_secs(2));
+            release_tx.send(()).unwrap();
+            let result = apply.join().unwrap();
+            control.join().unwrap();
+            let (status,stopped) = completed.expect("Status and emergency control must complete before slow staging is released.");
+            assert_eq!(status["state"]["profiles"]["profileSession"]["state"],"running");
+            assert_eq!(stopped["ok"],true,"{stopped}");
+            assert_eq!(result["ok"],false,"{operation}: {result}");
+            assert!(result["error"].as_str().unwrap().contains("cancelled"));
+            let status = request(&manager,"profile_status",None,json!({}));
+            assert!(status["state"]["profiles"]["profileSession"]["owner"].is_null());
+            if operation == "profile_pause" { assert_eq!(status["state"]["profiles"]["profileSession"]["paused"],true); }
+        }
+    }
+    #[test]
+    fn successful_competing_apply_or_saved_edit_invalidates_the_older_native_stage() {
+        for saved_edit in [false,true] {
+            let (mut manager, _) = setup();
+            let fields = json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1});
+            let initial = request(&manager,"profile_apply",None,fields.clone());
+            assert_eq!(initial["ok"],true);
+            let initial_owner = initial["state"]["profiles"]["profileSession"]["owner"].clone();
+            let prepare = manager.profile_prepare.clone();
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let release = Mutex::new(release_rx);
+            let first = AtomicBool::new(true);
+            Arc::get_mut(&mut manager).unwrap().profile_prepare = Arc::new(move |candidate| {
+                if first.swap(false,Ordering::AcqRel) {
+                    entered_tx.send(()).unwrap();
+                    release.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+                }
+                prepare(candidate)
+            });
+            let pending = manager.clone();
+            let pending_fields = fields.clone();
+            let apply = std::thread::spawn(move || request(&pending,"profile_apply",None,pending_fields));
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let mut retained_owner = initial_owner;
+            if saved_edit {
+                let mut document = request(&manager,"profile_get",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID}))["state"]["profiles"]["document"].clone();
+                document["eligibility"]["gameIds"] = json!(["dcs"]);
+                let saved = request(&manager,"profile_save",None,json!({"document":document,"expectedRevision":1}));
+                assert_eq!(saved["ok"],true,"{saved}");
+            } else {
+                let newer = request(&manager,"profile_apply",None,fields);
+                assert_eq!(newer["ok"],true,"{newer}");
+                retained_owner = newer["state"]["profiles"]["profileSession"]["owner"].clone();
+            }
+            release_tx.send(()).unwrap();
+            let result = apply.join().unwrap();
+            assert_eq!(result["ok"],false,"{result}");
+            let status = request(&manager,"profile_status",None,json!({}));
+            assert_eq!(status["state"]["profiles"]["profileSession"]["owner"],retained_owner);
+            assert_eq!(status["state"]["profiles"]["profileSession"]["state"],"running");
+        }
+    }
+    #[test]
+    fn profile_runtime_requires_saved_revision_and_keeps_navigation_separate() {
+        let (manager, _) = setup();
+        let default = osg_profiles::DEFAULT_PROFILE_ID;
+        let applied = request(&manager,"profile_apply",None,json!({"id":default,"expectedRevision":1}));
+        assert_eq!(applied["ok"],true,"{applied}");
+        assert_eq!(applied["state"]["profiles"]["session"]["state"],"running");
+        let owner=applied["state"]["profiles"]["profileSession"]["owner"].clone();
+        let created=request(&manager,"profile_create",None,json!({"name":"Draft only"}));
+        let document=&created["state"]["profiles"]["document"];
+        assert_eq!(request(&manager,"profile_get",None,json!({"id":document["id"]}))["ok"],true);
+        assert_eq!(request(&manager,"profile_select",None,json!({"id":document["id"],"selectionSource":"manual"}))["ok"],true);
+        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["owner"],owner);
+        assert_eq!(request(&manager,"profile_apply",None,json!({"id":document["id"],"expectedRevision":2}))["ok"],false);
+        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["owner"],owner);
+        for command in ["module_usb_claim","module_usb_config_apply","module_usb_actions_invoke","action_invoke_owned","config_stage","controller_update","mapping_virtual_start","companion_assign","profile_reset"] {
+            let blocked=request(&manager,command,None,json!({}));
+            assert_eq!(blocked["ok"],false,"{command}");
+            assert!(blocked["error"].as_str().unwrap().contains("unified profile session"),"{command}: {blocked}");
+        }
+        assert_eq!(request(&manager,"controller_list",None,json!({}))["ok"],true);
+        assert_eq!(request(&manager,"mapping_status",None,json!({}))["ok"],true);
+        assert_eq!(request(&manager,"module_usb_list",None,json!({}))["ok"],true);
+        assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
+    }
+
+    #[test]
+    fn profile_pause_latches_and_legacy_stop_stops_the_profile() {
+        let (manager, _) = setup();
+        let fields=json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1});
+        assert_eq!(request(&manager,"profile_apply",None,fields.clone())["ok"],true);
+        assert_eq!(request(&manager,"profile_pause",None,json!({"paused":true}))["ok"],true);
+        assert_eq!(request(&manager,"profile_selection_mode",None,json!({"mode":"automatic"}))["ok"],true);
+        assert_eq!(request(&manager,"profile_select",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"selectionSource":"automatic"}))["ok"],true);
+        assert_eq!(request(&manager,"profile_apply",None,fields.clone())["ok"],false);
+        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["session"]["state"],"paused");
+        assert_eq!(request(&manager,"profile_pause",None,json!({"paused":false}))["ok"],true);
+        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["session"]["state"],"stopped");
+        assert_eq!(request(&manager,"profile_apply",None,fields)["ok"],true);
+        let _=request(&manager,"mapping_stop",None,json!({}));
+        let status=request(&manager,"profile_status",None,json!({}));
+        assert_eq!(status["state"]["profiles"]["session"]["state"],"stopped");
+        assert!(status["state"]["profiles"]["profileSession"]["owner"].is_null());
+    }
+
+    #[test]
+    fn profile_runtime_rejects_forged_authority_and_replay_flags() {
+        let (manager, _) = setup();
+        for (command,fields) in [
+            ("profile_apply",json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1,"owner":{"generation":5}})),
+            ("profile_apply",json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1,"gameId":"dcs","processIdentity":{"pid":1}})),
+            ("profile_stop",json!({"replay":true})),
+            ("profile_recover",json!({"rehide":true})),
+            ("profile_pause",json!({"paused":"false"})),
+        ] {assert_eq!(request(&manager,command,None,fields)["ok"],false,"{command}");}
+        assert!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["owner"].is_null());
+    }
+
     #[test]
     fn profile_request_budget_does_not_expand_gateway_command_budget() {
         let (manager, _) = setup();
@@ -1225,7 +1517,9 @@ mod tests {
     }
     fn configuration_setup() -> (Arc<GatewayManager>, Arc<MockProvider>, Value) {
         let (mut manager,provider) = setup();
-        Arc::get_mut(&mut manager).unwrap().module_usb = Arc::new(crate::module_usb_fleet::tests::manager_fixture());
+        let state = Arc::get_mut(&mut manager).unwrap();
+        state.module_usb = Arc::new(crate::module_usb_fleet::tests::manager_fixture());
+        state.profile_panels = Arc::new(ProfilePanelIo::new(state.sessions.clone(),state.module_usb.clone(),state.configuration_gate.clone(),Arc::new(AtomicBool::new(false))));
         assert_eq!(request(&manager,"connect",Some(FIRST),json!({}))["ok"],true);
         let module = manager.module_usb.snapshots()[0].value();
         provider.adapters.lock().unwrap()[0].state.lock().unwrap()["modules"] = json!([{"id":module["snapshot"]["identity"]["moduleId"],"online":true,"boot":10}]);
@@ -1274,6 +1568,34 @@ mod tests {
         let direct = direct.join().unwrap();
         assert_ne!(can["ok"],direct["ok"],"exactly one same-client transport may acquire a writer: CAN={can} USB={direct}");
         assert_eq!(manager.configuration_claims().len()+manager.module_usb.configuration_claims().len(),1);
+    }
+    #[test]
+    fn native_profile_and_browser_claims_use_the_same_configuration_gate() {
+        let (manager,_,usb) = configuration_setup();
+        let start = Arc::new(std::sync::Barrier::new(3));
+        let native = manager.profile_panels.clone();
+        let native_start = start.clone();
+        let route = serde_json::from_value(usb["snapshot"]["route"].clone()).unwrap();
+        let key = usb["key"].as_str().unwrap().to_owned();
+        let direct = std::thread::spawn(move || { native_start.wait(); native.usb(&key,crate::module_usb::UsbRequest::Claim {route,client_id:CLIENT.into()}).is_ok() });
+        let browser = manager.clone();
+        let browser_start = start.clone();
+        let module = usb["snapshot"]["identity"]["moduleId"].clone();
+        let can = std::thread::spawn(move || { browser_start.wait(); request(&browser,"claim",Some(FIRST),json!({"moduleId":module}))["ok"]==true });
+        start.wait();
+        assert_ne!(can.join().unwrap(),direct.join().unwrap());
+        assert_eq!(manager.configuration_claims().len()+manager.module_usb.configuration_claims().len(),1);
+    }
+    #[test]
+    fn manager_shutdown_closes_native_panel_io_after_owned_cleanup_phase() {
+        let (manager,_,usb) = configuration_setup();
+        manager.closed.store(true,Ordering::Release);
+        // Public admission closes first, but private coordinator cleanup still
+        // needs current route reads and lease/configuration releases.
+        assert_eq!(manager.profile_panels.can(json!({"command":"status","gatewayId":FIRST}))["ok"],true);
+        manager.shutdown();
+        assert_eq!(manager.profile_panels.can(json!({"command":"status","gatewayId":FIRST}))["ok"],false);
+        assert!(manager.profile_panels.usb(usb["key"].as_str().unwrap(),crate::module_usb::UsbRequest::ConfigRead{route:serde_json::from_value(usb["snapshot"]["route"].clone()).unwrap()}).is_err());
     }
     #[test]
     fn failed_handshake_and_command_do_not_close_other_gateways() {

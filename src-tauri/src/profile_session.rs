@@ -11,6 +11,9 @@ use std::path::PathBuf;
 #[path = "profile_session_journal.rs"]
 mod journal;
 use journal::{Manifest, Store, Transition};
+#[path = "profile_session_stage.rs"]
+mod staging;
+pub(crate) use staging::{apply_staged, apply_staged_admitted, Stage};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Candidate {
@@ -19,6 +22,8 @@ pub(crate) struct Candidate {
     pub read_only: bool,
     /// Native selection only; a browser cannot provide process identity.
     pub game_id: Option<String>,
+    /// A native one-use preparation. It is never serialized or accepted over IPC.
+    pub stage: Option<std::sync::Arc<Stage>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,17 +216,7 @@ impl<H: Host> Coordinator<H> {
             && !self.status.paused
     }
     pub(crate) fn apply(&mut self, candidate: Candidate) -> Result<(), String> {
-        if self.status.paused {
-            return Err(
-                "The profile session is paused. Explicitly resume before applying a profile."
-                    .into(),
-            );
-        }
-        if self.status.state == State::RecoveryNeeded {
-            return Err(
-                "Recover the interrupted profile session before applying another profile.".into(),
-            );
-        }
+        self.check_apply()?;
         if candidate.read_only {
             return Err("Profile storage is read-only; repair it before activation.".into());
         }
@@ -249,6 +244,20 @@ impl<H: Host> Coordinator<H> {
             self.host.discard_preparation(&owner);
         }
         result
+    }
+    fn check_apply(&self) -> Result<(), String> {
+        if self.status.paused {
+            return Err(
+                "The profile session is paused. Explicitly resume before applying a profile."
+                    .into(),
+            );
+        }
+        if self.status.state == State::RecoveryNeeded {
+            return Err(
+                "Recover the interrupted profile session before applying another profile.".into(),
+            );
+        }
+        Ok(())
     }
     fn takeover(
         &mut self,

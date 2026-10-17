@@ -107,6 +107,81 @@ fn runtime() -> Runtime {
     );
     runtime
 }
+
+#[test]
+fn slow_native_collection_never_excludes_current_game_delivery() {
+    use std::sync::mpsc;
+    for background in [false, true] {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let released = Arc::new(Mutex::new(release_rx));
+        let calls = Arc::new(AtomicU64::new(0));
+        let runtime = Arc::new(Runtime::new(
+            None,
+            Arc::new(move |revision| {
+                if calls.fetch_add(1, Ordering::AcqRel) == 0 {
+                    entered_tx.send(()).unwrap();
+                    released
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+                vec![(
+                    "game:dcs".into(),
+                    Ok(batch(
+                        "game:dcs",
+                        "metadata",
+                        revision + 1,
+                        vec![metadata("dcs")],
+                    )),
+                )]
+            }),
+            background,
+        ));
+        Runtime::adopt(
+            &runtime.state,
+            vec![(
+                "game:dcs".into(),
+                Ok(batch("game:dcs", "metadata", 1, vec![metadata("dcs")])),
+            )],
+        );
+        let refresh = (!background).then(|| {
+            let runtime = runtime.clone();
+            thread::spawn(move || runtime.refresh_native())
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (published_tx, published_rx) = mpsc::channel();
+        let publishing = runtime.clone();
+        let publication = thread::spawn(move || {
+            let result = (|| {
+                publishing.publish_profile_game_delivery(delivery("dcs", "current-reader", 1))?;
+                let plan = plan(&publishing);
+                let bound = publishing.bind_delivery_reads(&plan)?;
+                let token = bound.sources[0]
+                    .token
+                    .as_ref()
+                    .ok_or("No actual read token.")?;
+                publishing.validate_delivery(token)?;
+                Ok::<_, String>(())
+            })();
+            published_tx.send(result).unwrap();
+        });
+        let published = published_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        if let Some(refresh) = refresh {
+            refresh.join().unwrap().unwrap();
+        }
+        publication.join().unwrap();
+        runtime.shutdown();
+        assert!(published.is_ok(), "Live game delivery must publish before slow collection is released (background={background}).");
+        published.unwrap().unwrap();
+        assert_eq!(
+            runtime.state.lock().unwrap().game_deliveries["dcs"].session,
+            "current-reader"
+        );
+    }
+}
 fn plan(runtime: &Runtime) -> ExecutionPlan {
     let state = runtime.state.lock().unwrap();
     let details = state

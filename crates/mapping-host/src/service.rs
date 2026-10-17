@@ -26,6 +26,8 @@ pub const QUALIFICATION: &str = osg_virtual_controller::uinput::REASON;
 pub const QUALIFICATION: &str = osg_virtual_controller::apple_helper::REASON;
 pub const BACKEND: &str = osg_virtual_controller::entry::BACKEND;
 pub const SCRIPT_LIVE_QUALIFIED: bool = false;
+/// Shared activation gate for every native coordinator using this backend.
+pub const LIVE_OUTPUT_QUALIFIED: bool = false;
 fn native_readiness() -> Value {
     #[cfg(target_os = "linux")]
     {
@@ -78,7 +80,7 @@ impl Service {
             root,
             inspector,
             osg_virtual_controller::entry::factory(),
-            false,
+            LIVE_OUTPUT_QUALIFIED,
         )
     }
     fn with_output(

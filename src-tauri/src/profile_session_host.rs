@@ -1,0 +1,750 @@
+//! Concrete native profile adapters. Volatile readers/workers are keyed by the
+//! coordinator owner; durable manifests contain only compare/restore receipts.
+use crate::profile_session::{
+    Admission, AdmissionBlocker, ApplyPhase, BlockerKind, Candidate, Health, Host, OwnedRun,
+    Prepared, Receipt, RunOwner,
+};
+use osg_mapping::{
+    engine::{typed::Phase, Counter},
+    runtime::RecordingSink,
+};
+use osg_profiles::{
+    compiler_models::{CompilationReport, ExecutionPlan, PlanReadiness, SinkAdapter},
+    resources::{ResourceToken, Transport},
+};
+use serde_json::{json, Value};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
+
+type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
+struct NativePreparation {
+    prepared: Prepared,
+    report: CompilationReport,
+    backend: osg_profiles::compiler_models::BackendCapabilities,
+    bindings: Vec<osg_virtual_controller::vjoy::Binding>,
+    scripts: crate::profile_session_scripts::Scripts,
+    game: crate::profile_session_games::GameSources,
+    game_preparation: Option<crate::games::PreparedGame>,
+}
+struct NativeRun {
+    owner: RunOwner,
+    report: CompilationReport,
+    assignments: Vec<osg_profiles::store::LocalAssignment>,
+    document: osg_profiles::ProfileDocument,
+    backend: osg_profiles::compiler_models::BackendCapabilities,
+    delivery: Option<ExecutionPlan>,
+    inputs: Option<crate::profile_session_inputs::HidInputs>,
+    baselines: Vec<osg_mapping::engine::typed::Frame>,
+    reducer: Option<Phase>,
+    recording: RecordingSink,
+    started: Instant,
+    clock_origin: u64,
+    bindings: Vec<osg_virtual_controller::vjoy::Binding>,
+    output: Option<osg_virtual_controller::session::Session>,
+    scripts: crate::profile_session_scripts::Scripts,
+    game: crate::profile_session_games::GameSources,
+    game_preparation: Option<crate::games::PreparedGame>,
+}
+pub(crate) struct NativeProfileHost {
+    resources: Arc<crate::profile_resources::Runtime>,
+    controllers: Arc<osg_controller_input::ControllerService>,
+    games: Arc<crate::games::GamesRuntime>,
+    companions: Arc<crate::companion_host::Runtime>,
+    usb: Arc<crate::module_usb_fleet::Fleet>,
+    panel: Panel,
+    native: bool,
+    authority: Option<RunOwner>,
+    prepared: BTreeMap<String, NativeRun>,
+}
+fn key(owner: &RunOwner) -> String {
+    format!("{}:{}", owner.session, owner.generation)
+}
+impl NativeProfileHost {
+    pub(crate) fn new(
+        resources: Arc<crate::profile_resources::Runtime>,
+        controllers: Arc<osg_controller_input::ControllerService>,
+        games: Arc<crate::games::GamesRuntime>,
+        companions: Arc<crate::companion_host::Runtime>,
+        usb: Arc<crate::module_usb_fleet::Fleet>,
+        panel: Panel,
+        native: bool,
+    ) -> Self {
+        Self {
+            resources,
+            controllers,
+            games,
+            companions,
+            usb,
+            panel,
+            native,
+            authority: None,
+            prepared: BTreeMap::new(),
+        }
+    }
+    fn run(&mut self, owner: &RunOwner) -> Result<&mut NativeRun, String> {
+        self.prepared
+            .get_mut(&key(owner))
+            .filter(|run| run.owner == *owner)
+            .ok_or_else(|| "The native prepared run expired; capture a fresh profile plan.".into())
+    }
+    fn validate_token(
+        resources: &crate::profile_resources::Runtime,
+        token: &ResourceToken,
+    ) -> Result<(), String> {
+        resources.validate_delivery(token).map(|_| ())
+    }
+    fn fence(&self, owner: &RunOwner) -> Result<(), String> {
+        if self.authority.as_ref() != Some(owner) {
+            Err("The native profile delivery owner was revoked.".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn blockers(plan: &ExecutionPlan) -> Vec<AdmissionBlocker> {
+        let mut blockers = vec![];
+        // Every enabled adapter must have its concrete native implementation.
+        // Capability gaps are explicit; they never fall back to browser values.
+        for source in &plan.sources {
+            if source.readiness == PlanReadiness::Ready
+                && source.route.as_ref().is_some_and(|route| {
+                    !matches!(route.transport, Transport::Hid | Transport::Integration)
+                })
+            {
+                blockers.push(AdmissionBlocker {
+                    kind: BlockerKind::Backend,
+                    message: format!(
+                        "Native source acquisition is not yet installed for {}.",
+                        source.endpoint.node_id
+                    ),
+                });
+            }
+        }
+        for sink in &plan.sinks {
+            if sink.readiness == PlanReadiness::Ready
+                && !matches!(
+                    sink.adapter,
+                    SinkAdapter::VirtualController | SinkAdapter::SimulatorCommand
+                )
+            {
+                blockers.push(AdmissionBlocker {
+                    kind: BlockerKind::Backend,
+                    message: format!(
+                        "Native output acquisition is not yet installed for {}.",
+                        sink.endpoint.node_id
+                    ),
+                });
+            }
+        }
+        if !plan.runtime_overrides.is_empty() || !plan.companion_assignments.is_empty() {
+            blockers.push(AdmissionBlocker {
+                kind: BlockerKind::Backend,
+                message: "Owned configuration/companion adapters are still being installed.".into(),
+            });
+        }
+        if plan.program.nodes.iter().any(|node| {
+            matches!(
+                node.operation,
+                osg_mapping::program::Operation::Script { .. }
+            )
+        }) && !osg_mapping_host::service::SCRIPT_LIVE_QUALIFIED
+        {
+            blockers.push(AdmissionBlocker {
+                kind: BlockerKind::Script,
+                message:
+                    "Live script output remains behind its existing native qualification gate."
+                        .into(),
+            });
+        }
+        blockers
+    }
+    fn game_capture(
+        snapshot: &mut osg_profiles::compiler_models::CompileSnapshot,
+        game: Option<&crate::games::PreparedGame>,
+    ) {
+        snapshot.game_context =
+            game.map(|game| osg_profiles::compiler_models::VerifiedGameContext {
+                game_id: game.proof.game_id.clone(),
+                session: game.proof.session.clone(),
+                provider_setup_revisions: snapshot
+                    .resources
+                    .iter()
+                    .filter(|resource| {
+                        resource.game_id.as_deref() == Some(&game.proof.game_id)
+                            && resource.provider_setup_revision.as_deref()
+                                == Some(&game.proof.provider_setup_revision)
+                            && resource.summary.attributes.get("catalogueRevision")
+                                == Some(&game.proof.catalogue_revision)
+                    })
+                    .map(|resource| {
+                        (
+                            resource.summary.id.clone(),
+                            game.proof.provider_setup_revision.clone(),
+                        )
+                    })
+                    .collect(),
+            });
+    }
+    fn withdraw_game(resources: &crate::profile_resources::Runtime, state: &NativeRun) -> Result<(), String> {
+        if let Some((game, reader)) = state.game.provider_identity() {
+            resources.withdraw_profile_game_delivery(game, reader)?;
+        }
+        Ok(())
+    }
+    fn game_poll(
+        resources: &crate::profile_resources::Runtime,
+        games: &crate::games::GamesRuntime,
+        state: &mut NativeRun,
+        now_us: u64,
+    ) -> Result<crate::profile_session_games::GamePoll, String> {
+        let mut sample = state.game.poll(games, now_us);
+        if let Some(batch) = state.game.delivery_batch() {
+            if let Err(error) = resources.publish_profile_game_delivery(batch) {
+                sample = state.game.fail(now_us, error);
+            }
+        }
+        if sample.context_lost {
+            Self::withdraw_game(resources, state)?;
+            if sample.diagnostics.is_empty() {
+                sample.diagnostics.push("The game branch is disarmed; prepare a fresh verified game session to resume it.".into());
+            }
+        } else if state.game.requires_baseline() && !sample.fresh {
+            sample.diagnostics.push("Game telemetry is stale; its branches await a fresh native baseline.".into());
+        }
+        Ok(sample)
+    }
+    fn dispatch_game(
+        resources: &crate::profile_resources::Runtime,
+        games: &crate::games::GamesRuntime,
+        state: &mut NativeRun,
+        effects: Vec<osg_mapping::engine::typed::Effect>,
+    ) -> Result<Vec<String>, String> {
+        let mut diagnostics = vec![];
+        for effect in effects {
+            let sink = state.delivery.as_ref().and_then(|plan| plan.sinks.iter().find(|sink|
+                sink.endpoint.node_id == effect.endpoint.node_id && sink.endpoint.port_id == effect.endpoint.port_id)).cloned();
+            let Some(sink) = sink.filter(|sink| sink.adapter == SinkAdapter::SimulatorCommand) else {
+                // Virtual-controller effects are submitted by the existing
+                // recording/isolated-feeder adapter. Other adapters are blocked
+                // by native admission until their concrete owners are installed.
+                continue;
+            };
+            if !matches!(effect.sample, osg_mapping::program::SignalSample::Known(_)) {
+                continue;
+            }
+            let result = (|| {
+                let stale = sink.readiness != PlanReadiness::Ready || sink.token.as_ref()
+                    .is_none_or(|token| resources.validate_delivery(token).is_err());
+                if stale {
+                    // A fresh reader baseline may replace only cached delivery
+                    // tokens, never the immutable graph or its local assignment.
+                    let mut snapshot = resources.snapshot_for_compile(state.assignments.clone())?;
+                    snapshot.backend = state.backend.clone();
+                    Self::game_capture(&mut snapshot, state.game_preparation.as_ref());
+                    let report = osg_profiles::compiler::compile(&state.document, &snapshot);
+                    if report.program_hash != state.report.program_hash {
+                        return Err("The native game delivery program identity changed.".into());
+                    }
+                    state.delivery = report.plan;
+                }
+                let sink = state.delivery.as_ref().and_then(|plan| plan.sinks.iter().find(|sink|
+                    sink.endpoint.node_id == effect.endpoint.node_id && sink.endpoint.port_id == effect.endpoint.port_id))
+                    .filter(|sink| sink.adapter == SinkAdapter::SimulatorCommand && sink.readiness == PlanReadiness::Ready)
+                    .ok_or("The simulator action is dormant or no longer ready.")?;
+                let token = sink.token.as_ref().filter(|token| token.access == osg_profiles::resources::Access::Invoke)
+                    .ok_or("The simulator action has no current native invocation token.")?;
+                resources.validate_delivery(token)?;
+                state.game.invoke(games, &effect)
+            })();
+            if let Err(error) = result {
+                let loss = state.game.fail(effect.at_us.0, error);
+                diagnostics.extend(loss.diagnostics);
+                Self::withdraw_game(resources, state)?;
+                if let Some(reducer) = state.reducer.as_mut() {
+                    for frame in loss.frames { reducer.accept(frame)?; }
+                    state.recording.record(reducer.drain_reports());
+                    // Disconnection effects cannot become deferred simulator
+                    // commands. Ordinary controller reports still reach feeder.
+                    reducer.drain();
+                }
+                break;
+            }
+        }
+        Ok(diagnostics)
+    }
+    pub(crate) fn stage(
+        resources: &crate::profile_resources::Runtime,
+        games: &crate::games::GamesRuntime,
+        native: bool,
+        candidate: &Candidate,
+    ) -> Result<Arc<crate::profile_session::Stage>, String> {
+        let game_preparation = match candidate.game_id.as_deref() {
+            Some(id) => games.prepare_profile_game_context(id)?,
+            None => None,
+        };
+        if !candidate.assignments.is_empty() {
+            resources.refresh_native()?;
+        }
+        let (mut snapshot, preparations) = resources.snapshot_for_preparation(candidate.assignments.clone())?;
+        Self::game_capture(&mut snapshot, game_preparation.as_ref());
+        let slots = if !candidate.document.virtual_outputs.is_empty() && native {
+            osg_virtual_controller::inspection::current().ok()
+        } else {
+            None
+        };
+        snapshot.backend.name = osg_mapping_host::service::BACKEND.into();
+        snapshot.backend.available = slots.is_some();
+        snapshot.backend.qualified =
+            native && osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED;
+        let report = osg_profiles::compiler::compile_for_preparation(
+            &candidate.document,
+            &snapshot,
+            &preparations,
+        );
+        let plan = report
+            .plan
+            .clone()
+            .ok_or("The profile compiler did not produce an executable plan.")?;
+        let mut admission = Admission::default();
+        if matches!(
+            report.readiness,
+            PlanReadiness::Invalid | PlanReadiness::Blocked
+        ) {
+            admission.blockers.extend(
+                report
+                    .diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        diagnostic.severity
+                            == osg_profiles::compiler_models::DiagnosticSeverity::Error
+                    })
+                    .map(|diagnostic| AdmissionBlocker {
+                        kind: if report.readiness == PlanReadiness::Invalid {
+                            BlockerKind::Structural
+                        } else {
+                            BlockerKind::RequiredResource
+                        },
+                        message: diagnostic.message.clone(),
+                    }),
+            );
+            if admission.blockers.is_empty() {
+                admission.blockers.push(AdmissionBlocker {
+                    kind: BlockerKind::RequiredResource,
+                    message: "The profile requires a current compatible native resource.".into(),
+                });
+            }
+        }
+        admission.blockers.extend(Self::blockers(&plan));
+        admission.waiting_baselines = plan
+            .sources
+            .iter()
+            .filter(|source| {
+                source
+                    .preparation
+                    .as_ref()
+                    .is_some_and(|pin| pin.requires_baseline())
+            })
+            .map(|source| format!("{}:{}", source.endpoint.node_id, source.endpoint.port_id))
+            .collect();
+        let bindings = if !plan.program.controllers.is_empty() && slots.is_some() {
+            match crate::profile_session_virtual::bindings(
+                &plan.program.controllers,
+                slots.as_deref().unwrap(),
+            ) {
+                Ok(bindings) => bindings,
+                Err(message) => {
+                    admission.blockers.push(AdmissionBlocker {
+                        kind: BlockerKind::Layout,
+                        message,
+                    });
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        };
+        admission.dormant_branches = plan
+            .branches
+            .iter()
+            .filter(|branch| branch.readiness == PlanReadiness::Dormant)
+            .map(|branch| format!("{}:{}", branch.sink.node_id, branch.sink.port_id))
+            .collect();
+        admission.optional_unavailable = plan
+            .branches
+            .iter()
+            .filter(|branch| !branch.required && branch.readiness == PlanReadiness::Blocked)
+            .map(|branch| {
+                format!(
+                    "{}:{} is unavailable.",
+                    branch.sink.node_id, branch.sink.port_id
+                )
+            })
+            .collect();
+        let prepared = Prepared {
+            plan,
+            admission,
+            program_hash: report
+                .program_hash
+                .clone()
+                .ok_or("The compiled profile has no program identity.")?,
+            capture_fingerprint: report.capture_fingerprint.clone(),
+        };
+        let scripts = crate::profile_session_scripts::Scripts::prepare(
+            &prepared.plan.program,
+            &std::env::current_exe().map_err(|error| error.to_string())?,
+        )?;
+        let game = crate::profile_session_games::GameSources::prepare(
+            &prepared.plan,
+            game_preparation.clone(),
+        )?;
+        crate::profile_session::Stage::new(candidate, NativePreparation {
+            prepared, report, backend: snapshot.backend, bindings, scripts, game, game_preparation,
+        })
+    }
+}
+impl Host for NativeProfileHost {
+    fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
+        let NativePreparation {prepared, report, backend, bindings, scripts, game, game_preparation} = candidate.stage.as_ref()
+            .ok_or("A fresh native profile preparation is required.")?
+            .take::<NativePreparation>(candidate)?;
+        self.prepared.insert(key(owner), NativeRun {
+            owner: owner.clone(), report, assignments: candidate.assignments.clone(),
+            document: candidate.document.clone(), backend, delivery: None, inputs: None,
+            baselines: vec![], reducer: None, recording: RecordingSink::default(),
+            started: Instant::now(), clock_origin: 0, bindings, output: None, scripts, game, game_preparation,
+        });
+        self.validate_prepared(&prepared, owner)?;
+        Ok(prepared)
+    }
+    fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String> {
+        let assignments = self.run(owner)?.assignments.clone();
+        let proof = self
+            .run(owner)?
+            .game_preparation
+            .as_ref()
+            .map(|game| game.proof.clone());
+        if let Some(proof) = proof {
+            self.games.validate_game_preparation(&proof)?;
+        }
+        let (current, _) = self.resources.snapshot_for_preparation(assignments)?;
+        let run = self.run(owner)?;
+        if current.read_only
+            || current.inventory_session.is_empty()
+            || run.report.capture_fingerprint != prepared.capture_fingerprint
+            || run.report.program_hash.as_deref() != Some(&prepared.program_hash)
+        {
+            return Err("The native prepared profile identity changed.".into());
+        }
+        for pin in prepared
+            .plan
+            .sources
+            .iter()
+            .filter_map(|source| source.preparation.as_ref())
+            .chain(
+                prepared
+                    .plan
+                    .sinks
+                    .iter()
+                    .filter_map(|sink| sink.preparation.as_ref()),
+            )
+        {
+            self.resources.validate_preparation(pin)?;
+        }
+        Ok(())
+    }
+    fn capture(
+        &mut self,
+        prepared: &Prepared,
+        owner: &RunOwner,
+        _previous: Option<&OwnedRun>,
+    ) -> Result<Vec<Receipt>, String> {
+        self.validate_prepared(prepared, owner)?;
+        let state = self.run(owner)?;
+        if state.bindings.is_empty() {
+            Ok(vec![])
+        } else {
+            Ok(vec![Receipt {
+                kind: "virtual-output".into(),
+                resource_id: "virtual-output".into(),
+                state: json!({"journal":crate::profile_session_virtual::journal_name(owner)?}),
+            }])
+        }
+    }
+    fn set_authority(&mut self, owner: Option<&RunOwner>) -> Result<(), String> {
+        if self.authority.as_ref() == owner {
+            return Ok(());
+        }
+        if self
+            .authority
+            .as_ref()
+            .and_then(|owner| owner.game_id.as_ref())
+            .is_none()
+            && owner.and_then(|owner| owner.game_id.as_ref()).is_none()
+        {
+            self.authority = owner.cloned();
+            return Ok(());
+        }
+        self.authority = None;
+        self.games
+            .set_profile_context_owner(owner.filter(|owner| owner.game_id.is_some()).map(
+                |owner| crate::game_context::ProfileOwner {
+                    session: owner.session.clone(),
+                    profile_id: owner.profile_id.clone(),
+                    applied_revision: owner.profile_revision,
+                    run_generation: owner.generation,
+                    game_id: owner.game_id.clone(),
+                },
+            ))?;
+        self.authority = owner.cloned();
+        Ok(())
+    }
+    fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
+        let resources = self.resources.clone();
+        if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
+            if let Some(reducer) = state.reducer.as_mut() {
+                reducer.stop();
+                state.recording.record(reducer.drain_reports());
+                reducer.drain();
+            }
+            state.scripts.stop();
+            state.game.stop();
+            let withdrawal = Self::withdraw_game(&resources, state);
+            let mut output_result = Ok(());
+            if let Some(output) = state.output.as_mut() {
+                let flush = output.poll(&state.recording);
+                let stop = output.stop();
+                output_result = flush.and(stop);
+            }
+            withdrawal.and(output_result)?;
+        }
+        Ok(())
+    }
+    fn enter(
+        &mut self,
+        phase: ApplyPhase,
+        prepared: &Prepared,
+        run: &OwnedRun,
+    ) -> Result<(), String> {
+        match phase {
+            ApplyPhase::Overrides => Ok(()),
+            ApplyPhase::Acquire => {
+                let native = self.native;
+                let state = self.run(&run.owner)?;
+                if !state.bindings.is_empty() {
+                    if !native || !osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED {
+                        return Err(osg_mapping_host::service::QUALIFICATION.into());
+                    }
+                    let path = crate::dcs_runtime::config_path()
+                        .with_file_name(crate::profile_session_virtual::journal_name(&run.owner)?);
+                    state.output = Some(
+                        osg_virtual_controller::session::Session::start_with_journal(
+                            osg_virtual_controller::entry::factory(),
+                            osg_mapping::engine::RunToken {
+                                session: run.owner.session.clone(),
+                                generation: Counter(run.owner.generation),
+                            },
+                            state.bindings.clone(),
+                            Counter(0),
+                            Some(path),
+                        )?,
+                    );
+                }
+                let games = self.games.clone();
+                self.run(&run.owner)?.game.acquire(&games)?;
+                Ok(())
+            }
+            ApplyPhase::Baseline => {
+                let games = self.games.clone();
+                let resources = self.resources.clone();
+                let controllers = self.controllers.clone();
+                let deadline = Instant::now() + std::time::Duration::from_secs(3);
+                let mut game_frames = vec![];
+                while self.run(&run.owner)?.game.requires_baseline() {
+                    let now = controllers.stream_page("", 0).captured_us;
+                    let state = self.run(&run.owner)?;
+                    let sample = state.game.poll(&games, now);
+                    if let Some(batch) = state.game.delivery_batch() {
+                        resources.publish_profile_game_delivery(batch)?;
+                    }
+                    if sample.context_lost {
+                        return Err(
+                            "The verified game context changed during baseline acquisition.".into(),
+                        );
+                    }
+                    if sample.fresh {
+                        game_frames = sample.frames;
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err("The game provider did not produce an advancing fresh baseline before activation.".into());
+                    }
+                    if let Some(output) = state.output.as_mut() {
+                        output.keep_alive()?;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                if !prepared.plan.sources.is_empty() || !prepared.plan.sinks.is_empty() {
+                    resources.refresh_native()?;
+                }
+                let delivery = resources.bind_delivery_reads(&prepared.plan)?;
+                let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
+                    &delivery,
+                    self.controllers.as_ref(),
+                    |token| Self::validate_token(&self.resources, token),
+                )?;
+                let state = self.run(&run.owner)?;
+                state.inputs = Some(inputs);
+                state.baselines = baselines;
+                state.baselines.extend(game_frames);
+                state.delivery = Some(delivery);
+                Ok(())
+            }
+            ApplyPhase::Visibility => Ok(()),
+            ApplyPhase::Start => {
+                self.fence(&run.owner)?;
+                let games = self.games.clone();
+                let resources = self.resources.clone();
+                let controllers = self.controllers.clone();
+                let (assignments, document, backend, game_preparation) = {
+                    let state = self.run(&run.owner)?;
+                    (
+                        state.assignments.clone(),
+                        state.document.clone(),
+                        state.backend.clone(),
+                        state.game_preparation.clone(),
+                    )
+                };
+                {
+                    let state = self.run(&run.owner)?;
+                    state.game.admit(&games)?;
+                    if let Some(batch) = state.game.delivery_batch() {
+                        resources.publish_profile_game_delivery(batch)?;
+                    }
+                }
+                let mut snapshot = resources.snapshot_for_compile(assignments)?;
+                snapshot.backend = backend;
+                Self::game_capture(&mut snapshot, game_preparation.as_ref());
+                let delivery = osg_profiles::compiler::compile(&document, &snapshot);
+                if matches!(
+                    delivery.readiness,
+                    PlanReadiness::Invalid | PlanReadiness::Blocked
+                ) || delivery.program_hash.as_deref() != Some(&prepared.program_hash)
+                {
+                    return Err("The final native delivery plan changed or remained blocked after acquisition.".into());
+                }
+                let delivery = delivery
+                    .plan
+                    .ok_or("The compiler did not produce the final native delivery plan.")?;
+                let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
+                    &delivery,
+                    controllers.as_ref(),
+                    |token| Self::validate_token(&resources, token),
+                )?;
+                let state = self.run(&run.owner)?;
+                let game_baseline = state
+                    .game
+                    .baseline(&games, controllers.stream_page("", 0).captured_us);
+                if game_baseline.context_lost
+                    || state.game.requires_baseline() && !game_baseline.fresh
+                {
+                    return Err("The game baseline expired before arming the profile.".into());
+                }
+                state.inputs = Some(inputs);
+                state.baselines = baselines;
+                state.baselines.extend(game_baseline.frames);
+                state.delivery = Some(delivery);
+                let mut reducer = Phase::new(
+                    prepared.plan.program.clone(),
+                    Counter(run.owner.generation),
+                    run.owner.session.clone(),
+                )?;
+                for baseline in state.baselines.drain(..) {
+                    state.clock_origin = state.clock_origin.max(baseline.captured_us.0);
+                    reducer.accept(baseline)?;
+                }
+                state.scripts.poll(&mut reducer);
+                state.recording.record(reducer.drain_reports());
+                let effects = reducer.drain();
+                state.reducer = Some(reducer);
+                state.started = Instant::now();
+                let diagnostics = Self::dispatch_game(&resources, &games, state, effects)?;
+                if !diagnostics.is_empty() { return Err(diagnostics.join("; ")); }
+                if let Some(output) = state.output.as_mut() {
+                    output.poll(&state.recording)?;
+                }
+                Ok(())
+            }
+        }
+    }
+    fn restore(&mut self, run: &OwnedRun, _recovery: bool) -> Result<(), String> {
+        if let Some(state) = self.prepared.get(&key(&run.owner)) {
+            Self::withdraw_game(&self.resources, state)?;
+        }
+        for receipt in &run.receipts {
+            if receipt.kind != "virtual-output"
+                || receipt.resource_id != "virtual-output"
+                || receipt.state
+                    != json!({"journal":crate::profile_session_virtual::journal_name(&run.owner)?})
+            {
+                return Err("Unknown native recovery receipts require inspection; external state was preserved.".into());
+            }
+            if run.attempted.contains(&ApplyPhase::Acquire) {
+                crate::profile_session_virtual::recover(&run.owner)?;
+            }
+        }
+        self.prepared.remove(&key(&run.owner));
+        Ok(())
+    }
+    fn health(&mut self, run: &OwnedRun) -> Result<Health, String> {
+        self.fence(&run.owner)?;
+        let controllers = self.controllers.clone();
+        let resources = self.resources.clone();
+        let games = self.games.clone();
+        let state = self.run(&run.owner)?;
+        let (frames, mut degraded) = state
+            .inputs
+            .as_mut()
+            .ok_or("The native source reader was not acquired.")?
+            .poll(controllers.as_ref(), |token| {
+                Self::validate_token(&resources, token)
+            })?;
+        // Native context loss reaches the reducer before timers/scripts can
+        // emit effects, withdrawing only branches that depend on that game.
+        let game = Self::game_poll(&resources, &games, state, controllers.stream_page("", 0).captured_us)?;
+        degraded.extend(game.diagnostics);
+        let reducer = state
+            .reducer
+            .as_mut()
+            .ok_or("The profile reducer is stopped.")?;
+        for frame in frames.into_iter().chain(game.frames) {
+            reducer.accept(frame)?;
+        }
+        let elapsed = u64::try_from(state.started.elapsed().as_micros())
+            .map_err(|_| "Profile runtime clock exhausted.")?;
+        reducer.advance(Counter(
+            reducer.at_us().0.max(
+                state
+                    .clock_origin
+                    .checked_add(elapsed)
+                    .ok_or("Profile runtime clock exhausted.")?,
+            ),
+        ))?;
+        degraded.extend(state.scripts.poll(reducer));
+        state.recording.record(reducer.drain_reports());
+        let effects = reducer.drain();
+        let stop = reducer.fault().map(str::to_owned);
+        degraded.extend(Self::dispatch_game(&resources, &games, state, effects)?);
+        if let Some(output) = state.output.as_mut() {
+            output.poll(&state.recording)?;
+        }
+        Ok(Health {
+            degraded,
+            stop,
+        })
+    }
+    fn discard_preparation(&mut self, owner: &RunOwner) {
+        if let Some(mut state) = self.prepared.remove(&key(owner)) {
+            state.scripts.stop();
+            state.game.stop();
+            let _ = Self::withdraw_game(&self.resources, &state);
+        }
+    }
+}

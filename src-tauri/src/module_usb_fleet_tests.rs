@@ -764,3 +764,66 @@ fn a_retiring_usb_writer_remains_pinned_until_its_worker_has_closed() {
     });
     assert!(fleet.configuration_claims().is_empty());
 }
+
+#[test]
+fn native_profile_calls_are_typed_route_bound_and_never_open_or_persist() {
+    let (fleet, _, created) = fixture(vec![port("COM8", false)], false);
+    let module = connect(&fleet, "COM8");
+    let key = module["key"].as_str().unwrap();
+    fleet
+        .request_native(key, UsbRequest::ConfigRead { route: route() })
+        .unwrap();
+    let mut old = route();
+    old.boot += 1;
+    assert!(fleet
+        .request_native(key, UsbRequest::ConfigRead { route: old })
+        .is_err());
+    assert!(fleet.request_native(key, UsbRequest::Refresh).is_err());
+    assert!(fleet
+        .request_native(
+            key,
+            UsbRequest::ConfigChange {
+                route: route(),
+                client_id: "profile".into(),
+                change: ConfigChange::Save
+            }
+        )
+        .is_err());
+    assert_eq!(
+        *created.lock().unwrap()[0].calls.lock().unwrap(),
+        vec!["explicit", "read"]
+    );
+    assert!(fleet
+        .request(&json!({"command":"module_usb_actions_claim","key":key,"route":route()}))
+        .is_err());
+    fleet.shutdown();
+    assert!(fleet
+        .request_native(key, UsbRequest::ConfigRead { route: route() })
+        .is_err());
+}
+#[test]
+fn native_profile_call_uses_existing_busy_guard_without_replaying() {
+    let (fleet, _, created) = fixture(vec![port("COM8", false)], false);
+    let module = connect(&fleet, "COM8");
+    let key = module["key"].as_str().unwrap().to_owned();
+    let fleet = Arc::new(fleet);
+    let (entered, notify) = std::sync::mpsc::sync_channel(1);
+    let (resume, release) = std::sync::mpsc::channel();
+    *created.lock().unwrap()[0].hold_refresh.lock().unwrap() = Some((entered, release));
+    let worker = fleet.clone();
+    let worker_key = key.clone();
+    let pending = std::thread::spawn(move || {
+        worker.request(&json!({"command":"module_usb_status","key":worker_key}))
+    });
+    notify.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(fleet
+        .request_native(&key, UsbRequest::ConfigRead { route: route() })
+        .unwrap_err()
+        .contains("busy"));
+    resume.send(()).unwrap();
+    pending.join().unwrap().unwrap();
+    assert_eq!(
+        *created.lock().unwrap()[0].calls.lock().unwrap(),
+        vec!["explicit", "refresh"]
+    );
+}

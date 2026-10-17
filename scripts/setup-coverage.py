@@ -28,7 +28,9 @@ def main():
     root = Path(__file__).resolve().parents[1]
     module_names = ['dcs_setup.rs', 'game_integration_setup.rs', 'acr_setup.rs',
                     'game_context.rs', 'game_context_runtime.rs', 'game_provider_settings.rs',
-                    'profile_session.rs', 'profile_session_journal.rs']
+                    'profile_session.rs', 'profile_session_journal.rs', 'profile_session_games.rs',
+                    'profile_session_stage.rs', 'profile_session_inputs.rs',
+                    'profile_session_scripts.rs', 'profile_session_virtual.rs']
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=root / '.research/setup-coverage')
     parser.add_argument('--module', action='append', choices=module_names,
@@ -81,7 +83,8 @@ def main():
                          '-show-line-counts-or-regions', *map(str, sources)], root)
     (output / 'lines.txt').write_text(annotated, encoding='utf-8')
     source_paths = {str(path): path for path in sources}
-    counts, current = {}, ''
+    # llvm-cov omits the file heading when exactly one source was requested.
+    counts, current = {}, sources[0].name if len(sources) == 1 else ''
     for line in annotated.splitlines():
         if line.endswith(':') and line[:-1] in source_paths:
             current = source_paths[line[:-1]].name

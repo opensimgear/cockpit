@@ -35,6 +35,8 @@ pub(crate) struct Runtime {
     worker: Mutex<Option<JoinHandle<()>>>,
     collect: Collect,
     local_revision: Arc<AtomicU64>,
+    /// Serializes discovery revisions without excluding live delivery adoption.
+    collector_gate: Arc<Mutex<()>>,
     capture_gate: Arc<Mutex<()>>,
 }
 impl Runtime {
@@ -325,12 +327,14 @@ impl Runtime {
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let local_revision = Arc::new(AtomicU64::new(0));
+        let collector_gate = Arc::new(Mutex::new(()));
         let capture_gate = Arc::new(Mutex::new(()));
         let worker = if native {
             let state = state.clone();
             let stopped = stop.clone();
             let collect = collect.clone();
             let revisions = local_revision.clone();
+            let collectors = collector_gate.clone();
             let gate = capture_gate.clone();
             Some(
                 thread::Builder::new()
@@ -338,12 +342,16 @@ impl Runtime {
                     .spawn(move || {
                         while !stopped.load(Ordering::Acquire) {
                             {
-                                let _capture = gate.lock().unwrap_or_else(|p| p.into_inner());
+                                let _collector =
+                                    collectors.lock().unwrap_or_else(|p| p.into_inner());
                                 if stopped.load(Ordering::Acquire) {
                                     break;
                                 }
                                 let revision = revisions.fetch_add(1, Ordering::AcqRel) + 1;
                                 let batches = collect(revision);
+                                // Discovery may block; the live reader must keep
+                                // publishing and renewing while it is in flight.
+                                let _capture = gate.lock().unwrap_or_else(|p| p.into_inner());
                                 if stopped.load(Ordering::Acquire) {
                                     break;
                                 }
@@ -368,6 +376,7 @@ impl Runtime {
             worker: Mutex::new(worker),
             collect,
             local_revision,
+            collector_gate,
             capture_gate,
         }
     }
@@ -377,12 +386,16 @@ impl Runtime {
         if self.stop.load(Ordering::Acquire) {
             return Err("Resource inventory has stopped.".into());
         }
-        let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
+        let _collector = self
+            .collector_gate
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         if self.stop.load(Ordering::Acquire) {
             return Err("Resource inventory has stopped.".into());
         }
         let revision = self.local_revision.fetch_add(1, Ordering::AcqRel) + 1;
         let batches = (self.collect)(revision);
+        let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
         if self.stop.load(Ordering::Acquire) {
             return Err("Resource inventory has stopped.".into());
         }

@@ -6,6 +6,7 @@ pub mod settings;
 mod learn;
 
 pub use osg_logic::helper_main as logic_helper_main;
+pub use osg_logic::typed_worker::TypedWorker;
 
 pub mod panels;
 
