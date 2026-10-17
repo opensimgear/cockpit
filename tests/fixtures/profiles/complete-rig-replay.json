@@ -1,0 +1,489 @@
+{
+  "schemaVersion": 1,
+  "evidence": "Computed samples and requested effects from the real portable compiler and typed reducer; no driver, game, display or HidHide acknowledgement.",
+  "documentSha256": "sha256:6602799ed14dc349a8b1424061ed9cea12d2a657808b54a843dbfc41afdccd2d",
+  "routeVariants": [
+    {
+      "id": "can-only",
+      "directUsb": false
+    },
+    {
+      "id": "can-plus-direct-usb",
+      "directUsb": true
+    }
+  ],
+  "baselines": [
+    {
+      "source": "third-party-a",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "axis",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": 100
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "third-party-b",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "axis",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": 200
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "can-a",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "axis",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": 300
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "can-b",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "axis",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": 400
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "direct-usb",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "axis",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": 500
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "companion-panel",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "switch",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "dcs",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "altitude",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": 10000
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "can-command",
+      "generation": "1",
+      "sequence": "1",
+      "capturedUs": "100",
+      "reason": "baseline",
+      "changes": [
+        {
+          "portId": "pressed",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "baseline": {
+    "controllers": {
+      "combined-controller": {
+        "buttons": [
+          true
+        ],
+        "axes": [
+          100,
+          200
+        ],
+        "hats": []
+      },
+      "can-controller": {
+        "buttons": [],
+        "axes": [
+          300,
+          400,
+          500
+        ],
+        "hats": []
+      }
+    },
+    "samples": [
+      {
+        "nodeId": "dcs",
+        "portId": "altitude",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": 10000
+          }
+        }
+      },
+      {
+        "nodeId": "feet-to-metres",
+        "portId": "metres",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": 3048
+          }
+        }
+      },
+      {
+        "nodeId": "altitude-threshold",
+        "portId": "warning",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": true
+          }
+        }
+      },
+      {
+        "nodeId": "altitude-visible",
+        "portId": "metres",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": 3048
+          }
+        }
+      },
+      {
+        "nodeId": "altitude-format",
+        "portId": "text",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": "ALT 3048.0 m"
+          }
+        }
+      }
+    ],
+    "requests": [
+      {
+        "edgeId": "module-action",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "action-pack",
+            "value": {
+              "arguments": [
+                {
+                  "id": "value",
+                  "value": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "edgeId": "companion-warning",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": true
+          }
+        }
+      },
+      {
+        "edgeId": "companion-altitude-label",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": "ALT 3048.0 m"
+          }
+        }
+      }
+    ],
+    "commandCount": 0
+  },
+  "changes": [
+    {
+      "frame": {
+        "source": "can-command",
+        "generation": "1",
+        "sequence": "2",
+        "capturedUs": "200",
+        "reason": "change",
+        "changes": [
+          {
+            "portId": "pressed",
+            "sample": {
+              "status": "known",
+              "value": {
+                "kind": "scalar",
+                "value": true
+              }
+            }
+          }
+        ]
+      },
+      "requests": [],
+      "commandCount": 1
+    },
+    {
+      "frame": {
+        "source": "dcs",
+        "generation": "1",
+        "sequence": "2",
+        "capturedUs": "300",
+        "reason": "change",
+        "changes": [
+          {
+            "portId": "altitude",
+            "sample": {
+              "status": "known",
+              "value": {
+                "kind": "scalar",
+                "value": 9700
+              }
+            }
+          }
+        ]
+      },
+      "requests": [
+        {
+          "edgeId": "companion-altitude-label",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": "ALT 2956.6 m"
+            }
+          }
+        }
+      ],
+      "commandCount": 0
+    },
+    {
+      "frame": {
+        "source": "dcs",
+        "generation": "1",
+        "sequence": "3",
+        "capturedUs": "400",
+        "reason": "change",
+        "changes": [
+          {
+            "portId": "altitude",
+            "sample": {
+              "status": "known",
+              "value": {
+                "kind": "scalar",
+                "value": 9400
+              }
+            }
+          }
+        ]
+      },
+      "requests": [
+        {
+          "edgeId": "module-action",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "action-pack",
+              "value": {
+                "arguments": [
+                  {
+                    "id": "value",
+                    "value": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "edgeId": "companion-warning",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": false
+            }
+          }
+        },
+        {
+          "edgeId": "companion-altitude-label",
+          "sample": {
+            "status": "unknown"
+          }
+        }
+      ],
+      "commandCount": 0
+    },
+    {
+      "frame": {
+        "source": "dcs",
+        "generation": "1",
+        "sequence": "4",
+        "capturedUs": "500",
+        "reason": "change",
+        "changes": [
+          {
+            "portId": "altitude",
+            "sample": {
+              "status": "known",
+              "value": {
+                "kind": "scalar",
+                "value": 9800
+              }
+            }
+          }
+        ]
+      },
+      "requests": [],
+      "commandCount": 0
+    },
+    {
+      "frame": {
+        "source": "dcs",
+        "generation": "1",
+        "sequence": "5",
+        "capturedUs": "600",
+        "reason": "change",
+        "changes": [
+          {
+            "portId": "altitude",
+            "sample": {
+              "status": "known",
+              "value": {
+                "kind": "scalar",
+                "value": 10000
+              }
+            }
+          }
+        ]
+      },
+      "requests": [
+        {
+          "edgeId": "module-action",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "action-pack",
+              "value": {
+                "arguments": [
+                  {
+                    "id": "value",
+                    "value": true
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "edgeId": "companion-warning",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": true
+            }
+          }
+        },
+        {
+          "edgeId": "companion-altitude-label",
+          "sample": {
+            "status": "known",
+            "value": {
+              "kind": "scalar",
+              "value": "ALT 3048.0 m"
+            }
+          }
+        }
+      ],
+      "commandCount": 0
+    }
+  ]
+}

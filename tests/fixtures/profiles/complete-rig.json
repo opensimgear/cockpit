@@ -1,0 +1,993 @@
+{
+  "schemaVersion": 2,
+  "id": "33333333-3333-4333-8333-333333333333",
+  "name": "Complete rig fixture",
+  "revision": 1,
+  "eligibility": {
+    "gameIds": [
+      "dcs"
+    ]
+  },
+  "resources": [
+    {
+      "id": "third-party-a",
+      "name": "Third party A",
+      "kind": "device",
+      "required": true,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "Steering",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "third-party-b",
+      "name": "Third party B",
+      "kind": "device",
+      "required": true,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "Throttle",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "can-a",
+      "name": "OSG CAN device A",
+      "kind": "device",
+      "required": true,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "CAN axis A",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        },
+        {
+          "id": "led",
+          "name": "Module indicator action",
+          "direction": "input",
+          "contract": {
+            "delivery": "action",
+            "parameters": [
+              {
+                "id": "value",
+                "name": "Value",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            ],
+            "semantics": "setter",
+            "endpoint": "led",
+            "readable": true,
+            "display": null,
+            "ownership": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "can-b",
+      "name": "OSG CAN device B",
+      "kind": "device",
+      "required": false,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "CAN axis B",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "direct-usb",
+      "name": "OSG direct USB device",
+      "kind": "device",
+      "required": false,
+      "ports": [
+        {
+          "id": "axis",
+          "name": "Direct USB axis",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "companion-panel",
+      "name": "Companion panel",
+      "kind": "companion",
+      "required": false,
+      "ports": [
+        {
+          "id": "switch",
+          "name": "Panel switch",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        },
+        {
+          "id": "warning",
+          "name": "Altitude warning widget",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        },
+        {
+          "id": "altitude-label",
+          "name": "Conditional altitude text widget",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "text",
+              "maxBytes": 64,
+              "encoding": "ascii"
+            },
+            "freshnessMs": 1000,
+            "fallback": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "dcs",
+      "name": "DCS game data and commands",
+      "kind": "game",
+      "required": true,
+      "ports": [
+        {
+          "id": "altitude",
+          "name": "Altitude feet",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 60000,
+              "unit": "ft"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        },
+        {
+          "id": "master-caution",
+          "name": "Master caution command",
+          "direction": "input",
+          "contract": {
+            "delivery": "action",
+            "parameters": [],
+            "semantics": "one-shot",
+            "endpoint": "master-caution",
+            "readable": true,
+            "display": null,
+            "ownership": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "third-party-c",
+      "name": "Hidden third party C",
+      "kind": "device",
+      "required": true,
+      "ports": []
+    },
+    {
+      "id": "can-command",
+      "name": "Separate OSG command module",
+      "kind": "device",
+      "required": true,
+      "ports": [
+        {
+          "id": "pressed",
+          "name": "Command button",
+          "direction": "output",
+          "contract": {
+            "delivery": "event",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "id": "third-party-steering",
+      "from": {
+        "nodeId": "third-party-a",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "combined-controller",
+        "portId": "steering"
+      }
+    },
+    {
+      "id": "third-party-throttle",
+      "from": {
+        "nodeId": "third-party-b",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "combined-controller",
+        "portId": "throttle"
+      }
+    },
+    {
+      "id": "can-axis-a",
+      "from": {
+        "nodeId": "can-a",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "can-controller",
+        "portId": "axis-a"
+      }
+    },
+    {
+      "id": "can-axis-b",
+      "from": {
+        "nodeId": "can-b",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "can-controller",
+        "portId": "axis-b"
+      }
+    },
+    {
+      "id": "usb-axis",
+      "from": {
+        "nodeId": "direct-usb",
+        "portId": "axis"
+      },
+      "to": {
+        "nodeId": "can-controller",
+        "portId": "usb-axis"
+      }
+    },
+    {
+      "id": "companion-button",
+      "from": {
+        "nodeId": "companion-panel",
+        "portId": "switch"
+      },
+      "to": {
+        "nodeId": "combined-controller",
+        "portId": "button"
+      }
+    },
+    {
+      "id": "dcs-command-trigger",
+      "from": {
+        "nodeId": "can-command",
+        "portId": "pressed"
+      },
+      "to": {
+        "nodeId": "command-trigger",
+        "portId": "trigger"
+      }
+    },
+    {
+      "id": "dcs-command",
+      "from": {
+        "nodeId": "command-trigger",
+        "portId": "action"
+      },
+      "to": {
+        "nodeId": "dcs",
+        "portId": "master-caution"
+      }
+    },
+    {
+      "id": "altitude-feet",
+      "from": {
+        "nodeId": "dcs",
+        "portId": "altitude"
+      },
+      "to": {
+        "nodeId": "feet-to-metres",
+        "portId": "feet"
+      }
+    },
+    {
+      "id": "altitude-metres",
+      "from": {
+        "nodeId": "feet-to-metres",
+        "portId": "metres"
+      },
+      "to": {
+        "nodeId": "altitude-threshold",
+        "portId": "altitude"
+      }
+    },
+    {
+      "id": "altitude-warning",
+      "from": {
+        "nodeId": "altitude-threshold",
+        "portId": "warning"
+      },
+      "to": {
+        "nodeId": "warning-action",
+        "portId": "value"
+      }
+    },
+    {
+      "id": "companion-warning",
+      "from": {
+        "nodeId": "altitude-threshold",
+        "portId": "warning"
+      },
+      "to": {
+        "nodeId": "companion-panel",
+        "portId": "warning"
+      }
+    },
+    {
+      "id": "module-action",
+      "from": {
+        "nodeId": "warning-action",
+        "portId": "action"
+      },
+      "to": {
+        "nodeId": "can-a",
+        "portId": "led"
+      }
+    },
+    {
+      "id": "altitude-display-value",
+      "from": {
+        "nodeId": "feet-to-metres",
+        "portId": "metres"
+      },
+      "to": {
+        "nodeId": "altitude-visible",
+        "portId": "value"
+      }
+    },
+    {
+      "id": "altitude-display-condition",
+      "from": {
+        "nodeId": "altitude-threshold",
+        "portId": "warning"
+      },
+      "to": {
+        "nodeId": "altitude-visible",
+        "portId": "gate"
+      }
+    },
+    {
+      "id": "altitude-format-input",
+      "from": {
+        "nodeId": "altitude-visible",
+        "portId": "metres"
+      },
+      "to": {
+        "nodeId": "altitude-format",
+        "portId": "metres"
+      }
+    },
+    {
+      "id": "companion-altitude-label",
+      "from": {
+        "nodeId": "altitude-format",
+        "portId": "text"
+      },
+      "to": {
+        "nodeId": "companion-panel",
+        "portId": "altitude-label"
+      }
+    }
+  ],
+  "processingNodes": [
+    {
+      "id": "command-trigger",
+      "name": "Explicit command trigger",
+      "operation": {
+        "kind": "action-pack",
+        "arguments": []
+      },
+      "inputs": [
+        {
+          "id": "trigger",
+          "name": "Button event",
+          "direction": "input",
+          "contract": {
+            "delivery": "event",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "action",
+          "name": "Action request",
+          "direction": "output",
+          "contract": {
+            "delivery": "invocation",
+            "parameters": [],
+            "semantics": "one-shot"
+          }
+        }
+      ]
+    },
+    {
+      "id": "feet-to-metres",
+      "name": "Feet to metres",
+      "operation": {
+        "kind": "unit-convert",
+        "from": "ft",
+        "to": "m",
+        "rounding": "none"
+      },
+      "inputs": [
+        {
+          "id": "feet",
+          "name": "Altitude feet",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 60000,
+              "unit": "ft"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "metres",
+          "name": "Altitude metres",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 18288,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "altitude-threshold",
+      "name": "Altitude threshold",
+      "operation": {
+        "kind": "hysteresis",
+        "press": 3000,
+        "release": 2900,
+        "comparison": "greater-equal"
+      },
+      "inputs": [
+        {
+          "id": "altitude",
+          "name": "Altitude metres",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 18288,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "warning",
+          "name": "Above threshold",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "warning-action",
+      "name": "Explicit warning setter",
+      "operation": {
+        "kind": "set-on-change",
+        "arguments": [
+          "value"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "value",
+          "name": "Warning state",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "action",
+          "name": "Warning action",
+          "direction": "output",
+          "contract": {
+            "delivery": "invocation",
+            "parameters": [
+              {
+                "id": "value",
+                "name": "Value",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            ],
+            "semantics": "setter"
+          }
+        }
+      ]
+    },
+    {
+      "id": "altitude-visible",
+      "name": "Only show altitude while warning is active",
+      "operation": {
+        "kind": "gate"
+      },
+      "inputs": [
+        {
+          "id": "value",
+          "name": "Altitude metres",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 18288,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        },
+        {
+          "id": "gate",
+          "name": "Warning active",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "metres",
+          "name": "Visible altitude metres",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 18288,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "altitude-format",
+      "name": "Format altitude in metres",
+      "operation": {
+        "kind": "format",
+        "decimals": 1,
+        "prefix": "ALT ",
+        "suffix": " m",
+        "rounding": "nearest",
+        "overflow": "reject"
+      },
+      "inputs": [
+        {
+          "id": "metres",
+          "name": "Altitude metres",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 18288,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "text",
+          "name": "Formatted altitude",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "text",
+              "maxBytes": 64,
+              "encoding": "ascii"
+            },
+            "freshnessMs": 1000,
+            "fallback": ""
+          }
+        }
+      ]
+    }
+  ],
+  "virtualOutputs": [
+    {
+      "id": "combined-controller",
+      "name": "Combined third party controller",
+      "required": true,
+      "ports": [
+        {
+          "id": "steering",
+          "name": "Steering",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        },
+        {
+          "id": "throttle",
+          "name": "Throttle",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        },
+        {
+          "id": "button",
+          "name": "Companion button",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        }
+      ],
+      "layout": {
+        "buttons": [
+          "button"
+        ],
+        "axes": [
+          {
+            "portId": "steering",
+            "range": "unipolar",
+            "fallback": 0
+          },
+          {
+            "portId": "throttle",
+            "range": "unipolar",
+            "fallback": 0
+          }
+        ],
+        "hats": []
+      }
+    },
+    {
+      "id": "can-controller",
+      "name": "Combined OSG controller",
+      "required": false,
+      "ports": [
+        {
+          "id": "axis-a",
+          "name": "CAN axis A",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        },
+        {
+          "id": "axis-b",
+          "name": "CAN axis B",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        },
+        {
+          "id": "usb-axis",
+          "name": "Direct USB axis",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
+        }
+      ],
+      "layout": {
+        "buttons": [],
+        "axes": [
+          {
+            "portId": "axis-a",
+            "range": "unipolar",
+            "fallback": 0
+          },
+          {
+            "portId": "axis-b",
+            "range": "unipolar",
+            "fallback": 0
+          },
+          {
+            "portId": "usb-axis",
+            "range": "unipolar",
+            "fallback": 0
+          }
+        ],
+        "hats": []
+      }
+    }
+  ],
+  "visibility": [
+    {
+      "resourceId": "third-party-c",
+      "mode": "hidden-while-active"
+    },
+    {
+      "resourceId": "can-a",
+      "mode": "visible"
+    }
+  ],
+  "overrides": [
+    {
+      "resourceId": "can-a",
+      "enabled": true
+    }
+  ],
+  "companionAssignments": [
+    {
+      "resourceId": "companion-panel",
+      "publicationHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "editor": {
+    "positions": [
+      {
+        "nodeId": "third-party-a",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "nodeId": "third-party-b",
+        "x": 300,
+        "y": 0
+      },
+      {
+        "nodeId": "can-a",
+        "x": 600,
+        "y": 0
+      },
+      {
+        "nodeId": "can-b",
+        "x": 900,
+        "y": 0
+      },
+      {
+        "nodeId": "direct-usb",
+        "x": 0,
+        "y": 220
+      },
+      {
+        "nodeId": "companion-panel",
+        "x": 300,
+        "y": 220
+      },
+      {
+        "nodeId": "dcs",
+        "x": 600,
+        "y": 220
+      },
+      {
+        "nodeId": "third-party-c",
+        "x": 900,
+        "y": 220
+      },
+      {
+        "nodeId": "can-command",
+        "x": 0,
+        "y": 440
+      },
+      {
+        "nodeId": "command-trigger",
+        "x": 300,
+        "y": 440
+      },
+      {
+        "nodeId": "feet-to-metres",
+        "x": 600,
+        "y": 440
+      },
+      {
+        "nodeId": "altitude-threshold",
+        "x": 900,
+        "y": 440
+      },
+      {
+        "nodeId": "warning-action",
+        "x": 0,
+        "y": 660
+      },
+      {
+        "nodeId": "altitude-visible",
+        "x": 300,
+        "y": 660
+      },
+      {
+        "nodeId": "altitude-format",
+        "x": 600,
+        "y": 660
+      },
+      {
+        "nodeId": "combined-controller",
+        "x": 900,
+        "y": 660
+      },
+      {
+        "nodeId": "can-controller",
+        "x": 0,
+        "y": 880
+      }
+    ],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}
