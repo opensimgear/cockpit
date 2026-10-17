@@ -83,6 +83,20 @@ impl Default for PicoService {
     }
 }
 impl PicoService {
+    pub(crate) fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
+        match self.selected.lock().unwrap_or_else(|p|p.into_inner()).as_ref() {
+            Some(Selected::Debug(service)) => service.configuration_claims(),
+            _ => vec![],
+        }
+    }
+    pub(crate) fn cached_state(&self) -> Value {
+        match self.selected.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            Some(Selected::Debug(service)) => service.cached_state(),
+            Some(Selected::Legacy(service)) => service.error("", None)["state"].clone(),
+            None => empty_state(),
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory))
     }

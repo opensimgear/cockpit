@@ -28,6 +28,28 @@ pub(crate) fn fixture(path: &str, serial: Option<&str>) -> Definition {
     }
 }
 #[test]
+fn inventory_snapshot_keeps_identical_devices_and_offline_descriptors_isolated() {
+    let mut registry = Registry::default();
+    let first = registry.connect(fixture("first", None)).unwrap();
+    let second = registry.connect(fixture("second", None)).unwrap();
+    let before = registry.resource_inventory();
+    assert_eq!(before.sources.len(), 2);
+    assert_ne!(first, second);
+    assert!(before.sources.iter().all(|source| source.online && !source.baseline_ready));
+    registry.disconnect(&first);
+    let after = registry.resource_inventory();
+    assert_eq!(after.session, before.session);
+    let offline = after.sources.iter().find(|source| source.saved.id == first).unwrap();
+    assert!(!offline.online);
+    assert!(!offline.baseline_ready);
+    assert_eq!(offline.controls.len(), 3);
+    assert!(after.sources.iter().find(|source| source.saved.id == second).unwrap().online);
+    assert!(before.sources.iter().all(|source| source.online));
+    let service = ControllerService::new(None, false);
+    assert!(service.resource_inventory().sources.is_empty());
+    service.shutdown();
+}
+#[test]
 fn signed_unsigned_axes_and_null_hats() {
     let device = fixture("a", None);
     let axis = &device.controls[1];

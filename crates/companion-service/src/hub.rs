@@ -73,6 +73,7 @@ struct Pending {
 #[derive(Clone)]
 struct Session {
     connection: String,
+    transport: SourceTransport,
     client_id: String,
     companion_id: String,
     token: SourceToken,
@@ -85,6 +86,8 @@ struct Session {
     values: BTreeMap<String, InputValue>,
     feedback_cursor: crate::feedback::FeedbackCursor,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceTransport { Network, Usb }
 struct Inner {
     record: Record,
     publications: BTreeMap<String, Publication>,
@@ -741,13 +744,25 @@ impl Hub {
         json!({"hostId":inner.record.host_id,"diagnostic":inner.diagnostic,"clients":inner.record.credentials.iter().map(|c|json!({"companionId":c.companion_id,"name":c.name,"kind":c.kind,"connected":inner.connections.values().any(|v|v==&c.companion_id)})).collect::<Vec<_>>(),"pending":inner.pending.iter().map(|(id,p)|json!({"requestId":id,"companionId":p.companion_id,"name":p.name,"expiresAtMs":p.expires,"approved":p.token.is_some()})).collect::<Vec<_>>(),"instances":inner.record.instances.iter().map(|a|{let s=inner.sessions.values().find(|s|s.token.source_id==a.instance_id);json!({"instanceId":a.instance_id,"sourceId":a.instance_id,"companionId":a.companion_id,"publicationHash":a.publication_hash,"name":a.definition.name,"connected":s.is_some(),"armed":s.is_some_and(|s|s.armed),"generation":s.map(|s|s.token.generation.to_string()),"sessionId":s.map(|s|&s.token.session_id),"values":s.map(|s|&s.values)})}).collect::<Vec<_>>(),"publications":inner.publications.values().map(|p|json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title,"controlCount":p.controls.len(),"assetCount":p.assets.len()})).collect::<Vec<_>>()})
     }
     pub fn handle_wire(&self, frame: Value, connection_id: &str, now_ms: u64) -> Value {
-        let result = self.wire(&frame, connection_id, now_ms);
+        self.handle_native_wire(frame, connection_id, now_ms, SourceTransport::Network)
+    }
+    /// Only the native serial adapter selects this entry. Peer payloads cannot
+    /// claim a transport or alter the transport of an existing source owner.
+    pub fn handle_serial_wire(&self, frame: Value, connection_id: &str, now_ms: u64) -> Value {
+        self.handle_native_wire(frame, connection_id, now_ms, SourceTransport::Usb)
+    }
+    pub fn source_transport(&self, source_id: &str) -> Option<SourceTransport> {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner()).sessions.values()
+            .find(|session| session.armed && session.token.source_id == source_id).map(|session| session.transport)
+    }
+    fn handle_native_wire(&self, frame: Value, connection_id: &str, now_ms: u64, transport: SourceTransport) -> Value {
+        let result = self.wire(&frame, connection_id, now_ms, transport);
         match result {
             Ok(value) => value,
             Err(error) => json!({"ok":false,"type":"error","error":error}),
         }
     }
-    fn wire(&self, frame: &Value, connection_id: &str, now: u64) -> Result<Value, String> {
+    fn wire(&self, frame: &Value, connection_id: &str, now: u64, transport: SourceTransport) -> Result<Value, String> {
         ensure(
             id(connection_id)
                 && serde_json::to_vec(frame)
@@ -966,6 +981,7 @@ impl Hub {
                     inner.sessions.insert(
                         session_id.clone(),
                         Session {
+                            transport,
                             connection: connection_id.into(),
                             client_id: client_id.clone(),
                             companion_id: companion.clone(),

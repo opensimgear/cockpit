@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./gateway-capabilities', './dcs-profile', './dcs-test-presets']);
+const modules = await loadModules(['./gateway-capabilities', './panel-input-metadata', './dcs-profile', './dcs-test-presets']);
 const { newDcsProfile, dcsProfileError, dcsProfileStartError } = modules.get('./dcs-profile');
 const { dcsTestPreset, dcsTestPresetQueries } = modules.get('./dcs-test-presets');
 const plain = value => JSON.parse(JSON.stringify(value));
 const gatewayId = 'pico:OSG-PICO-0123456789ABCDEF', moduleId = '00112233445566778899aabbccddeeff';
 const profile = { ...newDcsProfile(), cataloguePath: '/installed/doc/json' };
-const events = { boot: 7, contactButtonCount: 3, maintainedButtons: [0,1], encoderButtons: [3,4,5,6], axisCount: 1 };
+const events = { boot: 7, buttonCount: 7, contactButtonCount: 3, maintainedButtons: [0,1], encoderButtons: [3,4,5,6], axisCount: 1 };
 const led = { id: 'led.status.set_mode', label: 'Status LED', endpoint: 'led', readable: true, semantics: 'setter', parameters: [{ type: 'enum', options: ['auto','on','off'] }] };
 const displays = ['frequency','preset','text'].map(endpoint => ({ id: `display.${endpoint}.set_text`, label: endpoint, endpoint, readable: true, semantics: 'setter', parameters: [{ type: 'string', maxBytes: 63 }], display: { columns: 16, rows: 1, encoding: 'ascii' } }));
 const actions = { boot: 7, status: 'ready', actions: [led,...displays] };
@@ -79,4 +79,10 @@ test('Pico profile identities validate only stable serials and negotiated produc
   assert.equal(dcsProfileError(active), '');
   assert.match(dcsProfileError({ ...active, inputs: [{ ...active.inputs[0], gatewayId: 'pico:unrelated' }] }), /supported gateway/);
   for (const change of [{ protocolVersion: 1 }, { canProtocol: 2 }, { backend: 'unknown' }]) assert.match(dcsProfileStartError(active, [{ ...target, state: { ...target.state, ...change } }]), /Reconnect/);
+});
+
+test('unsupported input events cannot produce a preset from otherwise ready output capabilities', () => {
+  const unsupported={status:'unsupported',boot:7,route:[1,1,2,7],configurationGeneration:1};
+  const result=dcsTestPreset(profile,{...target,state:{...target.state,moduleEvents:{[moduleId]:unsupported}}},'radio',catalogue);
+  assert.equal(result.inputs.length,0);assert.equal(result.outputs.length,0);assert.ok(result.error);
 });

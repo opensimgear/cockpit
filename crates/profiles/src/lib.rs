@@ -1,5 +1,8 @@
 //! Portable unified profile documents. Parsing and validation never acquire a device.
 pub mod model;
+pub mod resources;
+pub mod resources_ports;
+pub mod resources_store;
 pub mod service;
 pub mod session;
 pub mod store;

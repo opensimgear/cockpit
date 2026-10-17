@@ -585,6 +585,16 @@ pub(crate) fn telemetry_sources(
     Ok(sources)
 }
 pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
+    query_catalogue_page(request, false)
+}
+
+/// Read one complete validated catalogue for the native resource cache. The UI
+/// query retains its 64-item bound; this does not change its request contract.
+pub(crate) fn resource_catalogue(request: &Value) -> Result<Value, String> {
+    query_catalogue_page(request, true)
+}
+
+fn query_catalogue_page(request: &Value, complete: bool) -> Result<Value, String> {
     let path = text(&request["cataloguePath"], 4096, false)
         .filter(|p| Path::new(p).is_absolute())
         .ok_or(INVALID)?;
@@ -609,11 +619,11 @@ pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
         .map_or(Some(0), Value::as_u64)
         .filter(|n| *n <= 20000)
         .ok_or(INVALID)? as usize;
-    let limit = request
+    let limit = if complete { 20_000 } else { request
         .get("limit")
         .map_or(Some(32), Value::as_u64)
         .filter(|n| (1..=64).contains(n))
-        .ok_or(INVALID)? as usize;
+        .ok_or(INVALID)? as usize };
     let document = dcs_bios::read_json(
         &Path::new(path).join(format!("{aircraft_module}.json")),
         dcs_bios::MAX_DOCUMENT,
@@ -711,7 +721,7 @@ pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
         return Err(INVALID.into());
     }
     let reply = json!({"cataloguePath":path,"aircraftModule":aircraft_module,"query":query,"kind":kind,"offset":offset,"total":total,"controls":controls.into_iter().skip(offset).take(limit).collect::<Vec<_>>()});
-    if reply.to_string().len() > 65536 {
+    if reply.to_string().len() > if complete { 16 * 1024 * 1024 } else { 65536 } {
         return Err("The catalogue page exceeds the response budget; reduce its limit.".into());
     }
     Ok(reply)

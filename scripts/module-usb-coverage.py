@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Measure native USB and profile inventory boundaries; require 71% production lines per module."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+
+MODULES = ["module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
+           "profile_resources", "profile_resource_sources", "profile_resource_ports"]
+TEST_FILTERS = ["module_", "profile_resource", "stm32::tests::events_"]
+
+
+def source_stamp(paths, root):
+    return {str(path.relative_to(root)): {
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "modifiedNs": path.stat().st_mtime_ns,
+    } for path in paths}
+
+
+def run(args, root, env=None):
+    result = subprocess.run([str(arg) for arg in args], cwd=root, env=env,
+                            text=True, encoding="utf-8", stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT)
+    if result.returncode:
+        # Cargo JSON artifacts can dwarf the useful compiler diagnostics.
+        for line in result.stdout.splitlines():
+            if line.startswith("{"):
+                entry = json.loads(line)
+                rendered = entry.get("message", {}).get("rendered")
+                if rendered:
+                    print(rendered, file=sys.stderr, end="")
+            else:
+                print(line, file=sys.stderr)
+        result.check_returncode()
+    return result.stdout
+
+
+def main():
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, default=root / ".research/module-usb-coverage")
+    args = parser.parse_args()
+    output = args.output_dir.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    # Never leave a previous successful summary behind after a failed rerun.
+    for name in ["summary.json", "evidence.json", "tests.log"]:
+        (output / name).unlink(missing_ok=True)
+    tracked = [root / f"src-tauri/src/{module}{suffix}.rs"
+               for module in MODULES for suffix in ["", "_tests"]]
+    tracked.extend([root / "src-tauri/src/stm32.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
+    initial_stamp = source_stamp(tracked, root)
+    profiles = Path(tempfile.mkdtemp(prefix="profiles-", dir=output))
+    env = dict(os.environ,
+               CARGO_TARGET_DIR=os.environ.get("CARGO_TARGET_DIR", str(output / "target")),
+               RUSTFLAGS="-C instrument-coverage",
+               LLVM_PROFILE_FILE=str(profiles / "build-%m-%p.profraw"))
+    artifacts = run(["cargo", "test", "--locked", "--lib", "--no-run", "--message-format=json",
+                     "--manifest-path", root / "src-tauri/Cargo.toml"], root, env)
+    binaries = []
+    for line in artifacts.splitlines():
+        if not line.startswith("{"):
+            continue
+        entry = json.loads(line)
+        if (entry.get("reason") == "compiler-artifact" and entry.get("executable")
+                and entry.get("profile", {}).get("test")):
+            binaries.append(entry["executable"])
+    if len(binaries) != 1:
+        raise RuntimeError("Expected one instrumented Cockpit library test executable.")
+    test_env = dict(env, LLVM_PROFILE_FILE=str(profiles / "test-%m-%p.profraw"))
+    logs = []
+    for test_filter in TEST_FILTERS:
+        tests = subprocess.run([binaries[0], test_filter, "--test-threads=1"],
+                               cwd=root, env=test_env, text=True, encoding="utf-8",
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        logs.append(tests.stdout)
+        (output / "tests.log").write_text("\n".join(logs), encoding="utf-8")
+        if tests.returncode:
+            print(tests.stdout, file=sys.stderr, end="")
+            tests.check_returncode()
+    evidence = list(profiles.glob("test-*.profraw"))
+    if len(evidence) < len(TEST_FILTERS):
+        raise RuntimeError("Successful USB test processes produced incomplete coverage evidence.")
+    final_stamp = source_stamp(tracked, root)
+    if initial_stamp != final_stamp:
+        changed = [name for name in initial_stamp if initial_stamp[name] != final_stamp[name]]
+        raise RuntimeError(f"Sources or tests changed during coverage; rerun on the final files: {changed}")
+    sysroot = Path(run(["rustc", "--print", "sysroot"], root).strip())
+    host = re.search(r"^host: (.+)$", run(["rustc", "-vV"], root), re.M).group(1)
+    suffix = ".exe" if os.name == "nt" else ""
+    llvm = sysroot / "lib/rustlib" / host / "bin"
+    profile = output / "coverage.profdata"
+    run([llvm / f"llvm-profdata{suffix}", "merge", "-sparse", *evidence, "-o", profile], root)
+    summary = {}
+    for module in MODULES:
+        source = root / f"src-tauri/src/{module}.rs"
+        annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0],
+                         f"-instr-profile={profile}", "-show-line-counts-or-regions", source], root)
+        (output / f"{module}-lines.txt").write_text(annotated, encoding="utf-8")
+        lines = source.read_text(encoding="utf-8").splitlines()
+        end = next((i + 1 for i, line in enumerate(lines) if line == "#[cfg(test)]"), len(lines) + 1)
+        counts = {}
+        for line in annotated.splitlines():
+            match = re.match(r"^\s*(\d+)\|\s*([^|]+)\|", line)
+            if not match or int(match[1]) >= end:
+                continue
+            count = match[2].strip()
+            if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?[kMGT]?", count):
+                counts[int(match[1])] = float(count.rstrip("kMGT")) > 0
+        if not counts:
+            raise RuntimeError(f"No production coverage recorded for {module}.")
+        covered = sum(counts.values())
+        percent = 100 * covered / len(counts)
+        summary[module] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
+        print(f"{module}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
+    (output / "evidence.json").write_text(json.dumps({"sources": final_stamp, "testFilters": TEST_FILTERS,
+        "rustc": run(["rustc", "-vV"], root)}, indent=2) + "\n", encoding="utf-8")
+    (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    if any(item["percent"] < 71 for item in summary.values()):
+        raise SystemExit("Every native USB/inventory module requires at least 71% production line coverage.")
+
+
+if __name__ == "__main__":
+    main()

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./runtime-config', './integration-profile', './games']);
+const modules = await loadModules(['./runtime-config', './panel-input-metadata', './integration-profile', './games']);
 const { visibleGames, defaultGameProfile, newGameProfile, cloneGameProfile, gameProfileEqual, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationVerificationLabel, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationUserFolder, gameIntegrationFolderError, gameIntegrationSetupBlockedReason, profileChangesBindings, gameProfileError, gameSessionLabel, gameCompanionCaptureError, captureGameCompanions } = modules.get('./games');
 const plain = value => JSON.parse(JSON.stringify(value));
 const gatewayId = 'stm32:111111111111111111111111', moduleId = '0123456789abcdef0123456789abcdef';

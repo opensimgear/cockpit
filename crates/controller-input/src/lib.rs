@@ -32,6 +32,12 @@ pub struct ControllerService {
     visibility: visibility::service::Service,
 }
 impl ControllerService {
+    /// Capture all retained metadata atomically; unlike UI pages, this cannot
+    /// mix different connection generations between list and inspect calls.
+    pub fn resource_inventory(&self) -> registry::ResourceInventory {
+        self.registry.lock().unwrap_or_else(|p| p.into_inner()).resource_inventory()
+    }
+
     pub fn new(path: Option<PathBuf>, native: bool) -> Self {
         Self::start(path, native, false)
     }

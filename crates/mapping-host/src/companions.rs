@@ -28,6 +28,14 @@ pub struct Definition {
     pub publication_hash: String,
     pub controls: Vec<ControlDefinition>,
 }
+#[derive(Clone, Debug)]
+pub struct ResourceDescriptor {
+    pub definition: Definition,
+    pub online: bool,
+    pub baseline_ready: bool,
+    pub generation: u64,
+    pub fault: Option<String>,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputToken {
     pub source_id: String,
@@ -173,6 +181,20 @@ fn expire(state: &mut State, now: u64) {
     }
 }
 impl CompanionProvider {
+    /// Descriptors and liveness are captured together without subscribing or
+    /// returning input values. A publication replacement changes its generation.
+    pub fn resource_inventory(&self) -> Vec<ResourceDescriptor> {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        expire(&mut state, (self.clock)());
+        state.instances.values().map(|instance| ResourceDescriptor {
+            definition: instance.definition.clone(),
+            online: instance.owner.is_some(),
+            baseline_ready: instance.owner.is_some() && instance.values.len() == instance.definition.controls.len(),
+            generation: instance.generation,
+            fault: instance.fault.clone(),
+        }).collect()
+    }
+
     pub fn new(clock: Clock) -> Self {
         Self {
             state: Arc::new(Mutex::new(State::default())),

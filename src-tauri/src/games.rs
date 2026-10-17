@@ -436,6 +436,11 @@ impl GamesRuntime {
     pub(crate) fn status(&self) -> Value {
         self.status_with_telemetry(&Value::Null, &Value::Null)
     }
+    /// Retained installation metadata only. Inventory must not launch discovery,
+    /// perform setup checks or activate the independently scoped game runtime.
+    pub(crate) fn resource_catalogue(&self) -> Vec<Value> {
+        self.inner.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone()
+    }
     pub(crate) fn status_with_telemetry(&self, integration: &Value, dcs: &Value) -> Value {
         let s = self
             .inner

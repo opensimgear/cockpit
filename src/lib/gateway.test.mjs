@@ -69,6 +69,72 @@ test('unified profile writes remain ordered without blocking gateway discovery o
   assert.deepEqual(api.calls[0].args.request.document, document);
 });
 
+test('profile resource inspection and token checks use their own queue without activating profiles', async () => {
+  const waiting = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'profile_save') await waiting.promise;
+    return { ok: true, state: { profileResources: { valid: true } } };
+  } });
+  const save = api.gatewayRequest({ command: 'profile_save', document: { id: 'profile', revision: 1 }, expectedRevision: 1 });
+  const inventory = api.gatewayRequest({ command: 'profile_resources_list', offset: 0, limit: 32 });
+  const resourceToken = { inventorySession: 'i', resourceId: 'r', generation: '9007199254740999', capabilityRevision: 'c', routeId: 'route', providerSession: 'p', providerGeneration: 'g', portId: 'axis:0', contractHash: 'hash', access: 'read' };
+  const validate = api.gatewayRequest({ command: 'profile_resources_validate', resourceToken, portId: 'axis:0', access: 'read' });
+  const capture = api.gatewayRequest({ command: 'controller_list' });
+  await tick();
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['profile_save', 'profile_resources_list', 'controller_list', 'profile_resources_validate']);
+  assert.deepEqual(api.calls.at(-1).args.request.resourceToken, resourceToken);
+  waiting.resolve();
+  await Promise.all([save, inventory, validate, capture]);
+  assert.ok(api.calls.every(call => call.args.request.command !== 'profile_apply'));
+});
+
+test('standalone USB endpoints have independent queues and Disconnect cancels older unsent writes', async () => {
+  const reading = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.key === 'physical-a:COM8' && request.command === 'module_usb_status') await reading.promise;
+    return { ok: true, state: { moduleUsb: { module: { key: request.key } } } };
+  } });
+  const route = { moduleId: 'module', serial: 'serial', connectionGeneration: 5, boot: 2, configurationGeneration: 4 };
+  const read = api.gatewayRequest({ command: 'module_usb_status', key: 'physical-a:COM8' });
+  await tick();
+  const write = api.gatewayRequest({ command: 'module_usb_config_apply', key: 'physical-a:COM8', route, config: {}, save: true });
+  const cancelled = assert.rejects(write, /cancelled by Disconnect/);
+  const disconnect = api.gatewayRequest({ command: 'module_usb_disconnect', key: 'physical-a:COM8' });
+  await api.gatewayRequest({ command: 'module_usb_status', key: 'physical-b:COM9' });
+  await api.gatewayRequest({ command: 'module_usb_ports' });
+  await api.gatewayRequest({ command: 'profile_resources_list', offset: 0, limit: 32 });
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['module_usb_status', 'module_usb_status', 'module_usb_ports', 'profile_resources_list']);
+  reading.resolve(); await Promise.all([read, cancelled, disconnect]);
+  assert.equal(api.calls.at(-1).args.request.command, 'module_usb_disconnect');
+  assert.ok(api.calls.every(call => call.args.request.command !== 'module_usb_config_apply'));
+  await api.gatewayRequest({ command: 'module_usb_config_read', key: 'physical-a:COM8', route });
+  assert.deepEqual(api.calls.at(-1).args.request.route, route);
+});
+
+test('a new explicit USB Connect waits for Disconnect and captures the observed endpoint key and path', async () => {
+  const stopping = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'module_usb_disconnect') await stopping.promise;
+    return { ok: true, state: { moduleUsb: {} } };
+  } });
+  const stop = api.gatewayRequest({ command: 'module_usb_disconnect', key: 'physical-a:COM8' });
+  const connect = api.gatewayRequest({ command: 'module_usb_connect', key: 'physical-a:COM8', port: 'COM8' });
+  await tick();
+  await api.gatewayRequest({ command: 'module_usb_connect', key: 'physical-b:COM9', port: 'COM9' });
+  assert.deepEqual(api.calls.map(call => call.args.request.key), ['physical-a:COM8', 'physical-b:COM9']);
+  stopping.resolve(); await Promise.all([stop, connect]);
+  assert.deepEqual(api.calls.at(-1).args.request, { command: 'module_usb_connect', key: 'physical-a:COM8', port: 'COM8', clientId: 'test-client-uuid' });
+});
+
+test('a lost USB action reply is surfaced once and does not poison a later explicit read', async () => {
+  const api = transport({ invokeResults: async (_command, request) => request.command === 'module_usb_actions_invoke'
+    ? { ok: false, error: 'Reply lost; output state is unknown', state: { moduleUsb: { module: { snapshot: { error: 'unknown' } } } } }
+    : { ok: true, state: { moduleUsb: {} } } });
+  await assert.rejects(api.gatewayRequest({ command: 'module_usb_actions_invoke', key: 'physical-a:COM8', route: {}, catalogueRevision: 4, actionId: 'led.set', values: [true] }), /state is unknown/);
+  await api.gatewayRequest({ command: 'module_usb_actions_state', key: 'physical-a:COM8', route: {} });
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['module_usb_actions_invoke', 'module_usb_actions_state']);
+});
+
 test('native game file selection returns the absolute path or cancellation and does not change installations', async () => {
   const path = String.raw`D:\Games\X-Plane 12\X-Plane.exe`;
   const api = transport({invokeResults: command => command === 'pick_game_executable' ? path : null});

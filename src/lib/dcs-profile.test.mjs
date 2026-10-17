@@ -2,16 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 const capabilities = {};
 vm.runInNewContext(ts.transpileModule(await readFile(new URL('./gateway-capabilities.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: capabilities });
-const require = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
+const inputMetadata = {};
+vm.runInNewContext(ts.transpileModule(await readFile(new URL('./panel-input-metadata.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: inputMetadata }, { filename: fileURLToPath(new URL('./panel-input-metadata.ts', import.meta.url)) });
+const require = name => { if (name === './gateway-capabilities') return capabilities; if (name === './panel-input-metadata') return inputMetadata; throw new Error(`Unexpected import ${name}`); };
 const exported = {};
 vm.runInNewContext(ts.transpileModule(await readFile(new URL('./dcs-profile.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports: exported, TextEncoder, require }, { filename: new URL('./dcs-profile.ts', import.meta.url).pathname });
+}).outputText, { exports: exported, TextEncoder, require }, { filename: fileURLToPath(new URL('./dcs-profile.ts', import.meta.url)) });
 const { newDcsProfile, dcsProfileEqual, boundDcsTargets, dcsTargetKey, dcsProfileError, physicalDcsControls,
   dcsInputInterfaces, dcsOutputIndex, dcsBindingStatusLabel, dcsBindingState, dcsOutputActions, dcsEndpointLabel, dcsProfileStartError, managedDcsActions, dcsBindingValue } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -91,7 +96,7 @@ test('physical choices distinguish momentary contacts, maintained switches, enco
   assert.deepEqual(plain(physicalDcsControls('switch', events)).map(v => v.value), [2]);
   assert.deepEqual(plain(physicalDcsControls('encoder', events)), [{ value: 0, label: 'Encoder 0 · buttons 3/4' }]);
   assert.equal(physicalDcsControls('axis', events).length, 2);
-  assert.equal(physicalDcsControls('axis', { axes: [0] }).length, 1);
+  assert.equal(physicalDcsControls('axis', { axes: [0] }).length, 0);
   assert.deepEqual(plain(physicalDcsControls('button')), []);
   assert.deepEqual(plain(physicalDcsControls('button', { ...events, contactButtonCount: undefined })), []);
 });
@@ -164,4 +169,14 @@ test('manual guards scope all managed actions and live value labels retain unkno
   assert.equal(dcsBindingStatusLabel(), 'Unknown');
   assert.equal(dcsBindingStatusLabel({ status: 'stale' }), 'Stale');
   assert.equal(dcsBindingStatusLabel({ status: 'future-status' }), 'future-status');
+});
+
+test('unsupported and malformed event metadata offers no controls and never bypasses legacy input admission', () => {
+  const unsupported = { status: 'unsupported', boot: 7, route: [1,1,2,7], configurationGeneration: 1 };
+  for (const value of [unsupported, {}, null, { ...events, ok: false }, { ...events, encoderButtons: null }, { ...events, encoderButtons: [3] }, { ...events, buttonCount: 129 }, { ...events, axisCount: 9 }, { ...events, maintainedButtons: [99] }, { ...events, axes: ['bad'] }]) {
+    for (const kind of ['button', 'switch', 'encoder', 'axis']) assert.deepEqual(plain(physicalDcsControls(kind, value)), []);
+  }
+  const unavailable = { ...target, state: { ...target.state, moduleEvents: { [moduleId]: unsupported } } };
+  assert.match(dcsProfileStartError(profile, [unavailable]), /capabilities/);
+  assert.match(dcsProfileStartError(profile, [unavailable], legacy), /does not advertise input event controls/);
 });

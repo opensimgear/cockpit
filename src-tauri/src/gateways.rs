@@ -18,9 +18,13 @@ pub const PROFILE_REQUEST_LIMIT: usize = osg_profiles::MAX_PROFILE_BYTES + 65_53
 
 trait Adapter: Send + Sync {
     fn request(&self, request: Value) -> Value;
+    fn cached_state(&self) -> Value { empty_state() }
+    fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { vec![] }
     fn shutdown(&self);
 }
 impl Adapter for PicoService {
+    fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
+    fn cached_state(&self) -> Value { self.cached_state() }
     fn request(&self, request: Value) -> Value {
         self.request(request)
     }
@@ -29,6 +33,8 @@ impl Adapter for PicoService {
     }
 }
 impl Adapter for Stm32Service {
+    fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
+    fn cached_state(&self) -> Value { self.cached_state() }
     fn request(&self, request: Value) -> Value {
         self.request(request)
     }
@@ -100,14 +106,17 @@ fn empty_state() -> Value {
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 pub struct GatewayManager {
     profiles: Mutex<osg_profiles::service::Service>,
+    profile_resources: crate::profile_resources::Runtime,
+    module_usb: Arc<crate::module_usb_fleet::Fleet>,
     provider: Arc<dyn Provider>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
+    configuration_gate: Mutex<()>,
     closed: AtomicBool,
     integration_gate: Arc<Mutex<()>>,
     dcs: Arc<crate::dcs_runtime::DcsRuntime>,
     integration: Arc<crate::integration_runtime::IntegrationRuntime>,
-    games: crate::games::GamesRuntime,
+    games: Arc<crate::games::GamesRuntime>,
     game_admission: RwLock<()>,
     controllers: Arc<osg_controller_input::ControllerService>,
     mapping_host: Arc<osg_mapping_host::service::Service>,
@@ -121,6 +130,17 @@ impl Default for GatewayManager {
     }
 }
 impl GatewayManager {
+    fn configuration_claims(&self) -> Vec<(String, crate::module_configuration_routes::WriterPin)> {
+        let sessions = self.sessions.lock().unwrap_or_else(|p|p.into_inner()).iter()
+            .map(|(id,adapter)|(id.clone(),adapter.clone())).collect::<Vec<_>>();
+        sessions.into_iter().flat_map(|(id,adapter)|adapter.configuration_claims().into_iter().map(move |pin|(id.clone(),pin))).collect()
+    }
+    fn cached_gateways(&self) -> Vec<(String, Value)> {
+        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner()).iter()
+            .map(|(id, adapter)| (id.clone(), adapter.clone())).collect::<Vec<_>>();
+        sessions.into_iter().map(|(id, adapter)| (id, adapter.cached_state())).collect()
+    }
+
     pub fn new() -> Self {
         Self::with_options(Arc::new(NativeProvider), true)
     }
@@ -146,7 +166,7 @@ impl GatewayManager {
         mapping_host.set_companion_provider(companion_provider.clone());
         let companion_host = Arc::new(crate::companion_host::Runtime::new(
             native.then(|| crate::dcs_runtime::config_path().with_file_name("companions")),
-            companion_provider,
+            companion_provider.clone(),
         ));
         if native { companion_host.start_detection(); }
         let companion_blueprints = companion_host.clone();
@@ -271,20 +291,37 @@ impl GatewayManager {
                 panel(request)
             }
         });
-        let games = crate::games::GamesRuntime::new(
+        let games = Arc::new(crate::games::GamesRuntime::new(
             game_panel,
             std::env::var_os("OSG_GAMES_CONFIG")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| crate::dcs_runtime::config_path().with_file_name("games.json")),
             Arc::new(crate::game_discovery::NativePlatform),
+        ));
+        let resource_sessions = sessions.clone();
+        let resource_requests = sessions.clone();
+        let resource_ports = provider.clone();
+        let module_usb = Arc::new(crate::module_usb_fleet::Fleet::new(Arc::new(move || resource_ports.ports()), native));
+        let collect = crate::profile_resource_sources::collector(
+            controllers.clone(), companion_provider, companion_host.clone(), games.clone(), integration.clone(),
+            Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.cached_state())).collect()),
+            Arc::new(move |request| {
+                let adapter = resource_requests.lock().unwrap_or_else(|p| p.into_inner()).get(request["gatewayId"].as_str().unwrap_or("")).cloned();
+                adapter.map_or_else(|| json!({"ok":false,"error":"The inventory gateway is disconnected."}), |adapter| adapter.request(request))
+            }),
+            module_usb.clone(), native,
         );
+        let profile_resources = crate::profile_resources::Runtime::new(native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-resources-v1")), collect, native);
         let manager = Self {
+            module_usb,
+            profile_resources,
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
                 crate::dcs_runtime::config_path().with_file_name("profiles-v1")
             }))),
             provider,
             sessions,
             inventory: Mutex::new(Vec::new()),
+            configuration_gate: Mutex::new(()),
             closed: AtomicBool::new(false),
             integration_gate,
             dcs,
@@ -417,8 +454,44 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        // Hold the ownership check and its actual worker dispatch together.
+        // Numeric firmware owner IDs may match on USB/CAN for one UI client;
+        // that does not authorize transferring its existing draft or route.
+        let _configuration = matches!(command.as_str(),
+            "claim" | "release" | "connect" | "disconnect" | "config_apply" | "config_apply_save" | "config_save" | "config_discard" | "config_reset"
+            | "module_usb_claim" | "module_usb_release" | "module_usb_connect" | "module_usb_disconnect" | "module_usb_config_apply" | "module_usb_config_save" | "module_usb_config_discard" | "module_usb_config_reset")
+            .then(|| self.configuration_gate.lock().unwrap_or_else(|p|p.into_inner()));
+        if self.closed.load(Ordering::Acquire) {
+            return self.error("Cockpit gateway manager has closed.", None);
+        }
         // Profile documents are independent of gateway inventory and legacy game
         // ownership. Their service never starts an output or restores old stores.
+        if command.starts_with("module_usb_") {
+            if matches!(command.as_str(), "module_usb_claim" | "module_usb_config_apply" | "module_usb_config_save" | "module_usb_config_reset" | "module_usb_actions_invoke") {
+                let usb = self.module_usb.snapshots();
+                if let Some(module) = usb.iter().find(|slot| request["key"] == slot.key).and_then(|slot| slot.snapshot.identity.as_ref()) {
+                    if let Err(error) = crate::module_configuration_routes::evaluate(&usb, &self.cached_gateways(), &module.module_id) {
+                        return json!({"ok":false,"error":error});
+                    }
+                    if command == "module_usb_claim" {
+                        if let Err(error) = crate::module_configuration_routes::guard_usb_writer(&module.module_id, &self.configuration_claims()) {
+                            return json!({"ok":false,"error":error});
+                        }
+                    }
+                }
+            }
+            return match self.module_usb.request(&request) {
+                Ok(module_usb) => json!({"ok":true,"state":{"moduleUsb":module_usb}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
+            };
+        }
+        if command.starts_with("profile_resources_") {
+            request.as_object_mut().unwrap().remove("clientId");
+            return match self.profile_resources.request(&request) {
+                Ok(resources) => json!({"ok":true,"state":{"profileResources":resources}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
+            };
+        }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
             let result = self
@@ -590,6 +663,24 @@ impl GatewayManager {
             id = selected[0]["gatewayId"].as_str().map(str::to_owned);
             request["port"] = selected[0]["path"].clone();
         }
+        // Only the manager computes transport preference. A caller cannot use a
+        // private dispatch flag to bypass a ready direct-USB route.
+        request.as_object_mut().unwrap().remove("_directUsbPreferred");
+        if command == "claim" {
+            if let Some(module) = request["moduleId"].as_str() {
+                if let Err(error) = crate::module_configuration_routes::guard_can_writer(module, &self.module_usb.configuration_claims()) {
+                    return self.error(&error, id.as_deref());
+                }
+            }
+        }
+        if matches!(command.as_str(), "claim" | "config_apply" | "config_save" | "config_reset" | "action_invoke" | "action_claim" | "action_renew" | "action_invoke_owned") {
+            if let Some(module) = request["moduleId"].as_str() {
+                match crate::module_configuration_routes::evaluate(&self.module_usb.snapshots(), &self.cached_gateways(), module) {
+                    Ok(preference) => if command == "claim" { request["_directUsbPreferred"] = json!(preference.direct_usb_preferred); },
+                    Err(error) => return self.error(&error, id.as_deref()),
+                }
+            }
+        }
         let (id, adapter) = {
             let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
             if self.closed.load(Ordering::Acquire) {
@@ -673,6 +764,8 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.profile_resources.shutdown();
+        self.module_usb.shutdown();
         self.companion_feedback.stop();
         self.companion_host.shutdown();
         self.games.shutdown();
@@ -724,8 +817,13 @@ mod tests {
         entered: AtomicBool,
         blocked: AtomicBool,
         wrong_identity: AtomicBool,
+        configuration_claims: Mutex<Vec<crate::module_configuration_routes::WriterPin>>,
     }
     impl Adapter for MockAdapter {
+        fn cached_state(&self) -> Value { self.state.lock().unwrap().clone() }
+        fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
+            if self.closed.load(Ordering::Acquire) { vec![] } else { self.configuration_claims.lock().unwrap().clone() }
+        }
         fn request(&self, request: Value) -> Value {
             self.calls.lock().unwrap().push(request.clone());
             if request["command"] == "wait" {
@@ -745,9 +843,17 @@ mod tests {
             }
             if request["command"] == "disconnect" {
                 state["connected"] = json!(false);
+                self.configuration_claims.lock().unwrap().clear();
             }
             if request["command"] == "claim" {
                 state["claimedModules"] = json!([request["moduleId"]]);
+                self.configuration_claims.lock().unwrap().push(crate::module_configuration_routes::WriterPin {
+                    module_id:request["moduleId"].as_str().unwrap().into(),client_id:request["clientId"].as_str().unwrap().into(),boot:10,
+                });
+            }
+            if request["command"] == "release" {
+                self.configuration_claims.lock().unwrap().retain(|pin|request["moduleId"] != pin.module_id || request["clientId"] != pin.client_id);
+                state["claimedModules"] = json!([]);
             }
             if request["command"] == "config_stage" {
                 state["moduleConfigs"][request["moduleId"].as_str().unwrap()] =
@@ -888,6 +994,7 @@ mod tests {
     }
     #[test]
     fn same_backend_and_cross_backend_sessions_keep_state_and_ownership_separate() {
+        const SHARED_MODULE: &str = "00112233445566778899aabbccddeeff";
         let (manager, provider) = setup();
         for id in [FIRST, SECOND, PICO] {
             assert_eq!(
@@ -900,13 +1007,13 @@ mod tests {
                 &manager,
                 "claim",
                 Some(id),
-                json!({"moduleId":"shared-module"}),
+                json!({"moduleId":SHARED_MODULE}),
             );
             request(
                 &manager,
                 "config_stage",
                 Some(id),
-                json!({"moduleId":"shared-module","config":{"name":format!("Gateway {index}")}}),
+                json!({"moduleId":SHARED_MODULE,"config":{"name":format!("Gateway {index}")}}),
             );
         }
         for (index, id) in [FIRST, SECOND, PICO].iter().enumerate() {
@@ -914,10 +1021,10 @@ mod tests {
             assert_eq!(state["connected"], true);
             assert_eq!(state["gatewayId"], *id);
             assert_eq!(
-                state["moduleConfigs"]["shared-module"]["name"],
+                state["moduleConfigs"][SHARED_MODULE]["name"],
                 format!("Gateway {index}")
             );
-            assert_eq!(state["claimedModules"], json!(["shared-module"]));
+            assert_eq!(state["claimedModules"], json!([SHARED_MODULE]));
             assert_eq!(state["ports"].as_array().unwrap().len(), 3);
         }
         request(&manager, "disconnect", Some(SECOND), json!({}));
@@ -983,6 +1090,58 @@ mod tests {
                 .sum::<usize>(),
             count
         );
+    }
+    fn configuration_setup() -> (Arc<GatewayManager>, Arc<MockProvider>, Value) {
+        let (mut manager,provider) = setup();
+        Arc::get_mut(&mut manager).unwrap().module_usb = Arc::new(crate::module_usb_fleet::tests::manager_fixture());
+        assert_eq!(request(&manager,"connect",Some(FIRST),json!({}))["ok"],true);
+        let module = manager.module_usb.snapshots()[0].value();
+        provider.adapters.lock().unwrap()[0].state.lock().unwrap()["modules"] = json!([{"id":module["snapshot"]["identity"]["moduleId"],"online":true,"boot":10}]);
+        (manager,provider,module)
+    }
+    #[test]
+    fn configuration_writers_require_explicit_release_before_either_transport_transfer() {
+        let (manager,provider,usb) = configuration_setup();
+        let module = usb["snapshot"]["identity"]["moduleId"].clone();
+        let fields = json!({"key":usb["key"],"route":usb["snapshot"]["route"]});
+        assert_eq!(request(&manager,"claim",Some(FIRST),json!({"moduleId":module}))["ok"],true);
+        // The private adapter pin is authoritative even when a public response
+        // intentionally omits caller-specific claimedModules.
+        provider.adapters.lock().unwrap()[0].state.lock().unwrap()["claimedModules"] = json!([]);
+        let blocked = request(&manager,"module_usb_claim",None,fields.clone());
+        assert_eq!(blocked["ok"],false,"{blocked}");
+        assert!(blocked["error"].as_str().unwrap().contains("release the current CAN"));
+        assert!(manager.module_usb.snapshots()[0].snapshot.claimed_by.is_none());
+        assert_eq!(request(&manager,"claim",Some(FIRST),json!({"moduleId":module}))["ok"],true,"current CAN owner may renew");
+        assert_eq!(request(&manager,"release",Some(FIRST),json!({"moduleId":module}))["ok"],true);
+        assert_eq!(request(&manager,"module_usb_claim",None,fields.clone())["ok"],true);
+        assert_eq!(manager.module_usb.configuration_claims().len(),1);
+        let before = provider.adapters.lock().unwrap()[0].calls.lock().unwrap().len();
+        let blocked = request(&manager,"claim",Some(FIRST),json!({"moduleId":module,"_directUsbPreferred":false}));
+        assert_eq!(blocked["ok"],false,"{blocked}");
+        assert!(blocked["error"].as_str().unwrap().contains("release the current Direct USB"));
+        assert_eq!(provider.adapters.lock().unwrap()[0].calls.lock().unwrap().len(),before,"opposite claim never reached the worker");
+        assert_eq!(request(&manager,"module_usb_claim",None,fields.clone())["ok"],true,"current USB owner may renew");
+        assert_eq!(request(&manager,"module_usb_release",None,fields)["ok"],true);
+        assert!(manager.module_usb.configuration_claims().is_empty());
+        assert_eq!(request(&manager,"claim",Some(FIRST),json!({"moduleId":module}))["ok"],true);
+    }
+    #[test]
+    fn simultaneous_same_client_configuration_claims_choose_only_one_transport() {
+        let (manager,_,usb) = configuration_setup();
+        let start = Arc::new(std::sync::Barrier::new(3));
+        let can_manager = manager.clone();
+        let can_start = start.clone();
+        let module = usb["snapshot"]["identity"]["moduleId"].clone();
+        let can = std::thread::spawn(move || { can_start.wait(); request(&can_manager,"claim",Some(FIRST),json!({"moduleId":module})) });
+        let usb_manager = manager.clone();
+        let usb_start = start.clone();
+        let direct = std::thread::spawn(move || { usb_start.wait(); request(&usb_manager,"module_usb_claim",None,json!({"key":usb["key"],"route":usb["snapshot"]["route"]})) });
+        start.wait();
+        let can = can.join().unwrap();
+        let direct = direct.join().unwrap();
+        assert_ne!(can["ok"],direct["ok"],"exactly one same-client transport may acquire a writer: CAN={can} USB={direct}");
+        assert_eq!(manager.configuration_claims().len()+manager.module_usb.configuration_claims().len(),1);
     }
     #[test]
     fn failed_handshake_and_command_do_not_close_other_gateways() {
