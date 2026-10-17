@@ -8,13 +8,15 @@ const {ProfileEditorStore,seedProfile,blankProfile,copyProfile,addProfileResourc
 const plain=value=>JSON.parse(JSON.stringify(value));
 const uid=n=>`11111111-1111-4111-8111-${String(n).padStart(12,'0')}`;
 const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8').catch(()=>readFile(new URL('../../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8')));
+const summary=document=>({id:document.id,name:document.name,revision:document.revision,isDefault:document.id===DEFAULT_PROFILE_ID,semanticHash:`sha256:${'3'.repeat(64)}`});
+const savedResult=document=>({document,assignments:[],session:session(),profiles:[summary(document)]});
 const session=()=>({selectedProfileId:DEFAULT_PROFILE_ID,selectionMode:'manual',state:'paused',appliedSnapshot:{profileId:DEFAULT_PROFILE_ID,revision:2,semanticHash:`sha256:${'1'.repeat(64)}`},fault:null});
 const resource=(type,n)=>({id:`native:${type}:${n}`,name:`${type} ${n}`,resourceType:type,availability:type==='game-integration'?'unavailable':'online',generation:'1',capabilityRevision:`sha256:${'2'.repeat(64)}`,portCount:type==='game-integration'?20000:20,cachedPortCount:type==='game-integration'?20000:20,connections:[{scope:'fixture',key:String(n),route:{id:`route${n}`,transport:type==='osg-module'?(n%2?'usb':'can'):type==='game-integration'?'integration':'hid',providerGeneration:'boot1',attributes:{gateway:'gateway-1',owner:'fixture'},baselineReady:false,writable:false,priority:1}}],attributes:{gameId:type==='game-integration'?'dcs':'',context:'waiting-profile'},diagnostics:type==='game-integration'?['Waiting for the matching game']:[]});
 const inventory=()=>['host-controller','osg-module','companion','game-integration'].flatMap(type=>[resource(type,1),resource(type,2)]);
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 function harness(){
   const docs=new Map([[DEFAULT_PROFILE_ID,{...blankProfile(uid(1),'Default'),id:DEFAULT_PROFILE_ID}]]);let serial=10;const calls=[];
-  const api={async list(){calls.push('list');return{profiles:[...docs.values()].map(document=>({id:document.id,name:document.name,revision:document.revision,isDefault:document.id===DEFAULT_PROFILE_ID,semanticHash:'hash'})),session:session(),readOnly:false};},async getAssignments(id){calls.push(['get',id]);return{document:plain(docs.get(id)),assignments:[],session:session()};},async editorSave(document,expectedRevision,assignments){calls.push(['save',plain(document),expectedRevision,plain(assignments)]);const saved={...plain(document),revision:expectedRevision===null?1:expectedRevision+1};docs.set(saved.id,saved);return{document:saved,assignments:plain(assignments),session:session()};}};
+  const api={async list(){calls.push('list');return{profiles:[...docs.values()].map(document=>({id:document.id,name:document.name,revision:document.revision,isDefault:document.id===DEFAULT_PROFILE_ID,semanticHash:'hash'})),session:session(),readOnly:false};},async getAssignments(id){calls.push(['get',id]);return{document:plain(docs.get(id)),assignments:[],session:session()};},async editorSave(document,expectedRevision,assignments){calls.push(['save',plain(document),expectedRevision,plain(assignments)]);const saved={...plain(document),revision:expectedRevision===null?1:expectedRevision+1};docs.set(saved.id,saved);return{document:saved,assignments:plain(assignments),session:session(),profiles:[...docs.values()].map(summary)};}};
   const provider={async listAll(){calls.push('inventory');return{resources:inventory(),inventoryDiagnostics:[]};}};
   return{api,provider,calls,docs,store:new ProfileEditorStore(api,provider,()=>uid(serial++))};
 }
@@ -73,10 +75,10 @@ test('copy creation, layout edits, unsaved Back and saved reopening preserve gra
 test('save completion preserves newer edits and advances their optimistic base; a switched editor is untouched',async()=>{
   const h=harness();await h.store.open(DEFAULT_PROFILE_ID);const pending=deferred();h.api.editorSave=()=>pending.promise;
   const first=h.store.save();const newer=plain(h.store.state.editor.document);newer.editor.viewport.x=40;h.store.update(newer);
-  pending.resolve({document:{...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:2},assignments:[],session:session()});await first;
+  pending.resolve(savedResult({...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:2}));await first;
   assert.equal(h.store.state.editor.document.editor.viewport.x,40);assert.equal(h.store.state.editor.document.revision,2);assert.equal(h.store.state.editor.baseRevision,2);assert.equal(profileEditorDirty(h.store.state.editor),true);
   const pending2=deferred();h.api.editorSave=()=>pending2.promise;const second=h.store.save();h.store.back(true);await h.store.beginCopy(DEFAULT_PROFILE_ID);const copyId=h.store.state.editor.document.id;
-  pending2.resolve({document:{...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:3},assignments:[],session:session()});await second;assert.equal(h.store.state.editor.document.id,copyId);assert.equal(h.store.state.editor.baseRevision,null);
+  pending2.resolve(savedResult({...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:3}));await second;assert.equal(h.store.state.editor.document.id,copyId);assert.equal(h.store.state.editor.baseRevision,null);
 });
 test('stale, malformed and failed responses preserve local edits and expose actionable errors',async()=>{
   const h=harness();await h.store.open(DEFAULT_PROFILE_ID);let document=plain(h.store.state.editor.document);document.name='';h.store.update(document);await h.store.save();assert.ok(h.store.state.error);assert.equal(h.calls.filter(c=>Array.isArray(c)&&c[0]==='save').length,0);
@@ -90,9 +92,23 @@ test('late open/list/inventory results cannot overwrite a newer editor or dispos
   b.resolve({document:blankProfile(uid(2)),assignments:[]});await second;a.resolve({document:blankProfile(uid(1)),assignments:[]});await first;assert.equal(h.store.state.editor.document.id,uid(2));
   const later=deferred();h.provider.listAll=()=>later.promise;const read=h.store.refreshInventory();h.store.dispose();later.resolve({resources:inventory()});await read;assert.equal(h.store.state.inventoryLoaded,false);
 });
+test('missing, mismatched or malformed committed summaries never advance the editor base or fabricate hashes',async()=>{
+  for(const mutate of [result=>delete result.profiles,result=>result.profiles=[],result=>result.profiles.push({...result.profiles[0]}),result=>result.profiles[0].name='Wrong',result=>result.profiles[0].revision=99,result=>result.profiles[0].isDefault=false,result=>result.profiles[0].semanticHash='',result=>result.profiles[0].id=uid(99)]){
+    const h=harness();await h.store.refresh();await h.store.open(DEFAULT_PROFILE_ID);const current=plain(h.store.state.editor.document);current.editor.viewport.x=75;h.store.update(current);
+    h.api.editorSave=async()=>{const result=savedResult({...current,revision:2});mutate(result);return result;};await h.store.save();
+    assert.match(h.store.state.error,/exact committed profile summary/);assert.equal(h.store.state.editor.baseRevision,1);assert.equal(h.store.state.editor.document.editor.viewport.x,75);assert.equal(profileEditorDirty(h.store.state.editor),true);assert.equal(h.store.state.profiles[0].semanticHash,'hash');
+  }
+  const h=harness();await h.store.open(DEFAULT_PROFILE_ID);await h.store.save();assert.equal(h.store.state.profiles[0].semanticHash,summary(h.store.state.editor.document).semanticHash);
+});
 test('read-only, capacity and inventory failures do not produce partial drafts or writes',async()=>{
   const h=harness();assert.throws(()=>h.store.beginBlank(),/Refresh resource inventory/);await h.store.refreshInventory();h.api.list=async()=>({profiles:[],readOnly:true,diagnostics:['Corrupt library']});await h.store.refresh();assert.throws(()=>h.store.beginBlank(),/read-only/);assert.throws(()=>h.store.update(blankProfile(uid(1))),/read-only/);
   const other=harness();other.api.list=async()=>({profiles:Array.from({length:32},(_,n)=>({id:uid(n),name:'P',revision:1,isDefault:false,semanticHash:'hash'}))});await other.store.refresh();await other.store.refreshInventory();assert.throws(()=>other.store.beginBlank(),/library is full/);await assert.rejects(()=>other.store.beginCopy(uid(1)),/library is full/);
   other.provider.listAll=async()=>{throw new Error('Inventory changed; refresh');};await other.store.refreshInventory();assert.match(other.store.state.inventoryError,/refresh/);assert.equal(other.store.state.inventory.length,8);assert.equal(other.store.state.editor,null);
   const bad=harness();bad.api.list=async()=>({});await bad.store.refresh();assert.match(bad.store.state.error,/missing/);await bad.store.save();assert.throws(()=>bad.store.addResources([]),/Open a profile/);
+});
+test('failed inventory refresh retains known blocks but cannot silently seed a new draft from stale cached inventory',async()=>{
+  const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const original=plain(h.store.state.editor);h.store.back(true);
+  h.provider.listAll=async()=>{throw new Error('Inventory revision changed while paging; refresh');};await h.store.refreshInventory();
+  assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.inventory.length,8);assert.throws(()=>h.store.beginBlank(),/Refresh resource inventory/);assert.equal(h.store.state.editor,null);assert.equal(h.docs.size,1);
+  h.provider.listAll=async()=>({resources:[...inventory(),resource('companion',3)]});await h.store.refreshInventory();h.store.beginBlank();assert.equal(h.store.state.editor.document.resources.length,9);assert.equal(original.document.resources.length,8);
 });

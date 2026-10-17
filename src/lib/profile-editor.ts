@@ -6,6 +6,7 @@ export const PROFILE_BLOCK_HEIGHT = 232;
 export type EditorSaveResult = ProfileResult & {
     document: ProfileDocument;
     assignments: ProfileLocalAssignment[];
+    profiles: ProfileSummary[];
 };
 export type ProfileEditorApi = {
     list(): Promise<ProfileResult>;
@@ -109,7 +110,7 @@ export function copyProfile(document: ProfileDocument, id: string): ProfileDocum
     next.name = `${[...document.name].slice(0, 75).join('')} copy`;
     return parseProfileDocument(JSON.stringify(next));
 }
-export function profileEditorDirty(editor: ProfileDraft): boolean {
+export function profileEditorDirty(editor: DeepReadonly<ProfileDraft>): boolean {
     return editor.baseRevision === null || JSON.stringify(editor.document) !== JSON.stringify(editor.baseDocument) || JSON.stringify(editor.assignments) !== JSON.stringify(editor.baseAssignments);
 }
 function draft(document: ProfileDocument, assignments: ProfileLocalAssignment[], baseRevision: number | null): ProfileDraft {
@@ -155,7 +156,7 @@ export class ProfileEditorStore {
     }
     catch (error) {
         if (epoch === this.inventoryEpoch)
-            this.set({ inventoryError: error instanceof Error ? error.message : String(error) });
+            this.set({ inventoryLoaded: false, inventoryError: error instanceof Error ? error.message : String(error) });
     }
     finally {
         if (epoch === this.inventoryEpoch)
@@ -215,6 +216,10 @@ export class ProfileEditorStore {
         const result = await this.api.editorSave(submitted.document, submitted.baseRevision, submitted.assignments);
         if (!result.document || !result.assignments || result.document.id !== submitted.document.id)
             throw new Error('Save did not return this profile and its local assignments.');
+        const summaries = result.profiles?.filter(row => row.id === result.document.id) ?? [];
+        const summary = summaries[0];
+        if (summaries.length !== 1 || summary.name !== result.document.name || summary.revision !== result.document.revision || summary.isDefault !== (result.document.id === DEFAULT_PROFILE_ID) || !/^sha256:[0-9a-f]{64}$/.test(summary.semanticHash))
+            throw new Error('Save did not return the exact committed profile summary. Refresh the saved profile before saving again.');
         const committed = draft(result.document, result.assignments, result.document.revision);
         if (epoch !== this.epoch)
             return;
@@ -224,7 +229,7 @@ export class ProfileEditorStore {
         const unchanged = JSON.stringify(current.document) === JSON.stringify(submitted.document) && JSON.stringify(current.assignments) === JSON.stringify(submitted.assignments);
         const next = unchanged ? committed : { ...current, document: { ...clone(current.document), revision: result.document.revision }, baseRevision: result.document.revision, baseDocument: clone(result.document), baseAssignments: clone(result.assignments) };
         const rows = this.value.profiles.filter(row => row.id !== result.document.id);
-        rows.push({ id: result.document.id, name: result.document.name, revision: result.document.revision, isDefault: result.document.id === DEFAULT_PROFILE_ID, semanticHash: result.profiles?.find(row => row.id === result.document.id)?.semanticHash ?? '' });
+        rows.push(clone(summary));
         this.set({ editor: next, profiles: rows, session: this.session(result) });
     }
     catch (error) {

@@ -9,6 +9,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+include!("../../tests/fixtures/profiles/editor-boundary.rs");
+
 #[test]
 fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service() {
     let scratch = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -139,6 +141,24 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
         "clientId":"cockpit-service-boundary-test","size":65_537})
         )["ok"],
         false
+    );
+    let mut editor = editor_boundary_request();
+    editor["clientId"] = json!("cockpit-service-boundary-test");
+    assert!(editor.to_string().len() > osg_cockpit::gateways::PROFILE_REQUEST_LIMIT);
+    let saved_editor = exchange("large-editor-save", editor.clone());
+    assert_eq!(saved_editor["ok"], true, "{}", saved_editor["error"]);
+    assert_eq!(saved_editor["state"]["profiles"]["document"]["revision"], 1);
+    assert_eq!(
+        saved_editor["state"]["profiles"]["assignments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        16
+    );
+    editor["command"] = json!("profile_import");
+    assert_eq!(
+        exchange("ordinary-profile-limit", editor)["error"],
+        "Invalid gateway request."
     );
     drop(exchange);
     drop(input);

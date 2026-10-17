@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { randomUUID } from 'node:crypto';
 
 const profileRequestLimit = 524_288 + 65_536;
+const editorRequestLimit = 2_097_152;
 const responseEnvelopeLimit = 2_097_152;
 
 /** @returns {import('vite').Plugin} */
@@ -90,11 +91,12 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
           let bodySize = 0;
           for await (const bytes of req) {
             bodySize += bytes.length;
-            if (bodySize > profileRequestLimit) throw new Error('Profile request exceeds its size limit.');
+            if (bodySize > editorRequestLimit) throw new Error('Profile request exceeds its size limit.');
             chunks.push(bytes);
           }
           const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const profile = typeof payload?.command === 'string' && payload.command.startsWith('profile_');
+          if (profile && payload.command !== 'profile_editor_save' && bodySize > profileRequestLimit) throw new Error('Profile request exceeds its size limit.');
           if (!profile && bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
           res.end(JSON.stringify(await request(payload)));
         } catch (error) {

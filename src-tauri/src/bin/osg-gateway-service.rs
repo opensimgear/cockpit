@@ -12,7 +12,7 @@ use std::{
 
 // Profile documents have a separately bounded envelope. GatewayManager still
 // enforces the original 64 KiB bound for unrelated commands after parsing.
-const REQUEST_ENVELOPE_LIMIT: usize = osg_cockpit::gateways::PROFILE_REQUEST_LIMIT + 1_024;
+const REQUEST_ENVELOPE_LIMIT: usize = osg_cockpit::gateways::PROFILE_EDITOR_REQUEST_LIMIT + 1_024;
 
 // Read incrementally; an oversized line is discarded without retaining it.
 fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Result<Vec<u8>, ()>>> {
@@ -52,7 +52,9 @@ fn emit(output: &Mutex<io::Stdout>, response: Value) {
     let _ = output.flush();
 }
 fn main() {
-    if let Some(code) = osg_mapping_host::logic_helper_main() { std::process::exit(code); }
+    if let Some(code) = osg_mapping_host::logic_helper_main() {
+        std::process::exit(code);
+    }
     #[cfg(windows)]
     if let Some(code) = osg_virtual_controller::windows_provision_entry::helper_main() {
         std::process::exit(code);

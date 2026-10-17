@@ -1,7 +1,7 @@
 //! Portable unified profile documents. Parsing and validation never acquire a device.
-pub mod model;
-pub mod compiler_models;
 pub mod compiler;
+pub mod compiler_models;
+pub mod model;
 pub mod resources;
 pub mod resources_ports;
 pub mod resources_store;
@@ -15,6 +15,8 @@ pub use validation::{semantic_hash, validate_document};
 
 pub const PROFILE_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_PROFILE_ID: &str = "00000000-0000-4000-8000-000000000001";
+/// A single editor graph plus machine-local exact port expectations.
+pub const MAX_EDITOR_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_PROFILE_BYTES: usize = 512 * 1024;
 pub const MAX_PROFILES: usize = 32;
 pub const MAX_LIBRARY_BYTES: usize = 17 * 1024 * 1024;
