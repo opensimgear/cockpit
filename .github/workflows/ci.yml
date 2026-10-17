@@ -148,6 +148,7 @@ jobs:
       - name: Device action coverage above 70 percent
         run: |
           rustup component add llvm-tools-preview
+          python3 -m unittest discover -s scripts -p test_action_coverage.py -v
           python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
           python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
           python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"

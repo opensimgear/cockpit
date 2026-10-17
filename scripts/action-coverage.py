@@ -21,6 +21,12 @@ def command(args, cwd, env=None, log_path=None):
     return result.stdout
 
 
+def cargo_test_binaries(artifacts):
+    return [entry['executable'] for line in artifacts.splitlines() if line.startswith('{')
+            if (entry := json.loads(line)).get('reason') == 'compiler-artifact'
+            and entry.get('executable') and entry.get('profile', {}).get('test')]
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -37,9 +43,7 @@ def main():
                        LLVM_PROFILE_FILE=str(build_profiles / '%m-%p.profraw'))
     artifacts = command(['cargo', 'test', '--locked', '--lib', '--no-run', '--message-format=json',
                          '--manifest-path', str(root / 'src-tauri/Cargo.toml')], root, environment)
-    binaries = [entry['executable'] for line in artifacts.splitlines()
-                if (entry := json.loads(line)).get('reason') == 'compiler-artifact'
-                and entry.get('executable') and entry.get('profile', {}).get('test')]
+    binaries = cargo_test_binaries(artifacts)
     if len(binaries) != 1:
         raise RuntimeError('Expected one instrumented Cockpit library test executable.')
     profiles = Path(tempfile.mkdtemp(prefix='test-profiles-', dir=output))
