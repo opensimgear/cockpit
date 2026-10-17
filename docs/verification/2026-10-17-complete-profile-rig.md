@@ -12,7 +12,7 @@ The graph contains:
 - A separate OSG event source feeding an explicit atomic DCS command invocation.
 - DCS altitude in feet feeding visible conversion, hysteresis, conditional display and formatting nodes. The resulting state feeds a companion warning widget and a text widget; a separate visible setter requests a physical indicator change.
 
-Both CAN-only and direct USB variants run the same portable graph. The real registry correlates the USB and CAN observations into one resource, keeps both connection attributes and selects the authoritative USB input. Gateway, serial endpoint and route metadata never become portable graph edges or exports.
+Both CAN-only and direct USB variants run the same portable graph. The real registry correlates the USB and CAN observations into one resource, keeps both connection attributes and selects the higher-priority USB input while both routes advertise usable baselines. Gateway, serial endpoint and route metadata never become portable graph edges or exports.
 
 The replay checks exact computed controller states, raw `10000 ft`, converted `3048 m`, conditional warning state and formatted `ALT 3048.0 m`. It compares complete requested feedback and physical setter tuples. DCS requests are zero-argument atomic one-shot tuples; none is interpreted as a device or game acknowledgement.
 

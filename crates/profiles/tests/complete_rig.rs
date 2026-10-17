@@ -148,8 +148,8 @@ impl Rig {
                 } else {
                     BTreeMap::new()
                 },
-                baseline_ready: !(direct_usb && resource.id == "direct-usb"),
-                writable: !(direct_usb && resource.id == "direct-usb"),
+                baseline_ready: true,
+                writable: true,
                 priority: 10,
             };
             let observed = Observation {
@@ -462,6 +462,7 @@ fn complete_rig_has_explicit_pipelines_and_transport_metadata_never_becomes_grap
             .iter()
             .any(|c| c.route.transport == Transport::Can
                 && c.route.attributes.get("gateway").is_some()));
+        assert!(module.summary.connections.iter().all(|c| c.route.baseline_ready && c.route.writable), "USB priority is tested with both observed routes usable, rather than only a USB fallback.");
         let direct = plan
             .sources
             .iter()
