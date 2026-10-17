@@ -52,7 +52,11 @@ pub(super) fn validate_game_delivery(
         || item.resource_type != ResourceType::GameIntegration
         || item.evidence != metadata.evidence
         || item.attributes.get("gameId") != metadata.attributes.get("gameId")
-        || item.attributes.get("gamePreparationSession") != Some(&batch.session)
+        || item.attributes.get("gameReaderSession") != Some(&batch.session)
+        || !item
+            .attributes
+            .get("gamePreparationSession")
+            .is_some_and(|proof| osg_profiles::resources_ports::text(proof, 256).is_ok())
         || ["providerSetupRevision", "catalogueRevision"]
             .iter()
             .any(|field| item.attributes.get(*field) != metadata.attributes.get(*field))
@@ -74,6 +78,7 @@ pub(super) fn validate_game_delivery(
             "providerSetupRevision",
             "catalogueRevision",
             "gamePreparationSession",
+            "gameReaderSession",
         ]
         .iter()
         .any(|field| route.attributes.get(*field) != item.attributes.get(*field))

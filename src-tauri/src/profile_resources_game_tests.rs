@@ -70,8 +70,12 @@ fn delivery(game: &str, session: &str, revision: u64) -> ProviderBatch {
     let mut item = metadata(game);
     item.attributes.remove("gameContextStatus");
     item.attributes.remove("processVerified");
+    item.attributes.insert(
+        "gamePreparationSession".into(),
+        "shared-native-proof".into(),
+    );
     item.attributes
-        .insert("gamePreparationSession".into(), session.into());
+        .insert("gameReaderSession".into(), session.into());
     item.route = Some(Route {
         id: format!("profile-game:{game}"),
         transport: Transport::Integration,
@@ -248,9 +252,13 @@ fn old_reader_withdrawal_cannot_delete_incoming_owner_and_retired_publications_f
         .token
         .clone()
         .unwrap();
-    runtime
-        .publish_profile_game_delivery(delivery("dcs", "new-reader", 1))
-        .unwrap();
+    let incoming = delivery("dcs", "new-reader", 1);
+    assert_eq!(
+        incoming.observations[0].attributes["gamePreparationSession"],
+        delivery("dcs", "old-reader", 1).observations[0].attributes["gamePreparationSession"]
+    );
+    assert_ne!(incoming.session, "old-reader");
+    runtime.publish_profile_game_delivery(incoming).unwrap();
     let new = runtime.bind_delivery_reads(&prepared).unwrap().sources[0]
         .token
         .clone()

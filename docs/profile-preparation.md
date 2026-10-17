@@ -28,3 +28,9 @@ leaving command sinks untouched until Start obtains actual command admission.
 Hardware binding permits a baseline becoming ready on the exact selected route;
 provider session, route generation, attributes and catalogue stay pinned. No
 browser request invokes publication, withdrawal, read binding or provider I/O.
+
+Each acquired game reader has its own fresh private reader-session UUID. This is
+the delivery provider session and withdrawal owner; it is distinct from the
+broker preparation proof, which may remain valid across a same-game profile
+switch. Two readers sharing a valid preparation proof cannot withdraw each
+other's routes. Both reader and proof identity remain native-only metadata.
