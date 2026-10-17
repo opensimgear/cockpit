@@ -257,6 +257,8 @@ class ReapplyFixture:
             route = dict(id=f'companion:{peer.name}',transport='network',providerGeneration=str(generation),baselineReady=phase != 3,writable=phase != 3)
             detail['resource']['connections'] = [] if 0 <= phase <= 2 else [dict(route=route)]
             detail['resource']['attributes'] = dict(publicationHash=peer.publication['publicationHash'])
+            for port in detail['ports']:
+                port['current'] = not 0 <= phase <= 2
 
 
 class ReapplyService(FixtureService):

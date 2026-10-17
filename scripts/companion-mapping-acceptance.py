@@ -234,13 +234,14 @@ def resources(service):
         assert page['resources'],'Inventory paging made no progress'
 
 
-def selected_resource(service,instance):
+def selected_resource(service,instance,require_current=True):
     for resource in resources(service):
         if resource['resourceType']!='companion':continue
         detail=mapping.state(service,'profile_resources_inspect','profileResources',resourceId=resource['id'],offset=0,limit=128)
         if any(item==dict(kind='companion-instance',value=instance) for item in detail['evidence']):
             assert detail['total']<=128,'Acceptance publication unexpectedly exceeds selected descriptor budget'
-            assert all(port['current'] for port in detail['ports']),detail
+            if require_current:
+                assert all(port['current'] for port in detail['ports']),detail
             return detail
     return None
 
@@ -264,7 +265,7 @@ def companion_checkpoint(service, configurations, peers):
         session = peer.ready_session()
         assert session is not None, 'The peer has no acknowledged neutral baseline'
         assert peer.name == instance and session['controllerInstanceId'] == instance and session['publicationHash'] == publication['publicationHash'], session
-        detail = selected_resource(service, instance)
+        detail = selected_resource(service, instance, require_current=False)
         assert detail is not None, f'The retained native companion {instance} disappeared'
         route = native_route(detail, instance)
         result[instance] = dict(session=session, resourceId=detail['resource']['id'], generation=int(route['providerGeneration']) if route else 0)
@@ -283,13 +284,15 @@ def wait_native_companions(service, configurations, peers, previous=None):
                 assert peer.name == instance and session['controllerInstanceId'] == instance and session['publicationHash'] == publication['publicationHash'], session
                 if previous is not None and session['sessionId'] == previous[instance]['session']['sessionId']:
                     complete = False
-            detail = selected_resource(service, instance)
+            detail = selected_resource(service, instance, require_current=False)
             if detail is None:
                 complete = False
                 continue
             if previous is not None:
                 assert detail['resource']['id'] == previous[instance]['resourceId'], 'Native companion identity changed during reconnect'
             if detail['resource']['attributes'].get('publicationHash') != publication['publicationHash']:
+                complete = False
+            if not all(port['current'] for port in detail['ports']):
                 complete = False
             route = native_route(detail, instance)
             if route is None:
