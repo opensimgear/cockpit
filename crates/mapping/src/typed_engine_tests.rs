@@ -148,13 +148,49 @@ fn scalar_output(engine: &Phase) -> f64 {
 
 #[test]
 fn inspected_samples_keep_unobserved_and_zero_time_distinct_without_mutating_execution() {
-    let mut engine=Phase::new(unary(Operation::Not {},boolean_contract(),boolean_contract()),Counter(1),uuid::Uuid::new_v4().to_string()).unwrap();
-    assert_eq!(engine.inspected_sample(&endpoint("source","value")),Some((&SignalSample::Unknown,None)));
-    assert!(engine.inspected_sample(&endpoint("missing","port")).is_none());
-    feed(&mut engine,1,0,SignalSample::scalar(PortValue::Boolean(true)));
-    let before=(engine.clock,engine.effects.len(),engine.reports.len(),engine.sequence);
-    for _ in 0..20 {assert_eq!(engine.inspected_sample(&endpoint("source","value")),Some((&SignalSample::scalar(PortValue::Boolean(true)),Some(Counter(0)))));}
-    assert_eq!((engine.clock,engine.effects.len(),engine.reports.len(),engine.sequence),before);
+    let mut engine = Phase::new(
+        unary(Operation::Not {}, boolean_contract(), boolean_contract()),
+        Counter(1),
+        uuid::Uuid::new_v4().to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        engine.inspected_sample(&endpoint("source", "value")),
+        Some((&SignalSample::Unknown, None))
+    );
+    assert!(engine
+        .inspected_sample(&endpoint("missing", "port"))
+        .is_none());
+    feed(
+        &mut engine,
+        1,
+        0,
+        SignalSample::scalar(PortValue::Boolean(true)),
+    );
+    let before = (
+        engine.clock,
+        engine.effects.len(),
+        engine.reports.len(),
+        engine.sequence,
+    );
+    for _ in 0..20 {
+        assert_eq!(
+            engine.inspected_sample(&endpoint("source", "value")),
+            Some((
+                &SignalSample::scalar(PortValue::Boolean(true)),
+                Some(Counter(0))
+            ))
+        );
+    }
+    assert_eq!(
+        (
+            engine.clock,
+            engine.effects.len(),
+            engine.reports.len(),
+            engine.sequence
+        ),
+        before
+    );
 }
 fn invocation(parameters: Vec<ActionParameter>, semantics: ActionSemantics) -> PortContract {
     PortContract::Invocation {
@@ -1248,8 +1284,8 @@ fn script_transactions_validate_all_fields_before_committing() {
     feed(&mut engine, 1, 0, pressed(false));
     let request = script_request(&mut engine);
     assert!(engine.script_ticket_current(&request.ticket));
-    let mut forged=request.ticket.clone();
-    forged.sequence.0+=1;
+    let mut forged = request.ticket.clone();
+    forged.sequence.0 += 1;
     assert!(!engine.script_ticket_current(&forged));
     let invalid = ScriptTransaction {
         outputs: BTreeMap::from([(
@@ -2511,4 +2547,618 @@ fn typed_scripts_keep_retained_worker_input_source_and_parameter_byte_bounds() {
         vec![boolean_contract()],
         boolean_contract()
     ));
+}
+
+fn mixed_timers() -> Phase {
+    let mut program = Program {
+        sources: vec![],
+        nodes: vec![],
+        sinks: vec![],
+        controllers: vec![],
+    };
+    for name in ["hid", "panel", "game"] {
+        let mut branch = script_program(true, invocation(vec![], ActionSemantics::OneShot));
+        let producer = format!("{name}-script");
+        branch.sources[0].endpoint = endpoint(name, "value");
+        branch.nodes[0].id = producer.clone();
+        branch.nodes[0].inputs[0].from = endpoint(name, "value");
+        branch.nodes[0].inputs[0].edge_id = format!("edge-{name}");
+        branch.sinks[0].id = format!("{name}-sink");
+        branch.sinks[0].from = endpoint(&producer, "output");
+        branch.sinks[0].endpoint = endpoint(&format!("device-{name}"), "call");
+        branch.sinks[0].contract = action(vec![], ActionSemantics::OneShot);
+        program.sources.extend(branch.sources);
+        program.nodes.extend(branch.nodes);
+        program.sinks.extend(branch.sinks);
+    }
+    let mut engine = phase(program);
+    for name in ["hid", "panel", "game"] {
+        engine
+            .accept(frame(
+                name,
+                1,
+                1,
+                0,
+                Reason::Baseline,
+                vec![("value", pressed(false))],
+            ))
+            .unwrap();
+    }
+    for _ in 0..8 {
+        let requests = engine.script_requests();
+        if requests.is_empty() {
+            break;
+        }
+        for request in requests {
+            engine
+                .script_reply(&request.node_id, &request.ticket, Default::default())
+                .unwrap();
+        }
+    }
+    for name in ["hid", "panel", "game"] {
+        engine
+            .accept(frame(
+                name,
+                1,
+                2,
+                1,
+                Reason::Change,
+                vec![("value", pressed(true))],
+            ))
+            .unwrap();
+    }
+    for request in engine.script_requests() {
+        engine
+            .script_reply(
+                &request.node_id,
+                &request.ticket,
+                ScriptTransaction {
+                    timers: vec![ScriptTimer {
+                        id: "scheduled-call".into(),
+                        after_us: Counter(49),
+                        outputs: BTreeMap::from([("output".into(), packed(&[]))]),
+                    }],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    assert_eq!(engine.timers.len(), 3);
+    engine.drain();
+    engine.drain_reports();
+    engine
+}
+#[test]
+fn batch_pre_revokes_every_panel_game_loss_before_hid_or_first_loss_can_advance_timers() {
+    for order in [0, 1, 2] {
+        let mut engine = mixed_timers();
+        let hid = frame(
+            "hid",
+            1,
+            3,
+            100,
+            Reason::Change,
+            vec![("value", pressed(false))],
+        );
+        let panel = frame("panel", 1, 3, 100, Reason::Gap, vec![]);
+        let game = frame("game", 1, 3, 100, Reason::Disconnect, vec![]);
+        let frames = match order {
+            0 => vec![hid, panel, game],
+            1 => vec![panel, game, hid],
+            _ => vec![game, hid, panel],
+        };
+        let diagnostics = engine.accept_batch(frames).unwrap();
+        assert_eq!(diagnostics.len(), 2);
+        let calls = engine
+            .drain()
+            .into_iter()
+            .filter(|effect| matches!(effect.sample, SignalSample::Known(_)))
+            .map(|effect| effect.sink_id)
+            .collect::<Vec<_>>();
+        assert_eq!(calls, vec!["hid-sink"]);
+        assert_eq!(
+            engine.sample(&endpoint("panel", "value")),
+            Some(&SignalSample::Unknown)
+        );
+        assert_eq!(
+            engine.sample(&endpoint("game", "value")),
+            Some(&SignalSample::Unavailable)
+        );
+        assert!(engine.timers.is_empty());
+        assert!(engine.active());
+    }
+}
+#[test]
+fn batch_loss_removes_already_queued_dependent_actions_but_keeps_independent_ones() {
+    let mut engine = mixed_timers();
+    engine.advance(Counter(50)).unwrap();
+    assert_eq!(
+        engine
+            .effects
+            .iter()
+            .filter(|effect| matches!(effect.sample, SignalSample::Known(_)))
+            .count(),
+        3
+    );
+    engine
+        .accept_batch([
+            frame("panel", 1, 3, 100, Reason::Gap, vec![]),
+            frame("game", 1, 3, 100, Reason::Disconnect, vec![]),
+        ])
+        .unwrap();
+    let calls = engine
+        .drain()
+        .into_iter()
+        .filter(|effect| matches!(effect.sample, SignalSample::Known(_)))
+        .map(|effect| effect.sink_id)
+        .collect::<Vec<_>>();
+    assert_eq!(calls, vec!["hid-sink"]);
+}
+#[test]
+fn batch_source_gap_discards_earlier_and_unbaselined_events_then_admits_only_fresh_occurrence() {
+    let mut engine = phase(action_program(false, false));
+    engine
+        .accept(frame(
+            "source",
+            1,
+            1,
+            0,
+            Reason::Baseline,
+            vec![("trigger", pressed(false))],
+        ))
+        .unwrap();
+    engine.drain();
+    let diagnostics = engine
+        .accept_batch([
+            frame(
+                "source",
+                1,
+                2,
+                10,
+                Reason::Change,
+                vec![("trigger", pressed(true))],
+            ),
+            frame("source", 1, 3, 20, Reason::Gap, vec![]),
+            frame(
+                "source",
+                1,
+                4,
+                21,
+                Reason::Change,
+                vec![("trigger", pressed(true))],
+            ),
+            frame(
+                "source",
+                1,
+                5,
+                22,
+                Reason::Baseline,
+                vec![("trigger", pressed(true))],
+            ),
+            frame(
+                "source",
+                1,
+                6,
+                23,
+                Reason::Change,
+                vec![("trigger", pressed(true))],
+            ),
+        ])
+        .unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    let calls = engine
+        .drain()
+        .into_iter()
+        .filter(|effect| matches!(effect.sample, SignalSample::Known(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].at_us, Counter(23));
+    assert_eq!(engine.sources["source"].sequence, 6);
+}
+#[test]
+fn batch_generation_and_sequence_gaps_fence_recovery_and_do_not_stop_unrelated_timers() {
+    for generation_gap in [false, true] {
+        let mut engine = mixed_timers();
+        let (generation, sequence) = if generation_gap { (2, 1) } else { (1, 9) };
+        engine
+            .accept_batch([
+                frame(
+                    "panel",
+                    generation,
+                    sequence,
+                    20,
+                    Reason::Change,
+                    vec![("value", pressed(true))],
+                ),
+                frame(
+                    "panel",
+                    generation,
+                    sequence + 1,
+                    30,
+                    Reason::Change,
+                    vec![("value", pressed(false))],
+                ),
+                frame("game", 1, 3, 100, Reason::Gap, vec![]),
+            ])
+            .unwrap();
+        assert!(!engine.sources["panel"].available);
+        assert_eq!(engine.sources["panel"].generation, generation);
+        assert_eq!(engine.sources["panel"].sequence, sequence + 1);
+        assert_eq!(
+            engine
+                .drain()
+                .into_iter()
+                .filter(|effect| matches!(effect.sample, SignalSample::Known(_)))
+                .map(|effect| effect.sink_id)
+                .collect::<Vec<_>>(),
+            vec!["hid-sink"]
+        );
+        assert!(engine
+            .accept_batch([frame(
+                "panel",
+                generation,
+                sequence + 1,
+                101,
+                Reason::Baseline,
+                vec![("value", pressed(true))]
+            )])
+            .is_err());
+        engine
+            .accept_batch([frame(
+                "panel",
+                generation,
+                sequence + 2,
+                102,
+                Reason::Baseline,
+                vec![("value", pressed(true))],
+            )])
+            .unwrap();
+        assert!(engine
+            .drain()
+            .iter()
+            .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
+        assert!(engine.sources["panel"].available);
+    }
+}
+#[test]
+fn batch_nonknown_port_samples_cancel_old_tickets_and_suppress_only_that_ports_prior_events() {
+    for missing in [
+        SignalSample::Unknown,
+        SignalSample::Stale,
+        SignalSample::Unavailable,
+    ] {
+        let mut engine = mixed_timers();
+        engine
+            .accept_batch([
+                frame(
+                    "hid",
+                    1,
+                    3,
+                    100,
+                    Reason::Change,
+                    vec![("value", pressed(false))],
+                ),
+                frame(
+                    "panel",
+                    1,
+                    3,
+                    100,
+                    Reason::Change,
+                    vec![("value", missing.clone())],
+                ),
+                frame(
+                    "game",
+                    1,
+                    3,
+                    100,
+                    Reason::Change,
+                    vec![("value", missing.clone())],
+                ),
+            ])
+            .unwrap();
+        assert_eq!(
+            engine
+                .drain()
+                .into_iter()
+                .filter(|effect| matches!(effect.sample, SignalSample::Known(_)))
+                .map(|effect| effect.sink_id)
+                .collect::<Vec<_>>(),
+            vec!["hid-sink"]
+        );
+        assert_eq!(engine.sample(&endpoint("panel", "value")), Some(&missing));
+    }
+    let mut program = Program {
+        sources: vec![
+            source("panel", "left", event()),
+            source("panel", "right", event()),
+        ],
+        nodes: vec![],
+        sinks: vec![
+            resource_sink("left", endpoint("panel", "left"), event()),
+            resource_sink("right", endpoint("panel", "right"), event()),
+        ],
+        controllers: vec![],
+    };
+    let mut engine = phase(program.clone());
+    engine
+        .accept(frame(
+            "panel",
+            1,
+            1,
+            0,
+            Reason::Baseline,
+            vec![("left", pressed(false)), ("right", pressed(false))],
+        ))
+        .unwrap();
+    engine.drain();
+    engine
+        .accept_batch([
+            frame(
+                "panel",
+                1,
+                2,
+                10,
+                Reason::Change,
+                vec![("left", pressed(true))],
+            ),
+            frame(
+                "panel",
+                1,
+                3,
+                11,
+                Reason::Change,
+                vec![("right", pressed(true))],
+            ),
+            frame(
+                "panel",
+                1,
+                4,
+                12,
+                Reason::Change,
+                vec![("left", SignalSample::Unavailable)],
+            ),
+            frame(
+                "panel",
+                1,
+                5,
+                13,
+                Reason::Change,
+                vec![("right", pressed(false))],
+            ),
+        ])
+        .unwrap();
+    let known = engine
+        .drain()
+        .into_iter()
+        .filter(|effect| matches!(effect.sample, SignalSample::Known(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        known
+            .iter()
+            .map(|effect| effect.sink_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["right", "right"]
+    );
+    // A complete baseline earlier in this same batch stays complete when its
+    // subsequently invalidated port is conservatively seeded as non-Known.
+    program.sources[0].contract = boolean_contract();
+    program.sinks[0].contract = boolean_contract();
+    let mut engine = phase(program);
+    engine
+        .accept_batch([
+            frame(
+                "panel",
+                1,
+                1,
+                0,
+                Reason::Baseline,
+                vec![("left", pressed(true)), ("right", pressed(false))],
+            ),
+            frame(
+                "panel",
+                1,
+                2,
+                10,
+                Reason::Change,
+                vec![("left", SignalSample::Unknown)],
+            ),
+        ])
+        .unwrap();
+    assert_eq!(
+        engine.sample(&endpoint("panel", "left")),
+        Some(&SignalSample::Unknown)
+    );
+}
+#[test]
+fn batch_revokes_virtual_slots_without_erasing_other_controls_queued_pulse() {
+    let b = boolean_contract();
+    let axis = integer_contract(0, 32767);
+    let hat = integer_contract(-1, 7);
+    let mut program = Program {
+        sources: vec![
+            source("panel", "button", b.clone()),
+            source("panel", "axis", axis.clone()),
+            source("panel", "hat", hat.clone()),
+            source("hid", "button", b.clone()),
+        ],
+        nodes: vec![],
+        sinks: vec![],
+        controllers: vec![VirtualController {
+            id: "target".into(),
+            layout: ControllerLayout {
+                buttons: vec!["lost".into(), "healthy".into()],
+                axes: vec![ControllerAxis {
+                    port_id: "axis".into(),
+                    range: AxisRange::Unipolar,
+                    fallback: 42,
+                }],
+                hats: vec!["hat".into()],
+            },
+        }],
+    };
+    for (id, node, port, contract, control) in [
+        (
+            "lost",
+            "panel",
+            "button",
+            b.clone(),
+            OutputControl::Button { index: 0 },
+        ),
+        (
+            "healthy",
+            "hid",
+            "button",
+            b,
+            OutputControl::Button { index: 1 },
+        ),
+        (
+            "axis",
+            "panel",
+            "axis",
+            axis,
+            OutputControl::Axis { index: 0 },
+        ),
+        ("hat", "panel", "hat", hat, OutputControl::Hat { index: 0 }),
+    ] {
+        program.sinks.push(Sink {
+            id: id.into(),
+            endpoint: endpoint("target", id),
+            from: endpoint(node, port),
+            contract,
+            kind: SinkKind::Virtual {
+                controller_id: "target".into(),
+                control,
+            },
+        });
+    }
+    let mut engine = phase(program);
+    engine
+        .accept(frame(
+            "panel",
+            1,
+            1,
+            0,
+            Reason::Baseline,
+            vec![
+                ("button", pressed(true)),
+                ("axis", sample(100.0)),
+                ("hat", sample(2.0)),
+            ],
+        ))
+        .unwrap();
+    engine
+        .accept(frame(
+            "hid",
+            1,
+            1,
+            0,
+            Reason::Baseline,
+            vec![("button", pressed(false))],
+        ))
+        .unwrap();
+    engine.drain_reports();
+    engine.drain();
+    engine
+        .accept(frame(
+            "panel",
+            1,
+            2,
+            1,
+            Reason::Change,
+            vec![("button", pressed(false))],
+        ))
+        .unwrap();
+    engine
+        .accept(frame(
+            "panel",
+            1,
+            3,
+            2,
+            Reason::Change,
+            vec![("button", pressed(true))],
+        ))
+        .unwrap();
+    engine
+        .accept(frame(
+            "hid",
+            1,
+            2,
+            3,
+            Reason::Change,
+            vec![("button", pressed(true))],
+        ))
+        .unwrap();
+    engine
+        .accept(frame(
+            "hid",
+            1,
+            3,
+            4,
+            Reason::Change,
+            vec![("button", pressed(false))],
+        ))
+        .unwrap();
+    engine
+        .accept_batch([frame("panel", 1, 4, 100, Reason::Gap, vec![])])
+        .unwrap();
+    let reports = engine.drain_reports();
+    assert!(reports.iter().all(|report| !report.state.buttons[0]
+        && report.state.axes == vec![42]
+        && report.state.hats == vec![None]));
+    assert!(reports.iter().any(|report| report.state.buttons[1]));
+    assert!(!reports.last().unwrap().state.buttons[1]);
+    assert!(engine
+        .drain()
+        .iter()
+        .filter(|effect| effect.sink_id == "lost"
+            || effect.sink_id == "axis"
+            || effect.sink_id == "hat")
+        .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
+}
+#[test]
+fn malformed_and_oversized_batches_cannot_advance_or_replay_queued_source_work() {
+    let mut engine = mixed_timers();
+    let mut invalid = frame(
+        "panel",
+        1,
+        3,
+        100,
+        Reason::Change,
+        vec![("value", sample(1.0))],
+    );
+    assert!(engine
+        .accept_batch([
+            frame(
+                "hid",
+                1,
+                3,
+                100,
+                Reason::Change,
+                vec![("value", pressed(true))]
+            ),
+            invalid.clone(),
+            frame("game", 1, 3, 100, Reason::Gap, vec![])
+        ])
+        .is_err());
+    assert_eq!(engine.at_us(), Counter(1));
+    assert_eq!(engine.timers.len(), 1);
+    assert!(engine
+        .effects
+        .iter()
+        .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
+    invalid.source = "unknown".into();
+    assert!(engine.accept_batch([invalid]).is_err());
+    let mut engine = mixed_timers();
+    engine.advance(Counter(50)).unwrap();
+    let frame = frame("hid", 1, 3, 100, Reason::Change, vec![]);
+    assert!(engine
+        .accept_batch(std::iter::repeat(frame).take(MAX_REPORTS + 1))
+        .is_err());
+    assert!(!engine.active());
+    assert!(engine.fault().unwrap().contains("budget"));
+    assert!(engine
+        .drain()
+        .iter()
+        .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
+    assert!(engine.accept_batch([]).is_err());
 }

@@ -780,9 +780,7 @@ impl Host for NativeProfileHost {
             .reducer
             .as_mut()
             .ok_or("The profile reducer is stopped.")?;
-        for frame in frames.into_iter().chain(game.frames).chain(panels.frames) {
-            reducer.accept(frame)?;
-        }
+        degraded.extend(reducer.accept_batch(frames.into_iter().chain(game.frames).chain(panels.frames))?);
         let elapsed = u64::try_from(state.started.elapsed().as_micros())
             .map_err(|_| "Profile runtime clock exhausted.")?;
         reducer.advance(Counter(
