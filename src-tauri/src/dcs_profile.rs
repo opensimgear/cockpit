@@ -539,16 +539,26 @@ pub(crate) fn telemetry_sources(
     profile: &CompiledProfile,
     rows: &[Value],
 ) -> Result<Vec<(String, OutputSource)>, String> {
+    telemetry_sources_from_catalogue(
+        &profile.profile.catalogue_path,
+        &profile.profile.aircraft_module,
+        &profile.catalogue,
+        rows,
+    )
+}
+/// Pure decoding for a unified derived plan; no legacy binding profile or
+/// independently editable provider configuration is created.
+pub(crate) fn telemetry_sources_from_catalogue(
+    path: &Path,
+    module: &str,
+    catalogue: &Catalogue,
+    rows: &[Value],
+) -> Result<Vec<(String, OutputSource)>, String> {
     if rows.is_empty() {
         return Ok(vec![]);
     }
-    let document = dcs_bios::read_json(
-        &profile
-            .profile
-            .catalogue_path
-            .join(format!("{}.json", profile.profile.aircraft_module)),
-        dcs_bios::MAX_DOCUMENT,
-    )?;
+    let document =
+        dcs_bios::read_json(&path.join(format!("{module}.json")), dcs_bios::MAX_DOCUMENT)?;
     let mut sources = Vec::new();
     for row in rows {
         let control = dcs_bios::control(&document, row["channel"].as_str().ok_or(INVALID)?)?;
@@ -559,7 +569,7 @@ pub(crate) fn telemetry_sources(
         let source = match output["type"].as_str() {
             Some("integer") => {
                 let out = IntegerOutput::parse(output)?;
-                if overlaps(out.address as usize, 2, &profile.catalogue) {
+                if overlaps(out.address as usize, 2, catalogue) {
                     return Err(CATALOGUE_ERROR.into());
                 }
                 OutputSource::Integer(out)
@@ -573,7 +583,7 @@ pub(crate) fn telemetry_sources(
                     .as_u64()
                     .filter(|n| (1..=1024).contains(n))
                     .ok_or(CATALOGUE_ERROR)? as usize;
-                if overlaps(address as usize, length, &profile.catalogue) {
+                if overlaps(address as usize, length, catalogue) {
                     return Err(CATALOGUE_ERROR.into());
                 }
                 OutputSource::String { address, length }
@@ -619,11 +629,15 @@ fn query_catalogue_page(request: &Value, complete: bool) -> Result<Value, String
         .map_or(Some(0), Value::as_u64)
         .filter(|n| *n <= 20000)
         .ok_or(INVALID)? as usize;
-    let limit = if complete { 20_000 } else { request
-        .get("limit")
-        .map_or(Some(32), Value::as_u64)
-        .filter(|n| (1..=64).contains(n))
-        .ok_or(INVALID)? as usize };
+    let limit = if complete {
+        20_000
+    } else {
+        request
+            .get("limit")
+            .map_or(Some(32), Value::as_u64)
+            .filter(|n| (1..=64).contains(n))
+            .ok_or(INVALID)? as usize
+    };
     let document = dcs_bios::read_json(
         &Path::new(path).join(format!("{aircraft_module}.json")),
         dcs_bios::MAX_DOCUMENT,
@@ -884,6 +898,36 @@ pub(crate) struct ExportSession {
     malformed_frames: u64,
 }
 impl ExportSession {
+    pub(crate) fn from_sources(
+        catalogue: Catalogue,
+        freshness_ms: u64,
+        sources: Vec<(String, OutputSource)>,
+    ) -> Result<Self, String> {
+        if !(100..=10_000).contains(&freshness_ms)
+            || sources.len() > osg_mapping::program::MAX_PORTS
+        {
+            return Err("Invalid bounded native DCS export source plan.".into());
+        }
+        let mut ids = HashSet::new();
+        if sources.iter().any(|(id, _)| {
+            id.is_empty() || id.len() > 256 || id.chars().any(char::is_control) || !ids.insert(id)
+        }) {
+            return Err("Invalid or duplicate native DCS source identity.".into());
+        }
+        Ok(Self {
+            parser: Parser::new(catalogue.counter.address),
+            catalogue,
+            outputs: vec![],
+            extra_sources: sources,
+            freshness_ms,
+            memory: Memory::new(),
+            aircraft: None,
+            counter: None,
+            last_frame: None,
+            epoch: 1,
+            malformed_frames: 0,
+        })
+    }
     pub fn new(profile: &CompiledProfile) -> Self {
         Self {
             catalogue: profile.catalogue.clone(),
