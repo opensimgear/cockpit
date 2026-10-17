@@ -19,9 +19,10 @@ The native entry point cannot create or disconnect transport sessions, save
 firmware settings, reset devices, forget remembered devices or replay a lost
 mutation. Configuration apply is explicitly runtime-only (`save=false`). Direct
 USB firmware currently advertises no HID publication enable operation; an enabled
-override for that transport must remain explicitly unsupported. CAN publication
-overrides use the actual gateway's exact-boot lifecycle operations and compare
-captured active configuration plus publication state before restoration.
+override for that transport must remain explicitly unsupported. Existing CAN Enable/Disable lifecycle operations save permanent registry state;
+profiles never use them as temporary overrides. Current controller enable
+intent remains blocked until firmware advertises an owned nonpersistent
+publication lease with compare-if-unchanged restoration.
 
 Shutdown closes public admission and joins the profile poller first. Private
 native IO remains available for the coordinator's owned cleanup, then closes
@@ -84,3 +85,20 @@ only for a relinquished, nonzero lease with no remaining TTL. Legacy endpoints
 and release replies remain discoverable; they cannot imply reversible profile
 owned writes. Unknown or malformed restoration policies fail closed. No hardware
 qualification flag or execution gate changes as a result of this metadata.
+
+Atomic restoration of the actual prior output additionally requires
+`fallbackPolicy: "capture-at-claim"`. `ActionRequest::ClaimCurrent` and the CAN
+`action_claim_current` path emit `claim_current` with no host fallback tuple.
+The device captures its current readable Setter tuple atomically before granting
+ownership. A prior host state read cannot replace this guarantee. Both the
+captured catalogue and the claim reply must advertise it; missing/legacy policy
+stays visible and does not qualify actual-prior restoration. Canonical
+`supports_captured_setter()` and frontend capability helpers report this separate
+advertised requirement, preserving qualification flags and exact contract hashes.
+
+Claims remain restricted to readable Setters. After such a claim, the existing
+owned-invoke path supports advertised one-shot aliases affecting that same
+physical endpoint; firmware verifies exact token, lease, transport scope and
+endpoint before any callback. Failed/ambiguous claims and invokes never replay.
+Native cached lease activity covers the new acquisition path and its remaining
+TTL so capture-only learning cannot overlap a possible delayed fallback.

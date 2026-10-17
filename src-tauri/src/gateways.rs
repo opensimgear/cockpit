@@ -136,7 +136,7 @@ fn learning_interrupt(request:&Value)->bool{
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
             |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"companion_status"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate");
     }
-    matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
+    matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
 }
 struct PendingProfileApply<'a>(&'a AtomicUsize);
 impl Drop for PendingProfileApply<'_>{fn drop(&mut self){self.0.fetch_sub(1,Ordering::AcqRel);}}
@@ -935,7 +935,7 @@ impl GatewayManager {
                 }
             }
         }
-        if matches!(command.as_str(), "claim" | "config_apply" | "config_save" | "config_reset" | "action_invoke" | "action_claim" | "action_renew" | "action_invoke_owned") {
+        if matches!(command.as_str(), "claim" | "config_apply" | "config_save" | "config_reset" | "action_invoke" | "action_claim" | "action_claim_current" | "action_renew" | "action_invoke_owned") {
             if let Some(module) = request["moduleId"].as_str() {
                 match crate::module_configuration_routes::evaluate(&self.module_usb.snapshots(), &self.cached_gateways(), module) {
                     Ok(preference) => if command == "claim" { request["_directUsbPreferred"] = json!(preference.direct_usb_preferred); },

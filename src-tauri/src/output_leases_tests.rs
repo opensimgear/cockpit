@@ -334,3 +334,56 @@ fn preserved_public_ownership_is_unowned_and_never_exposes_a_token() {
     reply["ownership"][0]["fallbackStatus"] = json!("failed");
     assert!(ownership_page(&reply, 1, 0).is_ok());
 }
+
+#[test]
+fn capture_at_claim_uses_no_host_fallback_requires_advertised_ack_and_tracks_expiry() {
+    let legacy = json!({"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000});
+    assert_eq!(capability(&legacy).unwrap(), legacy);
+    let captured = json!({"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000,"restorePolicy":"if-unchanged","fallbackPolicy":"capture-at-claim"});
+    assert_eq!(capability(&captured).unwrap(), captured);
+    for value in [Value::Null, json!("always"), json!(true)] {
+        let mut bad = captured.clone();
+        bad["fallbackPolicy"] = value;
+        assert!(capability(&bad).is_err());
+    }
+    let mut bad = captured.clone();
+    bad.as_object_mut().unwrap().remove("restorePolicy");
+    assert!(capability(&bad).is_err());
+    let mut request = request();
+    request.as_object_mut().unwrap().remove("values");
+    assert_eq!(
+        child("action_claim_current", &request, 1, &[action()]).unwrap(),
+        "claim_current 1 led.set 00112233-4455-6677-8899-aabbccddeeff 5000"
+    );
+    let mut bad = request.clone();
+    bad["values"] = json!([false]);
+    assert!(child("action_claim_current", &bad, 1, &[action()]).is_err());
+    let mut reply = json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":captured,"leaseId":7,"endpoint":"led","remainingMs":5000});
+    assert!(acknowledgement(&reply, 1, &request, "action_claim_current").is_ok());
+    reply["ownership"] = legacy;
+    assert!(acknowledgement(&reply, 1, &request, "action_claim_current").is_err());
+    let activity = LeaseActivity::default();
+    let now = Instant::now();
+    activity.begin().finish_at(
+        "module:boot",
+        "action_claim_current",
+        None,
+        Some(&reply),
+        now,
+    );
+    assert!(activity.active_at(now + Duration::from_millis(4999)));
+    assert!(!activity.active_at(now + Duration::from_millis(5000)));
+    let mut pulse = action();
+    pulse["id"] = json!("led.pulse");
+    pulse["semantics"] = json!("oneShot");
+    pulse["readable"] = json!(false);
+    pulse["parameters"] = json!([]);
+    bad = request.clone();
+    bad["actionId"] = json!("led.pulse");
+    bad["values"] = json!([]);
+    assert!(child("action_invoke_owned", &bad, 1, &[pulse.clone()])
+        .unwrap()
+        .starts_with("invoke_owned "));
+    bad.as_object_mut().unwrap().remove("values");
+    assert!(child("action_claim_current", &bad, 1, &[pulse]).is_err());
+}

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {loadModules} from './test-module-loader.mjs';
 const loaded=await loadModules(['./gateway-capabilities','./device-actions']);
 const exported=loaded.get('./device-actions');
-const { actionReady, nextActionRead, initialValues, integerInputValue, actionError, outputSummary, actionOwnershipValid, guardedSetterRestorationAdvertised } = exported;
+const { actionReady, nextActionRead, initialValues, integerInputValue, actionError, outputSummary, actionOwnershipValid, guardedSetterRestorationAdvertised, capturedSetterRestorationAdvertised } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
 const module = { id: 'device', online: true, boot: 100, active: false, enabled: false, directUsb: true };
 const state = { backend: 'stm32', connected: true, modules: [module] };
@@ -80,4 +80,11 @@ test('guarded restoration is an explicit advertised capability and never inferre
   assert.equal(guardedSetterRestorationAdvertised(action),false);
   for(const patch of [{status:'uncertain'},{actions:[]},{actions:[{...action,endpoint:'other'}]}]) assert.equal(guardedSetterRestorationAdvertised(action,{...ready,ownership:guarded,...patch}),false);
   for(const patch of [{readable:false},{semantics:'oneShot'}]) assert.equal(guardedSetterRestorationAdvertised({...action,...patch},{...ready,ownership:guarded}),false);
+});
+
+test('actual prior restoration requires atomic capture policy and rejects malformed optional claims',()=>{
+ const guarded={schemaVersion:1,scope:'endpoint',maxLeaseMs:5000,restorePolicy:'if-unchanged'},captured={...guarded,fallbackPolicy:'capture-at-claim'};
+ assert.equal(actionOwnershipValid(captured),true);assert.equal(capturedSetterRestorationAdvertised(action,{...ready,ownership:guarded}),false);assert.equal(capturedSetterRestorationAdvertised(action,{...ready,ownership:captured}),true);
+ for(const fallbackPolicy of [null,undefined,'host-read','always',true])assert.equal(actionOwnershipValid({...guarded,fallbackPolicy}),false);
+ assert.equal(actionOwnershipValid({...captured,restorePolicy:undefined}),false);assert.equal(capturedSetterRestorationAdvertised({...action,semantics:'oneShot'},{...ready,ownership:captured}),false);
 });

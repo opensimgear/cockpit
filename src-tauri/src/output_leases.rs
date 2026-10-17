@@ -105,7 +105,7 @@ impl LeaseAttempt<'_> {
             uncertain(&mut state);
             return;
         };
-        if command != "action_claim" && lease != Some(id) {
+        if !matches!(command, "action_claim" | "action_claim_current") && lease != Some(id) {
             uncertain(&mut state);
             return;
         }
@@ -118,7 +118,11 @@ impl LeaseAttempt<'_> {
             }
             return;
         }
-        if !matches!(command, "action_claim" | "action_renew") || receipt["released"] == true {
+        if !matches!(
+            command,
+            "action_claim" | "action_claim_current" | "action_renew"
+        ) || receipt["released"] == true
+        {
             uncertain(&mut state);
             return;
         }
@@ -162,6 +166,12 @@ pub(crate) fn capability(value: &Value) -> Result<Value, String> {
             return Err(crate::actions::INVALID.into());
         }
         capability["restorePolicy"] = policy.clone();
+    }
+    if let Some(policy) = value.get("fallbackPolicy") {
+        if policy != "capture-at-claim" || capability["restorePolicy"] != "if-unchanged" {
+            return Err(crate::actions::INVALID.into());
+        }
+        capability["fallbackPolicy"] = policy.clone();
     }
     Ok(capability)
 }
@@ -215,7 +225,7 @@ pub(crate) fn child(
             ttl(request)?
         )),
         "action_release" => Ok(format!("release {secret} {}", lease(request)?)),
-        "action_claim" | "action_invoke_owned" => {
+        "action_claim" | "action_claim_current" | "action_invoke_owned" => {
             if request["catalogueRevision"].as_u64() != Some(revision) {
                 return Err(
                     "The device action catalogue changed. Discover its actions again.".into(),
@@ -225,8 +235,20 @@ pub(crate) fn child(
                 .iter()
                 .find(|a| a["id"] == request["actionId"])
                 .ok_or("This action is no longer advertised by the device.")?;
-            if action["readable"] != true || action["semantics"] != "setter" {
+            if command != "action_invoke_owned"
+                && (action["readable"] != true || action["semantics"] != "setter")
+            {
                 return Err("Output ownership requires a readable setter.".into());
+            }
+            if command == "action_claim_current" {
+                if request.get("values").is_some() {
+                    return Err("Capture-at-claim does not accept a host fallback tuple.".into());
+                }
+                return Ok(format!(
+                    "claim_current {revision} {} {secret} {}",
+                    action["id"].as_str().unwrap(),
+                    ttl(request)?
+                ));
             }
             let args = crate::actions::arguments(action, &request["values"])?;
             let suffix = if args.is_empty() {
@@ -257,6 +279,13 @@ pub(crate) fn acknowledgement(
         return Err(crate::actions::INVALID.into());
     }
     let capability = reply.get("ownership").map(capability).transpose()?;
+    if command == "action_claim_current"
+        && capability
+            .as_ref()
+            .is_none_or(|c| c["fallbackPolicy"] != "capture-at-claim")
+    {
+        return Err(crate::actions::INVALID.into());
+    }
     if command == "action_release" {
         let policy = capability
             .as_ref()
@@ -281,7 +310,8 @@ pub(crate) fn acknowledgement(
                 && s.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
         })
-        || command != "action_claim" && reply["leaseId"] != request["leaseId"]
+        || !matches!(command, "action_claim" | "action_claim_current")
+            && reply["leaseId"] != request["leaseId"]
         || command == "action_release" && reply["released"] != true
         || command != "action_release" && !reply["remainingMs"].as_u64().is_some_and(|n| n <= TTL)
         || reply.get("token").is_some()

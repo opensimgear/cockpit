@@ -16,6 +16,7 @@ fn action(parameters: Vec<ActionParameter>) -> PortDescriptor {
                 scope: "endpoint".into(),
                 max_lease_ms: 5000,
                 restore_policy: None,
+                fallback_policy: None,
             }),
         },
     }
@@ -517,7 +518,8 @@ fn guarded_restore_is_explicit_strict_and_part_of_the_exact_contract_identity() 
         assert!(!OwnershipCapability {
             scope: scope.into(),
             max_lease_ms,
-            restore_policy: Some(RestorePolicy::IfUnchanged)
+            restore_policy: Some(RestorePolicy::IfUnchanged),
+            fallback_policy: None,
         }
         .supports_guarded_restore());
     }
@@ -527,4 +529,44 @@ fn guarded_restore_is_explicit_strict_and_part_of_the_exact_contract_identity() 
         fallback: None,
     };
     assert!(!state.supports_guarded_setter());
+}
+
+#[test]
+fn captured_fallback_is_a_distinct_strict_contract_without_changing_legacy_identity() {
+    let legacy = action(vec![]);
+    let value = serde_json::to_value(&legacy).unwrap();
+    assert!(value["contract"]["ownership"]
+        .get("fallbackPolicy")
+        .is_none());
+    assert!(!legacy.contract.supports_captured_setter());
+    let mut captured = value.clone();
+    captured["contract"]["ownership"]["restorePolicy"] = json!("if-unchanged");
+    captured["contract"]["ownership"]["fallbackPolicy"] = json!("capture-at-claim");
+    let port: PortDescriptor = serde_json::from_value(captured.clone()).unwrap();
+    port.validate().unwrap();
+    assert!(port.contract.supports_captured_setter());
+    assert_eq!(serde_json::to_value(&port).unwrap(), captured);
+    assert_ne!(
+        legacy.contract_hash().unwrap(),
+        port.contract_hash().unwrap()
+    );
+    for invalid in [Value::Null, json!("always"), json!(true)] {
+        let mut bad = captured.clone();
+        bad["contract"]["ownership"]["fallbackPolicy"] = invalid;
+        assert!(serde_json::from_value::<PortDescriptor>(bad).is_err());
+    }
+    let mut missing = captured.clone();
+    missing["contract"]["ownership"]
+        .as_object_mut()
+        .unwrap()
+        .remove("restorePolicy");
+    let bad: PortDescriptor = serde_json::from_value(missing).unwrap();
+    assert!(bad.validate().is_err());
+    assert!(!bad.contract.supports_captured_setter());
+    for (field, value) in [("readable", json!(false)), ("semantics", json!("one-shot"))] {
+        let mut bad = captured.clone();
+        bad["contract"][field] = value;
+        let bad: PortDescriptor = serde_json::from_value(bad).unwrap();
+        assert!(!bad.contract.supports_captured_setter());
+    }
 }

@@ -78,7 +78,7 @@ impl ProfilePanelIo {
                 | UsbRequest::Release { .. }
                 | UsbRequest::ConfigChange { .. }
                 | UsbRequest::Action {
-                    action: ActionRequest::Claim { .. }
+                    action: ActionRequest::Claim { .. } | ActionRequest::ClaimCurrent { .. }
                         | ActionRequest::Renew { .. }
                         | ActionRequest::Release { .. }
                         | ActionRequest::Invoke { .. }
@@ -147,7 +147,7 @@ impl ProfilePanelIo {
                 | "action_describe"
                 | "action_state"
                 | "action_ownership"
-                | "action_claim"
+                | "action_claim" | "action_claim_current"
                 | "action_renew"
                 | "action_release"
                 | "action_invoke_owned"
@@ -162,7 +162,7 @@ impl ProfilePanelIo {
         }
         let mutating = matches!(
             command.as_str(),
-            "action_claim"
+            "action_claim" | "action_claim_current"
                 | "action_renew"
                 | "action_release"
                 | "action_invoke_owned"

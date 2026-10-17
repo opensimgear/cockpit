@@ -1,7 +1,7 @@
 //! Translate existing validated provider descriptors without inventing controls.
 use osg_profiles::resources_ports::{
     ActionParameter, ActionSemantics, DisplayConstraints, OwnershipCapability, PortContract,
-    PortDescriptor, RestorePolicy, ScalarSchema, TextEncoding,
+    PortDescriptor, RestorePolicy, FallbackPolicy, ScalarSchema, TextEncoding,
 };
 use osg_profiles::{Direction, PortValue};
 use serde_json::Value;
@@ -213,6 +213,7 @@ pub(crate) fn actions(cache: &Value) -> Result<Vec<PortDescriptor>, String> {
                         max_lease_ms: capability["maxLeaseMs"].as_u64().unwrap() as u32,
                         restore_policy: (capability["restorePolicy"] == "if-unchanged")
                             .then_some(RestorePolicy::IfUnchanged),
+                        fallback_policy: (capability["fallbackPolicy"]=="capture-at-claim").then_some(FallbackPolicy::CaptureAtClaim),
                     }),
             },
         };

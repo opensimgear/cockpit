@@ -426,3 +426,8 @@ test('canonical action contracts preserve an explicit restoration policy without
   for(const restorePolicy of [null,undefined,'always',true]) assert.match(profileContractError({...contract,ownership:{...contract.ownership,restorePolicy}},'input'),/ownership/);
   assert.match(profileContractError({...contract,ownership:{...contract.ownership,restorePolicy:'if-unchanged',secret:'no'}},'input'),/ownership/);
 });
+
+test('portable action contracts retain atomic fallback advertisement separately from legacy restore policy',()=>{
+ const contract={delivery:'action',parameters:[],semantics:'setter',endpoint:'lamp',readable:true,display:null,ownership:{scope:'endpoint',maxLeaseMs:5000,restorePolicy:'if-unchanged',fallbackPolicy:'capture-at-claim'}};
+ assert.equal(profileContractError(contract,'input'),'');for(const fallbackPolicy of [null,undefined,'always',true])assert.match(profileContractError({...contract,ownership:{...contract.ownership,fallbackPolicy}},'input'),/ownership/);const ownership={...contract.ownership};delete ownership.restorePolicy;assert.match(profileContractError({...contract,ownership},'input'),/ownership/);
+});

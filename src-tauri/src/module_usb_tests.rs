@@ -64,6 +64,7 @@ struct Device {
     action_revision: u32,
     ownership: bool,
     guarded_restore: bool,
+    capture_current: bool,
     last_owned: Option<bool>,
     actions_supported: bool,
     events_supported: bool,
@@ -96,6 +97,7 @@ impl Default for Device {
             action_revision: 1,
             ownership: true,
             guarded_restore: false,
+            capture_current: false,
             last_owned: None,
             actions_supported: true,
             events_supported: true,
@@ -117,6 +119,9 @@ impl Device {
             value["ownership"] = json!({"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000});
             if self.guarded_restore {
                 value["ownership"]["restorePolicy"] = json!("if-unchanged");
+                if self.capture_current {
+                    value["ownership"]["fallbackPolicy"] = json!("capture-at-claim");
+                }
             }
         }
         value
@@ -251,6 +256,22 @@ impl Device {
                         self.led = args[3] == "1";
                         result["id"] = json!(args[2]);
                         result["values"] = json!([self.led]);
+                    }
+                }
+                "claim_current" => {
+                    assert_eq!(args.len(), 5, "capture_current takes no stale host tuple");
+                    if self.token.as_deref().is_some_and(|token| token != args[3]) {
+                        result = json!({"ok":false,"error":"outputBusy"});
+                    } else {
+                        if self.token.is_none() {
+                            self.lease += 1;
+                            self.fallback = self.led;
+                            self.last_owned = Some(self.led);
+                        }
+                        self.token = Some(args[3].into());
+                        result["leaseId"] = json!(self.lease);
+                        result["endpoint"] = json!("led.boolean");
+                        result["remainingMs"] = json!(args[4].parse::<u32>().unwrap());
                     }
                 }
                 "claim" => {
@@ -770,7 +791,10 @@ fn endpoint_tokens_are_input_only_and_leases_do_not_bypass_writer_or_state_guard
     let lease = claimed.actions.as_ref().unwrap()["lastLease"]["leaseId"]
         .as_u64()
         .unwrap() as u32;
-    assert!(service.output_activity(),"a live firmware fallback is scheduled even without a configuration writer");
+    assert!(
+        service.output_activity(),
+        "a live firmware fallback is scheduled even without a configuration writer"
+    );
     assert!(!serde_json::to_string(&claimed).unwrap().contains(TOKEN));
     assert!(!d.lock().unwrap().led);
     service
@@ -817,17 +841,66 @@ fn endpoint_tokens_are_input_only_and_leases_do_not_bypass_writer_or_state_guard
         .unwrap();
     assert!(!d.lock().unwrap().led);
     assert!(d.lock().unwrap().token.is_none());
-    assert!(!service.output_activity(),"an exact validated release proves this lease idle");
+    assert!(
+        !service.output_activity(),
+        "an exact validated release proves this lease idle"
+    );
 }
 #[test]
-fn cached_endpoint_activity_keeps_lost_usb_claim_guarded_after_disconnect_without_polling_or_retry(){
-    let(service,device)=setup();let service=Arc::new(service);let route=connect(&service).route.unwrap();actions(&service,&route);
-    let mut blocked=device.lock().unwrap();blocked.drop_command=Some("action claim ".into());let worker=service.clone();
-    let pending=std::thread::spawn(move||worker.request(UsbRequest::Action{route,action:ActionRequest::Claim{catalogue_revision:1,action_id:"led.boolean.set_enabled".into(),values:vec![json!(false)],token:TOKEN.into(),ttl_ms:5000}}));
-    let deadline=Instant::now()+Duration::from_secs(2);while !service.output_activity()&&Instant::now()<deadline{std::thread::sleep(Duration::from_millis(1));}assert!(service.output_activity(),"cached admission must see a worker blocked before the wire ACK");drop(blocked);
-    assert!(pending.join().unwrap().is_err());assert!(service.output_activity());
-    let writes=device.lock().unwrap().writes.len();assert!(service.output_activity());assert_eq!(device.lock().unwrap().writes.len(),writes,"the cached guard cannot poll or replay hardware commands");
-    assert_eq!(device.lock().unwrap().writes.iter().filter(|line|line.starts_with("action claim ")).count(),1);service.shutdown();assert!(service.output_activity(),"closing the CDC worker cannot erase a possibly scheduled firmware fallback");
+fn cached_endpoint_activity_keeps_lost_usb_claim_guarded_after_disconnect_without_polling_or_retry()
+{
+    let (service, device) = setup();
+    let service = Arc::new(service);
+    let route = connect(&service).route.unwrap();
+    actions(&service, &route);
+    let mut blocked = device.lock().unwrap();
+    blocked.drop_command = Some("action claim ".into());
+    let worker = service.clone();
+    let pending = std::thread::spawn(move || {
+        worker.request(UsbRequest::Action {
+            route,
+            action: ActionRequest::Claim {
+                catalogue_revision: 1,
+                action_id: "led.boolean.set_enabled".into(),
+                values: vec![json!(false)],
+                token: TOKEN.into(),
+                ttl_ms: 5000,
+            },
+        })
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !service.output_activity() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        service.output_activity(),
+        "cached admission must see a worker blocked before the wire ACK"
+    );
+    drop(blocked);
+    assert!(pending.join().unwrap().is_err());
+    assert!(service.output_activity());
+    let writes = device.lock().unwrap().writes.len();
+    assert!(service.output_activity());
+    assert_eq!(
+        device.lock().unwrap().writes.len(),
+        writes,
+        "the cached guard cannot poll or replay hardware commands"
+    );
+    assert_eq!(
+        device
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .filter(|line| line.starts_with("action claim "))
+            .count(),
+        1
+    );
+    service.shutdown();
+    assert!(
+        service.output_activity(),
+        "closing the CDC worker cannot erase a possibly scheduled firmware fallback"
+    );
 }
 #[test]
 fn lost_action_reply_is_uncertain_without_an_automatic_second_invocation() {
@@ -1354,4 +1427,124 @@ fn guarded_policy_and_preserved_receipt_survive_actual_usb_worker_without_replay
             .count(),
         1
     );
+}
+
+#[test]
+fn atomic_current_claim_requires_capability_captures_actual_value_and_keeps_worker_activity() {
+    let (service, device) = setup();
+    let route = connect(&service).route.unwrap();
+    actions(&service, &route);
+    let claim = UsbRequest::Action {
+        route: route.clone(),
+        action: ActionRequest::ClaimCurrent {
+            catalogue_revision: 1,
+            action_id: "led.boolean.set_enabled".into(),
+            token: TOKEN.into(),
+            ttl_ms: 5000,
+        },
+    };
+    assert!(service
+        .request(claim.clone())
+        .unwrap_err()
+        .contains("capture-at-claim"));
+    assert!(!device
+        .lock()
+        .unwrap()
+        .writes
+        .iter()
+        .any(|line| line.starts_with("action claim_current ")));
+    {
+        let mut device = device.lock().unwrap();
+        device.guarded_restore = true;
+        device.capture_current = true;
+    }
+    actions(&service, &route);
+    device.lock().unwrap().led = true;
+    let claimed = service.request(claim).unwrap();
+    assert!(service.output_activity());
+    let lease = claimed.actions.as_ref().unwrap()["lastLease"]["leaseId"]
+        .as_u64()
+        .unwrap() as u32;
+    assert!(device.lock().unwrap().fallback);
+    assert!(claimed.claimed_by.is_none());
+    assert_eq!(device.lock().unwrap().owner, 0);
+    service
+        .request(UsbRequest::Action {
+            route: route.clone(),
+            action: ActionRequest::InvokeOwned {
+                catalogue_revision: 1,
+                action_id: "led.boolean.set_enabled".into(),
+                values: vec![json!(false)],
+                token: TOKEN.into(),
+                lease_id: lease,
+            },
+        })
+        .unwrap();
+    assert!(!device.lock().unwrap().led);
+    service
+        .request(UsbRequest::Action {
+            route: route.clone(),
+            action: ActionRequest::Release {
+                token: TOKEN.into(),
+                lease_id: lease,
+            },
+        })
+        .unwrap();
+    assert!(device.lock().unwrap().led);
+    assert_eq!(device.lock().unwrap().saved, 1);
+    assert_eq!(
+        device
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .filter(|line| line.starts_with("action claim_current "))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn lost_atomic_claim_reply_stays_uncertain_without_replay_or_configuration_claim() {
+    let (service, device) = setup();
+    {
+        let mut d = device.lock().unwrap();
+        d.guarded_restore = true;
+        d.capture_current = true;
+    }
+    let route = connect(&service).route.unwrap();
+    actions(&service, &route);
+    device.lock().unwrap().drop_command = Some("action claim_current ".into());
+    assert!(service
+        .request(UsbRequest::Action {
+            route,
+            action: ActionRequest::ClaimCurrent {
+                catalogue_revision: 1,
+                action_id: "led.boolean.set_enabled".into(),
+                token: TOKEN.into(),
+                ttl_ms: 5000
+            }
+        })
+        .is_err());
+    assert!(service.output_activity());
+    assert_eq!(
+        service.snapshot().actions.as_ref().unwrap()["status"],
+        "uncertain"
+    );
+    assert!(!serde_json::to_string(&service.snapshot())
+        .unwrap()
+        .contains(TOKEN));
+    assert_eq!(
+        device
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .filter(|line| line.starts_with("action claim_current "))
+            .count(),
+        1
+    );
+    assert_eq!(device.lock().unwrap().owner, 0);
+    service.shutdown();
+    assert!(service.output_activity());
 }

@@ -68,6 +68,12 @@ pub(crate) enum ActionRequest {
     Ownership {
         offset: u32,
     },
+    ClaimCurrent {
+        catalogue_revision:u32,
+        action_id:String,
+        token:String,
+        ttl_ms:u32,
+    },
     Claim {
         catalogue_revision: u32,
         action_id: String,
@@ -719,6 +725,8 @@ impl Worker {
             ActionRequest::Ownership { offset } => {
                 ("action_ownership", json!({"offset":offset}), false)
             }
+            ActionRequest::ClaimCurrent {catalogue_revision,action_id,token,ttl_ms} => (
+                "action_claim_current",json!({"catalogueRevision":catalogue_revision,"actionId":action_id,"ownershipToken":token,"ttlMs":ttl_ms}),false),
             ActionRequest::Claim {
                 catalogue_revision,
                 action_id,
@@ -762,7 +770,7 @@ impl Worker {
         }
         let lease_operation = matches!(
             command,
-            "action_claim"
+            "action_claim" | "action_claim_current"
                 | "action_renew"
                 | "action_release"
                 | "action_ownership"
@@ -771,6 +779,7 @@ impl Worker {
         if lease_operation && command != "action_ownership" && cache["ownership"].is_null() {
             return Err("The USB module does not advertise endpoint ownership.".into());
         }
+        if command=="action_claim_current" && cache["ownership"]["fallbackPolicy"]!="capture-at-claim" {return Err("This USB module does not advertise atomic capture-at-claim.".into());}
         let child = if lease_operation {
             crate::output_leases::child(command, &request, revision, &descriptors)?
         } else if invocation {
@@ -811,9 +820,9 @@ impl Worker {
                     revision,
                     request["offset"].as_u64().unwrap() as usize,
                 )?;
-            } else if matches!(command, "action_claim" | "action_renew" | "action_release") {
+            } else if matches!(command, "action_claim" | "action_claim_current" | "action_renew" | "action_release") {
                 crate::output_leases::acknowledgement(&reply, revision, &request, command)?;
-                if command == "action_claim"
+                if matches!(command,"action_claim"|"action_claim_current")
                     && descriptors
                         .iter()
                         .find(|a| a["id"] == request["actionId"])
@@ -1053,6 +1062,7 @@ impl ModuleUsbService {
             return Err(CLOSED.into());
         }
         let lease=match &request{
+            UsbRequest::Action{route,action:ActionRequest::ClaimCurrent{..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_claim_current",None)),
             UsbRequest::Action{route,action:ActionRequest::Claim{..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_claim",None)),
             UsbRequest::Action{route,action:ActionRequest::Renew{lease_id,..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_renew",Some(u64::from(*lease_id)))),
             UsbRequest::Action{route,action:ActionRequest::Release{lease_id,..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_release",Some(u64::from(*lease_id)))),

@@ -12,7 +12,7 @@ export type DeviceAction = {
   display?: { columns: number; rows: number; encoding: 'ascii' | 'utf8' };
 };
 export type ActionOwnershipCapability = {
-  schemaVersion: 1; scope: 'endpoint'; maxLeaseMs: 5000; restorePolicy?: 'if-unchanged';
+  schemaVersion: 1; scope: 'endpoint'; maxLeaseMs: 5000; restorePolicy?: 'if-unchanged'; fallbackPolicy?: 'capture-at-claim';
 };
 /** Advertised restoration capability only; live output still needs native qualification and ownership. */
 export function actionOwnershipValid(value: unknown): value is ActionOwnershipCapability {
@@ -20,14 +20,16 @@ export function actionOwnershipValid(value: unknown): value is ActionOwnershipCa
   const entry = value as Record<string, unknown>;
   return ['schemaVersion', 'scope', 'maxLeaseMs'].every(key => Object.hasOwn(entry, key))
     && entry.schemaVersion === 1 && entry.scope === 'endpoint' && entry.maxLeaseMs === 5000
-    && Object.keys(entry).every(key => ['schemaVersion', 'scope', 'maxLeaseMs', 'restorePolicy'].includes(key))
-    && (!Object.hasOwn(entry, 'restorePolicy') || entry.restorePolicy === 'if-unchanged');
+    && Object.keys(entry).every(key => ['schemaVersion', 'scope', 'maxLeaseMs', 'restorePolicy', 'fallbackPolicy'].includes(key))
+    && (!Object.hasOwn(entry, 'restorePolicy') || entry.restorePolicy === 'if-unchanged')
+    && (!Object.hasOwn(entry,'fallbackPolicy') || entry.fallbackPolicy === 'capture-at-claim' && entry.restorePolicy === 'if-unchanged');
 }
 export function guardedSetterRestorationAdvertised(action: DeviceAction, snapshot?: DeviceActions): boolean {
   return action.readable === true && action.semantics === 'setter' && snapshot?.status === 'ready'
     && actionOwnershipValid(snapshot.ownership) && snapshot.ownership.restorePolicy === 'if-unchanged'
     && snapshot.actions.some(current => current.id === action.id && current.endpoint === action.endpoint && current.readable === true && current.semantics === 'setter');
 }
+export function capturedSetterRestorationAdvertised(action:DeviceAction,snapshot?:DeviceActions):boolean {return guardedSetterRestorationAdvertised(action,snapshot)&&snapshot?.ownership?.fallbackPolicy==='capture-at-claim';}
 export type DeviceActions = {
   boot: number; catalogueRevision?: number; actions: DeviceAction[];
   states: { id: string; values: ActionValue[] }[];

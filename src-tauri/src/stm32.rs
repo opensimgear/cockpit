@@ -1394,13 +1394,14 @@ impl Gateway {
                 .clone();
             if matches!(
                 command,
-                "action_claim" | "action_renew" | "action_release" | "action_ownership"
+                "action_claim" | "action_claim_current" | "action_renew" | "action_release" | "action_ownership"
             ) {
                 if command != "action_ownership" && cached["ownership"].is_null() {
                     return Err(
                         "This firmware does not advertise endpoint output ownership.".into(),
                     );
                 }
+                if command=="action_claim_current" && cached["ownership"]["fallbackPolicy"]!="capture-at-claim" {return Err("This module does not advertise atomic capture-at-claim.".into());}
                 let child = crate::output_leases::child(command, request, revision, &descriptors)?;
                 let reply = self.action_command(id, &mut route, &child)?;
                 if command == "action_ownership" {
@@ -1411,7 +1412,7 @@ impl Gateway {
                     )?;
                 } else {
                     crate::output_leases::acknowledgement(&reply, revision, request, command)?;
-                    if command == "action_claim"
+                    if matches!(command,"action_claim"|"action_claim_current")
                         && descriptors
                             .iter()
                             .find(|a| a["id"] == request["actionId"])
@@ -1931,6 +1932,7 @@ impl Gateway {
             | "action_state"
             | "action_invoke"
             | "action_claim"
+            | "action_claim_current"
             | "action_renew"
             | "action_release"
             | "action_ownership"
@@ -2299,7 +2301,7 @@ impl Stm32Service {
         let command=request["command"].as_str().unwrap_or("").to_owned();
         let scope=format!("{}:{}",request["moduleId"].as_str().unwrap_or(""),request["boot"].as_u64().unwrap_or(0));
         let lease=request["leaseId"].as_u64();
-        let attempt=matches!(command.as_str(),"action_claim"|"action_renew"|"action_release"|"action_invoke_owned").then(||self.endpoint_activity.begin());
+        let attempt=matches!(command.as_str(),"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke_owned").then(||self.endpoint_activity.begin());
         let module_id=request["moduleId"].as_str().unwrap_or("").to_owned();
         let (sender, receiver) = mpsc::channel();
         if let Err(e) = self.sender.try_send(Message::Request(request, sender)) {
@@ -4388,6 +4390,16 @@ mod tests {
         let released=request(&mut gateway,"action_release",json!({"moduleId":MODULE,"boot":100,"ownershipToken":secret,"leaseId":7}));assert_eq!(released["ok"],true,"{released}");
         assert_eq!(released["state"]["moduleActions"][MODULE]["lastLease"]["fallbackStatus"],"preserved");assert!(!released.to_string().contains(secret));
         assert_eq!(context.lock().unwrap().writes.iter().filter(|line|line.contains("action")&&line.contains("release")).count(),1);
+    }
+
+    #[test]
+    fn atomic_current_claim_is_capability_gated_guarded_and_tracked_by_actual_can_worker(){
+        let(_,context)=action_harness();let service=Stm32Service::with_factory(Box::new(MockFactory(context.clone())),timing());assert_eq!(service.request(json!({"command":"connect","port":PATH,"clientId":CLIENT}))["ok"],true);
+        let captured=json!({"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000,"restorePolicy":"if-unchanged","fallbackPolicy":"capture-at-claim"});
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":captured,"total":1,"next":null,"actions":[{"id":"led.set_enabled","label":"LED","endpoint":"led","semantics":"setter","readable":true,"parameters":[{"id":"enabled","label":"Enabled","type":"boolean"}]}]}));assert_eq!(service.request(json!({"command":"action_describe","clientId":CLIENT,"moduleId":MODULE}))["ok"],true);
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":captured,"leaseId":7,"endpoint":"led","remainingMs":5000}));
+        let request=json!({"command":"action_claim_current","clientId":CLIENT,"moduleId":MODULE,"boot":100,"catalogueRevision":1,"actionId":"led.set_enabled","ownershipToken":"00112233-4455-6677-8899-aabbccddeeff","ttlMs":5000});let claimed=service.request(request.clone());assert_eq!(claimed["ok"],true,"{claimed}");assert!(service.output_activity());assert!(service.configuration_claims().is_empty());assert!(!claimed.to_string().contains("00112233-4455"));let writes=context.lock().unwrap().writes.iter().filter(|line|line.contains("action")&&line.contains("claim_current")).cloned().collect::<Vec<_>>();assert_eq!(writes.len(),1);assert!(writes[0].trim_end().ends_with("5000"));
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":captured,"leaseId":7,"endpoint":"led","released":true,"fallbackStatus":"applied"}));assert_eq!(service.request(json!({"command":"action_release","clientId":CLIENT,"moduleId":MODULE,"boot":100,"ownershipToken":"00112233-4455-6677-8899-aabbccddeeff","leaseId":7}))["ok"],true);assert!(!service.output_activity());
     }
     #[test]
     fn endpoint_lease_activity_is_cached_across_actual_can_worker_claim_release_and_uncertain_ack(){

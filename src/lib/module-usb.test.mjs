@@ -187,3 +187,8 @@ test('USB action captures preserve optional guarded restoration and reject inven
     await assert.rejects(new ModuleUsbClient(async()=>({module:supplied})).status(key),/unknown/);
   }
 });
+
+test('USB captures preserve atomic fallback capability without inferring a missing restore policy',async()=>{
+ const ownership={schemaVersion:1,scope:'endpoint',maxLeaseMs:5000,restorePolicy:'if-unchanged',fallbackPolicy:'capture-at-claim'},supplied=module();supplied.snapshot.actions.ownership=ownership;assert.deepEqual((await new ModuleUsbClient(async()=>({module:supplied})).status(key)).snapshot.actions.ownership,ownership);
+ for(const fallbackPolicy of [null,'host-read',true]){const supplied=module();supplied.snapshot.actions.ownership={...ownership,fallbackPolicy};await assert.rejects(new ModuleUsbClient(async()=>({module:supplied})).status(key));}
+});

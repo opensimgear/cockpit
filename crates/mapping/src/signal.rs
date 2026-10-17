@@ -90,6 +90,16 @@ fn optional_restore_policy<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<RestorePolicy>, D::Error> {
     RestorePolicy::deserialize(deserializer).map(Some)
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FallbackPolicy {
+    CaptureAtClaim,
+}
+fn optional_fallback_policy<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<FallbackPolicy>, D::Error> {
+    FallbackPolicy::deserialize(deserializer).map(Some)
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OwnershipCapability {
@@ -101,8 +111,18 @@ pub struct OwnershipCapability {
         deserialize_with = "optional_restore_policy"
     )]
     pub restore_policy: Option<RestorePolicy>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "optional_fallback_policy"
+    )]
+    pub fallback_policy: Option<FallbackPolicy>,
 }
 impl OwnershipCapability {
+    pub fn supports_captured_restore(&self) -> bool {
+        self.supports_guarded_restore()
+            && self.fallback_policy == Some(FallbackPolicy::CaptureAtClaim)
+    }
     /// Advertised capability only. Native qualification and the exact live lease
     /// remain separate admission requirements for physical output execution.
     pub fn supports_guarded_restore(&self) -> bool {
@@ -335,6 +355,8 @@ impl PortDescriptor {
                     if ownership.scope != "endpoint"
                         || ownership.max_lease_ms == 0
                         || ownership.max_lease_ms > 60_000
+                        || ownership.fallback_policy.is_some()
+                            && !ownership.supports_guarded_restore()
                     {
                         return Err("Invalid advertised output ownership.".into());
                     }
@@ -419,6 +441,10 @@ where
 }
 
 impl PortContract {
+    /// Actual prior-state capture is a separate advertised requirement.
+    pub fn supports_captured_setter(&self) -> bool {
+        matches!(self,Self::Action{semantics:ActionSemantics::Setter,readable:true,ownership:Some(capability),..}if capability.supports_captured_restore())
+    }
     /// Whether this exact port advertises reversible owned Setter behavior.
     /// This never qualifies a native backend or acquires an endpoint lease.
     pub fn supports_guarded_setter(&self) -> bool {
