@@ -54,6 +54,7 @@
     if(opened.publicationHash!==assignment.publicationHash || verified.publicationHash!==assignment.publicationHash)throw new Error('Panel assignment changed during delivery');
     panel=verified.document;pageId=panel.ui.pages.some(p=>p.id===pageId)?pageId:panel.ui.pages[0].id;
     assets=Object.fromEntries(verified.assets.map(a=>[a.assetId,'data:'+panel!.ui.assets.find(m=>m.id===a.assetId)!.mime+';base64,'+a.base64]));
+    controller.setDocument(panel);
     session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};feedbackNotice='';
     await tick();if(version!==epoch || !visible())return;
     const values=Object.fromEntries(panel.ui.controls.map(c=>[c.id,fallbackValue(c)]));
