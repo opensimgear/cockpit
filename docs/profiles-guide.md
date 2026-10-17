@@ -145,8 +145,9 @@ its affected contributions; reconnect requires fresh baselines and current
 native authority. Held input, old events and action requests are not replayed.
 
 **Stop** cancels pending Apply/launch and releases owned output. **Pause** stops
-the run and retains the pause latch. Clearing Pause does not restart processing;
-use an explicit Apply. **Recover outputs** restores retained ownership journals
+the run and retains the pause latch. Clearing Pause permits Automatic selection
+to resume. In Manual mode, restart with an explicit Apply. **Recover outputs**
+restores retained ownership journals
 without restarting the graph, commands or hiding. Conflicting external edits or
 offline hardware can leave recovery pending for explicit attention.
 

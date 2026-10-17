@@ -140,9 +140,10 @@ a successful read-only preflight never grants activation authority. Stop and
 Pause remain available during an in-flight Apply. Delayed replies from an older
 Apply or status read cannot replace a newer Stop/Pause result.
 
-**Pause** persists the pause latch and stops the run. **Clear pause** clears only
-that latch; starting again requires a separate explicit Apply. **Recover outputs**
-uses native recovery and reports its actual result. Failed effect requests are
+**Pause** persists the pause latch and stops the run. **Clear pause** clears that
+latch and permits Automatic selection to resume. In Manual mode, starting again
+requires an explicit Apply. **Recover outputs** uses native recovery and reports
+its actual result. Failed effect requests are
 never retried automatically. Leaving the editor does not stop an applied run.
 
 ## Applied port samples
