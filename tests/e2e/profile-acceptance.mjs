@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {createHash,randomBytes} from 'node:crypto';
 import {once} from 'node:events';
 import {setterProfile} from './profile-graph-fixtures.mjs';
+import {waitForCurrentAction} from './profile-action-readiness.mjs';
 import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {processClient} from './process-client.mjs';
@@ -101,6 +102,12 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
     };
     const connected=await reconnect(),crashRoute=routeOf(connected),publication=publicationOf(connected);
     await ok('action_describe',{gatewayId,moduleId});
+    const currentActions=await waitForCurrentAction(async()=>
+      (await ok('profile_resources_inspect',{resourceId:resource.id,offset:0,limit:128})).profileResources,
+      {...crashRoute,resourceId:resource.id,portId:action.descriptor.id,contractHash:action.contractHash},wait);
+    await writeFile(resolve(directory,'crash-action-readiness.json'),JSON.stringify({resourceId:resource.id,
+      inventorySession:currentActions.session,inventoryRevision:currentActions.revision,route:crashRoute,
+      observedPortId:action.descriptor.id,contractHash:action.contractHash,current:true},null,2));
     const active=(await ok('profile_apply',{id:saved.id,expectedRevision:1})).profiles.profileSession;
     assert.equal(active.state,'running');assert.ok(active.owner);assert.equal(active.appliedSnapshot.profileId,saved.id);
     const owned=await wait(()=>admin(device,'direct_action ownership 0'),state=>actualRgb(state)==='445566'&&ownershipOf(state).owned===true,'active owned output before forced service death');
