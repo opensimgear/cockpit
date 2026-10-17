@@ -111,11 +111,34 @@ impl Session {
     /// Explicit restart recovery requires a previously acknowledged run.
     /// Intent/release gaps require inspection and explicit no-output acknowledgement.
     pub fn recover_stored(factory: Factory, path: PathBuf) -> Result<(), String> {
+        Self::recover_stored_checked(factory, path, None)
+    }
+    /// Restore only the complete journal which a native cleanup caller inspected.
+    /// Comparison happens after taking its storage lock and before opening a feeder.
+    pub fn recover_stored_exact(
+        factory: Factory,
+        path: PathBuf,
+        expected: &crate::output_journal::Record,
+    ) -> Result<(), String> {
+        Self::recover_stored_checked(factory, path, Some(expected))
+    }
+    fn recover_stored_checked(
+        factory: Factory,
+        path: PathBuf,
+        expected: Option<&crate::output_journal::Record>,
+    ) -> Result<(), String> {
         let store = Store::open(path)?;
         let record = store
             .record()
             .cloned()
             .ok_or("No interrupted output is recorded.")?;
+        if let Some(expected) = expected {
+            if serde_json::to_vec(&record).map_err(|e| e.to_string())?
+                != serde_json::to_vec(expected).map_err(|e| e.to_string())?
+            {
+                return Err("The complete retained output journal changed; inspect its current owner before cleanup.".into());
+            }
+        }
         if record.phase != Phase::Confirmed {
             return Err("Output ownership is ambiguous or already clean; inspect it before acknowledging recovery.".into());
         }

@@ -439,3 +439,73 @@ fn restart_recovery_sends_only_fallback_and_refuses_ambiguous_or_missing_records
     );
     assert!(Session::recover_stored(factory.clone(), path).is_err());
 }
+
+#[test]
+fn exact_restart_recovery_rejects_changed_owner_binding_and_phase_before_opening_driver() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let (factory, state) = factory();
+    let mut store = Store::open(path.clone()).unwrap();
+    store
+        .begin(token(), vec![crate::vjoy::tests::binding()])
+        .unwrap();
+    store.transition(Phase::Confirmed).unwrap();
+    let expected = store.record().unwrap().clone();
+    drop(store);
+    let original = std::fs::read(&path).unwrap();
+    let mut changed = vec![expected.clone(); 4];
+    changed[0].token.generation = Counter(2);
+    changed[1].bindings[0].slot = 2;
+    changed[2].phase = Phase::Releasing;
+    changed[3].schema = 2;
+    for stale in changed {
+        assert!(
+            Session::recover_stored_exact(factory.clone(), path.clone(), &stale)
+                .unwrap_err()
+                .contains("complete retained output journal changed")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+    assert_eq!(state.lock().unwrap().spawned, 0);
+    assert!(state.lock().unwrap().messages.is_empty());
+    Session::recover_stored_exact(factory, path.clone(), &expected).unwrap();
+    let state = state.lock().unwrap();
+    assert_eq!(state.spawned, 1);
+    assert!(
+        matches!(state.messages.as_slice(), [Message::Recover { bindings, .. }]
+        if bindings[0].slot == expected.bindings[0].slot)
+    );
+    assert_eq!(state.terminated, vec![1]);
+    assert_eq!(
+        crate::output_journal::inspect(&path)
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Clean
+    );
+}
+#[test]
+fn exact_restart_recovery_never_opens_driver_while_another_session_owns_the_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("output.json");
+    let (factory, state) = factory();
+    let mut store = Store::open(path.clone()).unwrap();
+    store
+        .begin(token(), vec![crate::vjoy::tests::binding()])
+        .unwrap();
+    store.transition(Phase::Confirmed).unwrap();
+    let expected = store.record().unwrap().clone();
+    assert!(
+        Session::recover_stored_exact(factory, path.clone(), &expected)
+            .unwrap_err()
+            .contains("Another Cockpit session owns")
+    );
+    assert_eq!(state.lock().unwrap().spawned, 0);
+    assert_eq!(
+        crate::output_journal::inspect(&path)
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Confirmed
+    );
+}
