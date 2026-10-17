@@ -437,7 +437,7 @@ impl Wire {
         if !frame.is_object() {
             return Err("Invalid USB frame.".into());
         }
-        let response = hub.handle_wire(frame, &self.connection, hub.now_ms());
+        let response = hub.handle_serial_wire(frame, &self.connection, hub.now_ms());
         Ok(reply_frames(&response)?.into_iter().map(|frame|json!({"command":"serial-reply","linkId":link,"requestId":id,"frame":frame})).collect())
     }
 }

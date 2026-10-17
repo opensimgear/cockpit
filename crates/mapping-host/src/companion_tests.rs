@@ -56,6 +56,24 @@ fn baseline() -> Vec<Change> {
         })
         .collect()
 }
+#[test]
+fn resource_inventory_retains_descriptors_and_expires_live_authority_without_ui_feeds() {
+    let (provider, clock) = provider();
+    provider.register_definition(definition("left")).unwrap();
+    let retained = provider.resource_inventory();
+    assert!(!retained[0].online);
+    let input = token("left", 1);
+    provider.baseline_native(&input, 0, &baseline()).unwrap();
+    let connected = provider.resource_inventory();
+    assert!(connected[0].online && connected[0].baseline_ready);
+    clock.store(100 + LEASE_US, Ordering::Release);
+    let expired = provider.resource_inventory();
+    assert!(!expired[0].online);
+    assert!(!expired[0].baseline_ready);
+    assert_eq!(expired[0].definition, retained[0].definition);
+    assert!(expired[0].fault.as_deref().unwrap().contains("expired"));
+    assert!(connected[0].online);
+}
 fn change(control: &str, value: Value) -> Change {
     Change {
         control: control.into(),

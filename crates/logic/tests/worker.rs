@@ -5,8 +5,12 @@ use osg_logic::{
 use osg_mapping::{engine::*, profile::Profile, runtime::Runtime, script::*, trace::*};
 use std::{
     path::Path,
+    sync::Mutex,
     time::{Duration, Instant},
 };
+// These tests launch real constrained helpers. Keep this test binary from
+// competing with itself for the unchanged 100 ms production response budget.
+static NATIVE_HELPERS: Mutex<()> = Mutex::new(());
 fn helper() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_osg-logic"))
 }
@@ -94,6 +98,7 @@ fn callback(worker: &mut Worker, runtime: &mut Runtime) {
 }
 #[test]
 fn native_worker_pulse_replay_and_process_death() {
+    let _helpers = NATIVE_HELPERS.lock().unwrap_or_else(|p| p.into_inner());
     let (profile, assignments) = fixture();
     let mut worker = Worker::spawn(helper(), &profile.scripts[0].source).unwrap();
     assert!(worker.id().is_some());
@@ -188,6 +193,7 @@ fn native_worker_pulse_replay_and_process_death() {
 }
 #[test]
 fn compiler_and_ipc_fail_closed() {
+    let _helpers = NATIVE_HELPERS.lock().unwrap_or_else(|p| p.into_inner());
     let (profile, _) = fixture();
     let mut worker = Worker::spawn(helper(), &profile.scripts[0].source).unwrap();
     assert!(worker.alive());
@@ -231,6 +237,7 @@ fn compiler_and_ipc_fail_closed() {
 
 #[test]
 fn framed_worker_exits_cleanly_on_eof_and_rejects_recompilation() {
+    let _helpers = NATIVE_HELPERS.lock().unwrap_or_else(|p| p.into_inner());
     use osg_logic::wire::Reply;
     use std::process::{Command, Stdio};
     for recompile in [false, true] {

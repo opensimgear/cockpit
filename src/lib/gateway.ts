@@ -13,6 +13,8 @@ import type { PanelInputState } from './dcs-profile';
 import type { IntegrationConfig, IntegrationState, IntegrationCommandName, TelemetryFrame } from './integration-profile';
 import type { GamesState, GameProfile, GameId, GameCommand } from './games';
 import type { ProfileCommand, ProfileResult, ProfileDocument } from './profiles';
+import type { ProfileInventoryCommand, ProfileResourcesResult, ResourceToken, ResourceAccess } from './profile-inventory';
+import type { ModuleUsbCommand, ModuleUsbResult, UsbRouteToken } from './module-usb';
 
 export type GatewayBackend = 'pico' | 'stm32';
 export type GatewayPort = { gatewayId?: string; path: string; manufacturer?: string; friendlyName?: string; serialNumber?: string; vendorId?: string; productId?: string; backend?: GatewayBackend };
@@ -67,10 +69,12 @@ export type GatewayState = {
   mappings?: MappingResult;
   companions?: CompanionHostState;
   profiles?: ProfileResult;
+  profileResources?: ProfileResourcesResult;
+  moduleUsb?: ModuleUsbResult;
 };
-export type GatewayCommand = ProfileCommand | CompanionCommand | MappingCommand | ControllerCommand | GameCommand | IntegrationCommandName | 'action_claim' | 'action_renew' | 'action_release' | 'action_ownership' | 'action_invoke_owned' | 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop' | 'debug_describe' | 'debug_invoke';
-type ProfileRequestFields = { id?: string; document?: ProfileDocument; expectedRevision?: number; mode?: 'manual' | 'automatic'; paused?: boolean; selectionSource?: 'manual' | 'automatic'; confirm?: boolean };
-export type GatewayRequest = ProfileRequestFields & { companion?: Record<string, unknown>; launch?: IsolatedLaunch; visibility?: {mode: string; sourceIds: string[]} | null; sourceCode?: string; intent?: VisibilityIntent; sourceIds?: string[]; sessionId?: string; jobId?: string; enabled?: boolean; bindings?: VirtualBinding[]; uploadId?: string; size?: number; bytes?: number[]; assignments?: MappingAssignment[]; source?: MappingSource; token?: MappingToken; changes?: { control: string; value: MappingValue }[]; sourceId?: string; observedId?: string; name?: string; role?: string; gameProfile?: GameProfile; gameId?: GameId; profileId?: string; executable?: string | null; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; integrationConfig?: IntegrationConfig; bindingId?: string; durationMs?: number; resume?: boolean; revision?: number; telemetryFrame?: TelemetryFrame; ownershipToken?: string; leaseId?: number; ttlMs?: number; command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number | string; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number; debugOperation?: DebugOperation; debugArgs?: number[]; preset?: string };
+export type GatewayCommand = ModuleUsbCommand | ProfileInventoryCommand | ProfileCommand | CompanionCommand | MappingCommand | ControllerCommand | GameCommand | IntegrationCommandName | 'action_claim' | 'action_renew' | 'action_release' | 'action_ownership' | 'action_invoke_owned' | 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop' | 'debug_describe' | 'debug_invoke';
+type ProfileRequestFields = { id?: string; document?: ProfileDocument; expectedRevision?: number; mode?: 'manual' | 'automatic'; paused?: boolean; selectionSource?: 'manual' | 'automatic'; confirm?: boolean; resourceId?: string; portId?: string; resourceToken?: ResourceToken; access?: ResourceAccess };
+export type GatewayRequest = ProfileRequestFields & { key?: string; route?: UsbRouteToken; save?: boolean; companion?: Record<string, unknown>; launch?: IsolatedLaunch; visibility?: {mode: string; sourceIds: string[]} | null; sourceCode?: string; intent?: VisibilityIntent; sourceIds?: string[]; sessionId?: string; jobId?: string; enabled?: boolean; bindings?: VirtualBinding[]; uploadId?: string; size?: number; bytes?: number[]; assignments?: MappingAssignment[]; source?: MappingSource; token?: MappingToken; changes?: { control: string; value: MappingValue }[]; sourceId?: string; observedId?: string; name?: string; role?: string; gameProfile?: GameProfile; gameId?: GameId; profileId?: string; executable?: string | null; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; integrationConfig?: IntegrationConfig; bindingId?: string; durationMs?: number; resume?: boolean; revision?: number; telemetryFrame?: TelemetryFrame; ownershipToken?: string; leaseId?: number; ttlMs?: number; command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number | string; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number; debugOperation?: DebugOperation; debugArgs?: number[]; preset?: string };
 
 const clientId = crypto.randomUUID();
 const browserEndpoint = '/api/gateway/';
@@ -87,6 +91,7 @@ const requestQueues = new Map<string, Promise<unknown>>();
 // code yet. Track lifetime with pending requests so arbitrary stale IDs do not
 // leave an ever-growing epoch map behind.
 const companionRoutes = new Map<string, { epoch: number; pending: number }>();
+const usbRoutes = new Map<string, { epoch: number; pending: number }>();
 function queuedRequest(request: GatewayRequest, operation: () => Promise<GatewayState>): Promise<GatewayState> {
   const route = request.command === 'mapping_companion_route';
   const instance = typeof request.companion?.instanceId === 'string' ? request.companion.instanceId : 'invalid';
@@ -98,12 +103,24 @@ function queuedRequest(request: GatewayRequest, operation: () => Promise<Gateway
     if (action === 'stop') ticket.epoch++;
   }
   const epoch = ticket?.epoch;
-  const key = route ? `companion-route:${instance}:${action === 'stop' ? 'stop' : 'requests'}` : request.command.startsWith('profile_') ? 'profiles' : request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command === 'mapping_stop' ? 'mapping-stop' : request.command === 'mapping_virtual_inspect' ? 'mapping-inspect' : request.command.startsWith('mapping_') ? 'mapping' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
+  const usb = request.command.startsWith('module_usb_') && request.command !== 'module_usb_ports' && request.command !== 'module_usb_list';
+  const usbEndpoint = request.key ?? request.port ?? 'invalid';
+  let usbTicket: { epoch: number; pending: number } | undefined;
+  if (usb) {
+    usbTicket = usbRoutes.get(usbEndpoint) ?? { epoch: 0, pending: 0 };
+    usbRoutes.set(usbEndpoint, usbTicket); usbTicket.pending++;
+    // Finish only the operation already handed to native. Cancel older queued
+    // operations before Disconnect reaches the same worker; never replay them.
+    if (request.command === 'module_usb_disconnect') usbTicket.epoch++;
+  }
+  const usbEpoch = usbTicket?.epoch;
+  const key = usb ? `module-usb:${usbEndpoint}` : request.command.startsWith('module_usb_') ? 'module-usb-inventory' : route ? `companion-route:${instance}:${action === 'stop' ? 'stop' : 'requests'}` : request.command.startsWith('profile_resources_') ? 'profile-resources' : request.command.startsWith('profile_') ? 'profiles' : request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command === 'mapping_stop' ? 'mapping-stop' : request.command === 'mapping_virtual_inspect' ? 'mapping-inspect' : request.command.startsWith('mapping_') ? 'mapping' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
   const previous = requestQueues.get(key) ?? Promise.resolve();
   const stopping = route && action === 'start' ? requestQueues.get(`companion-route:${instance}:stop`) : undefined;
   const before = stopping ? Promise.all([previous, stopping]) : previous;
   const pending = before.catch(() => {}).then(() => {
     if (action === 'start' && ticket && epoch !== ticket.epoch) throw new GatewayError('Companion Start was cancelled by Stop; start explicitly again.');
+    if (usbTicket && request.command !== 'module_usb_disconnect' && usbEpoch !== usbTicket.epoch) throw new GatewayError('USB request was cancelled by Disconnect; refresh and request it explicitly again.');
     return operation();
   });
   const settled = pending.then(() => {}, () => {});
@@ -111,6 +128,7 @@ function queuedRequest(request: GatewayRequest, operation: () => Promise<Gateway
   void settled.then(() => {
     if (requestQueues.get(key) === settled) requestQueues.delete(key);
     if (ticket && --ticket.pending === 0 && companionRoutes.get(instance) === ticket) companionRoutes.delete(instance);
+    if (usbTicket && --usbTicket.pending === 0 && usbRoutes.get(usbEndpoint) === usbTicket) usbRoutes.delete(usbEndpoint);
   });
   return pending;
 }

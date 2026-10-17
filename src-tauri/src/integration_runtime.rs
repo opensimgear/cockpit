@@ -347,6 +347,21 @@ fn project_events(events: &mut Value, config: &Value) -> Result<(), String> {
     crate::panel_events::validate(events, None)
 }
 impl IntegrationRuntime {
+    /// Provider setup and context determine descriptors. Reading inventory does
+    /// not change legacy catalogue queries or start a simulator connection.
+    pub(crate) fn resource_catalogue(&self, provider: &str) -> Result<Value, String> {
+        if provider == crate::xplane::PROVIDER { return Ok(crate::xplane::catalogue()); }
+        if provider == crate::game_telemetry::PROVIDER { return Ok(crate::game_telemetry::catalogue()); }
+        if provider != "dcs-bios" { return Err("Unsupported game integration.".into()); }
+        let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        let config = settings.config.as_ref().filter(|config| config.provider() == provider)
+            .ok_or("Choose DCS catalogue and aircraft in game details to expose its ports.")?;
+        let mut query = config.connection.clone();
+        query["aircraftModule"] = config.document["context"]["aircraftModule"].clone();
+        drop(settings);
+        crate::dcs_profile::resource_catalogue(&query)
+    }
+
     pub(crate) fn new(panel: Panel, path: PathBuf) -> Self {
         let saved = fs::read(&path)
             .ok()

@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 pub const ARG: &str = "--osg-logic-worker-v1";
+const RESPONSE_DEADLINE: Duration = Duration::from_millis(100);
+const RESPONSE_TIMEOUT: &str =
+    "Script helper response exceeded 100 ms; evaluation is limited to 5 ms.";
 pub struct Worker {
     pub source_hash: String,
     child: Option<Child>,
@@ -90,10 +93,11 @@ impl Worker {
             return Err("Script helper is busy or stopped.".into());
         }
         let ticket = request.ticket.clone();
+        let started = Instant::now();
         self.outgoing
             .try_send(Request::Invoke { request })
             .map_err(|e| e.to_string())?;
-        self.pending = Some((ticket, Instant::now()));
+        self.pending = Some((ticket, started));
         Ok(())
     }
     pub fn id(&self) -> Option<u32> {
@@ -109,21 +113,7 @@ impl Worker {
     }
     pub fn poll(&mut self) -> Option<(Ticket, Result<Transaction, String>)> {
         let (ticket, started) = self.pending.as_ref()?;
-        let result = match self.incoming.try_recv() {
-            Ok(Ok(Reply::Completed {
-                ticket: reply,
-                result,
-            })) if reply == *ticket => result,
-            Ok(Ok(_)) => Err("Wrong script helper reply token.".into()),
-            Ok(Err(error)) => Err(error),
-            Err(TryRecvError::Disconnected) => Err("Script helper terminated.".into()),
-            Err(TryRecvError::Empty) if started.elapsed() < Duration::from_millis(100) => {
-                return None
-            }
-            Err(TryRecvError::Empty) => {
-                Err("Script helper response exceeded 100 ms; evaluation is limited to 5 ms.".into())
-            }
-        };
+        let result = response(&self.incoming, ticket, *started, Instant::now)?;
         let ticket = ticket.clone();
         self.pending = None;
         if result.is_err() {
@@ -141,6 +131,34 @@ impl Worker {
         self.pending = None;
     }
 }
+// The deadline covers scheduling, transport and decoding, including replies
+// already queued when the host resumes. Receiving bytes never extends it.
+fn response(
+    incoming: &Receiver<Result<Reply, String>>,
+    ticket: &Ticket,
+    started: Instant,
+    mut now: impl FnMut() -> Instant,
+) -> Option<Result<Transaction, String>> {
+    if now().saturating_duration_since(started) >= RESPONSE_DEADLINE {
+        return Some(Err(RESPONSE_TIMEOUT.into()));
+    }
+    let result = match incoming.try_recv() {
+        Ok(Ok(Reply::Completed {
+            ticket: reply,
+            result,
+        })) if reply == *ticket => Some(result),
+        Ok(Ok(_)) => Some(Err("Wrong script helper reply token.".into())),
+        Ok(Err(error)) => Some(Err(error)),
+        Err(TryRecvError::Disconnected) => Some(Err("Script helper terminated.".into())),
+        Err(TryRecvError::Empty) => None,
+    };
+    if now().saturating_duration_since(started) >= RESPONSE_DEADLINE {
+        Some(Err(RESPONSE_TIMEOUT.into()))
+    } else {
+        result
+    }
+}
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.terminate();
@@ -198,4 +216,71 @@ pub fn serve(
 pub fn hash(source: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(source.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use osg_mapping::engine::{Counter, ProducerToken};
+
+    fn ticket() -> Ticket {
+        Ticket {
+            producer: ProducerToken {
+                session: "00000000-0000-4000-8000-000000000001".into(),
+                run_generation: Counter(1),
+                node: "script:output".into(),
+                sources: vec![],
+            },
+            epoch: Counter(1),
+            sequence: Counter(1),
+        }
+    }
+
+    fn completed(ticket: &Ticket) -> Reply {
+        Reply::Completed {
+            ticket: ticket.clone(),
+            result: Ok(Transaction {
+                state: serde_json::json!({}),
+                outputs: vec![],
+                timers: vec![],
+                logs: vec![],
+            }),
+        }
+    }
+
+    #[test]
+    fn expired_queued_reply_cannot_reauthorize_a_completed_transaction() {
+        let (sender, incoming) = mpsc::sync_channel(1);
+        let ticket = ticket();
+        sender.send(Ok(completed(&ticket))).unwrap();
+        let started = Instant::now();
+        let expired = started + RESPONSE_DEADLINE;
+        assert_eq!(
+            response(&incoming, &ticket, started, || expired)
+                .unwrap()
+                .unwrap_err(),
+            RESPONSE_TIMEOUT
+        );
+        // The valid reply was already queued; no late success was consumed.
+        assert!(matches!(
+            incoming.try_recv().unwrap().unwrap(),
+            Reply::Completed { .. }
+        ));
+    }
+
+    #[test]
+    fn deadline_crossing_during_reply_admission_discards_success() {
+        let (sender, incoming) = mpsc::sync_channel(1);
+        let ticket = ticket();
+        sender.send(Ok(completed(&ticket))).unwrap();
+        let started = Instant::now();
+        let mut clock = [started, started + RESPONSE_DEADLINE].into_iter();
+        assert_eq!(
+            response(&incoming, &ticket, started, || clock.next().unwrap())
+                .unwrap()
+                .unwrap_err(),
+            RESPONSE_TIMEOUT
+        );
+        assert!(matches!(incoming.try_recv(), Err(TryRecvError::Empty)));
+    }
 }

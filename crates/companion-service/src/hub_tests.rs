@@ -373,6 +373,24 @@ fn two_distinct_panels_and_two_instances_share_a_hub_with_isolated_sources() {
     assert!(!status.to_string().contains(&a));
 }
 #[test]
+fn source_transport_is_native_adapter_metadata_and_tracks_the_current_owner() {
+    let hub = Hub::new("host".into(), Arc::new(Sink::default()));
+    let secret = paired(&hub, "panel");
+    let publication = publish(&hub, fixture());
+    assign(&hub, "panel", "instance", &publication.publication_hash);
+    assert_eq!(hub.handle_serial_wire(json!({"type":"auth","token":secret}), "usb-connection", hub.now_ms())["ok"], true);
+    let opened = hub.handle_serial_wire(json!({"type":"open","instanceId":"instance"}), "usb-connection", hub.now_ms());
+    let mut initial = frame(&opened, "baseline", "0");
+    initial["values"] = serde_json::to_value(publication.controls.iter().map(|control| (control.id.clone(), control.fallback())).collect::<BTreeMap<_,_>>()).unwrap();
+    assert_eq!(hub.handle_serial_wire(initial, "usb-connection", hub.now_ms())["ok"], true);
+    assert_eq!(hub.source_transport("instance"), Some(SourceTransport::Usb));
+    hub.disconnect_connection("usb-connection", hub.now_ms());
+    assert_eq!(hub.source_transport("instance"), None);
+    let opened = connect(&hub, "network-connection", &secret, "instance");
+    assert_eq!(baseline(&hub, "network-connection", &opened, &publication)["ok"], true);
+    assert_eq!(hub.source_transport("instance"), Some(SourceTransport::Network));
+}
+#[test]
 fn forged_assignments_versions_and_sessions_never_gain_input_authority() {
     let sink = Arc::new(Sink::default());
     let h = Hub::new("host".into(), sink.clone());

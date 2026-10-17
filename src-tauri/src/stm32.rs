@@ -538,6 +538,10 @@ fn action_route(state: &Value, id: &str) -> Option<Value> {
             ])
         })
 }
+fn configuration_generation(state: &Value, id: &str) -> Value {
+    state["modules"].as_array().into_iter().flatten().find(|module| module["id"] == id)
+        .map_or(Value::Null, |module| module["configurationGeneration"].clone())
+}
 struct Gateway {
     role: Role,
     factory: Box<dyn Factory>,
@@ -557,6 +561,18 @@ struct Gateway {
     events_reply: Option<Value>,
 }
 impl Gateway {
+    fn configuration_claims(&self) -> Vec<(Instant, crate::module_configuration_routes::WriterPin)> {
+        if self.connection.is_none() || self.state["connected"] != true {
+            return vec![];
+        }
+        self.claims.iter().filter_map(|(module_id,claim)| {
+            let boot = u32::try_from(claim.boot?).ok().filter(|boot|*boot > 0)?;
+            let expires = claim.seen + self.timing.claim_timeout;
+            (expires > Instant::now()).then(|| (expires,crate::module_configuration_routes::WriterPin {
+                module_id:module_id.clone(),client_id:claim.client.clone(),boot,
+            }))
+        }).collect()
+    }
     #[cfg(test)]
     fn new(factory: Box<dyn Factory>, timing: Timing, cancel: Arc<AtomicBool>) -> Self {
         Self::with_role(factory, timing, cancel, Role::Can)
@@ -674,10 +690,10 @@ impl Gateway {
         });
         state["ports"] = self.state["ports"].clone();
         state["port"] = self.state["port"].clone();
-        self.actions
-            .retain(|id, cache| action_route(&state, id).as_ref() == Some(&cache.route));
-        self.events
-            .retain(|id, cache| action_route(&state, id).as_ref() == Some(&cache.route));
+        self.actions.retain(|id, cache| action_route(&state, id).as_ref() == Some(&cache.route)
+            && configuration_generation(&self.state, id) == configuration_generation(&state, id));
+        self.events.retain(|id, cache| action_route(&state, id).as_ref() == Some(&cache.route)
+            && configuration_generation(&self.state, id) == configuration_generation(&state, id));
         self.configs.retain(|id, _| {
             state["modules"].as_array().unwrap().iter().any(|m| {
                 m["id"] == *id
@@ -1311,6 +1327,7 @@ impl Gateway {
         }
         let mut route = action_route(&self.state, id)
             .ok_or("Reconnect the device before using its actions.")?;
+        let generation = configuration_generation(&self.state, id);
         if !matches!(
             command,
             "action_describe" | "action_state" | "action_ownership"
@@ -1326,7 +1343,7 @@ impl Gateway {
             .unwrap_or_else(
                 || json!({"boot":route[3],"actions":[],"states":[],"status":"unknown"}),
             );
-        let result: Result<(), String> = (|| {
+        let mut result: Result<(), String> = (|| {
             if command == "action_describe" {
                 let mut descriptors = Vec::new();
                 let mut offset = 0;
@@ -1466,6 +1483,9 @@ impl Gateway {
             cached["error"] = Value::Null;
             Ok(())
         })();
+        if generation != configuration_generation(&self.state, id) {
+            result = Err("The device configuration changed while reading its action capabilities. Read the new configuration and discover actions again; no mutation is repeated.".into());
+        }
         if let Err(error) = &result {
             cached["status"] = json!(if error.contains("does not advertise")
                 || error.contains("unknown_command")
@@ -1482,6 +1502,7 @@ impl Gateway {
             cached["states"] = json!([]);
         }
         cached["route"] = route.clone();
+        cached["configurationGeneration"] = generation;
         self.actions.insert(
             id.into(),
             ActionCache {
@@ -1498,6 +1519,7 @@ impl Gateway {
         }
         let route = action_route(&self.state, id)
             .ok_or("Reconnect the device before reading input events.")?;
+        let generation = configuration_generation(&self.state, id);
         if request.get("boot").is_some_and(|boot| *boot != route[3]) {
             return Err("The device restarted. Establish a new input event baseline.".into());
         }
@@ -1521,25 +1543,49 @@ impl Gateway {
             || "state".into(),
             |(stream, after)| format!("read {stream} {after}"),
         );
-        self.exchange(
+        // A failed fresh read withdraws the prior baseline; its retained
+        // descriptors remain inventory metadata, never current input authority.
+        self.events.remove(id);
+        let result = self.exchange(
             &format!("events {id} {} {child}", route[3]),
             self.timing.command,
-        )?;
-        if action_route(&self.state, id).as_ref() != Some(&route) {
+        );
+        if action_route(&self.state, id).as_ref() != Some(&route) || configuration_generation(&self.state, id) != generation {
             return Err("The device input event route changed. Establish a new baseline.".into());
+        }
+        let unsupported = |worker: &mut Self| -> Result<(), String> {
+            worker.events.insert(id.into(), ActionCache {
+                route: route.clone(),
+                value: json!({"status":"unsupported","boot":route[3],"route":route,"configurationGeneration":generation}),
+            });
+            Ok(())
+        };
+        if let Err(error) = result {
+            // The existing settings fallback returns this exact rejection plus
+            // a valid settings snapshot when no event handler is installed.
+            // A timeout, unrelated rejection or malformed snapshot proves none
+            // of those facts and must never become an unsupported marker.
+            if read.is_none()
+                && error == "CAN gateway rejected the request: invalid_request"
+                && self.events_reply.as_ref().is_some_and(|value| crate::runtime::validate(value).is_ok())
+            {
+                return unsupported(self);
+            }
+            return Err(error);
         }
         let mut reply = self
             .events_reply
             .take()
             .ok_or(crate::panel_events::INVALID)?;
         if reply["ok"] == false {
-            return Err(format!(
-                "The device rejected the input event read: {}",
-                reply["error"]
-                    .as_str()
-                    .filter(|s| printable(s, 128))
-                    .ok_or(crate::panel_events::INVALID)?
-            ));
+            let error = reply["error"].as_str().filter(|s| printable(s, 128))
+                .ok_or(crate::panel_events::INVALID)?;
+            if read.is_none() && error == "unknownCommand"
+                && reply.as_object().is_some_and(|object| object.len() == 2)
+            {
+                return unsupported(self);
+            }
+            return Err(format!("The device rejected the input event read: {error}"));
         }
         crate::panel_events::validate(&reply, read)?;
         let module = self.state["modules"]
@@ -1553,6 +1599,7 @@ impl Gateway {
         }
         reply["boot"] = route[3].clone();
         reply["route"] = route.clone();
+        reply["configurationGeneration"] = generation;
         self.events.insert(
             id.into(),
             ActionCache {
@@ -1977,6 +2024,9 @@ impl Gateway {
             "save" => self.exchange("save", self.timing.command),
             "apply" | "reconnect" => self.apply(),
             "claim" => {
+                let prefer_usb = request.get("_directUsbPreferred").map_or(Ok(false), |value| {
+                    value.as_bool().ok_or("Invalid internal configuration route preference.")
+                })?;
                 if self
                     .claims
                     .get(&module_id)
@@ -1984,12 +2034,22 @@ impl Gateway {
                 {
                     return Err("Another Cockpit session owns this module.".into());
                 }
+                if prefer_usb && !self.claims.get(&module_id)
+                    .is_some_and(|claim| claim.client == client && claim.boot.is_some()) {
+                    return Err(crate::module_configuration_routes::PREFER_USB.into());
+                }
                 if self.automatic() {
                     // Publication renews CAN leases before devices accept their
                     // next assignment. Probe with reads before sending claim once.
                     self.read_active(&module_id, None)?;
                 } else {
                     self.exchange("snapshot", self.timing.command)?;
+                }
+                // Refresh may invalidate an old route/epoch claim. Preference
+                // must never turn that expired session into a new CAN writer.
+                if prefer_usb && !self.claims.get(&module_id)
+                    .is_some_and(|claim| claim.client == client && claim.boot.is_some()) {
+                    return Err(crate::module_configuration_routes::PREFER_USB.into());
                 }
                 let module = self.state["modules"]
                     .as_array()
@@ -2139,6 +2199,7 @@ pub struct Stm32Service {
     sender: mpsc::SyncSender<Message>,
     closed: Arc<AtomicBool>,
     state: Arc<Mutex<Value>>,
+    configuration_claims: Arc<Mutex<Vec<(Instant, crate::module_configuration_routes::WriterPin)>>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 impl Default for Stm32Service {
@@ -2147,6 +2208,17 @@ impl Default for Stm32Service {
     }
 }
 impl Stm32Service {
+    pub(crate) fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
+        if self.closed.load(Ordering::Acquire) {
+            return vec![];
+        }
+        self.configuration_claims.lock().unwrap_or_else(|p|p.into_inner()).iter()
+            .filter(|(expires,_)|*expires > Instant::now()).map(|(_,pin)|pin.clone()).collect()
+    }
+    pub(crate) fn cached_state(&self) -> Value {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory), Timing::default())
     }
@@ -2166,6 +2238,8 @@ impl Stm32Service {
         }
         let state = Arc::new(Mutex::new(initial));
         let latest = state.clone();
+        let configuration_claims = Arc::new(Mutex::new(Vec::new()));
+        let latest_claims = configuration_claims.clone();
         let worker = thread::Builder::new()
             .name("osg-stm32-cdc".into())
             .spawn(move || {
@@ -2178,6 +2252,7 @@ impl Stm32Service {
                         Ok(Message::Request(request, response)) => {
                             seen = Instant::now();
                             let result = gateway.request(request);
+                            *latest_claims.lock().unwrap_or_else(|p|p.into_inner()) = gateway.configuration_claims();
                             *latest.lock().unwrap_or_else(|p| p.into_inner()) =
                                 gateway.decorated(None);
                             let _ = response.send(result);
@@ -2185,6 +2260,7 @@ impl Stm32Service {
                         Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             gateway.heartbeat(seen);
+                            *latest_claims.lock().unwrap_or_else(|p|p.into_inner()) = gateway.configuration_claims();
                             heartbeat = Instant::now() + gateway.timing.heartbeat;
                             *latest.lock().unwrap_or_else(|p| p.into_inner()) =
                                 gateway.decorated(None);
@@ -2192,6 +2268,7 @@ impl Stm32Service {
                     }
                 }
                 gateway.close();
+                latest_claims.lock().unwrap_or_else(|p|p.into_inner()).clear();
                 *latest.lock().unwrap_or_else(|p| p.into_inner()) = gateway.decorated(None);
                 while let Ok(Message::Request(_, response)) = receiver.try_recv() {
                     let _ = response
@@ -2203,6 +2280,7 @@ impl Stm32Service {
             sender,
             closed,
             state,
+            configuration_claims,
             worker: Mutex::new(Some(worker)),
         }
     }
@@ -2805,6 +2883,7 @@ mod tests {
             } else {
                 match command {
                     "events" => {
+                        error = context.action_outer_error;
                         assert_eq!(tokens[4], MODULE);
                         assert_eq!(tokens[5], "100");
                         if context.config_restart {
@@ -2897,7 +2976,7 @@ mod tests {
                     "config" => {
                         assert_eq!(tokens[4], MODULE);
                         let pending = tokens[6] == "apply_save";
-                        assert!(pending || matches!(tokens[6], "get_active" | "claim"));
+                        assert!(pending || matches!(tokens[6], "get_active" | "claim" | "release"));
                         if (pending && context.drop_config_ack)
                             || (!pending && context.disconnect_config_read_once)
                         {
@@ -2932,6 +3011,8 @@ mod tests {
                         } else {
                             let owner = if tokens[6] == "claim" {
                                 tokens[7].parse::<u32>().unwrap()
+                            } else if tokens[6] == "release" {
+                                0
                             } else {
                                 17
                             };
@@ -3906,6 +3987,66 @@ mod tests {
         );
     }
     #[test]
+    fn direct_usb_preference_rejects_new_can_claim_but_keeps_a_fresh_pinned_writer() {
+        let (mut gateway, context) = automatic_harness();
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(100);
+        assert_eq!(connect(&mut gateway)["ok"], true);
+        context.lock().unwrap().writes.clear();
+        let preferred = json!({"moduleId":MODULE,"_directUsbPreferred":true});
+        let rejected = request(&mut gateway,"claim",preferred.clone());
+        assert_eq!(rejected["ok"],false);
+        assert!(rejected["error"].as_str().unwrap().contains("Direct USB configuration"));
+        assert!(context.lock().unwrap().writes.is_empty(),"a new preferred-USB claim must not touch CAN ownership");
+        assert_eq!(request(&mut gateway,"claim",json!({"moduleId":MODULE}))["ok"],true);
+        let pinned = (gateway.claims[MODULE].node,gateway.claims[MODULE].lease,gateway.claims[MODULE].boot);
+        context.lock().unwrap().writes.clear();
+        let renewed = request(&mut gateway,"claim",preferred.clone());
+        assert_eq!(renewed["ok"],true,"{renewed}");
+        assert_eq!(gateway.claims[MODULE].node,pinned.0);
+        assert_eq!(gateway.claims[MODULE].lease,pinned.1);
+        assert_eq!(gateway.claims[MODULE].boot,pinned.2);
+        let wire = context.lock().unwrap().writes.clone();
+        assert_eq!(wire.iter().filter(|line|line.contains(" claim ")).count(),1);
+        assert!(wire.iter().all(|line|!line.contains(" release ") && !line.contains(" discard ") && !line.contains(" apply ")));
+        context.lock().unwrap().state["modules"][0]["lease"] = json!(65538);
+        context.lock().unwrap().writes.clear();
+        let expired = request(&mut gateway,"claim",preferred);
+        assert_eq!(expired["ok"],false);
+        assert!(gateway.claims.is_empty());
+        assert!(!context.lock().unwrap().writes.iter().any(|line|line.contains(" claim ")),"a stale pinned claim must not be silently recreated on CAN");
+    }
+    #[test]
+    fn actual_configuration_pins_track_claim_release_route_invalidation_and_expiry_privately() {
+        let (_,context) = automatic_harness();
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(100);
+        let mut timing = timing();
+        timing.heartbeat = Duration::from_secs(60);
+        let service = Stm32Service::with_factory(Box::new(MockFactory(context.clone())),timing);
+        assert_eq!(service.request(json!({"command":"connect","port":PATH,"clientId":CLIENT}))["ok"],true);
+        let claim = json!({"command":"claim","moduleId":MODULE,"clientId":CLIENT});
+        assert_eq!(service.request(claim.clone())["ok"],true);
+        let pins = service.configuration_claims();
+        assert_eq!(pins.len(),1);
+        assert_eq!(pins[0].module_id,MODULE);
+        assert_eq!(pins[0].client_id,CLIENT);
+        assert_eq!(pins[0].boot,100);
+        assert_eq!(service.cached_state()["claimedModules"],json!([]),"private ownership must not rely on a caller-specific inventory field");
+        assert!(service.cached_state().get("configurationClaims").is_none());
+        service.configuration_claims.lock().unwrap()[0].0 = Instant::now() - Duration::from_millis(1);
+        assert!(service.configuration_claims().is_empty(),"expired mirrors cannot pin a dead host session");
+        assert_eq!(service.request(claim.clone())["ok"],true);
+        assert_eq!(service.configuration_claims().len(),1);
+        let released = service.request(json!({"command":"release","moduleId":MODULE,"clientId":CLIENT}));
+        assert_eq!(released["ok"],true,"{released}");
+        assert!(service.configuration_claims().is_empty());
+        assert_eq!(service.request(claim)["ok"],true);
+        context.lock().unwrap().state["modules"][0]["boot"] = json!(101);
+        assert_eq!(service.request(json!({"command":"status","clientId":CLIENT}))["ok"],true);
+        assert!(service.configuration_claims().is_empty(),"a restarted module invalidates its pinned writer");
+        service.shutdown();
+        assert!(service.configuration_claims().is_empty());
+    }
+    #[test]
     fn cached_configuration_survives_usb_reconnect_but_expires_on_same_boot_generation_change() {
         let (mut gateway, _) = harness();
         let mut wire = state();
@@ -3924,10 +4065,18 @@ mod tests {
             "Current controller"
         );
         gateway.configs.insert(MODULE.into(), cached);
+        let route = action_route(&gateway.state, MODULE).unwrap();
+        gateway.actions.insert(MODULE.into(), ActionCache { route: route.clone(), value: json!({"status":"ready"}) });
+        gateway.events.insert(MODULE.into(), ActionCache { route, value: json!({"ok":true}) });
+        gateway.accept(&wire).unwrap();
+        assert!(!gateway.actions.is_empty());
+        assert!(!gateway.events.is_empty());
         wire["modules"][0]["configurationGeneration"] = json!(6);
         gateway.accept(&wire).unwrap();
         assert!(gateway.configs.is_empty());
         assert!(gateway.active_configs.is_empty());
+        assert!(gateway.actions.is_empty());
+        assert!(gateway.events.is_empty());
         assert!(gateway.decorated(Some(CLIENT))["moduleConfigs"][MODULE].is_null());
         assert_eq!(gateway.state["modules"][0]["boot"], 100);
         wire["modules"][0]["configurationGeneration"] = json!(u64::from(u32::MAX) + 1);
@@ -4288,4 +4437,60 @@ mod tests {
         wire["modules"][0]["profile"]["revision"] = json!(0);
         assert!(snapshot(&wire, None).is_err());
     }
+    #[test]
+    fn events_unsupported_is_known_without_a_baseline_and_expires_on_configuration_change() {
+        let (mut gateway, context) = action_harness();
+        connect(&mut gateway);
+        context.lock().unwrap().action_error = Some("unknownCommand");
+        let reply = request(&mut gateway,"events_state",json!({"moduleId":MODULE,"boot":100}));
+        assert_eq!(reply["ok"],true,"{reply}");
+        let marker=&reply["state"]["moduleEvents"][MODULE];
+        assert_eq!(marker["status"],"unsupported");
+        assert!(marker.get("ok").is_none() && marker.get("held").is_none() && marker.get("head").is_none());
+        assert_eq!(reply["state"]["connected"],true);
+        context.lock().unwrap().action_error=None;
+        let actions=request(&mut gateway,"action_describe",json!({"moduleId":MODULE,"boot":100}));
+        assert_eq!(actions["state"]["moduleActions"][MODULE]["status"],"ready");
+        assert_eq!(actions["state"]["moduleEvents"][MODULE]["status"],"unsupported");
+        let mut wire=context.lock().unwrap().state.clone();
+        wire["modules"][0]["configurationGeneration"]=json!(123);
+        gateway.accept(&wire).unwrap();
+        assert!(gateway.events.is_empty());
+    }
+    #[test]
+    fn events_capability_negative_requires_exact_current_validated_discovery_reply() {
+        for negative in [json!({"ok":false,"error":"invalidStream"}),json!({"ok":false,"error":"unknownCommand","held":[]}),json!({"ok":false,"error":5}),json!("unknownCommand")] {
+            let (mut gateway, context)=action_harness();connect(&mut gateway);
+            assert_eq!(request(&mut gateway,"events_state",json!({"moduleId":MODULE}))["ok"],true);
+            context.lock().unwrap().action_replies.push_back(negative);
+            assert_eq!(request(&mut gateway,"events_state",json!({"moduleId":MODULE}))["ok"],false);
+            assert!(gateway.events.is_empty(),"A failed fresh read must withdraw its old baseline");
+        }
+        let (mut gateway, context)=action_harness();connect(&mut gateway);
+        context.lock().unwrap().action_error=Some("unknownCommand");
+        context.lock().unwrap().config_restart=true;
+        assert_eq!(request(&mut gateway,"events_state",json!({"moduleId":MODULE}))["ok"],false);
+        assert!(gateway.events.is_empty(),"A stale route cannot prove unsupported capabilities");
+    }
+    #[test]
+    fn events_legacy_negative_needs_a_valid_settings_snapshot_and_timeouts_never_mean_unsupported() {
+        let configuration=json!({"generation":1,"savedGeneration":1,"owner":0,"dirty":false,"pendingApply":false,"view":"active","valid":true,
+            "config":{"name":"Older module","expanderMask":0,"buttons":[[0,0,0]],"axes":[],"hats":[],"encoders":[],"selectors":[]}});
+        let (mut gateway, context)=action_harness();connect(&mut gateway);
+        context.lock().unwrap().action_outer_error=Some("invalid_request");
+        context.lock().unwrap().action_replies.push_back(configuration.clone());
+        let result=request(&mut gateway,"events_state",json!({"moduleId":MODULE}));
+        assert_eq!(result["ok"],true,"{result}");
+        assert_eq!(result["state"]["moduleEvents"][MODULE]["status"],"unsupported");
+        let mut malformed=configuration;malformed["config"]["buttons"]=json!("invalid");
+        context.lock().unwrap().action_replies.push_back(malformed);
+        assert_eq!(request(&mut gateway,"events_state",json!({"moduleId":MODULE}))["ok"],false);
+        assert!(gateway.events.is_empty());
+        let (mut gateway, context)=action_harness();connect(&mut gateway);
+        gateway.timing.command=Duration::from_millis(5);context.lock().unwrap().timeout=Some("events".into());
+        assert_eq!(request(&mut gateway,"events_state",json!({"moduleId":MODULE}))["ok"],false);
+        assert!(gateway.events.is_empty());
+        assert_eq!(context.lock().unwrap().writes.iter().filter(|line|line.contains(" events ")).count(),1);
+    }
+
 }

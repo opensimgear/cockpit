@@ -1,3 +1,5 @@
+import { panelInputMetadata, type PanelInputState } from './panel-input-metadata';
+export type { PanelInputSnapshot, PanelInputUnsupported, PanelInputState, PanelInputMetadata } from './panel-input-metadata';
 import { supportsDeviceContracts } from './gateway-capabilities';
 import type { DcsBiosLegacyConfig, DcsBiosStatus } from './dcs-bios';
 import type { DeviceAction, DeviceActions, ActionValue } from './device-actions';
@@ -32,12 +34,6 @@ export type DcsCatalogueControl = {
 export type DcsCataloguePage = {
   cataloguePath: string; aircraftModule: string; query: string; kind: 'input' | 'output' | 'all';
   offset: number; total: number; controls: DcsCatalogueControl[];
-};
-export type PanelInputState = {
-  boot: number; stream: number; head: number; buttonCount: number; contactButtonCount?: number;
-  held: boolean[]; encoderButtons: number[]; maintainedButtons?: number[]; selectorButtons?: number[][];
-  axisCount?: number; axes?: number[]; axisAvailable?: boolean[]; axisNeutral?: number[];
-  axisUsage?: number[]; sampledAtMs?: number;
 };
 export type DcsTarget = { gatewayId: string; module: GatewayModule; state: GatewayState | null; busy?: boolean; label: string };
 export type DcsBindingStatus = {
@@ -141,11 +137,12 @@ export function dcsProfileError(profile: DcsProfileConfig): string {
 }
 
 export function physicalDcsControls(kind: DcsInputKind, events?: PanelInputState): { value: number; label: string }[] {
-  if (!events) return [];
-  if (kind === 'axis') return Array.from({ length: events.axisCount ?? events.axes?.length ?? 0 }, (_, value) => ({ value, label: `Axis ${value} · calibrated 0–65535` }));
-  if (kind === 'encoder') return Array.from({ length: Math.floor(events.encoderButtons.length / 2) }, (_, value) => ({ value, label: `Encoder ${value} · buttons ${events.encoderButtons[value * 2]}/${events.encoderButtons[value * 2 + 1]}` }));
-  const count = events.contactButtonCount ?? 0;
-  return Array.from({ length: count }, (_, value) => value).filter(value => kind === 'switch' ? events.maintainedButtons?.includes(value) : !events.maintainedButtons?.includes(value)).map(value => ({ value, label: `${kind === 'switch' ? 'Switch' : 'Button'} ${value}` }));
+  const metadata = panelInputMetadata(events);
+  if (!metadata) return [];
+  if (kind === 'axis') return Array.from({ length: metadata.axisCount ?? metadata.axes?.length ?? 0 }, (_, value) => ({ value, label: `Axis ${value} · calibrated 0–65535` }));
+  if (kind === 'encoder') return Array.from({ length: Math.floor(metadata.encoderButtons.length / 2) }, (_, value) => ({ value, label: `Encoder ${value} · buttons ${metadata.encoderButtons[value * 2]}/${metadata.encoderButtons[value * 2 + 1]}` }));
+  const count = metadata.contactButtonCount ?? 0;
+  return Array.from({ length: count }, (_, value) => value).filter(value => kind === 'switch' ? metadata.maintainedButtons?.includes(value) : !metadata.maintainedButtons?.includes(value)).map(value => ({ value, label: `${kind === 'switch' ? 'Switch' : 'Button'} ${value}` }));
 }
 export function dcsInputInterfaces(kind: DcsInputKind, control?: DcsCatalogueControl): string[] {
   const allowed = kind === 'encoder' ? ['fixed_step', 'variable_step'] : ['set_state'];
@@ -196,7 +193,9 @@ export function dcsProfileStartError(profile: DcsProfileConfig, targets: DcsTarg
     const target = targets.find(target => target.gatewayId === binding.gatewayId && target.module.id === binding.moduleId)!;
     const events = target.state?.moduleEvents?.[binding.moduleId];
     if (saved?.schemaVersion === 1 && dcsProfileEqual(profile, saved)) {
-      if (saved.button >= target.module.buttonCount || events?.encoderButtons.includes(saved.button)) return `Choose a momentary button within ${target.label} controls.`;
+      const metadata = panelInputMetadata(events);
+      if (events && !metadata) return `Refresh ${target.label} capabilities; this device does not advertise input event controls.`;
+      if (saved.button >= target.module.buttonCount || metadata?.encoderButtons.includes(saved.button)) return `Choose a momentary button within ${target.label} controls.`;
       continue;
     }
     if (events?.boot !== target.module.boot || !physicalDcsControls(binding.kind, events).some(control => control.value === binding.control)) return `Refresh ${target.label} capabilities and choose an available ${binding.kind}.`;

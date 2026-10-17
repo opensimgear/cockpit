@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 
 import { loadModules } from './test-module-loader.mjs';
-const modules=await loadModules(['./integration-profile']);
+const modules=await loadModules(['./panel-input-metadata', './integration-profile']);
 const api=modules.get('./integration-profile');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const {newIntegrationConfig,integrationError,integrationFormatError,exportIntegrationDocument,importIntegrationDocument,
@@ -163,4 +163,14 @@ test('schema two logical feedback is independent of physical roles and preserves
  const mixed=config();mixed.document.schemaVersion=2;mixed.document.feedbackOutputs=[{id:'rev',channel:'rpm'}];assert.ok(integrationError(mixed));mixed.document.feedbackOutputs=[{id:'feedback',channel:'rpm'}];assert.equal(integrationError(mixed),'');
  mixed.document.outputs=Array.from({length:16},(_,i)=>({...mixed.document.outputs[0],id:'o'+i,endpoint:'e'+i}));assert.ok(integrationError(mixed));
  const empty=plain(upgraded);empty.document.feedbackOutputs=[];assert.ok(integrationError(empty));
+});
+
+test('unsupported event markers never invent integration input controls', () => {
+  const unsupported={status:'unsupported',boot:9,route:[1,1,2,9],configurationGeneration:1};
+  for(const value of [unsupported,{},null,{...events,encoderButtons:null},{...events,encoderButtons:[3]},{...events,axisCount:999}]) {
+    for(const kind of ['button','switch','encoder','axis']) assert.deepEqual(plain(integrationPhysicalControls(kind,value)),[]);
+  }
+  const input=dcs();input.document.inputs=[{id:'input',role:'panel',kind:'encoder',control:0,command:'MASTER',interface:'fixed_step'}];
+  const unavailable={...target,module:{...target.module,enabled:false,published:false},state:{...target.state,moduleEvents:{[moduleId]:unsupported}}};
+  assert.match(integrationStartError(input,[unavailable]),/Refresh/);
 });

@@ -1,5 +1,6 @@
 import type { ActionValue, DeviceAction, DeviceActions } from './device-actions';
 import type { DcsInputKind, DcsTarget, PanelInputState } from './dcs-profile';
+import { panelInputMetadata } from './panel-input-metadata';
 
 export type IntegrationProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'x-plane';
 export type IntegrationRole = { id: string; label: string };
@@ -228,10 +229,11 @@ export function renameIntegrationRole(config: IntegrationConfig, previous: strin
     assignments:config.assignments.map(a => a.role === previous ? {...a,role:next} : a) };
 }
 export function integrationPhysicalControls(kind: DcsInputKind, events?: PanelInputState): { value: number; label: string }[] {
-  if (!events) return [];
-  if (kind === 'axis') return Array.from({ length: events.axisCount ?? 0 },(_,value) => ({ value,label:`Axis ${value}` }));
-  if (kind === 'encoder') return Array.from({ length: Math.floor(events.encoderButtons.length/2) },(_,value) => ({ value,label:`Encoder ${value}` }));
-  return Array.from({length:events.contactButtonCount ?? 0},(_,value) => value).filter(value => kind === 'switch' ? events.maintainedButtons?.includes(value) : !events.maintainedButtons?.includes(value)).map(value => ({ value,label:`${kind === 'switch' ? 'Switch' : 'Button'} ${value}` }));
+  const metadata = panelInputMetadata(events);
+  if (!metadata) return [];
+  if (kind === 'axis') return Array.from({ length: metadata.axisCount ?? 0 },(_,value) => ({ value,label:`Axis ${value}` }));
+  if (kind === 'encoder') return Array.from({ length: Math.floor(metadata.encoderButtons.length/2) },(_,value) => ({ value,label:`Encoder ${value}` }));
+  return Array.from({length:metadata.contactButtonCount ?? 0},(_,value) => value).filter(value => kind === 'switch' ? metadata.maintainedButtons?.includes(value) : !metadata.maintainedButtons?.includes(value)).map(value => ({ value,label:`${kind === 'switch' ? 'Switch' : 'Button'} ${value}` }));
 }
 export function integrationStartError(config: IntegrationConfig, targets: IntegrationTarget[]): string {
   const error = integrationError(config); if (error) return error;

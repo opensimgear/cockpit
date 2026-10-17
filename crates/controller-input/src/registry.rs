@@ -156,13 +156,33 @@ pub fn fingerprint(controls: &[Control]) -> String {
         Sha256::digest(serde_json::to_vec(controls).expect("serializable controls"))
     )
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SavedSource {
     pub id: String,
     pub identity: Identity,
     pub name: String,
     pub role: String,
+}
+
+/// One read-only descriptor capture under the registry lock. Values and event
+/// cursors stay in the input service; inventory consumers cannot acquire input.
+#[derive(Clone, Debug)]
+pub struct ResourceDescriptor {
+    pub saved: SavedSource,
+    pub online: bool,
+    pub generation: u64,
+    pub baseline_ready: bool,
+    pub controls: Vec<Control>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResourceInventory {
+    pub session: String,
+    pub backend_status: String,
+    pub diagnostic: String,
+    pub sources: Vec<ResourceDescriptor>,
 }
 #[derive(Clone)]
 struct Source {
@@ -227,6 +247,19 @@ impl Default for Registry {
     }
 }
 impl Registry {
+    pub fn resource_inventory(&self) -> ResourceInventory {
+        ResourceInventory {
+            session: self.session.clone(),
+            backend_status: self.backend_status.clone(),
+            diagnostic: self.diagnostic.clone(),
+            sources: self.sources.values().map(|source| ResourceDescriptor {
+                saved: source.saved.clone(), online: source.online,
+                generation: source.generation, baseline_ready: source.ready(),
+                controls: source.controls.clone(), diagnostics: source.diagnostics.clone(),
+            }).collect(),
+        }
+    }
+
     pub fn restore(&mut self, records: Vec<SavedSource>) -> Result<(), String> {
         if records.len() > MAX_SOURCES {
             return Err("Too many remembered controllers.".into());

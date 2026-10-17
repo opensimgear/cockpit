@@ -538,6 +538,13 @@ impl Runtime {
     ) -> Result<osg_companion_service::Publication, String> {
         self.services()?.hub.assigned_publication(instance_id)
     }
+    pub(crate) fn resource_transport(&self, instance_id: &str) -> Option<osg_companion_service::SourceTransport> {
+        self.services.get()?.as_ref().ok()?.hub.source_transport(instance_id)
+    }
+    pub(crate) fn resource_publication(&self, instance_id: &str) -> Result<osg_companion_service::Publication, String> {
+        self.services.get().ok_or("Companion setup is not initialized; no inventory access starts it.")?
+            .as_ref().map_err(Clone::clone)?.hub.assigned_publication(instance_id)
+    }
 
     pub fn shutdown(&self) {
         self.stopped.store(true, Ordering::SeqCst);
