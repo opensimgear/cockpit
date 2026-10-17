@@ -16,6 +16,10 @@ MODULES = ["profile_companion_retention", "profile_retired_recovery", "profile_g
 TEST_FILTERS = ["gateways::companion_retention::tests", "profile_retired_recovery::tests", "gateways::automatic::launch::runtime::tests", "gateways::automatic::launch::tests", "profile_session_host::launch::tests", "profile_session_host::action::tests", "profile_session::topology", "profile_session::launch", "profile_session_actions::tests", "profile_session_host::visibility::tests", "companion_host::authoring", "gateways::companion_authoring", "profile_session_action_lease::tests", "gateways::automatic::tests", "games::launch::tests", "input_learning", "output_leases", "module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "stm32::tests::guarded_restoration", "stm32::tests::atomic_current_claim", "stm32::tests::endpoint_lease", "pico::tests::cached_endpoint_activity", "profile_panels_io", "profile_session_panels_inputs", "profile_session::inspection", "gateways::tests::applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate", "profile_session_companions::tests", "profile_session_host::companion::tests", "profile_session_visibility::tests", "profile_session_overrides::tests", "game_activation", "profile_automatic_store"]
 
 
+MODULES.append("stm32_publication")
+TEST_FILTERS.append("stm32::publication::tests")
+
+
 def source_stamp(paths, root):
     return {str(path.relative_to(root)): {
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),

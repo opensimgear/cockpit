@@ -32,6 +32,7 @@ mod companion_retention;
 mod retired_game_io;
 
 trait Adapter: Send + Sync {
+    fn publication(&self,_request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{Err("This transport does not support native controller publication overrides.".into())}
     fn output_activity(&self)->bool{false}
     fn request(&self, request: Value) -> Value;
     fn cached_state(&self) -> Value { empty_state() }
@@ -50,6 +51,7 @@ impl Adapter for PicoService {
     }
 }
 impl Adapter for Stm32Service {
+    fn publication(&self,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{self.publication(request)}
     fn output_activity(&self)->bool{self.output_activity()}
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
     fn cached_state(&self) -> Value { self.cached_state() }

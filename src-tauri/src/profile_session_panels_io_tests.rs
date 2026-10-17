@@ -6,9 +6,14 @@ const MODULE: &str = "4f53474400112233445566778899aabb";
 #[derive(Default)]
 struct Fake {
     calls: Mutex<Vec<Value>>,
+    publications: Mutex<Vec<crate::stm32::PublicationRequest>>,
     claims: Mutex<Vec<crate::module_configuration_routes::WriterPin>>,
 }
 impl Adapter for Fake {
+    fn publication(&self,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{
+        self.publications.lock().unwrap().push(request);
+        Ok(crate::stm32::PublicationReply{state:self.cached_state(),owned:None})
+    }
     fn cached_state(&self) -> Value {
         json!({"connected":true,"modules":[{"id":MODULE,"online":true,"boot":10}]})
     }
@@ -223,4 +228,21 @@ fn cached_native_can_snapshot_performs_no_request_or_discovery() {
     assert!(io.can_snapshot("unknown").is_err());
     io.close();
     assert!(io.can_snapshot(GATEWAY).is_err());
+}
+
+#[test]
+fn native_publication_dispatch_is_typed_exact_scoped_and_closed_after_the_writer_gate(){
+    use crate::stm32::{PublicationOperation,PublicationRequest};
+    let (io,adapter,_,_)=fixture();
+    let read=||PublicationRequest{epoch:10,operation:PublicationOperation::State,authority:None,control_epoch:None};
+    assert!(io.publication(GATEWAY,read()).is_ok());
+    assert_eq!(adapter.publications.lock().unwrap().len(),1);
+    assert!(io.publication("unknown",read()).is_err());
+    assert_eq!(io.can(request("publication_claim"))["ok"],false,"JSON routes cannot provide private ownership");
+    adapter.publications.lock().unwrap().clear();
+    let guard=io.gate.lock().unwrap();let waiting=io.clone();
+    let operation=thread::spawn(move||waiting.publication(GATEWAY,PublicationRequest{epoch:10,operation:PublicationOperation::Release{owner:"1234567890abcdef1234567890abcdef".into(),lease:1},authority:None,control_epoch:None}));
+    thread::sleep(Duration::from_millis(10));assert!(adapter.publications.lock().unwrap().is_empty());
+    io.closed.store(true,Ordering::Release);drop(guard);assert!(operation.join().unwrap().is_err());
+    assert!(io.publication(GATEWAY,read()).is_err());assert!(adapter.publications.lock().unwrap().is_empty());
 }

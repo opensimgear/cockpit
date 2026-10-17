@@ -6,7 +6,7 @@ use std::{
     collections::{HashMap, HashSet},
     io,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -25,6 +25,10 @@ const CONFIG_ROUTE_NOT_READY: &str =
     "The device is renewing its CAN connection. Wait for its route before configuration.";
 const CONFIG_ROUTE_CHANGED: &str =
     "The module configuration route changed while awaiting its reply.";
+
+#[path = "stm32_publication.rs"]
+mod publication;
+pub(crate) use publication::{PublicationOperation, PublicationReply, PublicationRequest};
 
 #[derive(Clone)]
 struct Timing {
@@ -162,6 +166,8 @@ fn role_snapshot(wire: &Value, expected: Option<&str>, role: Role) -> Result<Val
     }
     let mut normalized = wire.clone();
     normalized["gatewayType"] = json!("stm32-can-gateway");
+    // A debug transport cannot acquire the physical CAN publisher capability.
+    normalized["controllerPublicationOverride"] = Value::Null;
     let mut state = snapshot(&normalized, expected)?;
     state["backend"] = json!("pico");
     state["gatewayType"] = json!("pico-debug-gateway");
@@ -342,6 +348,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
     if input.len() > capacity {
         return Err(bad());
     }
+    let publication = publication::metadata(wire)?;
     let mut ids = HashSet::new();
     let mut nodes = HashSet::new();
     let mut pending_slots = HashSet::new();
@@ -374,6 +381,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
             if wire["layoutPending"] == false
                 && wire["layoutError"].is_null()
                 && enabled != published
+                && !publication.as_ref().is_some_and(|state| publication::permits_overlay(state,module))
             {
                 return Err(bad());
             }
@@ -408,7 +416,9 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
         let label = format!("CAN device {}", &id[24..]);
         let delivering = wire["running"] == true
             && active >= 0
-            && (!automatic || module["enabled"] == true)
+            && (!automatic || module["enabled"] == true
+                || publication.as_ref().is_some_and(|state|publication::permits_overlay(state,module)))
+            && publication.as_ref().is_none_or(|state|publication::deliverable(state,module,wire["layoutPending"]==true))
             && module["online"] == true
             && module["directUsb"] == false
             && module["profileMatch"] == true
@@ -420,7 +430,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
         {
             return Err(bad());
         }
-        modules.push(json!({
+        let mut normalized = json!({
             "id":id,"name":label,"kind":"panel", "online":module["online"],
             "registered":pending >= 0,"active":delivering,
             "directUsb":module["directUsb"],"profileMatch":module["profileMatch"],
@@ -437,7 +447,11 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
             "neutral":discovered.neutral,"profile":discovered.value,
             "serialNumber":id,"usbSerialNumber":uid.to_ascii_lowercase(),"hidInterface":Value::Null,
             "settings":{"label":label,"debounce":10,"inverted":false},"canConfigure":module["boot"].as_u64().is_some_and(|v|v>0) && wire["canProtocol"]==3
-        }));
+        });
+        for key in ["publicationSlot","configuredEnabled","publicationReportId","configuredDescriptorIndex"] {
+            normalized[key]=if publication.is_some(){module[key].clone()}else{Value::Null};
+        }
+        modules.push(normalized);
     }
     if automatic && (0..active_slots.len() as i64).any(|index| !active_slots.contains(&index)) {
         return Err(bad());
@@ -490,6 +504,10 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
         "gatewayType":wire["gatewayType"],"protocolVersion":wire["protocol"],"canProtocol":wire["canProtocol"],
         "firmwareVersion":wire["firmware"],"epoch":wire["epoch"],"maxModules":capacity,
         "maxRemembered":wire["maxRemembered"],"maxControllers":wire["maxControllers"],"activeGeneration":wire["activeGeneration"],"pendingGeneration":wire["pendingGeneration"],
+        "controllerPublicationOverride":if publication.is_some(){publication::capability()}else{Value::Null},
+        "publication":publication,"publicationRevision":if wire["controllerPublicationOverride"]==publication::capability(){wire["publicationRevision"].clone()}else{Value::Null},
+        "configuredGeneration":if wire["controllerPublicationOverride"]==publication::capability(){wire["configuredGeneration"].clone()}else{Value::Null},
+        "effectiveGeneration":if wire["controllerPublicationOverride"]==publication::capability(){wire["effectiveGeneration"].clone()}else{Value::Null},
         "running":wire["running"],"needsReconnect":if automatic {json!(false)} else {wire["needsApply"].clone()},"needsApply":if automatic {json!(false)} else {wire["needsApply"].clone()},
         "lifecycle":if automatic {json!("automatic")} else {Value::Null},
         "layoutPending":if automatic {layout_pending.clone()} else {json!(false)},"layoutError":if automatic {wire["layoutError"].clone()} else {Value::Null},
@@ -559,6 +577,7 @@ struct Gateway {
     action_reply: Option<Value>,
     events: HashMap<String, ActionCache>,
     events_reply: Option<Value>,
+    publication_reply: Option<bool>,
 }
 impl Gateway {
     fn configuration_claims(&self) -> Vec<(Instant, crate::module_configuration_routes::WriterPin)> {
@@ -602,6 +621,7 @@ impl Gateway {
             action_reply: None,
             events: HashMap::new(),
             events_reply: None,
+            publication_reply: None,
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
@@ -721,8 +741,12 @@ impl Gateway {
         Ok(())
     }
     fn exchange(&mut self, command: &str, timeout: Duration) -> Result<(), String> {
+        self.exchange_guarded(command,timeout,None,None)
+    }
+    fn exchange_guarded(&mut self, command: &str, timeout: Duration, authority:Option<&AtomicBool>, control_epoch:Option<(&AtomicU64,u64)>) -> Result<(), String> {
         self.action_reply = None;
         self.events_reply = None;
+        self.publication_reply = None;
         if self.connection.is_none() {
             return Err(NO_CONNECTION.into());
         }
@@ -741,6 +765,12 @@ impl Gateway {
             return Err("Gateway command is too long.".into());
         }
         let deadline = Instant::now() + timeout;
+        if self.cancel.load(Ordering::Acquire) || authority.is_some_and(|live|!live.load(Ordering::Acquire))
+            || control_epoch.is_some_and(|(epoch,expected)|epoch.load(Ordering::Acquire)!=expected) {
+            // An unsent obsolete request cannot close a replacement owner's
+            // transport or release unrelated configuration ownership.
+            return Err("The native gateway request was revoked before its serial write.".into());
+        }
         let result = (|| {
             let connection = self.connection.as_mut().unwrap();
             connection
@@ -838,6 +868,10 @@ impl Gateway {
                 }
                 if command.starts_with("action ") && !value["targetAction"].is_null() {
                     self.action_reply = Some(value["targetAction"].clone());
+                }
+                if command.starts_with("publication inspect ") {
+                    self.publication_reply = value["publicationOwned"].as_bool();
+                    if self.publication_reply.is_none() && value["ok"]==true {return Err("The gateway returned malformed request-scoped publication proof.".into());}
                 }
                 if command.starts_with("events ") && !value["targetEvents"].is_null() {
                     self.events_reply = Some(value["targetEvents"].clone());
@@ -2195,6 +2229,7 @@ impl Gateway {
 
 enum Message {
     Request(Value, mpsc::Sender<Value>),
+    Publication(PublicationRequest,mpsc::Sender<Result<PublicationReply,String>>),
     Shutdown,
 }
 pub struct Stm32Service {
@@ -2265,6 +2300,13 @@ impl Stm32Service {
                                 gateway.decorated(None);
                             let _ = response.send(result);
                         }
+                        Ok(Message::Publication(request,response)) => {
+                            seen = Instant::now();
+                            let result=gateway.publication(request);
+                            *latest_claims.lock().unwrap_or_else(|p|p.into_inner())=gateway.configuration_claims();
+                            *latest.lock().unwrap_or_else(|p|p.into_inner())=gateway.decorated(None);
+                            let _=response.send(result);
+                        }
                         Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             gateway.heartbeat(seen);
@@ -2278,9 +2320,12 @@ impl Stm32Service {
                 gateway.close();
                 latest_claims.lock().unwrap_or_else(|p|p.into_inner()).clear();
                 *latest.lock().unwrap_or_else(|p| p.into_inner()) = gateway.decorated(None);
-                while let Ok(Message::Request(_, response)) = receiver.try_recv() {
-                    let _ = response
-                        .send(json!({"ok":false,"error":CLOSED,"state":gateway.decorated(None)}));
+                while let Ok(message) = receiver.try_recv() {
+                    match message {
+                        Message::Request(_,response)=>{let _=response.send(json!({"ok":false,"error":CLOSED,"state":gateway.decorated(None)}));}
+                        Message::Publication(_,response)=>{let _=response.send(Err(CLOSED.into()));}
+                        Message::Shutdown=>{}
+                    }
                 }
             })
             .expect("could not start physical gateway worker");

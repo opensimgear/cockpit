@@ -67,6 +67,14 @@ impl ProfilePanelIo {
             .ok_or("Connect the bound gateway first.")?;
         Ok(adapter.cached_state())
     }
+    /// Sealed native owner operations share the configuration writer gate.
+    /// There is deliberately no JSON/IPC command that accepts their owner.
+    pub(crate) fn publication(&self,gateway:&str,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String> {
+        let _gate=request.mutating().then(||self.gate.lock().unwrap_or_else(|p|p.into_inner()));
+        if self.closed.load(Ordering::Acquire){return Err("Cockpit gateway manager has closed.".into());}
+        let adapter=self.sessions.lock().unwrap_or_else(|p|p.into_inner()).get(gateway).cloned().ok_or("Connect the exact bound publication gateway first.")?;
+        adapter.publication(request)
+    }
     pub(crate) fn usb_snapshots(&self) -> Vec<crate::module_usb_fleet::SlotSnapshot> {
         self.usb.snapshots()
     }
