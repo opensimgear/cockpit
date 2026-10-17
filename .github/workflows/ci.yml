@@ -28,6 +28,7 @@ jobs:
       - run: pnpm mappings:coverage
       - run: pnpm profiles:coverage
       - run: pnpm profile-inventory:coverage
+      - run: pnpm profile-compilation:coverage
       - run: pnpm module-usb:coverage
       - run: pnpm actions:coverage
       - run: pnpm dcs:coverage
@@ -128,7 +129,7 @@ jobs:
           python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
           python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
           python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"
-      - name: Standalone USB module coverage at least 71 percent
+      - name: USB, inventory and compiler preview coverage at least 71 percent
         run: python3 scripts/module-usb-coverage.py
       - name: Game integration setup coverage at least 71 percent
         env:
@@ -264,7 +265,7 @@ jobs:
       - name: Windows and macOS desktop compilation and regression tests
         if: runner.os != 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
-      - name: Windows and macOS standalone USB module coverage
+      - name: Windows and macOS USB, inventory and compiler preview coverage
         if: runner.os != 'Linux'
         run: python scripts/module-usb-coverage.py
       - name: Windows companion trust, WSS, source isolation and operator coverage

@@ -540,11 +540,60 @@ impl Registry {
         Ok(ResourceDetails {
             session: self.session.clone(),
             revision: self.revision.to_string(),
-            resource: self.summary(entry)?,
+            resource: self.summary_with_port_count(entry, ports.len())?,
             evidence,
             total: ports.len(),
             offset,
             ports: ports.into_iter().skip(offset).take(limit).collect(),
+        })
+    }
+    /// Native capture projection. Enumerate/hash the catalogue once rather than
+    /// repeating a complete catalogue walk for each page or selected port.
+    pub fn inspect_selected(
+        &self,
+        id: &str,
+        expectations: &[PortExpectation],
+    ) -> Result<ResourceDetails, String> {
+        if expectations.len() > crate::validation::MAX_PORTS {
+            return Err("A compile capture may select at most 1024 exact ports.".into());
+        }
+        let entry = self.entry(id)?;
+        let ports = observed_ports(entry)?;
+        let mut by_id = BTreeMap::<&str, Vec<&ObservedPort>>::new();
+        for port in &ports {
+            by_id.entry(&port.descriptor.id).or_default().push(port);
+        }
+        let mut selected = BTreeMap::new();
+        for expected in expectations {
+            let Some(variants) = by_id.get(expected.observed_port_id.as_str()) else { continue };
+            // Prefer the current exact variant, then a changed current variant
+            // so the compiler reports a changed contract rather than silence.
+            let port = variants.iter().copied().find(|port| {
+                port.current && port.contract_hash == expected.expected_contract_hash
+            }).or_else(|| variants.iter().copied().find(|port| port.current))
+              .or_else(|| variants.iter().copied().find(|port| {
+                  port.contract_hash == expected.expected_contract_hash
+              })).or_else(|| variants.first().copied());
+            if let Some(port) = port {
+                selected.insert((port.descriptor.id.clone(), port.contract_hash.clone()), port.clone());
+            }
+        }
+        let mut evidence = Vec::new();
+        for sighting in &entry.saved.sightings {
+            for item in &sighting.evidence {
+                if !evidence.contains(item) {
+                    evidence.push(item.clone());
+                }
+            }
+        }
+        Ok(ResourceDetails {
+            session: self.session.clone(),
+            revision: self.revision.to_string(),
+            resource: self.summary_with_port_count(entry, ports.len())?,
+            evidence,
+            offset: 0,
+            total: ports.len(),
+            ports: selected.into_values().collect(),
         })
     }
     pub fn token(&self, id: &str, port_id: &str, access: Access) -> Result<ResourceToken, String> {
@@ -673,7 +722,7 @@ impl Registry {
                     });
                     match port {
                         None=>issue("portContractChanged",Some(&expected.profile_port_id),"The assigned port is missing or its advertised contract changed; reconcile this binding."),
-                        Some(port) if !port.descriptor.graph_compatible(logical_port.unwrap())=>issue("unrepresentablePortContract",Some(&expected.profile_port_id),"The portable port cannot represent this exact contract; structured actions and constrained text require an explicit later schema/processor."),
+                        Some(port) if !crate::resources_ports::graph_compatible(&port.descriptor, logical_port.unwrap())=>issue("unrepresentablePortContract",Some(&expected.profile_port_id),"The portable port cannot represent this exact contract; structured actions and constrained text require an explicit later schema/processor."),
                         Some(port) if !port.current=>issue("portOffline",Some(&expected.profile_port_id),"This port is retained from an offline route."),
                         Some(_)=>{},
                     }
@@ -860,6 +909,9 @@ impl Registry {
     }
     fn summary(&self, entry: &Entry) -> Result<ResourceSummary, String> {
         let ports = observed_ports(entry)?;
+        self.summary_with_port_count(entry, ports.len())
+    }
+    fn summary_with_port_count(&self, entry: &Entry, cached_port_count: usize) -> Result<ResourceSummary, String> {
         let mut attributes = BTreeMap::new();
         let mut diagnostics = Vec::new();
         for sighting in &entry.saved.sightings {
@@ -899,7 +951,7 @@ impl Registry {
             },
             generation: entry.generation.to_string(),
             capability_revision: capability_revision(entry)?,
-            port_count: ports.len().max(
+            port_count: cached_port_count.max(
                 entry
                     .saved
                     .sightings
@@ -908,7 +960,7 @@ impl Registry {
                     .max()
                     .unwrap_or(0),
             ),
-            cached_port_count: ports.len(),
+            cached_port_count,
             connections: entry
                 .saved
                 .sightings

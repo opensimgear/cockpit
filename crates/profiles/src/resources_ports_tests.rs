@@ -264,26 +264,15 @@ fn catalogue_hash_ignores_names_order_and_refuses_lossy_port_bindings() {
         id: "logical".into(),
         name: "Logical".into(),
         direction: Direction::Output,
-        delivery: crate::Delivery::Event,
-        value_type: ValueType::Boolean,
-        unit: None,
-        range: None,
-        enum_values: vec![],
-        freshness_ms: None,
-        fallback: None,
+        contract: boolean.contract.clone(),
     };
-    assert!(boolean.graph_compatible(&graph));
+    assert!(graph_compatible(&boolean, &graph));
     graph.direction = Direction::Input;
-    assert!(!boolean.graph_compatible(&graph));
+    assert!(!graph_compatible(&boolean, &graph));
     graph.direction = Direction::Output;
-    graph.value_type = ValueType::Integer;
-    graph.unit = Some("steps".into());
-    graph.range = Some(crate::NumericRange {
-        min: 0.0,
-        max: 10.0,
-    });
-    assert!(numeric.graph_compatible(&graph));
-    let text = action(vec![parameter(
+    graph.contract = numeric.contract.clone();
+    assert!(graph_compatible(&numeric, &graph));
+    let constrained = action(vec![parameter(
         "text",
         ScalarSchema::Text {
             max_bytes: 8,
@@ -291,9 +280,19 @@ fn catalogue_hash_ignores_names_order_and_refuses_lossy_port_bindings() {
         },
     )]);
     graph.direction = Direction::Input;
-    graph.delivery = crate::Delivery::Action;
-    graph.value_type = ValueType::Text;
-    assert!(!text.graph_compatible(&graph));
+    graph.contract = constrained.contract.clone();
+    assert!(graph_compatible(&constrained, &graph));
+    if let PortContract::Action { parameters, .. } = &mut graph.contract {
+        parameters[0].name = "Cosmetic portable label".into();
+    }
+    assert!(graph_compatible(&constrained, &graph));
+    if let PortContract::Action { parameters, .. } = &mut graph.contract {
+        parameters[0].schema = ScalarSchema::Text {
+            max_bytes: 9,
+            encoding: TextEncoding::Utf8,
+        };
+    }
+    assert!(!graph_compatible(&constrained, &graph));
     let mut update = PortUpdate::complete(vec![boolean]).unwrap();
     update.total = 2;
     assert!(update.validate().is_err());

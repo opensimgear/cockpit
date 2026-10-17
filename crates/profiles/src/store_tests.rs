@@ -4,7 +4,7 @@ use crate::new_document;
 #[test]
 fn fresh_library_round_trips_and_replace_failures_preserve_old_bytes() {
     let temp = crate::test_directory();
-    let store = Store::new(temp.path().join("profiles-v1"));
+    let store = Store::new(temp.path().join("profiles-v2"));
     assert!(store.load().unwrap().is_none());
     let original = Library::default();
     store.save(&original).unwrap();
@@ -45,9 +45,9 @@ fn malformed_unknown_and_oversize_envelopes_are_rejected() {
 #[test]
 fn library_enforces_default_uniqueness_and_count_bounds() {
     let mut library = Library::default();
-    library.schema_version = 2;
-    assert!(library.validate().is_err());
     library.schema_version = 1;
+    assert!(library.validate().is_err());
+    library.schema_version = 2;
     library.profiles.clear();
     assert!(library.validate().is_err());
     library.profiles.push(new_document("No default").unwrap());
@@ -80,6 +80,7 @@ fn local_assignments_are_bounded_and_refer_to_existing_logical_resources() {
     let assignment = LocalAssignment {
         resource_id: "stick".into(),
         source_id: "hid:machine-local".into(),
+        ports: vec![],
     };
     library
         .local_assignments
@@ -121,7 +122,7 @@ fn local_assignments_are_bounded_and_refer_to_existing_logical_resources() {
 
 #[test]
 fn relative_parent_and_nonregular_paths_are_rejected() {
-    assert!(Store::new("profiles-v1".into()).load().is_err());
+    assert!(Store::new("profiles-v2".into()).load().is_err());
     let temp = crate::test_directory();
     assert!(
         Store::new(temp.path().join("..absolutely-not-a-parent").join(".."))
@@ -132,7 +133,7 @@ fn relative_parent_and_nonregular_paths_are_rejected() {
     assert!(Store::new(temp.path().to_owned()).load().is_err());
     let file_parent = temp.path().join("not-a-directory");
     std::fs::write(&file_parent, "").unwrap();
-    assert!(Store::new(file_parent.join("profiles-v1")).load().is_err());
+    assert!(Store::new(file_parent.join("profiles-v2")).load().is_err());
 }
 
 #[cfg(unix)]
@@ -167,14 +168,14 @@ fn canonical_temporary_fixture_works_but_the_alias_stays_rejected() {
     // a fixture choice, not a change to Store's no-symlink contract.
     let fixture = crate::test_directory_in(&alias);
     assert!(fixture.path().starts_with(&real_parent));
-    let root = fixture.path().join("profiles-v1");
+    let root = fixture.path().join("profiles-v2");
     let store = Store::new(root);
     store.save(&Library::default()).unwrap();
     assert_eq!(store.load().unwrap().unwrap().profiles.len(), 1);
 
     let alias_root = alias
         .join(fixture.path().file_name().unwrap())
-        .join("profiles-v1");
+        .join("profiles-v2");
     assert!(Store::new(alias_root.clone()).load().is_err());
     assert!(Store::new(alias_root).save(&Library::default()).is_err());
 }

@@ -71,6 +71,7 @@ pub struct Runtime {
     pub trace: crate::trace::Capture,
     session: String,
     engine: Option<Engine>,
+    typed: Option<crate::engine::typed::Phase>,
     generation: u64,
     pub recording: RecordingSink,
 }
@@ -80,6 +81,7 @@ impl Default for Runtime {
             trace: Default::default(),
             session: uuid::Uuid::new_v4().to_string(),
             engine: None,
+            typed: None,
             generation: 0,
             recording: RecordingSink::default(),
         }
@@ -116,6 +118,12 @@ impl Runtime {
         runtime
     }
     pub fn token(&self) -> Result<RunToken, String> {
+        if let Some(typed) = &self.typed {
+            return typed
+                .active()
+                .then(|| typed.run_token())
+                .ok_or_else(|| "No active typed mapping run.".into());
+        }
         self.engine
             .as_ref()
             .filter(|e| e.active())
@@ -135,10 +143,53 @@ impl Runtime {
     }
     pub fn advance_for(&mut self, token: &RunToken, now: Counter) -> Result<(), String> {
         self.check_run(token)?;
+        if let Some(typed) = &mut self.typed {
+            let result = typed.advance(now);
+            self.recording.record(typed.drain_reports());
+            return result;
+        }
         self.advance(now)
     }
     pub fn engine(&self) -> Option<&Engine> {
         self.engine.as_ref()
+    }
+    pub fn typed_engine(&self) -> Option<&crate::engine::typed::Phase> {
+        self.typed.as_ref()
+    }
+    pub fn typed_engine_mut(&mut self) -> Option<&mut crate::engine::typed::Phase> {
+        self.typed.as_mut()
+    }
+    pub fn start_program(&mut self, program: crate::program::Program) -> Result<RunToken, String> {
+        let generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("Run generation exhausted.")?;
+        let typed =
+            crate::engine::typed::Phase::new(program, Counter(generation), self.session.clone())?;
+        self.stop();
+        self.engine = None;
+        self.generation = generation;
+        self.typed = Some(typed);
+        if let Some(typed) = &mut self.typed {
+            self.recording.record(typed.drain_reports());
+        }
+        self.token()
+    }
+    pub fn accept_signal_for(
+        &mut self,
+        token: &RunToken,
+        frame: crate::engine::typed::Frame,
+    ) -> Result<(), String> {
+        self.check_run(token)?;
+        let typed = self.typed.as_mut().ok_or("No typed mapping run.")?;
+        let result = typed.accept(frame);
+        self.recording.record(typed.drain_reports());
+        result
+    }
+    pub fn drain_effects(&mut self) -> Vec<crate::engine::typed::Effect> {
+        self.typed
+            .as_mut()
+            .map_or_else(Vec::new, |typed| typed.drain())
     }
     pub fn start(
         &mut self,
@@ -157,6 +208,7 @@ impl Runtime {
             self.session.clone(),
         )?;
         self.stop();
+        self.typed = None;
         self.trace = crate::trace::Capture::start(profile, assignments);
         self.generation = generation;
         self.engine = Some(next);
@@ -253,6 +305,10 @@ impl Runtime {
             .schedule(token, id, at, value)
     }
     pub fn stop(&mut self) {
+        if let Some(typed) = &mut self.typed {
+            typed.stop();
+            self.recording.record(typed.drain_reports());
+        }
         if let Some(engine) = &mut self.engine {
             if engine.active() {
                 self.trace.push(crate::trace::Step::Stop);

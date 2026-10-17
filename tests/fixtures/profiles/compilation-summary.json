@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "compilationId": "00000000-0000-4000-8000-000000000002",
+  "profileId": "00000000-0000-4000-8000-000000000001",
+  "profileRevision": 1,
+  "programHash": "sha256:ec0d248102107dcaf6bfcc658a76c1b64a6723f1ce03c74f7a62dc3e6ab070dd",
+  "documentSemanticHash": "sha256:fed79b01bdc554a67d4e2162fbc2f0bc92294976dd6b4e5c17a644da3633a2fb",
+  "captureFingerprint": "sha256:9ba1e02de7c5694fd36866133a793e83d23d236ec6c9ef724df60b1069cda67f",
+  "readiness": "ready",
+  "diagnostics": [],
+  "sectionTotals": { "branches": 0, "controllers": 0, "diagnostics": 0, "nodes": 0, "order": 0, "sinks": 0, "sources": 0, "visibility": 0 },
+  "budgets": { "actionQueueCapacity": 4096, "bindings": 0, "eventQueueCapacity": 4096, "processingNodes": 0, "sinkPorts": 0, "sourcePorts": 0, "stateSlots": 0, "timerCapacity": 0, "usedSources": 0, "virtualTargets": 0 }
+}

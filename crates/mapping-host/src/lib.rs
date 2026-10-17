@@ -10,3 +10,4 @@ pub use osg_logic::helper_main as logic_helper_main;
 pub mod panels;
 
 pub mod companions;
+pub mod typed_sources;

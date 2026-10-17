@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub const MAX_TIMERS: usize = 256;
 pub const MAX_REPORTS: usize = 4096;
+#[path = "typed_engine.rs"]
+pub mod typed;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Counter(pub u64);
 impl Serialize for Counter {

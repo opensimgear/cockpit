@@ -1,7 +1,7 @@
 //! Named-profile CRUD and session metadata. This boundary cannot execute an
 //! output, change HidHide, start integrations, or publish companion layouts.
 use crate::session::{SelectionMode, Session};
-use crate::store::{Library, Store};
+use crate::store::{Library, LocalAssignment, Store};
 use crate::{
     new_document, semantic_hash, ProfileDocument, DEFAULT_PROFILE_ID, MAX_PROFILES, MAX_REVISION,
 };
@@ -56,7 +56,8 @@ impl Service {
         let fields: &[&str] = match command {
             "profile_list" | "profile_status" => &[],
             "profile_apply" => &["id"],
-            "profile_get" | "profile_export" => &["id"],
+            "profile_get" | "profile_export" | "profile_assignments_get" => &["id"],
+            "profile_assignments_save" => &["id", "expectedRevision", "assignments"],
             "profile_create" => &["name"],
             "profile_rename" => &["id", "name", "expectedRevision"],
             "profile_duplicate" => &["id", "name"],
@@ -99,6 +100,13 @@ impl Service {
             "profile_get" | "profile_export" => {
                 let document = self.document(required_text(request, "id")?)?;
                 Ok(json!({"document":document}))
+            }
+            "profile_assignments_get" => {
+                let id = required_text(request, "id")?;
+                let (document, assignments, read_only) = self.compile_source(id)?;
+                Ok(
+                    json!({"document":document,"assignments":assignments,"session":self.session.status(),"readOnly":read_only}),
+                )
             }
             "profile_apply" => Err(
                 "Profile output activation is unavailable until P4; no outputs were started."
@@ -197,6 +205,29 @@ impl Service {
                 stored.revision = next_revision(stored.revision)?;
                 stored.clone()
             }
+            "profile_assignments_save" => {
+                let id = required_text(request, "id")?;
+                let expected = expected_revision(request)?;
+                let assignments: Vec<LocalAssignment> =
+                    serde_json::from_value(request["assignments"].clone())
+                        .map_err(|e| format!("Invalid local assignments: {e}"))?;
+                let document = library
+                    .profiles
+                    .iter_mut()
+                    .find(|p| p.id == id)
+                    .ok_or("Profile not found.")?;
+                check_revision(document, expected)?;
+                document.revision = next_revision(expected)?;
+                let output = document.clone();
+                library
+                    .local_assignments
+                    .insert(id.to_owned(), assignments.clone());
+                self.persist(&library)?;
+                self.library = library;
+                return Ok(
+                    json!({"document":output,"assignments":assignments,"session":self.session.status()}),
+                );
+            }
             "profile_save" => {
                 let mut document = decode_document(&request["document"])?;
                 let expected = expected_revision(request)?;
@@ -212,8 +243,17 @@ impl Service {
                 document.revision = next_revision(expected)?;
                 *stored = document.clone();
                 if let Some(assignments) = library.local_assignments.get_mut(&document.id) {
-                    assignments
-                        .retain(|a| document.resources.iter().any(|r| r.id == a.resource_id));
+                    assignments.retain(|a| {
+                        document.resources.iter().any(|r| {
+                            r.id == a.resource_id
+                                && r.ports.len() == a.ports.len()
+                                && r.ports.iter().all(|p| {
+                                    a.ports
+                                        .iter()
+                                        .any(|expected| expected.profile_port_id == p.id)
+                                })
+                        })
+                    });
                 }
                 document
             }
@@ -235,6 +275,22 @@ impl Service {
         self.persist(&library)?;
         self.library = library;
         Ok(json!({"document":output,"session":self.session.status()}))
+    }
+
+    /// Captures saved authoring/local binding data without changing runtime state or acquiring a device.
+    pub fn compile_source(
+        &self,
+        id: &str,
+    ) -> Result<(ProfileDocument, Vec<LocalAssignment>, bool), String> {
+        Ok((
+            self.document(id)?.clone(),
+            self.library
+                .local_assignments
+                .get(id)
+                .cloned()
+                .unwrap_or_default(),
+            self.read_only,
+        ))
     }
 
     fn persist(&self, library: &Library) -> Result<(), String> {

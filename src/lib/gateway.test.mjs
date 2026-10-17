@@ -69,6 +69,24 @@ test('unified profile writes remain ordered without blocking gateway discovery o
   assert.deepEqual(api.calls[0].args.request.document, document);
 });
 
+test('compiler previews follow profile edits without blocking independent inventory or activating', async () => {
+  const waiting = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'profile_save') await waiting.promise;
+    return { ok: true, state: { profileCompilation: { compilationId: 'preview' } } };
+  } });
+  const save = api.gatewayRequest({ command: 'profile_save', document: { id: 'profile', revision: 1 }, expectedRevision: 1 });
+  const compile = api.gatewayRequest({ command: 'profile_compile', document: { id: 'profile', revision: 2 } });
+  const inspect = api.gatewayRequest({ command: 'profile_compilation_inspect', compilationId: 'preview', section: 'diagnostics', offset: 0, limit: 32 });
+  const inventory = api.gatewayRequest({ command: 'profile_resources_list', offset: 0, limit: 32 });
+  await tick();
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['profile_save', 'profile_resources_list']);
+  waiting.resolve();
+  await Promise.all([save, compile, inspect, inventory]);
+  assert.deepEqual(api.calls.slice(-2).map(call => call.args.request.command), ['profile_compile', 'profile_compilation_inspect']);
+  assert.ok(api.calls.every(call => call.args.request.command !== 'profile_apply'));
+});
+
 test('profile resource inspection and token checks use their own queue without activating profiles', async () => {
   const waiting = deferred();
   const api = transport({ invokeResults: async (_command, request) => {

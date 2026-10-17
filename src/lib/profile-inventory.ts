@@ -1,19 +1,13 @@
 /** Native resource observations stay local; portable graph definitions live in profiles.ts. */
-import type { DeepReadonly, ProfileValue } from './profiles';
+import type { DeepReadonly, ProfileScalarSchema, ProfilePortContract } from './profiles';
+import { profileContractError } from './profiles.ts';
 export const RESOURCE_PAGE_SIZE = 32;
 export const RESOURCE_PORT_PAGE_SIZE = 32;
 export type ResourceType = 'host-controller' | 'osg-module' | 'companion' | 'game-integration';
 export type ResourceAccess = 'read' | 'write' | 'invoke';
 export type ResourceEvidence = { kind: 'local-path' | 'serial' | 'verified-physical' | 'companion-instance' | 'game-scope'; value: string };
-export type ResourceScalar = { type: 'boolean' } | { type: 'rgb' }
-  | { type: 'integer' | 'number'; min: number; max: number; unit: string | null }
-  | { type: 'text'; maxBytes: number; encoding: 'utf8' | 'ascii' }
-  | { type: 'enum'; values: string[] };
-export type ResourcePortContract = { delivery: 'state'; schema: ResourceScalar; freshnessMs: number; fallback: ProfileValue }
-  | { delivery: 'event'; schema: ResourceScalar }
-  | { delivery: 'action'; parameters: { id: string; name: string; schema: ResourceScalar }[]; semantics: 'setter' | 'one-shot'; endpoint: string; readable: boolean;
-      display: { columns: number; rows: number; encoding: 'utf8' | 'ascii' } | null;
-      ownership: { scope: string; maxLeaseMs: number } | null };
+export type ResourceScalar = ProfileScalarSchema;
+export type ResourcePortContract = Exclude<ProfilePortContract, {delivery: 'invocation'}>;
 export type ResourcePortDescriptor = { id: string; name: string; direction: 'input' | 'output'; contract: ResourcePortContract };
 export type ResourceRoute = { id: string; transport: 'hid' | 'can' | 'usb' | 'network' | 'integration'; providerGeneration: string; attributes: Record<string, string>; baselineReady: boolean; writable: boolean; priority: number };
 export type ResourceSummary = { id: string; name: string; resourceType: ResourceType; availability: 'online' | 'offline' | 'unavailable'; generation: string; capabilityRevision: string;
@@ -44,36 +38,9 @@ function freezeClone<T>(value: T): DeepReadonly<T> {
   freeze(cloned);
   return cloned as DeepReadonly<T>;
 }
-function scalar(value: unknown): value is ResourceScalar {
-  if (!object(value)) return false;
-  if (value.type === 'boolean' || value.type === 'rgb') return true;
-  if (value.type === 'text') return whole(value.maxBytes, 4096) && value.maxBytes > 0 && ['utf8', 'ascii'].includes(String(value.encoding));
-  if (value.type === 'enum') return array(value.values, 64) && value.values.length > 0 && value.values.every(entry => text(entry, 256)) && new Set(value.values).size === value.values.length;
-  return ['integer', 'number'].includes(String(value.type)) && typeof value.min === 'number' && Number.isFinite(value.min) && typeof value.max === 'number' && Number.isFinite(value.max) && value.min <= value.max && Math.abs(value.min) <= Number.MAX_SAFE_INTEGER && Math.abs(value.max) <= Number.MAX_SAFE_INTEGER && (value.type !== 'integer' || Number.isSafeInteger(value.min) && Number.isSafeInteger(value.max)) && (value.unit === null || text(value.unit, 128));
-}
-function accepts(schema: ResourceScalar, value: unknown): boolean {
-  if (schema.type === 'boolean') return typeof value === 'boolean';
-  if (schema.type === 'rgb') return typeof value === 'string' && /^[0-9a-f]{6}$/i.test(value);
-  if (schema.type === 'enum') return typeof value === 'string' && schema.values.includes(value);
-  if (schema.type === 'text') return typeof value === 'string' && (value === '' || text(value, schema.maxBytes)) && (schema.encoding === 'utf8' || /^[\x00-\x7f]*$/.test(value));
-  return typeof value === 'number' && Number.isFinite(value) && value >= schema.min && value <= schema.max && (schema.type !== 'integer' || Number.isSafeInteger(value));
-}
 export function resourcePortError(value: unknown): string {
-  if (!object(value) || !text(value.id, 256) || !text(value.name, 320) || !['input', 'output'].includes(String(value.direction)) || !object(value.contract)) return 'Malformed resource port descriptor.';
-  const contract = value.contract;
-  if (contract.delivery === 'state') return scalar(contract.schema) && whole(contract.freshnessMs, 600000) && contract.freshnessMs > 0 && Object.hasOwn(contract, 'fallback') && (contract.fallback === null || accepts(contract.schema, contract.fallback)) ? '' : 'Malformed resource state contract.';
-  if (contract.delivery === 'event') return scalar(contract.schema) ? '' : 'Malformed resource event contract.';
-  if (contract.delivery !== 'action' || value.direction !== 'input' || !['setter', 'one-shot'].includes(String(contract.semantics)) || !text(contract.endpoint, 256) || typeof contract.readable !== 'boolean' || !array(contract.parameters, 4) || !contract.parameters.every(parameter => object(parameter) && text(parameter.id, 80) && text(parameter.name, 320) && scalar(parameter.schema))) return 'Malformed resource action contract.';
-  if (new Set(contract.parameters.map(parameter => (parameter as { id: string }).id)).size !== contract.parameters.length) return 'Duplicate resource action argument.';
-  if (!Object.hasOwn(contract, 'display') || contract.display !== null && (!object(contract.display) || !whole(contract.display.columns, 63) || contract.display.columns === 0 || !whole(contract.display.rows, 4) || contract.display.rows === 0 || contract.display.columns * contract.display.rows > 63 || !['utf8', 'ascii'].includes(String(contract.display.encoding)))) return 'Malformed resource display constraints.';
-  if (contract.display !== null) {
-    const display = contract.display as { columns: number; rows: number; encoding: string };
-    const parameters = contract.parameters as { schema: ResourceScalar }[];
-    const schema = parameters[0]?.schema;
-    if (contract.semantics !== 'setter' || !contract.readable || parameters.length !== 1 || schema?.type !== 'text' || schema.maxBytes < display.columns * display.rows || schema.encoding !== display.encoding) return 'Resource display does not match its action argument.';
-  }
-  if (!Object.hasOwn(contract, 'ownership') || contract.ownership !== null && (!object(contract.ownership) || contract.ownership.scope !== 'endpoint' || !whole(contract.ownership.maxLeaseMs, 60000) || contract.ownership.maxLeaseMs === 0)) return 'Malformed resource ownership constraints.';
-  return '';
+  if (!object(value) || Object.keys(value).length !== 4 || !text(value.id, 256) || !text(value.name, 320) || (value.direction !== 'input' && value.direction !== 'output')) return 'Malformed resource port descriptor.';
+  return profileContractError(value.contract, value.direction, true);
 }
 function route(value: unknown): boolean {
   return object(value) && text(value.id) && ['hid', 'can', 'usb', 'network', 'integration'].includes(String(value.transport)) && text(value.providerGeneration) && attributes(value.attributes) && typeof value.baselineReady === 'boolean' && typeof value.writable === 'boolean' && typeof value.priority === 'number' && Number.isInteger(value.priority) && value.priority >= -2147483648 && value.priority <= 2147483647;
