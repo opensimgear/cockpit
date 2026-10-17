@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import HostControllers from './lib/HostControllers.svelte';
   import MappingsPanel from './lib/MappingsPanel.svelte';
+  import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import CompanionDesigner from './lib/CompanionDesigner.svelte';
   import CompanionListenerSettings from './lib/CompanionListenerSettings.svelte';
   import Icon from './lib/Icon.svelte';
@@ -30,13 +31,14 @@
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'overview' | 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'preferences';
+  type View = 'overview' | 'profiles' | 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'preferences';
   type SettingsOrigin = { view: View; selectedGameId: GameId | ''; hash: string; returnState?: unknown };
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
     { id: 'overview', label: 'Overview', icon: 'activity' },
     { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
+    { id: 'profiles', label: 'Profiles', icon: 'network' },
     { id: 'mappings', label: 'Mappings', icon: 'network' },
     { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
@@ -63,10 +65,22 @@
   let games = $state<GamesState>();
   let selectedGameId = $state<GameId | ''>('');
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
+  let profilesPanel = $state.raw<{requestNavigation:(continueNavigation:()=>void)=>void}>();
   const selectedGameName = $derived((games?.catalogue ?? supportedGames).find(game => game.id === selectedGameId)?.name);
   const section = $derived(view === 'device' ? 'devices' : view);
   const sectionLabel = $derived(navigation.find(item => item.id === section)?.label ?? 'Settings');
   function navigate(section: View) {
+    if (settingsVisit?.origin.view === 'profiles') {
+      returnToSettingsOrigin();
+      if (section === 'profiles') return;
+    }
+    if (view === 'profiles' && profilesPanel) {
+      profilesPanel.requestNavigation(() => commitNavigation(section));
+      return;
+    }
+    commitNavigation(section);
+  }
+  function commitNavigation(section: View) {
     settingsVisit = null;
     if (gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     selectedGameId = '';
@@ -83,6 +97,15 @@
     settingsVisit = null; view = origin.view; selectedGameId = origin.selectedGameId;
     if (updateHash) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${origin.hash}`);
     if ('returnState' in origin) window.dispatchEvent(new CustomEvent(RETURN_FROM_GAME_SETTINGS_EVENT, { detail: origin.returnState }));
+  }
+  function readSettingsHash(event?: HashChangeEvent) {
+    const gameId = gameSettingsFromHash(window.location.hash);
+    if (gameId) {
+      if (view === 'profiles' && !settingsVisit) settingsVisit = visitGameSettings(gameId, { view, selectedGameId, hash: event ? new URL(event.oldURL).hash : '' });
+      selectedGameId = gameId; view = 'games';
+    }
+    else if (settingsVisit) returnToSettingsOrigin(false);
+    else if (view === 'games') selectedGameId = '';
   }
   let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
@@ -294,12 +317,6 @@
     const dcsTimer = setInterval(() => { void refreshDcs(); }, 1000);
     const gamesTimer = setInterval(() => { void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
-    const readSettingsHash = () => {
-      const gameId = gameSettingsFromHash(window.location.hash);
-      if (gameId) { selectedGameId = gameId; view = 'games'; }
-      else if (settingsVisit) returnToSettingsOrigin(false);
-      else if (view === 'games') selectedGameId = '';
-    };
     const openSettingsEvent = (event: Event) => {
       if (!(event instanceof CustomEvent)) return;
       const link = gameSettingsLink(event.detail);
@@ -416,6 +433,7 @@
     <div class="main-shell">
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><span class="connection-pill">{connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
+        {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} /></div>{/if}
         {#if view === 'mappings' || settingsVisit?.origin.view === 'mappings'}<div hidden={view !== 'mappings'}><MappingsPanel active={view === 'mappings'} /></div>{/if}
         {#if view === 'overview'}
           <OverviewPanel {games} {integration} {dcsBios} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
@@ -427,6 +445,8 @@
           <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
           <DesktopPreferences />
           <CompanionListenerSettings />
+        {:else if view === 'profiles'}
+          <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->
         {:else if view === 'mappings'}
           <!-- The editor above stays mounted during a game-settings visit. -->
         {:else if view === 'companions'}

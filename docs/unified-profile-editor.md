@@ -31,9 +31,12 @@ Newer in-flight edits remain local and receive the new optimistic base.
 Late replies cannot replace a different editor.
 
 **Cancel creation** discards the local draft without a storage request.
-**Back to Profiles** explicitly offers Save, Discard or Keep editing when
-changes are unsaved. These operations do not select, apply, start or pause
-runtime processing. Default retains its protected fixed name and identity.
+**Back to Profiles** and sidebar navigation explicitly offer Save, Discard or
+Keep editing when changes are unsaved. A failed Save keeps the draft open; edits
+made during Save must also be saved or discarded before continuing. Keeping
+the editor open cancels the pending departure, including while a Save reply is
+in flight. These operations do not select, apply, start or pause runtime
+processing. Default retains its protected fixed name and identity.
 
 ## Canvas and ownership
 
@@ -54,7 +57,12 @@ catalogue that changes revision or capability contract between pages.
 Game integration inspectors link to the owning game's settings. The callback
 includes the current editor store and selection as opaque local navigation
 state. The application retains the editor instance for the actual settings
-round-trip; no draft is saved or profile activated by navigation. Provider
+round-trip, including browser Back and changing the selected game. Returning
+restores the same draft, canvas viewport and selection. The editor is mounted
+when Profiles is opened and retained only for that actual settings visit.
+Ordinary Games navigation creates no editor return target. Sidebar departure
+from a settings visit returns to the retained editor before handling unsaved
+changes. No draft is saved or profile activated by navigation. Provider
 connection settings are not duplicated in the graph inspector.
 
 `ProfileEditorStore` accepts only list, exact document/assignment reads and
@@ -67,7 +75,8 @@ Exact connection authoring and live execution controls are subsequent scopes.
 The pure editor, canvas geometry, catalogue paging and actual Svelte SSR
 rendering tests cover list entry, Default, Add/Copy/Save/Cancel/Back, exact
 opening, complete category seeding, capacity errors, large catalogues, offline
-retention, transport attributes and preserved layouts/session snapshots.
+retention, transport attributes, preserved layouts/session snapshots, actual
+App navigation, browser-history settings return and Save/continue races.
 Frontend coverage gates retain the repository's 71% thresholds.
 
 These tests establish authoring/navigation behavior. They do not establish

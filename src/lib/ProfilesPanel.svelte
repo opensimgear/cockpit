@@ -5,13 +5,14 @@
   import { gatewayRequest } from './gateway';
   import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument } from './profiles';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
-  import { ProfileEditorStore, profileCategory, profileEditorDirty } from './profile-editor';
+  import { ProfileEditorStore, ProfileNavigationGuard, profileCategory, profileEditorDirty } from './profile-editor';
   import type { GameId } from './games';
   let { editorStore: suppliedStore, resourceClient: suppliedResources, openGameSettings }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
   const profiles = new ProfilesClient(async request => { const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Profiles are unavailable. Reconnect the native service.');return result; });
   const store = supplied ?? new ProfileEditorStore(profiles,resources);
+  const navigationGuard = new ProfileNavigationGuard(store);
   let workspace = $state.raw(store.state);
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
   let inventoryOpen = $state(false), inventorySelection = $state<string[]>([]), creatingSelection = $state(false);
@@ -31,9 +32,18 @@
   function showConfirmation(node:HTMLDialogElement) { node.showModal();return()=>node.close(); }
   function change(document:ProfileDocument) { report(()=>store.update(document)); }
   function name(value:string) { if(!editor)return;const next=JSON.parse(JSON.stringify(editor.document)) as ProfileDocument;next.name=value;change(next); }
-  function back() { if(!store.back())leaveDialog=true;else{notice='';inventoryOpen=false;}workspace=store.state; }
-  async function save(backAfter=false) { notice='';await store.save();workspace=store.state;if(backAfter&&!workspace.error&&workspace.editor&&!profileEditorDirty(workspace.editor)){store.back();workspace=store.state;leaveDialog=false;} }
-  function cancel() { store.back(true);workspace=store.state;notice='';leaveDialog=false;inventoryOpen=false; }
+  export function requestNavigation(continueNavigation:()=>void):void {
+    notice='';
+    const result=navigationGuard.request(continueNavigation);
+    leaveDialog=result==='confirm';
+    if(result==='busy')notice='Wait for the current profile operation to finish before leaving.';
+    if(result==='left')inventoryOpen=false;
+    workspace=store.state;
+  }
+  function back() { requestNavigation(()=>{}); }
+  function keepEditing() { navigationGuard.keepEditing();leaveDialog=false; }
+  async function save(backAfter=false) { notice='';if(backAfter){await navigationGuard.save();leaveDialog=navigationGuard.awaitingChoice;}else await store.save();workspace=store.state; }
+  function cancel() { navigationGuard.discard();workspace=store.state;notice='';leaveDialog=false;inventoryOpen=false; }
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
   async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank());else{await store.beginCopy(id);workspace=store.state;} }
   function toggleResource(id:string,checked:boolean) { inventorySelection=checked?[...inventorySelection,id]:inventorySelection.filter(value=>value!==id); }
@@ -60,7 +70,7 @@
     {#if inventoryOpen}<section class="inventory-picker panel" aria-label="Add resource blocks"><div><h2>Available inventory resources</h2><button class="text-button" disabled={workspace.inventoryBusy} onclick={()=>store.refreshInventory()}>Refresh inventory</button></div>{#if workspace.inventoryError}<p class="workspace-error">{workspace.inventoryError}</p>{/if}<p class="inventory-help">{editor.document.resources.length} of 64 resource blocks used. Port catalogues remain paged; adding a block creates no routes.</p><div class="inventory-choices">{#each available as resource (resource.id)}<label><input type="checkbox" checked={inventorySelection.includes(resource.id)} onchange={event=>toggleResource(resource.id,event.currentTarget.checked)}/><span><strong>{resource.name}</strong><small>{profileCategory(resource)} · {resource.availability} · {resource.portCount} advertised ports</small></span></label>{:else}<p>All current inventory resources already have assigned blocks.</p>{/each}</div><button class="secondary-button" disabled={!inventorySelection.length||workspace.readOnly||workspace.busy} onclick={addSelected}>Add {inventorySelection.length} selected resources</button></section>{/if}
     {#key editor.document.id}<ProfileCanvas document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} readOnly={workspace.readOnly} {change} openGameSettings={openGameSettings?gameSettings:undefined}/>{/key}
   {/if}
-  {#if leaveDialog}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="leave-profile-title" onclose={()=>leaveDialog=false} {@attach showConfirmation}><h2 id="leave-profile-title">Keep your unsaved changes?</h2><p>Save this profile before returning, or discard this draft. Runtime selection stays unchanged.</p><div><button class="secondary-button" onclick={()=>leaveDialog=false}>Keep editing</button><button class="secondary-button" onclick={cancel}>Discard and return</button><button class="primary-button" disabled={!!error||workspace.readOnly||workspace.busy} onclick={()=>save(true)}>Save and return</button></div></dialog>{/if}
+  {#if leaveDialog}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="leave-profile-title" onclose={keepEditing} {@attach showConfirmation}><h2 id="leave-profile-title">Keep your unsaved changes?</h2><p>Save this profile before leaving, or discard this draft. Runtime selection stays unchanged.</p>{#if workspace.error}<p class="workspace-error" role="alert">{workspace.error}</p>{/if}<div><button class="secondary-button" onclick={keepEditing}>Keep editing</button><button class="secondary-button" onclick={cancel}>Discard and continue</button><button class="primary-button" disabled={!!error||workspace.readOnly||workspace.busy} onclick={()=>save(true)}>Save and continue</button></div></dialog>{/if}
   {#if replaceSource}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="replace-profile-title" onclose={()=>replaceSource=null} {@attach showConfirmation}><h2 id="replace-profile-title">Replace this new draft?</h2><p>Your unsaved edits will be discarded before starting from {replaceSource==='blank'?'the current inventory':'the selected copy'}.</p><div><button class="secondary-button" onclick={()=>replaceSource=null}>Keep this draft</button><button class="primary-button" onclick={()=>replace(replaceSource!)}>Replace draft</button></div></dialog>{/if}
 </section>
 

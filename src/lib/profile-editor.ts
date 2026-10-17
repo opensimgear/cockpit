@@ -128,6 +128,7 @@ export class ProfileEditorStore {
     private inventoryEpoch = 0;
     constructor(private api: ProfileEditorApi, private inventory: Pick<ProfileInventoryClient, 'listAll'>, private newId: () => string = () => globalThis.crypto.randomUUID()) { }
     get state(): DeepReadonly<ProfileWorkspaceState> { return freeze(this.value); }
+    get editorEpoch(): number { return this.epoch; }
     subscribe(listener: (state: DeepReadonly<ProfileWorkspaceState>) => void): () => void { this.listeners.add(listener); listener(this.state); return () => { this.listeners.delete(listener); }; }
     private set(patch: Partial<ProfileWorkspaceState>) { this.value = { ...this.value, ...patch }; for (const listener of this.listeners)
         listener(this.state); }
@@ -241,4 +242,40 @@ export class ProfileEditorStore {
             this.set({ busy: false });
     } }
     dispose(): void { this.epoch++; this.inventoryEpoch++; this.listeners.clear(); }
+}
+
+/** Routes are UI continuations, never runtime selection or activation requests. */
+export class ProfileNavigationGuard {
+    private pending: { continueNavigation: () => void; editorEpoch: number } | null = null;
+    constructor(private store: ProfileEditorStore) {}
+    get awaitingChoice(): boolean { return this.pending !== null; }
+    request(continueNavigation: () => void = () => {}): 'left' | 'confirm' | 'busy' {
+        if (this.store.state.busy) return 'busy';
+        this.pending = { continueNavigation, editorEpoch: this.store.editorEpoch };
+        if (!this.store.back()) return 'confirm';
+        this.complete();
+        return 'left';
+    }
+    keepEditing(): void { this.pending = null; }
+    discard(): void {
+        this.store.back(true);
+        this.complete();
+    }
+    async save(): Promise<boolean> {
+        const pending = this.pending;
+        if (!pending || this.store.state.busy || this.store.state.readOnly) return false;
+        await this.store.save();
+        if (this.pending !== pending) return false;
+        if (this.store.editorEpoch !== pending.editorEpoch) { this.pending = null; return false; }
+        const current = this.store.state;
+        if (current.error || current.editor && profileEditorDirty(current.editor)) return false;
+        if (!this.store.back()) return false;
+        this.complete();
+        return true;
+    }
+    private complete(): void {
+        const next = this.pending;
+        this.pending = null;
+        next?.continueNavigation();
+    }
 }

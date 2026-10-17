@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { loadModules } from './test-module-loader.mjs';
 const modules=await loadModules(['./profiles','./profile-editor']);
 const {DEFAULT_PROFILE_ID,exportProfileDocument}=modules.get('./profiles');
-const {ProfileEditorStore,seedProfile,blankProfile,copyProfile,addProfileResources,profileAutoLayout,profileEditorDirty,profileCategory}=modules.get('./profile-editor');
+const {ProfileEditorStore,ProfileNavigationGuard,seedProfile,blankProfile,copyProfile,addProfileResources,profileAutoLayout,profileEditorDirty,profileCategory}=modules.get('./profile-editor');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const uid=n=>`11111111-1111-4111-8111-${String(n).padStart(12,'0')}`;
 const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8').catch(()=>readFile(new URL('../../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8')));
@@ -111,4 +111,35 @@ test('failed inventory refresh retains known blocks but cannot silently seed a n
   h.provider.listAll=async()=>{throw new Error('Inventory revision changed while paging; refresh');};await h.store.refreshInventory();
   assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.inventory.length,8);assert.throws(()=>h.store.beginBlank(),/Refresh resource inventory/);assert.equal(h.store.state.editor,null);assert.equal(h.docs.size,1);
   h.provider.listAll=async()=>({resources:[...inventory(),resource('companion',3)]});await h.store.refreshInventory();h.store.beginBlank();assert.equal(h.store.state.editor.document.resources.length,9);assert.equal(original.document.resources.length,8);
+});
+test('sidebar guard keeps a canceled draft mounted and only discards after the explicit navigation choice',async()=>{
+  const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const guard=new ProfileNavigationGuard(h.store);const original=h.store.state.editor;let first=0,second=0;
+  assert.equal(guard.request(()=>first++),'confirm');assert.equal(first,0);assert.equal(h.store.state.editor,original);guard.keepEditing();assert.equal(h.store.state.editor,original);
+  assert.equal(guard.request(()=>second++),'confirm');guard.discard();assert.equal(first,0);assert.equal(second,1);assert.equal(h.store.state.view,'list');assert.equal(h.docs.size,1);assert.equal(h.store.state.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(h.calls.filter(c=>Array.isArray(c)&&c[0]==='save').length,0);
+});
+test('clean sidebar navigation and guarded save preserve runtime selection and continue exactly once',async()=>{
+  const h=harness();await h.store.refresh();const guard=new ProfileNavigationGuard(h.store);let navigated=0;assert.equal(guard.request(()=>navigated++),'left');assert.equal(navigated,1);
+  await h.store.open(DEFAULT_PROFILE_ID);assert.equal(guard.request(()=>navigated++),'left');assert.equal(navigated,2);assert.equal(h.store.state.editor,null);
+  await h.store.refreshInventory();h.store.beginBlank();assert.equal(guard.request(()=>navigated++),'confirm');assert.equal(await guard.save(),true);assert.equal(navigated,3);assert.equal(h.docs.size,2);assert.equal(h.store.state.session.state,'paused');assert.equal(h.store.state.session.appliedSnapshot.revision,2);
+  assert.equal(await guard.save(),false);assert.equal(navigated,3);
+});
+test('failed guarded saves stay in the editor and show the native error before retrying the same continuation',async()=>{
+  const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const guard=new ProfileNavigationGuard(h.store);let navigated=0;guard.request(()=>navigated++);const save=h.api.editorSave;
+  h.api.editorSave=async()=>{throw new Error('Storage is unavailable; preserve this draft.');};assert.equal(await guard.save(),false);assert.equal(navigated,0);assert.match(h.store.state.error,/preserve this draft/);assert.equal(h.store.state.view,'editor');
+  h.api.editorSave=save;assert.equal(await guard.save(),true);assert.equal(navigated,1);assert.equal(h.store.state.view,'list');
+});
+test('newer edits during guarded save stay dirty and a busy navigation cannot replace its pending destination',async()=>{
+  const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const guard=new ProfileNavigationGuard(h.store);let original=0,replacement=0;guard.request(()=>original++);
+  const save=h.api.editorSave,pending=deferred();h.api.editorSave=()=>pending.promise;const saving=guard.save();assert.equal(guard.request(()=>replacement++),'busy');assert.equal(await guard.save(),false);
+  const newer=plain(h.store.state.editor.document);newer.name='Newer edits';h.store.update(newer);pending.resolve({...savedResult({...newer,name:'New profile',revision:1}),assignments:plain(h.store.state.editor.assignments)});assert.equal(await saving,false);assert.equal(original,0);assert.equal(replacement,0);assert.equal(h.store.state.editor.document.name,'Newer edits');assert.equal(h.store.state.editor.baseRevision,1);
+  h.api.editorSave=save;assert.equal(await guard.save(),true);assert.equal(original,1);assert.equal(replacement,0);
+});
+test('canceling a pending navigation or replacing its editor during Save cannot close the retained or replacement editor',async()=>{
+  for(const keep of [true,false]){
+    const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const guard=new ProfileNavigationGuard(h.store);let navigated=0;guard.request(()=>navigated++);
+    const submitted=plain(h.store.state.editor.document),assignments=plain(h.store.state.editor.assignments),pending=deferred();h.api.editorSave=()=>pending.promise;const saving=guard.save();
+    if(keep)guard.keepEditing();else{h.store.back(true);await h.store.open(DEFAULT_PROFILE_ID);}
+    const retainedId=h.store.state.editor.document.id;pending.resolve({...savedResult(submitted),assignments});assert.equal(await saving,false);assert.equal(navigated,0);assert.equal(h.store.state.view,'editor');assert.equal(h.store.state.editor.document.id,retainedId);
+    assert.equal(guard.awaitingChoice,false);
+  }
 });
