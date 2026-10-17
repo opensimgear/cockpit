@@ -16,6 +16,11 @@ pub(crate) trait Platform: Send + Sync {
     }
     fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<Value>;
     fn validate(&self, game_id: &str, executable: &str) -> Result<(), String>;
+    /// Only create the native process. Unified launch admission must not hold
+    /// its short ownership guard while waiting for a process to appear.
+    fn spawn_process(&self, _game: &Value) -> Result<(), String> {
+        Err("This platform has no admitted process-only game launcher.".into())
+    }
     fn launch(&self, game: &Value) -> Result<ProcessIdentity, String>;
     fn find(&self, game: &Value) -> Result<Option<ProcessIdentity>, String>;
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String>;
@@ -545,7 +550,7 @@ impl Platform for NativePlatform {
     fn validate(&self, game_id: &str, executable: &str) -> Result<(), String> {
         validated_executable(supported(game_id)?, Path::new(executable)).map(|_| ())
     }
-    fn launch(&self, game: &Value) -> Result<ProcessIdentity, String> {
+    fn spawn_process(&self, game: &Value) -> Result<(), String> {
         if !cfg!(windows) {
             return Err("Game launch and process monitoring require Windows.".into());
         }
@@ -555,7 +560,10 @@ impl Platform for NativePlatform {
                 "This game is already running. Close it before launching a new profile.".into(),
             );
         }
-        native::spawn(&request)?;
+        native::spawn(&request)
+    }
+    fn launch(&self, game: &Value) -> Result<ProcessIdentity, String> {
+        self.spawn_process(game)?;
         wait_for_process(
             Duration::from_secs(45),
             || self.find(game),

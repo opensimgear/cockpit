@@ -394,6 +394,8 @@ pub(crate) struct GamesRuntime {
 mod context_runtime;
 #[path = "game_activation_runtime.rs"]
 mod activation_runtime;
+#[path = "profile_game_launch.rs"]
+pub(crate) mod launch;
 pub(crate) use context_runtime::PreparedGame;
 impl GamesRuntime {
     pub(crate) fn new(panel: Panel, path: PathBuf, platform: Arc<dyn Platform>) -> Self {
