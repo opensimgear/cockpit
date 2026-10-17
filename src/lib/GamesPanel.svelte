@@ -7,6 +7,7 @@
   import Icon from './Icon.svelte';
   import GameConfigEditor from './GameConfigEditor.svelte';
   import GameProviderSettings from './GameProviderSettings.svelte';
+  import GameProfileRule from './GameProfileRule.svelte';
   import { gameContextLabel } from './game-provider-settings';
   import type { DcsBiosStatus } from './dcs-bios';
   import type { DcsTarget } from './dcs-profile';
@@ -201,6 +202,7 @@
 
     <div class="games-detail-layout">
       <div class="game-content">
+        {#key selected.id}<GameProfileRule game={selected} busy={busy||pending}/>{/key}
         <section class="panel setup-panel" id="game-integration-settings" aria-label="Game integration setup">
           <div class="sidebar-title"><Icon name="link" size={17} /><h3>Integration setup</h3></div>
           <div class={['setup-readiness', { ready: gameIntegrationReady(selected), attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={gameIntegrationReady(selected) ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={15} /><strong>{gameIntegrationLabel(selected)}</strong></div>

@@ -8,7 +8,7 @@ import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation']);
+const modules = await loadModules(['./profiles','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation']);
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
 async function component(name) {
@@ -41,7 +41,7 @@ const state = g => ({catalogue:[g],profiles:[],defaultProfiles:{},session:{phase
 test('DCS game details own connection, catalogue, aircraft, installer recovery and separate readiness',()=>{
   const g=game('dcs');g.integrationSetup.recoveryNeeded=true;
   const html=render(GamesPanel,{props:{status:state(g),selectedGameId:'dcs',busy:false,targets:[],request:noRequest,readConfig:noRequest,returnLabel:'Return to profile',returnToEditor:noRequest}}).body;
-  for(const label of ['DCS-BIOS connection and catalogue','DCS Saved Games folder','DCS-BIOS doc/json directory','Aircraft module','Command UDP port','Provider setup','Game context','Telemetry freshness','Waiting for an active profile','No verified matching process','Recover integration setup','Save game settings','Return to profile'])assert.ok(html.includes(label),label);
+  for(const label of ['Automatic profile rule','Current installation executable','Saved unified profile','DCS-BIOS connection and catalogue','DCS Saved Games folder','DCS-BIOS doc/json directory','Aircraft module','Command UDP port','Provider setup','Game context','Telemetry freshness','Waiting for an active profile','No verified matching process','Recover integration setup','Save game settings','Return to profile'])assert.ok(html.includes(label),label);
   for(const obsolete of ['Start DCS-BIOS','Use saved integration','Update from saved integration','Save and open integrations','Synthetic test telemetry'])assert.ok(!html.includes(obsolete),obsolete);
   assert.ok(html.includes('C:\\DCS-BIOS\\doc\\json'));
 });

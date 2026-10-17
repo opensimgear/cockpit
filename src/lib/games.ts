@@ -17,7 +17,7 @@ export type GameIntegrationContext = {
   message: string; processVerified: boolean; contextSession: string | null;
   providerSetupRevision: string | null; catalogueRevision: string | null;
 };
-export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext };
+export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext };
 export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
 export type CapturedCompanionAssignment = { instanceId:string; companionId:string; publicationHash:string; capabilityFingerprint:string };
 export type CapturedGameCompanions = { schemaVersion:1; assignments:CapturedCompanionAssignment[] };

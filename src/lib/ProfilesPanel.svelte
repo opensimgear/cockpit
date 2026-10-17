@@ -3,6 +3,7 @@
   import Icon from './Icon.svelte';
   import ProfileRoutingEditor from './ProfileRoutingEditor.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
+  import ProfileAutomaticControls from './ProfileAutomaticControls.svelte';
   import ProfileLiveInspector from './ProfileLiveInspector.svelte';
   import { gatewayRequest } from './gateway';
   import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument, type ProfileLocalAssignment } from './profiles';
@@ -93,6 +94,7 @@
   {#if workspace.readOnly}<p class="workspace-error" role="status">This library is read-only. Resolve its diagnostics before making changes.</p>{/if}
   {#if notice||workspace.error}<p class="workspace-error" role="alert">{notice||workspace.error}</p>{/if}
   {#if workspace.view==='list'}
+    <ProfileAutomaticControls profiles={workspace.profiles} {active}/>
     <div class="page-heading"><div><div class="eyebrow">YOUR OPERATING SETUPS</div><h1>Profiles</h1><p>Edit Default or create an independent profile for your rig.</p></div><button class="primary-button" disabled={workspace.busy||workspace.inventoryBusy||workspace.readOnly} onclick={add}><Icon name="plus" size={14}/> Add profile</button></div>
     <div class="list-tools"><span>{rows.length} {rows.length===1?'profile':'profiles'} · {workspace.inventory.length} inventory resources</span><button class="text-button" disabled={workspace.busy} onclick={()=>store.refresh()}>Refresh profiles</button></div>
     {#if creatingSelection}<section class="inventory-picker panel" aria-label="Choose resources for new profile"><h2>Choose up to 64 resource blocks</h2><p class="inventory-help">The inventory has {workspace.inventory.length} resources. This exceeds the profile's 64-block capacity; select the resources for this draft explicitly. Nothing has been saved or omitted automatically.</p><div class="inventory-choices">{#each workspace.inventory as resource (resource.id)}<label><input type="checkbox" checked={inventorySelection.includes(resource.id)} onchange={event=>toggleResource(resource.id,event.currentTarget.checked)}/><span><strong>{resource.name}</strong><small>{profileCategory(resource)} · {resource.availability}</small></span></label>{/each}</div><button class="text-button" onclick={()=>creatingSelection=false}>Cancel creation</button><button class="secondary-button" disabled={!inventorySelection.length||inventorySelection.length>64} onclick={beginSelected}>Open draft with {inventorySelection.length} selected resources</button></section>{/if}
