@@ -94,7 +94,7 @@ test('applied topology metadata is an independent read lane and cannot delay sam
   assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_runtime_topology','profile_runtime_inspect','profile_stop','profile_save']);assert.deepEqual(api.calls[0].args.request,{command:'profile_runtime_topology',owner,section:'edges',offset:0,limit:64,clientId:'test-client-uuid'});pending.resolve();await reading;
 });
 test('learning cached status and priority cancel bypass a blocked start, and controls cancel unsent starts',async()=>{
-  for(const command of ['profile_input_learn_cancel','profile_apply','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','mapping_preview_start','action_invoke']){
+  for(const command of ['profile_input_learn_cancel','profile_apply','profile_game_launch','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','mapping_preview_start','action_invoke']){
     const wait=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='profile_input_learn_start')await wait.promise;return{ok:true,state};}});
     const fields={resourceId:'physical',generation:'1',capabilityRevision:'sha256:'+'1'.repeat(64)},active=api.gatewayRequest({command:'profile_input_learn_start',...fields});
     const old=api.gatewayRequest({command:'profile_input_learn_start',...fields}),rejected=assert.rejects(old,/learning Start was cancelled/);await tick();
@@ -496,4 +496,16 @@ test('passive companion panel metadata bypasses blocked profile saves without de
   assert.equal(api.calls.at(-1).args.request.resourceId,'native-instance');
   assert.equal(api.calls.at(-1).args.request.publicationHash,'sha256:captured');
   saving.resolve();await save;
+});
+
+test('native profile launch waits for saved edits and shares Apply ordering while Stop and status stay independent',async()=>{
+  const saved=deferred(),launch=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='profile_save')await saved.promise;if(request.command==='profile_game_launch')await launch.promise;return{ok:true,state};}});
+  const saving=api.gatewayRequest({command:'profile_save',document:{id:'profile',revision:1},expectedRevision:1});
+  const starting=api.gatewayRequest({command:'profile_game_launch',gameId:'dcs'});
+  const queued=api.gatewayRequest({command:'profile_game_launch',gameId:'x-plane-12'}),cancelled=assert.rejects(queued,/launch was cancelled/);
+  await tick();assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_save']);saved.resolve();await saving;await tick();
+  await api.gatewayRequest({command:'profile_status'});await api.gatewayRequest({command:'profile_stop'});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_save','profile_game_launch','profile_status','profile_stop']);
+  assert.deepEqual(api.calls[1].args.request,{command:'profile_game_launch',gameId:'dcs',clientId:'test-client-uuid'});
+  launch.resolve();await Promise.all([starting,cancelled]);
 });
