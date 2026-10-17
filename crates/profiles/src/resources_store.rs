@@ -78,8 +78,16 @@ impl Store {
             );
         }
         let mut checked = PathBuf::new();
-        for component in self.root.components() {
+        let mut components = self.root.components().peekable();
+        while let Some(component) = components.next() {
             checked.push(component.as_os_str());
+            // A Windows prefix such as \\?\C: is not the complete root.
+            // Check it with its following separator, then every full ancestor.
+            if matches!(component, Component::Prefix(_))
+                && matches!(components.peek(), Some(Component::RootDir))
+            {
+                continue;
+            }
             match std::fs::symlink_metadata(&checked) {
                 Ok(metadata) => {
                     reject_link(&metadata)?;

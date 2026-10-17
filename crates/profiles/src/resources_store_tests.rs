@@ -125,6 +125,91 @@ fn a_saved_resource_round_trips_offline_and_tampered_port_metadata_is_preserved_
     assert_eq!(std::fs::read(&path).unwrap(), corrupt);
 }
 
+#[cfg(windows)]
+#[test]
+fn canonical_windows_root_preserves_saved_identity_and_offline_ports_after_reopen() {
+    use crate::resources::{
+        Access, Availability, ResourceType, SavedCatalogue, SavedResource, SavedSighting,
+    };
+    use crate::resources_ports::{catalogue_hash, PortContract, PortDescriptor, ScalarSchema};
+    let temp = crate::test_directory();
+    // The qualification/native runtime uses canonicalized private directories.
+    // Windows canonicalization returns a verbatim disk prefix, not merely C:\.
+    let canonical = temp.path().canonicalize().unwrap();
+    assert!(matches!(
+        canonical.components().next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
+    ));
+    let root = canonical.join("new-child").join("resources-v1");
+    assert!(!root.exists());
+    let store = Store::new(root.clone());
+    assert!(store
+        .load()
+        .expect("canonical Windows inventory root must load as a new store")
+        .is_none());
+    let port = PortDescriptor {
+        id: "button:0".into(),
+        name: "Remembered button".into(),
+        direction: crate::Direction::Output,
+        contract: PortContract::State {
+            schema: ScalarSchema::Boolean {},
+            freshness_ms: 1000,
+            fallback: Some(crate::PortValue::Boolean(false)),
+        },
+    };
+    let hash = catalogue_hash(&[port.clone()]).unwrap();
+    let id = "7b2815a5-b6f5-41af-a3a1-56d2e53c79be";
+    let saved = SavedRegistry {
+        resources: vec![SavedResource {
+            id: id.into(),
+            name: "Remembered controller".into(),
+            resource_type: ResourceType::HostController,
+            sightings: vec![SavedSighting {
+                scope: "host-controllers".into(),
+                key: "remembered-source".into(),
+                evidence: vec![],
+                attributes: Default::default(),
+                diagnostics: vec![],
+                catalogue: Some(SavedCatalogue {
+                    revision: hash.clone(),
+                    total: 1,
+                    complete: true,
+                    ports: vec![port.clone()],
+                    hash,
+                }),
+            }],
+        }],
+        ..SavedRegistry::default()
+    };
+    store.save(&saved).unwrap();
+    drop(store);
+    let reopened = Store::new(root);
+    let loaded = reopened.load().unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap(),
+        serde_json::to_value(&saved).unwrap()
+    );
+    let registry = Registry::restore(loaded).unwrap();
+    let details = registry.inspect(id, 0, 32).unwrap();
+    assert_eq!(details.resource.id, id);
+    assert_eq!(details.resource.availability, Availability::Offline);
+    assert!(details.resource.connections.is_empty());
+    assert_eq!(details.resource.cached_port_count, 1);
+    assert_eq!(details.ports.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&details.ports[0].descriptor).unwrap(),
+        serde_json::to_value(&port).unwrap()
+    );
+    assert!(!details.ports[0].current);
+    assert!(details.ports[0].route_ids.is_empty());
+    assert!(registry.token(id, "button:0", Access::Read).is_err());
+    reopened.save(&registry.saved()).unwrap();
+    let again = Registry::restore(reopened.load().unwrap().unwrap()).unwrap();
+    assert_eq!(again.list(0, 32).unwrap().resources[0].id, id);
+    assert_eq!(again.inspect(id, 0, 32).unwrap().ports.len(), 1);
+}
+
 #[cfg(unix)]
 #[test]
 fn inventory_storage_refuses_symlinked_parent_and_target() {
