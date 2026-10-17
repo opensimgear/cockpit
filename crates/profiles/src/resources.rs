@@ -214,10 +214,21 @@ struct PreparationPin {
     port_id: String,
     contract_hash: String,
     access: Access,
+    selection_scope: Option<String>,
+    selection_catalogue_revision: Option<String>,
 }
 impl PortPreparation {
     pub fn resolved(&self) -> &ResolvedRoute {
         &self.resolved
+    }
+    pub fn inventory_session(&self) -> &str {
+        &self.pin.inventory_session
+    }
+    pub fn capability_revision(&self) -> &str {
+        &self.pin.capability_revision
+    }
+    pub fn provider_session(&self) -> &str {
+        &self.pin.provider_session
     }
     pub fn access(&self) -> Access {
         self.pin.access
@@ -244,8 +255,9 @@ impl PortPreparation {
     ) -> bool {
         self.pin.inventory_session == session
             && self.pin.resource_id == resource.id
-            && self.pin.generation == resource.generation
-            && self.pin.capability_revision == resource.capability_revision
+            && (self.pin.selection_scope.is_some() || self.pin.generation == resource.generation)
+            && (self.pin.selection_scope.is_some()
+                || self.pin.capability_revision == resource.capability_revision)
             && self.pin.port_id == port.descriptor.id
             && self.pin.contract_hash == port.contract_hash
             && self.pin.access == access
@@ -700,8 +712,41 @@ impl Registry {
         expected_contract_hash: &str,
         access: Access,
     ) -> Result<PortPreparation, String> {
+        self.prepare_port_selection(id, port_id, expected_contract_hash, access, None)
+    }
+    /// Native game acquisition always pins catalogue metadata, never a live
+    /// outgoing profile's reader. The metadata scope cannot be a delivery scope.
+    pub fn prepare_game_metadata_port(
+        &self,
+        id: &str,
+        port_id: &str,
+        expected_contract_hash: &str,
+        access: Access,
+        game_id: &str,
+    ) -> Result<PortPreparation, String> {
         let entry = self.entry(id)?;
-        let resolved = self.choose_mode(entry, port_id, access, true)?;
+        if entry.saved.resource_type != ResourceType::GameIntegration {
+            return Err("Only game resources have game metadata acquisition scopes.".into());
+        }
+        self.prepare_port_selection(
+            id,
+            port_id,
+            expected_contract_hash,
+            access,
+            Some(format!("game:{game_id}")),
+        )
+    }
+    fn prepare_port_selection(
+        &self,
+        id: &str,
+        port_id: &str,
+        expected_contract_hash: &str,
+        access: Access,
+        selection_scope: Option<String>,
+    ) -> Result<PortPreparation, String> {
+        let entry = self.entry(id)?;
+        let resolved =
+            self.choose_mode_scope(entry, port_id, access, true, selection_scope.as_deref())?;
         let hash = resolved.port.contract_hash()?;
         if hash != expected_contract_hash {
             return Err("Resource contract changed before preparation; reconcile its exact local port expectation.".into());
@@ -723,6 +768,10 @@ impl Registry {
                 port_id: port_id.into(),
                 contract_hash: hash,
                 access,
+                selection_catalogue_revision: selection_scope
+                    .as_ref()
+                    .and(live.catalogue_revision.clone()),
+                selection_scope,
             },
             resolved,
         })
@@ -731,12 +780,20 @@ impl Registry {
         &self,
         preparation: &PortPreparation,
     ) -> Result<ResolvedRoute, String> {
-        let current = self.prepare_port(
+        let mut current = self.prepare_port_selection(
             &preparation.pin.resource_id,
             &preparation.pin.port_id,
             &preparation.pin.contract_hash,
             preparation.pin.access,
+            preparation.pin.selection_scope.clone(),
         )?;
+        if preparation.pin.selection_scope.is_some() {
+            // A separate outgoing/incoming delivery sighting may change the
+            // aggregate entry generation. Metadata admission pins only its own
+            // provider session, exact route and complete catalogue revision.
+            current.pin.generation = preparation.pin.generation.clone();
+            current.pin.capability_revision = preparation.pin.capability_revision.clone();
+        }
         if current.pin != preparation.pin {
             return Err(
                 "Resource identity, route, catalogue or generation changed after preparation."
@@ -892,6 +949,12 @@ impl Registry {
     }
     fn locate(&mut self, scope: &str, observation: &Observation) -> Result<String, String> {
         let proof = verified(&observation.evidence);
+        let game_proof = observation
+            .evidence
+            .iter()
+            .filter(|e| e.kind == EvidenceKind::GameScope)
+            .map(|e| e.value.as_str())
+            .collect::<BTreeSet<_>>();
         let mut candidates = BTreeSet::new();
         for (id, entry) in &self.entries {
             if entry
@@ -909,6 +972,19 @@ impl Registry {
                 if !previous.is_empty() && !proof.is_empty() && previous.is_disjoint(&proof) {
                     return Err("Physical identity changed for a retained provider key; explicit reconciliation is required.".into());
                 }
+                candidates.insert(id.clone());
+            }
+            // Catalogue metadata and a native acquired reader are sightings of
+            // one game integration. This evidence never joins physical devices.
+            if observation.resource_type == ResourceType::GameIntegration
+                && entry.saved.resource_type == ResourceType::GameIntegration
+                && !game_proof.is_empty()
+                && entry.saved.sightings.iter().any(|s| {
+                    s.evidence.iter().any(|e| {
+                        e.kind == EvidenceKind::GameScope && game_proof.contains(e.value.as_str())
+                    })
+                })
+            {
                 candidates.insert(id.clone());
             }
             if !proof.is_empty()
@@ -982,6 +1058,16 @@ impl Registry {
         access: Access,
         preparing: bool,
     ) -> Result<ResolvedRoute, String> {
+        self.choose_mode_scope(entry, port_id, access, preparing, None)
+    }
+    fn choose_mode_scope(
+        &self,
+        entry: &Entry,
+        port_id: &str,
+        access: Access,
+        preparing: bool,
+        selection_scope: Option<&str>,
+    ) -> Result<ResolvedRoute, String> {
         if access != Access::Read {
             if let Some(reason) = write_conflict(entry) {
                 return Err(reason.into());
@@ -989,6 +1075,9 @@ impl Registry {
         }
         let mut candidates = Vec::new();
         for sighting in &entry.saved.sightings {
+            if selection_scope.is_some_and(|scope| sighting.scope != scope) {
+                continue;
+            }
             let Some(live) = entry
                 .live
                 .get(&(sighting.scope.clone(), sighting.key.clone()))
@@ -1274,6 +1363,9 @@ fn validate_sighting(sighting: &SavedSighting, kind: ResourceType) -> Result<(),
         text(&evidence.value, 2048)?;
         if !seen.insert((evidence.kind, &evidence.value)) {
             return Err("Duplicate resource identity evidence.".into());
+        }
+        if evidence.kind == EvidenceKind::GameScope && kind != ResourceType::GameIntegration {
+            return Err("Game identity evidence belongs to a game integration.".into());
         }
         if evidence.kind == EvidenceKind::VerifiedPhysical
             && !matches!(kind, ResourceType::HostController | ResourceType::OsgModule)

@@ -253,6 +253,7 @@ impl Sources {
                 ("gameId", id.into()),
                 ("provider", provider.into()),
                 ("installed", game["installed"].to_string()),
+                ("processVerified", game["integrationContext"]["processVerified"].as_bool().unwrap_or(false).to_string()),
             ]);
             let setup_revision = game["integrationSetup"]["providerSetupRevision"]
                 .as_str()

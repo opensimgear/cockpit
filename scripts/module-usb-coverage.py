@@ -12,7 +12,7 @@ import tempfile
 
 
 MODULES = ["module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
-           "profile_resources", "profile_resource_sources", "profile_resource_ports", "profile_compilation"]
+           "profile_resources", "profile_resources_game", "profile_resource_sources", "profile_resource_ports", "profile_compilation"]
 TEST_FILTERS = ["module_", "profile_resource", "profile_compilation", "stm32::tests::events_"]
 
 
