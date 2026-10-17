@@ -1236,6 +1236,10 @@ fn script_transactions_validate_all_fields_before_committing() {
     let mut engine = phase(script_program(false, boolean_contract()));
     feed(&mut engine, 1, 0, pressed(false));
     let request = script_request(&mut engine);
+    assert!(engine.script_ticket_current(&request.ticket));
+    let mut forged=request.ticket.clone();
+    forged.sequence.0+=1;
+    assert!(!engine.script_ticket_current(&forged));
     let invalid = ScriptTransaction {
         outputs: BTreeMap::from([(
             "output".into(),
@@ -1253,6 +1257,7 @@ fn script_transactions_validate_all_fields_before_committing() {
         .is_err());
     assert!(engine.timers.is_empty());
     assert!(engine.states["processor"].script_state.is_empty());
+    assert!(!engine.script_ticket_current(&request.ticket));
     assert_eq!(output(&engine), SignalSample::Unknown);
     feed(&mut engine, 2, 1, pressed(true));
     assert!(engine.script_requests().is_empty());
@@ -1263,10 +1268,12 @@ fn script_and_timer_queues_have_shared_bounds_and_stop_invalidates_work() {
     let mut engine = phase(script_program(true, boolean_contract()));
     feed(&mut engine, 1, 0, pressed(false));
     let request = script_request(&mut engine);
+    assert!(engine.script_ticket_current(&request.ticket));
     for sequence in 2..=34 {
         feed(&mut engine, sequence, sequence, pressed(true));
     }
     assert!(engine.states["processor"].fault);
+    assert!(!engine.script_ticket_current(&request.ticket));
     assert!(engine.script_requests().is_empty());
     assert!(engine
         .script_reply("processor", &request.ticket, Default::default())
