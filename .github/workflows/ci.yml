@@ -180,7 +180,11 @@ jobs:
           python3 -m unittest discover -s tests/e2e -p 'test_*.py'
           node --test tests/e2e/profile-graph-fixtures.test.mjs
       - name: Independent gateway and device acceptance
-        run: python3 tests/e2e/run.py --sanitize
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 tests/e2e/run.py --sanitize
+          '
       - name: Upload integration evidence
         if: always()
         uses: actions/upload-artifact@v4
