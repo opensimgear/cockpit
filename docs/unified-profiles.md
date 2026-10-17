@@ -1,13 +1,13 @@
-# Unified profile contracts (P0)
+# Unified profile contracts and storage
 
-P0 supplies the portable document, native library, session metadata and typed
-frontend client for [the unified profile plan](https://github.com/opensimgear/cockpit/issues/79).
-Resource discovery, compilation, device execution and the profile UI follow in
-P1–P9. In particular, `profile_apply` refuses output activation until P4.
+The portable document, native library, session metadata and typed frontend client
+support [the unified profile plan](https://github.com/opensimgear/cockpit/issues/79).
+See the [Profiles guide](profiles-guide.md) for creating, editing, applying and
+inspecting a rig, and [editor details](unified-profile-editor.md) for exact routing.
 
-The Profiles section will open to a list containing Default and an **Add
+The Profiles section opens to a list containing Default and an **Add
 profile** button. Opening a profile opens its editor; **Back to Profiles**
-returns to the list. P0's client keeps that editor context independent of
+returns to the list. The client keeps that editor context independent of
 runtime selection. Opening, creating, editing, saving or closing an editor
 does not activate it.
 
@@ -17,7 +17,7 @@ does not activate it.
 matching frontend contract and client. Shared JSON fixtures under
 `tests/fixtures/profiles` are checked by both implementations.
 
-Schema version 1 contains:
+Schema version 2 contains:
 
 | Field | Meaning |
 | --- | --- |
@@ -25,7 +25,7 @@ Schema version 1 contains:
 | `eligibility` | Logical game catalogue requirements, without executable paths or live processes |
 | `resources` | Required/optional logical devices, companions and game resources, with typed ports |
 | `bindings` | Explicit directional source-port to destination-port connections |
-| `processingNodes` | Visible processing declarations; execution belongs to P2 and P4 |
+| `processingNodes` | Visible typed processing declarations compiled for the applied session |
 | `virtualOutputs` | Logical virtual controller definitions, without machine-specific vJoy slot IDs |
 | `visibility` | Intent referring to logical resources, without HidHide instance paths |
 | `overrides` | Optional peripheral runtime intent, separate from permanent calibration/firmware setup |
@@ -42,7 +42,7 @@ fallback; this contract does not authorize replay of an old event or command.
 Native validation rejects unknown versions/fields, malformed identifiers, invalid
 port declarations, duplicate graph identities, missing endpoints, incompatible
 connections, implicit type/unit conversion and cycles. Runtime compilation and
-capability/resource admission remain separate P1/P2/P4 responsibilities.
+capability/resource admission remain separate from document validation.
 
 Live route observations, hardware identities/evidence, OS device paths, backend
 slots, pairing credentials, process IDs, raw calibration, game installation and
@@ -68,13 +68,14 @@ identity/name/revision metadata.
 Session metadata separates selected profile, manual/automatic selection mode,
 paused/faulted state and the captured applied revision. Automatic selection must
 honor manual mode, Pause and faults. Selecting a document cannot rearm processing.
-The pure snapshot/session contract does not submit output; P4 will own preflight,
-acquisition, execution, neutralization, compensation and recovery. Process restart
-starts stopped with Default and never replays a saved applied snapshot.
+Pure snapshot/session metadata does not submit output. The native coordinator
+owns preflight, acquisition, execution, neutralization, compensation and recovery.
+Process restart never replays a saved applied snapshot. Automatic selection, when
+explicitly enabled, independently requires current verified native observations.
 
 ## Fresh bounded storage
 
-The native service uses a new `profiles-v1` directory beside the other application
+The native service uses a fresh `profiles-v2` directory beside the other application
 configuration, containing its own library. It never reads or migrates old game,
 mapping, integration or companion-feedback profile configuration into that
 library. Existing domain workflows are removed by the later P9 cutover; they are
@@ -115,6 +116,9 @@ development. Profile requests have a dedicated frontend queue and return
 | `profile_select` | `id`, `selectionSource` (`manual` or `automatic`); metadata only |
 | `profile_selection_mode` | `mode` (`manual` or `automatic`) |
 | `profile_pause` | `paused` boolean; cannot clear a fault |
+| `profile_apply` | Saved `id`, `expectedRevision`, optional logical `gameId` |
+| `profile_game_launch` | Logical `gameId`; selection and process authority are native |
+| `profile_stop`, `profile_recover` | None; cleanup does not replay the graph |
 | `profile_reset` | Explicit `confirm: true` |
 
 Lists/status return compact summaries and session metadata; get/export return one
