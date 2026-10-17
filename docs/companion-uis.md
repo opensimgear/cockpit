@@ -21,9 +21,11 @@ HTTPS browser client embedded in Cockpit. `packages/companion-designer` owns the
 designer/library/publication model and `packages/companion-ui` supplies the shared
 Svelte canvas and input semantics. `crates/companion-service` owns the narrow native
 WSS transport, pairing, native protected stores and pure source-sink interface.
-Cockpit integrates that interface with the dedicated `companion` mapping origin
-in `crates/mapping-host`; the client crate has no controller-driver dependency.
-Cockpit retains ownership of mappings, virtual devices, game profiles and feedback.
+Cockpit's native companion provider exposes exact typed resources to unified
+Profiles; the retained dedicated `companion` source contract cannot impersonate
+physical input. The client crate has no controller-driver dependency. One native
+ProfileSession owns the applied graph, virtual devices and feedback; game details
+own provider setup.
 
 The companion must not link Cockpit's gateway/serial stack, acquire local vJoy
 slots, change HidHide, launch games, expose the development bridge or accept
@@ -92,12 +94,12 @@ Latency/freshness numbers are release targets, not current measurements. Report
 client render time, network time, host processing, successful virtual submission,
 queues, dropped/coalesced data and faults separately. Configured gesture delays
 and game sampling are separate. C6 must qualify the chosen network/device/load
-matrix. C4 coordinates the ordinary physical/panel mapping and bounded companion
-routes in one workspace. Each companion route has its own execution worker and
-Stop scope, while all routes share 16 total source roles, eight total targets and
-256 total nodes. This preserves the C0 resource envelope across execution engines.
-Eight companions is a ceiling, not eight guaranteed free slots; preflight reserves
-every role, target and node before arming and rejects unsupported backend layouts.
+matrix. Current unified graphs support 64 resources, 256 processing nodes,
+512 bindings and 1024 selected ports. Native execution retains its limits of
+16 used source resources and eight virtual targets; at most eight companion
+instances can be acquired by one profile. Eight companions is a ceiling, not
+eight guaranteed free slots. Preflight checks shared budgets, exact ports and
+backend layouts before arming, rather than allocating independent C4 engines.
 
 ## Sessions, ordering and isolated failure
 
@@ -105,8 +107,9 @@ The C0 reducer is an executable contract, not a network authentication service.
 C2's native Hub implements authentication, instance authorization and session
 ordering before its `SourceSink` callbacks can update mapping input. One controller instance has one writer. A second writer is
 rejected; explicit takeover first releases the old instance and increments its
-generation. Stop/revoke/failure affects that instance, not global `mapping_stop`.
-Other companions, physical inputs, gateways and integrations remain running.
+generation. Peer disconnect/revocation invalidates that instance's contributions;
+unrelated admitted branches can continue. Host Stop/Pause affects the owning
+profile. No standalone `mapping_stop` authority remains.
 
 Input starts disarmed. A complete neutral baseline uses sequence `0`, then input
 batches are strictly contiguous. Momentary controls already held when connecting
@@ -200,61 +203,38 @@ queue, gateway worker, mapping clock or feedback. C2 implements these boundaries
 sockets. Second-PC LAN and mobile native trust/storage qualification remain open;
 local socket tests are not physical-network release evidence.
 
-## Authored companion mappings (C4)
+## Profile-owned companion controls and feedback
 
-In Cockpit's Mappings page, use **Companion controller mappings** to select a
-persistent instance, inspect its trusted publication and save its authored route.
-The native host derives source roles, target indices, axis ranges, declared
-fallbacks and bindings from that immutable publication. Two copies of the same UI
-receive distinct instance, profile and target identities. The manual mapping
-editor remains available for existing physical/panel workflows.
+Current authoring lives in **Profiles**. Add/open a graph, choose a paired companion resource and retained immutable panel, capture that revision in the draft, and select exact control outputs and feedback/widget inputs. The profile owns its bindings, visible processing, virtual layouts, local instance/port pins and companion revision references together. There is no separate Mappings workspace, per-instance recording Start or global feedback-route save. See the [current guide](companion-guide.md).
 
-**Save for recording only** needs no virtual driver. **Start selected recording**
-requires current assignment authority and waits for a complete source baseline
-before recording input reports through the production mapping engine. The report log identifies
-the target, sequence, state and reason; these are software reports, not evidence
-that a game received input. Saving, pairing, reconnecting or restoring settings
-never starts a route.
+Native preparation uses the paired instance, exact publication/capability and prospective contracts without inventing delivery tokens. Apply acquires the actual assignment and requires its real neutral baseline before binding current source tokens. Panel, capability, route, instance or generation changes require explicit reconciliation; a new input baseline cannot revive an obsolete captured route. Copy/import does not infer machine assignments.
 
-For live output, inspect native targets and explicitly save exact output
-assignments, including native axis usages. Preflight checks the pinned revision,
-authorization, baseline, explicit output enablement, backend qualification,
-capabilities, inventory, recovery and shared reservations. Missing or extra axes,
-buttons or hats, duplicate slots, mismatched fallback and over-budget layouts are
-rejected rather than truncated. Publishing a changed revision requires Stop and
-explicit reconciliation; a new baseline cannot revive an old route.
+One effective ProfileSession owns the typed reducer and participating workers. Preflight validates exact backend layouts, source/route overlaps, required/optional resources, retained panels, qualification and recovery before replacing the old run. Failed preparation preserves that prior run. Save and editor navigation never activate a graph. Ordinary controller routes can run without a game while matching-game-only integration branches remain dormant.
 
-Each route has a bounded worker and separate recovery journal. A slow feeder does
-not run on the ordinary mapping worker or another companion's worker. Stop
-invalidates queued/in-flight Start for that instance, cancels pending actions and
-applies its declared fallback. Pending or failed cleanup remains visible and
-retains resource ownership until recovery completes. Source loss, revocation,
-lease expiry and restart require a fresh baseline and explicit Start. Existing
-physical mappings and other companion instances retain their own sessions.
+Applied source-to-destination inspection shows the captured revision's node summaries, typed values, freshness and requested destinations. It does not prove OS submission or game-confirmed state. Companion controls remain sources; presentation feedback cannot synthesize a control input. Unit conversion, hysteresis, conditions and invocation arguments are explicit graph nodes. The shared renderer accepts only supported advertised widget properties; stale/disconnected feedback cannot masquerade as fresh confirmation.
 
-Browser and mobile companion clients share the host authorization model;
-the client OS does not select or qualify the host output backend. Recording is
-available while live output is unqualified. Linux/macOS host output and multiple
-live feeder processes on those hosts remain gated by their backend limitations
-and #48/#49. Current production qualification gates remain disabled, including
-Windows output pending #54. No test-only feeder can be selected from the UI.
+Stop, Pause, switching and context loss revoke affected owned contributions and feedback. Disconnect/reconnect isolates peers and needs new baselines; late messages cannot mutate replacement panels or owners. Crash recovery restores only exact still-owned state without replaying input/actions, running a prior graph or silently rehiding devices. Retained C4 mapping/output journals are cleanup-only; they cannot restart a standalone companion mapping.
 
-Real-game routing, game binding retention, physical fallback and browser/mobile
-OS combinations remain in [#66](https://github.com/opensimgear/cockpit/issues/66).
-Native installation, protected-store and LAN/lifecycle checks remain in the
-platform stories below. Automated local WSS/recording and injected feeder tests
-do not replace those checks.
-## Delivery, schema migration and validation
+Browser and mobile clients share native authorization boundaries; the client OS does not qualify the host output backend. Designer preview and portable tests work while live output remains unqualified. Linux/macOS output and existing Windows output/script/hiding gates remain unchanged. No test-only feeder can be selected from the UI.
 
-C1 delivers the designer and full shared renderer. C2 adds the native listener,
-pairing, Rust client/session boundary and a distinct `companion` mapping source
-origin through an explicit schema migration. Existing `host-controller`, panel
-and synthetic sources are not reused to impersonate a remote controller. Preserve
-existing imports and recording behavior; production startup never enables new
-listener/input effects implicitly. C3 delivers the Android and iOS native shells. C4 coordinates isolated companion engines with the ordinary mapping,
-reserves shared resources and checks exact backend layouts before acquisition.
-C5 adds feedback and captured game settings. C6 qualifies distribution/lifecycle,
-mixed peers, performance and supported host/backend combinations.
+The actual loopback browser/native WSS proof exercises the real profile host, reducer and shared renderer through conversion/hysteresis, live/stale feedback, disconnect/reconnect, Pause, Default and Stop. Its source is an explicitly authored altitude preset, not simulator altitude. See [the evidence](verification/2026-10-17-profile-companion-browser-wss.md). Real-game routing, binding retention, physical fallback and supported client/host combinations remain [#66](https://github.com/opensimgear/cockpit/issues/66) and the release matrix's scoped qualification stories.
+
+## Historical milestones and current validation
+
+The C0–C6 checkpoints below describe the companion foundations, not current
+desktop activation commands. Unified schema-2 profile storage is fresh: old
+mapping/game/integration configurations are not read or migrated, and retained
+ownership records permit cleanup only. Portable panel document version handling
+is separate from retired host configuration.
+
+C1 delivered the designer/shared renderer. C2 added native transport, pairing,
+protected stores and distinct companion source identity; physical and synthetic
+sources cannot impersonate that identity. C3 added Android/iOS native shells.
+Historically C4 coordinated independent companion mapping engines and C5 added
+feedback/captured game settings. Their desktop configuration/start
+paths are now retired in favor of ProfileSession ownership. C6 tracks
+distribution/lifecycle, mixed peers, performance and supported host/backend
+qualification; it does not declare those checks passed.
 
 CI checks contracts and lifecycle tests with at least 71% measurable lines,
 branches and functions, TypeScript/Svelte checks, the renderer build, and an Android
@@ -304,7 +284,9 @@ hashing only the embedded C0 logical UI would omit renderer behavior.
 The local designer supports saved panels, pages, movement/resizing, grid,
 alignment, groups, undo/redo, validated properties, templates, static raster
 assets, logical controller assignment, import/export, target-size preview and
-explicit publication. It never allocates a driver slot or starts game input.
+immutable publication. The current **Save panel** action creates its transport
+revision internally; no separate Publish control is required. It never allocates
+a driver slot or starts game input.
 Drafts and immutable published snapshots are persisted atomically, with hash and
 asset validation on load. Local storage is bounded to 20 drafts, 100 published
 revisions and 64 MiB; portable documents/bundles retain their separate limits.
@@ -377,11 +359,12 @@ and decodes the shared document/assets before allowing Start. Assets are static
 PNG/JPEG/WebP, at most 2 MiB each/8 MiB total; dimensions are at most 8192 per side
 and 16,777,216 pixels. Publication verification never grants input authority.
 
-The provider registers persistent logical instance IDs under `Origin::Companion`.
-It never calls a companion Synthetic, physical HID or gateway source. Mapping
-schema 1 imports retain their interpretation; companion roles require explicit
-schema 2. UI option keys may use `companion:<id>` only to avoid collisions; saved
-native assignments contain the bare instance ID and the explicit origin.
+The retained source contract registers persistent instances under
+`Origin::Companion`; the unified native provider projects exact companion
+resources/ports. It never calls a companion Synthetic, physical HID or a gateway
+source. Assignments pin the actual paired instance, publication and capability;
+display names or UI option prefixes cannot supply that authority. Old mapping
+imports are not a current desktop configuration path.
 
 The mapping worker drains isolated per-instance queues using the native host
 clock, independently of UI polling. Each source has a 512-transition queue;
@@ -408,22 +391,23 @@ nor source-accepted acknowledgements establish those performance targets.
 
 The native mobile app retains persistent verified offline panels, explicit recovery and guarded async session/view state. Android/iOS authentication remains disabled pending native qualification. See [mobile build and storage instructions](../apps/companion/README.md). Desktop uses the [browser companion](browser-companion.md).
 
-## C4 isolated controller mappings
+## C4 retained output ownership
 
-Each retained companion instance has its own immutable controller revision,
-recording/output profile, worker, reservation and recovery boundary. Start is an
-explicit operation, with the current native backend qualification and enablement
-checks. See [C4 validation](verification/2026-10-16-companion-c4.md).
+The historical independent companion mapping/start path is retired. Existing
+output/provisioning ownership records remain eligible only for exact native
+cleanup, with their original qualification and compare-if-unchanged guards.
+They cannot recreate a mapping/profile, replay held input or restore a recording.
+See [C4's historical validation](verification/2026-10-16-companion-c4.md) and
+[current cleanup behavior](profile-retired-recovery.md).
 
-## C5 typed feedback and captured game assignments
+## Profile-owned typed feedback and assignments
 
-Browser and Android/iOS companions share the Svelte renderer and typed
-feedback model. The host's Companion connections page exposes
-**Feedback** for a selected instance. Save explicit bindings from a publication's
-feedback widget/channel to requested state, host acceptance, acknowledged native
-submission or an integration source. Numeric sources require compatible units and
-ranges; an explicit scale/offset converts values before the bounded destination
-range is checked. Text and boolean routes retain their types.
+Browser and Android/iOS companions share the Svelte renderer and typed feedback
+model. Profiles selects the captured publication's declared feedback inputs and
+connects exact source ports through visible processing. Numeric sources require
+compatible units/ranges; explicit conversion nodes adjust them before checking
+the destination contract. Text, Boolean and ordered action arguments retain
+their exact types. Provider connection/catalogue setup belongs in game details.
 
 The renderer labels provenance independently from freshness. Requested, Local,
 Host accepted, Host submitted and Game confirmed are separate states; missing,
@@ -433,12 +417,12 @@ cannot establish submission. ACR's synthetic source is Local; DCS-BIOS or the
 supported simulator provider can establish Game confirmed only from its fresh
 native decoder. This does not add a Star Citizen telemetry feed.
 
-Integration documents keep schema 1 behavior. Schema 2 may add up to 16 combined
-physical/feedback outputs, with source-only `feedbackOutputs` and no module roles.
-These decode supported telemetry without acquiring a panel or inventing physical
-output targets. Bindings pin the semantic integration configuration, channel
-metadata and immutable publication. A changed source requires an explicit save.
-Transient game process IDs do not invalidate an unchanged source definition.
+The unified graph is the only host authoring source. It pins exact selected
+channel contracts and immutable companion references; native acquisition adds
+current game/setup/catalogue/process authority. Changed contracts require explicit
+reconciliation and fresh admission. Wrong/no-game branches remain dormant.
+Retired schema-1/2 integration and game configurations are not imported or used
+as fallback. No source-only graph invents an output target or a delivery token.
 
 Visual Reset clears displayed values to unknown until the source changes;
 Resync rotates the feedback generation and obtains a native snapshot. Neither
@@ -448,15 +432,13 @@ both sides. Ordered chunk transport supports bounded full snapshots, with one
 socket worker per peer. Slow or disconnected peers cannot run network I/O on the
 mapping, gateway or integration worker.
 
-Game profiles may optionally capture the current companion assignment identities
-and immutable publication/capability hashes. Schema 3 adds that capture to game
-profiles and recovery journals; schema 1/2 continue to load. Import, capture and
-save do not connect or arm a controller. Activation preflights all captured
-requirements before effects, stops the previous integration before taking the
-assignments and records their baseline. Stop/recovery restores only the exact
-state owned by that game session. External edits cause a visible restoration
-conflict; they are not overwritten. Active game ownership guards assignment and
-feedback-route edits, and preserves emergency Stop/disconnect/revoke operations.
+Profiles captures exact companion assignment and publication/capability references
+with the graph. Save/navigation do not activate it. Apply preflights captured
+requirements before effects, acquires native assignment ownership and waits for
+real neutral baselines. Stop/recovery restores only still-owned state and reports
+external edits instead of overwriting them. Old game companion records remain
+cleanup evidence only. Active ownership guards assignment changes; Stop and
+disconnect/revoke remain independent of editor state.
 
 [C5 verification](verification/2026-10-16-companion-c5.md) distinguishes local
 software evidence from [native qualification #67](https://github.com/opensimgear/cockpit/issues/67).
@@ -465,8 +447,8 @@ gates retain their existing disabled/unqualified state. Native companion client
 support does not qualify Linux/macOS host output backends (#48/#49).
 ## C6 release preparation
 
-The [user guide](companion-guide.md) covers designer/import, pairing, independent
-recording routes, feedback, captured game assignments, readiness and recovery.
+The [user guide](companion-guide.md) covers panel Save/import, pairing,
+profile-owned exact controls/feedback, readiness and retained cleanup.
 [Flight/button-box and axis/racing examples](../examples/companion/README.md) are
 portable designer imports; they contain no credentials or local assignments and
 do not connect or activate output when imported.

@@ -1,140 +1,115 @@
 # Use a companion panel
 
-Cockpit designs and hosts the panel. The browser companion displays it on desktop; the native Companion app targets Android and iOS. Install controller drivers on the Cockpit host only when its separately qualified output backend needs them; the companion computer needs no vJoy or HidHide.
+Cockpit designs and hosts the panel. The browser companion displays it over the host's opt-in HTTPS listener; the native Companion app targets Android and iOS. Controller drivers belong on the Cockpit host only when its separately qualified output backend needs them. The companion computer needs no vJoy or HidHide.
 
-Start with local preview and recording. The [release matrix](companion-release-matrix.md) is the source of truth for supported installation, network and game-output combinations. **The qualified release matrix is currently empty.** Development builds and automated tests do not establish a signed, physically qualified release. Android/iOS authentication and unqualified host output capabilities remain disabled.
+Start with local preview. The [release matrix](companion-release-matrix.md) is the source of truth for supported installation, network and game-output combinations. **The qualified release matrix is currently empty.** Development builds and automated tests do not establish a signed, physically qualified release. Mobile authentication and unqualified host output remain disabled.
 
 ## Choose the right app
 
 | Where | What to run | Current boundary |
 | --- | --- | --- |
-| Cockpit host | Native Cockpit | Owns publications, listener, assignments, mappings, simulator connections and game profiles. |
+| Cockpit host | Native Cockpit | Owns panels, pairing, provider setup and the active unified profile. |
 | Desktop browser | Cockpit-hosted browser companion | See [browser setup](browser-companion.md) for HTTPS trust, pairing and installation. |
-| Android/iPhone/iPad | Configured Companion mobile shell/local reference preview | Authentication remains disabled pending native device qualification. |
-| Browser preview | Cockpit designer or Companion browser preview | Local design/recording; the browser Companion cannot pair with a host. |
+| Android/iPhone/iPad | Companion mobile shell/local reference preview | Authentication remains disabled pending native device qualification. |
+| Browser preview | Cockpit designer or mobile shell's browser preview | Local design/preview only; the mobile shell's browser preview cannot pair. |
 
-A browser client does not select or qualify the host output backend. Host output readiness is a separate check. Use the [native build instructions](../apps/companion/README.md#development-and-native-builds) for development builds; signed installation/update paths are tracked in the release matrix.
+A browser client does not select or qualify the host output backend. Use the [native build instructions](../apps/companion/README.md#development-and-native-builds) for development builds; signed installation/update paths remain in the release matrix.
 
 ## Import an example and try it locally
 
-1. Download [Flight button box](../examples/companion/flight-button-box.json) or [Racing axes](../examples/companion/axis-racing.json). These are portable bundles, not credentials or game bindings.
-2. In Cockpit, open **Companion panels** and choose **Import bundle**. Select the downloaded JSON file.
-3. Choose **Save draft**. The saved panel appears in the local Library.
-4. Choose **Preview locally**. Try the controls and watch their recorded transitions. **Stop preview** ends the preview. No virtual controller or game input starts.
-5. Change pages or stop and verify the controls return to their declared fallback. Feedback stays unknown until an explicit visual source is configured.
+1. Download [Flight button box](../examples/companion/flight-button-box.json) or [Racing axes](../examples/companion/axis-racing.json). These are portable panel bundles, without credentials or game bindings.
+2. In **Companions**, use **Import panel** in the Panels list and select the file.
+3. Choose **Save panel** to retain it. Check any unsupported-content or companion-update diagnostic before continuing.
+4. Choose **Preview locally**, try the controls, then **Stop preview**. No virtual controller or game input starts.
+5. Change pages or stop and check that controls return to their declared fallback. Feedback remains unknown until an explicit profile route supplies it.
 
-The [example notes](../examples/companion/README.md) explain control behavior, target shapes and optional feedback bindings. The examples make no game-specific binding assumptions. Importing them does not configure a simulator or acquire an output device.
+The [example notes](../examples/companion/README.md) describe control behavior, logical target shapes and suggested feedback sources. Importing a panel does not configure a simulator or acquire an output device.
 
-## Edit and publish a panel
+## Edit and save a panel
 
-Use **New panel**, **Flight template**, **Racing template**, an imported bundle or a saved Library entry. Add widgets from the palette; edit their labels, positions and behavior in Properties. Use the page selector, **Add page**, viewport sizes and **Rotate** to check the intended screen. Choose **Phone inset** when reserving a safe area. Small-target warnings require a layout adjustment and real-device review; a phone-sized browser preview is not a touch qualification.
+Use **New panel**, **Flight template**, **Racing template**, an imported panel or a saved Panels entry. Add supported widgets from the palette and edit their labels, positions and behavior. Inspect the intended viewport, rotation and pages. Small-target warnings need a layout adjustment and real-device review; a phone-sized preview is not touch qualification.
 
-Momentary buttons release when the pointer releases. Toggle buttons retain their requested state until toggled again or the session is stopped. Pulse/encoder controls emit bounded button pulses. Spring sliders return to their configured fallback; latched controls retain their value until cancellation or Stop. A selector emits one normalized axis value, not several separate buttons. Page/layout changes and lifecycle cancellation disarm the panel and clear retained inputs.
+Momentary buttons release with the pointer. Toggles retain requested state until toggled again or cancelled. Pulse/encoder controls emit bounded pulses. Spring sliders return to their configured fallback; latched controls retain their value until cancellation. Page/layout changes and lifecycle cancellation clear held inputs. Logical axes, buttons and hats describe portable controls, not an OS device or a vJoy slot. Check their range and fallback.
 
-Each input must have a **Logical target** binding before publication. Logical target layouts describe portable axes, buttons and hats. A logical target is not a vJoy slot or an OS device. Inspect axis range and fallback carefully: a bipolar axis uses -1 to 1, a unipolar axis uses 0 to 1, and fallback need not always be zero.
+**Save panel** retains the design and creates its immutable transport revision internally; there is no separate Publish button. Select **Assigned companions** to update those assignments when saving. A failed companion update leaves the local save intact and reports the failure. **Export panel** creates a portable bundle without credentials, host trust, local output slots or game settings. Static PNG/JPEG/WebP assets travel inside it; external image URLs and animated assets are unsupported.
 
-Choose **Save draft**, then **Publish revision**. Publishing creates an immutable revision. Later edits affect the draft; they cannot change an already published revision or a captured game profile. Choose **Export bundle** to share a portable copy. The export excludes installation credentials, host trust, local device slots and game settings. Static PNG/JPEG/WebP assets travel inside the bundle; external image URLs and animated assets are unsupported.
+Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A saved profile retains its exact captured revision; saving a newer panel does not rewrite that profile or its running graph. Active ownership may block an assignment change. Stop/recover the owner and explicitly reconcile the profile's instance and ports before applying a replacement revision.
 
-A visual change creates a new publication hash. Changes to input behavior, ranges, fallback or logical bindings also change its capability fingerprint. Updating a connected instance requires an explicit new publication/assignment and mapping reconciliation; it does not silently alter a running route.
+## Pair and assign a companion
 
-## Pair a native mobile companion
+For a desktop browser, follow [browser pairing](browser-companion.md): configure **Settings → Companion listener**, verify and trust its public certificate, then use **Companions → Pair → Browser**. Open the one-use pairing link in the intended browser. It expires after 60 seconds; keep it private. Cockpit does not change system trust or firewall rules. Loopback works only on the same computer.
 
-Keep Cockpit and the companion on the intended local network. This flow describes the mobile native client; desktop users follow [browser pairing](browser-companion.md). Mobile authentication remains gated pending device qualification.
+Choose an **Assigned panel** in the paired companion's settings and save, or select the companion under a panel's **Assigned companions** before **Save panel**. The host supplies distinct instance identities. A display name is not an identity or credential. The browser receives the assignment automatically and starts after its verified panel and fresh neutral input baseline are acknowledged. Focus/background loss or reconnect requires a new session and baseline; old gestures are not replayed.
 
-1. In Cockpit, expand **Companion connections**. Under **Published panels**, choose the saved **Local revision**, then **Make revision available**. This validates the revision and places its document/assets in the native host's memory cache.
-2. Select **Listen on IP**, **Advertised host IP** and **Port**, then **Enable listener**. Loopback (`127.0.0.1`) works only on the same computer. For another PC, choose a reachable host LAN address and matching advertised address. Port 54437 is the default. Enable **LAN discovery** only if wanted. A bind conflict is reported; Cockpit does not silently select a replacement port or create firewall rules.
-3. Choose **Pair a companion**. Transfer the complete one-time payload directly from the host screen through a trusted channel. It contains the endpoint, host certificate fingerprint and a secret that expires after 60 seconds. Do not post it in an issue, chat log or public screenshot.
-4. In Companion, enter **This device name**, paste the **Manual / decoded QR payload**, and choose **Request pairing**. The app currently accepts pasted/decoded QR text; it has no built-in camera scanner. **Find nearby hosts** supplies hints only and does not establish trust.
-5. In Cockpit, check the requesting installation and choose **Approve installation**. If the offer expires, generate a new offer and repeat the request.
-6. Under **Controller assignments**, choose the **Installation**, enter a stable **Controller instance ID** such as `flight-left` or `racing-main`, select its published revision and choose **Assign panel**. Two copies of the same panel need different instance IDs. A display name is not an identity or a credential.
-7. In Companion, choose **Refresh assignments**, select the **Assigned controller**, then **Connect**. Wait for the verified publication and fresh fallback-baseline acknowledgement. Choose **Start panel** explicitly when ready.
+The native mobile shell retains its separate explicit Connect/Start lifecycle, but authentication remains gated. The host's **Mobile** pairing choice does not establish mobile qualification. Do not bypass that gate or certificate checks. ESP32 pairing and firmware remain shared device setup, independent of profile selection. See the [release matrix](companion-release-matrix.md) for each client.
 
-The native client checks the offered host CA fingerprint, certificate validity and endpoint name before sending the pairing secret. Compare trust information with the host screen. Do not bypass certificate errors or install a system-wide trust exception. Connection and **Start panel** are separate operations; pairing and assignment start no mapping or game output.
+## Route controls through Profiles
 
-## Record controls or inspect live readiness
+Open **Profiles**, then **Add profile** or an existing profile. A blank draft includes known companion resources without adding routes. Select the intended companion block and **Browse retained panels**. Choose its paired resource and **Retained immutable panel**, then **Capture panel revision in draft**.
 
-In Cockpit's Mappings page, open **Companion controller mappings** and select the controller instance. Its immutable publication, full logical targets and axis fallbacks come from the published panel.
+Use **Inspect exact panel ports** and **Add control output** to select declared controls. **Connect exact ports** routes each selected output to a specific virtual-controller input or supported action. Add virtual layouts and visible processing nodes explicitly. Input learning and exact local assignments do not infer whole-panel mappings. Copied/imported profiles require explicit instance and port reconciliation.
 
-For a software recording, choose **Save for recording only**, then **Start selected recording**. Connect/start the panel explicitly and use its controls. The **Selected instance report log** shows the mapping engine's reports. This needs no virtual driver and does not prove that a game received input.
-
-Live output additionally needs **Inspect native targets**, exact **Local output identity** and native axis-usage assignments, **Save exact output assignments**, and a completely passing **Native preflight**. Preflight checks qualification, explicit enablement, current publication, baseline, exact capabilities, resource ownership and recovery. **Start selected live output** stays unavailable while any required check fails. Do not change qualification flags to bypass this check.
-
-Use **Stop selected instance** for this route. Stop cancels pending work and applies its declared fallback while other instances retain their own sessions. If cleanup remains pending, retain the recovery information and follow the displayed diagnostic. **Recover selected outputs** is available only when the native backend permits recovery. Do not delete journals or select another instance to conceal an unresolved cleanup failure.
-
-After publishing a changed panel, stop the route and choose **Reconcile current publication** before saving/restarting its mappings. Reconnect and a new input baseline cannot revive a route bound to an obsolete revision.
+**Save profile** stores the graph and local pins together without starting output. **Apply saved revision** performs fresh native admission, including qualification, backend readiness, exact capabilities, ownership and neutral baselines. Blocked live capabilities stay blocked. The applied inspector shows graph samples and requested destinations; it does not prove OS or game delivery. Use designer preview for local control testing; the retired standalone recording/mapping start workflow is unavailable.
 
 ## Add feedback
 
-Feedback widgets are visual outputs. They never send a controller command.
+Feedback widgets are visual outputs; changing presentation does not press a control. Configure a simulator's installation, catalogue/aircraft, connection and freshness in its **Games** details. DCS-BIOS settings belong in DCS details. The profile graph selects actual catalogue telemetry outputs and the companion's declared feedback inputs. It contains no second integration configuration.
 
-To show simulator data, open **Simulator integrations**, select the provider and load its catalogue. Under **Logical telemetry for companion panels**, choose **Add logical telemetry source** and select a named channel. Use a stable **Source binding ID**. A source-only integration may omit physical device roles/outputs. Choose **Validate draft**, **Save validated profile**, then **Start integration** explicitly. Use the simulator's separately documented setup and supported channels; naming a channel does not create a telemetry feed.
+In the companion block, inspect the captured panel's **Feedback / widget inputs** and choose **Add feedback input** for each needed property. Connect exact ports through visible unit conversion, comparison/hysteresis, Gate or Format nodes as needed. A destination action requires a complete ordered invocation, using an explicit **Action pack** or supported **Set on change** node. Types, units and declared ranges must fit. Visibility, enabled and navigation properties are available only when the renderer advertises their supported semantics.
 
-Back in **Companion connections → Panel feedback**, select the controller instance. For each published output, choose its **Visual source**, then **Save visual routes**. Sources can be a published control's requested/accepted/submitted state or one of the integration's logical telemetry bindings. Types must match: indicators take booleans, text takes strings, and numeric/gauge widgets take numbers. A numeric conversion needs an explicit **Scale** or **Offset**, and the entire converted source range must fit the published widget range.
+For altitude, choose the actual aircraft catalogue channel and its defined quantity/units, rather than assuming a generic AGL or MSL value. Convert units and configure the condition and unavailable presentation explicitly. Only the matching verified game context may supply live game data. Wrong/no game, stale telemetry, disconnected peers and obsolete panel revisions cannot provide a fresh false/zero value or retain a Game confirmed presentation.
 
 | Displayed provenance | What it establishes |
 | --- | --- |
-| Requested | The panel's requested control state. |
-| Local | Local/synthetic state, including synthetic ACR telemetry. |
+| Requested | The panel or graph requested this control state. |
+| Local | Local/synthetic state, without simulator confirmation. |
 | Host accepted | The host accepted the source value. |
-| Host submitted | A native live feeder acknowledged the corresponding output; recording alone cannot establish this. |
-| Game confirmed | A supported fresh native simulator source reported the value. It does not follow merely from a button press. |
+| Host submitted | A native live feeder acknowledged output; a preview or graph sample cannot establish this. |
+| Game confirmed | A supported fresh native simulator source reported the value; a button press alone cannot establish it. |
 
-Freshness is separate from provenance. Unknown, stale and disconnected values remain visibly unavailable; a historical value is not a current confirmation. The input acknowledgement `source-accepted` with `submitted: false` does not confirm virtual output or game behavior. No Star Citizen telemetry source is added by this feature.
+Freshness is separate from provenance. Unknown, stale and disconnected remain distinct; historical values are not current confirmation. An input acknowledgement with `submitted: false` does not confirm virtual output or game behavior. No Star Citizen telemetry source is added by this feature.
 
-**Reset visual state** on the host, or **Clear visual state** in Companion, clears visuals until a new source change. **Resync visuals** requests a fresh native feedback snapshot. Neither action presses buttons, reconnects input, starts an integration or starts a mapping. When source semantics change, save the explicit route again rather than reusing an old source binding ID silently.
+**Clear visual state** and **Resync visuals** in the companion affect presentation only. Resync requests a fresh native snapshot without replaying input or actions. Changed source semantics or panel contracts require explicit profile reconciliation.
 
-## Include assignments in a game profile
+## Apply, stop and recover owned state
 
-In Games, open a profile's **Captured companions** section. Optionally enter up to eight comma-separated **Controller instance IDs**, then choose **Capture current companion assignments** and **Save profile**. Leaving the field empty captures all current assignments only when there are at most eight; larger sets require an explicit selection.
+A profile captures exact companion instance/publication/capability references with its graph and feedback routes. There is no separate global feedback-route save or Games companion capture. Ordinary hardware routing can run without a game; game integrations remain dormant until their matching verified context. Saving or opening an editor leaves the captured running revision unchanged.
 
-The capture pins installation identities and immutable publication/capability hashes. It does not pair, connect, start a panel or start a mapping. Later designer edits do not modify this capture. Activation checks the captured revisions and feedback-source compatibility before changing settings. Active or recovery-owned companion routes must be stopped/cleaned up before the game session can take their assignments.
+Host **Stop** and **Pause** release owned contributions; clearing Pause requires a separate Apply to start again. Switching profile, game-context loss and peer disconnect invalidate affected state and require fresh baselines. Restoration compares the exact still-owned assignment/state and preserves external changes. **Recover outputs** handles the current profile's retained journal without replaying its graph, commands, held input or hiding.
 
-Choose **Restore setup** after the game session, or use recovery if restoration is pending. Cockpit restores only the exact assignments it owns. An external change is preserved and reported as a conflict. **Keep current setup** explicitly abandons restoration ownership and keeps the current setup; choose it only when that is the intended outcome. During an active game session, assignment/feedback edits are guarded. Emergency Stop, disconnect, revocation and visual reset/resync remain separate available operations.
+Recovery records from the previous mapping/game system are cleanup-only. Use the displayed retained cleanup controls in Games or **Previous output setup recovery** in Host controllers. Recover only the exact recorded owner; uncertain or externally changed state can remain pending. **Keep current setup**, when offered, explicitly abandons restoration ownership. Cleanup cannot start an old profile or migrate its configuration. Do not delete a journal to hide a conflict.
 
-## Stop, revoke and recover
+Removing a companion in its settings revokes its saved pairing; reconnecting then requires pairing again. Disabling the listener stops remote sessions without deleting panels or profiles. Browser credentials live in that browser profile's dedicated HTTPS origin; clearing site data or changing origin requires pairing again. The mobile shell's forget/protected-storage controls remain subject to its native authentication gate.
 
-- **Stop** in Companion disarms this panel and cancels held controls/timers. After page/orientation/focus/background loss or an error, Connect again if needed and choose Start explicitly. Old gestures are not replayed.
-- **Disconnect input** in Cockpit releases the selected instance's writer. **Give selected installation control** changes that instance's authorized writer; the replacement still needs a new connection/baseline and Start.
-- **Revoke access** invalidates one installation's credential and releases its sources. **Disable listener** stops remote sessions for the listener. Neither action deletes portable drafts.
-- **Forget host** / **Forget saved pairing** removes this app's saved credential; it does not revoke the host's copy. Revoke obsolete installations in Cockpit as well.
-- **Retry protected storage** retries an unavailable/locked native credential store. It restores valid authority disarmed. There is no plaintext fallback. Corrupt state is preserved until an explicit forget succeeds.
-- **Open offline** displays one of up to four verified cached panels, disarmed with unavailable feedback. **Clear saved panels** clears public layouts only; it does not revoke credentials.
-
-After a host restart, paired installation authority and listener preferences are retained. Active input sessions do not resume. Ensure the required panel revision is available, then reconnect. Native mobile input still needs explicit Start. Game recovery may need the exact saved revision before it can validate assignments.
-
-The authenticated host lease expires after 1500 ms without liveness while the host/mapping clock can run. A final cancellation frame cannot be guaranteed after an app/OS kill. Whole-host or feeder death has backend-specific cleanup limits; the [release matrix](companion-release-matrix.md) keeps that qualification separate from normal Stop or a disconnected socket.
+Host restart retains paired authority, listener preferences and saved panel references, but does not resume an old input session or replay prior commands/held controls. The browser reconnects with a new baseline; the mobile shell retains explicit Start. Automatic selection can admit a fresh saved graph after its recovery/identity checks; pending recovery blocks new ownership. The 1.5-second host lease bounds liveness loss while the host clock runs; a final frame cannot be guaranteed after an OS kill. Whole-host/feeder death has separately qualified cleanup limits.
 
 ## Limits and diagnostics
 
 | Resource | Implemented limit |
 | --- | --- |
-| Companion controller instances active together | At most 8, subject to shared mapping budgets |
+| Companion instances acquired by one profile | At most 8, subject to shared runtime budgets |
 | One panel | 16 pages, 128 logical inputs, 64 feedback widgets |
-| Mapping workspace | 16 source roles, 8 total targets, 256 nodes across ordinary and companion routes |
-| Portable document / import bundle | 1 MiB document / 13 MiB bundle |
+| Unified graph | 64 resources, 256 processing nodes, 512 bindings and 1024 graph ports; native virtual output supports at most 8 targets |
+| Panel document / import bundle | 1 MiB document / 13 MiB bundle |
+| Portable profile | 512 KiB; local resource assignments are separate |
 | Static raster assets | 2 MiB each, 8 MiB total; at most 8192 pixels per side, 16 megapixels per image and 32 megapixels total |
 | Input | At most 64 changes/batch, 120 batches/second/client, 512 queued transitions/client |
 | Feedback | Up to 30 updates/second/client, latest-state coalescing |
-| Companion offline cache | 4 verified panels, 24 MiB total |
+| Native mobile offline cache | 4 verified panels, 24 MiB total; no offline host input |
 
-The p95 25 ms/p99 50 ms touch-to-successful-virtual-submit numbers are qualification targets, not measured guarantees. Source acceptance, rendering and network round trips are different measurement boundaries. See the release matrix for load, real-game and platform evidence.
-
-## Troubleshooting
+The p95 25 ms/p99 50 ms touch-to-successful-virtual-submit numbers are qualification targets, not measured guarantees. Source acceptance, rendering and network round trips are separate boundaries. See the release matrix for load, real-game and platform evidence.
 
 | Symptom | Check / next action |
 | --- | --- |
-| Mobile UI says BROWSER PREVIEW | This is the mobile renderer preview. Desktop remote input uses the separate [browser companion](browser-companion.md). |
-| Pairing unavailable on Android/iOS | Native authentication is intentionally gated pending device qualification; use local references, not a flag override. |
-| Another PC cannot connect | Check the LAN listen/advertised address, port, same-network reachability and OS firewall policy. Loopback only serves the same PC. Cockpit does not add a firewall exception. |
-| Port already in use | Stop the competing listener or explicitly choose a free port and create a new trusted pairing payload. |
-| Fingerprint, certificate or hostname error | Compare the full host fingerprint, advertised endpoint and system clocks. Stop on a mismatch; never disable TLS validation. |
-| Address changed | Stop/disconnect, obtain a new trusted pairing payload, and re-pair explicitly. Revoke/forget the obsolete installation as appropriate; discovery cannot rewrite saved trust. |
-| Waiting for approval / offer expired | Approve the correct installation in Cockpit, or generate a new 60-second offer and request again. |
-| Instance already owned | Inspect its current installation. Disconnect its old input session or explicitly give the selected installation control. |
-| Missing revision after host restart | Reopen the saved draft/publication and choose Make revision available for that exact hash. |
-| Panel disarms after changing windows/pages | This is intentional lifecycle cancellation. Return to the panel, reconnect if needed and Start explicitly. |
-| Live output remains blocked | Read each Native preflight reason. Recording can work while output is unqualified; preserve the disabled gate. |
-| Feedback unknown/stale or wrong units | Check the exact published output, saved visual route, integration's validated source/channel/range, and explicit Start. Synthetic data stays Local. |
-| Pending output/game recovery | Keep the journal and inspect the conflict. Stop/recover only the affected ownership scope; Keep current setup is an explicit abandonment decision. |
+| Mobile UI says BROWSER PREVIEW | This is the mobile renderer preview. Desktop remote input uses the [browser companion](browser-companion.md). |
+| Mobile pairing unavailable | Native authentication is gated pending device qualification; use local references, not a flag override. |
+| Another PC cannot connect | Check the listener's LAN/advertised address, stable port, certificate trust and firewall reachability. Loopback serves only the same PC. |
+| Fingerprint, certificate or hostname error | Compare the host fingerprint, endpoint and clocks. Do not bypass TLS validation. |
+| Panel saved, companion update failed | The local panel is retained. Inspect the exact assignment/ownership diagnostic and reconcile explicitly. |
+| Captured panel revision missing | Restore that exact retained panel or explicitly reconcile the profile to another compatible revision. |
+| Panel disarms on focus/page changes | This is lifecycle cancellation. The browser establishes a new baseline on return; native mobile requires its explicit Start. |
+| Live output blocked | Read the native preflight reasons. Local preview can work while output remains unqualified. |
+| Feedback unknown/stale or wrong units | Check exact profile ports, captured panel, game-owned catalogue/channel, visible conversion and current applied owner/context. |
+| Pending recovery | Retain the journal and inspect its exact owner/conflict; cleanup does not restart a graph. |
 
-For a bug report, include app/host versions, OS, instance ID, publication hash, relevant preflight/fault text and reproducible steps. Redact pairing payloads, credentials and private trust material. Link the applicable [qualification story](companion-release-matrix.md) instead of marking an unperformed physical check as passed.
+For a bug report, include app/host versions, OS, instance/publication identity, preflight/fault text and reproduction steps. Redact pairing payloads, credentials and private trust material. Link the applicable [qualification story](companion-release-matrix.md) without marking an unperformed physical check passed. See the [Profiles guide](profiles-guide.md) for complete graph authoring and lifecycle behavior.

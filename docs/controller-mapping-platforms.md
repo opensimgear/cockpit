@@ -1,7 +1,7 @@
 # Experimental controller mapping: platform setup and recovery
 
-Recording previews, built-in transformations, bounded Rhai logic, explicit panel
-sources and captured game profiles are available. Live virtual output,
+Unified profile authoring, built-in transformations, bounded Rhai logic and
+explicit panel sources are available. Live virtual output,
 provisioning, visibility changes and live script output remain disabled. Installing
 an optional component or saving its preference does not bypass qualification.
 See the [qualification matrix](verification/2026-10-15-mapping-qualification-m7.md).
@@ -9,14 +9,13 @@ See the [qualification matrix](verification/2026-10-15-mapping-qualification-m7.
 ## Windows
 
 Ordinary controller discovery uses Raw Input and needs neither vJoy nor HidHide.
-Recording previews do not acquire a virtual controller. Virtual output and hiding
+Local designer/CLI previews do not acquire a virtual controller. Virtual output and hiding
 have independent opt-ins: a profile that requests neither needs neither driver.
 
 The current inspection adapter accepts the pinned **vJoy 2.2.2.0 x64** DLL and
 driver at their expected installation paths. The [M0 record](verification/2026-10-14-controller-mapping-m0.md)
 contains release links, artifact hashes and the signed-driver observations.
-Use **Set up vJoy** under Devices → Host controllers or Mappings → Virtual
-controllers to open the bundled upstream installer. Complete its
+Use **Set up vJoy** under Devices → Host controllers to open the bundled upstream installer. Complete its
 Windows authorization/restart requirements, then use **Inspect vJoy**. A changed
 version, missing file or hash mismatch is reported as unavailable. Cockpit does
 not download or install a driver on startup, or take a slot owned by another app.
@@ -80,7 +79,7 @@ managed rule for `/dev/uinput`. Complete the distribution's rule reload/login
 requirements; package sandbox permissions must allow the same resources. Cockpit
 does not install rules or broaden node permissions. Avoid running the whole app
 as root or granting global input-device access. **Inspect** only queries uinput
-availability/version. Missing or denied access does not block recording previews.
+availability/version. Missing or denied access does not block profile authoring or portable previews.
 
 The candidate backend supports up to eight targets, each with eight standard
 axes, 32 buttons and four hats on x86_64/aarch64. Devices belong to their creator
@@ -141,25 +140,26 @@ broad suppression also remains disabled pending its separate qualification.
 
 ## Profiles, device lifetime and recovery
 
-- Save/import never starts a mapping or installs/enables an optional integration.
-  Portable mapping documents contain logical roles and targets. Native identities,
-  output assignments and opt-ins remain local. Imports are bounded to 64 KiB;
-  incompatible input controls/layouts are rejected rather than guessed.
+- Save/import never applies a graph or installs/enables an optional backend.
+  Unified schema-2 documents contain logical resources, exact ports, visible
+  processing, virtual layouts and profile policies. Native assignments and
+  backend slots remain local. Portable profiles are bounded to 512 KiB;
+  incompatible controls/layouts are rejected rather than guessed.
 - Reconnect requires a fresh complete baseline. Held momentary controls must
   release before a new mapped press. A source gap clears that source's output;
   scripts fault until an explicit restart. Do not replay old pulses after recovery.
 - Panel events use independent cursors and gateway/module/boot identity. They
   have no hats in the current contract. Selecting a panel and its duplicate HID
   route is rejected where the app can identify the overlap.
-- Existing schema-1 game profiles/journals remain readable. Capturing a mapping
-  is an explicit schema-2 upgrade; editor changes afterward do not change the
-  saved capture. Requested unavailable capabilities fail preflight before hardware
-  changes. Windows DCS/Rally launch support does not imply a Linux/macOS launcher.
-- Emergency Stop remains available. Interrupted game sessions require explicit
-  recovery, which leaves mapping stopped. Ordinary cleanup may resume a prior
-  recording mapping only with fresh baselines. Conflicting external settings or
-  ownership are preserved with a diagnostic. Never delete recovery files merely
-  to suppress that diagnostic.
+- Old game/mapping configurations are not read, imported or migrated. Retained
+  ownership journals are cleanup-only. A saved graph and its captured applied
+  revision remain independent. Requested unavailable capabilities fail preflight
+  before hardware changes. Windows game launch support does not enable a
+  Linux/macOS launcher.
+- Emergency Stop remains available. Recovery compares exact owned state and
+  preserves conflicting external edits. It cannot resume a recording, replay
+  commands/scripts/held input or silently reapply hiding. Start again only through
+  fresh native admission. Never delete journals to suppress a recovery diagnostic.
 
-See [profiles](mapping-profiles.md), [script limits](mapping-scripts.md),
-[game captures](mapping-game-profiles.md) and [preview/recovery](mapping-preview.md).
+See [Profiles](profiles-guide.md), [script limits](mapping-scripts.md),
+[retained game cleanup](mapping-game-profiles.md) and [preview/recovery](mapping-preview.md).

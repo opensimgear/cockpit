@@ -1,13 +1,13 @@
 # Importable companion examples
 
-Import either JSON file through Cockpit's **Companion panels → Import bundle**, then **Save draft** and **Preview locally**. See the [user guide](../../docs/companion-guide.md) for publication, desktop pairing, recording and feedback steps. Both files are bundleVersion 1 with a schema 2 designer document and no assets. They contain no host addresses, credentials, installation identities, local slots or simulator connection settings.
+Import either JSON file through **Companions → Panels → Import panel**, then **Save panel** and **Preview locally**. See the [user guide](../../docs/companion-guide.md) for panel assignment, browser pairing and profile-owned control/feedback routes. Both files are bundleVersion 1 with a schema 2 designer document and no assets. They contain no host addresses, credentials, installation identities, local slots or simulator connection settings.
 
 | Bundle | Logical controller shape | Pages |
 | --- | --- | --- |
 | [Flight button box](flight-button-box.json) | 2 axes (unipolar flaps, bipolar trim), 7 buttons, 1 hat | Flight controls / Flight feedback |
 | [Racing axes](axis-racing.json) | 4 axes (bipolar steering; unipolar throttle, brake and handbrake), 2 buttons | Driving controls / Driving feedback |
 
-The logical target shapes are complete. Native output devices must match exactly when output becomes qualified; these examples never allocate or select a native device. Publishing/importing does not start output. Start with recording; the [qualified release matrix is currently empty](../../docs/companion-release-matrix.md).
+The logical target shapes are complete. Unified profiles select exact declared companion ports and explicitly route them into chosen virtual layouts or supported actions; these examples never allocate or select a native device. Saving/importing a panel does not start output. Start with local preview; the [qualified release matrix is currently empty](../../docs/companion-release-matrix.md).
 
 ## Flight button box
 
@@ -28,7 +28,7 @@ Game bindings and telemetry vary by aircraft. Choose actual supported catalogue 
 
 Steering, throttle, brake and handbrake are independent spring sliders; several pointers can hold them simultaneously. Steering returns to 0 at centre; the three unipolar controls return to 0 on release. Shift up/down are momentary buttons. These are touch controls, not a claim of physical pedal or force-feedback behavior.
 
-The RPM gauge is on the controls page. The second page offers speed (0 to 2000 `km/h`), normalized gear (-1 reverse, 0 neutral, up to 31; `ratio`) and steering-requested feedback (-1 to 1, `ratio`). Suggested visual sources are ACR catalogue `rpm`, `speed_kmh` and `gear`, plus requested control `example-racing-steering`. First add logical telemetry sources in Simulator integrations, validate/save/start explicitly, then bind them under Panel feedback. ACR synthetic mode remains Local; it cannot confirm a game value. This example adds no unsupported ACR text/car-name channel.
+The RPM gauge is on the controls page. The second page offers speed (0 to 2000 `km/h`), normalized gear (-1 reverse, 0 neutral, up to 31; `ratio`) and steering-requested feedback (-1 to 1, `ratio`). Suggested sources are ACR catalogue `rpm`, `speed_kmh` and `gear`, plus requested control `example-racing-steering`. Configure ACR in its Games details, then capture the exact companion panel in Profiles and connect selected telemetry outputs to its declared feedback inputs. Add visible unit/range conversion where needed; save and Apply explicitly. Synthetic fixture values remain Local and cannot confirm a game value. This example adds no unsupported ACR text/car-name channel.
 
 ## Cancellation and editing
 

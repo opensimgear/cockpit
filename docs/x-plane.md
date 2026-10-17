@@ -1,11 +1,11 @@
 # X-Plane 11 and 12 telemetry
 
-Games has separate X-Plane 11 and X-Plane 12 tiles and hardware profiles. The
+Games has separate X-Plane 11 and X-Plane 12 installation/provider identities. The
 `x-plane` provider uses read-only RREF UDP subscriptions, shared with both simulator
-generations. It uses the existing portable roles, exact device assignments,
-advertised LED/RGB/display actions, endpoint leases, temporary overrides and
-stale/disconnected fallback rules. Saving, importing and setting up profiles never
-activates outputs.
+generations. Unified profiles select its exact telemetry ports, visible
+processing and supported companion/physical actions. Native endpoint ownership
+and stale/disconnected fallback rules remain required. Saving/importing a graph
+or setting up a provider never activates outputs.
 
 ## Support and qualification
 
@@ -46,29 +46,31 @@ the selected installation's `Resources/plugins/DataRefs.txt`; see the
    other game setup settings. Setup is repeatable, preserves previous overrides
    and changes no simulator files; no plugin, backup or restoration is needed.
    Recheck observes configuration readiness, independently of live data.
-3. In Integrations select **X-Plane 11 / 12**, choose the correct simulator version,
-   and optionally copy prepared connection settings. Defaults are loopback
+3. In that game's details, edit its provider connection settings. Defaults are loopback
    `127.0.0.1:49000`, an automatically allocated reply port, 10 Hz and 1500 ms
    freshness. Set the simulator's UDP receive port to match, allow local UDP in
    the firewall, and run only one X-Plane process. No Data Output checkbox is
    required for RREF subscriptions. Fixed reply ports must be free.
-4. Assign roles to connected peripherals, load the catalogue and bind channels to
-   their advertised output actions. Validate and save. Capture a copy of that
-   integration in the matching Games hardware profile. Integration settings are
-   independent snapshots; later editor changes are copied explicitly.
-5. Launch the game profile, or start the selected installation and **Activate
-   profile**. Games inserts the real process path, PID and creation time only
-   after discovery/launch. Manual Start in Integrations directs users to Games.
-   Process IDs are never durable game-profile identity. Enter a flight and leave
-   pause/replay to establish a fresh baseline. Watch Integrations' live telemetry.
-6. Stop/deactivate or exit X-Plane to release outputs and restore the previous
-   game/device configuration. Interrupted sessions use Games' existing recovery
-   journal; recovery does not replay a prior process or activate old telemetry.
+4. Open **Profiles** and select the matching X-Plane resource. Choose exact
+   catalogue outputs and explicitly assigned companion/physical destination
+   ports. Add visible conversion, conditions, formatting and invocation packing
+   as required by their contracts. Inspect draft preflight, then **Save profile**.
+5. Use Games **Launch** with the saved Manual pin or Automatic rule/default, or
+   start the selected installation externally and Apply the saved profile with
+   its matching verified context. Native code verifies process path, PID and
+   creation time; the profile/rule never stores a durable PID. Enter a flight and
+   leave pause/replay to establish a fresh baseline. Inspect the applied port and
+   path samples in Profiles. Wrong/no game leaves the X-Plane branch dormant.
+6. **Stop**, **Pause** or game-context loss withdraws affected output. Interrupted
+   ownership uses explicit profile recovery; recovery does not replay a process,
+   commands or old telemetry. Unrelated admitted hardware branches can continue
+   after game-context loss.
 
-Host, simulator port, reply port, update rate and freshness persist in the saved
-integration and captured game profile. Setup API overrides accept these same
-fields; repeat setup preserves them. Switching installations requires setup for
-the new copy. Existing DCS/ACR game profiles and defaults migrate unchanged.
+Host, simulator port, reply port, update rate and freshness persist in the game's
+provider preferences. Repeat setup preserves those choices. Switching
+installations requires setup for the new copy and native revalidation of captured
+ports/plans. Old DCS/ACR/X-Plane game/integration configurations are not imported
+or migrated into the fresh unified profile library.
 
 ## Starter catalogue
 
@@ -97,12 +99,12 @@ not electrical lamp illumination. These are stock datarefs, not aircraft-specifi
 guarantees. Absent catalogue entries, missing updates, invalid ranges and missing
 engines remain explicitly unavailable rather than fabricated zeroes.
 
-The example [C172 panel](../integration-profiles/x-plane-c172-panel.json) binds a
-gear-unsafe indicator and an indicated-air-speed numeric display. It illustrates
-portable bindings; a C172's fixed gear normally leaves gear-unsafe off. Assign
-`panel` to real hardware and select its actual endpoint/action identifiers before
-validation. To exercise an indicator on fixed-gear aircraft use `stall_warning`
-with a safely controlled simulator scenario, or choose a retractable-gear aircraft.
+For a C172 graph, select `gear_unsafe` or indicated airspeed and the actual
+destination contracts. A C172's fixed gear normally leaves gear-unsafe off; use
+`stall_warning` in a safely controlled simulator scenario or choose retractable
+gear when checking an indicator. Author the schema-2 graph through Profiles with
+exact local assignments; retired integration documents are not importable
+unified profiles.
 
 ## Freshness, bounds and troubleshooting
 
@@ -133,4 +135,5 @@ X-Plane copies, confirm UDP receive port/firewall, start a flight and exit pause
 and replay. A port-bind error means another listener owns the reply port; choose
 0 or a free fixed port. Missing guard/catalogue errors require repairing the
 installation. A disappeared optional channel drives its configured fallback.
-After process exit/restart, reactivate from Games; old process identity is rejected.
+After process exit/restart, a fresh native context and admission are required;
+Automatic selection follows its configured rules. Old process identity is rejected.

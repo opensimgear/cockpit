@@ -1,58 +1,40 @@
-# Simulator profiles and telemetry outputs
+# Simulator ports in unified profiles
 
-Current configuration belongs in [game details](games.md#integration-setup-and-readiness)
-and the unified profile graph. The independent Integrations/DCS-BIOS editors,
-configuration saves and Start paths described by the retained adapter reference
-below are retired at the native gateway boundary. P3 supplies verified game-context
-admission; P4 supplies applied-profile execution. The decoding, ownership and
-qualification evidence below remains a reference for those reused adapters.
+Configure installation, provider connection, catalogue/aircraft and freshness in the owning game's [details](games.md#integration-setup-and-readiness). DCS-BIOS settings belong in DCS details. **Profiles** owns selected resource ports, exact directed bindings, visible processing and output policies. The independent integration/DCS configuration editors, global feedback saves and standalone Start paths are retired; old configurations are not read or migrated.
 
-The `x-plane` provider adds X-Plane 11/12 RREF UDP telemetry through the same
-portable bindings, endpoint leases and fallback runtime. See the [X-Plane guide](x-plane.md)
-for setup, typed channels, example bindings and explicit qualification limits.
+DCS-BIOS advertises actual catalogue-backed command inputs and telemetry outputs. Assetto Corsa Rally and X-Plane advertise supported read-only telemetry. Read-only providers cannot acquire invented command ports. The [X-Plane guide](x-plane.md) records its setup, channels and qualification limits.
 
-Milestone 4 uses one provider-neutral binding document and separate local connection settings/device assignments. Open **Integrations** to import or create a profile. DCS-BIOS supports named inputs and outputs from an installed aircraft catalogue. The Assetto Corsa Rally starter advertises telemetry outputs only. Other games can add acquisition/decoding providers without adding game-specific LED commands to firmware.
+## Author and apply
 
-**Games** can capture a saved integration configuration in a game profile and
-start it as part of coordinated activation or launch. The captured configuration
-is independent of later edits in Integrations. On exit or deactivation, the game
-coordinator restores the previous peripheral and integration setup; interrupted
-sessions use explicit recovery. See [Games and hardware profiles](games.md).
+1. Open **Profiles**, then Add or open a graph. Select a game resource and choose exact catalogue output/command ports. Closed-game catalogues support authoring without starting a provider.
+2. Assign exact physical/companion resources and select their actual input/output contracts. USB/CAN and gateway attachment stay resource attributes, not graph connections.
+3. Connect exact ports. Add visible unit/range conversions, comparisons/hysteresis, formatting and timing nodes explicitly. Actions require complete ordered arguments through an explicit invocation/argument-pack node; a Boolean or event cannot silently become an action.
+4. Inspect draft preflight, resolve diagnostics and **Save profile**. Saving does not start a provider or send output. Portable schema-2 graphs are bounded to 512 KiB; local assignments and provider connection settings are separate. See the [profile contract](unified-profiles.md) for collection bounds.
+5. **Apply saved revision** with a matching verified game context, or use Games **Launch** with the saved Manual pin or Automatic rule/default. Native admission checks the actual process path/PID/creation epoch, setup/catalogue revisions, current contracts and output ownership. A profile may run ordinary hardware with no game while its integration branches remain dormant.
 
-Games provides DCS-BIOS installation and readiness checks on Windows; see
-[Integration setup and readiness](games.md#integration-setup-and-readiness). Setup
-prepares local connection defaults without changing portable bindings or starting
-a runtime. Existing drafts opt in to copying the prepared settings.
-
-## Portable and local settings
-
-A portable JSON document contains `schemaVersion:1`, `id`, `name`, `provider`, `context`, logical `roles`, and `inputs`/`outputs`. Bindings reference a role, named simulator control/channel and an advertised physical input or endpoint/action. DCS output ordinals retain their original catalogue indexes. Local `connection` settings and explicit role assignments to `(gatewayId,moduleId)` stay outside the exported document. Identical module identities on separate gateways remain distinct targets.
-
-Import is a bounded preview. It does not save, start, assign devices, acquire outputs or change controller publication. Assign each role explicitly and refresh device capabilities. **Validate** checks provider metadata, types, interfaces, ranges, source ordinals, exact endpoint/action identities and current routes. Review diagnostics, then **Save**. Saved configuration never starts automatically. **Start** rechecks the current catalogue, routes and devices; changed semantics or routes require explicit revalidation. Binary DCS addresses are resolved from installed files rather than copied into portable profiles.
-
-Limits are eight logical roles, eight device targets on four gateways, 16 inputs and 16 outputs, and 64 KiB profile/request size. One integration runs at a time, including the existing DCS-BIOS editor. Stop before editing. Existing schema 1 master-caution and schema 2 DCS settings stay available and are not silently rewritten; their legacy local output guard does not provide the endpoint leases required by new portable profiles. Use Integrations for device-enforced ownership and temporary overrides.
+Provider edits revoke incompatible captured execution and require fresh native revalidation. Missing/changed ports are reported rather than rebound by name. Wrong-game packets cannot arm a dormant branch. Game exit, process replacement and stale telemetry invalidate affected values and dependent contributions while unrelated admitted hardware branches can continue. Applied inspection retains freshness and requested-output provenance; it does not prove a physical change or simulator acknowledgement.
 
 ## Output ownership and manual control
 
-Portable bindings to device outputs require firmware implementing volatile endpoint leases. Start validates all targets and obtains every output claim before forwarding input commands. Claims are separate from configuration writers and HID ownership. Actions sharing one physical endpoint share its lock, including legacy LED diagnostics and one-shot aliases. A competing live owner cannot be displaced by a manual action or another integration.
+Physical output needs actual advertised volatile endpoint ownership. The profile adapter requires a readable Setter with compare-if-unchanged restoration and atomic capture-at-claim fallback. It pins route, boot, configuration, catalogue and action contract, then captures the actual prior state when claiming the endpoint. Its bounded five-second lease and private renewal worker do not write flash. Unsupported endpoints remain unavailable; a manual action cannot displace an active owner.
 
-Each run uses secret UUID capability tokens and device-issued lease generations. Tokens are not returned by ownership queries or published status. The device stores a descriptor-validated fallback and a lease lasting at most 5000 ms; Cockpit renews it every 1000 ms through that gateway's serialized worker. Device timers apply fallbacks if the host disappears. Reboot and transport route loss invalidate the relevant claims. Claims never save flash.
+One-shot aliases may use a compatible owned Setter on the same endpoint. Ordered named arguments retain their exact types. Ambiguous claims, invocations and renewals revoke delivery without retrying the operation. Source loss, Stop, Pause and switching release affected owned contributions. Cleanup restores only still-owned state and preserves external edits; an unreachable endpoint cannot confirm restoration until readback or device-side expiry. See [physical leases](profile-physical-actions.md) and the [bounded worker](profile-physical-action-worker.md).
 
-An owned output offers a temporary override of up to 30000 ms. The run retains its claim while telemetry continues updating behind the override. **Resume** or expiry applies the latest fresh value. Unknown/stale feedback cancels overrides and applies the configured fallback. Stop discards pending fresh values, releases only momentary presses actually sent by the run, applies output fallbacks and releases claims. Lost replies remain uncertain; readable state is reconciled before another setter. An unreachable endpoint cannot confirm fallback until readback or device-side expiry completes.
+Inputs and output actors use existing per-endpoint USB/CAN workers, so one stalled route does not drive the reducer from the UI or stall unrelated endpoints. Shared writer/identity checks remain required. Direct DCS/HID ownership constraints are enforced independently of OS hiding. Firmware publication, physical connectivity and routing activity are separate facts; persistent Enable/Disable is not a temporary profile override.
 
-Every gateway has an independent I/O worker. Pending absolute setters coalesce to the newest desired value; ordered button/encoder events retain their order. A slow gateway does not stop telemetry acquisition or another gateway's inputs. Input forwarding requires fresh simulator state, a current event baseline and disabled direct/gateway HID for its input panels. A device used only for feedback may retain unrelated HID input.
+Interrupted ownership uses explicit profile recovery or retained previous-system cleanup. Recovery cannot replay commands, macros, held input, an old integration graph or hiding. Optional dependencies and current qualification gates remain unchanged.
 
 ## Output-only devices and rev lights
 
 A device may advertise a valid revision with zero buttons, axes and hats. It joins normal inventory and supports configuration/actions without publishing an empty HID controller. Direct device USB exposes CDC only. Cockpit labels it as an output device and offers no Enable/Disable controller controls. Simulations provide RGB/boolean outputs and the current board's status LED using the same production contracts; see the device repository's output-only presets.
 
-Formats include boolean/on-off enum LEDs, text/numeric displays with bounded encoding/cell/byte fit, numeric thresholds and up to eight ordered RGB bands. A Rally rev-light preset uses the derived `rev_ratio`, changing green/yellow/red at configured thresholds; a boolean or status LED uses a configured threshold. Bind several separate advertised endpoints for several lights. These are Cockpit rules over numeric channels, not an assumed native game rev-light command. Missing maximum RPM leaves `rev_ratio` unknown and drives fallback; an explicit `rpm` binding can use a chosen absolute threshold.
+Declared destination contracts can include Boolean/enumerated LEDs and bounded text/numeric/RGB actions. Select only the actual supported endpoint and encode every conversion or condition in visible graph nodes. A rev-light condition can use `rev_ratio` or an explicit absolute RPM threshold; no native game rev-light command or hidden formatting preset is inferred. Missing maximum RPM leaves `rev_ratio` unknown and requires the authored unavailable/fallback behavior. Several lights require several explicitly selected endpoints/routes.
 
 ## Assetto Corsa Rally starter
 
-Games can prepare the native connection and verify its exact executable against
-a live telemetry session. Saving a native profile may defer the process ID until
-Games launches it; direct manual Start still needs a running process. Setup never
+Game details prepare the native connection; the profile coordinator verifies its
+exact executable against a live telemetry session. Process identity is obtained
+natively at launch/attachment, never saved as a durable profile PID. Setup never
 installs a plugin or changes game files.
 
 The native source is **Windows shared memory**, selected with the Rally process ID. It opens existing `Local\acpmf_physics`, `Local\acpmf_graphics` and `Local\acpmf_static` mappings read-only. The researched executable basename is `acr.exe`; the implementation verifies the selected process identity/creation epoch and checks its lifetime. Shared mapping names are reused by other Assetto games and alone do not establish the producer. Run only the selected game when using these mappings. The source closes old mapping handles on exit/reset and uses bounded stable-copy retries.
@@ -61,7 +43,7 @@ The adapter decodes explicit little-endian prefixes: physics packet ID at 0, raw
 
 This layout is developer-derived, not an officially guaranteed ACR binary interface. Sources: [ACR-specific MIT reader](https://github.com/LuizZak/AssettoCorsaRallyTelemetryReader/tree/8bb26990def38ffd0e4afe71e04e85e5ddeb3670), [independent graphics/status parser](https://github.com/decnet100/acr_telemetry/tree/eaef0f29c6712a2e0dbc3bfd8246b84dcdbb9586), and [Microsoft mapping lifetime documentation](https://learn.microsoft.com/en-us/windows/win32/memory/sharing-files-and-memory). No code was copied from the noncommercial recorder. Later conflicting fields are deliberately excluded. Static maximum RPM must be valid; an observed peak is not treated as a redline.
 
-On every platform, **Synthetic** source accepts bounded authored physics/graphics/static byte pages through the identical parser and runtime. The editor supplies RPM, gear, speed, maximum RPM, progression and live/pause/replay/off controls. Synthetic snapshots are OpenSimGear test input; they are not Rally native UDP. Original Assetto Corsa has a separate [Kunos UDP interface](https://docs.google.com/document/d/1KfkZiIluXZ6mMhLWfDX1qAGbvhGRC3ZUzjVIt5FQpp4/pub) and remains a future independent provider.
+Portable tests feed bounded authored physics/graphics/static byte pages through the same parser, including RPM, gear, speed, maximum RPM, progression and live/pause/replay/off states. These synthetic fixtures are OpenSimGear test input, not Rally native UDP or a second desktop integration editor. Original Assetto Corsa has a separate [Kunos UDP interface](https://docs.google.com/document/d/1KfkZiIluXZ6mMhLWfDX1qAGbvhGRC3ZUzjVIt5FQpp4/pub) and remains a future independent provider.
 
 Software checks and authored samples do not qualify live Rally versions, real DCS, Windows USB/HID enumeration or assembled LEDs/displays/CAN. Hardware validation is deferred for this milestone; board design versions remain 0.1.0.
 

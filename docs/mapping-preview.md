@@ -1,42 +1,45 @@
-# Controller mapping previews and vJoy foundations
+# Unified profile inspection and vJoy foundations
 
 This is an incremental implementation of [Cockpit #25](https://github.com/opensimgear/cockpit/issues/25).
-The issue remains open. Ordinary Cockpit can save, import and assign profiles,
-run recording previews, inspect vJoy, and retain optional-feature preferences and
-target slots. Live output, Create and Recover remain disabled. Enabling vJoy is
+The issue remains open. Cockpit authors unified Profiles, inspects applied graph
+samples and vJoy, and retains optional-feature preferences and native target
+setup. Live output, provisioning and qualified output recovery remain gated. Enabling vJoy is
 an explicit local preference; it does not bypass the qualification gate.
 
 ## Using the current workspace
 
-Open **Mappings**. Create a direct mapping from a physical control or synthetic
-button, axis or hat, or import a version-1 profile (maximum 65,536 UTF-8 bytes).
-Choose each physical source and compatible control and save the local assignments.
-Start a recording preview explicitly. Synthetic inputs have Press/Release, axis
-and hat controls. The preview table retains the most recent 64 displayed reports;
-native history contains 4,096 reports and exposes an explicit history-gap flag.
+Open **Profiles** to add/open a schema-2 graph. Choose exact resource ports and
+local assignments, add virtual layouts and visible transformations, and save.
+Portable profiles are bounded to 512 KiB. The old Mappings editor, schema-1
+desktop import, synthetic-input controls and standalone recording Start are
+retired; no old configuration is migrated. The retained pure library/CLI preview
+is documented in [portable mapping foundations](mapping-profiles.md).
 
-The capture journal contains 1,024 ordered, complete native reports. It is separate
-from UI snapshots. A held momentary button must be released before its first
-mapped press. Stationary axes retain their current value. Source loss releases
-that source's contributions; a fresh generation and complete baseline can recover.
-An unknown capture-session/history gap stops the preview and requires an explicit
-restart. Old session tokens cannot inject synthetic input into a replacement run.
+**Inspect draft preflight** validates the captured unsaved graph without saving
+or starting it. **Apply saved revision** independently checks native authority
+before effects. Applied port/path inspection reads cached reducer values for
+the exact running revision. Inputs and action tuples are upstream/requested
+values, not successful virtual submission. Unknown, stale, unavailable and known
+false/zero stay distinct. A newer draft cannot replace those samples.
 
-Profiles contain logical roles and targets. Source IDs, native control assignments,
-vJoy slots and integration enablement remain local. Imports and ordinary startup
-do not enable optional integrations, start previews or change driver layouts.
-Optional vJoy and device hiding have separate flags, both false by default.
+Source loss releases affected contributions and cancels dependent timers. Fresh
+generations and complete baselines are required before delivery; old events are
+not replayed. UI refresh does not drive the reducer. Local companion preview
+tests controls without acquiring a virtual device or delivering game input.
+
+Native source assignments, backend slots and opt-ins remain local. Save/import
+does not apply a graph, change driver layouts or enable optional vJoy/hiding.
 Invalid local settings are preserved and reported rather than overwritten.
 
 **Inspect vJoy** runs in a fresh process, never loads a driver DLL into the UI,
-and never acquires a slot. The Windows adapter accepts the pinned, signed
+and never acquires a slot. Use driver setup/inspection under **Devices → Host
+controllers**. The Windows adapter accepts the pinned, signed
 2.2.2.0 x64 artifacts recorded in the M0 verification record. Other versions or
 installation paths are not silently substituted. Missing optional dependencies
-do not prevent synthetic recording previews. Native Linux/macOS physical capture
+do not prevent graph authoring or portable previews. Native Linux/macOS physical capture
 remains gated by the M1 platform qualification record.
 
-When a profile layout matches an inspected slot, its local slot assignment can be
-saved independently of activation. The adapter validates actual button, axis,
+Native target setup is independent of profile activation. The adapter validates actual button, axis,
 continuous-hat and FFB capabilities before acquisition; unsupported layouts,
 discrete hats, busy slots and changed axis ranges are rejected.
 
@@ -66,12 +69,13 @@ fallback recovery of acknowledged target ownership through a new helper. These
 paths are exercised with the production reducer and injected drivers; the
 application gate must remain closed until actual Windows qualification passes.
 
-The current live lifecycle requires an explicit Stop before another live Start.
-It does not guess ownership when the initial acquisition acknowledgement is lost,
-and it does not automatically resume a run. Interrupted in-process recovery is
-retained, and durable output/provisioning journals expose interrupted operations
-for explicit recovery. Actual whole-app/driver failure recovery remains unqualified;
-a journal is not proof that cleanup succeeded.
+The unified coordinator preflights a replacement before taking over the prior
+run, obtains fresh baselines and compensates failures. It does not guess
+ownership after an ambiguous acquisition acknowledgement or replay an old run.
+Durable output/provisioning journals retain interrupted ownership for explicit,
+compare-if-unchanged recovery. Previous-system records are cleanup-only and cannot
+restart a recording, script or profile. Actual whole-app/driver failure recovery
+remains unqualified; a journal is not proof that cleanup succeeded.
 
 Before enabling provisioning, qualify cancellation, driver refresh, concurrent external
 configuration, partial acquisition, supervisor/feeder death, lease timing under

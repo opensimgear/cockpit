@@ -1,44 +1,41 @@
-# Custom mapping scripts (experimental)
+# Custom profile scripts (experimental)
 
-Use Mappings → Draft editor → Custom Rhai logic. Add an example, inspect its declared inputs and named output bindings, edit the source, and check syntax. Save creates a draft; Start recording preview activates a separately compiled candidate. Syntax/compile errors preserve the existing run. Stop is always independent of script code. Live script output is disabled until resource controls and a virtual backend are qualified.
+Open **Profiles**, add/open a graph, then choose **Script with declared ports** in the transformation selector. Its inspector edits the Rhai source, scalar parameters and declared typed input/output ports on that graph node. Connect those exact ports explicitly. **Save profile** does not execute a script; draft preflight and **Apply saved revision** use separate immutable captures. Syntax/compile errors cannot replace a healthy run. Host **Stop** is independent of script code. Live script output remains behind its existing qualification gate.
 
-The examples cover a shift layer, two-control condition, axis hysteresis, short/long press and a timed pulse. Examples select existing compatible inputs and a target button; add the required roles or target first if none exist. Button examples require a release after startup before acting on a press. Bind roles to two distinct controllers to test source-loss behavior across devices.
+The old Mappings → Draft editor, standalone recording Start and completed-trace export controls are retired. No controller-only script/profile configuration is read or migrated into unified Profiles. The retained library/CLI implementation and historical [M5 verification record](verification/2026-10-15-script-runtime-m5.md) do not describe a second desktop authoring path.
 
-## Callback contract
+## Typed callback contract
 
-Define `on_start(ctx)`, `on_event(ctx)` and `on_timer(ctx)`. Only function definitions are retained; top-level statements are not executed. Every invocation gets a new scope and copies of:
+The [typed helper contract](typed-script-helper.md) is authoritative for schema-2 Script nodes. Define `on_start(ctx)` and `on_event(ctx)`. Only retained function definitions execute; callbacks receive copies of `ctx.inputs`, `ctx.parameters`, `ctx.state`, `ctx.nowUs` and `ctx.eventTrigger`. Inputs are keyed by this node's declared port IDs, rather than controller roles.
 
-- `ctx.inputs[role][control]`: a declared control with `kind` and `value`. Buttons are boolean, axes use the profile range, hats are 0–7 or null.
-- `ctx.parameters`: the profile's parameter object.
-- `ctx.state`: the previous successfully committed state object.
-- `ctx.nowUs`: the reducer's deterministic microsecond clock.
-- `ctx.event`: source event metadata, or a timer ID in `ctx.event.timer`.
+Each input keeps its exact typed envelope: known scalar/invocation, unknown, stale or unavailable. Known false and zero are values; unavailable input is not silently converted to either. A callback returns `transaction(stateMap, outputMap, timerArray)`. Outputs may name only declared outputs and must fit their full scalar or ordered invocation contract.
 
-Return `transaction(state, outputs, timers)`. An output is `button("name", true)`, `axis("name", 12000)` or `hat("name", -1)`; negative hat values mean neutral. A timer is `timer("id", 5000)`. A transaction may also contain a `logs` array of strings. Basic arrays, maps, arithmetic and selected math functions are available, including integer `min`/`max`. Files, imports, dynamic eval, printing, randomness, OS time, native handles and device writes are unavailable.
+```rhai
+fn on_start(ctx) {
+    transaction(#{}, #{lamp:scalar(false)}, [])
+}
+fn on_event(ctx) {
+    if !ctx.eventTrigger { return transaction(ctx.state, #{}, []); }
+    transaction(ctx.state, #{lamp:scalar(true)}, [
+        after("release", 1000, #{lamp:scalar(false)})
+    ])
+}
+```
 
-Each reply **replaces the complete state, output contribution and timer set** belonging to that script. An empty output list releases its contribution. Timer delays are relative to transaction commit, range from 1 ms to 60 seconds, and deliver `on_timer`. Replacing the timer set also cancels already queued callbacks from the old set. Other input callbacks retain their captured inputs and receive the last committed state when dispatched. One invocation per script is in flight; the shared queue is bounded. Scripts do not depend on UI polling.
+This example requires a declared Boolean `lamp` output. Named action outputs use `action([argument("id", value), ...])` in declaration order. One-shot actions also require the reducer's actual event authority; editing callback context cannot invent it. Every successful reply replaces the script's complete output contribution and timer set. Omitted outputs become unknown.
 
-Buttons combine all producer contributions with OR. Axes and hats with multiple writers need explicit priority, using script owners named `script-id:output-name`. All declared input roles participate in ownership. Losing any declared source clears the whole script's state, outputs and timers and requires explicit Start with fresh baselines. A failed callback has no partial commit; only that script is faulted. Built-in rules and unrelated scripts continue. Stop invalidates queued work and worker replies immediately; cleanup never calls user code.
+A timer uses `after(id, delayUs, outputMap)`, with delay 1–60,000,000 microseconds. The reducer schedules those typed outputs directly; it does not call an `on_timer` interpreter callback. Explicit visible OR/priority nodes resolve fan-in. Source loss, validity changes, Stop and run replacement revoke contributions and timers. Recovery never replays a callback or timer.
 
 ## Bounds and process controls
 
-Code is limited to 16 KiB within a 64 KiB profile. Each callback permits 100,000 operations, call depth 16, a 5 ms evaluation deadline, 16 KiB state, 128 output intents, 64 timers and four log lines. The run shares 256 timers and 32 queued/in-flight callbacks. Logs are limited to 256 bytes each and 16 messages per second. IPC frames are at most 32 KiB. Parent supervision stops an unresponsive callback after 100 ms, separately from the interpreter's 5 ms evaluation budget. Compilation has a two-second process deadline. Deadlines are failure bounds, not latency guarantees.
+Script source is limited to 16 KiB within the 512 KiB portable unified profile. State contains named scalar values and is bounded to 16 KiB. The helper uses bounded 32 KiB IPC frames, one in-flight request, the existing 100 ms absolute host deadline and 5 ms interpreter evaluation budget. Worker faults end that worker; ambiguous or late invocations are not retried. These are failure bounds, not latency guarantees.
 
-Windows workers are assigned to an owned Job Object before code is sent, with a 256 MiB process memory cap, one process and kill-on-close. Linux workers set a 256 MiB data limit and a 32-descriptor limit before accepting code. macOS bounds requested Rust heap allocations at 256 MiB and limits descriptors to 32; native-library allocations and total RSS remain outside that heap budget. These controls complement interpreter limits; they are not an OS permission sandbox, and their native release qualification remains open. Live script output stays disabled.
+The immutable handshake pins the node's source, ports and parameters. Native run/source generations and port validity epochs fence every result before the reducer accepts it. Scripts run in disposable child processes, never in the coordinator or UI. Files, imports, dynamic eval, native device handles and wall-clock/random APIs are unavailable. Output goes only through the declared graph ports and qualified adapters.
 
-## Recording and replay
+The retained Windows Job Object and Unix resource limits complement interpreter limits; they are not a permission sandbox or qualification evidence. Windows uses an owned Job Object with a 256 MiB process limit, one process and kill-on-close. Linux bounds data memory and descriptors. macOS bounds requested Rust heap allocations and descriptors; native-library allocations and total RSS remain outside that heap budget. Native release/resource-control qualification remains open and live scripts stay disabled.
 
-Stop preview, then choose **Export completed replay trace**. Capture is limited to 4096 steps and 4 MiB and fails explicitly instead of dropping history. Adjacent clock advances are coalesced; input edges, dispatches, replies and faults are retained. Traces contain the profile, explicit source assignments, profile/script SHA-256 fingerprints, declared/native capability snapshots, generations, callback inputs/state and timer decisions.
+## Inspection and verification
 
-Build and replay on the host:
+Applied port/path inspection reads the running graph's declared inputs, outputs, summaries and freshness, independently of a newer draft. It does not evaluate callbacks or expose script code, secrets or backend handles. A requested action tuple does not confirm physical or game delivery.
 
-```sh
-cargo build --locked --manifest-path crates/logic/Cargo.toml
-cargo run --locked --manifest-path crates/logic/Cargo.toml -- replay cockpit-mapping-trace.json
-```
-
-Replay evaluates recorded invocations in fresh helper processes, compares successful transactions and applies the recorded scheduling through the production reducer. It reports a stable output hash. It never opens controller or virtual-output handles. Captured helper/source failures remain explicit trace events; replay does not erase those failures because a later machine is faster.
-
-See the [M5 validation record](verification/2026-10-15-script-runtime-m5.md) for software evidence and remaining qualification gaps.
-
-On macOS, the helper uses a 256 MiB requested Rust-heap allocation budget and descriptor limit. Darwin rejects the small RLIMIT_DATA cap at startup; native-library allocations and total RSS are not covered by the heap budget. Whole-process memory qualification remains open and live scripts remain disabled.
+Real-process typed helper tests cover immutable handshakes, transactions, declared contracts, faults and lifecycle fencing. Portable reducer fixtures test scheduling without hardware. These do not qualify real driver output, simulator effects or process resource controls. See [typed helper details](typed-script-helper.md), [Profiles](profiles-guide.md) and [platform/recovery limits](controller-mapping-platforms.md).
