@@ -47,6 +47,111 @@ fn rows() -> Vec<Value> {
     vec![json!({"id":"aircraft/altitude","channel":"common:CommonData:ALT_MSL_FT","output":0})]
 }
 
+fn assert_mh6_commondata_only(path: &Path) {
+    // The repo example registers a genuine empty read-only module. Its official
+    // JSON writer emits this object and adds only this exact aircraft alias.
+    fs::write(path.join("MH-6J.json"), b"{\n\n}").unwrap();
+    let alias_path = path.join("AircraftAliases.json");
+    let original = dcs_bios::read_json(&alias_path, dcs_bios::MAX_DOCUMENT).unwrap();
+    assert!(original.get("MH-6J").is_none());
+    let mut aliases = original.clone();
+    aliases["MH-6J"] = json!(["MH-6J", "CommonData"]);
+    fs::write(&alias_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+    for (name, modules) in original.as_object().unwrap() {
+        assert_eq!(&aliases[name], modules, "Existing aliases are preserved");
+    }
+
+    let request = json!({"cataloguePath":path,"aircraftModule":"MH-6J"});
+    let result = resource_catalogue(&request).unwrap();
+    let controls = result["controls"].as_array().unwrap();
+    assert!(!controls.is_empty());
+    assert!(controls.iter().all(|control| {
+        control["sourceModule"] == "CommonData" && control["inputs"] == json!([])
+    }));
+    let altitude = controls
+        .iter()
+        .find(|control| control["id"] == "common:CommonData:ALT_MSL_FT")
+        .unwrap();
+    assert_eq!(altitude["sourceControl"], "ALT_MSL_FT");
+    assert!(altitude["reportedQuality"]
+        .as_str()
+        .unwrap()
+        .contains("not advertised"));
+    let commands = query_catalogue(&json!({
+        "cataloguePath":path,"aircraftModule":"MH-6J","kind":"input"
+    }))
+    .unwrap();
+    assert_eq!(commands["total"], 0);
+    assert_eq!(commands["controls"], json!([]));
+    let ports = crate::profile_resource_ports::integration(&result).unwrap();
+    assert!(ports
+        .iter()
+        .all(|port| port.direction == osg_profiles::Direction::Output));
+    let port = ports
+        .iter()
+        .find(|port| port.id == "channel:common:CommonData:ALT_MSL_FT:0")
+        .unwrap();
+    assert!(matches!(
+        &port.contract,
+        osg_profiles::resources_ports::PortContract::State {
+            schema: osg_profiles::resources_ports::ScalarSchema::Integer {
+                min: 0,
+                max: 65535,
+                unit: None
+            },
+            fallback: None,
+            ..
+        }
+    ));
+
+    let revision = result["sourceRevision"].as_str().unwrap();
+    let (sources, mut guard, metadata) =
+        guarded_telemetry_sources(path, "MH-6J", &rows(), revision).unwrap();
+    assert_eq!(metadata.aircraft_names, HashSet::from(["MH-6J".into()]));
+    guard.validate(true).unwrap();
+    let mut decoder = ExportSession::from_sources(metadata, 100, sources).unwrap();
+    let frame = |name: &str, counter: u8| {
+        let mut bytes = vec![0x55; 4];
+        let mut aircraft = [0; 24];
+        aircraft[..name.len()].copy_from_slice(name.as_bytes());
+        for (address, data) in [
+            (0u16, aircraft.to_vec()),
+            (1076, 10000u16.to_le_bytes().to_vec()),
+            (65534, vec![counter, 0]),
+        ] {
+            bytes.extend(address.to_le_bytes());
+            bytes.extend((data.len() as u16).to_le_bytes());
+            bytes.extend(data);
+        }
+        bytes
+    };
+    decoder.feed(&frame("MH-6J", 1), 0);
+    decoder.feed(&frame("MH-6J", 2), 1);
+    assert!(decoder.snapshot(1).fresh);
+    assert_eq!(
+        decoder.snapshot(1).values["aircraft/altitude"],
+        json!(10000)
+    );
+    for (counter, wrong) in [(3, "AH-6"), (4, "AH-6J"), (5, "BlackHawk")] {
+        decoder.feed(&frame(wrong, counter), u64::from(counter));
+        assert!(!decoder.snapshot(u64::from(counter)).fresh, "{wrong}");
+    }
+
+    // A user cannot turn a known MH-6J reader into the incompatible older
+    // command module by editing the alias after its immutable capture.
+    aliases["MH-6J"] = json!(["CommonData", "AH-6J"]);
+    fs::write(alias_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+    assert!(guard.validate(true).is_err());
+    assert!(guarded_telemetry_sources(path, "MH-6J", &rows(), revision).is_err());
+    assert!(resource_catalogue(&request).is_err());
+}
+
+#[test]
+fn mh6_self_named_read_only_catalogue_preserves_identity_and_has_no_ah6_commands() {
+    let fixture = Fixture::new();
+    assert_mh6_commondata_only(fixture.0.path());
+}
+
 #[test]
 fn only_alias_authorized_common_outputs_are_namespaced_and_legacy_commands_are_unchanged() {
     let fixture = Fixture::new();
@@ -335,4 +440,7 @@ fn pinned_official_archive_commondata_normalization_and_native_guard() {
         "Actual parsed mask/shift preserve the full reported word"
     );
     guard.validate(true).unwrap();
+    // Repeat the extension contract with complete checksum-pinned upstream
+    // documents, preserving every official alias and CommonData control.
+    assert_mh6_commondata_only(directory.path());
 }
