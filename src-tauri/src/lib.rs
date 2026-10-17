@@ -53,6 +53,17 @@ mod transport;
 mod xplane;
 mod xplane_installation;
 
+// macOS exposes its system temporary parent through /var -> /private/var.
+// Positive storage fixtures use a real parent; explicit symlink tests still
+// construct their own unsafe targets. Production storage never follows aliases.
+#[cfg(test)]
+pub(crate) fn test_directory() -> tempfile::TempDir {
+    let parent = std::env::temp_dir();
+    #[cfg(unix)]
+    let parent = parent.canonicalize().expect("canonical native test temporary parent");
+    tempfile::tempdir_in(parent).expect("native test temporary directory")
+}
+
 use serde_json::Value;
 use std::sync::Arc;
 use tauri::Manager;

@@ -180,9 +180,18 @@ impl NativeProfileHost {
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
         loop {
             self.check_transition(owner)?;
+            // Acquiring the assignment revokes the prior browser session. Its
+            // replacement baseline advances the native provider generation,
+            // independently of the periodic inventory worker. Capture that
+            // actual observation before binding; cached old tokens must never
+            // authorize the newly connected writer.
+            if self.run(owner)?.companions.baseline_ready(&hub)? {
+                resources.refresh_native()?;
+                self.check_transition(owner)?;
+            }
+            let snapshot = resources.snapshot_for_compile(self.run(owner)?.assignments.clone())?;
             let now = self.controllers.stream_page("", 0).captured_us;
             let state = self.run(owner)?;
-            let snapshot = resources.snapshot_for_compile(state.assignments.clone())?;
             if state.companions.baseline_ready(&hub)?
                 && state
                     .companion_catalogues

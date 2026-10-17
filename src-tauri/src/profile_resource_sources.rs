@@ -705,3 +705,14 @@ fn hex(value: &Option<String>) -> Option<u16> {
 #[cfg(test)]
 #[path = "profile_resource_sources_tests.rs"]
 mod tests;
+
+// The ignored browser proof uses the production projection, not a fabricated
+// registry descriptor or token. This exposes nothing in the production build.
+#[cfg(test)]
+pub(crate) fn companion_observation(
+    source: osg_mapping_host::companions::ResourceDescriptor,
+    publication: Result<osg_companion_service::Publication, String>,
+    transport: Option<osg_companion_service::SourceTransport>,
+) -> Result<Observation, String> {
+    Sources::companion_observation(source, publication, transport)
+}

@@ -4,6 +4,9 @@ use osg_mapping::signal::ScalarSchema;
 use osg_profiles::compiler_models::{BackendCapabilities, CapturedResource};
 use osg_profiles::resources::{Availability, Connection, ResourceSummary, ResourceType, Route};
 
+#[path = "profile_session_companion_live_tests.rs"]
+mod live;
+
 fn snapshot() -> CompileSnapshot {
     CompileSnapshot {
         inventory_session: "native".into(),
@@ -265,9 +268,12 @@ pub(crate) struct NativeFixture {
 }
 impl NativeFixture {
     pub(crate) fn new() -> Self {
+        Self::with_inventory_interval(std::time::Duration::ZERO)
+    }
+    fn with_inventory_interval(inventory_interval: std::time::Duration) -> Self {
         use osg_profiles::resources::{EvidenceKind, IdentityEvidence, Observation, ProviderBatch};
         use osg_profiles::resources_ports::PortUpdate;
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
         let clock = controllers.clone();
         let provider = Arc::new(osg_mapping_host::companions::CompanionProvider::new(
@@ -372,6 +378,7 @@ impl NativeFixture {
         let peer = std::thread::spawn(move || {
             let mut opened: Option<serde_json::Value> = None;
             let mut sequence = 0u64;
+            let mut last_inventory: Option<Instant> = None;
             while !stop.load(Ordering::Acquire) {
                 if opened.is_none() {
                     peer_hub.handle_wire(
@@ -402,7 +409,10 @@ impl NativeFixture {
                         *captured_reply.lock().unwrap() = received;
                     }
                 }
-                peer_resources.refresh_native().unwrap();
+                if last_inventory.is_none_or(|last| last.elapsed() >= inventory_interval) {
+                    peer_resources.refresh_native().unwrap();
+                    last_inventory = Some(Instant::now());
+                }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         });
@@ -593,6 +603,30 @@ impl Drop for NativeFixture {
         self.companions.shutdown();
         self.controllers.shutdown();
     }
+}
+
+#[test]
+fn assignment_takeover_captures_actual_generation_before_periodic_inventory_refresh() {
+    // The initial neutral browser is cached. No peer-side inventory refresh can
+    // occur during the three-second takeover window, so the host must capture
+    // the replacement writer instead of binding the retained old generation.
+    let mut fixture = NativeFixture::with_inventory_interval(std::time::Duration::from_secs(60));
+    fixture.desired = fixture.original.clone();
+    let provider = fixture.companions.profile_provider();
+    let before = provider.resource_inventory()[0].generation;
+    assert!(before > 0);
+    let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
+    coordinator.apply(fixture.candidate(false)).unwrap();
+    assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
+    let current = provider.resource_inventory()[0].generation;
+    assert!(current > before, "Takeover must establish a new actual native baseline");
+    let listed = fixture.resources.request(&json!({"command":"profile_resources_list"})).unwrap();
+    let connections = listed["resources"][0]["connections"].as_array().unwrap();
+    assert_eq!(connections.len(), 1, "Only the exact verified native route is admitted");
+    assert_eq!(connections[0]["route"]["providerGeneration"], current.to_string());
+    assert_eq!(connections[0]["route"]["baselineReady"], true);
+    coordinator.poll().unwrap();
+    coordinator.stop().unwrap();
 }
 
 #[test]
