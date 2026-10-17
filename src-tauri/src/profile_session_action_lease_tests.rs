@@ -66,6 +66,17 @@ impl Device {
     }
     fn run(&mut self, r: Value) -> Result<(), String> {
         let command = r["command"].as_str().unwrap().to_owned();
+        if command != "action_state" {
+            // Both native USB and CAN paths use this production encoder before
+            // firmware sees a lease command. The device fixture must not admit
+            // a private token that either real adapter would reject.
+            crate::output_leases::child(
+                &command,
+                &r,
+                self.cache["catalogueRevision"].as_u64().unwrap(),
+                self.cache["actions"].as_array().unwrap(),
+            )?;
+        }
         self.writes.push(r.clone());
         let check = |this: &Self| {
             this.owned && r["ownershipToken"] == this.secret && r["leaseId"] == this.id
@@ -446,6 +457,67 @@ fn atomic_claim_captures_actual_prior_state_and_dispatch_preserves_exact_argumen
         assert_eq!(io.calls("action_release"), 1);
         assert!(lease.renew(&owner).is_err());
     }
+}
+#[test]
+fn production_parser_admits_live_and_recovered_endpoint_lease_commands_on_usb_and_can() {
+    for can in [false, true] {
+        let (sink, io, owner) = fixture(can, false);
+        let mut lease = prepared(&sink, &io, &owner);
+        let receipt = lease.receipt();
+        let prior = io.device.lock().unwrap().current.clone();
+        lease.claim().unwrap();
+        lease.bind_delivery(&sink).unwrap();
+        lease.invoke(&owner, &args()).unwrap();
+        lease.renew(&owner).unwrap();
+        let mut recovered =
+            Lease::recover_io(&receipt, &owner, io.clone(), &TestProtector).unwrap();
+        assert!(canonical_uuid(&recovered.cleanup.secret));
+        assert_eq!(recovered.cleanup.secret, lease.cleanup.secret);
+        assert!(recovered.claim().is_err());
+        assert!(recovered.bind_delivery(&sink).is_err());
+        assert!(recovered.invoke(&owner, &args()).is_err());
+        assert!(recovered.renew(&owner).is_err());
+        assert_eq!(recovered.release().unwrap(), Released::Restored);
+        assert_eq!(io.device.lock().unwrap().current, prior);
+        for command in [
+            "action_claim_current",
+            "action_invoke_owned",
+            "action_renew",
+            "action_release",
+        ] {
+            assert_eq!(io.calls(command), 1, "{command} must never be replayed");
+        }
+    }
+}
+
+#[test]
+fn recovery_rejects_sealed_tokens_that_the_endpoint_wire_parser_cannot_admit() {
+    let (sink, io, owner) = fixture(true, false);
+    let lease = prepared(&sink, &io, &owner);
+    let receipt = lease.receipt();
+    let envelope: Envelope = serde_json::from_value(receipt.state.clone()).unwrap();
+    let plain = TestProtector
+        .unseal(&unhex(&envelope.sealed_hex).unwrap())
+        .unwrap();
+    let mut cleanup: Cleanup = serde_json::from_slice(&plain).unwrap();
+    for token in [
+        uuid::Uuid::new_v4().simple().to_string(),
+        uuid::Uuid::nil().to_string(),
+        "00112233_4455-4677-8899-aabbccddeeff".into(),
+    ] {
+        cleanup.secret = token;
+        let sealed = TestProtector
+            .seal(&serde_json::to_vec(&cleanup).unwrap())
+            .unwrap();
+        let mut bad = receipt.clone();
+        bad.state = serde_json::to_value(Envelope {
+            schema_version: 1,
+            sealed_hex: hex(&sealed),
+        })
+        .unwrap();
+        assert!(Lease::recover_io(&bad, &owner, io.clone(), &TestProtector).is_err());
+    }
+    assert!(io.device.lock().unwrap().writes.is_empty());
 }
 #[test]
 fn one_shot_alias_uses_same_readable_endpoint_lease_and_preserves_external_edits() {

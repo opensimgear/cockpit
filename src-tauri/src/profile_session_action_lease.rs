@@ -623,7 +623,7 @@ impl Lease {
             endpoint: endpoint.clone(),
             setter_id: setter.id.strip_prefix("action:").ok_or(INVALID)?.into(),
             setter_hash: setter.contract_hash()?,
-            secret: uuid::Uuid::new_v4().simple().to_string(),
+            secret: uuid::Uuid::new_v4().to_string(),
             can_cleanup,
         };
         let mut plain = serde_json::to_vec(&cleanup).map_err(|_| INVALID)?;
@@ -1118,8 +1118,7 @@ impl Lease {
             || cleanup.owner != *owner
             || !canonical_uuid(&cleanup.resource)
             || cleanup.revision == 0
-            || cleanup.secret.len() != 32
-            || !cleanup.secret.bytes().all(|b| b.is_ascii_hexdigit())
+            || crate::output_leases::token(&json!(cleanup.secret)).is_err()
             || receipt.resource_id != format!("{}:{}", cleanup.resource, cleanup.endpoint)
         {
             return Err(INVALID.into());
