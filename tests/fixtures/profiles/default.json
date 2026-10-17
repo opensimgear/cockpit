@@ -1,1 +1,24 @@
-{"schemaVersion":1,"id":"00000000-0000-4000-8000-000000000001","name":"Default","revision":1,"eligibility":{"gameIds":[]},"resources":[],"bindings":[],"processingNodes":[],"virtualOutputs":[],"visibility":[],"overrides":[],"companionAssignments":[],"editor":{"positions":[],"viewport":{"x":0,"y":0,"zoom":1}}}
+{
+  "schemaVersion": 2,
+  "id": "00000000-0000-4000-8000-000000000001",
+  "name": "Default",
+  "revision": 1,
+  "eligibility": {
+    "gameIds": []
+  },
+  "resources": [],
+  "bindings": [],
+  "processingNodes": [],
+  "virtualOutputs": [],
+  "visibility": [],
+  "overrides": [],
+  "companionAssignments": [],
+  "editor": {
+    "positions": [],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

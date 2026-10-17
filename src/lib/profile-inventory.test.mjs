@@ -178,3 +178,10 @@ test('inventory capability errors preserve dirty editor documents and captured p
   assert.strictEqual(profiles.session, beforeSession);
   assert.deepEqual(profileCalls, ['profile_status', 'profile_get']);
 });
+
+test('graph invocation contracts cannot be advertised as observed provider capabilities', () => {
+  const graphOnly={...action(),direction:'output',contract:{delivery:'invocation',parameters:[],semantics:'one-shot'}};
+  assert.ok(resourcePortError(graphOnly));
+  assert.ok(resourcePortError({...descriptor(),contract:{...descriptor().contract,privateMetadata:true}}));
+  assert.ok(resourcePortError({...descriptor(),contract:{...descriptor().contract,schema:{type:'boolean',rawCalibration:{min:0}}}}));
+});

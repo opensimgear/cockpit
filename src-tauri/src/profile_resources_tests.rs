@@ -36,6 +36,173 @@ fn observed(generation: u64) -> Observation {
         ),
     }
 }
+
+#[test]
+fn compiler_capture_uses_one_cached_native_snapshot_without_discovery_or_normalization() {
+    use osg_profiles::resources::PortExpectation;
+    use osg_profiles::store::LocalAssignment;
+    let calls = Arc::new(AtomicU64::new(0));
+    let observed_calls = calls.clone();
+    let runtime = Runtime::new(
+        None,
+        Arc::new(move |revision| {
+            observed_calls.fetch_add(1, Ordering::AcqRel);
+            let mut item = observed(1);
+            let ports = &mut item.ports.as_mut().unwrap().ports;
+            let mut second = ports[0].clone();
+            second.id = "button:1".into();
+            ports.push(second);
+            item.ports = Some(PortUpdate::complete(ports.clone()).unwrap());
+            vec![(
+                "host".into(),
+                Ok(batch("host", "provider", revision, vec![item])),
+            )]
+        }),
+        false,
+    );
+    runtime
+        .request(&json!({"command":"profile_resources_list"}))
+        .unwrap();
+    let details = runtime.state.lock().unwrap().registry.list(0, 1).unwrap();
+    let id = details.resources[0].id.clone();
+    let make_assignment = |logical: &str, port: &str| {
+        let detail = runtime
+            .state
+            .lock()
+            .unwrap()
+            .registry
+            .inspect(&id, 0, 128)
+            .unwrap();
+        let hash = detail
+            .ports
+            .iter()
+            .find(|observed| observed.descriptor.id == port)
+            .unwrap()
+            .contract_hash
+            .clone();
+        LocalAssignment {
+            resource_id: logical.into(),
+            source_id: id.clone(),
+            ports: vec![PortExpectation {
+                profile_port_id: "pressed".into(),
+                observed_port_id: port.into(),
+                expected_contract_hash: hash,
+            }],
+        }
+    };
+    let assignments = vec![
+        make_assignment("wheel-a", "button:0"),
+        make_assignment("wheel-b", "button:1"),
+    ];
+    let capture = runtime.snapshot_for_compile(assignments).unwrap();
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+    assert_eq!(capture.inventory_session, details.session);
+    assert_eq!(capture.inventory_revision, details.revision);
+    assert_eq!(capture.resources.len(), 1);
+    assert_eq!(capture.resources[0].ports.len(), 2);
+    assert_eq!(capture.resources[0].tokens.len(), 2);
+    assert!(capture.resources[0]
+        .tokens
+        .iter()
+        .all(|token| token.access == Access::Read));
+    assert!(!capture.backend.available && !capture.backend.qualified);
+    assert!(capture.game_context.is_none());
+    let bytes = serde_json::to_vec(&capture).unwrap();
+    Runtime::adopt(
+        &runtime.state,
+        vec![(
+            "host".into(),
+            Ok(batch("host", "provider", 10, vec![observed(2)])),
+        )],
+    );
+    assert_eq!(serde_json::to_vec(&capture).unwrap(), bytes);
+    let later = runtime
+        .snapshot_for_compile(capture.assignments.clone())
+        .unwrap();
+    assert_ne!(later.resources[0].tokens, capture.resources[0].tokens);
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn compiler_capture_retains_missing_and_read_only_diagnostics_without_write_tokens() {
+    use osg_profiles::resources::PortExpectation;
+    use osg_profiles::store::LocalAssignment;
+    let runtime = Runtime::new(
+        None,
+        Arc::new(|_| panic!("cached compilation must not enumerate")),
+        false,
+    );
+    let mut item = observed(1);
+    item.route.as_mut().unwrap().writable = true;
+    item.ports = Some(
+        PortUpdate::complete(vec![PortDescriptor {
+            id: "action:reset".into(),
+            name: "Reset".into(),
+            direction: Direction::Input,
+            contract: PortContract::Action {
+                parameters: vec![],
+                semantics: ActionSemantics::OneShot,
+                endpoint: "reset".into(),
+                readable: false,
+                display: None,
+                ownership: None,
+            },
+        }])
+        .unwrap(),
+    );
+    Runtime::adopt(
+        &runtime.state,
+        vec![("host".into(), Ok(batch("host", "provider", 1, vec![item])))],
+    );
+    let details = runtime.state.lock().unwrap().registry.list(0, 1).unwrap();
+    let id = details.resources[0].id.clone();
+    let hash = runtime
+        .state
+        .lock()
+        .unwrap()
+        .registry
+        .inspect(&id, 0, 1)
+        .unwrap()
+        .ports[0]
+        .contract_hash
+        .clone();
+    let assignment = LocalAssignment {
+        resource_id: "device".into(),
+        source_id: id,
+        ports: vec![PortExpectation {
+            profile_port_id: "reset".into(),
+            observed_port_id: "action:reset".into(),
+            expected_contract_hash: hash,
+        }],
+    };
+    assert_eq!(
+        runtime
+            .snapshot_for_compile(vec![assignment.clone()])
+            .unwrap()
+            .resources[0]
+            .tokens[0]
+            .access,
+        Access::Invoke
+    );
+    runtime.state.lock().unwrap().read_only = true;
+    let missing = LocalAssignment {
+        resource_id: "missing".into(),
+        source_id: uuid::Uuid::new_v4().to_string(),
+        ports: vec![],
+    };
+    let capture = runtime
+        .snapshot_for_compile(vec![assignment.clone(), missing])
+        .unwrap();
+    assert!(capture.read_only);
+    assert!(capture.resources[0].tokens.is_empty());
+    assert!(capture
+        .inventory_diagnostics
+        .iter()
+        .any(|message| message.contains("missing")));
+    assert!(runtime.snapshot_for_compile(vec![assignment; 65]).is_err());
+    runtime.shutdown();
+    assert!(runtime.snapshot_for_compile(vec![]).is_err());
+}
 #[test]
 fn ipc_inventory_reads_are_separate_and_old_route_tokens_fail_after_reconnect() {
     let generation = Arc::new(AtomicU64::new(1));

@@ -7,13 +7,14 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 pub use crate::{MAX_LIBRARY_BYTES, MAX_PROFILES};
-pub const LIBRARY_SCHEMA_VERSION: u32 = 1;
+pub const LIBRARY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalAssignment {
     pub resource_id: String,
     pub source_id: String,
+    pub ports: Vec<crate::resources::PortExpectation>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -75,6 +76,34 @@ impl Library {
                     return Err(
                         "Local assignments must reference distinct profile resources.".into(),
                     );
+                }
+                let resource = document
+                    .resources
+                    .iter()
+                    .find(|r| r.id == assignment.resource_id)
+                    .unwrap();
+                if assignment.ports.len() != resource.ports.len() {
+                    return Err("Local assignment must pin every logical port exactly.".into());
+                }
+                let mut logical = BTreeSet::new();
+                let mut observed = BTreeSet::new();
+                for port in &assignment.ports {
+                    if !crate::validation::port_identifier(&port.profile_port_id)
+                        || !resource.ports.iter().any(|p| p.id == port.profile_port_id)
+                        || !logical.insert(&port.profile_port_id)
+                        || !observed.insert(&port.observed_port_id)
+                        || crate::resources_ports::text(&port.observed_port_id, 256).is_err()
+                        || !port
+                            .expected_contract_hash
+                            .strip_prefix("sha256:")
+                            .is_some_and(|v| {
+                                v.len() == 64
+                                    && v.bytes()
+                                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                            })
+                    {
+                        return Err("Local port assignments require unique exact observed IDs and contract hashes.".into());
+                    }
                 }
                 if assignment.source_id.is_empty()
                     || assignment.source_id.len() > 1024

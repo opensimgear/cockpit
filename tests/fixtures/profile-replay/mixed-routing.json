@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "baselines": [
+    {"source":"third-party-a","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"axis","sample":{"status":"known","value":{"kind":"scalar","value":100}}}]},
+    {"source":"third-party-b","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"axis","sample":{"status":"known","value":{"kind":"scalar","value":200}}}]},
+    {"source":"can-a","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"axis","sample":{"status":"known","value":{"kind":"scalar","value":300}}}]},
+    {"source":"can-b","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"axis","sample":{"status":"known","value":{"kind":"scalar","value":400}}}]},
+    {"source":"direct-usb","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"axis","sample":{"status":"known","value":{"kind":"scalar","value":500}}}]},
+    {"source":"companion-panel","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"switch","sample":{"status":"known","value":{"kind":"scalar","value":true}}}]},
+    {"source":"dcs","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"altitude","sample":{"status":"known","value":{"kind":"scalar","value":10000}}}]},
+    {"source":"can-command","generation":"1","sequence":"1","capturedUs":"100","reason":"baseline","changes":[{"portId":"pressed","sample":{"status":"known","value":{"kind":"scalar","value":false}}}]}
+  ],
+  "changes": [
+    {"frame":{"source":"can-command","generation":"1","sequence":"2","capturedUs":"200","reason":"change","changes":[{"portId":"pressed","sample":{"status":"known","value":{"kind":"scalar","value":true}}}]},"setter":null,"commands":1},
+    {"frame":{"source":"dcs","generation":"1","sequence":"2","capturedUs":"300","reason":"change","changes":[{"portId":"altitude","sample":{"status":"known","value":{"kind":"scalar","value":9700}}}]},"setter":null,"commands":0},
+    {"frame":{"source":"dcs","generation":"1","sequence":"3","capturedUs":"400","reason":"change","changes":[{"portId":"altitude","sample":{"status":"known","value":{"kind":"scalar","value":9400}}}]},"setter":false,"commands":0},
+    {"frame":{"source":"dcs","generation":"1","sequence":"4","capturedUs":"500","reason":"change","changes":[{"portId":"altitude","sample":{"status":"known","value":{"kind":"scalar","value":9800}}}]},"setter":null,"commands":0},
+    {"frame":{"source":"dcs","generation":"1","sequence":"5","capturedUs":"600","reason":"change","changes":[{"portId":"altitude","sample":{"status":"known","value":{"kind":"scalar","value":10000}}}]},"setter":true,"commands":0}
+  ],
+  "controllers": {
+    "combined-controller":{"buttons":[true],"axes":[100,200],"hats":[]},
+    "can-controller":{"buttons":[],"axes":[300,400,500],"hats":[]}
+  }
+}

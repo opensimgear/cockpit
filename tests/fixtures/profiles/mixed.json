@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "22222222-2222-4222-8222-222222222222",
   "name": "Mixed",
   "revision": 1,
@@ -19,28 +19,28 @@
           "id": "axis",
           "name": "Steering",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         },
         {
           "id": "pressed",
           "name": "Command button",
           "direction": "output",
-          "delivery": "event",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": null,
-          "fallback": null
+          "contract": {
+            "delivery": "event",
+            "schema": {
+              "type": "boolean"
+            }
+          }
         }
       ]
     },
@@ -54,16 +54,17 @@
           "id": "axis",
           "name": "Throttle",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         }
       ]
     },
@@ -77,28 +78,39 @@
           "id": "axis",
           "name": "CAN axis A",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         },
         {
           "id": "led",
           "name": "Module indicator action",
           "direction": "input",
-          "delivery": "action",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": null,
-          "fallback": null
+          "contract": {
+            "delivery": "action",
+            "parameters": [
+              {
+                "id": "value",
+                "name": "Value",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            ],
+            "semantics": "setter",
+            "endpoint": "led",
+            "readable": true,
+            "display": null,
+            "ownership": null
+          }
         }
       ]
     },
@@ -112,16 +124,17 @@
           "id": "axis",
           "name": "CAN axis B",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         }
       ]
     },
@@ -135,16 +148,17 @@
           "id": "axis",
           "name": "Direct USB axis",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         }
       ]
     },
@@ -158,25 +172,36 @@
           "id": "switch",
           "name": "Panel switch",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": false
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
         },
         {
           "id": "warning",
           "name": "Altitude warning",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": false
+          "contract": {
+            "delivery": "action",
+            "parameters": [
+              {
+                "id": "value",
+                "name": "Value",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            ],
+            "semantics": "setter",
+            "endpoint": "warning",
+            "readable": true,
+            "display": null,
+            "ownership": null
+          }
         }
       ]
     },
@@ -190,28 +215,31 @@
           "id": "altitude",
           "name": "Altitude feet",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ft",
-          "range": {
-            "min": 0,
-            "max": 60000
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 60000,
+              "unit": "ft"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         },
         {
           "id": "master-caution",
           "name": "Master caution command",
           "direction": "input",
-          "delivery": "action",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": null,
-          "fallback": null
+          "contract": {
+            "delivery": "action",
+            "parameters": [],
+            "semantics": "one-shot",
+            "endpoint": "master-caution",
+            "readable": true,
+            "display": null,
+            "ownership": null
+          }
         }
       ]
     }
@@ -291,7 +319,7 @@
       },
       "to": {
         "nodeId": "command-trigger",
-        "portId": "event"
+        "portId": "trigger"
       }
     },
     {
@@ -303,17 +331,6 @@
       "to": {
         "nodeId": "dcs",
         "portId": "master-caution"
-      }
-    },
-    {
-      "id": "module-action",
-      "from": {
-        "nodeId": "command-trigger",
-        "portId": "action"
-      },
-      "to": {
-        "nodeId": "can-a",
-        "portId": "led"
       }
     },
     {
@@ -345,8 +362,30 @@
         "portId": "warning"
       },
       "to": {
+        "nodeId": "warning-action",
+        "portId": "value"
+      }
+    },
+    {
+      "id": "companion-warning",
+      "from": {
+        "nodeId": "warning-action",
+        "portId": "action"
+      },
+      "to": {
         "nodeId": "companion-panel",
         "portId": "warning"
+      }
+    },
+    {
+      "id": "module-action",
+      "from": {
+        "nodeId": "warning-action",
+        "portId": "action"
+      },
+      "to": {
+        "nodeId": "can-a",
+        "portId": "led"
       }
     }
   ],
@@ -355,20 +394,20 @@
       "id": "command-trigger",
       "name": "Explicit command trigger",
       "operation": {
-        "kind": "trigger"
+        "kind": "action-pack",
+        "arguments": []
       },
       "inputs": [
         {
-          "id": "event",
+          "id": "trigger",
           "name": "Button event",
           "direction": "input",
-          "delivery": "event",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": null,
-          "fallback": null
+          "contract": {
+            "delivery": "event",
+            "schema": {
+              "type": "boolean"
+            }
+          }
         }
       ],
       "outputs": [
@@ -376,13 +415,11 @@
           "id": "action",
           "name": "Action request",
           "direction": "output",
-          "delivery": "action",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": null,
-          "fallback": null
+          "contract": {
+            "delivery": "invocation",
+            "parameters": [],
+            "semantics": "one-shot"
+          }
         }
       ]
     },
@@ -390,25 +427,27 @@
       "id": "feet-to-metres",
       "name": "Feet to metres",
       "operation": {
-        "kind": "scale",
-        "factor": 0.3048,
-        "offset": 0
+        "kind": "unit-convert",
+        "from": "ft",
+        "to": "m",
+        "rounding": "none"
       },
       "inputs": [
         {
           "id": "feet",
           "name": "Altitude feet",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ft",
-          "range": {
-            "min": 0,
-            "max": 60000
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 60000,
+              "unit": "ft"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         }
       ],
       "outputs": [
@@ -416,16 +455,17 @@
           "id": "metres",
           "name": "Altitude metres",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "m",
-          "range": {
-            "min": 0,
-            "max": 18288
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 18288,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         }
       ]
     },
@@ -433,24 +473,27 @@
       "id": "altitude-threshold",
       "name": "Altitude threshold",
       "operation": {
-        "kind": "threshold",
-        "threshold": 3000
+        "kind": "hysteresis",
+        "press": 3000,
+        "release": 2900,
+        "comparison": "greater-equal"
       },
       "inputs": [
         {
           "id": "altitude",
           "name": "Altitude metres",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "m",
-          "range": {
-            "min": 0,
-            "max": 18288
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 18288,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         }
       ],
       "outputs": [
@@ -458,13 +501,59 @@
           "id": "warning",
           "name": "Above threshold",
           "direction": "output",
-          "delivery": "state",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": false
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "warning-action",
+      "name": "Explicit warning setter",
+      "operation": {
+        "kind": "set-on-change",
+        "arguments": [
+          "value"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "value",
+          "name": "Warning state",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "action",
+          "name": "Warning action",
+          "direction": "output",
+          "contract": {
+            "delivery": "invocation",
+            "parameters": [
+              {
+                "id": "value",
+                "name": "Value",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            ],
+            "semantics": "setter"
+          }
         }
       ]
     }
@@ -479,45 +568,66 @@
           "id": "steering",
           "name": "Steering",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         },
         {
           "id": "throttle",
           "name": "Throttle",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         },
         {
           "id": "button",
           "name": "Companion button",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "boolean",
-          "unit": null,
-          "range": null,
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": false
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": false
+          }
         }
-      ]
+      ],
+      "layout": {
+        "buttons": [
+          "button"
+        ],
+        "axes": [
+          {
+            "portId": "steering",
+            "range": "unipolar",
+            "fallback": 0
+          },
+          {
+            "portId": "throttle",
+            "range": "unipolar",
+            "fallback": 0
+          }
+        ],
+        "hats": []
+      }
     },
     {
       "id": "can-controller",
@@ -528,48 +638,72 @@
           "id": "axis-a",
           "name": "CAN axis A",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         },
         {
           "id": "axis-b",
           "name": "CAN axis B",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         },
         {
           "id": "usb-axis",
           "name": "Direct USB axis",
           "direction": "input",
-          "delivery": "state",
-          "valueType": "number",
-          "unit": "ratio",
-          "range": {
-            "min": 0,
-            "max": 1
-          },
-          "enumValues": [],
-          "freshnessMs": 1000,
-          "fallback": 0
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 32767,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": 0
+          }
         }
-      ]
+      ],
+      "layout": {
+        "buttons": [],
+        "axes": [
+          {
+            "portId": "axis-a",
+            "range": "unipolar",
+            "fallback": 0
+          },
+          {
+            "portId": "axis-b",
+            "range": "unipolar",
+            "fallback": 0
+          },
+          {
+            "portId": "usb-axis",
+            "range": "unipolar",
+            "fallback": 0
+          }
+        ],
+        "hats": []
+      }
     }
   ],
   "visibility": [
@@ -585,11 +719,7 @@
   "overrides": [
     {
       "resourceId": "can-a",
-      "enabled": true,
-      "debounceMs": 10,
-      "invertPorts": [
-        "axis"
-      ]
+      "enabled": true
     }
   ],
   "companionAssignments": [

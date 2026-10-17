@@ -1,3 +1,5 @@
+pub use osg_mapping::program::{ControllerLayout, Operation};
+pub use osg_mapping::signal::{Direction, PortContract, PortValue};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -20,7 +22,7 @@ pub struct ProfileDocument {
 impl ProfileDocument {
     pub(crate) fn empty(id: String, name: String) -> Self {
         Self {
-            schema_version: 1,
+            schema_version: crate::PROFILE_SCHEMA_VERSION,
             id,
             name,
             revision: 1,
@@ -49,6 +51,67 @@ impl ProfileDocument {
         let document: Self = serde_json::from_slice(bytes)
             .map_err(|error| format!("Invalid profile document: {error}"))?;
         crate::validate_document(&document)?;
+        Ok(document)
+    }
+    /// Parse a bounded compiler preview without requiring a valid routing graph.
+    /// Missing ports, incompatible contracts and cycles belong in the compiler's
+    /// traceable diagnostic report. Storage/import/export continue using `parse`.
+    pub fn parse_draft(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() > crate::MAX_PROFILE_BYTES {
+            return Err("Profile exceeds 512 KiB.".into());
+        }
+        // All nested structs/enums retain deny_unknown_fields and required keys.
+        let document: Self = serde_json::from_slice(bytes)
+            .map_err(|error| format!("Invalid profile draft: {error}"))?;
+        if document.schema_version != crate::PROFILE_SCHEMA_VERSION {
+            return Err("Unsupported unified profile version.".into());
+        }
+        if uuid::Uuid::parse_str(&document.id)
+            .ok()
+            .map(|id| id.to_string())
+            .as_deref()
+            != Some(document.id.as_str())
+        {
+            return Err("Profile identity must be a canonical lowercase UUID.".into());
+        }
+        if document.revision == 0
+            || document.revision > crate::MAX_REVISION
+            || !crate::validation::valid_name(&document.name)
+        {
+            return Err("Profile drafts require a trimmed name and positive safe revision.".into());
+        }
+        let resource_ports = document
+            .resources
+            .iter()
+            .map(|resource| resource.ports.len());
+        let processing_ports = document
+            .processing_nodes
+            .iter()
+            .map(|node| node.inputs.len() + node.outputs.len());
+        let output_ports = document
+            .virtual_outputs
+            .iter()
+            .map(|output| output.ports.len());
+        let ports = resource_ports
+            .chain(processing_ports)
+            .chain(output_ports)
+            .collect::<Vec<_>>();
+        if document.resources.len() > crate::validation::MAX_RESOURCES
+            || document.processing_nodes.len() > crate::validation::MAX_PROCESSING_NODES
+            || document.virtual_outputs.len() > crate::validation::MAX_VIRTUAL_OUTPUTS
+            || document.bindings.len() > crate::validation::MAX_BINDINGS
+            || document.eligibility.game_ids.len() > 32
+            || document.visibility.len() > 64
+            || document.overrides.len() > 64
+            || document.companion_assignments.len() > 64
+            || document.editor.positions.len() > 336
+            || ports
+                .iter()
+                .any(|count| *count > crate::validation::MAX_PORTS_PER_NODE)
+            || ports.iter().sum::<usize>() > crate::validation::MAX_PORTS
+        {
+            return Err("Profile draft exceeds its bounded graph collections.".into());
+        }
         Ok(document)
     }
     pub fn export(&self) -> Result<Vec<u8>, String> {
@@ -86,41 +149,6 @@ pub struct Resource {
     pub required: bool,
     pub ports: Vec<Port>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Direction {
-    Input,
-    Output,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Delivery {
-    State,
-    Event,
-    Action,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ValueType {
-    Boolean,
-    Integer,
-    Number,
-    Text,
-    Enum,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NumericRange {
-    pub min: f64,
-    pub max: f64,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum PortValue {
-    Boolean(bool),
-    Number(f64),
-    Text(String),
-}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Port {
@@ -128,17 +156,17 @@ pub struct Port {
     pub name: String,
     /// Output produces a value into the graph; input consumes a value from it.
     pub direction: Direction,
-    pub delivery: Delivery,
-    pub value_type: ValueType,
-    #[serde(deserialize_with = "required_option")]
-    pub unit: Option<String>,
-    #[serde(deserialize_with = "required_option")]
-    pub range: Option<NumericRange>,
-    pub enum_values: Vec<String>,
-    #[serde(deserialize_with = "required_option")]
-    pub freshness_ms: Option<u32>,
-    #[serde(deserialize_with = "required_option")]
-    pub fallback: Option<PortValue>,
+    pub contract: PortContract,
+}
+impl Port {
+    pub fn descriptor(&self) -> osg_mapping::signal::PortDescriptor {
+        osg_mapping::signal::PortDescriptor {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            direction: self.direction,
+            contract: self.contract.clone(),
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -154,16 +182,6 @@ pub struct Binding {
     pub to: Endpoint,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum Operation {
-    Identity {},
-    Not {},
-    Scale { factor: f64, offset: f64 },
-    Threshold { threshold: f64 },
-    Toggle {},
-    Trigger {},
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessingNode {
     pub id: String,
@@ -175,6 +193,7 @@ pub struct ProcessingNode {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VirtualOutput {
+    pub layout: ControllerLayout,
     pub id: String,
     pub name: String,
     pub required: bool,
@@ -196,11 +215,7 @@ pub struct VisibilityIntent {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeOverride {
     pub resource_id: String,
-    #[serde(deserialize_with = "required_option")]
-    pub enabled: Option<bool>,
-    #[serde(deserialize_with = "required_option")]
-    pub debounce_ms: Option<u32>,
-    pub invert_ports: Vec<String>,
+    pub enabled: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -229,10 +244,6 @@ pub struct Viewport {
     pub zoom: f64,
 }
 
-fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
+#[cfg(test)]
+#[path = "compiler_draft_tests.rs"]
+mod draft_tests;

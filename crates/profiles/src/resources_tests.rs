@@ -183,6 +183,7 @@ fn equal_module_ids_and_serials_do_not_merge_without_verified_physical_evidence(
         .map(|(i, id)| LocalAssignment {
             resource_id: format!("role-{i}"),
             source_id: id.clone(),
+        ports: vec![],
         })
         .collect::<Vec<_>>();
     assert_eq!(registry.duplicate_sources(&assignments).len(), 2);
@@ -416,18 +417,14 @@ fn assignment_expectations_pin_actual_schema_and_diagnose_retained_offline_bindi
             id: "button".into(),
             name: "Button".into(),
             direction: crate::Direction::Output,
-            delivery: crate::Delivery::State,
-            value_type: crate::ValueType::Boolean,
-            unit: None,
-            range: None,
-            enum_values: vec![],
-            freshness_ms: Some(1000),
-            fallback: Some(PortValue::Boolean(false)),
+            contract:state("button:0").contract,
+
         }],
     };
     let mut assignment = LocalAssignment {
         resource_id: logical.id.clone(),
         source_id: id.clone(),
+    ports: vec![],
     };
     let mut expected = PortExpectation {
         profile_port_id: "button".into(),
@@ -446,13 +443,13 @@ fn assignment_expectations_pin_actual_schema_and_diagnose_retained_offline_bindi
             .valid
     );
     expected.expected_contract_hash = state("button:0").contract_hash().unwrap();
-    logical.ports[0].value_type = crate::ValueType::Text;
+    logical.ports[0].contract = PortContract::Event {schema:ScalarSchema::Text {max_bytes:8,encoding:TextEncoding::Utf8}};
     assert!(
         !registry
             .check_assignment(&logical, &assignment, &[expected.clone()])
             .valid
     );
-    logical.ports[0].value_type = crate::ValueType::Boolean;
+    logical.ports[0].contract = state("button:0").contract;
     assert!(!registry.check_assignment(&logical, &assignment, &[]).valid);
     assert!(
         !registry

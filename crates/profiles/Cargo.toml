@@ -11,3 +11,4 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 tempfile = "3"
+osg-mapping = { path = "../mapping" }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure native USB and profile inventory boundaries; require 71% production lines per module."""
+"""Measure native USB, profile inventory and compiler preview boundaries; require 71% lines per module."""
 import argparse
 import hashlib
 import json
@@ -12,8 +12,8 @@ import tempfile
 
 
 MODULES = ["module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
-           "profile_resources", "profile_resource_sources", "profile_resource_ports"]
-TEST_FILTERS = ["module_", "profile_resource", "stm32::tests::events_"]
+           "profile_resources", "profile_resource_sources", "profile_resource_ports", "profile_compilation"]
+TEST_FILTERS = ["module_", "profile_resource", "profile_compilation", "stm32::tests::events_"]
 
 
 def source_stamp(paths, root):
@@ -54,6 +54,13 @@ def main():
     tracked = [root / f"src-tauri/src/{module}{suffix}.rs"
                for module in MODULES for suffix in ["", "_tests"]]
     tracked.extend([root / "src-tauri/src/stm32.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
+    # Preview semantics depend on the exact portable compiler and signal engine.
+    # Record those sources/tests too, so changes during this measurement cannot
+    # leave apparently current native-preview evidence behind.
+    for crate in ["mapping", "profiles"]:
+        crate_root = root / "crates" / crate
+        tracked.extend(sorted((crate_root / "src").glob("*.rs")))
+        tracked.extend([crate_root / "Cargo.toml", crate_root / "Cargo.lock"])
     initial_stamp = source_stamp(tracked, root)
     profiles = Path(tempfile.mkdtemp(prefix="profiles-", dir=output))
     env = dict(os.environ,
@@ -122,7 +129,7 @@ def main():
         "rustc": run(["rustc", "-vV"], root)}, indent=2) + "\n", encoding="utf-8")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if any(item["percent"] < 71 for item in summary.values()):
-        raise SystemExit("Every native USB/inventory module requires at least 71% production line coverage.")
+        raise SystemExit("Every native USB/inventory/compiler module requires at least 71% production line coverage.")
 
 
 if __name__ == "__main__":

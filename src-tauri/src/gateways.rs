@@ -107,6 +107,7 @@ fn empty_state() -> Value {
 pub struct GatewayManager {
     profiles: Mutex<osg_profiles::service::Service>,
     profile_resources: crate::profile_resources::Runtime,
+    profile_compilation: crate::profile_compilation::Runtime,
     module_usb: Arc<crate::module_usb_fleet::Fleet>,
     provider: Arc<dyn Provider>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
@@ -315,8 +316,9 @@ impl GatewayManager {
         let manager = Self {
             module_usb,
             profile_resources,
+            profile_compilation: crate::profile_compilation::Runtime::default(),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
-                crate::dcs_runtime::config_path().with_file_name("profiles-v1")
+                crate::dcs_runtime::config_path().with_file_name("profiles-v2")
             }))),
             provider,
             sessions,
@@ -489,6 +491,29 @@ impl GatewayManager {
             request.as_object_mut().unwrap().remove("clientId");
             return match self.profile_resources.request(&request) {
                 Ok(resources) => json!({"ok":true,"state":{"profileResources":resources}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
+            };
+        }
+        if matches!(command.as_str(), "profile_compile" | "profile_compilation_inspect") {
+            request.as_object_mut().unwrap().remove("clientId");
+            return match self.profile_compilation.request(&request, |document| {
+                let (stored, mut assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(&document.id)?;
+                if stored.revision != document.revision {
+                    return Err("The profile revision changed; reload its saved revision before compiling this draft.".into());
+                }
+                // Draft removal is reflected in this preview without changing
+                // the stored graph or its machine-local assignments.
+                assignments.retain(|assignment| document.resources.iter().any(|resource| resource.id == assignment.resource_id));
+                for assignment in &mut assignments {
+                    let resource = document.resources.iter().find(|resource| resource.id == assignment.resource_id).unwrap();
+                    assignment.ports.retain(|port| resource.ports.iter().any(|logical| logical.id == port.profile_port_id));
+                }
+                let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                snapshot.read_only |= read_only;
+                if read_only { snapshot.inventory_diagnostics.push("The profile library is read-only; repair its storage before activation.".into()); }
+                Ok(snapshot)
+            }) {
+                Ok(compilation) => json!({"ok":true,"state":{"profileCompilation":compilation}}),
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
@@ -938,6 +963,67 @@ mod tests {
         assert_ne!(profile["error"], "Invalid gateway request.");
         let oversized_profile = request(&manager, "profile_import", None, json!({"payload":"x".repeat(PROFILE_REQUEST_LIMIT)}));
         assert_eq!(oversized_profile["error"], "Invalid gateway request.");
+    }
+    #[test]
+    fn graph_compilation_and_paged_inspection_never_select_save_or_open_a_device() {
+        let (manager, provider) = setup();
+        let created = request(&manager, "profile_create", None, json!({"name":"Flight"}));
+        let mut document = created["state"]["profiles"]["document"].clone();
+        document["name"] = json!("Unsaved draft name");
+        let compiled = request(&manager, "profile_compile", None, json!({"document":document}));
+        assert_eq!(compiled["ok"], true, "{compiled}");
+        let preview = &compiled["state"]["profileCompilation"];
+        assert_eq!(preview["profileId"], document["id"]);
+        assert_eq!(preview["profileRevision"], 1);
+        let inspected = request(&manager, "profile_compilation_inspect", None,
+            json!({"compilationId":preview["compilationId"],"section":"sources","offset":0,"limit":32}));
+        assert_eq!(inspected["ok"], true);
+        assert_eq!(inspected["state"]["profileCompilation"]["items"], json!([]));
+        let saved = request(&manager, "profile_get", None, json!({"id":document["id"]}));
+        assert_eq!(saved["state"]["profiles"]["document"]["name"], "Flight");
+        let mut invalid_draft = document.clone();
+        invalid_draft["bindings"] = json!([{"id":"missing-binding","from":{"nodeId":"missing-source","portId":"value"},"to":{"nodeId":"missing-sink","portId":"value"}}]);
+        let invalid_preview = request(&manager, "profile_compile", None, json!({"document":invalid_draft}));
+        assert_eq!(invalid_preview["ok"], true, "{invalid_preview}");
+        assert_eq!(invalid_preview["state"]["profileCompilation"]["readiness"], "invalid");
+        assert!(invalid_preview["state"]["profileCompilation"]["programHash"].is_null());
+        let renamed = request(&manager, "profile_rename", None, json!({"id":document["id"],"expectedRevision":1,"name":"Saved name"}));
+        assert_eq!(renamed["ok"], true);
+        let stale = request(&manager, "profile_compile", None, json!({"document":document}));
+        assert_eq!(stale["ok"], false);
+        assert!(stale["error"].as_str().unwrap().contains("revision changed"));
+        // An old preview remains an explicit capture of its old revision.
+        let old = request(&manager, "profile_compilation_inspect", None,
+            json!({"compilationId":preview["compilationId"],"section":"order"}));
+        assert_eq!(old["state"]["profileCompilation"]["profileRevision"], 1);
+        let assignments = request(&manager, "profile_assignments_get", None, json!({"id":document["id"]}));
+        assert_eq!(assignments["state"]["profiles"]["assignments"], json!([]));
+        let assigned = request(&manager, "profile_assignments_save", None,
+            json!({"id":document["id"],"expectedRevision":2,"assignments":[]}));
+        assert_eq!(assigned["ok"], true, "{assigned}");
+        assert_eq!(assigned["state"]["profiles"]["document"]["revision"], 3);
+        let status = request(&manager, "profile_status", None, json!({}));
+        assert_eq!(status["state"]["profiles"]["session"]["selectedProfileId"], osg_profiles::DEFAULT_PROFILE_ID);
+        assert_eq!(status["state"]["profiles"]["session"]["state"], "stopped");
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        assert!(manager.sessions.lock().unwrap().is_empty());
+        assert!(manager.companion_host.resource_transport("missing").is_none());
+        manager.shutdown();
+        assert_eq!(request(&manager, "profile_compile", None, json!({"document":document}))["ok"], false);
+    }
+    #[test]
+    fn compiler_authority_can_only_come_from_the_native_capture() {
+        let (manager, provider) = setup();
+        for extra in [json!({"snapshot":{}}), json!({"backend":{"available":true,"qualified":true}}),
+            json!({"resourceTokens":[]}), json!({"gameContext":{"gameId":"dcs"}})] {
+            let mut fields = json!({"document":osg_profiles::default_document()});
+            for (key, value) in extra.as_object().unwrap() { fields[key] = value.clone(); }
+            let rejected = request(&manager, "profile_compile", None, fields);
+            assert_eq!(rejected["ok"], false);
+            assert!(rejected["error"].as_str().unwrap().contains("Unknown compiler request field"));
+        }
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        assert!(manager.sessions.lock().unwrap().is_empty());
     }
     #[test]
     fn controller_status_is_independent_of_gateway_inventory_and_rejects_invalid_edits() {

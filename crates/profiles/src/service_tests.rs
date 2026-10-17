@@ -22,7 +22,7 @@ fn resource() -> Resource {
 #[test]
 fn crud_restarts_with_independent_identity_and_revision_conflicts() {
     let temp = crate::test_directory();
-    let root = temp.path().join("profiles-v1");
+    let root = temp.path().join("profiles-v2");
     let mut service = Service::new(Some(root.clone()));
     let document = create(&mut service, "  Flight  ");
     assert_eq!(document["name"], "Flight");
@@ -73,6 +73,7 @@ fn duplicate_import_are_portable_deep_copies_and_never_copy_assignments() {
         vec![LocalAssignment {
             resource_id: "stick".into(),
             source_id: "host-controller:local-device".into(),
+            ports: vec![],
         }],
     );
     let duplicate = service
@@ -256,7 +257,7 @@ fn bounded_library_rejects_thirty_third_profile_and_max_names_duplicate() {
 #[test]
 fn failed_persistence_keeps_memory_revision_and_document_unchanged() {
     let temp = crate::test_directory();
-    let root = temp.path().join("profiles-v1");
+    let root = temp.path().join("profiles-v2");
     let mut service = Service::new(Some(root.clone()));
     let document = create(&mut service, "Flight");
     std::fs::remove_file(root.join("library.json")).unwrap();
@@ -268,4 +269,119 @@ fn failed_persistence_keeps_memory_revision_and_document_unchanged() {
             .unwrap()["document"],
         document
     );
+}
+
+#[test]
+fn exact_local_assignments_are_atomic_revisioned_and_never_portable() {
+    use crate::resources::PortExpectation;
+    let temp = crate::test_directory();
+    let root = temp.path().join("profiles-v2");
+    let mut service = Service::new(Some(root.clone()));
+    let mut document = crate::default_document();
+    document.resources.push(Resource {
+        id: "panel".into(),
+        name: "Panel".into(),
+        kind: ResourceKind::Device,
+        required: true,
+        ports: vec![crate::Port {
+            id: "pressed".into(),
+            name: "Pressed".into(),
+            direction: crate::Direction::Output,
+            contract: crate::resources_ports::PortContract::Event {
+                schema: crate::resources_ports::ScalarSchema::Boolean {},
+            },
+        }],
+    });
+    let saved = service
+        .request(&json!({"command":"profile_save","document":document,"expectedRevision":1}))
+        .unwrap();
+    let original_hash = saved["document"].clone();
+    let original_hash: ProfileDocument = serde_json::from_value(original_hash).unwrap();
+    let expected_hash = original_hash.semantic_hash().unwrap();
+    let assignments = vec![LocalAssignment {
+        resource_id: "panel".into(),
+        source_id: "native:opaque".into(),
+        ports: vec![PortExpectation {
+            profile_port_id: "pressed".into(),
+            observed_port_id: "button:0".into(),
+            expected_contract_hash: format!("sha256:{}", "a".repeat(64)),
+        }],
+    }];
+    let result=service.request(&json!({"command":"profile_assignments_save","id":DEFAULT_PROFILE_ID,"expectedRevision":2,"assignments":assignments})).unwrap();
+    assert_eq!(result["document"]["revision"], 3);
+    let (mut captured, mut bindings, read_only) =
+        service.compile_source(DEFAULT_PROFILE_ID).unwrap();
+    assert!(!read_only);
+    assert_eq!(captured.semantic_hash().unwrap(), expected_hash);
+    assert!(!String::from_utf8(captured.export().unwrap())
+        .unwrap()
+        .contains("native:opaque"));
+    captured.name = "Mutated clone".into();
+    bindings.clear();
+    assert_eq!(
+        service.compile_source(DEFAULT_PROFILE_ID).unwrap().1.len(),
+        1
+    );
+    let mut restarted = Service::new(Some(root.clone()));
+    let read = restarted
+        .request(&json!({"command":"profile_assignments_get","id":DEFAULT_PROFILE_ID}))
+        .unwrap();
+    assert_eq!(read["assignments"], json!(assignments));
+    let before = std::fs::read(root.join("library.json")).unwrap();
+    for replacement in [
+        json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[]}]),
+        json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[{"profilePortId":"missing","observedPortId":"button:0","expectedContractHash":format!("sha256:{}","a".repeat(64))}]}]),
+        json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[{"profilePortId":"pressed","observedPortId":"button:0","expectedContractHash":"stale"}]}]),
+        json!([{"resourceId":"panel","sourceId":"native:opaque"}]),
+        json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[],"token":"invented"}]),
+    ] {
+        assert!(restarted.request(&json!({"command":"profile_assignments_save","id":DEFAULT_PROFILE_ID,"expectedRevision":3,"assignments":replacement})).is_err());
+        assert_eq!(std::fs::read(root.join("library.json")).unwrap(), before);
+        assert_eq!(
+            restarted
+                .compile_source(DEFAULT_PROFILE_ID)
+                .unwrap()
+                .0
+                .revision,
+            3
+        );
+    }
+    assert!(restarted.request(&json!({"command":"profile_assignments_save","id":DEFAULT_PROFILE_ID,"expectedRevision":2,"assignments":assignments})).is_err());
+    assert!(restarted
+        .request(&json!({"command":"profile_assignments_get","id":DEFAULT_PROFILE_ID,"extra":true}))
+        .is_err());
+    assert!(restarted.compile_source("missing").is_err());
+    // Graph changes invalidate incomplete local pins rather than making a draft impossible to save.
+    let (mut edit, _, _) = restarted.compile_source(DEFAULT_PROFILE_ID).unwrap();
+    edit.resources[0].ports.clear();
+    restarted
+        .request(&json!({"command":"profile_save","document":edit,"expectedRevision":3}))
+        .unwrap();
+    assert!(restarted
+        .compile_source(DEFAULT_PROFILE_ID)
+        .unwrap()
+        .1
+        .is_empty());
+}
+
+#[test]
+fn schema_one_library_is_never_migrated_or_read_from_new_namespace() {
+    let temp = crate::test_directory();
+    let old = temp.path().join("profiles-v1");
+    std::fs::create_dir(&old).unwrap();
+    let bytes = br#"{"schemaVersion":1,"profiles":[],"localAssignments":{}}"#;
+    std::fs::write(old.join("library.json"), bytes).unwrap();
+    let fresh = Service::new(Some(temp.path().join("profiles-v2")));
+    assert_eq!(
+        fresh
+            .compile_source(DEFAULT_PROFILE_ID)
+            .unwrap()
+            .0
+            .schema_version,
+        2
+    );
+    assert_eq!(std::fs::read(old.join("library.json")).unwrap(), bytes);
+    let blocked = Service::new(Some(old.clone()));
+    assert!(blocked.compile_source(DEFAULT_PROFILE_ID).unwrap().2);
+    assert_eq!(std::fs::read(old.join("library.json")).unwrap(), bytes);
 }

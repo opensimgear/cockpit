@@ -33,6 +33,140 @@ pub(crate) struct Runtime {
     local_revision: AtomicU64,
 }
 impl Runtime {
+    /// Capture only cached descriptors and exact local port assignments. This
+    /// method performs no provider I/O and never changes inventory authority.
+    pub(crate) fn snapshot_for_compile(
+        &self,
+        mut assignments: Vec<osg_profiles::store::LocalAssignment>,
+    ) -> Result<osg_profiles::compiler_models::CompileSnapshot, String> {
+        use osg_profiles::compiler_models::{
+            BackendCapabilities, CapturedResource, CompileSnapshot,
+        };
+        use osg_profiles::resources_ports::PortContract;
+        use osg_profiles::Direction;
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        if assignments.len() > 64
+            || assignments
+                .iter()
+                .map(|assignment| assignment.ports.len())
+                .sum::<usize>()
+                > 1024
+        {
+            return Err("The compiler capture exceeds the profile resource/port limit.".into());
+        }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut resources: Vec<CapturedResource> = Vec::new();
+        let mut diagnostics = state.diagnostics.clone();
+        for assignment in &mut assignments {
+            let details = match state
+                .registry
+                .inspect_selected(&assignment.source_id, &assignment.ports)
+            {
+                Ok(details) => details,
+                Err(error) => {
+                    diagnostics.push(format!(
+                        "Resource {} could not be captured: {error}",
+                        assignment.resource_id
+                    ));
+                    continue;
+                }
+            };
+            // Resolve retained UUID redirects in this immutable capture. The
+            // saved local assignment is unchanged; no identity is inferred.
+            assignment.source_id = details.resource.id.clone();
+            let mut tokens = Vec::new();
+            for observed in &details.ports {
+                if !observed.current {
+                    continue;
+                }
+                let access = match (
+                    &observed.descriptor.direction,
+                    &observed.descriptor.contract,
+                ) {
+                    (Direction::Output, _) => Access::Read,
+                    (Direction::Input, PortContract::Action { .. }) => Access::Invoke,
+                    (Direction::Input, _) => Access::Write,
+                };
+                if state.read_only && access != Access::Read {
+                    continue;
+                }
+                if let Ok(token) =
+                    state
+                        .registry
+                        .token(&details.resource.id, &observed.descriptor.id, access)
+                {
+                    if token.contract_hash == observed.contract_hash && !tokens.contains(&token) {
+                        tokens.push(token);
+                    }
+                }
+            }
+            if let Some(resource) = resources
+                .iter_mut()
+                .find(|resource| resource.summary.id == details.resource.id)
+            {
+                for port in details.ports {
+                    if !resource.ports.iter().any(|old| {
+                        old.descriptor.id == port.descriptor.id
+                            && old.contract_hash == port.contract_hash
+                    }) {
+                        resource.ports.push(port);
+                    }
+                }
+                for token in tokens {
+                    if !resource.tokens.contains(&token) {
+                        resource.tokens.push(token);
+                    }
+                }
+            } else {
+                resources.push(CapturedResource {
+                    provider_setup_revision: details
+                        .resource
+                        .attributes
+                        .get("providerSetupRevision")
+                        .cloned(),
+                    game_id: details.resource.attributes.get("gameId").cloned(),
+                    summary: details.resource,
+                    ports: details.ports,
+                    tokens,
+                });
+            }
+        }
+        resources.sort_by(|left, right| left.summary.id.cmp(&right.summary.id));
+        for resource in &mut resources {
+            resource.ports.sort_by(|left, right| {
+                (&left.descriptor.id, &left.contract_hash)
+                    .cmp(&(&right.descriptor.id, &right.contract_hash))
+            });
+            resource.tokens.sort_by(|left, right| {
+                (&left.port_id, &left.route_id, &left.contract_hash).cmp(&(
+                    &right.port_id,
+                    &right.route_id,
+                    &right.contract_hash,
+                ))
+            });
+        }
+        Ok(CompileSnapshot {
+            inventory_session: state.registry.session().into(),
+            inventory_revision: state.registry.revision(),
+            assignments,
+            resources,
+            game_context: None,
+            backend: BackendCapabilities {
+                name: if cfg!(windows) {
+                    "windows-preflight-required"
+                } else {
+                    "platform-activation-unqualified"
+                }
+                .into(),
+                ..BackendCapabilities::default()
+            },
+            inventory_diagnostics: diagnostics,
+            read_only: state.read_only,
+        })
+    }
+
     pub(crate) fn new(root: Option<PathBuf>, collect: Collect, native: bool) -> Self {
         let store = root.map(Store::new);
         let loaded = store

@@ -29,6 +29,8 @@
     "module-usb:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/module-usb.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/module-usb.test.mjs",
     "profile-inventory:test": "node --test src/lib/profile-inventory.test.mjs",
     "profile-inventory:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-inventory.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-inventory.test.mjs",
+    "profile-compilation:test": "node --test src/lib/profile-compilation.test.mjs",
+    "profile-compilation:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-compilation.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-compilation.test.mjs",
     "controllers:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/controllers.test.mjs",
     "actions:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/device-actions.test.mjs",
     "dcs:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/dcs-bios.test.mjs",
