@@ -1207,18 +1207,24 @@ impl Phase {
         }
         requests
     }
+    /// Native workers can discard stale replies and faults without affecting a
+    /// newer callback from the same node.
+    pub fn script_ticket_current(&self, ticket: &ScriptTicket) -> bool {
+        self.active
+            && self
+                .states
+                .get(&ticket.producer.node_id)
+                .and_then(|state| state.inflight.as_ref())
+                .is_some_and(|(expected, _)| expected == ticket)
+            && self.validate_token(&ticket.producer).is_ok()
+    }
     pub fn script_reply(
         &mut self,
         node: &str,
         ticket: &ScriptTicket,
         transaction: ScriptTransaction,
     ) -> Result<(), String> {
-        let matching = self
-            .states
-            .get(node)
-            .and_then(|state| state.inflight.as_ref())
-            .is_some_and(|(expected, _)| expected == ticket);
-        if !matching || self.validate_token(&ticket.producer).is_err() {
+        if ticket.producer.node_id != node || !self.script_ticket_current(ticket) {
             return Err("Stale typed script ticket.".into());
         }
         let result = self.script_reply_inner(node, ticket, transaction);
