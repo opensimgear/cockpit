@@ -29,8 +29,8 @@ a module action. It is a contract fixture, not an executed simulator scenario.
 | Check | Result |
 | --- | --- |
 | Native profile crate tests | 29 passed |
-| Frontend profile tests | 16 passed |
-| Frontend profile coverage | 100% lines, 99.15% branches, 100% functions |
+| Frontend profile tests | 17 passed |
+| Frontend profile coverage | 100% lines, 99.17% branches, 100% functions |
 | Frontend and browser type checks | Zero errors and warnings |
 | Transport regression suite | 173 passed |
 | Browser companion and Cockpit UI builds | Passed; existing bundle-size/import warnings remain |
@@ -58,7 +58,23 @@ unknown-field rejection, reference/type validation, limits, corruption, failed
 atomic replacement, copy/import isolation, restart, manual selection, Pause,
 faults and immutable snapshots are exercised. Frontend regressions also cover
 editing during an in-flight save and reopening/switching editors before a reply.
+Draft creation and updates validate before JSON cloning, so invalid non-finite
+nullable values cannot silently become null and clear saved override intent.
 
 CI adds the native profile coverage job on Windows, Linux and macOS, plus the
 frontend profile coverage gate. Local evidence above is Windows evidence; results
 from other platforms must be recorded from their own CI/native runs.
+
+## CI repairs
+
+The initial run exposed macOS temporary-path aliases in store fixtures, a stale
+mapping-host dependency lockfile, and mobile build setup failures. Fixtures now
+canonicalize their temporary parent while the production store still rejects
+symlinks. Windows profile tests and 31 Unix profile tests passed locally; the
+updated CI profile jobs also pass on macOS, Windows and Linux.
+
+The mapping-host lockfile includes its existing companion-service dependencies;
+67 tests and all eight module coverage gates pass with locked dependencies.
+Mobile setup now uses the published Android 37.0 SDK and invokes the installed
+Node/Tauri CLI directly from generated Xcode hooks. Five configuration helper
+tests pass; native Android and iOS build results must come from CI.

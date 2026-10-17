@@ -280,3 +280,24 @@ test('non-finite draft values cannot normalize into null and reach storage', asy
   await assert.rejects(client.save({ ...withResource(), resources: [{ ...resource(), ports: [{ ...port(), freshnessMs: NaN }] }] }));
   assert.equal(calls, 0);
 });
+
+test('editor updates reject invalid nullable values before cloning and preserve the prior draft', async () => {
+  const document = { ...withResource(), overrides: [{ resourceId: 'wheel', enabled: null, debounceMs: 10, invertPorts: [] }] };
+  const requests = [];
+  const client = new ProfilesClient(async request => {
+    requests.push(request);
+    return { document };
+  });
+  await client.open(document.id);
+  const before = client.editor;
+  for (const value of [NaN, Infinity, -Infinity]) {
+    const invalid = client.editor.document;
+    invalid.overrides[0].debounceMs = value;
+    assert.throws(() => client.updateDraft(invalid), /runtime overrides/);
+    assert.throws(() => profileDraft(invalid), /runtime overrides/);
+    assert.deepEqual(client.editor, before);
+  }
+  assert.deepEqual(requests.map(request => request.command), ['profile_get']);
+  await client.saveDraft();
+  assert.equal(requests.at(-1).document.overrides[0].debounceMs, 10);
+});

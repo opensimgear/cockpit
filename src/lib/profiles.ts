@@ -125,6 +125,8 @@ export function exportProfileDocument(document: ProfileDocument): string {
   return JSON.stringify(document);
 }
 export function profileDraft(document: ProfileDocument): ProfileEditorState {
+  const error = profileDocumentError(document);
+  if (error) throw new Error(error);
   const checked = parseProfileDocument(JSON.stringify(document));
   return { document: clone(checked), baseDocument: checked, baseRevision: checked.revision };
 }
@@ -170,6 +172,8 @@ export class ProfilesClient {
   close(): void { this.editorEpoch++; this.currentEditor = null; }
   updateDraft(document: ProfileDocument): void {
     if (!this.currentEditor || document.id !== this.currentEditor.document.id || document.revision !== this.currentEditor.baseRevision) throw new Error('Open this profile before changing its draft; keep its saved identity and revision.');
+    const error = profileDocumentError(document);
+    if (error) throw new Error(error);
     this.currentEditor = { ...this.currentEditor, document: clone(document) };
   }
   async create(name: string): Promise<ProfileDocument> { return documentResult(await this.request({ command: 'profile_create', name })); }
