@@ -120,15 +120,22 @@ fn failed_renewal_or_foreign_owner_preserves_cleanup_authority() {
     let io = Fake::new();
     *io.start_pending.lock().unwrap() = true;
     let mut visibility = visibility(io.clone());
-    assert!(wait(
+    let mut renewals = 0;
+    // Start commits the real isolated journal before the first renewal callback.
+    // This case tests renewal failure, so allow slow CI storage to finish Start.
+    let error = wait(
         &mut visibility,
         false,
-        Duration::from_secs(1),
+        Duration::from_secs(30),
         || Ok(()),
-        || { Err("Output renewal failed".into()) }
+        || {
+            renewals += 1;
+            Err("Output renewal failed".into())
+        },
     )
-    .unwrap_err()
-    .contains("renewal failed"));
+    .unwrap_err();
+    assert_eq!(renewals, 1, "Expected the renewal callback, got {error}");
+    assert_eq!(error, "Output renewal failed");
     assert!(visibility.needs_cleanup());
     let actual = io.driver.lock().unwrap().clone();
     let old = io
