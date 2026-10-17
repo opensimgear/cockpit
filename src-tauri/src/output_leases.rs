@@ -1,6 +1,157 @@
 //! Additive volatile endpoint leases. Tokens are capabilities and never state.
 use serde_json::Value;
+use std::{
+    collections::BTreeMap,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 pub(crate) const TTL: u64 = 5000;
+const MAX_TRACKED_LEASES: usize = 1024;
+#[derive(Default)]
+struct ActivityState {
+    pending: usize,
+    leases: BTreeMap<(String, u64), Instant>,
+    uncertain_until: Option<Instant>,
+}
+/// Cached native ownership only. A firmware lease can restore an output at
+/// expiry, so capture-only learning must wait for this scheduled work as well.
+#[derive(Default)]
+pub(crate) struct LeaseActivity {
+    state: Mutex<ActivityState>,
+}
+pub(crate) struct LeaseAttempt<'a> {
+    activity: &'a LeaseActivity,
+    finished: bool,
+}
+impl LeaseActivity {
+    pub(crate) fn begin(&self) -> LeaseAttempt<'_> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).pending += 1;
+        LeaseAttempt {
+            activity: self,
+            finished: false,
+        }
+    }
+    pub(crate) fn active(&self) -> bool {
+        self.active_at(Instant::now())
+    }
+    fn active_at(&self, now: Instant) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.leases.retain(|_, until| *until > now);
+        if state.uncertain_until.is_some_and(|until| until <= now) {
+            state.uncertain_until = None;
+        }
+        state.pending != 0 || !state.leases.is_empty() || state.uncertain_until.is_some()
+    }
+}
+impl LeaseAttempt<'_> {
+    /// Queue rejection never reached the worker and cannot schedule a fallback.
+    pub(crate) fn unsent(mut self) {
+        self.finished = true;
+        self.activity
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pending -= 1;
+    }
+    /// Receipts have already passed the adapter's wire validation. Check their
+    /// identity again here so unrelated/stale cached receipts cannot clear work.
+    pub(crate) fn finish(
+        self,
+        scope: &str,
+        command: &str,
+        lease: Option<u64>,
+        receipt: Option<&Value>,
+    ) {
+        self.finish_at(scope, command, lease, receipt, Instant::now());
+    }
+    fn finish_at(
+        mut self,
+        scope: &str,
+        command: &str,
+        lease: Option<u64>,
+        receipt: Option<&Value>,
+        now: Instant,
+    ) {
+        self.finished = true;
+        let mut state = self
+            .activity
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        state.pending -= 1;
+        state.leases.retain(|_, until| *until > now);
+        let uncertain = |state: &mut ActivityState| {
+            let until = now + Duration::from_millis(TTL);
+            state.uncertain_until = Some(state.uncertain_until.map_or(until, |old| old.max(until)));
+        };
+        if scope.is_empty() || scope.len() > 256 || scope.chars().any(char::is_control) {
+            uncertain(&mut state);
+            return;
+        }
+        if command == "action_invoke_owned" {
+            if !lease.is_some_and(|id| state.leases.contains_key(&(scope.into(), id))) {
+                uncertain(&mut state);
+            }
+            return;
+        }
+        let Some(receipt) = receipt else {
+            uncertain(&mut state);
+            return;
+        };
+        let Some(id) = receipt["leaseId"]
+            .as_u64()
+            .filter(|id| *id > 0 && *id <= u32::MAX as u64)
+        else {
+            uncertain(&mut state);
+            return;
+        };
+        if command != "action_claim" && lease != Some(id) {
+            uncertain(&mut state);
+            return;
+        }
+        let key = (scope.into(), id);
+        if command == "action_release" {
+            if receipt["released"] == true {
+                state.leases.remove(&key);
+            } else {
+                uncertain(&mut state);
+            }
+            return;
+        }
+        if !matches!(command, "action_claim" | "action_renew") || receipt["released"] == true {
+            uncertain(&mut state);
+            return;
+        }
+        let Some(remaining) = receipt["remainingMs"]
+            .as_u64()
+            .filter(|remaining| *remaining <= TTL)
+        else {
+            uncertain(&mut state);
+            return;
+        };
+        if state.leases.len() >= MAX_TRACKED_LEASES && !state.leases.contains_key(&key) {
+            uncertain(&mut state);
+            return;
+        }
+        state
+            .leases
+            .insert(key, now + Duration::from_millis(remaining));
+    }
+}
+impl Drop for LeaseAttempt<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            let mut state = self
+                .activity
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            state.pending -= 1;
+            let until = Instant::now() + Duration::from_millis(TTL);
+            state.uncertain_until = Some(state.uncertain_until.map_or(until, |old| old.max(until)));
+        }
+    }
+}
 pub(crate) fn capability(value: &Value) -> Result<Value, String> {
     if value["schemaVersion"] != 1 || value["scope"] != "endpoint" || value["maxLeaseMs"] != TTL {
         return Err(crate::actions::INVALID.into());

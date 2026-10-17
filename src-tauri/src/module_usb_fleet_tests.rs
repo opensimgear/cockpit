@@ -1,4 +1,10 @@
 use super::*;
+#[test]
+fn fleet_cached_endpoint_activity_outlives_disconnected_or_replaced_slot_workers(){
+    let(fleet,_,_)=fixture(vec![],false);assert!(!fleet.output_activity());
+    fleet.endpoint_activity.begin().finish("physical:1:100","action_claim",None,Some(&json!({"leaseId":7,"remainingMs":5000})));assert!(fleet.output_activity());assert!(fleet.snapshots().is_empty());
+    fleet.endpoint_activity.begin().finish("physical:1:100","action_release",Some(7),Some(&json!({"leaseId":7,"released":true})));assert!(!fleet.output_activity());
+}
 use std::time::{Duration, Instant};
 const SERIAL: &str = "00112233445566778899aabb";
 fn port(path: &str, strict: bool) -> PortInfo {

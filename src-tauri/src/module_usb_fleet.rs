@@ -16,11 +16,13 @@ const MAX_PRESENT: usize = 32;
 const MAX_RETAINED: usize = 128;
 const MAX_REPLY_BYTES: usize = 110_000;
 trait Endpoint: Send + Sync {
+    fn output_activity(&self)->bool{false}
     fn snapshot(&self) -> UsbSnapshot;
     fn request(&self, request: UsbRequest) -> Result<UsbSnapshot, String>;
     fn shutdown(&self);
 }
 impl Endpoint for ModuleUsbService {
+    fn output_activity(&self)->bool{self.output_activity()}
     fn snapshot(&self) -> UsbSnapshot {
         self.snapshot()
     }
@@ -58,6 +60,7 @@ pub(crate) struct Fleet {
     state: Mutex<State>,
     discovery: Mutex<()>,
     closed: AtomicBool,
+    endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct SlotSnapshot {
@@ -87,11 +90,12 @@ impl Drop for Busy {
 
 impl Fleet {
     pub(crate) fn new(serial: SerialPorts, native: bool) -> Self {
-        Self::with_create(
+        let activity=Arc::new(crate::output_leases::LeaseActivity::default());let services=activity.clone();
+        let mut fleet=Self::with_create(
             serial,
             native,
-            Arc::new(|| Arc::new(ModuleUsbService::new())),
-        )
+            Arc::new(move|| Arc::new(ModuleUsbService::with_activity(services.clone()))),
+        );fleet.endpoint_activity=activity;fleet
     }
     fn with_create(serial: SerialPorts, native: bool, create: Create) -> Self {
         Self {
@@ -104,6 +108,7 @@ impl Fleet {
                 selected: BTreeMap::new(),
             }),
             closed: AtomicBool::new(false),
+            endpoint_activity:Arc::default(),
             discovery: Mutex::new(()),
         }
     }
@@ -295,6 +300,10 @@ impl Fleet {
             .iter()
             .map(|(key, slot)| snapshot(key, slot, state.diagnostic.as_deref()))
             .collect()
+    }
+    pub(crate) fn output_activity(&self)->bool{
+        if self.endpoint_activity.active(){return true;}
+        self.state.lock().unwrap_or_else(|p|p.into_inner()).slots.values().any(|slot|slot.service.as_ref().is_some_and(|service|service.output_activity())||slot.retiring_service.as_ref().is_some_and(|service|service.output_activity()))
     }
     pub(crate) fn configuration_claims(
         &self,

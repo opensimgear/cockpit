@@ -976,13 +976,18 @@ pub(crate) struct ModuleUsbService {
     sender: mpsc::SyncSender<Message>,
     closed: Arc<AtomicBool>,
     latest: Arc<Mutex<UsbSnapshot>>,
+    endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 impl ModuleUsbService {
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory), Timing::default())
     }
+    pub(crate) fn with_activity(activity:Arc<crate::output_leases::LeaseActivity>)->Self{Self::with_factory_activity(Box::new(NativeFactory),Timing::default(),activity)}
     fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
+        Self::with_factory_activity(factory,timing,Arc::default())
+    }
+    fn with_factory_activity(factory:Box<dyn Factory>,timing:Timing,endpoint_activity:Arc<crate::output_leases::LeaseActivity>)->Self{
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
         let cancel = closed.clone();
@@ -1031,6 +1036,7 @@ impl ModuleUsbService {
             sender,
             closed,
             latest,
+            endpoint_activity,
             worker: Mutex::new(worker),
         }
     }
@@ -1041,23 +1047,32 @@ impl ModuleUsbService {
             .unwrap_or_else(|p| p.into_inner())
             .clone()
     }
+    pub(crate) fn output_activity(&self)->bool{self.endpoint_activity.active()}
     pub fn request(&self, request: UsbRequest) -> Result<UsbSnapshot, String> {
         if self.closed.load(Ordering::Acquire) {
             return Err(CLOSED.into());
         }
+        let lease=match &request{
+            UsbRequest::Action{route,action:ActionRequest::Claim{..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_claim",None)),
+            UsbRequest::Action{route,action:ActionRequest::Renew{lease_id,..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_renew",Some(u64::from(*lease_id)))),
+            UsbRequest::Action{route,action:ActionRequest::Release{lease_id,..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_release",Some(u64::from(*lease_id)))),
+            UsbRequest::Action{route,action:ActionRequest::InvokeOwned{lease_id,..}}=>Some((format!("{}:{}:{}",route.module_id,route.connection_generation,route.boot),"action_invoke_owned",Some(u64::from(*lease_id)))),
+            _=>None,
+        };
+        let attempt=lease.as_ref().map(|_|self.endpoint_activity.begin());
         let (sender, receiver) = mpsc::channel();
-        self.sender
-            .try_send(Message::Request(request, sender))
-            .map_err(|error| {
-                match error {
+        if let Err(error)=self.sender.try_send(Message::Request(request,sender)){
+            if let Some(attempt)=attempt{attempt.unsent();}
+            return Err(match error {
                     mpsc::TrySendError::Full(_) => {
                         "The USB module is busy; wait for the current request."
                     }
                     mpsc::TrySendError::Disconnected(_) => CLOSED,
-                }
-                .to_owned()
-            })?;
-        receiver.recv().map_err(|_| CLOSED.to_owned())?
+                }.to_owned());
+        }
+        let result=receiver.recv().map_err(|_|CLOSED.to_owned()).and_then(|result|result);
+        if let (Some(attempt),Some((scope,command,id)))=(attempt,lease){let receipt=result.as_ref().ok().and_then(|snapshot|snapshot.actions.as_ref()).map(|actions|&actions["lastLease"]);attempt.finish(&scope,command,id,receipt);}
+        result
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);

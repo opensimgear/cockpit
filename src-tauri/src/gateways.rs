@@ -24,12 +24,14 @@ mod profile_panels_io;
 pub(crate) use profile_panels_io::ProfilePanelIo;
 
 trait Adapter: Send + Sync {
+    fn output_activity(&self)->bool{false}
     fn request(&self, request: Value) -> Value;
     fn cached_state(&self) -> Value { empty_state() }
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { vec![] }
     fn shutdown(&self);
 }
 impl Adapter for PicoService {
+    fn output_activity(&self)->bool{self.output_activity()}
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
     fn cached_state(&self) -> Value { self.cached_state() }
     fn request(&self, request: Value) -> Value {
@@ -40,6 +42,7 @@ impl Adapter for PicoService {
     }
 }
 impl Adapter for Stm32Service {
+    fn output_activity(&self)->bool{self.output_activity()}
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
     fn cached_state(&self) -> Value { self.cached_state() }
     fn request(&self, request: Value) -> Value {
@@ -150,6 +153,7 @@ pub struct GatewayManager {
     profile_admission_epoch: Arc<AtomicU64>,
     profile_pending: AtomicUsize,
     profile_learning: crate::profile_input_learning::Runtime,
+    retired_output_until:Mutex<Option<std::time::Instant>>,
     profile_closed: Arc<AtomicBool>,
     profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     module_usb: Arc<crate::module_usb_fleet::Fleet>,
@@ -399,6 +403,7 @@ impl GatewayManager {
             profile_prepare,
             profile_admission_epoch,
             profile_pending:AtomicUsize::new(0),
+            retired_output_until:Mutex::new(None),
             profile_learning,
             profile_closed,
             profile_worker: Mutex::new(profile_worker),
@@ -558,6 +563,9 @@ impl GatewayManager {
         if self.profile_pending.load(Ordering::Acquire)!=0{return Err("Wait for pending profile Apply to finish before input learning.".into());}
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("mapping_preview_start")?;
         self.mapping_host.guard_capture_only()?;
+        let adapters=self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values().cloned().collect::<Vec<_>>();
+        let retired=self.retired_output_until.lock().unwrap_or_else(|p|p.into_inner()).is_some_and(|until|until>std::time::Instant::now());
+        if retired||adapters.iter().any(|adapter|adapter.output_activity())||self.module_usb.output_activity(){return Err("Wait for independent device output leases and uncertain fallback recovery to finish before input learning.".into());}
         if self.games.active()||self.integration.running()||self.integration.status()["running"]==true||self.dcs.status()["running"]==true{return Err("Stop active or pending game/integration output before input learning.".into());}
         let visibility=self.controllers.request(&json!({"command":"controller_visibility_status"}))?;
         if self.controllers.visibility_active()||visibility["visibility"]["recovery"]["required"]!=false{return Err("Restore active/pending device visibility and its recovery before input learning.".into());}
@@ -1003,6 +1011,7 @@ impl GatewayManager {
                 != Some(&id)
             {
                 adapter.shutdown();
+                if adapter.output_activity(){let until=std::time::Instant::now()+std::time::Duration::from_millis(crate::output_leases::TTL);let mut retired=self.retired_output_until.lock().unwrap_or_else(|p|p.into_inner());*retired=Some(retired.map_or(until,|old|old.max(until)));}
                 let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
                 if sessions.get(&id).is_some_and(|a| Arc::ptr_eq(a, &adapter)) {
                     sessions.remove(&id);
@@ -1077,8 +1086,10 @@ mod tests {
         blocked: AtomicBool,
         wrong_identity: AtomicBool,
         configuration_claims: Mutex<Vec<crate::module_configuration_routes::WriterPin>>,
+        endpoint_activity:crate::output_leases::LeaseActivity,
     }
     impl Adapter for MockAdapter {
+        fn output_activity(&self)->bool{self.endpoint_activity.active()}
         fn cached_state(&self) -> Value { self.state.lock().unwrap().clone() }
         fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
             if self.closed.load(Ordering::Acquire) { vec![] } else { self.configuration_claims.lock().unwrap().clone() }
@@ -1367,6 +1378,21 @@ mod tests {
     fn input_learning_pending_apply_and_late_baseline_cannot_overlap_new_output(){
         let (manager,source)=learning_manager(None);manager.profile_pending.store(1,Ordering::Release);let blocked=request(&manager,"profile_input_learn_start",None,source);assert_eq!(blocked["ok"],false);assert!(blocked["error"].as_str().unwrap().contains("pending profile Apply"));manager.profile_pending.store(0,Ordering::Release);
         let gate=Arc::new(std::sync::Barrier::new(2));let(manager,source)=learning_manager(Some(gate.clone()));let manager=Arc::new(manager);let learning=manager.clone();let pending=std::thread::spawn(move||request(&learning,"profile_input_learn_start",None,source));gate.wait();let applied=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));assert_eq!(applied["ok"],true,"{applied}");gate.wait();let late=pending.join().unwrap();assert_eq!(late["ok"],false,"{late}");assert!(late["error"].as_str().unwrap().contains("cancelled"));assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["state"],"running");
+    }
+    #[test]
+    fn input_learning_rejects_existing_endpoint_fallback_work_until_exact_release(){
+        let(manager,source)=learning_manager(None);let adapter=Arc::new(MockAdapter::default());manager.sessions.lock().unwrap().insert(FIRST.into(),adapter.clone());
+        adapter.endpoint_activity.begin().finish("physical:100","action_claim",None,Some(&json!({"leaseId":7,"remainingMs":5000})));
+        let denied=request(&manager,"profile_input_learn_start",None,source.clone());assert_eq!(denied["ok"],false,"{denied}");assert!(denied["error"].as_str().unwrap().contains("output leases"));assert!(adapter.calls.lock().unwrap().is_empty(),"admission must only read cached activity");
+        adapter.endpoint_activity.begin().finish("physical:100","action_release",Some(7),Some(&json!({"leaseId":7,"released":true})));
+        let started=request(&manager,"profile_input_learn_start",None,source);assert_eq!(started["ok"],true,"{started}");
+    }
+    #[test]
+    fn input_learning_keeps_bounded_fallback_guard_when_bad_handshake_retires_the_adapter(){
+        let(manager,source)=learning_manager(None);let adapter=Arc::new(MockAdapter::default());adapter.wrong_identity.store(true,Ordering::Release);adapter.endpoint_activity.begin().finish("physical:100","action_claim",None,Some(&json!({"leaseId":7,"remainingMs":5000})));manager.sessions.lock().unwrap().insert(FIRST.into(),adapter);
+        assert_eq!(request(&manager,"connect",Some(FIRST),json!({}))["ok"],false);assert!(manager.sessions.lock().unwrap().is_empty());
+        let blocked=request(&manager,"profile_input_learn_start",None,source.clone());assert_eq!(blocked["ok"],false);assert!(blocked["error"].as_str().unwrap().contains("output leases"));
+        *manager.retired_output_until.lock().unwrap()=Some(std::time::Instant::now()-std::time::Duration::from_millis(1));assert_eq!(request(&manager,"profile_input_learn_start",None,source)["ok"],true);
     }
 
     #[test]

@@ -2200,6 +2200,7 @@ pub struct Stm32Service {
     closed: Arc<AtomicBool>,
     state: Arc<Mutex<Value>>,
     configuration_claims: Arc<Mutex<Vec<(Instant, crate::module_configuration_routes::WriterPin)>>>,
+    endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 impl Default for Stm32Service {
@@ -2208,6 +2209,7 @@ impl Default for Stm32Service {
     }
 }
 impl Stm32Service {
+    pub(crate) fn output_activity(&self)->bool{self.endpoint_activity.active()}
     pub(crate) fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
         if self.closed.load(Ordering::Acquire) {
             return vec![];
@@ -2228,7 +2230,11 @@ impl Stm32Service {
     pub(crate) fn pico_debug(factory: Box<dyn Factory>) -> Self {
         Self::with_role(factory, Timing::default(), Role::PicoDebug)
     }
+    pub(crate) fn pico_debug_with_activity(factory:Box<dyn Factory>,activity:Arc<crate::output_leases::LeaseActivity>)->Self{Self::with_role_activity(factory,Timing::default(),Role::PicoDebug,activity)}
     fn with_role(factory: Box<dyn Factory>, timing: Timing, role: Role) -> Self {
+        Self::with_role_activity(factory,timing,role,Arc::default())
+    }
+    fn with_role_activity(factory:Box<dyn Factory>,timing:Timing,role:Role,endpoint_activity:Arc<crate::output_leases::LeaseActivity>)->Self{
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
         let cancel = closed.clone();
@@ -2281,6 +2287,7 @@ impl Stm32Service {
             closed,
             state,
             configuration_claims,
+            endpoint_activity,
             worker: Mutex::new(Some(worker)),
         }
     }
@@ -2289,14 +2296,22 @@ impl Stm32Service {
         if self.closed.load(Ordering::Acquire) {
             return error(CLOSED);
         }
+        let command=request["command"].as_str().unwrap_or("").to_owned();
+        let scope=format!("{}:{}",request["moduleId"].as_str().unwrap_or(""),request["boot"].as_u64().unwrap_or(0));
+        let lease=request["leaseId"].as_u64();
+        let attempt=matches!(command.as_str(),"action_claim"|"action_renew"|"action_release"|"action_invoke_owned").then(||self.endpoint_activity.begin());
+        let module_id=request["moduleId"].as_str().unwrap_or("").to_owned();
         let (sender, receiver) = mpsc::channel();
         if let Err(e) = self.sender.try_send(Message::Request(request, sender)) {
+            if let Some(attempt)=attempt{attempt.unsent();}
             return error(match e {
                 mpsc::TrySendError::Full(_) => "CAN gateway is busy; wait for the current request.",
                 mpsc::TrySendError::Disconnected(_) => CLOSED,
             });
         }
-        receiver.recv().unwrap_or_else(|_| error(CLOSED))
+        let result=receiver.recv().unwrap_or_else(|_| error(CLOSED));
+        if let Some(attempt)=attempt{let receipt=(result["ok"]==true).then(||&result["state"]["moduleActions"][&module_id]["lastLease"]);attempt.finish(&scope,&command,lease,receipt);}
+        result
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
@@ -4373,6 +4388,22 @@ mod tests {
         let released=request(&mut gateway,"action_release",json!({"moduleId":MODULE,"boot":100,"ownershipToken":secret,"leaseId":7}));assert_eq!(released["ok"],true,"{released}");
         assert_eq!(released["state"]["moduleActions"][MODULE]["lastLease"]["fallbackStatus"],"preserved");assert!(!released.to_string().contains(secret));
         assert_eq!(context.lock().unwrap().writes.iter().filter(|line|line.contains("action")&&line.contains("release")).count(),1);
+    }
+    #[test]
+    fn endpoint_lease_activity_is_cached_across_actual_can_worker_claim_release_and_uncertain_ack(){
+        let(_,context)=action_harness();let service=Stm32Service::with_factory(Box::new(MockFactory(context.clone())),timing());
+        assert_eq!(service.request(json!({"command":"connect","port":PATH,"clientId":CLIENT}))["ok"],true);
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"ownership":{"schemaVersion":1,"scope":"endpoint","maxLeaseMs":5000},"total":1,"next":null,"actions":[{"id":"led.set_enabled","label":"LED","endpoint":"led","semantics":"setter","readable":true,"parameters":[{"id":"enabled","label":"Enabled","type":"boolean"}]}]}));
+        assert_eq!(service.request(json!({"command":"action_describe","clientId":CLIENT,"moduleId":MODULE}))["ok"],true);assert!(!service.output_activity());
+        let secret="00112233-4455-6677-8899-aabbccddeeff";
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"leaseId":7,"endpoint":"led","remainingMs":5000}));
+        let claim=json!({"command":"action_claim","clientId":CLIENT,"moduleId":MODULE,"boot":100,"catalogueRevision":1,"actionId":"led.set_enabled","values":[false],"ownershipToken":secret,"ttlMs":5000});
+        let claimed=service.request(claim.clone());assert_eq!(claimed["ok"],true,"{claimed}");assert!(service.output_activity());assert!(service.configuration_claims().is_empty());
+        let writes=context.lock().unwrap().writes.len();assert!(service.output_activity());assert_eq!(context.lock().unwrap().writes.len(),writes);
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"leaseId":7,"endpoint":"led","released":true}));
+        assert_eq!(service.request(json!({"command":"action_release","clientId":CLIENT,"moduleId":MODULE,"boot":100,"ownershipToken":secret,"leaseId":7}))["ok"],true);assert!(!service.output_activity());
+        context.lock().unwrap().action_replies.push_back(json!({"ok":true,"schemaVersion":1,"catalogueRevision":1,"leaseId":8,"endpoint":"led","remainingMs":5001}));
+        assert_eq!(service.request(claim)["ok"],false);assert!(service.output_activity(),"a malformed post-send lease ACK cannot prove idle");service.shutdown();assert!(service.output_activity(),"worker shutdown must preserve the maximum-TTL uncertainty window");
     }
     #[test]
     fn endpoint_lease_commands_are_boot_guarded_secret_and_never_retry_mutations() {

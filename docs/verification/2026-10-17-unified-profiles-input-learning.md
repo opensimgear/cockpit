@@ -38,12 +38,13 @@ cached learning state. Cancel remains available during a slow Start.
 
 | Check | Result |
 | --- | --- |
-| Native worker and Manager learning tests | 11 passed |
+| Native worker and Manager learning tests | 13 passed |
 | Cached MappingHost capture-ownership guard | Passed |
 | Gateway request/priority tests | 29 passed |
 | Combined workspace/routing/runtime/inspector/learning SSR and actual-handler tests | 36 passed |
 | Main and browser Svelte checks | 0 errors, 0 warnings |
 | Browser and desktop production UI builds | Passed; desktop 245 modules |
+| Full browser transport suite | 187 passed |
 
 Independent frontend gates retain 71% line, branch and function thresholds:
 
@@ -59,3 +60,42 @@ pending-start cancellation, late-response fencing, visible polling and cleanup.
 A routing SSR test verifies that only the selected assigned physical controller
 offers learning. These tests provide SSR/handler evidence, not interactive
 physical-controller qualification.
+
+The full source-stamped native gate passes all 19 existing module thresholds.
+Relevant production coverage is:
+
+| Native module | Covered / measured lines | Coverage |
+| --- | ---: | ---: |
+| `profile_input_learning` | 420 / 430 | 97.67% |
+| `output_leases` | 297 / 299 | 99.33% |
+| `module_usb` | 723 / 824 | 87.74% |
+| `module_usb_fleet` | 619 / 650 | 95.23% |
+
+Evidence is in `.research/profile-learning-lease-native19-coverage`.
+
+The cached lease guard also covers autonomous firmware fallback at lease expiry.
+It spans queued and pending worker requests, records exact confirmed lease IDs
+and remaining lifetime with a native monotonic clock, and clears only a matching
+confirmed release. Lost or malformed replies retain protection for the maximum
+five-second firmware lease duration after the worker finishes. Rejected queue
+submissions never reached hardware and add no uncertainty. A bounded tracker
+stores neither tokens nor browser data; its reads do not poll hardware. Outer
+Pico/USB-fleet tracking and a bounded retired-adapter grace period preserve this
+protection when protocol workers, USB slots or a mismatched gateway retire.
+
+Deterministic tracker tests exercise pending work, exact scoped release, renewal,
+expiry, malformed replies and bounded overflow. Actual CAN/USB service tests
+cover successful and uncertain acknowledgements without replay. Manager tests
+reject learning while endpoint fallback remains scheduled and admit it after a
+confirmed release or expired retired-adapter guard.
+
+The complete MappingHost suite also passes all 77 tests and all ten existing
+71% production-module gates, including `companion_runs` at 1030/1140 lines
+(90.35%) and `service` at 75.99%. This includes the cached capture-ownership guard
+and its pending/recovery checks. Evidence is in
+`.research/profile-learning-mapping-host-coverage-elevated`. On Windows, the
+existing owned-helper-death test needs an unsandboxed run: the initial sandboxed
+attempt returned `Access denied` from `taskkill` while the helper was healthy.
+The rerun preserves the helper deadlines, qualification flags, test cases and
+coverage thresholds. Startup and child-termination assertions now report the
+actual runtime/error state when a fixture fails.

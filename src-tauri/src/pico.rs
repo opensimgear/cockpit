@@ -76,6 +76,7 @@ pub struct PicoService {
     factory: SharedFactory,
     selected: Mutex<Option<Selected>>,
     closed: AtomicBool,
+    endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
 }
 impl Default for PicoService {
     fn default() -> Self {
@@ -83,6 +84,7 @@ impl Default for PicoService {
     }
 }
 impl PicoService {
+    pub(crate) fn output_activity(&self)->bool{self.endpoint_activity.active()}
     pub(crate) fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
         match self.selected.lock().unwrap_or_else(|p|p.into_inner()).as_ref() {
             Some(Selected::Debug(service)) => service.configuration_claims(),
@@ -105,6 +107,7 @@ impl PicoService {
             factory: SharedFactory(Arc::new(Mutex::new(factory))),
             selected: Mutex::new(None),
             closed: AtomicBool::new(false),
+            endpoint_activity:Arc::default(),
         }
     }
     fn probe(&self, request: &Value) -> Result<bool, String> {
@@ -215,8 +218,9 @@ impl PicoService {
             }
             match self.probe(&request) {
                 Ok(true) => {
-                    *selected = Some(Selected::Debug(crate::stm32::Stm32Service::pico_debug(
+                    *selected = Some(Selected::Debug(crate::stm32::Stm32Service::pico_debug_with_activity(
                         Box::new(self.factory.clone()),
+                        self.endpoint_activity.clone(),
                     )))
                 }
                 Ok(false) => {
@@ -1094,6 +1098,13 @@ impl Gateway {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cached_endpoint_activity_survives_protocol_worker_retirement(){
+        let service=super::PicoService::new();assert!(!service.output_activity());
+        service.endpoint_activity.begin().finish("physical:100","action_claim",None,Some(&serde_json::json!({"leaseId":7,"remainingMs":5000})));assert!(service.output_activity());
+        assert!(service.selected.lock().unwrap().is_none(),"the outer tracker survives an absent/replaced selected protocol worker");
+        service.endpoint_activity.begin().finish("physical:100","action_release",Some(7),Some(&serde_json::json!({"leaseId":7,"released":true})));assert!(!service.output_activity());
+    }
     use super::*;
     use std::{
         collections::VecDeque,

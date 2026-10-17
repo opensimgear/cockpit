@@ -7,6 +7,159 @@ fn request() -> Value {
     json!({"ownershipToken":"00112233-4455-6677-8899-aabbccddeeff","leaseId":42,"ttlMs":5000,"catalogueRevision":1,"actionId":"led.set","values":[false]})
 }
 #[test]
+fn cached_activity_spans_pending_work_and_tracks_exact_release_and_monotonic_expiry() {
+    let activity = LeaseActivity::default();
+    let now = Instant::now();
+    assert!(!activity.active_at(now));
+    let pending = activity.begin();
+    assert!(
+        activity.active_at(now + Duration::from_secs(60)),
+        "pending worker work cannot expire while an ACK is delayed"
+    );
+    pending.finish_at(
+        "module:boot",
+        "action_claim",
+        None,
+        Some(&json!({"leaseId":1,"remainingMs":1000})),
+        now,
+    );
+    activity.begin().finish_at(
+        "other:boot",
+        "action_claim",
+        None,
+        Some(&json!({"leaseId":1,"remainingMs":2000})),
+        now,
+    );
+    activity.begin().finish_at(
+        "module:boot",
+        "action_release",
+        Some(1),
+        Some(&json!({"leaseId":1,"released":true})),
+        now + Duration::from_millis(10),
+    );
+    assert!(
+        activity.active_at(now + Duration::from_millis(1500)),
+        "release must not clear another physical endpoint's lease"
+    );
+    assert!(!activity.active_at(now + Duration::from_millis(2000)));
+    activity.begin().finish_at(
+        "module:boot",
+        "action_claim",
+        None,
+        Some(&json!({"leaseId":2,"remainingMs":4000})),
+        now,
+    );
+    activity.begin().finish_at(
+        "module:boot",
+        "action_renew",
+        Some(2),
+        Some(&json!({"leaseId":2,"remainingMs":5000})),
+        now + Duration::from_millis(100),
+    );
+    activity.begin().finish_at(
+        "module:boot",
+        "action_invoke_owned",
+        Some(2),
+        None,
+        now + Duration::from_millis(200),
+    );
+    assert!(activity.active_at(now + Duration::from_millis(5099)));
+    assert!(!activity.active_at(now + Duration::from_millis(5100)));
+}
+#[test]
+fn uncertain_lease_acknowledgements_stay_guarded_through_maximum_ttl_after_last_worker_completion()
+{
+    let now = Instant::now();
+    let activity = LeaseActivity::default();
+    let pending = activity.begin();
+    assert!(activity.active_at(now + Duration::from_secs(60)));
+    pending.finish_at(
+        "module:boot",
+        "action_claim",
+        None,
+        None,
+        now + Duration::from_secs(60),
+    );
+    assert!(activity.active_at(now + Duration::from_millis(64999)));
+    assert!(!activity.active_at(now + Duration::from_secs(65)));
+    for (command, lease, receipt) in [
+        (
+            "action_renew",
+            Some(2),
+            json!({"leaseId":3,"remainingMs":5}),
+        ),
+        (
+            "action_release",
+            Some(2),
+            json!({"leaseId":3,"released":true}),
+        ),
+        (
+            "action_release",
+            Some(2),
+            json!({"leaseId":2,"released":false}),
+        ),
+        ("action_claim", None, json!({"leaseId":0,"remainingMs":5})),
+        (
+            "action_claim",
+            None,
+            json!({"leaseId":2,"remainingMs":TTL+1}),
+        ),
+        (
+            "action_claim",
+            None,
+            json!({"leaseId":2,"remainingMs":5,"released":true}),
+        ),
+        ("unknown", None, json!({"leaseId":2,"remainingMs":5})),
+    ] {
+        activity
+            .begin()
+            .finish_at("module:boot", command, lease, Some(&receipt), now);
+        assert!(activity.active_at(now + Duration::from_millis(4999)));
+        assert!(!activity.active_at(now + Duration::from_millis(5000)));
+    }
+    activity
+        .begin()
+        .finish_at("module:boot", "action_invoke_owned", Some(99), None, now);
+    assert!(activity.active_at(now));
+    assert!(!activity.active_at(now + Duration::from_millis(TTL)));
+    activity.begin().unsent();
+    assert!(!activity.active());
+    drop(activity.begin());
+    assert!(activity.active());
+}
+#[test]
+fn malformed_scope_and_bounded_tracker_overflow_preserve_uncertainty_without_storing_capabilities()
+{
+    let activity = LeaseActivity::default();
+    let now = Instant::now();
+    for scope in ["", "bad\nroute"] {
+        activity.begin().finish_at(
+            scope,
+            "action_claim",
+            None,
+            Some(&json!({"leaseId":1,"remainingMs":10})),
+            now,
+        );
+        assert!(activity.active_at(now));
+        assert!(!activity.active_at(now + Duration::from_millis(TTL)));
+    }
+    for id in 1..=MAX_TRACKED_LEASES + 1 {
+        activity.begin().finish_at(
+            "module:boot",
+            "action_claim",
+            None,
+            Some(&json!({"leaseId":id,"remainingMs":1})),
+            now,
+        );
+    }
+    assert_eq!(
+        activity.state.lock().unwrap().leases.len(),
+        MAX_TRACKED_LEASES
+    );
+    assert!(activity.active_at(now + Duration::from_millis(2)));
+    assert!(!activity.active_at(now + Duration::from_millis(TTL)));
+}
+#[test]
 fn bounded_tokens_commands_and_readable_setters() {
     let r = request();
     let a = vec![action()];

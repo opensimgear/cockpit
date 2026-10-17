@@ -754,6 +754,7 @@ fn endpoint_tokens_are_input_only_and_leases_do_not_bypass_writer_or_state_guard
     let (service, d) = setup();
     let route = connect(&service).route.unwrap();
     actions(&service, &route);
+    assert!(!service.output_activity());
     let claimed = service
         .request(UsbRequest::Action {
             route: route.clone(),
@@ -769,6 +770,7 @@ fn endpoint_tokens_are_input_only_and_leases_do_not_bypass_writer_or_state_guard
     let lease = claimed.actions.as_ref().unwrap()["lastLease"]["leaseId"]
         .as_u64()
         .unwrap() as u32;
+    assert!(service.output_activity(),"a live firmware fallback is scheduled even without a configuration writer");
     assert!(!serde_json::to_string(&claimed).unwrap().contains(TOKEN));
     assert!(!d.lock().unwrap().led);
     service
@@ -815,6 +817,17 @@ fn endpoint_tokens_are_input_only_and_leases_do_not_bypass_writer_or_state_guard
         .unwrap();
     assert!(!d.lock().unwrap().led);
     assert!(d.lock().unwrap().token.is_none());
+    assert!(!service.output_activity(),"an exact validated release proves this lease idle");
+}
+#[test]
+fn cached_endpoint_activity_keeps_lost_usb_claim_guarded_after_disconnect_without_polling_or_retry(){
+    let(service,device)=setup();let service=Arc::new(service);let route=connect(&service).route.unwrap();actions(&service,&route);
+    let mut blocked=device.lock().unwrap();blocked.drop_command=Some("action claim ".into());let worker=service.clone();
+    let pending=std::thread::spawn(move||worker.request(UsbRequest::Action{route,action:ActionRequest::Claim{catalogue_revision:1,action_id:"led.boolean.set_enabled".into(),values:vec![json!(false)],token:TOKEN.into(),ttl_ms:5000}}));
+    let deadline=Instant::now()+Duration::from_secs(2);while !service.output_activity()&&Instant::now()<deadline{std::thread::sleep(Duration::from_millis(1));}assert!(service.output_activity(),"cached admission must see a worker blocked before the wire ACK");drop(blocked);
+    assert!(pending.join().unwrap().is_err());assert!(service.output_activity());
+    let writes=device.lock().unwrap().writes.len();assert!(service.output_activity());assert_eq!(device.lock().unwrap().writes.len(),writes,"the cached guard cannot poll or replay hardware commands");
+    assert_eq!(device.lock().unwrap().writes.iter().filter(|line|line.starts_with("action claim ")).count(),1);service.shutdown();assert!(service.output_activity(),"closing the CDC worker cannot erase a possibly scheduled firmware fallback");
 }
 #[test]
 fn lost_action_reply_is_uncertain_without_an_automatic_second_invocation() {
