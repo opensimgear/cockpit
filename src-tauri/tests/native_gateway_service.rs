@@ -57,7 +57,9 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     let overhead = request.to_string().len();
     request["padding"] = json!("x".repeat(65_536 - overhead));
     assert_eq!(request.to_string().len(), 65_536);
-    assert_eq!(exchange("at-limit", request.clone())["ok"], true);
+    let at_limit = exchange("at-limit", request.clone());
+    assert_eq!(at_limit["ok"], false);
+    assert_ne!(at_limit["error"], "Invalid gateway request.", "The full payload reaches native schema validation: {at_limit}");
 
     request["padding"] = json!("x".repeat(65_537 - overhead));
     assert_eq!(request.to_string().len(), 65_537);
