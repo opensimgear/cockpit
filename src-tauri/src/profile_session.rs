@@ -289,7 +289,7 @@ impl<H: Host> Coordinator<H> {
         }
         result
     }
-    fn check_apply(&self) -> Result<(), String> {
+    pub(crate) fn check_apply(&self) -> Result<(), String> {
         if self.launch.is_some() || self.manifest.pending.is_some() {
             return Err("Stop or recover the pending profile transition before another Apply.".into());
         }

@@ -2,6 +2,8 @@
 //! cannot manufacture a process session or authorize a simulator context.
 use super::*;
 use osg_profiles::activation::GameIdentity;
+#[path = "profile_game_orchestration_runtime.rs"]
+mod runtime;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LaunchIntent {

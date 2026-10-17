@@ -130,7 +130,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 /// catalogue and editor reads must not keep cancelling the native learner.
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
-    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove");}
+    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove");}
     if command=="mapping_companion_route"{return !matches!(request["companion"]["action"].as_str(),Some("inspect"|"recording"));}
     if command=="companion_feedback_routes"{return request["companion"]["action"]!="inspect";}
     if command.starts_with("mapping_")||command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
@@ -154,6 +154,7 @@ pub struct GatewayManager {
     profile_session: Arc<Mutex<crate::profile_session::Coordinator<crate::profile_session_host::NativeProfileHost>>>,
     profile_admission: RwLock<()>,
     profile_prepare: ProfilePrepare,
+    profile_native: bool,
     profile_admission_epoch: Arc<AtomicU64>,
     profile_pending: AtomicUsize,
     profile_learning: crate::profile_input_learning::Runtime,
@@ -411,6 +412,7 @@ impl GatewayManager {
             profile_session,
             profile_admission: RwLock::new(()),
             profile_prepare,
+            profile_native: native,
             profile_admission_epoch,
             profile_pending:AtomicUsize::new(0),
             retired_output_until:Mutex::new(None),
@@ -478,10 +480,11 @@ impl GatewayManager {
         response["profileSession"] = status;
         response["automatic"] = self.profile_automatic.view();
     }
-    fn profile_session_request(&self, request: &Value) -> Result<Value, String> {
+    fn profile_session_request(&self, request: &Value, native_arrival_epoch: Option<u64>) -> Result<Value, String> {
         let command = request["command"].as_str().ok_or("Choose a profile session operation.")?;
         let fields: &[&str] = match command {
             "profile_apply" => &["id", "expectedRevision", "gameId"],
+            "profile_game_launch" => &["gameId"],
             "profile_pause" => &["paused"],
             "profile_stop" | "profile_recover" => &[],
             _ => return Err("Unknown profile session operation.".into()),
@@ -489,21 +492,22 @@ impl GatewayManager {
         if request.as_object().ok_or("A profile session request must be an object.")?.keys().any(|key| key != "command" && !fields.contains(&key.as_str())) {
             return Err("Unknown field in profile session request.".into());
         }
+        let staged_epoch = || native_arrival_epoch.filter(|epoch| self.profile_admission_epoch.load(Ordering::Acquire) == *epoch).ok_or("This staged profile request was cancelled by a newer native control. Submit it again explicitly.");
         match command {
+            "profile_game_launch" => return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).ok_or("Choose a supported native game installation to launch.")?, staged_epoch()?),
             "profile_apply" => {
-                let admission_epoch = self.profile_admission_epoch.load(Ordering::Acquire);
+                let admission_epoch = staged_epoch()?;
                 let id = request["id"].as_str().ok_or("Choose a saved profile to apply.")?;
                 let expected = request["expectedRevision"].as_u64().filter(|revision| *revision > 0 && *revision <= osg_profiles::MAX_REVISION).ok_or("Apply requires the current saved expectedRevision.")?;
                 let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
                 if document.revision != expected { return Err("The saved profile changed. Reload its revision before applying.".into()); }
                 let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
-                self.automatic_manual_pin(id)?;
-                self.profiles.lock().unwrap_or_else(|p|p.into_inner()).request(&json!({"command":"profile_selection_mode","mode":"manual"}))?;
+                self.pin_staged_manual(id,admission_epoch)?;
                 crate::profile_session::apply_staged_admitted(
                     &self.profile_session,
                     crate::profile_session::Candidate { document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
-                    |candidate| (self.profile_prepare)(candidate),
+                    |candidate| self.prepare_profile_at(candidate,admission_epoch),
                     |candidate| {
                         let admission = self.profile_admission.write().unwrap_or_else(|p| p.into_inner());
                         let game_admission = self.game_admission.read().unwrap_or_else(|p| p.into_inner());
@@ -531,6 +535,20 @@ impl GatewayManager {
         let mut response = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&json!({"command":"profile_status"}))?;
         self.decorate_profile_session(&mut response);
         Ok(response)
+    }
+    fn pin_staged_manual(&self,id:&str,arrival_epoch:u64)->Result<(),String>{
+        let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+        if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=arrival_epoch{return Err("This staged Manual selection was cancelled by a newer native control.".into());}
+        self.automatic_manual_pin(id)?;
+        self.profiles.lock().unwrap_or_else(|p|p.into_inner()).request(&json!({"command":"profile_selection_mode","mode":"manual"}))?;
+        Ok(())
+    }
+    fn prepare_profile_at(&self,candidate:&crate::profile_session::Candidate,arrival_epoch:u64)->Result<Arc<crate::profile_session::Stage>,String>{
+        let current=||self.profile_admission_epoch.load(Ordering::Acquire)==arrival_epoch;
+        if !current(){return Err("Profile preparation was cancelled by a newer native control.".into());}
+        let prepared=(self.profile_prepare)(candidate);
+        if !current(){return Err("Profile preparation was cancelled by a newer native control.".into());}
+        prepared
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
         let mut ports = BTreeMap::<String, Value>::new();
@@ -574,7 +592,7 @@ impl GatewayManager {
     fn error(&self, message: &str, id: Option<&str>) -> Value {
         self.decorate(json!({"ok":false,"error":message}), id)
     }
-    fn invalidate_learning(&self){self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");}
+    fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
     fn guard_learning(&self)->Result<(),String>{
         if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile Apply or selection control to finish before input learning.".into());}
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("mapping_preview_start")?;
@@ -606,23 +624,23 @@ impl GatewayManager {
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
-        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         let _policy=self.profile_automatic.begin_control(request["command"].as_str().unwrap_or(""));
         self.profile_automatic.control(request["command"].as_str().unwrap_or(""));
-        let staging = request["command"] == "profile_apply";
+        let staging = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch"));
         let learning_start=request["command"]=="profile_input_learn_start";
         let learning_passive=matches!(request["command"].as_str(),Some("profile_input_learn_status"|"profile_input_learn_cancel"));
         let _pending=if staging{self.profile_pending.fetch_add(1,Ordering::AcqRel);Some(PendingProfileApply(&self.profile_pending))}else{None};
         let interrupt=learning_interrupt(&request);
-        if interrupt{self.invalidate_learning();}
-        if staging{let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());self.invalidate_learning();}
+        let arrival_epoch=interrupt.then(||self.invalidate_learning());
+        if staging{let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)){return self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);}}
         if learning_start||learning_passive{return self.request_inner(request);}
         let _profile_write = (profile_mutation && !staging).then(|| self.profile_admission.write().unwrap_or_else(|p| p.into_inner()));
         let _profile_read = (!profile_mutation).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
         if interrupt&&!staging{self.invalidate_learning();}
         // Slow read-only staging holds neither admission lock. Final takeover
         // acquires profile then game admission together in the established order.
-        if staging { return self.request_inner(request); }
+        if staging { return self.request_inner_at(request,arrival_epoch); }
         // Starting a game waits for manual requests admitted before it. Normal
         // requests share this lock, preserving independent gateway workers.
         // Coordinator callbacks address adapters directly after admission.
@@ -643,7 +661,8 @@ impl GatewayManager {
             self.request_inner(request)
         }
     }
-    fn request_inner(&self, mut request: Value) -> Value {
+    fn request_inner(&self, request: Value) -> Value {self.request_inner_at(request,None)}
+    fn request_inner_at(&self, mut request: Value, native_arrival_epoch: Option<u64>) -> Value {
         if self.closed.load(Ordering::Acquire) {
             return self.error("Cockpit gateway manager has closed.", None);
         }
@@ -774,8 +793,8 @@ impl GatewayManager {
             if matches!(command.as_str(),"profile_automatic_status"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_selection_mode"){
                 return match self.automatic_request(&request){Ok(profiles)=>json!({"ok":true,"state":{"profiles":profiles}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
             }
-            if matches!(command.as_str(), "profile_apply" | "profile_stop" | "profile_pause" | "profile_recover") {
-                return match self.profile_session_request(&request) {
+            if matches!(command.as_str(), "profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover") {
+                return match self.profile_session_request(&request,native_arrival_epoch) {
                     Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
                     Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
                 };
@@ -1282,7 +1301,7 @@ mod tests {
             assert_eq!(status["state"]["profiles"]["profileSession"]["state"],"running");
             assert_eq!(stopped["ok"],true,"{stopped}");
             assert_eq!(result["ok"],false,"{operation}: {result}");
-            assert!(result["error"].as_str().unwrap().contains("cancelled"));
+            assert!(result["error"].as_str().unwrap().contains("cancelled"),"{operation}: {result}");
             let status = request(&manager,"profile_status",None,json!({}));
             assert!(status["state"]["profiles"]["profileSession"]["owner"].is_null());
             if operation == "profile_pause" { assert_eq!(status["state"]["profiles"]["profileSession"]["paused"],true); }
@@ -1539,6 +1558,10 @@ mod tests {
         for (command,fields) in [
             ("profile_apply",json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1,"owner":{"generation":5}})),
             ("profile_apply",json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1,"gameId":"dcs","processIdentity":{"pid":1}})),
+            ("profile_game_launch",json!({"gameId":"dcs","profileId":osg_profiles::DEFAULT_PROFILE_ID})),
+            ("profile_game_launch",json!({"gameId":"dcs","processIdentity":{"pid":1}})),
+            ("profile_game_launch",json!({"gameId":"unknown"})),
+            ("profile_game_launch",json!({})),
             ("profile_stop",json!({"replay":true})),
             ("profile_recover",json!({"rehide":true})),
             ("profile_pause",json!({"paused":"false"})),

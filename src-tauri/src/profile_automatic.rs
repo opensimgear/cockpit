@@ -70,7 +70,7 @@ impl Runtime {
     pub(super) fn view(&self) -> Value {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let (status, message) = if self.emergency.load(Ordering::Acquire) {
-            ("blocked","Stop or a failed Manual selection prevents automatic activation. Resolve any storage error, then select Automatic explicitly to resume.")
+            ("blocked","Stop or a failed profile control prevents automatic activation. Resolve the reported error, then select Automatic explicitly to resume.")
         } else {
             (state.status, state.message.as_str())
         };
@@ -114,6 +114,7 @@ impl Runtime {
         if !matches!(
             command,
             "profile_apply"
+                | "profile_game_launch"
                 | "profile_select"
                 | "profile_selection_mode"
                 | "profile_game_rule_save"
