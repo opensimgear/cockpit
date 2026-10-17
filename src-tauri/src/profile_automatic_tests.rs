@@ -555,6 +555,32 @@ fn malformed_optional_automation_storage_blocks_automatic_but_preserves_explicit
     assert!(owner(&fixture.manager).is_none());
     assert_eq!(std::fs::read(path).unwrap(), b"{");
 }
+
+#[test]
+fn external_activation_reports_enumeration_restart_only_for_successful_game_context_changes() {
+    let runtime = Runtime::new(None);
+    let mut target = Target::default();
+    target.game_id = Some("dcs".into());
+    target.process_session = Some("native-proof".into());
+    runtime.finish(0, target.clone(), &Ok(()), true);
+    assert!(runtime.view()["message"]
+        .as_str()
+        .unwrap()
+        .contains("may need a restart"));
+    runtime.finish(0, target.clone(), &Ok(()), false);
+    assert!(!runtime.view()["message"]
+        .as_str()
+        .unwrap()
+        .contains("restart"));
+    runtime.finish(0, Target::default(), &Ok(()), true);
+    assert!(!runtime.view()["message"]
+        .as_str()
+        .unwrap()
+        .contains("restart"));
+    runtime.finish(0, target, &Err("native preparation rejected".into()), true);
+    assert_eq!(runtime.view()["message"], "native preparation rejected");
+}
+
 #[test]
 fn failed_manual_pin_storage_inhibits_automatic_events_after_explicit_selection() {
     let mut fixture = Fixture::new();

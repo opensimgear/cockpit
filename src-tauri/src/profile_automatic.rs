@@ -174,14 +174,24 @@ impl Runtime {
             }
         }
     }
-    fn finish(&self, epoch: u64, target: Target, result: &Result<(), String>) {
+    fn finish(
+        &self,
+        epoch: u64,
+        target: Target,
+        result: &Result<(), String>,
+        enumeration_changed: bool,
+    ) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.epoch != epoch {
             return;
         }
+        let restart_notice = result.is_ok() && target.game_id.is_some() && enumeration_changed;
         state.target = Some(target);
         state.status = if result.is_ok() { "active" } else { "failed" };
         state.message=match result{Ok(())=>"Automatic selection applied the exact saved revision. Process polling does not replay its actions.".into(),Err(error)=>error.clone()};
+        if restart_notice {
+            state.message.push_str(" This profile changes controller availability; the running game may need a restart to see it.");
+        }
     }
 }
 
@@ -494,12 +504,15 @@ impl GatewayManager {
             self.invalidate_learning();
             (self.profile_admission_epoch.load(Ordering::Acquire), target)
         };
+        let mut enumeration_changed = false;
         let result = (|| {
             let (document, assignments, read_only) = self
                 .profiles
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .compile_source(&target.profile_id)?;
+            enumeration_changed =
+                crate::games::launch::enumeration_intents(&document).requires_startup_notice();
             let proof = target
                 .game_id
                 .as_ref()
@@ -567,7 +580,8 @@ impl GatewayManager {
                 },
             )
         })();
-        self.profile_automatic.finish(epoch, target, &result);
+        self.profile_automatic
+            .finish(epoch, target, &result, enumeration_changed);
     }
     /// Explicitly install the native background owner for desktop/service hosts.
     /// A Weak reference avoids a permanent manager/worker ownership cycle.
