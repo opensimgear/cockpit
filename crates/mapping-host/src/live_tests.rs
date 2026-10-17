@@ -17,6 +17,8 @@ struct State {
     busy: bool,
     blocked_recovery: bool,
     failed_stop: bool,
+    delay_stop_once: Option<Duration>,
+    stop_failures: Vec<String>,
     spawns: usize,
 }
 struct Backend {
@@ -93,11 +95,29 @@ impl Channel for Child {
         {
             return Err("External owner prevents recovery".into());
         }
-        if matches!(request, Message::Stop { .. }) && self.shared.lock().unwrap().failed_stop {
-            return Err("Stop acknowledgement lost".into());
+        let stopping = matches!(request, Message::Stop { .. });
+        if stopping {
+            let delay = self.shared.lock().unwrap().delay_stop_once.take();
+            if let Some(delay) = delay {
+                std::thread::sleep(delay);
+            }
         }
-        self.feeder
-            .receive(request.clone(), self.clock.elapsed().as_micros() as u64 + 1)
+        let result = if stopping && self.shared.lock().unwrap().failed_stop {
+            Err("Stop acknowledgement lost".into())
+        } else {
+            self.feeder
+                .receive(request.clone(), self.clock.elapsed().as_micros() as u64 + 1)
+        };
+        if stopping {
+            if let Err(error) = &result {
+                self.shared
+                    .lock()
+                    .unwrap()
+                    .stop_failures
+                    .push(error.clone());
+            }
+        }
+        result
     }
     fn alive(&mut self) -> bool {
         !self.terminated && !self.shared.lock().unwrap().dead

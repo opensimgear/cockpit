@@ -7,6 +7,7 @@ const STARTUP_ADMITTED: &str = "fixture-startup-admitted";
 const STARTUP_ATTEMPTS: usize = 3;
 const RESPONSE_TIMEOUT: &str =
     "Script helper response exceeded 100 ms; evaluation is limited to 5 ms.";
+const CLEANED_HEARTBEAT: &str = "Mapping heartbeat expired; fallback submitted and ownership released. Fallback recovery completed; mapping remains stopped.";
 
 pub(super) fn helper() -> &'static Path {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -72,7 +73,7 @@ fn on_start(ctx) { transaction(#{}, [button("result",false)], []) }
 fn on_event(ctx) { transaction(#{}, [button("result",ctx.inputs.left.trigger.value)], []) }
 fn on_timer(ctx) { transaction(ctx.state,[],[]) }
 "#;
-fn start(service: &Service, profile: &Profile) -> Value {
+fn start(service: &Service, profile: &Profile, state: &Arc<Mutex<State>>) -> Value {
     let mut failed_token = None;
     for attempt in 1..=STARTUP_ATTEMPTS {
         let started = service
@@ -104,13 +105,75 @@ fn start(service: &Service, profile: &Profile) -> Value {
         );
         // Production correctly rejects even a queued reply after 100 ms. Before
         // any fixture input, Stop must fully release this failed run's output.
-        let stopped = service.request(&json!({"command":"mapping_stop"})).unwrap();
+        if let Err(error) = service.request(&json!({"command":"mapping_stop"})) {
+            // Feeder expiry may complete fallback/release before Stop reaches
+            // it. Production still returns that diagnostic after successful
+            // cleanup. No other Stop error authorizes a fixture retry.
+            assert_eq!(error, CLEANED_HEARTBEAT, "Unresolved fixture cleanup");
+        }
+        let stopped = service
+            .request(&json!({"command":"mapping_status"}))
+            .unwrap();
         assert!(
             stopped["running"] == false
+                && stopped["ready"] == false
                 && stopped["recoveryRequired"] == false
-                && stopped["token"].is_null(),
+                && stopped["outputRecovery"]["required"] == false
+                && stopped["token"].is_null()
+                && stopped["scripts"][0]["logs"] == json!([])
+                && stopped["scripts"][0]["timers"] == 0,
             "Failed fixture cleanup remains unresolved: {stopped}"
         );
+        let record =
+            osg_virtual_controller::output_journal::inspect(&service.recovery_path().unwrap())
+                .unwrap()
+                .expect("A completed failed startup retains its clean native journal");
+        assert_eq!(
+            record.phase,
+            osg_virtual_controller::output_journal::Phase::Clean
+        );
+        assert_eq!(
+            serde_json::to_value(&record.token).unwrap(),
+            started["token"]
+        );
+        let bindings = service.settings.lock().unwrap().value.targets[&profile.id].clone();
+        assert_eq!(
+            serde_json::to_value(&record.bindings).unwrap(),
+            serde_json::to_value(&bindings).unwrap()
+        );
+        {
+            let state = state.lock().unwrap();
+            for binding in &bindings {
+                let acquire = format!("acquire:{}", binding.slot);
+                let release = format!("release:{}", binding.slot);
+                let submit = format!("submit:{}:", binding.slot);
+                let calls = state
+                    .calls
+                    .iter()
+                    .filter(|call| {
+                        **call == acquire || **call == release || call.starts_with(&submit)
+                    })
+                    .collect::<Vec<_>>();
+                let acquired = calls.iter().filter(|call| ***call == acquire).count();
+                assert!(acquired > 0);
+                assert_eq!(
+                    acquired,
+                    calls.iter().filter(|call| ***call == release).count(),
+                    "Every failed owner must release slot {} before fresh Start",
+                    binding.slot
+                );
+                assert_eq!(*calls.last().unwrap(), &release);
+                let fallback = format!(
+                    "{submit}{}",
+                    binding.report(&binding.fallback()).unwrap().words[18]
+                );
+                assert_eq!(
+                    *calls[calls.len() - 2],
+                    fallback,
+                    "The released slot must have acknowledged its actual fallback"
+                );
+            }
+        }
         let assignments = service
             .store()
             .unwrap()
@@ -178,7 +241,7 @@ fn production_script_gate_rejects_before_any_worker_or_output_and_syntax_cannot_
 fn isolated_script_transactions_reach_feeder_and_stop_rejects_late_input() {
     let (mut service, _root, profile, assignments, state) = scripted(DIRECT);
     service.script_live_qualified = true;
-    let token = start(&service, &profile);
+    let token = start(&service, &profile, &state);
     press(&service, &token, &assignments[0], true);
     submitted(&state, "submit:1:3");
     press(&service, &token, &assignments[0], false);
@@ -203,7 +266,7 @@ fn on_timer(ctx) {{ transaction(ctx.state,[],[]) }}
         );
         let (mut service, _root, profile, assignments, state) = scripted(&source);
         service.script_live_qualified = true;
-        let token = start(&service, &profile);
+        let token = start(&service, &profile, &state);
         submitted(&state, "submit:1:2");
         press(&service, &token, &assignments[0], true);
         wait_for(&service, |v| v["scripts"][0]["fault"].is_string());
@@ -258,7 +321,7 @@ fn on_timer(ctx) { transaction(ctx.state,[],[]) }
         }
         factory()
     });
-    let _token = start(&service, &profile);
+    let _token = start(&service, &profile, &state);
     submitted(&state, "submit:1:2");
     let attempts = attempts.load(Ordering::SeqCst);
     assert!((2..=3).contains(&attempts));
@@ -289,6 +352,115 @@ fn on_timer(ctx) { transaction(ctx.state,[],[]) }
     service.shutdown();
 }
 
+fn delay_initial_startup(service: &mut Service) -> Arc<std::sync::atomic::AtomicUsize> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let factory = service.output_factory.clone();
+    let first = AtomicBool::new(true);
+    service.output_factory = Arc::new(move || {
+        if first.swap(false, Ordering::SeqCst) {
+            // An actual healthy reply may already be queued, but output setup
+            // crosses the unchanged initial callback response deadline.
+            std::thread::sleep(Duration::from_millis(120));
+        }
+        factory()
+    });
+    let factory = service.script_factory.clone();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let observed = starts.clone();
+    service.script_factory = Arc::new(move |source| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        factory(source)
+    });
+    starts
+}
+
+#[test]
+fn expired_startup_stop_requires_completed_cleanup_before_a_fresh_owner() {
+    use std::sync::atomic::Ordering;
+    let source = r#"
+fn on_start(ctx) { transaction(#{},[button("result",true)],[]) }
+fn on_event(ctx) { transaction(ctx.state,[],[]) }
+fn on_timer(ctx) { transaction(ctx.state,[],[]) }
+"#;
+    let (mut service, _root, profile, _, state) = scripted(source);
+    service.script_live_qualified = true;
+    state.lock().unwrap().delay_stop_once = Some(Duration::from_micros(
+        osg_virtual_controller::feeder::LEASE_US + 50_000,
+    ));
+    let starts = delay_initial_startup(&mut service);
+    let _token = start(&service, &profile, &state);
+    submitted(&state, "submit:1:2");
+    assert!((2..=STARTUP_ATTEMPTS).contains(&starts.load(Ordering::SeqCst)));
+    let state = state.lock().unwrap();
+    assert!(state
+        .stop_failures
+        .iter()
+        .any(|error| error
+            == "Mapping heartbeat expired; fallback submitted and ownership released."));
+    assert_eq!(
+        state
+            .calls
+            .iter()
+            .filter(|call| *call == "submit:1:2")
+            .count(),
+        1,
+        "Only the admitted fresh startup may contribute held output"
+    );
+    drop(state);
+    service.request(&json!({"command":"mapping_stop"})).unwrap();
+    service.shutdown();
+}
+
+#[test]
+fn unresolved_or_unrelated_startup_stop_errors_never_admit_another_start() {
+    use std::sync::atomic::Ordering;
+    for unresolved in [true, false] {
+        let source = r#"
+fn on_start(ctx) { transaction(#{},[button("result",true)],[]) }
+fn on_event(ctx) { transaction(ctx.state,[],[]) }
+fn on_timer(ctx) { transaction(ctx.state,[],[]) }
+"#;
+        let (mut service, _root, profile, _, state) = scripted(source);
+        service.script_live_qualified = true;
+        {
+            let mut state = state.lock().unwrap();
+            state.delay_stop_once = Some(Duration::from_micros(
+                osg_virtual_controller::feeder::LEASE_US + 50_000,
+            ));
+            state.blocked_recovery = unresolved;
+            state.failed_stop = !unresolved;
+        }
+        let starts = delay_initial_startup(&mut service);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            start(&service, &profile, &state)
+        }));
+        assert!(result.is_err(), "Unsafe fixture admission must be rejected");
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state.lock().unwrap().stop_failures,
+            vec![if unresolved {
+                "Mapping heartbeat expired; fallback submitted and ownership released."
+            } else {
+                "Stop acknowledgement lost"
+            }],
+            "The intended Stop fault must be observed before claiming admission was refused"
+        );
+        let status = service
+            .request(&json!({"command":"mapping_status"}))
+            .unwrap();
+        assert_eq!(status["running"], false);
+        assert!(status["token"].is_null());
+        assert_eq!(status["recoveryRequired"], unresolved);
+        assert!(!state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|call| call == "submit:1:2"));
+        service.shutdown();
+    }
+}
+
 #[test]
 fn losing_either_declared_source_releases_script_and_cancels_its_timers() {
     for source in 0..2 {
@@ -299,7 +471,7 @@ fn on_timer(ctx) { transaction(ctx.state,[button("result",true)],[]) }
 "#;
         let (mut service, _root, profile, assignments, state) = scripted(code);
         service.script_live_qualified = true;
-        let token = start(&service, &profile);
+        let token = start(&service, &profile, &state);
         submitted(&state, "submit:1:2");
         {
             let mut router = service.router.lock().unwrap();
@@ -356,7 +528,7 @@ fn on_timer(ctx) { transaction(ctx.state,[],[]) }
         *saved.lock().unwrap() = worker.id();
         Ok(worker)
     });
-    let _token = start(&service, &profile);
+    let _token = start(&service, &profile, &state);
     submitted(&state, "submit:1:2");
     let pid = child_id.lock().unwrap().unwrap();
     #[cfg(unix)]
