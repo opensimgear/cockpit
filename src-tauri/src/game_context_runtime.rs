@@ -204,6 +204,15 @@ impl GamesRuntime {
 
 impl Inner {
     pub(super) fn refresh_game_contexts(&self, force_setup: bool) {
+        let epoch = match self
+            .contexts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .begin_observation()
+        {
+            Ok(epoch) => epoch,
+            Err(_) => return,
+        };
         let installation_metadata = self.guard_installation_metadata();
         let mut games = self
             .settings
@@ -276,7 +285,7 @@ impl Inner {
                 .contexts
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .observe(id, observation);
+                .observe(id, epoch, observation);
         }
     }
 }
@@ -365,7 +374,8 @@ mod tests {
                 .push(request["command"].as_str().unwrap_or("").to_owned());
             panic!("Context metadata must never call cleanup or a retired provider: {request}");
         });
-        let runtime = GamesRuntime::new(panel, Paths::in_directory(&scratch.path), platform.clone());
+        let runtime =
+            GamesRuntime::new(panel, Paths::in_directory(&scratch.path), platform.clone());
         let revision = runtime.inner.setup.provider_setup_revision("x-plane-12");
         runtime.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":revision,"connection":crate::xplane::defaults(12)})).unwrap();
         (runtime, platform, calls)

@@ -80,7 +80,8 @@ impl Fixture {
                     recovery: fixture_metadata_path.with_extension("recovery.json"),
                 }
             },
-            process.clone()));
+            process.clone(),
+        ));
         let revision = games.resource_catalogue()[0]["integrationSetup"]["providerSetupRevision"]
             .as_str()
             .unwrap()
@@ -209,6 +210,128 @@ impl Drop for Fixture {
         self.host.companions.shutdown();
         self.host.controllers.shutdown();
     }
+}
+
+/// An older concurrent refresh must not retire a newer exact preparation.
+/// Gate the real observer at process reads; do not retry preparation, sleep,
+/// fabricate a proof or widen the production launch deadline.
+#[test]
+fn a_newer_setup_observation_preserves_its_preparation_when_an_old_refresh_completes_late() {
+    use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+    use std::time::Duration;
+
+    struct GatedProcess {
+        process: Process,
+        observer: Mutex<Option<std::thread::ThreadId>>,
+        captured: SyncSender<()>,
+        release_old: Mutex<Receiver<()>>,
+        published: SyncSender<()>,
+        release_next: Mutex<Receiver<()>>,
+    }
+    impl Platform for GatedProcess {
+        fn integration_setup_supported(&self) -> bool {
+            self.process.integration_setup_supported()
+        }
+        fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<serde_json::Value> {
+            self.process.catalogue(manual)
+        }
+        fn validate(&self, id: &str, path: &str) -> Result<(), String> {
+            self.process.validate(id, path)
+        }
+        fn launch(&self, game: &serde_json::Value) -> Result<ProcessIdentity, String> {
+            self.process.launch(game)
+        }
+        fn find(&self, game: &serde_json::Value) -> Result<Option<ProcessIdentity>, String> {
+            if game["id"] == "x-plane-12" && game.get("integrationSetup").is_some() {
+                let current = std::thread::current().id();
+                let mut observer = self.observer.lock().unwrap();
+                if observer.is_none() && game["integrationSetup"]["state"] == "setup-required" {
+                    *observer = Some(current);
+                    drop(observer);
+                    self.captured.send(()).map_err(|error| error.to_string())?;
+                    self.release_old
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(3))
+                        .map_err(|error| error.to_string())?;
+                } else if *observer == Some(current) {
+                    drop(observer);
+                    // Reaching this observer's next scan proves its previous
+                    // setup-required snapshot attempted publication. Hold this
+                    // newer scan before publication so the assertion observes
+                    // exactly that late completion, independent of scheduling.
+                    self.published.send(()).map_err(|error| error.to_string())?;
+                    self.release_next
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(3))
+                        .map_err(|error| error.to_string())?;
+                    *self.observer.lock().unwrap() = None;
+                }
+            }
+            self.process.find(game)
+        }
+        fn alive(&self, process: &ProcessIdentity) -> Result<bool, String> {
+            self.process.alive(process)
+        }
+    }
+
+    let directory = crate::test_directory();
+    let (captured, old_captured) = sync_channel(1);
+    let (release_old, old_release) = sync_channel(1);
+    let (published, old_published) = sync_channel(1);
+    let (release_next, next_release) = sync_channel(1);
+    let platform = Arc::new(GatedProcess {
+        process: Process(
+            Mutex::new(Some(ProcessIdentity {
+                pid: 42,
+                path: "C:\\Fixture\\X-Plane.exe".into(),
+                epoch: 10,
+            })),
+            std::sync::atomic::AtomicBool::new(true),
+            std::sync::atomic::AtomicBool::new(false),
+        ),
+        observer: Mutex::new(None),
+        captured,
+        release_old: Mutex::new(old_release),
+        published,
+        release_next: Mutex::new(next_release),
+    });
+    let games = crate::games::GamesRuntime::new(
+        Arc::new(|request| panic!("Read-only process proof must not invoke an output: {request}")),
+        crate::games::Paths::in_directory(directory.path()),
+        platform,
+    );
+    old_captured.recv_timeout(Duration::from_secs(3)).unwrap();
+    let revision = games.resource_catalogue()[0]["integrationSetup"]["providerSetupRevision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    games.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":revision,"connection":crate::xplane::defaults(12)})).unwrap();
+    let prepared = games
+        .prepare_profile_game_context("x-plane-12")
+        .unwrap()
+        .unwrap();
+    games.validate_game_preparation(&prepared.proof).unwrap();
+    release_old.send(()).unwrap();
+    old_published.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert_eq!(
+        games.resource_catalogue()[0]["integrationContext"]["status"],
+        "waiting-profile"
+    );
+    games.validate_game_preparation(&prepared.proof).unwrap();
+    assert!(games.profile_game_context("x-plane-12").is_err());
+    // Explicit reads retain the same preparation, but cannot grant a game
+    // context without a matching applied owner. No launch or Apply occurs.
+    let fresh = games
+        .prepare_profile_game_context("x-plane-12")
+        .unwrap()
+        .unwrap();
+    assert_eq!(fresh.proof, prepared.proof);
+    games.validate_game_preparation(&fresh.proof).unwrap();
+    assert!(games.profile_game_context("x-plane-12").is_err());
+    release_next.send(()).unwrap();
+    games.shutdown();
 }
 
 #[test]

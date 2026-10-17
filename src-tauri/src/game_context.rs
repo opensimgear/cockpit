@@ -59,6 +59,9 @@ struct Record {
 pub(crate) struct Broker {
     owner: Option<ProfileOwner>,
     games: BTreeMap<String, Record>,
+    observation_epoch: u64,
+    observation_commits: BTreeMap<String, u64>,
+    observations_exhausted: bool,
 }
 fn supported(id: &str) -> bool {
     matches!(
@@ -78,6 +81,25 @@ fn revision(id: &str) -> bool {
     })
 }
 impl Broker {
+    /// Reserve before observing settings, catalogue or processes. Slow native
+    /// I/O must not publish an older snapshot over a newer completed capture.
+    pub(crate) fn begin_observation(&mut self) -> Result<u64, String> {
+        if !self.observations_exhausted {
+            if let Some(next) = self.observation_epoch.checked_add(1) {
+                self.observation_epoch = next;
+                return Ok(next);
+            }
+        }
+        self.observations_exhausted = true;
+        for record in self.games.values_mut() {
+            record.token = None;
+            record.preparation = None;
+            record.observation.process = None;
+            record.observation.catalogue_revision = None;
+            record.observation.error = Some("Native game observation counter exhausted.".into());
+        }
+        Err("Native game observation counter exhausted.".into())
+    }
     /// Called only by the native applied-profile coordinator, never from IPC.
     pub(crate) fn set_owner(&mut self, owner: Option<ProfileOwner>) -> Result<(), String> {
         if owner.as_ref().is_some_and(|owner| {
@@ -100,9 +122,28 @@ impl Broker {
         }
         Ok(())
     }
-    pub(crate) fn observe(&mut self, id: &str, observation: Observation) -> Result<(), String> {
+    pub(crate) fn observe(
+        &mut self,
+        id: &str,
+        epoch: u64,
+        observation: Observation,
+    ) -> Result<(), String> {
         if !supported(id)
-            || !revision(&observation.provider_setup_revision)
+            || self.observations_exhausted
+            || epoch == 0
+            || epoch > self.observation_epoch
+        {
+            return Err("Invalid native game observation capture.".into());
+        }
+        if self
+            .observation_commits
+            .get(id)
+            .is_some_and(|last| epoch <= *last)
+        {
+            return Ok(());
+        }
+        self.observation_commits.insert(id.into(), epoch);
+        if !revision(&observation.provider_setup_revision)
             || observation
                 .catalogue_revision
                 .as_deref()
@@ -172,6 +213,11 @@ impl Broker {
         }
     }
     pub(crate) fn invalidate(&mut self, id: &str, reason: String) {
+        // Direct validation already proved this current capture invalid. Fence
+        // every observation that was in flight before that validation failed.
+        if let Ok(epoch) = self.begin_observation() {
+            self.observation_commits.insert(id.into(), epoch);
+        }
         if let Some(record) = self.games.get_mut(id) {
             record.token = None;
             record.preparation = None;
@@ -283,10 +329,71 @@ mod tests {
             error: None,
         }
     }
+    fn observe(broker: &mut Broker, id: &str, observation: Observation) -> Result<(), String> {
+        let epoch = broker.begin_observation()?;
+        broker.observe(id, epoch, observation)
+    }
+    #[test]
+    fn older_observations_cannot_replace_a_new_preparation_or_applied_context() {
+        let mut broker = Broker::default();
+        let old = broker.begin_observation().unwrap();
+        let mut old_snapshot = observed();
+        old_snapshot.setup_ready = false;
+        observe(&mut broker, "dcs", observed()).unwrap();
+        let prepared = broker.preparation("dcs").unwrap().unwrap();
+        broker.set_owner(Some(owner(Some("dcs")))).unwrap();
+        let token = broker.token("dcs").unwrap();
+        broker.observe("dcs", old, old_snapshot).unwrap();
+        assert_eq!(broker.preparation("dcs").unwrap(), Some(prepared.clone()));
+        assert_eq!(broker.token("dcs").unwrap(), token);
+        let mut malformed = observed();
+        malformed.provider_setup_revision = "stale invalid data".into();
+        broker.observe("dcs", old, malformed).unwrap();
+        assert!(broker.validate_preparation(&prepared).is_ok());
+        assert!(broker.validate(&token).is_ok());
+
+        // Ordering is per game: a slow capture of another game still commits.
+        broker.observe("x-plane-12", old, observed()).unwrap();
+        assert!(broker.preparation("x-plane-12").unwrap().is_some());
+        assert!(broker.token("x-plane-12").is_err());
+    }
+    #[test]
+    fn explicit_current_invalidation_fences_inflight_results_but_allows_fresh_evidence() {
+        let mut broker = Broker::default();
+        observe(&mut broker, "dcs", observed()).unwrap();
+        let prepared = broker.preparation("dcs").unwrap().unwrap();
+        broker.set_owner(Some(owner(Some("dcs")))).unwrap();
+        let token = broker.token("dcs").unwrap();
+        let inflight = broker.begin_observation().unwrap();
+        assert!(broker.invalidate_preparation(&prepared, "Current process exited".into()));
+        broker.observe("dcs", inflight, observed()).unwrap();
+        assert!(broker.preparation("dcs").unwrap().is_none());
+        assert!(broker.validate(&token).is_err());
+        observe(&mut broker, "dcs", observed()).unwrap();
+        assert_ne!(broker.preparation("dcs").unwrap(), Some(prepared));
+        assert!(broker.validate(&token).is_err());
+        assert!(broker.token("dcs").is_ok());
+    }
+    #[test]
+    fn invalid_or_exhausted_observation_tickets_cannot_grant_or_restore_authority() {
+        let mut broker = Broker::default();
+        assert!(broker.observe("dcs", 0, observed()).is_err());
+        assert!(broker.observe("dcs", 1, observed()).is_err());
+        observe(&mut broker, "dcs", observed()).unwrap();
+        broker.set_owner(Some(owner(Some("dcs")))).unwrap();
+        let token = broker.token("dcs").unwrap();
+        broker.observation_epoch = u64::MAX;
+        assert!(broker.begin_observation().is_err());
+        assert!(broker.preparation("dcs").unwrap().is_none());
+        assert!(broker.validate(&token).is_err());
+        assert!(broker.observe("dcs", u64::MAX, observed()).is_err());
+        assert!(broker.begin_observation().is_err());
+        assert_eq!(broker.view("dcs")["status"], "error");
+    }
     #[test]
     fn preparation_proves_observation_without_granting_applied_authority() {
         let mut broker = Broker::default();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         let proof = broker.preparation("dcs").unwrap().unwrap();
         assert!(broker.token("dcs").is_err());
         assert!(broker.validate_preparation(&proof).is_ok());
@@ -303,30 +410,30 @@ mod tests {
     #[test]
     fn preparation_rejects_forgery_replacement_and_failed_new_evidence() {
         let mut broker = Broker::default();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         let proof = broker.preparation("dcs").unwrap().unwrap();
         let mut forged = proof.clone();
         forged.session = uuid::Uuid::new_v4().to_string();
         assert!(broker.validate_preparation(&forged).is_err());
         let mut replacement = observed();
         replacement.process.as_mut().unwrap().epoch += 1;
-        broker.observe("dcs", replacement).unwrap();
+        observe(&mut broker, "dcs", replacement).unwrap();
         assert!(broker.validate_preparation(&proof).is_err());
         let new = broker.preparation("dcs").unwrap().unwrap();
         let mut malformed = observed();
         malformed.provider_setup_revision = "bad".into();
-        assert!(broker.observe("dcs", malformed).is_err());
+        assert!(observe(&mut broker, "dcs", malformed).is_err());
         assert!(broker.validate_preparation(&new).is_err());
         assert!(broker.preparation("unknown").is_err());
     }
     #[test]
     fn late_preparation_failure_cannot_revoke_replacement_owner_but_current_failure_does() {
         let mut broker = Broker::default();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         let old = broker.preparation("dcs").unwrap().unwrap();
         let mut replacement = observed();
         replacement.process.as_mut().unwrap().epoch += 1;
-        broker.observe("dcs", replacement).unwrap();
+        observe(&mut broker, "dcs", replacement).unwrap();
         let current = broker.preparation("dcs").unwrap().unwrap();
         let mut next = owner(Some("dcs"));
         next.run_generation += 1;
@@ -345,7 +452,7 @@ mod tests {
     #[test]
     fn closed_wrong_and_unapplied_game_contexts_cannot_mint_capabilities() {
         let mut broker = Broker::default();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         assert_eq!(broker.view("dcs")["status"], "waiting-profile");
         assert_eq!(broker.view("dcs")["processVerified"], true);
         assert!(broker.token("dcs").is_err());
@@ -357,7 +464,7 @@ mod tests {
         assert!(broker.token("dcs").is_ok());
         let mut missing = observed();
         missing.process = None;
-        broker.observe("dcs", missing).unwrap();
+        observe(&mut broker, "dcs", missing).unwrap();
         assert_eq!(broker.view("dcs")["status"], "waiting-game");
         assert!(broker.token("dcs").is_err());
     }
@@ -365,36 +472,36 @@ mod tests {
     fn process_exit_replacement_and_pid_reuse_revoke_old_source_and_command_tokens() {
         let mut broker = Broker::default();
         broker.set_owner(Some(owner(Some("dcs")))).unwrap();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         let original = broker.token("dcs").unwrap();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         assert_eq!(broker.token("dcs").unwrap(), original);
         let mut replacement = observed();
         replacement.process.as_mut().unwrap().epoch += 1;
-        broker.observe("dcs", replacement).unwrap();
+        observe(&mut broker, "dcs", replacement).unwrap();
         assert!(broker.validate(&original).is_err());
         let replacement = broker.token("dcs").unwrap();
         let mut exit = observed();
         exit.process = None;
-        broker.observe("dcs", exit).unwrap();
+        observe(&mut broker, "dcs", exit).unwrap();
         assert!(broker.validate(&replacement).is_err());
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         assert!(broker.validate(&original).is_err());
     }
     #[test]
     fn profile_pause_setup_and_capability_changes_require_new_admission() {
         let mut broker = Broker::default();
         broker.set_owner(Some(owner(Some("dcs")))).unwrap();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         let first = broker.token("dcs").unwrap();
         let mut setup = observed();
         setup.provider_setup_revision = format!("sha256:{}", "c".repeat(64));
-        broker.observe("dcs", setup).unwrap();
+        observe(&mut broker, "dcs", setup).unwrap();
         assert!(broker.validate(&first).is_err());
         let setup = broker.token("dcs").unwrap();
         let mut catalogue = observed();
         catalogue.catalogue_revision = Some(format!("sha256:{}", "d".repeat(64)));
-        broker.observe("dcs", catalogue).unwrap();
+        observe(&mut broker, "dcs", catalogue).unwrap();
         assert!(broker.validate(&setup).is_err());
         let catalogue = broker.token("dcs").unwrap();
         broker.set_owner(None).unwrap();
@@ -407,15 +514,15 @@ mod tests {
         let mut broker = Broker::default();
         let mut observation = observed();
         observation.setup_ready = false;
-        broker.observe("dcs", observation).unwrap();
+        observe(&mut broker, "dcs", observation).unwrap();
         assert_eq!(broker.view("dcs")["status"], "setup-required");
         let mut observation = observed();
         observation.supported = false;
-        broker.observe("dcs", observation).unwrap();
+        observe(&mut broker, "dcs", observation).unwrap();
         assert_eq!(broker.view("dcs")["status"], "unsupported-platform");
         let mut observation = observed();
         observation.error = Some("Process inspection failed".into());
-        broker.observe("dcs", observation).unwrap();
+        observe(&mut broker, "dcs", observation).unwrap();
         assert_eq!(broker.view("dcs")["status"], "error");
         assert_eq!(broker.view("unknown")["status"], "waiting-game");
     }
@@ -425,12 +532,12 @@ mod tests {
         let mut invalid = owner(Some("dcs"));
         invalid.session = "editor-selected-profile".into();
         assert!(broker.set_owner(Some(invalid)).is_err());
-        assert!(broker.observe("unknown", observed()).is_err());
+        assert!(observe(&mut broker, "unknown", observed()).is_err());
         let mut invalid = observed();
         invalid.provider_setup_revision = "draft".into();
-        assert!(broker.observe("dcs", invalid).is_err());
+        assert!(observe(&mut broker, "dcs", invalid).is_err());
         broker.set_owner(Some(owner(Some("dcs")))).unwrap();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         let mut token = broker.token("dcs").unwrap();
         token.session = uuid::Uuid::new_v4().to_string();
         assert!(broker.validate(&token).is_err());
@@ -439,15 +546,15 @@ mod tests {
     fn malformed_new_evidence_withdraws_an_already_admitted_context() {
         let mut broker = Broker::default();
         broker.set_owner(Some(owner(Some("dcs")))).unwrap();
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         let token = broker.token("dcs").unwrap();
         let mut invalid = observed();
         invalid.process.as_mut().unwrap().epoch = 0;
-        assert!(broker.observe("dcs", invalid).is_err());
+        assert!(observe(&mut broker, "dcs", invalid).is_err());
         assert!(broker.validate(&token).is_err());
         assert_eq!(broker.view("dcs")["status"], "error");
         assert_eq!(broker.view("dcs")["processVerified"], false);
-        broker.observe("dcs", observed()).unwrap();
+        observe(&mut broker, "dcs", observed()).unwrap();
         assert!(broker.validate(&token).is_err());
     }
 }
