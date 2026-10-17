@@ -9,6 +9,9 @@ use crate::{PortValue, Resource};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "resources_companion.rs"]
+mod companion;
+
 pub const MAX_RESOURCES: usize = 2048;
 pub const MAX_CACHED_PORTS: usize = 40_000;
 pub const MAX_OBSERVATIONS: usize = 256;
@@ -216,6 +219,7 @@ struct PreparationPin {
     access: Access,
     selection_scope: Option<String>,
     selection_catalogue_revision: Option<String>,
+    companion: Option<companion::CompanionPortPin>,
 }
 impl PortPreparation {
     pub fn resolved(&self) -> &ResolvedRoute {
@@ -253,6 +257,13 @@ impl PortPreparation {
         port: &ObservedPort,
         access: Access,
     ) -> bool {
+        if self.pin.companion.is_some() {
+            return self.companion_matches_capture(session, resource)
+                && self.pin.port_id == port.descriptor.id
+                && self.pin.contract_hash == port.contract_hash
+                && self.resolved.port == port.descriptor
+                && self.pin.access == access;
+        }
         self.pin.inventory_session == session
             && self.pin.resource_id == resource.id
             && (self.pin.selection_scope.is_some() || self.pin.generation == resource.generation)
@@ -772,6 +783,7 @@ impl Registry {
                     .as_ref()
                     .and(live.catalogue_revision.clone()),
                 selection_scope,
+                companion: None,
             },
             resolved,
         })
@@ -780,6 +792,20 @@ impl Registry {
         &self,
         preparation: &PortPreparation,
     ) -> Result<ResolvedRoute, String> {
+        if let Some(companion) = &preparation.pin.companion {
+            let current = self.prepare_companion_port(
+                &preparation.pin.resource_id,
+                &companion.instance_id,
+                &companion.publication_hash,
+                &companion.capability_fingerprint,
+                preparation.resolved.port.clone(),
+                preparation.pin.access,
+            )?;
+            if current.pin != preparation.pin {
+                return Err("The paired companion route changed after preparation.".into());
+            }
+            return Ok(current.resolved);
+        }
         let mut current = self.prepare_port_selection(
             &preparation.pin.resource_id,
             &preparation.pin.port_id,

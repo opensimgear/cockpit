@@ -228,6 +228,7 @@ fn compile_mode(
                 &mut report.diagnostics,
                 edges,
                 preparations,
+                document.companion_assignments.iter().find(|a| a.resource_id == resource.id).map(|a| a.publication_hash.as_str()),
             );
             runtime_sources.push(SourcePort {
                 endpoint: runtime_endpoint(&endpoint),
@@ -273,6 +274,7 @@ fn compile_mode(
                 &mut report.diagnostics,
                 vec![binding.id.clone()],
                 preparations,
+                document.companion_assignments.iter().find(|a| a.resource_id == resource.id).map(|a| a.publication_hash.as_str()),
             );
             let (adapter, runtime_adapter) = match resource.kind {
                 ResourceKind::Game => (

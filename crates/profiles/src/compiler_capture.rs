@@ -135,6 +135,7 @@ pub(super) fn resolve(
     diagnostics: &mut Vec<CompileDiagnostic>,
     edge_ids: Vec<String>,
     preparations: Option<&[PortPreparation]>,
+    companion_publication: Option<&str>,
 ) -> ResolvedPort {
     let location = GraphLocation {
         resource_id: Some(logical.id.clone()),
@@ -208,10 +209,17 @@ pub(super) fn resolve(
         return result;
     };
     result.observed_id = Some(expected.observed_port_id.clone());
-    let Some(observed) = resource.ports.iter().find(|p| {
+    // A sealed native preparation may describe a retained desired publication
+    // which differs from the currently assigned one. It is acquisition-only;
+    // the ordinary delivery compiler never consults these prospective ports.
+    let prospective = preparations.and_then(|pins| pins.iter().find_map(|pin| {
+        let port = pin.prospective_companion_port(&snapshot.inventory_session, &resource.summary, companion_publication)?;
+        (port.descriptor.id == expected.observed_port_id && port.contract_hash == expected.expected_contract_hash).then_some(port)
+    }));
+    let Some(observed) = prospective.as_ref().or_else(|| resource.ports.iter().find(|p| {
         p.descriptor.id == expected.observed_port_id
             && p.contract_hash == expected.expected_contract_hash
-    }) else {
+    })) else {
         warn("portContractChanged", "The selected observed port is missing or its complete contract changed; reconcile this binding.");
         return result;
     };
@@ -240,7 +248,7 @@ pub(super) fn resolve(
             readiness = PlanReadiness::Dormant;
         }
     }
-    if resource.summary.availability != Availability::Online || !observed.current {
+    if resource.summary.availability != Availability::Online || (!observed.current && prospective.is_none()) {
         warn("resourceUnavailable", "This exact port is offline, unavailable or awaiting current-route capability verification.");
         if readiness != PlanReadiness::Dormant {
             readiness = PlanReadiness::Blocked;
@@ -257,7 +265,8 @@ pub(super) fn resolve(
         let mut selected = preparations
             .iter()
             .filter(|preparation| {
-                preparation.matches_capture(
+                preparation.companion_publication().is_none_or(|(_, publication, _)| Some(publication) == companion_publication)
+                && preparation.matches_capture(
                     &snapshot.inventory_session,
                     &resource.summary,
                     observed,
