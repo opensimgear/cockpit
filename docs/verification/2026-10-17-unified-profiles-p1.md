@@ -78,6 +78,14 @@ advertised action ports without inventing an input baseline or repeated probes.
 Native checks requiring DPAPI/process facilities run in the Windows user context.
 Remote cross-platform CI results are recorded in the pull request.
 
+The Windows CI run exposed concurrent real script helpers competing for the
+unchanged 100 ms response budget. Their integration tests now serialize helper
+processes. The worker also enforces its absolute deadline before and after reply
+admission, including an already queued reply; two deterministic clock regressions
+cover expiry without sleeps. All six unit and three integration tests pass, as do
+20 instrumented integration repetitions (60 tests). Logic module coverage remains
+77.42–100%, with the worker at 82.82%; no retries or deadline increases were added.
+
 ## Remaining boundaries
 
 P2 extends the portable graph to represent structured action arguments, constrained
