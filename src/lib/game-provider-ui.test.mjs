@@ -8,7 +8,7 @@ import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./profiles','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation']);
+const modules = await loadModules(['./profiles','./profile-runtime','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation']);
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
 async function component(name) {

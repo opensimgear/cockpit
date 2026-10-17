@@ -253,16 +253,6 @@
       return false;
     } finally { if (quiet) gamesPolling = false; else gamesBusy = false; }
   }
-  async function readGameConfig(gatewayId: string, moduleId: string): Promise<RuntimeConfig | null> {
-    try {
-      const result = await workspace?.request(gatewayId, { command: 'config_read', moduleId });
-      const config = result?.moduleConfigs?.[moduleId]?.config;
-      return config ? cloneConfig(config) : null;
-    } catch (error) {
-      notify(error instanceof Error ? error.message : 'Peripheral configuration could not be read.');
-      return null;
-    }
-  }
   function managedOutputs(gatewayId: string, moduleId: string) {
     const actions = managedDcsActions(dcsBios, gatewayId, moduleId);
     if (integration?.running && integration.config) {
@@ -452,7 +442,7 @@
         {:else if view === 'companions'}
           <CompanionDesigner openSettings={() => navigate('preferences')} />
         {:else if view === 'games'}
-          <GamesPanel bind:selectedGameId status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} dcsStatus={dcsBios} readConfig={readGameConfig} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
+          <GamesPanel bind:selectedGameId status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} dcsStatus={dcsBios} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'integrations'}
           <div class="page-heading"><div><div class="eyebrow">GAME RESOURCES</div><h1>Integrations</h1><p>Provider resources and links to their game settings.</p></div></div>
           <section class="panel dcs-profile-panel"><IntegrationsPanel setups={games?.catalogue} {openGameSettings} /></section>
