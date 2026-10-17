@@ -125,6 +125,7 @@ fn candidate() -> Candidate {
         assignments: vec![],
         read_only: false,
         game_id: None,
+        admission_epoch: None,
         stage: None,
     }
 }
@@ -442,6 +443,7 @@ fn native_stage_is_bound_to_the_complete_candidate_and_consumed_once() {
         Box::new(|value| value.document.revision += 1),
         Box::new(|value| value.read_only = true),
         Box::new(|value| value.game_id = Some("dcs".into())),
+        Box::new(|value| value.admission_epoch = Some(7)),
         Box::new(|value| {
             value
                 .assignments

@@ -39,7 +39,21 @@ native ownership/inventory/preview gate also passes (87.65–100% per module), w
 source stamps and test logs in `.research/profile-staging-native10`. The pinned
 official DCS-BIOS archive smoke test passed with the setup/adapters measurement.
 
+The transition also retains the exact epoch captured before preparation, rather
+than loading a potentially newer epoch after admission. The native Host checks
+that fence before preparation, each activation phase and every game-baseline
+wait iteration. A Stop arriving in the admission-to-prepare handoff window
+therefore aborts takeover. Active health uses its existing owner/generation
+fences; a successful Apply's epoch advance does not invalidate its own run.
+Baseline acquisition uses cached exact route pins and actual source capture,
+without starting synchronous discovery after output acquisition.
+
+The follow-up passes 19 focused coordinator/Manager tests, including the actual
+Host handoff race, all five stale phase entries and unchanged active health.
+Coverage remains 96.10% for the coordinator and 100% (81/81) for native staging;
+evidence and pinned archive smoke results are in
+`.research/profile-transition-epoch-coverage`.
+
 These are implementation and fixture checks; existing live script, driver and
-physical-hardware qualification gates remain unchanged. Cancellation during an
-already-started bounded transition and live adapter integration are subsequent
-atomic changes.
+physical-hardware qualification gates remain unchanged. Live adapter integration
+continues in subsequent atomic changes.

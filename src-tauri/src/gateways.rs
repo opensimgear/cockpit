@@ -129,7 +129,7 @@ pub struct GatewayManager {
     profile_session: Arc<Mutex<crate::profile_session::Coordinator<crate::profile_session_host::NativeProfileHost>>>,
     profile_admission: RwLock<()>,
     profile_prepare: ProfilePrepare,
-    profile_admission_epoch: AtomicU64,
+    profile_admission_epoch: Arc<AtomicU64>,
     profile_closed: Arc<AtomicBool>,
     profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     module_usb: Arc<crate::module_usb_fleet::Fleet>,
@@ -351,8 +351,9 @@ impl GatewayManager {
         let profile_prepare: ProfilePrepare = Arc::new(move |candidate| {
             crate::profile_session_host::NativeProfileHost::stage(&prepare_resources, &prepare_games, native, candidate)
         });
+        let profile_admission_epoch = Arc::new(AtomicU64::new(0));
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
-            crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), module_usb.clone(), profile_panel, native),
+            crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), module_usb.clone(), profile_panel, native, profile_admission_epoch.clone()),
             native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-session-v1.json")),
         )));
         let profile_closed = Arc::new(AtomicBool::new(false));
@@ -377,7 +378,7 @@ impl GatewayManager {
             profile_session,
             profile_admission: RwLock::new(()),
             profile_prepare,
-            profile_admission_epoch: AtomicU64::new(0),
+            profile_admission_epoch,
             profile_closed,
             profile_worker: Mutex::new(profile_worker),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
@@ -459,7 +460,7 @@ impl GatewayManager {
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
                 crate::profile_session::apply_staged_admitted(
                     &self.profile_session,
-                    crate::profile_session::Candidate { document, assignments, read_only, game_id, stage: None },
+                    crate::profile_session::Candidate { document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
                     |candidate| (self.profile_prepare)(candidate),
                     |candidate| {
                         let admission = self.profile_admission.write().unwrap_or_else(|p| p.into_inner());
@@ -471,7 +472,7 @@ impl GatewayManager {
                         let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
                         let (document, assignments, read_only) = profiles.compile_source(id)?;
                         let saved = crate::profile_session::Candidate {
-                            document, assignments, read_only, game_id: candidate.game_id.clone(), stage: None,
+                            document, assignments, read_only, game_id: candidate.game_id.clone(), admission_epoch: candidate.admission_epoch, stage: None,
                         };
                         candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
                         profiles.request(&json!({"command":"profile_select","id":id,"selectionSource":"manual"}))?;
@@ -1208,6 +1209,52 @@ mod tests {
             assert_eq!(status["state"]["profiles"]["profileSession"]["owner"],retained_owner);
             assert_eq!(status["state"]["profiles"]["profileSession"]["state"],"running");
         }
+    }
+    #[test]
+    fn cancellation_between_admission_and_native_prepare_uses_the_captured_epoch() {
+        use crate::profile_session::{Host, OwnedRun, RunOwner, APPLY_PHASES};
+        let (manager, _) = setup();
+        let applied = request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+        assert_eq!(applied["ok"],true);
+        let retained_owner = applied["state"]["profiles"]["profileSession"]["owner"].clone();
+        let captured = manager.profile_admission_epoch.load(Ordering::Acquire);
+        let (document, assignments, read_only) = manager.profiles.lock().unwrap().compile_source(osg_profiles::DEFAULT_PROFILE_ID).unwrap();
+        let mut candidate = crate::profile_session::Candidate {
+            document, assignments, read_only, game_id: None, admission_epoch: Some(captured), stage: None,
+        };
+        candidate.stage = Some((manager.profile_prepare)(&candidate).unwrap());
+        let panels = manager.profile_panels.clone();
+        let mut host = crate::profile_session_host::NativeProfileHost::new(
+            manager.profile_resources.clone(),manager.controllers.clone(),manager.games.clone(),
+            manager.companion_host.clone(),manager.module_usb.clone(),Arc::new(move |request|panels.can(request)),
+            false,manager.profile_admission_epoch.clone(),
+        );
+        let owner = RunOwner {
+            session:uuid::Uuid::new_v4().to_string(),generation:1,profile_id:candidate.document.id.clone(),
+            profile_revision:1,game_id:None,
+        };
+        // This is the narrow handoff window after Manager validated admission,
+        // before Host::prepare installs NativeRun. A late epoch load would miss it.
+        manager.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
+        assert!(host.prepare(&candidate,&owner).unwrap_err().contains("cancelled"));
+        candidate.admission_epoch = Some(manager.profile_admission_epoch.load(Ordering::Acquire));
+        candidate.stage = Some((manager.profile_prepare)(&candidate).unwrap());
+        let prepared = host.prepare(&candidate,&owner).unwrap();
+        let run = OwnedRun {
+            owner:owner.clone(),snapshot:osg_profiles::session::AppliedSnapshot::capture(&candidate.document).unwrap().summary().clone(),
+            program_hash:prepared.program_hash.clone(),capture_fingerprint:prepared.capture_fingerprint.clone(),
+            receipts:vec![],attempted:vec![],
+        };
+        manager.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
+        assert!(host.validate_prepared(&prepared,&owner).is_err());
+        for phase in APPLY_PHASES {
+            assert!(host.enter(phase,&prepared,&run).unwrap_err().contains("cancelled"),"{phase:?}");
+        }
+        host.restore(&run,false).unwrap();
+        // Successful Apply itself advances this epoch. Active health must use
+        // actual owner/generation fences, rather than this transition-only fence.
+        manager.profile_session.lock().unwrap().poll().unwrap();
+        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["owner"],retained_owner);
     }
     #[test]
     fn profile_runtime_requires_saved_revision_and_keeps_navigation_separate() {

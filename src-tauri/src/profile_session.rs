@@ -22,6 +22,8 @@ pub(crate) struct Candidate {
     pub read_only: bool,
     /// Native selection only; a browser cannot provide process identity.
     pub game_id: Option<String>,
+    /// Native cancellation fence captured before staging, never read from IPC.
+    pub admission_epoch: Option<u64>,
     /// A native one-use preparation. It is never serialized or accepted over IPC.
     pub stage: Option<std::sync::Arc<Stage>>,
 }

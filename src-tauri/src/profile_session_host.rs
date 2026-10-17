@@ -13,7 +13,7 @@ use osg_profiles::{
     resources::{ResourceToken, Transport},
 };
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, sync::{Arc, atomic::{AtomicU64, Ordering}}, time::Instant};
 
 type Panel = Arc<dyn Fn(Value) -> Value + Send + Sync>;
 struct NativePreparation {
@@ -27,6 +27,7 @@ struct NativePreparation {
 }
 struct NativeRun {
     owner: RunOwner,
+    admission_epoch: u64,
     report: CompilationReport,
     assignments: Vec<osg_profiles::store::LocalAssignment>,
     document: osg_profiles::ProfileDocument,
@@ -52,6 +53,7 @@ pub(crate) struct NativeProfileHost {
     usb: Arc<crate::module_usb_fleet::Fleet>,
     panel: Panel,
     native: bool,
+    admission_epoch: Arc<AtomicU64>,
     authority: Option<RunOwner>,
     prepared: BTreeMap<String, NativeRun>,
 }
@@ -67,6 +69,7 @@ impl NativeProfileHost {
         usb: Arc<crate::module_usb_fleet::Fleet>,
         panel: Panel,
         native: bool,
+        admission_epoch: Arc<AtomicU64>,
     ) -> Self {
         Self {
             resources,
@@ -76,6 +79,7 @@ impl NativeProfileHost {
             usb,
             panel,
             native,
+            admission_epoch,
             authority: None,
             prepared: BTreeMap::new(),
         }
@@ -85,6 +89,17 @@ impl NativeProfileHost {
             .get_mut(&key(owner))
             .filter(|run| run.owner == *owner)
             .ok_or_else(|| "The native prepared run expired; capture a fresh profile plan.".into())
+    }
+    fn check_epoch(epoch: &AtomicU64, expected: u64) -> Result<(), String> {
+        if epoch.load(Ordering::Acquire) != expected {
+            return Err("Profile takeover was cancelled by a newer native control request.".into());
+        }
+        Ok(())
+    }
+    fn check_transition(&self, owner: &RunOwner) -> Result<(), String> {
+        let state = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner)
+            .ok_or("The native profile transition expired.")?;
+        Self::check_epoch(&self.admission_epoch, state.admission_epoch)
     }
     fn validate_token(
         resources: &crate::profile_resources::Runtime,
@@ -402,11 +417,13 @@ impl NativeProfileHost {
 }
 impl Host for NativeProfileHost {
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
+        let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
+        Self::check_epoch(&self.admission_epoch, admission_epoch)?;
         let NativePreparation {prepared, report, backend, bindings, scripts, game, game_preparation} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         self.prepared.insert(key(owner), NativeRun {
-            owner: owner.clone(), report, assignments: candidate.assignments.clone(),
+            owner: owner.clone(), admission_epoch, report, assignments: candidate.assignments.clone(),
             document: candidate.document.clone(), backend, delivery: None, inputs: None,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, scripts, game, game_preparation,
@@ -415,6 +432,7 @@ impl Host for NativeProfileHost {
         Ok(prepared)
     }
     fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String> {
+        self.check_transition(owner)?;
         let assignments = self.run(owner)?.assignments.clone();
         let proof = self
             .run(owner)?
@@ -523,6 +541,7 @@ impl Host for NativeProfileHost {
         prepared: &Prepared,
         run: &OwnedRun,
     ) -> Result<(), String> {
+        self.check_transition(&run.owner)?;
         match phase {
             ApplyPhase::Overrides => Ok(()),
             ApplyPhase::Acquire => {
@@ -558,6 +577,7 @@ impl Host for NativeProfileHost {
                 let deadline = Instant::now() + std::time::Duration::from_secs(3);
                 let mut game_frames = vec![];
                 while self.run(&run.owner)?.game.requires_baseline() {
+                    self.check_transition(&run.owner)?;
                     let now = controllers.stream_page("", 0).captured_us;
                     let state = self.run(&run.owner)?;
                     let sample = state.game.poll(&games, now);
@@ -581,9 +601,7 @@ impl Host for NativeProfileHost {
                     }
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-                if !prepared.plan.sources.is_empty() || !prepared.plan.sinks.is_empty() {
-                    resources.refresh_native()?;
-                }
+                self.check_transition(&run.owner)?;
                 let delivery = resources.bind_delivery_reads(&prepared.plan)?;
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
@@ -599,6 +617,7 @@ impl Host for NativeProfileHost {
             }
             ApplyPhase::Visibility => Ok(()),
             ApplyPhase::Start => {
+                self.check_transition(&run.owner)?;
                 self.fence(&run.owner)?;
                 let games = self.games.clone();
                 let resources = self.resources.clone();
