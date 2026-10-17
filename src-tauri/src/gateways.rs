@@ -1258,12 +1258,16 @@ mod tests {
         let page=request(&manager,"profile_runtime_inspect",None,json!({"owner":owner}));assert_eq!(page["ok"],true,"{page}");
         let page=&page["state"]["profileInspection"];assert_eq!(page["total"],2);assert_eq!(page["owner"],owner);assert_eq!(page["appliedSnapshot"]["revision"],2);
         assert_eq!(page["ports"][0]["sample"],json!({"status":"known","value":{"kind":"scalar","value":true}}));
-        assert_eq!(page["ports"][0]["observedUs"],"0");
+        let retained=page["ports"].as_array().unwrap().iter().find(|port|port["endpoint"]==json!({"nodeId":"display","portId":"indicator"})).unwrap().clone();
+        let observed_us=retained["observedUs"].as_str().unwrap().parse::<u64>().unwrap();
+        assert!(observed_us>0,"Native startup must retain the actual nonzero capture clock: {retained}");
         let mut edited=saved["state"]["profiles"]["document"].clone();edited["processingNodes"][0]["operation"]["value"]=json!(false);
         assert_eq!(request(&manager,"profile_editor_save",None,json!({"document":edited,"expectedRevision":2,"assignments":[]}))["ok"],true);
         let old=request(&manager,"profile_runtime_inspect",None,json!({"owner":owner,"nodeId":"display","limit":1}));assert_eq!(old["ok"],true,"{old}");
         assert_eq!(old["state"]["profileInspection"]["appliedSnapshot"]["revision"],2);
         assert_eq!(old["state"]["profileInspection"]["ports"][0]["sample"]["value"]["value"],true);
+        assert_eq!(old["state"]["profileInspection"]["ports"][0]["sample"],retained["sample"]);
+        assert_eq!(old["state"]["profileInspection"]["ports"][0]["observedUs"],retained["observedUs"]);
         for fields in [json!({"owner":owner,"limit":65}),json!({"owner":owner,"nodeId":"missing"}),json!({"owner":owner,"drive":true})] {assert_eq!(request(&manager,"profile_runtime_inspect",None,fields)["ok"],false);}
         let mut wrong=owner.clone();wrong["generation"]=json!(999);assert_eq!(request(&manager,"profile_runtime_inspect",None,json!({"owner":wrong}))["ok"],false);
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);

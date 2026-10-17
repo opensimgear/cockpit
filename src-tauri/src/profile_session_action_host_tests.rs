@@ -395,8 +395,17 @@ fn actual_host_acquires_neutral_lease_then_starts_and_restores_without_reclaim()
     f.host
         .enter(ApplyPhase::Start, &f.prepared, &f.run)
         .unwrap();
-    let effect = f.effect(100);
-    dispatch(f.host.run(&f.run.owner).unwrap(), &[effect]);
+    let mut effect = f.effect(100);
+    effect.at_us = f
+        .host
+        .run(&f.run.owner)
+        .unwrap()
+        .reducer
+        .as_ref()
+        .unwrap()
+        .at_us();
+    let diagnostics = dispatch(f.host.run(&f.run.owner).unwrap(), &[effect]);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
     eventually(|| f.probe.count("invoke") >= 1);
     f.host.health(&f.run).unwrap();
     f.host.neutralize(&f.run).unwrap();
@@ -670,7 +679,15 @@ fn active_endpoint_failure_degrades_its_branch_without_global_stop() {
     let mut f = Fixture::new();
     f.arm();
     f.probe.fail_command("invoke");
-    let effect = f.effect(100);
+    let mut effect = f.effect(100);
+    effect.at_us = f
+        .host
+        .run(&f.run.owner)
+        .unwrap()
+        .reducer
+        .as_ref()
+        .unwrap()
+        .at_us();
     dispatch(f.host.run(&f.run.owner).unwrap(), &[effect]);
     eventually(|| {
         f.host
@@ -683,6 +700,15 @@ fn active_endpoint_failure_degrades_its_branch_without_global_stop() {
     let health = f.host.health(&f.run).unwrap();
     assert!(health.stop.is_none());
     assert!(!health.degraded.is_empty());
+    assert!(f.probe.count("invoke") >= 1);
+    assert!(
+        health
+            .degraded
+            .iter()
+            .any(|message| message.contains("failed invoke")),
+        "{:?}",
+        health.degraded
+    );
     assert!(held(f.host.run(&f.run.owner).unwrap()).is_err());
     f.host.neutralize(&f.run).unwrap();
     assert_eq!(f.probe.count("claim"), 1);
