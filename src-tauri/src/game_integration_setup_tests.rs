@@ -223,9 +223,23 @@ fn persisted_records_are_bounded_and_revalidated_on_load() {
     assert!(read_settings(&path).is_err());
 }
 fn wait_setup(runtime: &GameIntegrationSetup) {
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // These fixtures verify completion, not setup latency. Instrumented suites
+    // run filesystem sync and recovery work alongside all native tests.
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while runtime.busy() {
-        assert!(std::time::Instant::now() < end, "Setup did not finish");
+        if std::time::Instant::now() >= end {
+            let states = runtime.inner.states.try_lock().map(|states| states.clone());
+            let worker_finished = runtime
+                .worker
+                .try_lock()
+                .map(|worker| worker.as_ref().map(JoinHandle::is_finished));
+            assert!(
+                !runtime.busy(),
+                "Setup did not finish within 30 seconds; pending={}, worker_finished={worker_finished:?}, states={states:?}",
+                runtime.pending()
+            );
+            break;
+        }
         thread::sleep(std::time::Duration::from_millis(5));
     }
 }
