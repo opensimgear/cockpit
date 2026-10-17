@@ -426,3 +426,6 @@ fn actual_browser_wss_profile_altitude_feedback_proof() {
         "Browser proof exceeded its bounded 180-second window"
     );
 }
+
+#[path = "profile_session_companion_dcs_live_tests.rs"]
+mod dcs_live;
