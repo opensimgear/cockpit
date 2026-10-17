@@ -38,7 +38,7 @@ def main():
     for tool in ["llvm-profdata", "llvm-cov"]:
         if not (llvm / f"{tool}{suffix}").exists():
             raise SystemExit("Install llvm-tools-preview for the pinned Rust toolchain.")
-    targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "profile", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
+    targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "profile", "profile_owned", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
     if not options.service_only:
         targets.append(("desktop", root / "src-tauri/Cargo.toml", "companion_host::tests", [root / "src-tauri/src/companion_host.rs"]))
     summary = {}
@@ -69,11 +69,13 @@ def main():
             lines = source.read_text(encoding="utf-8").splitlines()
             # lib.rs declares test modules but has production exports/functions afterward.
             end = len(lines) + 1 if source.name == "lib.rs" else next((index + 1 for index, line in enumerate(lines) if line == "#[cfg(test)]"), len(lines) + 1)
-            counts = {int(match[1]): int(match[2]) for line in annotation.splitlines()
-                      if (match := re.match(r"^\s*(\d+)\|\s*(\d+)\|", line)) and int(match[1]) < end}
+            # LLVM abbreviates hot counts (for example 1.28k). Include those
+            # production lines in both numerator and denominator as well.
+            counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotation.splitlines()
+                      if (match := re.match(r"^\s*(\d+)\|\s*([\d.]+[kMGT]?)\|", line)) and int(match[1]) < end}
             if not counts:
                 raise RuntimeError(f"No instrumented production lines for {source}.")
-            covered = sum(count > 0 for count in counts.values())
+            covered = sum(counts.values())
             percent = 100 * covered / len(counts)
             key = f"{name}/{source.name}"
             summary[key] = {"covered": covered, "lines": len(counts), "percent": round(percent, 2)}

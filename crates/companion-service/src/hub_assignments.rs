@@ -139,6 +139,7 @@ fn plan(inner: &Inner, desired: &BTreeMap<String, Row>) -> Result<Record, String
                 companion_id: companion.clone(),
                 publication_hash: hash.clone(),
                 definition: p.definition(&row.instance_id),
+                ownership: None,
             });
         }
     }
@@ -188,6 +189,9 @@ impl Hub {
             "Expected/desired assignment scopes must match, including missing instances.",
         )?;
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        ensure(!inner.record.instances.iter().any(|assignment|
+            expected.contains_key(&assignment.instance_id) && assignment.ownership.is_some()),
+            "A unified profile owns this companion assignment; stop or edit that profile before legacy reassignment.")?;
         ensure(
             snapshot(&inner, expected.keys().cloned())? == expected,
             "Companion assignments changed externally; preserve the current authority.",

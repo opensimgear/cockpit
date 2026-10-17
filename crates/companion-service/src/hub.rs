@@ -30,13 +30,23 @@ struct Credential {
     #[serde(default = "unknown_kind")]
     kind: String,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AssignmentOwner {
+    owner: String,
+    revision: u64,
+    baseline_hash: String,
+    baseline_publication_hash: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Assignment {
     instance_id: String,
     companion_id: String,
     publication_hash: String,
     definition: SourceDefinition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ownership: Option<AssignmentOwner>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -265,7 +275,11 @@ impl Hub {
                     && a.definition.publication_hash == a.publication_hash
                     && label(&a.definition.name)
                     && !a.definition.controls.is_empty()
-                    && a.definition.controls.len() <= 128,
+                    && a.definition.controls.len() <= 128
+                    && a.ownership.as_ref().is_none_or(|owner|
+                        uuid::Uuid::parse_str(&owner.owner).is_ok_and(|id|id.to_string()==owner.owner)
+                        && owner.revision > 0 && digest_id(&owner.baseline_hash)
+                        && digest_id(&owner.baseline_publication_hash)),
                 "Invalid saved companion assignment.",
             )?;
             let mut controls = BTreeSet::new();
@@ -630,6 +644,7 @@ impl Hub {
                 let mut retained=BTreeSet::new();
                 for value in hashes { let hash=value.as_str().filter(|s|digest_id(s)).ok_or("Invalid panel retention hash.")?;retained.insert(hash.to_owned()); }
                 retained.extend(inner.record.instances.iter().map(|a|a.publication_hash.clone()));
+                retained.extend(inner.record.instances.iter().filter_map(|a|a.ownership.as_ref().map(|owner|owner.baseline_publication_hash.clone())));
                 retained.extend(inner.sessions.values().map(|s|s.token.publication_hash.clone()));
                 let before=inner.publications.len();
                 inner.publications.retain(|hash,p|!managed.contains(&p.ui_id)||retained.contains(hash));
@@ -669,6 +684,7 @@ impl Hub {
                     companion_id: companion.into(),
                     publication_hash: publication.into(),
                     definition: p.definition(instance),
+                    ownership: None,
                 };
                 let mut record = inner.record.clone();
                 record.instances.retain(|a| a.instance_id != instance);
@@ -719,6 +735,7 @@ impl Hub {
                     .find(|a| a.instance_id == instance)
                     .unwrap()
                     .companion_id = owner.into();
+                record.instances.iter_mut().find(|a|a.instance_id==instance).unwrap().ownership = None;
                 self.persist(&record)?;
                 let ids: Vec<_> = inner
                     .sessions

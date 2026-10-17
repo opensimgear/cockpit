@@ -114,6 +114,13 @@ impl Hub {
     }
     pub fn validate_profile_preparation(&self, proof: &Preparation) -> Result<(), String> {
         let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        self.validate_profile_preparation_inner(&inner, proof)
+    }
+    fn validate_profile_preparation_inner(
+        &self,
+        inner: &Inner,
+        proof: &Preparation,
+    ) -> Result<(), String> {
         let (_, identity) = current_identity(&inner, &proof.instance_id)?;
         ensure(
             self.runtime_identity.as_str() == proof.runtime_identity
@@ -129,6 +136,31 @@ impl Hub {
             publication.capability_fingerprint == proof.capability_fingerprint
                 && publication.definition(&proof.instance_id) == proof.definition,
             "The prepared companion capability or input definition changed.",
+        )
+    }
+}
+
+#[path = "profile_owned.rs"]
+mod owned;
+pub use owned::{AssignmentReceipt, AssignmentRestore};
+
+pub(super) fn feedback_access(
+    inner: &Inner,
+    instance: &str,
+    receipt: Option<&AssignmentReceipt>,
+) -> Result<(), String> {
+    if let Some(receipt) = receipt {
+        ensure(
+            receipt.instance_id() == instance,
+            "Wrongly routed profile feedback ownership.",
+        )?;
+        owned::validate_owned(inner, receipt)
+    } else {
+        ensure(
+            !inner.record.instances.iter().any(|assignment| {
+                assignment.instance_id == instance && assignment.ownership.is_some()
+            }),
+            "A unified profile owns this companion feedback; legacy changes were rejected.",
         )
     }
 }

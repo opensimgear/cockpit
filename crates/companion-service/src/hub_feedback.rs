@@ -7,7 +7,17 @@ impl Hub {
         publication_hash: &str,
         bindings: &[FeedbackBinding],
     ) -> Result<(), String> {
+        self.configure_feedback_authorized(instance, publication_hash, bindings, None)
+    }
+    pub(super) fn configure_feedback_authorized(
+        &self,
+        instance: &str,
+        publication_hash: &str,
+        bindings: &[FeedbackBinding],
+        receipt: Option<&profile::AssignmentReceipt>,
+    ) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        profile::feedback_access(&inner, instance, receipt)?;
         ensure(
             inner
                 .record
@@ -29,13 +39,25 @@ impl Hub {
         Ok(())
     }
     pub fn feedback_token(&self, instance: &str) -> Result<FeedbackToken, String> {
+        self.feedback_token_authorized(instance, None)
+    }
+    pub(super) fn feedback_token_authorized(
+        &self,
+        instance: &str,
+        receipt: Option<&profile::AssignmentReceipt>,
+    ) -> Result<FeedbackToken, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        profile::feedback_access(&inner, instance, receipt)?;
         self.expire(&mut inner, self.now_ms())?;
         let session = inner
             .sessions
             .values()
             .find(|s| s.token.source_id == instance)
             .ok_or("Feedback companion is disconnected.")?;
+        ensure(
+            receipt.is_none() || session.armed,
+            "Profile feedback requires a fresh actual companion input baseline.",
+        )?;
         let book = inner
             .feedback
             .get(instance)
@@ -55,7 +77,18 @@ impl Hub {
         mode: FeedbackMode,
         now_ms: u64,
     ) -> Result<u64, String> {
+        self.publish_feedback_authorized(token, values, mode, now_ms, None)
+    }
+    pub(super) fn publish_feedback_authorized(
+        &self,
+        token: &FeedbackToken,
+        values: &[FeedbackSample],
+        mode: FeedbackMode,
+        now_ms: u64,
+        receipt: Option<&profile::AssignmentReceipt>,
+    ) -> Result<u64, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        profile::feedback_access(&inner, &token.instance_id, receipt)?;
         self.expire(&mut inner, now_ms)?;
         let now = inner.last_now;
         let session = inner
@@ -65,7 +98,8 @@ impl Hub {
         ensure(
             session.token.source_id == token.instance_id
                 && session.token.publication_hash == token.publication_hash
-                && session.token.generation == token.generation,
+                && session.token.generation == token.generation
+                && (receipt.is_none() || session.armed),
             "Stale or wrongly routed native feedback token.",
         )?;
         let book = inner
@@ -84,7 +118,17 @@ impl Hub {
         publication_hash: &str,
         now_ms: u64,
     ) -> Result<(), String> {
+        self.clear_feedback_authorized(instance, publication_hash, now_ms, None)
+    }
+    pub(super) fn clear_feedback_authorized(
+        &self,
+        instance: &str,
+        publication_hash: &str,
+        now_ms: u64,
+        receipt: Option<&profile::AssignmentReceipt>,
+    ) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        profile::feedback_access(&inner, instance, receipt)?;
         self.expire(&mut inner, now_ms)?;
         ensure(
             inner

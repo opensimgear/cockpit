@@ -159,3 +159,363 @@ fn existing_metadata_read_never_creates_or_replaces_protected_state() {
     assert!(sink.owners.lock().unwrap().is_empty());
     assert!(sink.events.lock().unwrap().is_empty());
 }
+
+fn capture(
+    hub: &Hub,
+    desired: &Publication,
+    previous: Option<&profile::AssignmentReceipt>,
+) -> profile::AssignmentReceipt {
+    let proof = hub
+        .prepare_profile_assignment("instance", &desired.publication_hash)
+        .unwrap();
+    hub.capture_profile_assignment(&proof, &uuid::Uuid::new_v4().to_string(), previous)
+        .unwrap()
+}
+fn feedback(publication: &Publication) -> (FeedbackBinding, FeedbackSample) {
+    let descriptor = publication
+        .feedback
+        .iter()
+        .find(|descriptor| descriptor.kind == FeedbackKind::Boolean)
+        .unwrap();
+    let binding = FeedbackBinding {
+        channel_id: descriptor.channel_id.clone(),
+        output_id: descriptor.output_ids[0].clone(),
+    };
+    let sample = FeedbackSample {
+        channel_id: binding.channel_id.clone(),
+        output_id: binding.output_id.clone(),
+        value: Some(FeedbackValue::Boolean(true)),
+        status: FeedbackStatus::Fresh,
+        provenance: FeedbackProvenance::Local,
+        source_kind: FeedbackSource::Host,
+        source_age_ms: 0,
+        unit: "boolean".into(),
+        range: None,
+    };
+    (binding, sample)
+}
+
+#[test]
+fn native_takeover_inherits_original_baseline_and_stale_same_panel_owner_cannot_restore() {
+    use profile::AssignmentRestore;
+    let (hub, _, original, desired) = setup();
+    let first = capture(&hub, &desired, None);
+    assert_eq!(first.instance_id(), "instance");
+    assert_eq!(first.publication_hash(), desired.publication_hash);
+    assert_eq!(
+        first.capability_fingerprint(),
+        desired.capability_fingerprint
+    );
+    assert_eq!(first.revision(), 1);
+    assert!(uuid::Uuid::parse_str(first.owner()).is_ok());
+    hub.acquire_profile_assignment(&first).unwrap();
+    hub.acquire_profile_assignment(&first).unwrap(); // Journal retry is idempotent.
+    hub.validate_profile_assignment(&first).unwrap();
+    let second = capture(&hub, &desired, Some(&first));
+    assert_eq!(second.revision(), 2);
+    assert_ne!(second.owner(), first.owner());
+    hub.acquire_profile_assignment(&second).unwrap();
+    assert!(hub.validate_profile_assignment(&first).is_err());
+    assert_eq!(
+        hub.restore_profile_assignment(&first).unwrap(),
+        AssignmentRestore::OwnershipLost
+    );
+    hub.validate_profile_assignment(&second).unwrap();
+    assert_eq!(
+        hub.restore_profile_assignment(&second).unwrap(),
+        AssignmentRestore::Restored
+    );
+    assert_eq!(
+        hub.assigned_publication("instance")
+            .unwrap()
+            .publication_hash,
+        original.publication_hash
+    );
+    assert_eq!(
+        hub.restore_profile_assignment(&first).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+    assert_eq!(
+        hub.restore_profile_assignment(&second).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+}
+
+#[test]
+fn profile_feedback_fences_all_legacy_paths_old_cleanup_and_real_source_sessions() {
+    let sink = Arc::new(Sink::default());
+    let hub = Hub::new("host".into(), sink.clone());
+    let secret = paired(&hub, "screen");
+    let peer_secret = paired(&hub, "peer-screen");
+    let panel = publish(&hub, fixture());
+    assign(&hub, "screen", "instance", &panel.publication_hash);
+    assign(&hub, "peer-screen", "peer", &panel.publication_hash);
+    let opened = connect(&hub, "old-connection", &secret, "instance");
+    baseline(&hub, "old-connection", &opened, &panel);
+    let peer = connect(&hub, "peer-connection", &peer_secret, "peer");
+    baseline(&hub, "peer-connection", &peer, &panel);
+    let (binding, sample) = feedback(&panel);
+    hub.configure_feedback("instance", &panel.publication_hash, &[binding.clone()])
+        .unwrap();
+    let legacy = hub.feedback_token("instance").unwrap();
+    let first = capture(&hub, &panel, None);
+    hub.acquire_profile_assignment(&first).unwrap();
+    assert!(!sink.owners.lock().unwrap().contains_key("instance"));
+    assert!(sink.owners.lock().unwrap().contains_key("peer"));
+    assert!(hub
+        .configure_feedback("instance", &panel.publication_hash, &[binding.clone()])
+        .is_err());
+    assert!(hub.feedback_token("instance").is_err());
+    assert!(hub
+        .publish_feedback(
+            &legacy,
+            &[sample.clone()],
+            FeedbackMode::Snapshot,
+            hub.now_ms()
+        )
+        .is_err());
+    assert!(hub
+        .clear_feedback("instance", &panel.publication_hash, hub.now_ms())
+        .is_err());
+    let snapshot = hub.assignment_snapshot(&["instance".into()]).unwrap();
+    assert!(hub.compare_assignments(&snapshot, &snapshot).is_err());
+    hub.configure_profile_feedback(&first, &[binding.clone()])
+        .unwrap();
+    assert!(hub.profile_feedback_token(&first).is_err());
+    let opened = connect(&hub, "new-connection", &secret, "instance");
+    assert!(hub.profile_feedback_token(&first).is_err());
+    baseline(&hub, "new-connection", &opened, &panel);
+    let token = hub.profile_feedback_token(&first).unwrap();
+    hub.publish_profile_feedback(
+        &first,
+        &token,
+        &[sample.clone()],
+        FeedbackMode::Snapshot,
+        hub.now_ms(),
+    )
+    .unwrap();
+    let second = capture(&hub, &panel, Some(&first));
+    hub.acquire_profile_assignment(&second).unwrap();
+    hub.disconnect_connection("old-connection", hub.now_ms());
+    assert!(hub.clear_profile_feedback(&first, hub.now_ms()).is_err());
+    assert!(hub
+        .configure_profile_feedback(&first, &[binding.clone()])
+        .is_err());
+    assert!(hub
+        .publish_profile_feedback(
+            &first,
+            &token,
+            &[sample.clone()],
+            FeedbackMode::Snapshot,
+            hub.now_ms()
+        )
+        .is_err());
+    hub.configure_profile_feedback(&second, &[binding]).unwrap();
+    let opened = connect(&hub, "third-connection", &secret, "instance");
+    baseline(&hub, "third-connection", &opened, &panel);
+    let incoming = hub.profile_feedback_token(&second).unwrap();
+    hub.publish_profile_feedback(
+        &second,
+        &incoming,
+        &[sample],
+        FeedbackMode::Snapshot,
+        hub.now_ms(),
+    )
+    .unwrap();
+    assert!(hub
+        .clear_feedback("instance", &panel.publication_hash, hub.now_ms())
+        .is_err());
+    assert_eq!(hub.profile_feedback_token(&second).unwrap(), incoming);
+    hub.clear_profile_feedback(&second, hub.now_ms()).unwrap();
+    assert_ne!(
+        hub.profile_feedback_token(&second)
+            .unwrap()
+            .feedback_generation,
+        incoming.feedback_generation
+    );
+    assert_eq!(
+        wire(&hub, "peer-connection", input(&peer, &panel, "1"))["ok"],
+        true
+    );
+}
+
+#[test]
+fn protected_owner_survives_restart_and_tampered_recovery_cannot_redirect_baseline() {
+    use profile::AssignmentRestore;
+    let storage = Arc::new(Memory::default());
+    let sink = Arc::new(Sink::default());
+    let hub = Hub::with_storage(storage.clone(), sink.clone()).unwrap();
+    paired(&hub, "screen");
+    let original = publish(&hub, fixture());
+    let desired = publish(
+        &hub,
+        mutated(|document| document["ui"]["title"] = json!("Profile owned")),
+    );
+    assign(&hub, "screen", "instance", &original.publication_hash);
+    let receipt = capture(&hub, &desired, None);
+    hub.acquire_profile_assignment(&receipt).unwrap();
+    let encoded = serde_json::to_value(&receipt).unwrap();
+    let receipt: profile::AssignmentReceipt = serde_json::from_value(encoded.clone()).unwrap();
+    assert!(serde_json::from_value::<profile::AssignmentReceipt>(json!({"unknown":true})).is_err());
+    let restarted = Hub::with_existing_storage(storage, sink.clone())
+        .unwrap()
+        .unwrap();
+    publish(&restarted, fixture());
+    publish(
+        &restarted,
+        mutated(|document| document["ui"]["title"] = json!("Profile owned")),
+    );
+    restarted.validate_profile_assignment(&receipt).unwrap();
+    let mut tampered = encoded.clone();
+    tampered["baseline"]["publicationHash"] = json!(desired.publication_hash);
+    let tampered: profile::AssignmentReceipt = serde_json::from_value(tampered).unwrap();
+    assert!(restarted.restore_profile_assignment(&tampered).is_err());
+    let mut tampered = encoded;
+    tampered["desired"]["ownership"]["owner"] = json!(uuid::Uuid::new_v4().to_string());
+    let tampered: profile::AssignmentReceipt = serde_json::from_value(tampered).unwrap();
+    assert_eq!(
+        restarted.restore_profile_assignment(&tampered).unwrap(),
+        AssignmentRestore::OwnershipLost
+    );
+    restarted.validate_profile_assignment(&receipt).unwrap();
+    assert_eq!(
+        restarted.restore_profile_assignment(&receipt).unwrap(),
+        AssignmentRestore::Restored
+    );
+    assert!(sink.owners.lock().unwrap().is_empty());
+}
+
+#[test]
+fn failed_acquisition_preserves_durable_assignment_and_operator_edit_revokes_owner() {
+    use profile::AssignmentRestore;
+    let storage = Arc::new(Memory::default());
+    let hub = Hub::with_storage(storage.clone(), Arc::new(Sink::default())).unwrap();
+    paired(&hub, "screen");
+    let panel = publish(&hub, fixture());
+    assign(&hub, "screen", "instance", &panel.publication_hash);
+    let receipt = capture(&hub, &panel, None);
+    let old = storage.value.lock().unwrap().clone();
+    storage.fail.store(true, Ordering::SeqCst);
+    assert!(hub.acquire_profile_assignment(&receipt).is_err());
+    assert_eq!(*storage.value.lock().unwrap(), old);
+    assert_eq!(
+        hub.restore_profile_assignment(&receipt).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+    storage.fail.store(false, Ordering::SeqCst);
+    hub.acquire_profile_assignment(&receipt).unwrap();
+    let proof = hub
+        .prepare_profile_assignment("instance", &panel.publication_hash)
+        .unwrap();
+    assert!(hub
+        .capture_profile_assignment(&proof, &uuid::Uuid::new_v4().to_string(), None)
+        .is_err());
+    assert!(hub
+        .capture_profile_assignment(&proof, receipt.owner(), Some(&receipt))
+        .is_err());
+    assert!(hub
+        .capture_profile_assignment(&proof, "browser-owner", None)
+        .is_err());
+    assign(&hub, "screen", "instance", &panel.publication_hash);
+    assert!(hub.validate_profile_assignment(&receipt).is_err());
+    assert_eq!(
+        hub.restore_profile_assignment(&receipt).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+    hub.configure_feedback("instance", &panel.publication_hash, &[])
+        .unwrap();
+}
+
+#[test]
+fn maximum_native_panel_uses_compact_bounded_journal_references_and_keeps_baseline_retained() {
+    let storage = Arc::new(Memory::default());
+    let hub = Hub::with_storage(storage.clone(), Arc::new(Sink::default())).unwrap();
+    let companion = "c".repeat(64);
+    let instance = "i".repeat(64);
+    paired(&hub, &companion);
+    let large = |title: &str| {
+        mutated(|document| {
+            document["ui"]["title"] = json!(title);
+            let mut controls = vec![];
+            let mut widgets = vec![];
+            let mut items = vec![];
+            let mut bindings = vec![];
+            for index in 0..128 {
+                let id = format!("control-{index:03}-{}", "x".repeat(52));
+                let bounds = json!({"x":0.0,"y":0.0,"width":0.1,"height":0.1});
+                controls.push(json!({"id":id,"kind":"button","label":"L".repeat(120)}));
+                widgets.push(json!({"id":format!("widget-{index:03}-{}","x".repeat(53)),"pageId":"flight-page-0",
+                "kind":"button","label":"L".repeat(120),"bounds":bounds,"controlIds":[id],"feedbackIds":[],
+                "config":{"buttonMode":"momentary","pulseMs":0,"repeatMs":0}}));
+                items.push(json!({"kind":"control","refId":id,"bounds":bounds}));
+                bindings.push(json!({"controlId":id,"targetId":"flight-target-0","kind":"button","index":index}));
+            }
+            document["ui"]["controls"] = json!(controls);
+            document["ui"]["feedbackWidgets"] = json!([]);
+            document["ui"]["pages"][0]["items"] = json!(items);
+            document["presentation"]["widgets"] = json!(widgets);
+            document["targets"][0]["buttons"] = json!(128);
+            document["targets"][0]["axes"] = json!([]);
+            document["targets"][0]["hats"] = json!(0);
+            document["bindings"] = json!(bindings);
+        })
+    };
+    let baseline_upload = large(&"B".repeat(120));
+    let desired_upload = large(&"D".repeat(120));
+    let baseline = publish(&hub, baseline_upload.clone());
+    let desired = publish(&hub, desired_upload.clone());
+    assert_eq!(desired.controls.len(), 128);
+    assert!(
+        serde_json::to_vec(&desired.definition(&instance))
+            .unwrap()
+            .len()
+            > 8192
+    );
+    assign(&hub, &companion, &instance, &baseline.publication_hash);
+    let proof = hub
+        .prepare_profile_assignment(&instance, &desired.publication_hash)
+        .unwrap();
+    let first = hub
+        .capture_profile_assignment(&proof, &uuid::Uuid::new_v4().to_string(), None)
+        .unwrap();
+    assert!(serde_json::to_vec(&first).unwrap().len() <= 8192);
+    hub.acquire_profile_assignment(&first).unwrap();
+    let proof = hub
+        .prepare_profile_assignment(&instance, &desired.publication_hash)
+        .unwrap();
+    let second = hub
+        .capture_profile_assignment(&proof, &uuid::Uuid::new_v4().to_string(), Some(&first))
+        .unwrap();
+    let encoded = serde_json::to_vec(&second).unwrap();
+    assert!(encoded.len() <= 8192);
+    assert!(!String::from_utf8(encoded.clone())
+        .unwrap()
+        .contains("definition"));
+    hub.acquire_profile_assignment(&second).unwrap();
+    operator(
+        &hub,
+        json!({"command":"companion_prune","hashes":[],"panelIds":[desired.ui_id]}),
+    );
+    assert!(hub
+        .publication_uploads()
+        .iter()
+        .any(|panel| panel.publication_hash == baseline.publication_hash));
+    let restarted = Hub::with_existing_storage(storage, Arc::new(Sink::default()))
+        .unwrap()
+        .unwrap();
+    publish(&restarted, baseline_upload);
+    publish(&restarted, desired_upload);
+    let restored: profile::AssignmentReceipt = serde_json::from_slice(&encoded).unwrap();
+    restarted.validate_profile_assignment(&restored).unwrap();
+    assert_eq!(
+        restarted.restore_profile_assignment(&restored).unwrap(),
+        profile::AssignmentRestore::Restored
+    );
+    assert_eq!(
+        restarted
+            .assigned_publication(&instance)
+            .unwrap()
+            .publication_hash,
+        baseline.publication_hash
+    );
+}
