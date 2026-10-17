@@ -1,0 +1,21 @@
+import assert from'node:assert/strict';import test from'node:test';import{loadModules}from'./test-module-loader.mjs';
+const modules=await loadModules(['./profiles','./profile-inventory','./profile-learning']);const{ProfileLearningClient,captureLearningStatus}=modules.get('./profile-learning');
+const id='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`;
+const source=()=>({resourceId:'native:controller',generation:'1',capabilityRevision:hash});
+const candidate=()=>({descriptor:{id:'hid:0009:0001:0:0:1',name:'Button',direction:'output',contract:{delivery:'state',schema:{type:'boolean'},freshnessMs:1500,fallback:false}},contractHash:hash,routeIds:['hid:'+other],current:true});
+const status=(phase='listening')=>({schemaVersion:1,learnId:id,...source(),phase,reason:phase==='learned'?'Choose explicitly.':'',capturedUs:'100',untilUs:'30000100',candidates:phase==='learned'?[candidate()]:[]});
+const plain=value=>JSON.parse(JSON.stringify(value));
+test('learning client sends only exact native selection/ID requests and returns immutable descriptor candidates',async()=>{
+  const calls=[],native=status('learned'),client=new ProfileLearningClient(async request=>{calls.push(plain(request));return request.command==='profile_input_learn_start'?status():request.command==='profile_input_learn_cancel'?status('stopped'):native;});const selected=source(),starting=client.start(selected);selected.generation='9';await starting;const observed=await client.status(id);native.candidates[0].descriptor.name='mutated';assert.equal(observed.candidates[0].descriptor.name,'Button');assert.ok(Object.isFrozen(observed.candidates[0].descriptor.contract));await client.cancel(id);assert.deepEqual(calls,[{command:'profile_input_learn_start',...source()},{command:'profile_input_learn_status',learnId:id},{command:'profile_input_learn_cancel',learnId:id}]);
+});
+test('invalid request identity never reaches native, and native admission errors are neither retried nor converted into capture success',async()=>{
+  let calls=0;const client=new ProfileLearningClient(async()=>{calls++;throw new Error('Stop all outputs explicitly first.');});for(const patch of [{generation:'01'},{generation:'18446744073709551616'},{capabilityRevision:'bad'},{resourceId:''},{resourceId:'bad\nsource'},{sample:true}])await assert.rejects(client.start({...source(),...patch}),/current native/);await assert.rejects(client.status('forged'),/current native/);await assert.rejects(client.cancel('forged'),/current native/);assert.equal(calls,0);await assert.rejects(client.start(source()),/Stop all outputs/);assert.equal(calls,1);
+});
+test('malformed, nonphysical, ambiguous duplicate or out-of-window candidates cannot become learned capture state',()=>{
+  const changes=[s=>s.schemaVersion=2,s=>s.learnId='bad',s=>s.phase='running',s=>s.generation='01',s=>s.untilUs='0',s=>s.capturedUs='30000101',s=>s.candidates=[],s=>s.candidates[0].current=false,s=>s.candidates[0].contractHash='bad',s=>s.candidates[0].descriptor.direction='input',s=>s.candidates[0].routeIds=['usb:serial'],s=>s.candidates[0].descriptor.contract.freshnessMs=0,s=>s.candidates.push(plain(s.candidates[0])),s=>s.extra=true,s=>s.reason='bad\ntext'];
+  for(const change of changes){const data=status('learned');change(data);assert.throws(()=>captureLearningStatus(data),/malformed/);}
+  assert.throws(()=>captureLearningStatus({...status(),candidates:[candidate()]}),/malformed/);assert.throws(()=>captureLearningStatus({...status('stopped'),candidates:[candidate()]}),/malformed/);assert.equal(captureLearningStatus({...status('stopped'),capturedUs:'18446744073709551615'}).capturedUs,'18446744073709551615');
+});
+test('reply capture identities and cancellation phases must match the exact operation',async()=>{
+  await assert.rejects(new ProfileLearningClient(async()=>({...status(),resourceId:'other'})).start(source()),/does not match/);await assert.rejects(new ProfileLearningClient(async()=>status('learned')).start(source()),/does not match/);await assert.rejects(new ProfileLearningClient(async()=>({...status(),learnId:other})).status(id),/another capture/);await assert.rejects(new ProfileLearningClient(async()=>status()).cancel(id),/confirm cancellation/);
+});
