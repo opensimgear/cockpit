@@ -26,6 +26,8 @@ pub(crate) use profile_panels_io::ProfilePanelIo;
 mod automatic;
 #[path = "profile_companion_authoring_gateway.rs"]
 mod companion_authoring;
+#[path = "profile_companion_retention.rs"]
+mod companion_retention;
 
 trait Adapter: Send + Sync {
     fn output_activity(&self)->bool{false}
@@ -116,6 +118,7 @@ fn empty_state() -> Value {
     json!({"connected":false,"running":false,"needsReconnect":false,"reconnecting":false,"modules":[],"port":null,"ports":[]})
 }
 fn profile_guard_operation(command: &str) -> Option<&str> {
+    if command=="profile_companion_references" { return None; }
     if matches!(command,
         "mapping_profiles" | "mapping_get" | "mapping_export" | "mapping_status" | "mapping_targets_get" | "mapping_assignments_get" | "mapping_trace_export" | "mapping_script_validate"
         | "mapping_panel_sources" | "mapping_panel_inspect" | "mapping_companion_sources" | "mapping_companion_inspect" | "mapping_virtual_inspect"
@@ -821,7 +824,7 @@ impl GatewayManager {
             let result = if command == "companion_feedback_routes" {
                 self.companion_feedback.request(&request["companion"])
             } else {
-                self.companion_host.request(&request)
+                self.companion_request(&request)
             };
             return match result {
                 Ok(state) => json!({"ok":true,"state":{"companions":state}}),

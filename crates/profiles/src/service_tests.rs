@@ -20,6 +20,53 @@ fn resource() -> Resource {
 }
 
 #[test]
+fn saved_companion_references_follow_all_documents_without_editor_or_runtime_effects() {
+    let temp = crate::test_directory();
+    let root = temp.path().join("profiles-v2");
+    let mut service = Service::new(Some(root.clone()));
+    let mut saved = vec![];
+    for (name, letter) in [("First", 'b'), ("Second", 'a'), ("Third", 'b')] {
+        let mut document = create(&mut service, name);
+        document["resources"] = json!([{"id":"panel","name":"Panel","kind":"companion","required":false,"ports":[]}]);
+        document["companionAssignments"] = json!([{"resourceId":"panel","publicationHash":format!("sha256:{}",letter.to_string().repeat(64))}]);
+        saved.push(service.request(&json!({"command":"profile_save","document":document,"expectedRevision":1})).unwrap()["document"].clone());
+    }
+    let bytes = std::fs::read(root.join("library.json")).unwrap();
+    let status = service.status();
+    let references = service.request(&json!({"command":"profile_companion_references"})).unwrap()["publicationReferences"].clone();
+    assert_eq!(references["schemaVersion"], 1);
+    assert_eq!(references["hashes"], json!([format!("sha256:{}","a".repeat(64)),format!("sha256:{}","b".repeat(64))]));
+    assert_eq!(references["libraryFingerprint"].as_str().unwrap().len(), 71);
+    assert_eq!(std::fs::read(root.join("library.json")).unwrap(), bytes);
+    assert_eq!(service.status(), status);
+    service.request(&json!({"command":"profile_select","id":saved[0]["id"],"selectionSource":"manual"})).unwrap();
+    assert_eq!(service.companion_references().unwrap(), references);
+    assert!(service.status()["session"]["appliedSnapshot"].is_null());
+    for document in [&saved[0], &saved[2]] {
+        service.request(&json!({"command":"profile_delete","id":document["id"],"expectedRevision":2})).unwrap();
+    }
+    let remaining = service.companion_references().unwrap();
+    assert_ne!(remaining["libraryFingerprint"], references["libraryFingerprint"]);
+    assert_eq!(remaining["hashes"], json!([format!("sha256:{}","a".repeat(64))]));
+    assert_eq!(Service::new(Some(root)).companion_references().unwrap(), remaining);
+}
+
+#[test]
+fn companion_reference_reads_refuse_corrupt_storage_and_browser_authority() {
+    let temp = crate::test_directory();
+    let root = temp.path().join("profiles-v2");
+    std::fs::create_dir_all(&root).unwrap();
+    let original = b"{corrupt saved references";
+    std::fs::write(root.join("library.json"), original).unwrap();
+    let mut service = Service::new(Some(root.clone()));
+    assert!(service.request(&json!({"command":"profile_companion_references"})).unwrap_err().contains("preserve companion publications"));
+    assert!(service.request(&json!({"command":"profile_companion_references","hashes":[]})).unwrap_err().contains("Unknown field"));
+    assert_eq!(std::fs::read(root.join("library.json")).unwrap(), original);
+    service.request(&json!({"command":"profile_reset","confirm":true})).unwrap();
+    assert_eq!(service.companion_references().unwrap()["hashes"], json!([]));
+}
+
+#[test]
 fn crud_restarts_with_independent_identity_and_revision_conflicts() {
     let temp = crate::test_directory();
     let root = temp.path().join("profiles-v2");

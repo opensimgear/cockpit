@@ -59,7 +59,7 @@ impl Service {
             .as_str()
             .ok_or("A profile command is required.")?;
         let fields: &[&str] = match command {
-            "profile_list" | "profile_status" => &[],
+            "profile_list" | "profile_status" | "profile_companion_references" => &[],
             "profile_apply" => &["id"],
             "profile_get" | "profile_export" | "profile_assignments_get" => &["id"],
             "profile_assignments_save" => &["id", "expectedRevision", "assignments"],
@@ -103,6 +103,7 @@ impl Service {
                     "diagnostics":self.diagnostics,"readOnly":self.read_only}))
             }
             "profile_status" => Ok(self.status()),
+            "profile_companion_references" => Ok(json!({"publicationReferences":self.companion_references()?})),
             "profile_get" | "profile_export" => {
                 let document = self.document(required_text(request, "id")?)?;
                 Ok(json!({"document":document}))
@@ -159,6 +160,20 @@ impl Service {
                 self.mutate(command, request)
             }
         }
+    }
+
+    /// Saved graph references are independent of editor selection and live Hub
+    /// assignments. Hold the Service lock through pruning when consuming them.
+    pub fn companion_references(&self) -> Result<Value, String> {
+        use sha2::{Digest, Sha256};
+        if self.read_only {
+            return Err("Profile storage is read-only; preserve companion publications until its saved references can be verified.".into());
+        }
+        let hashes = self.library.profiles.iter()
+            .flat_map(|document| document.companion_assignments.iter().map(|assignment| assignment.publication_hash.as_str()))
+            .collect::<std::collections::BTreeSet<_>>();
+        let bytes = serde_json::to_vec(&self.library).map_err(|error| error.to_string())?;
+        Ok(json!({"schemaVersion":1,"libraryFingerprint":format!("sha256:{:x}",Sha256::digest(bytes)),"hashes":hashes}))
     }
 
     fn mutate(&mut self, command: &str, request: &Value) -> Result<Value, String> {
