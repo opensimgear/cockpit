@@ -1,0 +1,422 @@
+use super::*;
+use osg_profiles::compiler_models::{BackendCapabilities, CompileSnapshot};
+use serde_json::json;
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+struct Probe {
+    calls: Vec<String>,
+    fail: Option<String>,
+    owner: Option<RunOwner>,
+    value: u32,
+    hidden: bool,
+    health: Health,
+}
+struct Fake(Arc<Mutex<Probe>>);
+fn checkpoint(probe: &mut Probe, name: String) -> Result<(), String> {
+    probe.calls.push(name.clone());
+    if probe.fail.as_ref() == Some(&name) {
+        probe.fail = None;
+        Err(format!("uncertain {name}"))
+    } else {
+        Ok(())
+    }
+}
+impl Host for Fake {
+    fn prepare(&mut self, candidate: &Candidate, _: &RunOwner) -> Result<Prepared, String> {
+        let mut probe = self.0.lock().unwrap();
+        checkpoint(&mut probe, "prepare".into())?;
+        let snapshot = CompileSnapshot {
+            inventory_session: "fixture".into(),
+            inventory_revision: "1".into(),
+            assignments: vec![],
+            resources: vec![],
+            game_context: None,
+            backend: BackendCapabilities::default(),
+            inventory_diagnostics: vec![],
+            read_only: false,
+        };
+        let report = osg_profiles::compiler::compile(&candidate.document, &snapshot);
+        Ok(Prepared {
+            plan: report.plan.unwrap(),
+            admission: Admission::default(),
+            program_hash: report.program_hash.unwrap(),
+            capture_fingerprint: report.capture_fingerprint,
+        })
+    }
+    fn validate_prepared(&mut self, _: &Prepared, _: &RunOwner) -> Result<(), String> {
+        checkpoint(&mut self.0.lock().unwrap(), "validate".into())
+    }
+    fn capture(
+        &mut self,
+        _: &Prepared,
+        _: &RunOwner,
+        previous: Option<&OwnedRun>,
+    ) -> Result<Vec<Receipt>, String> {
+        let mut probe = self.0.lock().unwrap();
+        checkpoint(&mut probe, "capture".into())?;
+        // The baseline is transferred across runs rather than treating the
+        // previous profile's override as the user's original configuration.
+        Ok(previous.map(|run| run.receipts.clone()).unwrap_or_else(|| {
+            vec![Receipt {
+                kind: "fixture".into(),
+                resource_id: "physical-fixture".into(),
+                state: json!({"baseline":probe.value}),
+            }]
+        }))
+    }
+    fn set_authority(&mut self, owner: Option<&RunOwner>) -> Result<(), String> {
+        let mut probe = self.0.lock().unwrap();
+        probe.owner = owner.cloned();
+        checkpoint(
+            &mut probe,
+            if owner.is_some() {
+                "authorize"
+            } else {
+                "revoke"
+            }
+            .into(),
+        )
+    }
+    fn neutralize(&mut self, _: &OwnedRun) -> Result<(), String> {
+        let mut probe = self.0.lock().unwrap();
+        probe.hidden = false;
+        checkpoint(&mut probe, "neutralize".into())
+    }
+    fn enter(&mut self, phase: ApplyPhase, _: &Prepared, run: &OwnedRun) -> Result<(), String> {
+        let mut probe = self.0.lock().unwrap();
+        match phase {
+            ApplyPhase::Overrides => probe.value = run.owner.profile_revision as u32 + 100,
+            ApplyPhase::Visibility => probe.hidden = true,
+            _ => {}
+        }
+        checkpoint(&mut probe, format!("enter:{phase:?}"))
+    }
+    fn restore(&mut self, run: &OwnedRun, recovery: bool) -> Result<(), String> {
+        let mut probe = self.0.lock().unwrap();
+        probe.value = run.receipts[0].state["baseline"].as_u64().unwrap() as u32;
+        probe.hidden = false;
+        checkpoint(&mut probe, format!("restore:{recovery}"))
+    }
+    fn health(&mut self, _: &OwnedRun) -> Result<Health, String> {
+        let mut probe = self.0.lock().unwrap();
+        checkpoint(&mut probe, "health".into())?;
+        Ok(probe.health.clone())
+    }
+    fn discard_preparation(&mut self, _: &RunOwner) {
+        self.0.lock().unwrap().calls.push("discard".into());
+    }
+}
+fn candidate() -> Candidate {
+    Candidate {
+        document: osg_profiles::default_document(),
+        assignments: vec![],
+        read_only: false,
+        game_id: None,
+    }
+}
+fn coordinator(path: Option<PathBuf>) -> (Coordinator<Fake>, Arc<Mutex<Probe>>) {
+    let probe = Arc::new(Mutex::new(Probe {
+        value: 42,
+        ..Default::default()
+    }));
+    (Coordinator::new(Fake(probe.clone()), path), probe)
+}
+fn temp() -> tempfile::TempDir {
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+}
+
+#[test]
+fn startup_is_zero_effect_and_default_needs_no_optional_backend() {
+    let (mut runtime, probe) = coordinator(None);
+    assert_eq!(runtime.status().state, State::Stopped);
+    assert!(probe.lock().unwrap().calls.is_empty());
+    runtime.apply(candidate()).unwrap();
+    assert_eq!(runtime.status().state, State::Running);
+    let owner = runtime.status().owner.clone().unwrap();
+    assert!(runtime.validates(&owner));
+    runtime.stop().unwrap();
+    assert!(!runtime.validates(&owner));
+    assert_eq!(probe.lock().unwrap().value, 42);
+    assert!(!probe.lock().unwrap().hidden);
+}
+#[test]
+fn prepare_capture_and_initial_journal_failures_preserve_previous_run() {
+    for failure in ["prepare", "validate", "capture", "journal"] {
+        let (mut runtime, probe) = coordinator(None);
+        runtime.apply(candidate()).unwrap();
+        let previous = runtime.status().owner.clone().unwrap();
+        let baseline_calls = probe.lock().unwrap().calls.len();
+        if failure == "journal" {
+            runtime.store.fail_save = true;
+        } else {
+            probe.lock().unwrap().fail = Some(failure.into());
+        }
+        assert!(runtime.apply(candidate()).is_err(), "{failure}");
+        assert!(runtime.validates(&previous), "{failure}");
+        let probe = probe.lock().unwrap();
+        assert_eq!(probe.owner.as_ref(), Some(&previous));
+        assert!(!probe.calls[baseline_calls..]
+            .iter()
+            .any(|call| call == "revoke"));
+    }
+}
+#[test]
+fn every_uncertain_activation_phase_is_compensated_and_never_replayed() {
+    for phase in APPLY_PHASES {
+        let (mut runtime, probe) = coordinator(None);
+        runtime.apply(candidate()).unwrap();
+        let previous = runtime.status().owner.clone().unwrap();
+        probe.lock().unwrap().fail = Some(format!("enter:{phase:?}"));
+        assert!(runtime.apply(candidate()).is_err());
+        assert_eq!(runtime.status().state, State::RecoveryNeeded);
+        assert!(!runtime.validates(&previous));
+        let observed = probe.lock().unwrap();
+        assert!(observed.owner.is_none());
+        assert_eq!(observed.value, 42);
+        assert!(!observed.hidden);
+        drop(observed);
+        let calls = probe.lock().unwrap().calls.len();
+        runtime.recover().unwrap();
+        assert!(!probe.lock().unwrap().calls[calls..]
+            .iter()
+            .any(|call| call.starts_with("enter:")));
+        assert_eq!(runtime.status().state, State::Stopped);
+    }
+}
+#[test]
+fn pause_latch_survives_restart_and_selection_cannot_rearm_it() {
+    let folder = temp();
+    let path = folder.path().join("session.json");
+    let (mut runtime, _) = coordinator(Some(path.clone()));
+    runtime.apply(candidate()).unwrap();
+    runtime.pause(true).unwrap();
+    assert!(runtime.apply(candidate()).is_err());
+    drop(runtime);
+    let (mut restarted, probe) = coordinator(Some(path));
+    assert_eq!(restarted.status().state, State::Paused);
+    assert!(probe.lock().unwrap().calls.is_empty());
+    assert!(restarted.apply(candidate()).is_err());
+    restarted.pause(false).unwrap();
+    assert!(probe.lock().unwrap().calls.is_empty());
+    restarted.apply(candidate()).unwrap();
+    assert_eq!(restarted.status().state, State::Running);
+}
+#[test]
+fn restart_requires_explicit_owned_recovery_without_starting_workers_or_rehiding() {
+    let folder = temp();
+    let path = folder.path().join("session.json");
+    let (mut runtime, _) = coordinator(Some(path.clone()));
+    runtime.apply(candidate()).unwrap();
+    drop(runtime);
+    let (mut restarted, probe) = coordinator(Some(path));
+    assert_eq!(restarted.status().state, State::RecoveryNeeded);
+    assert!(probe.lock().unwrap().calls.is_empty());
+    assert!(restarted.apply(candidate()).is_err());
+    restarted.recover().unwrap();
+    assert!(probe
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .any(|call| call == "restore:true"));
+    assert!(!probe
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .any(|call| call.starts_with("enter:")));
+    assert_eq!(restarted.status().state, State::Stopped);
+}
+#[test]
+fn owned_setup_is_restored_across_switches_and_stale_workers_are_fenced() {
+    let (mut runtime, probe) = coordinator(None);
+    runtime.apply(candidate()).unwrap();
+    let old = runtime.status().owner.clone().unwrap();
+    let mut next = candidate();
+    next.document.revision = 2;
+    runtime.apply(next).unwrap();
+    let new = runtime.status().owner.clone().unwrap();
+    assert!(!runtime.validates(&old));
+    assert!(runtime.validates(&new));
+    assert!(new.generation > old.generation);
+    runtime.stop().unwrap();
+    assert_eq!(probe.lock().unwrap().value, 42);
+}
+#[test]
+fn provider_loss_degrades_without_guessing_a_replacement_and_game_exit_stops_authority() {
+    let (mut runtime, probe) = coordinator(None);
+    runtime.apply(candidate()).unwrap();
+    let owner = runtime.status().owner.clone().unwrap();
+    probe.lock().unwrap().health.degraded =
+        vec!["Assigned input disconnected; branch fallback is active.".into()];
+    runtime.poll().unwrap();
+    assert_eq!(runtime.status().state, State::Degraded);
+    assert!(runtime.validates(&owner));
+    probe.lock().unwrap().health.stop = Some("Verified game process exited.".into());
+    runtime.poll().unwrap();
+    assert_eq!(runtime.status().state, State::Faulted);
+    assert!(!runtime.validates(&owner));
+    assert!(probe.lock().unwrap().owner.is_none());
+}
+#[test]
+fn restoration_failure_retains_receipts_until_explicit_recovery() {
+    let folder = temp();
+    let path = folder.path().join("session.json");
+    let (mut runtime, probe) = coordinator(Some(path.clone()));
+    runtime.apply(candidate()).unwrap();
+    probe.lock().unwrap().fail = Some("restore:false".into());
+    assert!(runtime.stop().is_err());
+    assert_eq!(runtime.status().state, State::RecoveryNeeded);
+    drop(runtime);
+    let (mut restarted, _) = coordinator(Some(path));
+    assert_eq!(restarted.status().state, State::RecoveryNeeded);
+    restarted.recover().unwrap();
+}
+#[test]
+fn overlapping_owner_external_edits_and_corrupt_journals_preserve_evidence() {
+    let folder = temp();
+    let path = folder.path().join("session.json");
+    let (mut runtime, _) = coordinator(Some(path.clone()));
+    runtime.apply(candidate()).unwrap();
+    let (mut second, probe) = coordinator(Some(path.clone()));
+    assert_eq!(second.status().state, State::RecoveryNeeded);
+    assert!(second.recover().is_err());
+    assert!(probe
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .all(|call| call == "revoke"));
+    drop(second);
+    std::fs::write(&path, b"external").unwrap();
+    assert!(runtime.stop().is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+    drop(runtime);
+    let (mut corrupt, probe) = coordinator(Some(path.clone()));
+    assert_eq!(corrupt.status().state, State::RecoveryNeeded);
+    assert!(corrupt.recover().is_err());
+    assert!(probe
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .all(|call| call == "revoke"));
+    assert_eq!(std::fs::read(path).unwrap(), b"external");
+}
+#[test]
+fn independent_edits_are_guarded_and_emergency_stop_is_available() {
+    let (mut runtime, _) = coordinator(None);
+    runtime.apply(candidate()).unwrap();
+    for command in [
+        "mapping_start",
+        "mapping_configure",
+        "companion_feedback_routes",
+        "game_activate",
+        "claim",
+        "config_apply",
+        "action_invoke",
+    ] {
+        assert!(runtime.guard_request(command).is_err(), "{command}");
+    }
+    for command in [
+        "profile_status",
+        "profile_get",
+        "mapping_stop",
+        "controller_visibility_restore",
+    ] {
+        assert!(runtime.guard_request(command).is_ok(), "{command}");
+    }
+}
+
+#[test]
+fn recovery_envelope_rejects_missing_fields_forged_phases_and_oversized_data() {
+    let folder = temp();
+    let path = folder.path().join("session.json");
+    let (mut runtime, _) = coordinator(Some(path.clone()));
+    runtime.apply(candidate()).unwrap();
+    drop(runtime);
+    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut cases = vec![];
+    let mut value = original.clone();
+    value.as_object_mut().unwrap().remove("active");
+    cases.push(value);
+    let mut value = original.clone();
+    value["active"]["owner"]
+        .as_object_mut()
+        .unwrap()
+        .remove("gameId");
+    cases.push(value);
+    let mut value = original.clone();
+    value["active"]["attempted"] = json!(["start"]);
+    cases.push(value);
+    let mut value = original.clone();
+    value["active"]["snapshot"]["execute"] = json!(true);
+    cases.push(value);
+    let mut value = original.clone();
+    value["active"]["receipts"][0]["state"]["large"] = json!("x".repeat(128 * 1024));
+    cases.push(value);
+    let mut value = original.clone();
+    value["active"]["receipts"] = json!([
+        value["active"]["receipts"][0],
+        value["active"]["receipts"][0]
+    ]);
+    cases.push(value);
+    for value in cases {
+        let bytes = serde_json::to_vec(&value).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let (mut runtime, probe) = coordinator(Some(path.clone()));
+        assert_eq!(runtime.status().state, State::RecoveryNeeded);
+        assert!(runtime.recover().is_err());
+        assert!(probe
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .all(|call| call == "revoke"));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    std::fs::write(&path, vec![b' '; 2 * 1024 * 1024 + 1]).unwrap();
+    let (mut runtime, _) = coordinator(Some(path.clone()));
+    assert!(runtime.recover().is_err());
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 2 * 1024 * 1024 + 1);
+}
+
+#[test]
+fn resume_during_unresolved_recovery_preserves_persistent_pause() {
+    let folder = temp();
+    let path = folder.path().join("session.json");
+    let (mut runtime, probe) = coordinator(Some(path.clone()));
+    runtime.apply(candidate()).unwrap();
+    probe.lock().unwrap().fail = Some("restore:false".into());
+    assert!(runtime.pause(true).is_err());
+    assert!(runtime.pause(false).is_err());
+    drop(runtime);
+    let (mut restarted, _) = coordinator(Some(path));
+    assert!(restarted.status().paused);
+    restarted.recover().unwrap();
+    assert_eq!(restarted.status().state, State::Paused);
+}
+
+#[test]
+fn pause_revokes_workers_and_hiding_even_when_durable_storage_fails() {
+    let (mut runtime, probe) = coordinator(None);
+    runtime.apply(candidate()).unwrap();
+    let owner = runtime.status().owner.clone().unwrap();
+    runtime.pause(false).unwrap();
+    assert!(
+        runtime.validates(&owner),
+        "Idempotent Resume cannot orphan an already running owner."
+    );
+    runtime.store.fail_save = true;
+    assert!(runtime.pause(true).is_err());
+    assert!(runtime.status().paused);
+    assert_eq!(runtime.status().state, State::RecoveryNeeded);
+    assert!(!runtime.validates(&owner));
+    assert!(probe.lock().unwrap().owner.is_none());
+    assert!(!probe.lock().unwrap().hidden);
+    assert!(runtime.apply(candidate()).is_err());
+    runtime.store.fail_save = false;
+    runtime.recover().unwrap();
+    assert_eq!(runtime.status().state, State::Paused);
+}

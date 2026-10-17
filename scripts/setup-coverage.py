@@ -26,14 +26,19 @@ def production_end(lines):
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    sources = [root / 'src-tauri/src' / name
-               for name in ['dcs_setup.rs', 'game_integration_setup.rs', 'acr_setup.rs',
-                            'game_context.rs', 'game_context_runtime.rs', 'game_provider_settings.rs']]
-    source_hashes = {str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
-                     for source in sources}
+    module_names = ['dcs_setup.rs', 'game_integration_setup.rs', 'acr_setup.rs',
+                    'game_context.rs', 'game_context_runtime.rs', 'game_provider_settings.rs',
+                    'profile_session.rs', 'profile_session_journal.rs']
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=root / '.research/setup-coverage')
+    parser.add_argument('--module', action='append', choices=module_names,
+                        help='Focused local measurement; CI defaults to every production module.')
+    parser.add_argument('--test-filter', action='append', default=[],
+                        help='Focused local test filter; CI defaults to the complete native suite.')
     args = parser.parse_args()
+    sources = [root / 'src-tauri/src' / name for name in args.module or module_names]
+    source_hashes = {str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
+                     for source in sources}
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     archive = os.environ.get('OSG_DCS_SETUP_ARCHIVE')
@@ -60,7 +65,8 @@ def main():
         raise RuntimeError('Expected one instrumented Cockpit library test executable.')
     profiles = Path(tempfile.mkdtemp(prefix='test-profiles-', dir=output))
     test_environment = dict(environment, LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
-    tests = command([binaries[0], '--test-threads=1'], root, test_environment)
+    tests = ''.join(command([binaries[0], *([test_filter] if test_filter else []), '--test-threads=1'],
+                            root, test_environment) for test_filter in args.test_filter or [''])
     smoke = command([binaries[0], 'official_pinned_archive_smoke', '--ignored'], root, test_environment)
     if not re.search(r'test result: ok\. [1-9]\d* passed;', smoke):
         raise RuntimeError('The official archive smoke test did not run; production runtime coverage cannot be qualified.')
