@@ -1,0 +1,9 @@
+# Passive companion panel authoring
+
+The profile editor reads a bounded retained-publication catalogue and exact prospective port pages. Native paired-instance identity comes only from cached inventory evidence; a browser cannot supply an instance, delivery token or live sample. The catalogue getter neither expires sessions nor copies publication assets, and reads never start listeners, assign a panel or create missing native setup.
+
+Prospective pages carry immutable publication/capability hashes and a paired-identity fingerprint. They explicitly have no current baseline or delivery routes. Paging stops on identity changes. Draft selection captures the desired publication and only explicitly chosen exact logical ports. Replacing a panel with declared ports requires explicit reconciliation. Copied graphs can map every existing logical port to a chosen paired companion's desired prospective catalogue while preserving compatible routes, even when the companion currently shows another panel.
+
+The SDK and typed gateway boundary are independent of the Svelte authoring component. There is no inferred assignment, synthetic interactive control, Save or Apply. Real publications still require 1–128 interactive controls; a graph may select only their feedback ports.
+
+Validation: five actual Runtime/Hub authoring tests, strict Manager request parsing and cached offline identity regression pass. The native authoring gate covers 48/51 production lines (94.12%), with source stamps for Hub metadata, paired preparation and native port derivation. Seven SDK tests pass at 94.68% lines, 97.14% branches and 95.74% functions. All 31 gateway tests pass, including read queue independence from Save and emergency controls. CI retains the existing 71% minimum and adds the new independent SDK/native boundaries. Actual panel renderer acceptance remains separate.

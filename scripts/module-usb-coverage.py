@@ -11,9 +11,9 @@ import sys
 import tempfile
 
 
-MODULES = ["profile_session_launch", "profile_session_visibility_host", "profile_session_actions", "profile_session_action_lease", "profile_automatic", "profile_game_launch", "profile_session_companion_host", "output_leases", "module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
+MODULES = ["profile_session_launch", "profile_session_actions", "profile_session_visibility_host", "profile_companion_authoring", "profile_session_action_lease", "profile_automatic", "profile_game_launch", "profile_session_companion_host", "output_leases", "module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
            "profile_resources", "profile_resources_game", "profile_session_panels_io", "profile_session_panels_inputs", "profile_session_inspection", "profile_resource_sources", "profile_resource_ports", "profile_compilation", "profile_input_learning", "profile_session_companions", "profile_session_visibility", "profile_session_overrides", "game_activation", "game_activation_runtime", "profile_automatic_store"]
-TEST_FILTERS = ["profile_session::launch", "profile_session_host::visibility::tests", "profile_session_actions::tests", "profile_session_action_lease::tests", "gateways::automatic", "games::launch::tests", "input_learning", "output_leases", "module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "stm32::tests::guarded_restoration", "stm32::tests::atomic_current_claim", "stm32::tests::endpoint_lease", "pico::tests::cached_endpoint_activity", "profile_panels_io", "profile_session_panels_inputs", "profile_session::inspection", "gateways::tests::applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate", "profile_session_companions::tests", "profile_session_host::companion::tests", "profile_session_visibility::tests", "profile_session_overrides::tests", "game_activation", "profile_automatic_store"]
+TEST_FILTERS = ["profile_session::launch", "profile_session_actions::tests", "profile_session_host::visibility::tests", "companion_host::authoring", "gateways::companion_authoring", "profile_session_action_lease::tests", "gateways::automatic", "games::launch::tests", "input_learning", "output_leases", "module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "stm32::tests::guarded_restoration", "stm32::tests::atomic_current_claim", "stm32::tests::endpoint_lease", "pico::tests::cached_endpoint_activity", "profile_panels_io", "profile_session_panels_inputs", "profile_session::inspection", "gateways::tests::applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate", "profile_session_companions::tests", "profile_session_host::companion::tests", "profile_session_visibility::tests", "profile_session_overrides::tests", "game_activation", "profile_automatic_store"]
 
 
 def source_stamp(paths, root):
@@ -73,6 +73,13 @@ def main():
         crate_root = root / "crates" / crate
         tracked.extend(sorted((crate_root / "src").glob("*.rs")))
         tracked.extend([crate_root / "Cargo.toml", crate_root / "Cargo.lock"])
+    # Passive companion authoring depends on metadata-only Hub projection and
+    # native paired-identity validation, never operator status/session expiry.
+    tracked.extend([root / "src-tauri/src/profile_companion_authoring_gateway.rs",
+                    root / "crates/companion-service/src/hub.rs",
+                    root / "crates/companion-service/src/profile.rs",
+                    root / "crates/companion-service/src/publication.rs",
+                    root / "crates/mapping-host/src/companions.rs"])
     initial_stamp = source_stamp(tracked, root)
     profiles = Path(tempfile.mkdtemp(prefix="profiles-", dir=output))
     env = dict(os.environ,

@@ -24,6 +24,8 @@ mod profile_panels_io;
 pub(crate) use profile_panels_io::ProfilePanelIo;
 #[path = "profile_automatic.rs"]
 mod automatic;
+#[path = "profile_companion_authoring_gateway.rs"]
+mod companion_authoring;
 
 trait Adapter: Send + Sync {
     fn output_activity(&self)->bool{false}
@@ -758,6 +760,9 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if matches!(command.as_str(),"profile_companion_catalogue"|"profile_companion_inspect"){
+                return match self.companion_authoring_request(&request){Ok(page)=>json!({"ok":true,"state":{"profileCompanionAuthoring":page}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
+            }
             if matches!(command.as_str(),"profile_automatic_status"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_selection_mode"){
                 return match self.automatic_request(&request){Ok(profiles)=>json!({"ok":true,"state":{"profiles":profiles}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
             }

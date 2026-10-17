@@ -346,6 +346,16 @@ impl Hub {
     }
 
     /// Trusted local persistence boundary; never exposed as a wire operation.
+    /// Metadata only: unlike operator status, this does not expire sessions or
+    /// copy publication documents/assets while a profile editor is browsing.
+    pub fn publication_summaries(&self) -> Vec<Value> {
+        self.inner.lock().unwrap_or_else(|p|p.into_inner()).publications.values().map(|p|json!({
+            "publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,
+            "title":p.title,"controlCount":p.controls.len(),"assetCount":p.assets.len()
+        })).collect()
+    }
+
+    /// Trusted local persistence boundary; never exposed as a wire operation.
     pub fn publication_uploads(&self) -> Vec<PublicationUpload> {
         self.inner.lock().unwrap_or_else(|p|p.into_inner()).publications.values().map(|p|PublicationUpload {
             canonical_document:p.canonical_document.clone(),publication_hash:p.publication_hash.clone(),

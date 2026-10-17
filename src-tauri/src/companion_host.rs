@@ -16,6 +16,8 @@ include!(concat!(env!("OUT_DIR"), "/companion_firmware.rs"));
 include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
 
 const MAX_UPLOAD: usize = 13 * 1024 * 1024;
+#[path = "profile_companion_authoring.rs"]
+pub(crate) mod authoring;
 struct Upload {
     id: String,
     owner: String,

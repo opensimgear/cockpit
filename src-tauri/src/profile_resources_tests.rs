@@ -4,6 +4,24 @@ use osg_profiles::resources_ports::{
     ActionParameter, ActionSemantics, PortContract, PortDescriptor, PortUpdate, ScalarSchema,
 };
 use osg_profiles::{Direction, PortValue};
+#[test]
+fn companion_authoring_identity_is_cached_exact_and_retained_when_offline() {
+    use osg_profiles::resources::{EvidenceKind,IdentityEvidence};
+    let runtime=Runtime::new(None,Arc::new(|_|panic!("Authoring must not start discovery")),false);
+    let mut item=observed(1);item.key="paired".into();item.resource_type=ResourceType::Companion;
+    item.evidence=vec![IdentityEvidence{kind:EvidenceKind::CompanionInstance,value:"paired-instance".into()}];
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","paired-provider",1,vec![item])).unwrap();
+    let id=runtime.state.lock().unwrap().registry.list(0,1).unwrap().resources[0].id.clone();
+    assert_eq!(runtime.companion_authoring_identity(&id).unwrap(),(id.clone(),"paired-instance".into()));
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","paired-provider",2,vec![])).unwrap();
+    assert_eq!(runtime.companion_authoring_identity(&id).unwrap(),(id,"paired-instance".into()));
+    let mut wrong=observed(1);wrong.key="controller".into();
+    runtime.state.lock().unwrap().registry.reconcile(batch("host","host-provider",1,vec![wrong])).unwrap();
+    let host=runtime.state.lock().unwrap().registry.list(0,128).unwrap().resources.into_iter().find(|r|r.resource_type==ResourceType::HostController).unwrap().id;
+    assert!(runtime.companion_authoring_identity(&host).is_err());
+    assert!(runtime.companion_authoring_identity("missing").is_err());
+    runtime.shutdown();assert!(runtime.companion_authoring_identity(&host).is_err());
+}
 fn observed(generation: u64) -> Observation {
     Observation {
         key: "host-one".into(),

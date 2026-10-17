@@ -32,6 +32,7 @@ jobs:
       - run: pnpm profile-editor:coverage
       - run: pnpm profile-canvas:coverage
       - run: pnpm profile-port-browser:coverage
+      - run: pnpm profile-companion-authoring:coverage
       - run: pnpm profile-workspace:test
       - run: pnpm profile-graph:coverage
       - run: pnpm profile-graph-history:coverage

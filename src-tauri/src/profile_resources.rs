@@ -50,6 +50,21 @@ pub(crate) struct Runtime {
     capture_gate: Arc<Mutex<()>>,
 }
 impl Runtime {
+    /// Resolve only retained native identity. Authoring never triggers discovery,
+    /// grants a port token or selects a transport for a future Apply.
+    pub(crate) fn companion_authoring_identity(&self, resource: &str) -> Result<(String, String), String> {
+        if self.stop.load(Ordering::Acquire) { return Err("Resource inventory has stopped.".into()); }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let details = state.registry.inspect_selected(resource, &[])?;
+        if details.resource.resource_type != osg_profiles::resources::ResourceType::Companion {
+            return Err("Choose a retained native companion resource.".into());
+        }
+        let instances = details.evidence.iter().filter(|e| e.kind == osg_profiles::resources::EvidenceKind::CompanionInstance).collect::<Vec<_>>();
+        if instances.len() != 1 || instances[0].value.is_empty() {
+            return Err("The companion has no single exact native paired identity.".into());
+        }
+        Ok((details.resource.id, instances[0].value.clone()))
+    }
     /// Capture only cached descriptors and exact local port assignments. This
     /// method performs no provider I/O and never changes inventory authority.
     pub(crate) fn snapshot_for_compile(

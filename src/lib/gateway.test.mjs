@@ -472,3 +472,21 @@ test('a new explicit companion Start waits for its prior priority Stop to finish
   stopping.resolve(); await Promise.all([stop, start]);
   assert.deepEqual(api.calls.map(call => call.args.request.companion.action), ['stop', 'start']);
 });
+
+test('passive companion panel metadata bypasses blocked profile saves without delaying emergency controls', async () => {
+  const saving=deferred(),metadata=deferred();
+  const api=transport({invokeResults:async(_command,request)=>{
+    if(request.command==='profile_editor_save')await saving.promise;
+    if(request.command==='profile_companion_catalogue')await metadata.promise;
+    return{ok:true,state:{profileCompanionAuthoring:{schemaVersion:1,panels:[]}}};
+  }});
+  const save=api.gatewayRequest({command:'profile_editor_save'});await tick();
+  const catalogue=api.gatewayRequest({command:'profile_companion_catalogue'});await tick();
+  await api.gatewayRequest({command:'profile_stop'});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_editor_save','profile_companion_catalogue','profile_stop']);
+  metadata.resolve();await catalogue;
+  await api.gatewayRequest({command:'profile_companion_inspect',resourceId:'native-instance',publicationHash:'sha256:captured',offset:0,limit:32});
+  assert.equal(api.calls.at(-1).args.request.resourceId,'native-instance');
+  assert.equal(api.calls.at(-1).args.request.publicationHash,'sha256:captured');
+  saving.resolve();await save;
+});
