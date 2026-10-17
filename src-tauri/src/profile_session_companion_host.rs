@@ -1,0 +1,280 @@
+//! Native-only companion preparation and compare/restore journal policy.
+use super::*;
+use crate::profile_resources::CompanionCatalogue;
+use crate::profile_session_companions::{CompanionPoll, CompanionSources, PreparedCompanion};
+use osg_companion_service::{profile::AssignmentReceipt, Hub};
+use osg_profiles::compiler_models::CompileSnapshot;
+use std::collections::BTreeSet;
+
+const ASSIGNMENT: &str = "companion-assignment";
+const RELEASE: &str = "companion-release";
+
+pub(super) fn prepare_catalogues(
+    hub: &Hub,
+    snapshot: &CompileSnapshot,
+    candidate: &Candidate,
+) -> Result<(Vec<CompanionCatalogue>, Vec<PreparedCompanion>), String> {
+    let mut catalogues = vec![];
+    let mut bindings = vec![];
+    let mut selected = BTreeSet::new();
+    for desired in &candidate.document.companion_assignments {
+        let assignment = snapshot
+            .assignments
+            .iter()
+            .find(|a| a.resource_id == desired.resource_id)
+            .ok_or("Assign the companion resource to its actual paired native instance first.")?;
+        let resource = snapshot
+            .resources
+            .iter()
+            .find(|r| {
+                r.summary.id == assignment.source_id
+                    && r.summary.resource_type == osg_profiles::resources::ResourceType::Companion
+            })
+            .ok_or("The selected native companion is unavailable.")?;
+        let instances = resource
+            .summary
+            .connections
+            .iter()
+            .filter(|c| matches!(c.route.transport, Transport::Usb | Transport::Network))
+            .filter_map(|c| c.route.id.strip_prefix("companion:"))
+            .collect::<BTreeSet<_>>();
+        if instances.len() != 1 {
+            return Err("Connect the exact paired companion through one verified native route before applying its panel.".into());
+        }
+        let instance = *instances.iter().next().unwrap();
+        if !selected.insert(instance.to_owned()) {
+            return Err("A profile cannot assign the same companion instance twice.".into());
+        }
+        let proof = hub.prepare_profile_assignment(instance, &desired.publication_hash)?;
+        let definition = osg_mapping_host::companions::native_definition(proof.definition())?;
+        catalogues.push(CompanionCatalogue {
+            logical_resource_id: desired.resource_id.clone(),
+            inventory_resource_id: assignment.source_id.clone(),
+            instance_id: instance.into(),
+            publication_hash: proof.publication_hash().into(),
+            capability_fingerprint: proof.capability_fingerprint().into(),
+            ports: crate::profile_resource_ports::companion(&definition, proof.feedback())?
+                .into_iter()
+                .filter(|port| {
+                    assignment.ports.iter().any(|expected| {
+                        port.id == expected.observed_port_id
+                            && port.contract_hash().ok().as_ref()
+                                == Some(&expected.expected_contract_hash)
+                    })
+                })
+                .collect(),
+        });
+        bindings.push(PreparedCompanion {
+            resource_id: desired.resource_id.clone(),
+            proof,
+        });
+    }
+    Ok((catalogues, bindings))
+}
+
+fn decode(receipt: &Receipt) -> Result<Option<(bool, AssignmentReceipt)>, String> {
+    if !matches!(receipt.kind.as_str(), ASSIGNMENT | RELEASE) {
+        return Ok(None);
+    }
+    let captured: AssignmentReceipt = serde_json::from_value(receipt.state.clone())
+        .map_err(|e| format!("The companion recovery receipt is malformed: {e}"))?;
+    if captured.instance_id() != receipt.resource_id {
+        return Err("The companion recovery receipt changed its instance identity.".into());
+    }
+    Ok(Some((receipt.kind == RELEASE, captured)))
+}
+pub(super) fn receipts(receipts: &[Receipt]) -> Result<Vec<(bool, AssignmentReceipt)>, String> {
+    let mut result = vec![];
+    let mut instances = BTreeSet::new();
+    for receipt in receipts {
+        if let Some(row) = decode(receipt)? {
+            if !instances.insert(row.1.instance_id().to_owned()) {
+                return Err(
+                    "The native companion journal contains duplicate instance ownership.".into(),
+                );
+            }
+            result.push(row);
+        }
+    }
+    Ok(result)
+}
+pub(super) fn has_receipts(receipts: &[Receipt]) -> bool {
+    receipts
+        .iter()
+        .any(|r| matches!(r.kind.as_str(), ASSIGNMENT | RELEASE))
+}
+pub(super) fn capture(
+    hub: &Hub,
+    sources: &CompanionSources,
+    previous: &[Receipt],
+) -> Result<Vec<Receipt>, String> {
+    let previous = receipts(previous)?
+        .into_iter()
+        .filter_map(|(release, receipt)| {
+            (!release && hub.validate_profile_assignment_owner(&receipt).is_ok()).then_some(receipt)
+        })
+        .collect::<Vec<_>>();
+    let selected = sources.capture(hub, &previous)?;
+    let mut result = selected
+        .iter()
+        .map(|receipt| {
+            Ok(Receipt {
+                kind: ASSIGNMENT.into(),
+                resource_id: receipt.instance_id().into(),
+                state: serde_json::to_value(receipt).map_err(|e| e.to_string())?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    for receipt in previous {
+        if !selected
+            .iter()
+            .any(|r| r.instance_id() == receipt.instance_id())
+        {
+            result.push(Receipt {
+                kind: RELEASE.into(),
+                resource_id: receipt.instance_id().into(),
+                state: serde_json::to_value(receipt).map_err(|e| e.to_string())?,
+            });
+        }
+    }
+    Ok(result)
+}
+pub(super) fn restore(
+    hub: &Hub,
+    captured: &[(bool, AssignmentReceipt)],
+    release_only: bool,
+) -> Result<(), String> {
+    for (release, receipt) in captured {
+        if !release_only || *release {
+            // Exact protected owner comparison preserves operator edits and a
+            // newer run. This only restores the original retained baseline.
+            hub.restore_profile_assignment(receipt)?;
+        }
+    }
+    Ok(())
+}
+fn admitted(snapshot: &CompileSnapshot, catalogue: &CompanionCatalogue) -> bool {
+    snapshot.resources.iter().any(|r| {
+        r.summary.id == catalogue.inventory_resource_id
+            && r.summary.attributes.get("publicationHash") == Some(&catalogue.publication_hash)
+            && r.summary.attributes.get("capabilityFingerprint")
+                == Some(&catalogue.capability_fingerprint)
+            && r.summary.connections.iter().any(|c| {
+                c.route.id == format!("companion:{}", catalogue.instance_id)
+                    && c.route.baseline_ready
+            })
+    })
+}
+
+impl NativeProfileHost {
+    pub(super) fn companion_baseline(
+        &mut self,
+        owner: &RunOwner,
+        prepared: &ExecutionPlan,
+    ) -> Result<(ExecutionPlan, Vec<osg_mapping::engine::typed::Frame>), String> {
+        if self.run(owner)?.companions.is_empty() {
+            return Ok((self.resources.bind_delivery_reads(prepared)?, vec![]));
+        }
+        let hub = self.companions.profile_metadata()?;
+        let resources = self.resources.clone();
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            self.check_transition(owner)?;
+            let now = self.controllers.stream_page("", 0).captured_us;
+            let state = self.run(owner)?;
+            let snapshot = resources.snapshot_for_compile(state.assignments.clone())?;
+            if state.companions.baseline_ready(&hub)?
+                && state
+                    .companion_catalogues
+                    .iter()
+                    .all(|c| admitted(&snapshot, c))
+            {
+                if let Ok(delivery) = resources.bind_delivery_reads(prepared) {
+                    state.companions.bind_delivery_plan(&delivery)?;
+                    if let Some(frames) = state.companions.baseline(
+                        &hub,
+                        |token| Self::validate_token(&resources, token),
+                        now,
+                    )? {
+                        return Ok((delivery, frames));
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err("The assigned companion did not supply its actual publication, capabilities and fresh neutral baseline before activation.".into());
+            }
+            if let Some(output) = state.output.as_mut() {
+                output.keep_alive()?;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+    pub(super) fn companion_poll(
+        runtime: &crate::companion_host::Runtime,
+        resources: &crate::profile_resources::Runtime,
+        state: &mut NativeRun,
+        now: u64,
+    ) -> CompanionPoll {
+        if state.companions.is_empty() {
+            return CompanionPoll::default();
+        }
+        let hub = match runtime.profile_metadata() {
+            Ok(hub) => hub,
+            Err(error) => return state.companions.fail(now, error),
+        };
+        let mut poll =
+            state
+                .companions
+                .poll(&hub, |token| Self::validate_token(resources, token), now);
+        if state
+            .companions
+            .needs_rebind(|token| Self::validate_token(resources, token))
+            && state
+                .companion_retry
+                .is_none_or(|last| now.saturating_sub(last) >= 100_000)
+        {
+            state.companion_retry = Some(now);
+            let capture = resources
+                .snapshot_for_compile(state.assignments.clone())
+                .and_then(|mut snapshot| {
+                    let allowed = state
+                        .companion_catalogues
+                        .iter()
+                        .filter(|c| admitted(&snapshot, c))
+                        .map(|c| c.logical_resource_id.clone())
+                        .collect::<BTreeSet<_>>();
+                    snapshot.backend = state.backend.clone();
+                    Self::game_capture(&mut snapshot, state.game_preparation.as_ref());
+                    let report = osg_profiles::compiler::compile(&state.document, &snapshot);
+                    if report.program_hash != state.report.program_hash {
+                        return Err(
+                            "The companion delivery graph changed; prepare a fresh profile.".into(),
+                        );
+                    }
+                    let delivery = report
+                        .plan
+                        .ok_or("The companion delivery graph is unavailable.")?;
+                    Ok((delivery, allowed))
+                });
+            match capture {
+                Ok((delivery, allowed)) => {
+                    let rebound = state.companions.rebind(
+                        &hub,
+                        &delivery,
+                        |logical| allowed.contains(logical),
+                        |token| Self::validate_token(resources, token),
+                        now,
+                    );
+                    poll.frames.extend(rebound.frames);
+                    poll.diagnostics.extend(rebound.diagnostics);
+                }
+                Err(error) => poll.diagnostics.push(error),
+            }
+        }
+        poll
+    }
+}
+
+#[cfg(test)]
+#[path = "profile_session_companion_host_tests.rs"]
+mod tests;

@@ -18,7 +18,7 @@ use osg_mapping_host::companions::{
 };
 use osg_profiles::{
     compiler_models::{ExecutionPlan, PlanReadiness, SinkAdapter},
-    resources::{Access, ResourceToken},
+    resources::{Access, ResourceToken, Transport},
     resources_ports::{PortContract, PortDescriptor},
 };
 use std::{
@@ -50,6 +50,8 @@ struct Output {
 struct Instance {
     logical: String,
     proof: Preparation,
+    provider_session: Option<String>,
+    transport: Option<Transport>,
     definition: Definition,
     inputs: Vec<Input>,
     outputs: Vec<Output>,
@@ -205,7 +207,33 @@ impl CompanionSources {
                 });
             }
             result.push(Instance {
-                logical: binding.resource_id,
+                logical: binding.resource_id.clone(),
+                transport: plan
+                    .sources
+                    .iter()
+                    .filter(|s| s.endpoint.node_id == binding.resource_id)
+                    .filter_map(|s| s.route.as_ref())
+                    .chain(
+                        plan.sinks
+                            .iter()
+                            .filter(|s| s.endpoint.node_id == binding.resource_id)
+                            .filter_map(|s| s.route.as_ref()),
+                    )
+                    .next()
+                    .map(|route| route.transport),
+                provider_session: plan
+                    .sources
+                    .iter()
+                    .filter(|s| s.endpoint.node_id == binding.resource_id)
+                    .filter_map(|s| s.preparation.as_ref())
+                    .chain(
+                        plan.sinks
+                            .iter()
+                            .filter(|s| s.endpoint.node_id == binding.resource_id)
+                            .filter_map(|s| s.preparation.as_ref()),
+                    )
+                    .next()
+                    .map(|p| p.provider_session().to_owned()),
                 proof: binding.proof,
                 definition,
                 inputs,
@@ -253,6 +281,19 @@ impl CompanionSources {
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.instances.is_empty()
+    }
+    pub(crate) fn validate_preparation(
+        &self,
+        runtime: &crate::companion_host::Runtime,
+    ) -> Result<(), String> {
+        if self.is_empty() {
+            return Ok(());
+        }
+        let hub = runtime.profile_metadata()?;
+        for instance in &self.instances {
+            hub.validate_profile_preparation(&instance.proof)?;
+        }
+        Ok(())
     }
     pub(crate) fn arm(&mut self, run: RunToken) -> Result<(), String> {
         if !self.acquired || self.stopped || self.run.is_some() {
@@ -375,63 +416,138 @@ impl CompanionSources {
         Ok(true)
     }
     pub(crate) fn bind_delivery_plan(&mut self, delivery: &ExecutionPlan) -> Result<(), String> {
-        let mut bindings = vec![];
-        for instance in &self.instances {
-            let mut inputs = vec![];
-            let mut outputs = vec![];
-            for port in &instance.inputs {
-                let source = delivery
-                    .sources
-                    .iter()
-                    .find(|source| {
-                        source.endpoint.node_id == instance.logical
-                            && source.endpoint.port_id == port.logical
-                            && source.observed_port_id.as_ref() == Some(&port.observed)
-                            && source.inventory_resource_id.as_ref() == Some(&port.resource)
-                            && source.contract == port.descriptor.contract
-                            && source.readiness == PlanReadiness::Ready
-                    })
-                    .ok_or("The companion input binding changed before delivery.")?;
-                inputs.push(token(
-                    source.token.as_ref(),
-                    &port.resource,
-                    &port.descriptor,
-                    instance.proof.instance_id(),
-                    Access::Read,
-                )?);
-            }
-            for port in &instance.outputs {
-                let sink = delivery
-                    .sinks
-                    .iter()
-                    .find(|sink| {
-                        sink.endpoint == port.endpoint
-                            && sink.adapter == SinkAdapter::CompanionFeedback
-                            && sink.observed_port_id.as_ref() == Some(&port.observed)
-                            && sink.inventory_resource_id.as_ref() == Some(&port.resource)
-                            && sink.contract == port.descriptor.contract
-                            && sink.readiness == PlanReadiness::Ready
-                    })
-                    .ok_or("The companion feedback binding changed before delivery.")?;
-                outputs.push(token(
-                    sink.token.as_ref(),
-                    &port.resource,
-                    &port.descriptor,
-                    instance.proof.instance_id(),
-                    Access::Write,
-                )?);
-            }
-            bindings.push((inputs, outputs));
-        }
+        let bindings = self
+            .instances
+            .iter()
+            .map(|instance| instance.delivery_bindings(delivery))
+            .collect::<Result<Vec<_>, _>>()?;
         for (instance, (inputs, outputs)) in self.instances.iter_mut().zip(bindings) {
-            for (port, token) in instance.inputs.iter_mut().zip(inputs) {
-                port.token = Some(token);
-            }
-            for (port, token) in instance.outputs.iter_mut().zip(outputs) {
-                port.token = Some(token);
-            }
+            instance.install_bindings(inputs, outputs);
         }
         Ok(())
+    }
+    pub(crate) fn needs_rebind(
+        &self,
+        validate: impl Fn(&ResourceToken) -> Result<(), String>,
+    ) -> bool {
+        self.instances.iter().any(|i| {
+            !i.ready
+                || i.inputs
+                    .iter()
+                    .any(|p| p.token.as_ref().is_none_or(|t| validate(t).is_err()))
+                || i.outputs
+                    .iter()
+                    .any(|p| p.token.as_ref().is_none_or(|t| validate(t).is_err()))
+        })
+    }
+    /// Only exact already-owned instances may advance delivery generations.
+    /// One missing peer cannot prevent another from obtaining a fresh baseline.
+    pub(crate) fn rebind(
+        &mut self,
+        hub: &Hub,
+        delivery: &ExecutionPlan,
+        allowed: impl Fn(&str) -> bool,
+        validate: impl Fn(&ResourceToken) -> Result<(), String>,
+        now: u64,
+    ) -> CompanionPoll {
+        let mut poll = CompanionPoll::default();
+        if !self.acquired || self.stopped {
+            return poll;
+        }
+        for instance in &mut self.instances {
+            if !allowed(&instance.logical) {
+                continue;
+            }
+            let result = (|| {
+                let (inputs, outputs) = instance.delivery_bindings(delivery)?;
+                if outputs.iter().any(Option::is_none) {
+                    return Err("The companion feedback has no current write capability.".into());
+                }
+                for token in inputs.iter().chain(outputs.iter().flatten()) {
+                    validate(token)?;
+                }
+                let changed = instance
+                    .inputs
+                    .iter()
+                    .map(|p| p.token.as_ref())
+                    .ne(inputs.iter().map(Some))
+                    || instance
+                        .outputs
+                        .iter()
+                        .map(|p| p.token.as_ref())
+                        .ne(outputs.iter().map(Option::as_ref));
+                if instance.ready && !changed {
+                    return Ok(vec![]);
+                }
+                if instance.ready {
+                    if let Some(frame) = instance.loss(now)? {
+                        poll.frames.push(frame);
+                    }
+                    if let Some(receipt) = &instance.receipt {
+                        hub.clear_profile_feedback(receipt, hub.now_ms())?;
+                    }
+                    instance.feedback_live = false;
+                }
+                instance.install_bindings(inputs, outputs);
+                instance.validate_inputs(hub, &validate)?;
+                let frames = instance
+                    .feed
+                    .as_mut()
+                    .ok_or("The companion subscription is unavailable.")?
+                    .baseline()?;
+                let mut result = vec![];
+                for frame in frames {
+                    if let Some(frame) = instance.convert(frame, now)? {
+                        result.push(frame);
+                    }
+                }
+                Ok::<_, String>(result)
+            })();
+            match result {
+                Ok(frames) => poll.frames.extend(frames),
+                Err(error) => poll
+                    .diagnostics
+                    .push(format!("{}: {error}", instance.logical)),
+            }
+        }
+        poll
+    }
+    pub(crate) fn fail(&mut self, now: u64, error: String) -> CompanionPoll {
+        let mut result = CompanionPoll {
+            frames: vec![],
+            diagnostics: vec![error],
+        };
+        for instance in &mut self.instances {
+            if instance.ready {
+                if let Ok(Some(frame)) = instance.loss(now) {
+                    result.frames.push(frame);
+                }
+            }
+            instance.feedback_live = false;
+        }
+        result
+    }
+    pub(crate) fn stop_native(
+        &mut self,
+        runtime: &crate::companion_host::Runtime,
+    ) -> Result<(), String> {
+        if self.is_empty() {
+            self.stopped = true;
+            self.run = None;
+            return Ok(());
+        }
+        match runtime.profile_metadata() {
+            Ok(hub) => self.stop(&hub),
+            Err(error) => {
+                self.stopped = true;
+                self.run = None;
+                for i in &mut self.instances {
+                    i.feed.take();
+                    i.ready = false;
+                }
+                Err(error)
+            }
+        }
     }
     pub(crate) fn baseline(
         &mut self,
@@ -523,7 +639,8 @@ impl CompanionSources {
             ];
         }
         for instance in &mut self.instances {
-            if instance.outputs.is_empty()
+            if !instance.ready
+                || instance.outputs.is_empty()
                 || instance
                     .feedback_at
                     .is_some_and(|last| now_us.saturating_sub(last) < 34_000)
@@ -583,7 +700,7 @@ impl CompanionSources {
             instance.feed.take();
             instance.ready = false;
             if let Some(receipt) = &instance.receipt {
-                if hub.validate_profile_assignment(receipt).is_ok() {
+                if hub.validate_profile_assignment_owner(receipt).is_ok() {
                     if let Err(error) = hub.clear_profile_feedback(receipt, hub.now_ms()) {
                         errors.push(error);
                     }
@@ -598,6 +715,121 @@ impl CompanionSources {
     }
 }
 impl Instance {
+    fn delivery_bindings(
+        &self,
+        delivery: &ExecutionPlan,
+    ) -> Result<(Vec<ResourceToken>, Vec<Option<ResourceToken>>), String> {
+        let mut inputs = vec![];
+        let mut outputs = vec![];
+        for port in &self.inputs {
+            let source = delivery
+                .sources
+                .iter()
+                .find(|source| {
+                    source.endpoint.node_id == self.logical
+                        && source.endpoint.port_id == port.logical
+                        && source.observed_port_id.as_ref() == Some(&port.observed)
+                        && source.inventory_resource_id.as_ref() == Some(&port.resource)
+                        && source.contract == port.descriptor.contract
+                        && source.readiness == PlanReadiness::Ready
+                })
+                .ok_or("The companion input binding changed before delivery.")?;
+            if self.transport.is_some_and(|transport| {
+                source
+                    .route
+                    .as_ref()
+                    .is_none_or(|route| route.transport != transport)
+            }) {
+                return Err(
+                    "The companion transport changed; prepare a fresh native assignment.".into(),
+                );
+            }
+            inputs.push(token(
+                source.token.as_ref(),
+                &port.resource,
+                &port.descriptor,
+                self.proof.instance_id(),
+                Access::Read,
+            )?);
+        }
+        for port in &self.outputs {
+            let sink = delivery
+                .sinks
+                .iter()
+                .find(|sink| {
+                    sink.endpoint == port.endpoint
+                        && sink.adapter == SinkAdapter::CompanionFeedback
+                        && sink.observed_port_id.as_ref() == Some(&port.observed)
+                        && sink.inventory_resource_id.as_ref() == Some(&port.resource)
+                        && sink.contract == port.descriptor.contract
+                        && sink.readiness == PlanReadiness::Ready
+                })
+                .ok_or("The companion feedback binding changed before delivery.")?;
+            if self.transport.is_some_and(|transport| {
+                sink.route
+                    .as_ref()
+                    .is_none_or(|route| route.transport != transport)
+            }) {
+                return Err(
+                    "The companion transport changed; prepare a fresh native assignment.".into(),
+                );
+            }
+            outputs.push(
+                sink.token
+                    .as_ref()
+                    .map(|delivery| {
+                        token(
+                            Some(delivery),
+                            &port.resource,
+                            &port.descriptor,
+                            self.proof.instance_id(),
+                            Access::Write,
+                        )
+                    })
+                    .transpose()?,
+            );
+        }
+        let session = self
+            .provider_session
+            .as_deref()
+            .or_else(|| inputs.first().map(|t| t.provider_session.as_str()))
+            .or_else(|| {
+                outputs
+                    .iter()
+                    .flatten()
+                    .next()
+                    .map(|t| t.provider_session.as_str())
+            });
+        if inputs
+            .iter()
+            .chain(outputs.iter().flatten())
+            .any(|t| Some(t.provider_session.as_str()) != session)
+        {
+            return Err(
+                "The companion transport provider changed; prepare a fresh native assignment."
+                    .into(),
+            );
+        }
+        Ok((inputs, outputs))
+    }
+    fn install_bindings(
+        &mut self,
+        inputs: Vec<ResourceToken>,
+        outputs: Vec<Option<ResourceToken>>,
+    ) {
+        if self.provider_session.is_none() {
+            self.provider_session = inputs
+                .first()
+                .or_else(|| outputs.iter().flatten().next())
+                .map(|t| t.provider_session.clone());
+        }
+        for (port, token) in self.inputs.iter_mut().zip(inputs) {
+            port.token = Some(token);
+        }
+        for (port, token) in self.outputs.iter_mut().zip(outputs) {
+            port.token = token;
+        }
+    }
     fn validate_inputs(
         &self,
         hub: &Hub,
@@ -615,6 +847,11 @@ impl Instance {
                     .as_ref()
                     .ok_or("Bind an actual fresh companion read token first.")?,
             )?;
+        }
+        for output in &self.outputs {
+            if let Some(token) = &output.token {
+                validate(token)?;
+            }
         }
         Ok(())
     }
@@ -651,12 +888,14 @@ impl Instance {
         if matches!(frame.reason, Reason::Disconnect | Reason::Gap) {
             return self.loss(now_us.max(frame.captured_us.0));
         }
-        if self.inputs.iter().any(|input| {
-            input
-                .token
-                .as_ref()
-                .is_none_or(|token| token.provider_generation != frame.generation.0.to_string())
-        }) {
+        if self
+            .inputs
+            .iter()
+            .map(|input| &input.token)
+            .chain(self.outputs.iter().map(|output| &output.token))
+            .flatten()
+            .any(|token| token.provider_generation != frame.generation.0.to_string())
+        {
             return Err(
                 "The companion input generation changed; bind a fresh native baseline.".into(),
             );

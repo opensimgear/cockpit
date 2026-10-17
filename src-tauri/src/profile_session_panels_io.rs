@@ -232,5 +232,14 @@ impl ProfilePanelIo {
     }
 }
 #[cfg(test)]
+impl ProfilePanelIo {
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self::new(Arc::default(), Arc::new(crate::module_usb_fleet::Fleet::new(Arc::new(||Ok(vec![])),false)),
+            Arc::default(),Arc::new(AtomicBool::new(false)))
+    }
+}
+
+#[cfg(test)]
 #[path = "profile_session_panels_io_tests.rs"]
 mod tests;

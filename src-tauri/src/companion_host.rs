@@ -583,6 +583,16 @@ impl Runtime {
 }
 
 #[cfg(test)]
+impl Runtime {
+    #[cfg(test)]
+    pub(crate) fn with_profile_metadata(hub:Hub, provider:Arc<CompanionProvider>, directory:PathBuf)->Self {
+        let runtime=Self::new(None,provider);
+        assert!(runtime.metadata.set(Metadata {hub,directory}).is_ok());
+        runtime
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     fn runtime() -> Runtime {

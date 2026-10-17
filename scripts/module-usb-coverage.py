@@ -11,9 +11,9 @@ import sys
 import tempfile
 
 
-MODULES = ["output_leases", "module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
+MODULES = ["profile_session_companion_host", "output_leases", "module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
            "profile_resources", "profile_resources_game", "profile_session_panels_io", "profile_session_panels_inputs", "profile_session_inspection", "profile_resource_sources", "profile_resource_ports", "profile_compilation", "profile_input_learning", "profile_session_companions", "profile_session_visibility", "profile_session_overrides", "game_activation", "game_activation_runtime", "profile_automatic_store"]
-TEST_FILTERS = ["input_learning", "output_leases", "module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "stm32::tests::guarded_restoration", "stm32::tests::atomic_current_claim", "stm32::tests::endpoint_lease", "pico::tests::cached_endpoint_activity", "profile_panels_io", "profile_session_panels_inputs", "profile_session::inspection", "gateways::tests::applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate", "profile_session_companions::tests", "profile_session_visibility::tests", "profile_session_overrides::tests", "game_activation", "profile_automatic_store"]
+TEST_FILTERS = ["input_learning", "output_leases", "module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "stm32::tests::guarded_restoration", "stm32::tests::atomic_current_claim", "stm32::tests::endpoint_lease", "pico::tests::cached_endpoint_activity", "profile_panels_io", "profile_session_panels_inputs", "profile_session::inspection", "gateways::tests::applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate", "profile_session_companions::tests", "profile_session_host::companion::tests", "profile_session_visibility::tests", "profile_session_overrides::tests", "game_activation", "profile_automatic_store"]
 
 
 def source_stamp(paths, root):
@@ -56,7 +56,7 @@ def main():
         (output / name).unlink(missing_ok=True)
     tracked = [root / f"src-tauri/src/{module}{suffix}.rs"
                for module in MODULES for suffix in ["", "_tests"]]
-    tracked.extend([root / "src-tauri/src/stm32.rs", root / "src-tauri/src/pico.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
+    tracked.extend([root / "src-tauri/src/profile_session_host.rs", root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/stm32.rs", root / "src-tauri/src/pico.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
     if not args.module:
         # The full gate also pins Manager construction/admission. A focused
         # production-module report is explicitly not whole-Manager evidence.

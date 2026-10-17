@@ -282,6 +282,23 @@ fn actual_baseline_and_delivery_tokens_are_required_before_arming_feedback() {
     assert!(adapter.baseline_ready(&fixture.hub).unwrap());
     assert!(adapter.baseline(&fixture.hub, |_| Ok(()), 100).is_err());
     let plan = fixture.delivery();
+    let mut read_only_delivery = plan.clone();
+    read_only_delivery.sinks[0].token = None;
+    adapter.bind_delivery_plan(&read_only_delivery).unwrap();
+    assert!(adapter
+        .baseline(&fixture.hub, |_| Ok(()), 100)
+        .unwrap()
+        .is_some());
+    let unarmed = Phase::new(
+        plan.program.clone(),
+        Counter(1),
+        uuid::Uuid::new_v4().to_string(),
+    )
+    .unwrap();
+    assert!(
+        adapter.arm(unarmed.run_token()).is_err(),
+        "A read-only baseline does not grant feedback writes"
+    );
     adapter.bind_delivery_plan(&plan).unwrap();
     let frames = adapter
         .baseline(&fixture.hub, |_| Ok(()), 100)
@@ -526,4 +543,276 @@ fn feedback_only_profile_branch_uses_real_panel_session_without_dummy_graph_inpu
     assert!(adapter
         .publish_feedback(&fixture.hub, &phase, |_| Ok(()), 100_000)
         .is_empty());
+}
+
+#[test]
+fn reconnect_discards_buffered_edges_requires_current_tokens_and_never_changes_provider_identity() {
+    let fixture = Fixture::new();
+    let mut adapter = fixture.prepared();
+    fixture.acquire(&mut adapter, &[]);
+    fixture.connect();
+    adapter.bind_delivery_plan(&fixture.delivery()).unwrap();
+    let initial = adapter
+        .baseline(&fixture.hub, |_| Ok(()), 100)
+        .unwrap()
+        .unwrap();
+    fixture.clock.store(200, Ordering::Release);
+    let reopened = fixture.connect();
+    let loss = adapter.poll(&fixture.hub, |_| Err("Old native token".into()), 200);
+    assert_eq!(loss.frames[0].reason, Reason::Disconnect);
+    let button = fixture
+        .publication
+        .controls
+        .iter()
+        .find(|c| matches!(c.kind, SourceKind::Button))
+        .unwrap();
+    let mut input = fixture.frame(&reopened, "input", "1");
+    input["changes"] =
+        json!([{"controlId":button.id,"value":true},{"controlId":button.id,"value":false}]);
+    assert_eq!(wire(&fixture.hub, input)["ok"], true);
+    let rebound = adapter.rebind(&fixture.hub, &fixture.delivery(), |_| true, |_| Ok(()), 200);
+    assert!(rebound.diagnostics.is_empty(), "{:?}", rebound.diagnostics);
+    assert_eq!(rebound.frames.len(), 1);
+    assert_eq!(rebound.frames[0].reason, Reason::Baseline);
+    assert!(rebound.frames[0].sequence.0 > initial[0].sequence.0);
+    assert_eq!(
+        rebound.frames[0].changes[0].sample,
+        SignalSample::scalar(PortValue::Boolean(false))
+    );
+    assert!(adapter
+        .poll(&fixture.hub, |_| Ok(()), 200)
+        .frames
+        .iter()
+        .all(|f| f.reason == Reason::Baseline || f.changes.is_empty()));
+    let mut changed = fixture.delivery();
+    changed.sources[0].token.as_mut().unwrap().provider_session = "other-provider".into();
+    changed.sinks[0].token.as_mut().unwrap().provider_session = "other-provider".into();
+    assert!(adapter.bind_delivery_plan(&changed).is_err());
+    assert!(!adapter.needs_rebind(|_| Ok(())));
+    assert!(
+        adapter
+            .rebind(&fixture.hub, &fixture.delivery(), |_| true, |_| Ok(()), 201)
+            .frames
+            .is_empty(),
+        "Unchanged live tokens must not reset timers every tick"
+    );
+}
+
+#[test]
+fn one_offline_peer_cannot_block_another_companions_fresh_reconnect_baseline() {
+    let fixture = Fixture::new();
+    let offer = fixture
+        .hub
+        .command(&json!({"command":"companion_pair_offer"}))
+        .unwrap();
+    let pair=fixture.hub.handle_wire(json!({"type":"pair","secret":offer["secret"],"companionId":"second-screen","name":"Second"}),"second-peer",fixture.hub.now_ms());
+    fixture.hub.command(&json!({"command":"companion_approve","requestId":pair["requestId"],"companionId":"second-screen"})).unwrap();
+    let secret = fixture.hub.handle_wire(
+        json!({"type":"pair-status","requestId":pair["requestId"],"secret":offer["secret"]}),
+        "second-peer",
+        fixture.hub.now_ms(),
+    )["token"]
+        .clone();
+    fixture.hub.command(&json!({"command":"companion_assign","instanceId":"second-instance","companionId":"second-screen","publicationHash":fixture.publication.publication_hash})).unwrap();
+    let mut plan = fixture.plan.clone();
+    let mut source = plan.sources[0].clone();
+    source.endpoint.node_id = "second".into();
+    source.inventory_resource_id = Some("second-inventory".into());
+    plan.sources.push(source);
+    let mut sink = plan.sinks[0].clone();
+    sink.endpoint.node_id = "second".into();
+    sink.inventory_resource_id = Some("second-inventory".into());
+    plan.sinks.push(sink);
+    let mut source = plan.program.sources[0].clone();
+    source.endpoint.node_id = "second".into();
+    plan.program.sources.push(source);
+    let mut sink = plan.program.sinks[0].clone();
+    sink.id = "second-feedback".into();
+    sink.endpoint.node_id = "second".into();
+    sink.from.node_id = "second".into();
+    plan.program.sinks.push(sink);
+    plan.companion_assignments
+        .push(osg_profiles::CompanionAssignment {
+            resource_id: "second".into(),
+            publication_hash: fixture.publication.publication_hash.clone(),
+        });
+    let bindings = [("companion", "instance"), ("second", "second-instance")]
+        .into_iter()
+        .map(|(resource, instance)| PreparedCompanion {
+            resource_id: resource.into(),
+            proof: fixture
+                .hub
+                .prepare_profile_assignment(instance, &fixture.publication.publication_hash)
+                .unwrap(),
+        })
+        .collect();
+    let mut adapter = CompanionSources::prepare(&plan, bindings).unwrap();
+    let receipts = adapter.capture(&fixture.hub, &[]).unwrap();
+    adapter
+        .acquire_native(&fixture.hub, fixture.provider.clone(), &receipts)
+        .unwrap();
+    fixture.connect();
+    assert_eq!(
+        fixture.hub.handle_wire(
+            json!({"type":"auth","token":secret}),
+            "second-peer",
+            fixture.hub.now_ms()
+        )["ok"],
+        true
+    );
+    let opened = fixture.hub.handle_wire(
+        json!({"type":"open","instanceId":"second-instance"}),
+        "second-peer",
+        fixture.hub.now_ms(),
+    );
+    let mut baseline = fixture.frame(&opened, "baseline", "0");
+    baseline["values"] = serde_json::to_value(
+        fixture
+            .publication
+            .controls
+            .iter()
+            .map(|c| (c.id.clone(), c.fallback()))
+            .collect::<BTreeMap<_, _>>(),
+    )
+    .unwrap();
+    assert_eq!(
+        fixture
+            .hub
+            .handle_wire(baseline, "second-peer", fixture.hub.now_ms())["ok"],
+        true
+    );
+    let delivery = |offline_second: bool| {
+        let mut delivery = plan.clone();
+        let sources = fixture.provider.resource_inventory();
+        for (logical, instance, resource) in [
+            ("companion", "instance", "inventory"),
+            ("second", "second-instance", "second-inventory"),
+        ] {
+            let generation = sources
+                .iter()
+                .find(|s| s.definition.source_id == instance)
+                .unwrap()
+                .generation
+                .to_string();
+            let native = fixture.delivery();
+            for source in delivery
+                .sources
+                .iter_mut()
+                .filter(|s| s.endpoint.node_id == logical)
+            {
+                let mut token = native.sources[0].token.clone().unwrap();
+                token.resource_id = resource.into();
+                token.route_id = format!("companion:{instance}");
+                token.provider_generation = generation.clone();
+                source.token = Some(token);
+                if logical == "second" && offline_second {
+                    source.token = None;
+                    source.readiness = PlanReadiness::Blocked;
+                }
+            }
+            for sink in delivery
+                .sinks
+                .iter_mut()
+                .filter(|s| s.endpoint.node_id == logical)
+            {
+                let mut token = native.sinks[0].token.clone().unwrap();
+                token.resource_id = resource.into();
+                token.route_id = format!("companion:{instance}");
+                token.provider_generation = generation.clone();
+                sink.token = Some(token);
+                if logical == "second" && offline_second {
+                    sink.token = None;
+                    sink.readiness = PlanReadiness::Blocked;
+                }
+            }
+        }
+        delivery
+    };
+    adapter.bind_delivery_plan(&delivery(false)).unwrap();
+    assert_eq!(
+        adapter
+            .baseline(&fixture.hub, |_| Ok(()), 100)
+            .unwrap()
+            .unwrap()
+            .len(),
+        2
+    );
+    fixture.clock.store(200, Ordering::Release);
+    fixture
+        .hub
+        .disconnect_connection("connection", fixture.hub.now_ms());
+    let lost = adapter.poll(
+        &fixture.hub,
+        |token| {
+            if token.resource_id == "inventory" {
+                Err("First peer disconnected".into())
+            } else {
+                Ok(())
+            }
+        },
+        200,
+    );
+    assert!(lost
+        .frames
+        .iter()
+        .any(|f| f.source == "companion" && f.reason == Reason::Disconnect));
+    assert!(!lost
+        .frames
+        .iter()
+        .any(|f| f.source == "second" && f.reason == Reason::Disconnect));
+    assert!(adapter.instances[1].ready);
+    fixture.connect();
+    fixture
+        .hub
+        .disconnect_connection("second-peer", fixture.hub.now_ms());
+    let rebound = adapter.rebind(
+        &fixture.hub,
+        &delivery(true),
+        |logical| logical == "companion",
+        |_| Ok(()),
+        200,
+    );
+    assert!(rebound.diagnostics.is_empty(), "{:?}", rebound.diagnostics);
+    assert_eq!(rebound.frames.len(), 1);
+    assert_eq!(rebound.frames[0].source, "companion");
+    assert_eq!(rebound.frames[0].reason, Reason::Baseline);
+    assert!(
+        adapter.instances[0].ready,
+        "The other offline branch did not block reconnect"
+    );
+}
+
+#[test]
+fn a_companion_route_id_cannot_authorize_network_to_usb_transport_transfer() {
+    let mut fixture = Fixture::new();
+    let route = osg_profiles::resources::Route {
+        id: "companion:instance".into(),
+        transport: Transport::Network,
+        provider_generation: "1".into(),
+        attributes: BTreeMap::new(),
+        baseline_ready: false,
+        writable: false,
+        priority: 0,
+    };
+    fixture.plan.sources[0].route = Some(route.clone());
+    fixture.plan.sinks[0].route = Some(route);
+    let mut adapter = fixture.prepared();
+    fixture.acquire(&mut adapter, &[]);
+    fixture.connect();
+    let mut delivery = fixture.delivery();
+    adapter.bind_delivery_plan(&delivery).unwrap();
+    adapter
+        .baseline(&fixture.hub, |_| Ok(()), 100)
+        .unwrap()
+        .unwrap();
+    delivery.sources[0].route.as_mut().unwrap().transport = Transport::Usb;
+    delivery.sinks[0].route.as_mut().unwrap().transport = Transport::Usb;
+    assert!(adapter
+        .bind_delivery_plan(&delivery)
+        .unwrap_err()
+        .contains("transport changed"));
+    let rebound = adapter.rebind(&fixture.hub, &delivery, |_| true, |_| Ok(()), 101);
+    assert!(rebound.frames.is_empty());
+    assert!(rebound.diagnostics[0].contains("transport changed"));
+    adapter.bind_delivery_plan(&fixture.delivery()).unwrap();
 }
