@@ -1,6 +1,8 @@
 //! Native automatic selection uses the same one-use staging and coordinator as
 //! explicit Apply. Process sessions are reverified after slow preparation.
 use super::*;
+#[path = "profile_game_orchestration.rs"]
+mod launch;
 use crate::profile_automatic_store::{Settings, Store};
 use osg_profiles::{
     activation::{Decision, Locks, Reconciler, Rule, Target, VerifiedGame},
