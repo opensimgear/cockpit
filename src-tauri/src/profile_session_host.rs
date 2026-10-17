@@ -216,6 +216,12 @@ impl NativeProfileHost {
                 sample = state.game.fail(now_us, error);
             }
         }
+        if !sample.context_lost && state.game.requires_baseline() {
+            let validation = state.game.provider_identity()
+                .ok_or_else(|| "The acquired game reader has no native inventory owner.".to_owned())
+                .and_then(|(game, reader)| resources.validate_profile_game_delivery(game, reader));
+            if let Err(error) = validation { sample = state.game.fail(now_us, error); }
+        }
         if sample.context_lost {
             Self::withdraw_game(resources, state)?;
             if sample.diagnostics.is_empty() {
@@ -633,6 +639,12 @@ impl Host for NativeProfileHost {
                 };
                 {
                     let state = self.run(&run.owner)?;
+                    // Acquisition/visibility can outlast telemetry freshness.
+                    // Recheck the real reader before exposing any writable route.
+                    let baseline = state.game.baseline(&games, controllers.stream_page("", 0).captured_us);
+                    if baseline.context_lost || state.game.requires_baseline() && !baseline.fresh {
+                        return Err("The game baseline expired before command admission.".into());
+                    }
                     state.game.admit(&games)?;
                     if let Some(batch) = state.game.delivery_batch() {
                         resources.publish_profile_game_delivery(batch)?;

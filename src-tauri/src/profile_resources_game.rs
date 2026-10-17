@@ -105,6 +105,22 @@ pub(super) fn validate_game_delivery(
     Ok(())
 }
 impl Runtime {
+    /// Publication is deduplicated by native reader state. This cheap owner check
+    /// still observes metadata revocation on every health tick without cloning
+    /// or rescanning the provider catalogue.
+    pub(crate) fn validate_profile_game_delivery(&self, game: &str, reader: &str) -> Result<(), String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.read_only {
+            return Err("Repair retained inventory before accepting game delivery.".into());
+        }
+        if !state.game_deliveries.get(game).is_some_and(|batch| batch.session == reader) {
+            return Err("The native game reader lost its current inventory scope or verified metadata.".into());
+        }
+        Ok(())
+    }
     pub(crate) fn publish_profile_game_delivery(&self, batch: ProviderBatch) -> Result<(), String> {
         let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
         if self.stop.load(Ordering::Acquire) {

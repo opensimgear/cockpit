@@ -73,6 +73,7 @@ pub(crate) struct GameSources {
     witnessed_progress: bool,
     reader_session: String,
     acquired: bool,
+    published: Option<(u64, bool, bool)>,
 }
 #[derive(Default)]
 pub(crate) struct GamePoll {
@@ -131,6 +132,7 @@ impl GameSources {
             witnessed_progress: false,
             reader_session: uuid::Uuid::new_v4().to_string(),
             acquired: false,
+            published: None,
         };
         let Some(game) = &result.game else {
             return Ok(result);
@@ -511,8 +513,13 @@ impl GameSources {
         {
             return None;
         }
-        self.revision = self.revision.checked_add(1)?;
         let id = &game.proof.game_id;
+        let writable = id == "dcs" && self.fresh && self.context.is_some();
+        let publication = (self.epoch, self.fresh, writable);
+        if self.published == Some(publication) {
+            return None;
+        }
+        let revision = self.revision.checked_add(1)?;
         let attributes = BTreeMap::from([
             ("gameId".into(), id.clone()),
             (
@@ -526,10 +533,10 @@ impl GameSources {
             ("gamePreparationSession".into(), game.proof.session.clone()),
             ("gameReaderSession".into(), self.reader_session.clone()),
         ]);
-        Some(ProviderBatch {
+        let batch = ProviderBatch {
             scope: format!("profile-game:{id}"),
             session: self.reader_session.clone(),
-            revision: self.revision,
+            revision,
             complete: true,
             observations: vec![Observation {
                 key: id.clone(),
@@ -547,12 +554,15 @@ impl GameSources {
                     provider_generation: format!("{}:{}", self.reader_session, self.epoch),
                     attributes,
                     baseline_ready: self.fresh,
-                    writable: id == "dcs" && self.fresh && self.context.is_some(),
+                    writable,
                     priority: 100,
                 }),
                 ports: Some(PortUpdate::complete(self.descriptors.clone()).ok()?),
             }],
-        })
+        };
+        self.revision = revision;
+        self.published = Some(publication);
+        Some(batch)
     }
     pub(crate) fn provider_identity(&self) -> Option<(&str, &str)> {
         self.game

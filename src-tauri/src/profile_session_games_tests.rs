@@ -547,13 +547,104 @@ fn separate_readers_of_one_preparation_never_share_delivery_or_withdrawal_identi
     outgoing.stop();
     assert_eq!(outgoing.provider_identity().unwrap().1, old_identity);
     assert_ne!(incoming.provider_identity().unwrap().1, old_identity);
+    assert!(incoming.delivery_batch().is_none());
+    assert_eq!(incoming.provider_identity().unwrap().1, new.session);
+}
+
+#[test]
+fn sample_changes_do_not_republish_catalogues_but_delivery_authority_changes_do() {
+    let fixture = Dcs::new();
+    let mut source = fixture.sources();
+    feed(&mut source, 1, true, 0);
+    feed(&mut source, 2, true, 10_000);
+    let baseline = source.delivery_batch().unwrap();
     assert!(
-        incoming.delivery_batch().unwrap().observations[0]
+        baseline.observations[0]
             .route
             .as_ref()
             .unwrap()
             .baseline_ready
     );
+    assert!(!baseline.observations[0].route.as_ref().unwrap().writable);
+    for counter in 3..=10 {
+        let sample = feed(
+            &mut source,
+            counter,
+            counter % 2 == 0,
+            u64::from(counter) * 10_000,
+        );
+        assert!(sample.fresh);
+        assert_eq!(sample.frames[0].reason, Reason::Change);
+        assert_eq!(
+            sample.frames[0].changes[0].sample,
+            SignalSample::scalar(PortValue::Number(if counter % 2 == 0 { 1.0 } else { 0.0 }))
+        );
+        assert!(
+            source.delivery_batch().is_none(),
+            "Value/counter changes are frames, not new route/catalogue authority."
+        );
+    }
+    assert_eq!(source.revision, baseline.revision);
+    authorize(&mut source);
+    let admitted = source.delivery_batch().unwrap();
+    assert!(admitted.observations[0].route.as_ref().unwrap().writable);
+    assert!(source.delivery_batch().is_none());
+    let Some(Reader::Dcs { decoder, .. }) = source.reader.as_mut() else {
+        panic!()
+    };
+    decoder.tick(201);
+    let snapshot = decoder.snapshot(201);
+    assert!(!source.frames(snapshot, 201_000).fresh);
+    let stale = source.delivery_batch().unwrap();
+    assert!(!stale.observations[0].route.as_ref().unwrap().baseline_ready);
+    assert!(!stale.observations[0].route.as_ref().unwrap().writable);
+    assert!(source.delivery_batch().is_none());
+    assert!(!feed(&mut source, 11, true, 210_000).fresh);
+    assert!(source.delivery_batch().is_none());
+    assert!(feed(&mut source, 12, true, 220_000).fresh);
+    let fresh = source.delivery_batch().unwrap();
+    assert!(fresh.observations[0].route.as_ref().unwrap().writable);
+    assert!(source.delivery_batch().is_none());
+    let Some(Reader::Dcs { decoder, .. }) = source.reader.as_mut() else {
+        panic!()
+    };
+    decoder.reset_stream(230);
+    feed(&mut source, 13, true, 230_000);
+    let replaced = source.delivery_batch().unwrap();
+    assert_ne!(
+        replaced.observations[0]
+            .route
+            .as_ref()
+            .unwrap()
+            .provider_generation,
+        fresh.observations[0]
+            .route
+            .as_ref()
+            .unwrap()
+            .provider_generation
+    );
+    assert!(
+        !replaced.observations[0]
+            .route
+            .as_ref()
+            .unwrap()
+            .baseline_ready
+    );
+    feed(&mut source, 14, true, 240_000);
+    assert!(
+        source.delivery_batch().unwrap().observations[0]
+            .route
+            .as_ref()
+            .unwrap()
+            .baseline_ready
+    );
+    assert!(source.delivery_batch().is_none());
+    assert!(
+        source
+            .fail(250_000, "Native process exited".into())
+            .context_lost
+    );
+    assert!(source.delivery_batch().is_none());
 }
 
 #[test]

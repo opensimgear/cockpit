@@ -109,6 +109,28 @@ fn runtime() -> Runtime {
 }
 
 #[test]
+fn cached_delivery_check_observes_replacement_metadata_loss_and_closed_inventory_without_discovery() {
+    let runtime=runtime();
+    assert!(runtime.validate_profile_game_delivery("dcs","reader-one").is_err());
+    runtime.publish_profile_game_delivery(delivery("dcs","reader-one",1)).unwrap();
+    for _ in 0..20 { runtime.validate_profile_game_delivery("dcs","reader-one").unwrap(); }
+    assert!(runtime.validate_profile_game_delivery("dcs","other-reader").is_err());
+    assert!(runtime.validate_profile_game_delivery("x-plane-12","reader-one").is_err());
+    runtime.publish_profile_game_delivery(delivery("dcs","reader-two",1)).unwrap();
+    assert!(runtime.validate_profile_game_delivery("dcs","reader-one").is_err());
+    runtime.validate_profile_game_delivery("dcs","reader-two").unwrap();
+    Runtime::adopt(&runtime.state,vec![("game:dcs".into(),Err("Native metadata capture failed.".into()))]);
+    assert!(runtime.validate_profile_game_delivery("dcs","reader-two").is_err());
+    Runtime::adopt(&runtime.state,vec![("game:dcs".into(),Ok(batch("game:dcs","metadata",3,vec![metadata("dcs")])))]);
+    runtime.publish_profile_game_delivery(delivery("dcs","reader-three",1)).unwrap();
+    runtime.state.lock().unwrap().read_only=true;
+    assert!(runtime.validate_profile_game_delivery("dcs","reader-three").is_err());
+    runtime.state.lock().unwrap().read_only=false;
+    runtime.shutdown();
+    assert!(runtime.validate_profile_game_delivery("dcs","reader-three").is_err());
+}
+
+#[test]
 fn slow_native_collection_never_excludes_current_game_delivery() {
     use std::sync::mpsc;
     for background in [false, true] {
