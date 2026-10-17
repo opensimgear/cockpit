@@ -9,6 +9,8 @@ use std::{
         Arc, Mutex,
     },
 };
+#[path = "profile_tests.rs"]
+mod profile_tests;
 
 #[derive(Default)]
 struct Sink {

@@ -6,6 +6,7 @@ pub mod persistence;
 mod publication;
 pub mod sources;
 pub use hub::*;
+pub use hub::profile;
 pub use publication::*;
 pub use sources::*;
 #[cfg(test)]

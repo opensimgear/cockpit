@@ -108,6 +108,8 @@ pub struct Hub {
     sink: Arc<dyn SourceSink>,
     storage: Option<Arc<dyn StateStorage>>,
     started: Arc<Instant>,
+    runtime_identity: Arc<String>,
+    record_revision: Arc<std::sync::atomic::AtomicU64>,
 }
 pub struct NullSourceSink;
 impl SourceSink for NullSourceSink {
@@ -187,6 +189,19 @@ impl Hub {
             )),
             sink,
         )
+    }
+    /// Inspect retained local metadata without creating a host identity or store.
+    pub fn open_existing(path: impl AsRef<Path>, sink: Arc<dyn SourceSink>) -> Result<Option<Self>, String> {
+        Self::with_existing_storage(Arc::new(SealedFileStore::new(
+            path.as_ref().join("companion-host-state.dpapi"),
+        )), sink)
+    }
+    pub fn with_existing_storage(storage: Arc<dyn StateStorage>, sink: Arc<dyn SourceSink>) -> Result<Option<Self>, String> {
+        let Some(mut bytes) = storage.read()? else { return Ok(None); };
+        let record = serde_json::from_slice(&bytes)
+            .map_err(|_| "Invalid protected companion host state.");
+        bytes.zeroize();
+        Self::from_record(record?, sink, Some(storage)).map(Some)
     }
     pub fn with_storage(
         storage: Arc<dyn StateStorage>,
@@ -281,6 +296,8 @@ impl Hub {
             sink,
             storage,
             started: Arc::new(Instant::now()),
+            runtime_identity: Arc::new(uuid::Uuid::new_v4().to_string()),
+            record_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -333,6 +350,9 @@ impl Hub {
             .clone()
     }
     fn persist(&self, record: &Record) -> Result<(), String> {
+        // Even an uncertain attempted native edit expires in-flight metadata
+        // proofs. This fence grants no ownership and is never a wire field.
+        self.record_revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if let Some(storage) = &self.storage {
             let mut bytes = serde_json::to_vec(record).map_err(|e| e.to_string())?;
             let result = storage.write(&bytes);
@@ -1232,6 +1252,9 @@ impl Hub {
         Ok(reply(frame["sequence"].clone(), "ack"))
     }
 }
+
+#[path = "profile.rs"]
+pub mod profile;
 
 #[path = "hub_assignments.rs"]
 mod assignments_api;

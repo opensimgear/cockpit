@@ -32,10 +32,16 @@ struct Services {
     saved_listener: Mutex<Option<ServerConfig>>,
     panel_cache: Mutex<()>,
 }
+struct Metadata {
+    hub: Hub,
+    directory: PathBuf,
+}
 pub struct Runtime {
     path: Option<PathBuf>,
     stopped: AtomicBool,
     provider: Arc<CompanionProvider>,
+    metadata: OnceLock<Metadata>,
+    metadata_init: Mutex<()>,
     services: OnceLock<Result<Services, String>>,
     upload: Mutex<Option<Upload>>,
 }
@@ -48,6 +54,8 @@ impl Runtime {
             path,
             stopped: AtomicBool::new(false),
             provider,
+            metadata: OnceLock::new(),
+            metadata_init: Mutex::new(()),
             services: OnceLock::new(),
             upload: Mutex::new(None),
         }
@@ -79,25 +87,31 @@ impl Runtime {
             std::thread::sleep(Duration::from_secs(2));
         });
     }
+    fn metadata(&self, create: bool) -> Result<&Metadata, String> {
+        if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
+        if let Some(metadata) = self.metadata.get() { return Ok(metadata); }
+        let _initialization = self.metadata_init.lock().unwrap_or_else(|p|p.into_inner());
+        if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
+        if let Some(metadata) = self.metadata.get() { return Ok(metadata); }
+        let (hub, directory) = if let Some(path) = &self.path {
+            let hub = if create { Hub::open(path, self.provider.clone())? }
+                else { Hub::open_existing(path, self.provider.clone())?
+                    .ok_or("Set up and pair a companion before applying this assignment.")? };
+            (hub, path.clone())
+        } else if create {
+            (Hub::new(format!("host-{}", uuid::Uuid::new_v4()), self.provider.clone()),
+                std::env::temp_dir().join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
+        } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
+        crate::companion_panels::restore(&hub, &directory)?;
+        let _ = self.metadata.set(Metadata {hub, directory});
+        Ok(self.metadata.get().expect("metadata initialized under its gate"))
+    }
     fn services(&self) -> Result<&Services, String> {
         self.services
             .get_or_init(|| {
-                let (hub, directory) = if let Some(path) = &self.path {
-                    (
-                        Hub::open(path.clone(), self.provider.clone())?,
-                        path.clone(),
-                    )
-                } else {
-                    (
-                        Hub::new(
-                            format!("host-{}", uuid::Uuid::new_v4()),
-                            self.provider.clone(),
-                        ),
-                        std::env::temp_dir()
-                            .join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())),
-                    )
-                };
-                crate::companion_panels::restore(&hub,&directory)?;
+                let metadata = self.metadata(true)?;
+                let hub = metadata.hub.clone();
+                let directory = metadata.directory.clone();
                 let server = ServerRuntime::with_browser(hub.clone(), directory.clone(), BROWSER_ASSETS)?;
                 let saved_listener=match std::fs::read(directory.join("companion-listener.json")){
                     Ok(bytes)=>match serde_json::from_slice::<ServerConfig>(&bytes){
@@ -157,6 +171,15 @@ impl Runtime {
         )
     }
     pub(crate) fn hub(&self) -> Result<Hub, String> {
+        Ok(self.services()?.hub.clone())
+    }
+    /// A retained panel and paired installation are setup metadata, not a live
+    /// transport, input baseline, or authority to change an assignment.
+    pub(crate) fn profile_metadata(&self) -> Result<Hub, String> {
+        Ok(self.metadata(false)?.hub.clone())
+    }
+    /// Call only from the journaled acquisition phase.
+    pub(crate) fn profile_acquire_transports(&self) -> Result<Hub, String> {
         Ok(self.services()?.hub.clone())
     }
     pub(crate) fn game_command(&self, command: &str, request: &Value) -> Result<Value, String> {
@@ -536,14 +559,14 @@ impl Runtime {
         &self,
         instance_id: &str,
     ) -> Result<osg_companion_service::Publication, String> {
-        self.services()?.hub.assigned_publication(instance_id)
+        self.metadata(false)?.hub.assigned_publication(instance_id)
     }
     pub(crate) fn resource_transport(&self, instance_id: &str) -> Option<osg_companion_service::SourceTransport> {
-        self.services.get()?.as_ref().ok()?.hub.source_transport(instance_id)
+        self.metadata.get()?.hub.source_transport(instance_id)
     }
     pub(crate) fn resource_publication(&self, instance_id: &str) -> Result<osg_companion_service::Publication, String> {
-        self.services.get().ok_or("Companion setup is not initialized; no inventory access starts it.")?
-            .as_ref().map_err(Clone::clone)?.hub.assigned_publication(instance_id)
+        self.metadata.get().ok_or("Companion setup is not initialized; no inventory access starts it.")?
+            .hub.assigned_publication(instance_id)
     }
 
     pub fn shutdown(&self) {
@@ -564,6 +587,44 @@ mod tests {
     }
     fn call(runtime: &Runtime, command: &str, payload: Value) -> Result<Value, String> {
         runtime.request(&json!({"command":command,"clientId":"operator-one","companion":payload}))
+    }
+    #[test]
+    fn missing_profile_metadata_does_not_create_state_or_cache_a_failed_setup() {
+        let directory = std::env::temp_dir().join(format!("osg-companion-metadata-{}", uuid::Uuid::new_v4()));
+        let runtime = Runtime::new(Some(directory.clone()), Arc::new(CompanionProvider::new(Arc::new(|| 1))));
+        assert!(runtime.profile_metadata().is_err());
+        assert!(runtime.metadata.get().is_none());
+        assert!(runtime.services.get().is_none());
+        assert!(!directory.exists());
+        assert!(Runtime::new(None, Arc::new(CompanionProvider::new(Arc::new(|| 1)))).profile_metadata().is_err());
+        runtime.shutdown();
+        assert!(runtime.profile_metadata().is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn retained_profile_metadata_restores_descriptors_without_listener_or_tls_setup() {
+        let directory = std::env::temp_dir().join(format!("osg-companion-metadata-retained-{}", uuid::Uuid::new_v4()));
+        let hub = Hub::open(&directory, Arc::new(osg_companion_service::NullSourceSink)).unwrap();
+        let mut upload:Value = serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        upload["command"] = json!("companion_publish");
+        hub.command(&upload).unwrap();
+        crate::companion_panels::save(&hub, &directory).unwrap();
+        // A saved listener is shared setup. Merely inspecting a profile must not
+        // construct a server or attempt to bind this saved endpoint.
+        std::fs::write(directory.join("companion-listener.json"), b"invalid listener configuration").unwrap();
+        let before = std::fs::read(directory.join("companion-host-state.dpapi")).unwrap();
+        let runtime = Runtime::new(Some(directory.clone()), Arc::new(CompanionProvider::new(Arc::new(|| 1))));
+        let metadata = runtime.profile_metadata().unwrap();
+        assert_eq!(metadata.host_id(), hub.host_id());
+        assert_eq!(metadata.publication_uploads().len(), 1);
+        assert!(runtime.services.get().is_none());
+        assert_eq!(std::fs::read(directory.join("companion-host-state.dpapi")).unwrap(), before);
+        let mut names = std::fs::read_dir(&directory).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panels.json"]);
+        runtime.shutdown();
+        for name in names { std::fs::remove_file(directory.join(name)).unwrap(); }
+        std::fs::remove_dir(directory).unwrap();
     }
     #[cfg(windows)]
     #[test]
