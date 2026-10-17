@@ -51,7 +51,12 @@ test('desktop routes the complete explicitly scoped request through one native m
 });
 
 test('retired standalone authoring, synthetic and companion feedback routes never reach desktop or HTTP transport',async()=>{
- for(const desktop of[true,false]){const api=transport({desktop});for(const command of['mapping_status','mapping_start','mapping_stop','mapping_import','mapping_virtual_inspect','mapping_companion_route','integration_get_state','integration_start','integration_inject','dcs_status','dcs_catalogue','dcs_start','companion_feedback_routes','companion_feedback','companion_game_capture'])await assert.rejects(api.gatewayRequest({command}),/retired/);assert.equal(api.calls.length,0);}
+ for(const desktop of[true,false]){const api=transport({desktop});for(const command of['mapping_status','mapping_start','mapping_stop','mapping_import','mapping_virtual_inspect','mapping_companion_route','integration_get_state','integration_start','integration_inject','dcs_status','dcs_catalogue','dcs_start','companion_feedback_routes','companion_feedback','companion_game_capture','controller_visibility_apply','controller_visibility_launch'])await assert.rejects(api.gatewayRequest({command}),/retired/);assert.equal(api.calls.length,0);}
+});
+
+test('local visibility preferences, inspection, enablement and exact restoration still use the ordinary native boundary on both transports',async()=>{
+ const requests=[{command:'controller_visibility_status',sourceId:'physical'},{command:'controller_visibility_save',sourceId:'physical',intent:{mode:'hide-from-process',executable:'C:\\Games\\Game.exe'}},{command:'controller_visibility_enable',sourceId:'physical',enabled:true},{command:'controller_visibility_inspect',sourceId:'physical'},{command:'controller_visibility_processes',sourceId:'physical',offset:32},{command:'controller_visibility_restore',sourceId:'physical',jobId:'native-job',sessionId:'native-session'}];
+ for(const desktop of[true,false]){const api=transport({desktop});for(const request of requests)await api.gatewayRequest(request);assert.deepEqual(api.calls.map(call=>desktop?call.args.request:JSON.parse(call.options.body)),requests.map(request=>({...request,clientId:'test-client-uuid'})));}
 });
 
 test('retained cleanup forwards exact native references while status, cancellation and profile Stop bypass slow cleanup; cancelled unsent recovery never restarts a job',async()=>{
