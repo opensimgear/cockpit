@@ -36,6 +36,7 @@ jobs:
       - run: pnpm debug:coverage
       - run: pnpm integration:coverage
       - run: pnpm games:coverage
+      - run: pnpm game-provider:coverage
       - run: pnpm ui:build
       - name: Shared companion contracts, designer, renderer and host checks
         run: |

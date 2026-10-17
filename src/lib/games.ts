@@ -10,8 +10,14 @@ export type GameIntegrationSetup = {
   live?: 'waiting' | 'receiving' | 'stale'; liveMessage?: string; verified?: boolean;
   channels?: Record<string, { status: string; value?: unknown }>; optionalMaxRpm?: boolean;
   probeChannels?: Record<string, { status: 'available' | 'unknown' }>;
+  providerSetupRevision?: string; catalogueRevision?: string | null; aircraftModule?: string | null;
 };
-export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup };
+export type GameIntegrationContext = {
+  status: 'waiting-profile' | 'waiting-game' | 'setup-required' | 'ready' | 'unsupported-platform' | 'error';
+  message: string; processVerified: boolean; contextSession: string | null;
+  providerSetupRevision: string | null; catalogueRevision: string | null;
+};
+export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext };
 export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
 export type CapturedCompanionAssignment = { instanceId:string; companionId:string; publicationHash:string; capabilityFingerprint:string };
 export type CapturedGameCompanions = { schemaVersion:1; assignments:CapturedCompanionAssignment[] };
@@ -19,9 +25,9 @@ export type GameProfile = { schemaVersion: 1 | 2 | 3; id: string; gameId: GameId
 export type GameSession = { phase: 'idle' | 'validating' | 'applying' | 'launching' | 'waiting' | 'running' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; profileId?: string | null; pid?: number | null; error?: string | null; steps?: string[]; bindingWarning?: boolean | string | null };
 export type DetectedGame = { gameId: GameId; name: string; pid: number };
 export type GamesState = { detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; profiles: GameProfile[]; defaultProfiles: Record<string, string>; session: GameSession; error?: string | null };
-export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_profile_save' | 'game_profile_delete' | 'game_profile_default' | 'game_launch' | 'game_activate' | 'game_deactivate' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover';
+export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_profile_save' | 'game_profile_delete' | 'game_profile_default' | 'game_launch' | 'game_activate' | 'game_deactivate' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; gameProfile?: GameProfile; profileId?: string; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown> };
+export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; gameProfile?: GameProfile; profileId?: string; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export const supportedGames: Game[] = [
   { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },
