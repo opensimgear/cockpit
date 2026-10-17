@@ -3,6 +3,10 @@ use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
 };
+const STARTUP_ADMITTED: &str = "fixture-startup-admitted";
+const STARTUP_ATTEMPTS: usize = 3;
+const RESPONSE_TIMEOUT: &str =
+    "Script helper response exceeded 100 ms; evaluation is limited to 5 ms.";
 
 pub(super) fn helper() -> &'static Path {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -41,6 +45,16 @@ fn scripted(
     Arc<Mutex<State>>,
 ) {
     let (mut service, root, mut profile, assignments, state) = setup();
+    // The marker is committed atomically with the original startup transaction.
+    // A later timer fault must never be mistaken for a failed initial callback.
+    let source = if source.contains("fn on_start(ctx)") {
+        format!(
+            "{}\nfn on_start(ctx) {{ let result = fixture_on_start(ctx); if !result.contains(\"logs\") {{ result.logs = []; }} result.logs.push(\"{STARTUP_ADMITTED}\"); result }}",
+            source.replacen("fn on_start(ctx)", "fn fixture_on_start(ctx)", 1)
+        )
+    } else {
+        source.into()
+    };
     profile.scripts = vec![serde_json::from_value(json!({
         "id":"logic", "source":source,
         "inputs":[{"kind":"source","role":"left","control":"trigger"},{"kind":"source","role":"right","control":"trigger"}],
@@ -59,14 +73,62 @@ fn on_event(ctx) { transaction(#{}, [button("result",ctx.inputs.left.trigger.val
 fn on_timer(ctx) { transaction(ctx.state,[],[]) }
 "#;
 fn start(service: &Service, profile: &Profile) -> Value {
-    let started = service
-        .request(&json!({"command":"mapping_virtual_start","profileId":profile.id}))
-        .unwrap();
-    let ready=wait_for(service, |v| {
-        v["scripts"][0]["pending"] == 0 && v["scripts"][0]["inflight"] == false
-    });
-    assert!(ready["scripts"][0]["fault"].is_null(),"Script startup must be healthy before fixture input: {ready}");
-    started["token"].clone()
+    let mut failed_token = None;
+    for attempt in 1..=STARTUP_ATTEMPTS {
+        let started = service
+            .request(&json!({"command":"mapping_virtual_start","profileId":profile.id}))
+            .unwrap();
+        assert_ne!(failed_token.as_ref(), Some(&started["token"]),
+            "A fresh fixture admission must have a different native owner");
+        let ready = wait_for(service, |v| {
+            v["scripts"][0]["pending"] == 0 && v["scripts"][0]["inflight"] == false
+        });
+        let script = &ready["scripts"][0];
+        if script["fault"].is_null() {
+            assert!(
+                script["logs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|log| log == STARTUP_ADMITTED),
+                "The actual startup transaction must be admitted before fixture input: {ready}"
+            );
+            return started["token"].clone();
+        }
+        assert!(
+            script["fault"] == RESPONSE_TIMEOUT
+                && script["logs"] == json!([])
+                && script["started"] == true
+                && script["timers"] == 0,
+            "Only an uncommitted initial callback deadline may retry fixture admission: {ready}"
+        );
+        // Production correctly rejects even a queued reply after 100 ms. Before
+        // any fixture input, Stop must fully release this failed run's output.
+        let stopped = service.request(&json!({"command":"mapping_stop"})).unwrap();
+        assert!(
+            stopped["running"] == false
+                && stopped["recoveryRequired"] == false
+                && stopped["token"].is_null(),
+            "Failed fixture cleanup remains unresolved: {stopped}"
+        );
+        let assignments = service
+            .store()
+            .unwrap()
+            .load_assignments(&profile.id)
+            .unwrap();
+        assert!(
+            service
+                .request(
+                    &json!({"command":"mapping_simulate","token":started["token"],
+            "source":assignments[0].source,"changes":[]})
+                )
+                .is_err(),
+            "A stopped fixture token must reject input before a fresh Start"
+        );
+        failed_token = Some(started["token"].clone());
+        assert!(attempt < STARTUP_ATTEMPTS, "Initial script callback missed its strict deadline on every fresh fixture admission: {ready}");
+    }
+    unreachable!("Every bounded fixture admission either returned or failed")
 }
 fn press(service: &Service, token: &Value, assignment: &Assignment, pressed: bool) {
     service
@@ -156,6 +218,77 @@ fn on_timer(ctx) {{ transaction(ctx.state,[],[]) }}
         service.shutdown();
     }
 }
+
+#[test]
+fn delayed_output_setup_retries_only_a_cleaned_up_startup_without_replaying_held_output() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let source = r#"
+fn on_start(ctx) { transaction(#{},[button("result",true)],[]) }
+fn on_event(ctx) { transaction(ctx.state,[],[]) }
+fn on_timer(ctx) { transaction(ctx.state,[],[]) }
+"#;
+    let (mut service, _root, profile, _, state) = scripted(source);
+    service.script_live_qualified = true;
+    let factory = service.output_factory.clone();
+    let checked = state.clone();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed = attempts.clone();
+    service.output_factory = Arc::new(move || {
+        let attempt = observed.fetch_add(1, Ordering::SeqCst);
+        if attempt == 0 {
+            // The actual on_start request is pending while output setup runs.
+            // A queued healthy reply must still lose the production 100 ms race.
+            std::thread::sleep(Duration::from_millis(120));
+        } else {
+            let calls = &checked.lock().unwrap().calls;
+            for slot in [1, 2] {
+                assert_eq!(
+                    calls
+                        .iter()
+                        .filter(|call| **call == format!("release:{slot}"))
+                        .count(),
+                    attempt,
+                    "Every failed fixture owner must be released before another output acquisition"
+                );
+            }
+            assert!(
+                !calls.iter().any(|call| call == "submit:1:2"),
+                "An expired startup transaction cannot contribute held output"
+            );
+        }
+        factory()
+    });
+    let _token = start(&service, &profile);
+    submitted(&state, "submit:1:2");
+    let attempts = attempts.load(Ordering::SeqCst);
+    assert!((2..=3).contains(&attempts));
+    assert_eq!(
+        state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|call| *call == "submit:1:2")
+            .count(),
+        1,
+        "Only the fresh healthy startup may contribute held output"
+    );
+    service.request(&json!({"command":"mapping_stop"})).unwrap();
+    for slot in [1, 2] {
+        assert_eq!(
+            state
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .filter(|call| **call == format!("release:{slot}"))
+                .count(),
+            attempts
+        );
+    }
+    service.shutdown();
+}
+
 #[test]
 fn losing_either_declared_source_releases_script_and_cancels_its_timers() {
     for source in 0..2 {
