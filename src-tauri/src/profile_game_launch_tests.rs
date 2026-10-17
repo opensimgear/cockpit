@@ -232,12 +232,44 @@ fn started_process_proof_is_reverified_without_optional_integration_setup() {
         .wait_profile_launch(spawn(&runtime, &candidate), |_, _| Ok(()))
         .unwrap();
     runtime.validate_started_profile_game(&started).unwrap();
+    runtime.inner.activation.observe(
+        platform.as_ref(),
+        &runtime.inner.settings.lock().unwrap().catalogue,
+    );
+    runtime.inner.activation.observe(
+        platform.as_ref(),
+        &runtime.inner.settings.lock().unwrap().catalogue,
+    );
+    assert!(runtime
+        .confirm_started_profile_activation(&started)
+        .unwrap()
+        .is_some());
     platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
     assert!(runtime.validate_started_profile_game(&started).is_err());
+    assert!(runtime
+        .confirm_started_profile_activation(&started)
+        .is_err());
     *platform.process.lock().unwrap() = Some(started.process.clone());
     runtime.validate_started_profile_game(&started).unwrap();
     platform.alive.store(false, Ordering::Release);
     assert!(runtime.validate_started_profile_game(&started).is_err());
+    runtime.shutdown();
+}
+#[test]
+fn externally_started_process_after_preparation_is_preserved_without_a_second_spawn() {
+    let (runtime, platform, candidate, _directory) = fixture();
+    let armed = arm(&runtime, &candidate);
+    let external = PlatformFixture::process();
+    *platform.process.lock().unwrap() = Some(external.clone());
+    let error = runtime
+        .spawn_profile_launch(armed, |spawn| spawn(admission(&candidate)))
+        .err()
+        .unwrap();
+    assert!(error.message.contains("appeared after preparation"));
+    assert!(!error.process_may_have_started);
+    assert_eq!(error.cleanup_owner, admission(&candidate).status.owner);
+    assert_eq!(platform.spawns.load(Ordering::Acquire), 0);
+    assert_eq!(*platform.process.lock().unwrap(), Some(external));
     runtime.shutdown();
 }
 

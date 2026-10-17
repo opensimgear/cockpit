@@ -72,6 +72,33 @@ fn background_capture_needs_no_integration_setup_and_status_reads_never_scan() {
     assert_eq!(observer.snapshot().unwrap(), [context]);
 }
 #[test]
+fn launch_confirmation_requires_exact_debounced_process_without_scanning() {
+    let platform = fake();
+    let observer = Observer::default();
+    let identity = identity(&platform, &game()).unwrap();
+    assert!(observer.confirmed_process(&identity, &running(1)).is_none());
+    *platform.current.lock().unwrap() = Ok(Some(running(1)));
+    observer.observe(&platform, &[game()]);
+    assert!(observer.confirmed_process(&identity, &running(1)).is_none());
+    observer.observe(&platform, &[game()]);
+    let confirmed = observer.confirmed_process(&identity, &running(1)).unwrap();
+    assert!(observer.confirmed_process(&identity, &running(2)).is_none());
+    let mut wrong = running(1);
+    wrong.path = "C:\\Other\\DCS.exe".into();
+    assert!(observer.confirmed_process(&identity, &wrong).is_none());
+    assert_eq!(platform.scans.load(Ordering::Relaxed), 2);
+    *platform.current.lock().unwrap() = Ok(Some(running(2)));
+    observer.observe(&platform, &[game()]);
+    assert!(observer.confirmed_process(&identity, &running(1)).is_none());
+    observer.observe(&platform, &[game()]);
+    assert_ne!(
+        observer.confirmed_process(&identity, &running(2)).unwrap(),
+        confirmed
+    );
+    observer.0.lock().unwrap().at = Some(Instant::now() - MAX_AGE - Duration::from_millis(1));
+    assert!(observer.confirmed_process(&identity, &running(2)).is_none());
+}
+#[test]
 fn replacement_exit_ambiguity_and_executable_change_revoke_without_replay() {
     let platform = fake();
     let observer = Observer::default();

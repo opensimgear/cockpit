@@ -146,6 +146,27 @@ impl Observer {
             })
             .collect())
     }
+    /// Matches an already observed native launch without advancing debounce or
+    /// substituting another instance of the same executable.
+    pub(crate) fn confirmed_process(
+        &self,
+        identity: &GameIdentity,
+        process: &ProcessIdentity,
+    ) -> Option<VerifiedGame> {
+        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+            return None;
+        }
+        state
+            .entries
+            .get(&identity.game_id)
+            .and_then(|entry| entry.confirmed.as_ref())
+            .filter(|proof| &proof.identity == identity && &proof.process == process)
+            .map(|proof| VerifiedGame {
+                identity: proof.identity.clone(),
+                process_session: proof.session.clone(),
+            })
+    }
     pub(crate) fn validate(
         &self,
         platform: &dyn Platform,

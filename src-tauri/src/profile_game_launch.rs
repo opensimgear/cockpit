@@ -285,6 +285,11 @@ impl GamesRuntime {
             }
             owner = Some(captured);
             epoch = admission.admission_epoch;
+            if self.inner.platform.find(&installation)?.is_some() {
+                return Err(
+                    "The game appeared after preparation; no second process was launched.".into(),
+                );
+            }
             // An error from spawning is potentially post-effect. Never retry.
             attempted = true;
             let result = self.inner.platform.spawn_process(&installation);

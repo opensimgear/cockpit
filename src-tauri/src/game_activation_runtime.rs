@@ -51,6 +51,16 @@ impl GamesRuntime {
         }
         self.inner.activation.snapshot()
     }
+    pub(crate) fn confirm_started_profile_activation(
+        &self,
+        started: &super::launch::StartedGame,
+    ) -> Result<Option<VerifiedGame>, String> {
+        self.validate_started_profile_game(started)?;
+        Ok(self
+            .inner
+            .activation
+            .confirmed_process(&started.identity, &started.process))
+    }
     pub(crate) fn profile_activation_identity(
         &self,
         game_id: &str,
