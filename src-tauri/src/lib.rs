@@ -35,6 +35,8 @@ mod profile_session_inputs;
 mod profile_session_panels_inputs;
 mod profile_session_host;
 mod profile_session_virtual;
+mod profile_session_visibility;
+mod profile_session_overrides;
 mod profile_session_scripts;
 mod profile_resource_sources;
 mod profile_resource_ports;
