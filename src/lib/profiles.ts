@@ -86,7 +86,7 @@ export type ProfileRequest =
   | { command: 'profile_pause'; paused: boolean }
   | { command: 'profile_selection_mode'; mode: ProfileSelectionMode }
   | { command: 'profile_reset'; confirm: true };
-export type ProfileResult = { document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; profileSession?: import('./profile-runtime').NativeProfileStatus; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
+export type ProfileResult = { document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; profileSession?: import('./profile-runtime').NativeProfileStatus; automatic?: import('./profile-automatic').ProfileAutomaticStatus; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
 export type ProfileEditorSaveResult = { document: ProfileDocument; assignments: ProfileLocalAssignment[]; profiles: ProfileSummary[]; session: ProfileSession };
 export type ProfileSend = (request: ProfileRequest) => Promise<ProfileResult>;
 export type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;

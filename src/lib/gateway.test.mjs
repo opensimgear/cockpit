@@ -87,13 +87,17 @@ test('read-only applied inspection neither waits for nor blocks profile controls
   pending.resolve();await inspecting;
 });
 test('learning cached status and priority cancel bypass a blocked start, and controls cancel unsent starts',async()=>{
-  for(const command of ['profile_input_learn_cancel','profile_apply','mapping_preview_start','action_invoke']){
+  for(const command of ['profile_input_learn_cancel','profile_apply','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','mapping_preview_start','action_invoke']){
     const wait=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='profile_input_learn_start')await wait.promise;return{ok:true,state};}});
     const fields={resourceId:'physical',generation:'1',capabilityRevision:'sha256:'+'1'.repeat(64)},active=api.gatewayRequest({command:'profile_input_learn_start',...fields});
     const old=api.gatewayRequest({command:'profile_input_learn_start',...fields}),rejected=assert.rejects(old,/learning Start was cancelled/);await tick();
     await api.gatewayRequest({command:'profile_input_learn_status',learnId:'current'});await api.gatewayRequest({command,...(command==='profile_input_learn_cancel'?{learnId:'current'}:{})});
     assert.equal(api.calls.filter(call=>call.args.request.command==='profile_input_learn_start').length,1);wait.resolve();await Promise.all([active,rejected]);
   }
+});
+test('automatic status is an independent read while rule and saved-profile writes retain storage ordering',async()=>{
+  const waiting=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='profile_game_rule_save')await waiting.promise;return{ok:true,state:{profiles:{automatic:{mode:'manual'}}}};}});
+  const rule={command:'profile_game_rule_save',gameId:'dcs',profileId:'11111111-1111-4111-8111-111111111111',priority:32767,enabled:true};const saving=api.gatewayRequest(rule),mode=api.gatewayRequest({command:'profile_selection_mode',mode:'automatic'});await tick();await api.gatewayRequest({command:'profile_automatic_status'});await api.gatewayRequest({command:'profile_status'});assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_game_rule_save','profile_automatic_status','profile_status']);assert.deepEqual(api.calls[0].args.request,{...rule,clientId:'test-client-uuid'});waiting.resolve();await Promise.all([saving,mode]);assert.equal(api.calls.at(-1).args.request.command,'profile_selection_mode');
 });
 
 test('profile runtime controls and status bypass slow Apply while older unsent Apply is cancelled',async()=>{
