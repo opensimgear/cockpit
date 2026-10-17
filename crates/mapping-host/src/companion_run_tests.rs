@@ -257,7 +257,28 @@ impl Fixture {
         .unwrap()
     }
     fn start(&self, id: &str, mode: &str) -> Value {
-        self.request(id, "start", json!({"mode":mode})).unwrap()
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let ready = if mode == "live" { "liveReady" } else { "recordingReady" };
+        loop {
+            let view = self.request(id, "inspect", json!({})).unwrap();
+            if view["preflight"][ready] == true {
+                match self.request(id, "start", json!({"mode":mode})) {
+                    Ok(started) => return started,
+                    // A native clock can take the manual router between the
+                    // read-only preflight and admission. These exact errors
+                    // happen before any route or feeder ownership is created.
+                    Err(error) if error == "The manual mapping is preparing; retry explicitly."
+                        || error.strip_prefix("Companion route is not ready: ").is_some_and(|reasons| {
+                            reasons.split("; ").all(|reason| matches!(reason,
+                                "The manual mapping is preparing or busy; retry readiness."
+                                | "The manual mapping is busy; retry readiness."))
+                        }) => {}
+                    Err(error) => panic!("Unexpected companion Start failure: {error}"),
+                }
+            }
+            assert!(Instant::now() < deadline, "route never became ready for {mode}: {view}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
     fn submission(&self, id: &str) -> Value {
         let deadline = Instant::now() + Duration::from_secs(3);
