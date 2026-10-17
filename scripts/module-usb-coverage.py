@@ -12,8 +12,8 @@ import tempfile
 
 
 MODULES = ["module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
-           "profile_resources", "profile_resources_game", "profile_session_panels_io", "profile_resource_sources", "profile_resource_ports", "profile_compilation"]
-TEST_FILTERS = ["module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "profile_panels_io", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate"]
+           "profile_resources", "profile_resources_game", "profile_session_panels_io", "profile_session_panels_inputs", "profile_resource_sources", "profile_resource_ports", "profile_compilation"]
+TEST_FILTERS = ["module_", "profile_resource", "profile_compilation", "stm32::tests::events_", "profile_panels_io", "profile_session_panels_inputs", "gateways::tests::native_profile_and_browser_claims_use_the_same_configuration_gate"]
 
 
 def source_stamp(paths, root):

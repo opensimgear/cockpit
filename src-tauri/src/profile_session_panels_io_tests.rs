@@ -214,3 +214,13 @@ fn native_read_errors_and_forged_preference_never_create_a_session_or_move_a_wri
     assert!(io.usb(&key, UsbRequest::ConfigRead { route }).is_err());
     assert_eq!(io.can(request("status"))["ok"], false);
 }
+
+#[test]
+fn cached_native_can_snapshot_performs_no_request_or_discovery() {
+    let (io, adapter, _, _) = fixture();
+    assert_eq!(io.can_snapshot(GATEWAY).unwrap()["connected"], true);
+    assert!(adapter.calls.lock().unwrap().is_empty());
+    assert!(io.can_snapshot("unknown").is_err());
+    io.close();
+    assert!(io.can_snapshot(GATEWAY).is_err());
+}

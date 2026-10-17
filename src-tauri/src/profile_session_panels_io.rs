@@ -54,6 +54,19 @@ impl ProfilePanelIo {
             })
             .collect()
     }
+    pub(crate) fn can_snapshot(&self, gateway: &str) -> Result<Value, String> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err("Cockpit gateway manager has closed.".into());
+        }
+        let adapter = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(gateway)
+            .cloned()
+            .ok_or("Connect the bound gateway first.")?;
+        Ok(adapter.cached_state())
+    }
     pub(crate) fn usb_snapshots(&self) -> Vec<crate::module_usb_fleet::SlotSnapshot> {
         self.usb.snapshots()
     }

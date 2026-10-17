@@ -29,6 +29,7 @@ mod profile_compilation;
 mod profile_session;
 mod profile_session_games;
 mod profile_session_inputs;
+mod profile_session_panels_inputs;
 mod profile_session_host;
 mod profile_session_virtual;
 mod profile_session_scripts;
