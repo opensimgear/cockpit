@@ -1,7 +1,7 @@
 /** Read-only compiler previews. Preview IDs never authorize Apply or device writes. */
-import { profileDocumentError, profileContractError } from './profiles.ts';
+import { profileDocumentError, profileContractError, profileAssignmentsError } from './profiles.ts';
 import { resourceTokensEqual } from './profile-inventory.ts';
-import type { DeepReadonly, ProfileDocument, ProfileEndpoint, ProfilePortContract } from './profiles';
+import type { DeepReadonly, ProfileDocument, ProfileEndpoint, ProfileLocalAssignment, ProfilePortContract } from './profiles';
 import type { ResourceRoute, ResourceToken } from './profile-inventory';
 
 export const COMPILATION_SCHEMA_VERSION = 1;
@@ -33,7 +33,7 @@ export type CompilationPage<S extends CompilationSection = CompilationSection> =
   section: S; offset: number; total: number; items: CompilationItems[S][];
 };
 export type ProfileCompilationCommand = 'profile_compile' | 'profile_compilation_inspect';
-export type ProfileCompilationRequest = { command: 'profile_compile'; document: ProfileDocument }
+export type ProfileCompilationRequest = { command: 'profile_compile'; document: ProfileDocument; assignments?:ProfileLocalAssignment[] }
   | { command: 'profile_compilation_inspect'; compilationId: string; section: CompilationSection; offset: number; limit: number };
 export type ProfileCompilationResult = CompilationSummary | CompilationPage;
 export type ProfileCompilationSend = (request: ProfileCompilationRequest) => Promise<ProfileCompilationResult>;
@@ -93,12 +93,13 @@ function item(section: CompilationSection, value: unknown): boolean {
 export class ProfileCompilerClient {
   private readonly send: ProfileCompilationSend;
   constructor(send: ProfileCompilationSend) { this.send = send; }
-  async compile(document: ProfileDocument): Promise<DeepReadonly<CompilationSummary>> {
-    const error = profileDocumentError(document);
+  async compile(document: ProfileDocument, assignments?:ProfileLocalAssignment[]): Promise<DeepReadonly<CompilationSummary>> {
+    const error = profileDocumentError(document)||(assignments===undefined?'':profileAssignmentsError(assignments));
     if (error) throw new Error(error);
+    if(assignments?.some(assignment=>{const resource=document.resources.find(resource=>resource.id===assignment.resourceId);return !resource||resource.ports.length!==assignment.ports.length||resource.ports.some(port=>!assignment.ports.some(pin=>pin.profilePortId===port.id));}))throw new Error('Pin every selected logical port explicitly for this draft preview.');
     // Validate before JSON cloning; NaN must never become a nullable policy.
     const captured: ProfileDocument = JSON.parse(JSON.stringify(document));
-    const result = await this.send({ command: 'profile_compile', document: captured });
+    const result = await this.send({ command: 'profile_compile', document: captured,...(assignments===undefined?{}:{assignments:JSON.parse(JSON.stringify(assignments)) as ProfileLocalAssignment[]}) });
     if (!summary(result) || result.profileId !== captured.id || result.profileRevision !== captured.revision) throw new Error('The compilation preview does not match the captured draft.');
     return freezeClone(result);
   }

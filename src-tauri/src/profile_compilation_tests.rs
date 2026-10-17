@@ -28,6 +28,39 @@ fn native_summary_matches_the_shared_frontend_wire_fixture() {
     assert_eq!(response, fixture);
 }
 #[test]
+fn draft_pins_are_explicit_validated_and_never_saved_or_used_as_authority() {
+    let runtime=Runtime::default();
+    let document=ProfileDocument::parse(include_bytes!("../../tests/fixtures/profiles/mixed.json")).unwrap();
+    let assignments=document.resources.iter().map(|resource|osg_profiles::store::LocalAssignment {
+        resource_id:resource.id.clone(),source_id:format!("fixture:{}",resource.id),
+        ports:resource.ports.iter().map(|port|osg_profiles::resources::PortExpectation {
+            profile_port_id:port.id.clone(),observed_port_id:port.id.clone(),
+            expected_contract_hash:port.descriptor().contract_hash().unwrap(),
+        }).collect(),
+    }).collect::<Vec<_>>();
+    let request=json!({"command":"profile_compile","document":document,"assignments":assignments});
+    let preview=runtime.request(&request,|draft,pins| {
+        assert_eq!(draft.id,document.id);
+        assert_eq!(serde_json::to_value(pins.unwrap()).unwrap(),request["assignments"]);
+        Ok(snapshot())
+    }).unwrap();
+    assert!(!preview["compilationId"].is_null());
+    runtime.request(&json!({"command":"profile_compile","document":document,"assignments":[]}),|_,pins| {
+        assert!(pins.unwrap().is_empty());Ok(snapshot())
+    }).unwrap();
+    runtime.request(&json!({"command":"profile_compile","document":document}),|_,pins| {
+        assert!(pins.is_none());Ok(snapshot())
+    }).unwrap();
+    for invalid in [Value::Null,json!({}),json!([{"resourceId":"unknown","sourceId":"device","ports":[]}]),{
+        let mut missing=request["assignments"].clone();missing[0]["ports"]=json!([]);missing
+    },{
+        let mut extra=request["assignments"].clone();extra[0]["token"]=json!({"access":"invoke"});extra
+    }] {
+        let mut invalid_request=request.clone();invalid_request["assignments"]=invalid;
+        assert!(runtime.request(&invalid_request,|_,_|panic!("invalid pins cannot capture")).is_err());
+    }
+}
+#[test]
 fn semantic_errors_are_inspectable_without_saving_or_executing_a_draft() {
     let runtime = Runtime::default();
     let mut document = serde_json::to_value(osg_profiles::default_document()).unwrap();
@@ -36,7 +69,7 @@ fn semantic_errors_are_inspectable_without_saving_or_executing_a_draft() {
     let result = runtime
         .request(
             &json!({"command":"profile_compile","document":document}),
-            |_| Ok(snapshot()),
+            |_, _| Ok(snapshot()),
         )
         .unwrap();
     assert_eq!(result["readiness"], "invalid");
@@ -71,7 +104,7 @@ fn preview(runtime: &Runtime) -> Value {
     runtime
         .request(
             &json!({"command":"profile_compile","document":osg_profiles::default_document()}),
-            |_| Ok(snapshot()),
+            |_, _| Ok(snapshot()),
         )
         .unwrap()
 }
@@ -82,7 +115,7 @@ fn inspect(
     offset: usize,
     limit: usize,
 ) -> Result<Value, String> {
-    runtime.request(&json!({"command":"profile_compilation_inspect","compilationId":id,"section":section,"offset":offset,"limit":limit}), |_| panic!("inspection cannot capture providers"))
+    runtime.request(&json!({"command":"profile_compilation_inspect","compilationId":id,"section":section,"offset":offset,"limit":limit}), |_, _| panic!("inspection cannot capture providers"))
 }
 #[test]
 fn previews_are_read_only_immutable_paged_and_separate_from_selection() {
@@ -114,7 +147,7 @@ fn strict_requests_reject_forged_capture_fields_and_stale_preview_ids() {
         json!({"command":"profile_compile","document":{"schemaVersion":1}}),
     ] {
         assert!(runtime
-            .request(&request, |_| panic!(
+            .request(&request, |_, _| panic!(
                 "invalid requests cannot capture providers"
             ))
             .is_err());
@@ -132,11 +165,11 @@ fn strict_requests_reject_forged_capture_fields_and_stale_preview_ids() {
     ] {
         assert!(inspect(&runtime, id, section, offset, limit).is_err());
     }
-    assert!(runtime.request(&json!({"command":"profile_compilation_inspect","compilationId":id,"section":"nodes","offset":-1}), |_| panic!()).is_err());
+    assert!(runtime.request(&json!({"command":"profile_compilation_inspect","compilationId":id,"section":"nodes","offset":-1}), |_, _| panic!()).is_err());
     assert!(runtime
         .request(
             &json!({"command":"profile_compile","document":osg_profiles::default_document()}),
-            |_| Err("capture unavailable".into())
+            |_, _| Err("capture unavailable".into())
         )
         .unwrap_err()
         .contains("capture unavailable"));

@@ -441,7 +441,7 @@ impl GatewayManager {
         let profile_request = request["command"]
             .as_str()
             .is_some_and(|command| command.starts_with("profile_"));
-        let request_limit = if request["command"] == "profile_editor_save" {
+        let request_limit = if matches!(request["command"].as_str(), Some("profile_editor_save" | "profile_compile")) {
             PROFILE_EDITOR_REQUEST_LIMIT
         } else if profile_request {
             PROFILE_REQUEST_LIMIT
@@ -503,7 +503,16 @@ impl GatewayManager {
         }
         if matches!(command.as_str(), "profile_compile" | "profile_compilation_inspect") {
             request.as_object_mut().unwrap().remove("clientId");
-            return match self.profile_compilation.request(&request, |document| {
+            return match self.profile_compilation.request(&request, |document, draft_assignments| {
+                if let Some(assignments) = draft_assignments {
+                    // New/unsaved drafts have no saved identity requirement.
+                    // This is a cached preview, never a save or Apply authority.
+                    let read_only = self.profiles.lock().unwrap_or_else(|p| p.into_inner())
+                        .compile_source(osg_profiles::DEFAULT_PROFILE_ID)?.2;
+                    let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                    snapshot.read_only |= read_only;
+                    return Ok(snapshot);
+                }
                 let (stored, mut assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(&document.id)?;
                 if stored.revision != document.revision {
                     return Err("The profile revision changed; reload its saved revision before compiling this draft.".into());
@@ -1035,6 +1044,13 @@ mod tests {
         let status = request(&manager, "profile_status", None, json!({}));
         assert_eq!(status["state"]["profiles"]["session"]["selectedProfileId"], osg_profiles::DEFAULT_PROFILE_ID);
         assert_eq!(status["state"]["profiles"]["session"]["state"], "stopped");
+        let draft = osg_profiles::new_document("Unsaved preview").unwrap();
+        let draft_preview = request(&manager,"profile_compile",None,json!({"document":draft,"assignments":[]}));
+        assert_eq!(draft_preview["ok"],true,"{draft_preview}");
+        assert_eq!(draft_preview["state"]["profileCompilation"]["profileId"],draft.id);
+        assert_eq!(request(&manager,"profile_get",None,json!({"id":draft.id}))["ok"],false);
+        let rejected_pins = request(&manager,"profile_compile",None,json!({"document":draft,"assignments":[{"resourceId":"unknown","sourceId":"device","ports":[]}]}));
+        assert_eq!(rejected_pins["ok"],false);
         assert!(provider.adapters.lock().unwrap().is_empty());
         assert!(manager.sessions.lock().unwrap().is_empty());
         assert!(manager.companion_host.resource_transport("missing").is_none());

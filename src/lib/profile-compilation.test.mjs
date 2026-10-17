@@ -55,6 +55,19 @@ test('compiling captures a validated immutable draft without selecting or saving
   await assert.rejects(client.compile(invalid));
   assert.equal(calls.length, 1);
 });
+test('draft preview captures exact local pins independently and explicit empty pins never imply saved assignments',async()=>{
+  const draft=clone(document);draft.resources=[{id:'wheel',name:'Wheel',kind:'device',required:false,ports:[{id:'pressed',name:'Pressed',direction:'output',contract:contract()}]}];
+  const assignments=[{resourceId:'wheel',sourceId:'native-wheel',ports:[{profilePortId:'pressed',observedPortId:'button:0',expectedContractHash:hash}]}],calls=[];
+  const client=new ProfileCompilerClient(async request=>{calls.push(request);assignments[0].ports[0].observedPortId='later';return summary();});
+  await client.compile(draft,assignments);assert.equal(calls[0].assignments[0].ports[0].observedPortId,'button:0');assert.equal(calls[0].document.resources[0].ports[0].id,'pressed');assert.deepEqual(calls.map(request=>request.command),['profile_compile']);
+  await client.compile(draft,[]);assert.deepEqual(calls[1].assignments,[]);assert.ok(Object.hasOwn(calls[1],'assignments'));await client.compile(draft);assert.equal(Object.hasOwn(calls[2],'assignments'),false);
+});
+test('malformed or incomplete draft assignments cannot enter a native capture request',async()=>{
+  const draft=clone(document);draft.resources=[{id:'wheel',name:'Wheel',kind:'device',required:false,ports:[{id:'pressed',name:'Pressed',direction:'output',contract:contract()}]}];let calls=0;
+  const client=new ProfileCompilerClient(async()=>{calls++;return summary();});
+  for(const assignments of [[{resourceId:'wheel',sourceId:'native',ports:[]}],[{resourceId:'missing',sourceId:'native',ports:[]}],[{resourceId:'wheel',sourceId:'native',ports:[{profilePortId:'wrong',observedPortId:'button',expectedContractHash:hash}]}],[{resourceId:'wheel',sourceId:'native',ports:[{profilePortId:'pressed',observedPortId:'button',expectedContractHash:'wrong'}]}]])await assert.rejects(client.compile(draft,assignments),/Pin every|exact bounded/);
+  assert.equal(calls,0);
+});
 
 test('malformed summaries never replace the requested draft preview', async () => {
   for (const change of [

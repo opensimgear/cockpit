@@ -31,13 +31,13 @@ impl Runtime {
     pub(crate) fn request(
         &self,
         request: &Value,
-        capture: impl FnOnce(&ProfileDocument) -> Result<CompileSnapshot, String>,
+        capture: impl FnOnce(&ProfileDocument, Option<Vec<osg_profiles::store::LocalAssignment>>) -> Result<CompileSnapshot, String>,
     ) -> Result<Value, String> {
         let command = request["command"]
             .as_str()
             .ok_or("Missing compiler command.")?;
         let fields: &[&str] = match command {
-            "profile_compile" => &["document"],
+            "profile_compile" => &["document", "assignments"],
             "profile_compilation_inspect" => &["compilationId", "section", "offset", "limit"],
             _ => return Err("Unknown compiler operation.".into()),
         };
@@ -53,7 +53,13 @@ impl Runtime {
             let document = ProfileDocument::parse_draft(
                 &serde_json::to_vec(&request["document"]).map_err(|error| error.to_string())?,
             )?;
-            let snapshot = capture(&document)?;
+            let assignments = request.get("assignments").map(|value| {
+                let pins: Vec<osg_profiles::store::LocalAssignment> = serde_json::from_value(value.clone())
+                    .map_err(|error| format!("Invalid draft assignments: {error}"))?;
+                osg_profiles::store::validate_assignments(&document, &pins)?;
+                Ok::<_, String>(pins)
+            }).transpose()?;
+            let snapshot = capture(&document, assignments)?;
             let report = osg_profiles::compiler::compile(&document, &snapshot);
             serde_json::to_writer(SizeBudget(0), &report)
                 .map_err(|_| "The compiled preview exceeds its 8 MiB inspection budget.")?;
