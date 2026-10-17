@@ -1,260 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadModules } from './test-module-loader.mjs';
+import {readFile} from 'node:fs/promises';
+import {loadModules} from './test-module-loader.mjs';
+const modules=await loadModules(['./games']);
+const games=modules.get('./games');
+const {supportedGames,gameExecutableName,visibleGames,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason,gameCleanupLabel}=games;
+const plain=value=>JSON.parse(JSON.stringify(value));
+const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
-const modules = await loadModules(['./runtime-config', './panel-input-metadata', './integration-profile', './games']);
-const { visibleGames, defaultGameProfile, newGameProfile, cloneGameProfile, gameProfileEqual, gameDeviceKey, gameIntegrationLabel, gameIntegrationLiveLabel, gameIntegrationNativeVerified, gameIntegrationReady, gameIntegrationVerificationLabel, gameIntegrationSetupRequest, gameIntegrationTargetError, gameIntegrationUserFolder, gameIntegrationFolderError, gameIntegrationSetupBlockedReason, profileChangesBindings, gameProfileError, gameSessionLabel, gameCompanionCaptureError, captureGameCompanions } = modules.get('./games');
-const plain = value => JSON.parse(JSON.stringify(value));
-const gatewayId = 'stm32:111111111111111111111111', moduleId = '0123456789abcdef0123456789abcdef';
-const configuration = () => ({ name: 'Pedals', expanderMask: 0, buttons: [[0, 0, 0]], axes: [[0, 48, 0, 4095, 32768, 0, 100]], hats: [], encoders: [], selectors: [] });
-const profile = () => plain(newGameProfile('dcs'));
-const device = () => ({ gatewayId, moduleId, controller: 'keep' });
-const integration = () => ({
-  document: { schemaVersion: 1, id: 'rally-panel', name: 'Rally rev lights', provider: 'assetto-corsa-rally', context: {}, roles: [{ id: 'panel', label: 'Panel' }], inputs: [], outputs: [{ id: 'rev', role: 'panel', endpoint: 'led', actionId: 'led.set', channel: 'rev_ratio', output: 0, format: { kind: 'threshold', threshold: 0.8, comparison: 'gte' } }] },
-  connection: { freshnessMs: 1000, source: 'shared-memory', processId: 123 }, assignments: [{ role: 'panel', gatewayId, moduleId }],
+test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{
+ assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12']);
+ const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,1);assert.equal(visibleGames(catalogue,true).length,4);assert.equal(supportedGames[0].installed,false);
+ for(const game of supportedGames)assert.equal(gameExecutableName(game.id),game.id.startsWith('x-plane-')?'X-Plane.exe':game.id==='dcs'?'DCS.exe':'acr.exe');
+ for(const name of ['newGameProfile','cloneGameProfile','captureGameCompanions','gameProfileError','defaultGameProfile'])assert.equal(games[name],undefined);
+ const source=await readFile(new URL('./games.ts',import.meta.url),'utf8');for(const retired of ['game_profile_save','game_activate','game_launch','game_deactivate','CapturedMapping','IntegrationConfig','GameSession'])assert.ok(!source.includes(retired),retired);
 });
 
-test('X-Plane profiles distinguish versions and configuration readiness from live qualification', () => {
-  for (const version of [11,12]) {
-    const gameId = `x-plane-${version}`;
-    const p = plain(newGameProfile(gameId));
-    p.integration = integration(); p.integration.document.provider = 'x-plane';
-    p.integration.connection = { source: 'rref', version, host:'127.0.0.1', port:49000, listenPort:0, updateHz:10, freshnessMs:1500 };
-    assert.equal(gameProfileError(p),'');
-    const game = { id:gameId, provider:'x-plane', installed:true, integrationSetup:{state:'ready',live:'waiting',verified:false} };
-    assert.equal(gameIntegrationReady(game),true); assert.equal(gameIntegrationNativeVerified(game),false);
-    assert.equal(gameIntegrationLiveLabel(game),'Waiting for game data');
-    p.integration.connection.version = version === 11 ? 12 : 11;
-    assert.match(gameProfileError(p),/version must match/);
-    p.integration.document.provider = 'assetto-corsa-rally';
-    assert.notEqual(gameProfileError(p),'');
-  }
+test('provider setup, native verification and telemetry freshness remain separate facts',()=>{
+ const game=dcs();delete game.integrationSetup;assert.equal(gameIntegrationLabel(game),'Integration not checked');assert.equal(gameIntegrationReady(game),false);
+ for(const state of ['not-installed','setup-required','setting-up','ready','needs-attention','unsupported-platform'])assert.ok(gameIntegrationLabel({...game,integrationSetup:{state}}).length>5);
+ game.integrationSetup={state:'ready',live:'waiting'};assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationLabel(game),'Ready for integration');assert.equal(gameIntegrationNativeVerified(game),false);
+ for(const [live,label]of [['waiting','Waiting for game data'],['receiving','Receiving game data'],['stale','Game data is stale']]){game.integrationSetup.live=live;assert.equal(gameIntegrationLiveLabel(game),label);assert.equal(gameIntegrationReady(game),true);}
+ game.installed=false;assert.equal(gameIntegrationLabel(game),'Game not installed');assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationLiveLabel({}),'Waiting for game data');
+ for(const id of ['x-plane-11','x-plane-12'])assert.equal(gameIntegrationReady({...supportedGames.find(game=>game.id===id),installed:true,integrationSetup:{state:'ready',verified:false}}),true);
 });
 
-test('game library defaults to installations and shows all supported games on request', () => {
-  const catalogue = [{ id: 'dcs', installed: true }, { id: 'assetto-corsa-rally', installed: false }];
-  assert.deepEqual(plain(visibleGames(catalogue, false)), [catalogue[0]]);
-  assert.deepEqual(plain(visibleGames(catalogue, true)), catalogue);
-  assert.deepEqual(plain(visibleGames([], false)), []);
-  assert.equal(catalogue.length, 2);
+test('ACR verification requires its actual native provider and survives a closed game without inventing fresh data',()=>{
+ const game={...supportedGames[1],installed:true,integrationSetup:{state:'needs-attention',connection:{source:'shared-memory'},verified:false,live:'waiting'}};
+ assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationLabel(game),'Telemetry configured · verification needed');assert.equal(gameIntegrationVerificationLabel(game),'Native telemetry not verified');
+ game.integrationSetup.verified=true;game.integrationSetup.state='ready';assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationNativeVerified(game),true);assert.equal(gameIntegrationVerificationLabel(game),'Native telemetry verified');assert.equal(gameIntegrationLiveLabel(game),'Waiting for game data');
+ game.integrationSetup.live='stale';assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationLiveLabel(game),'Game data is stale');
+ for(const live of ['waiting','receiving','stale']){game.integrationSetup.connection.source='synthetic';game.integrationSetup.live=live;assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationNativeVerified(game),false);assert.ok(!gameIntegrationLiveLabel(game).includes('Receiving game data'));}
+ delete game.integrationSetup.connection;assert.equal(gameIntegrationNativeVerified(game),false);assert.equal(gameIntegrationLabel(game),'Native telemetry not verified');
 });
 
-test('default selection remains scoped to a game and tolerates removed or missing defaults', () => {
-  const first = profile(), second = { ...profile(), id: 'dcs-2', name: 'Jet' }, other = plain(newGameProfile('assetto-corsa-rally'));
-  const state = { profiles: [first, second, other], defaultProfiles: { dcs: second.id } };
-  assert.equal(defaultGameProfile(state, 'dcs'), second);
-  assert.equal(defaultGameProfile(state, 'assetto-corsa-rally'), other);
-  state.defaultProfiles.dcs = 'removed'; assert.equal(defaultGameProfile(state, 'dcs'), first);
-  state.defaultProfiles.dcs = other.id; assert.equal(defaultGameProfile(state, 'dcs'), first);
-  assert.equal(defaultGameProfile({ profiles: [], defaultProfiles: {} }, 'dcs'), undefined);
+test('game-owned setup targets use only explicit bounded installation metadata',()=>{
+ const first=String.raw`C:\Users\Pilot\Saved Games\DCS`,second=String.raw`D:\Profiles\DCS.openbeta`;
+ for(const setup of [undefined,{candidates:[]},{candidates:[first,second]}])assert.equal(gameIntegrationUserFolder({integrationSetup:setup}),'');
+ assert.equal(gameIntegrationUserFolder({integrationSetup:{candidates:[first]}}),first);assert.equal(gameIntegrationUserFolder({integrationSetup:{candidates:[first,second],userFolder:second}}),second);
+ for(const path of ['',' ','DCS','..\\DCS','C:DCS',String.raw`\Saved Games\DCS`])assert.ok(gameIntegrationFolderError(path));
+ for(const path of [first,'D:/Profiles/DCS',String.raw`\\server\Profiles\DCS`,'/home/pilot/Saved Games/DCS',' /home/pilot/DCS '])assert.equal(gameIntegrationFolderError(path),'');
+ for(const path of ['C:/Users/pilot/\nDCS','C:/Users/pilot/\u0000DCS'])assert.match(gameIntegrationFolderError(path),/control/);
+ for(const game of supportedGames){assert.equal(gameIntegrationTargetError(game,''),game.id==='dcs'?'Choose the DCS Saved Games folder.':'');for(const command of ['game_integration_check','game_integration_setup','game_integration_cancel','game_integration_recover'])assert.deepEqual(plain(gameIntegrationSetupRequest(game,command,'  C:/Pilot/DCS  ')),{command,gameId:game.id,...(game.id==='dcs'?{userFolder:'C:/Pilot/DCS'}:{})});}
+ assert.deepEqual(plain(gameIntegrationSetupRequest(dcs(),'game_integration_check','')),{command:'game_integration_check',gameId:'dcs'});
 });
 
-test('new profiles get unique IDs without mutating or sharing saved configuration', () => {
-  const first = profile(), second = plain(newGameProfile('dcs', [first]));
-  assert.equal(first.name, 'Default'); assert.equal(second.name, 'Profile 2'); assert.notEqual(first.id, second.id);
-  const third = plain(newGameProfile('dcs', [first, second])); assert.equal(third.id, 'dcs-3');
-  first.devices.push({ ...device(), config: configuration() });
-  const copy = cloneGameProfile(first); copy.devices[0].config.axes[0][5] = 1; copy.name = 'Inverted';
-  assert.equal(first.name, 'Default'); assert.equal(first.devices[0].config.axes[0][5], 0);
-  assert.equal(gameProfileEqual(first, copy), false); assert.equal(gameProfileEqual(first, null), false); assert.equal(gameProfileEqual(first), false);
-  const reordered = { name: first.name, devices: [{ config: first.devices[0].config, controller: 'keep', moduleId, gatewayId }], gameId: 'dcs', id: first.id, schemaVersion: 1, integration: null };
-  assert.equal(gameProfileEqual(first, reordered), true);
-  assert.notEqual(gameDeviceKey({ gatewayId: 'ab', moduleId: 'c' }), gameDeviceKey({ gatewayId: 'a', moduleId: 'bc' }));
+test('missing cleanup metadata is unavailable rather than a manufactured idle session; native profile ownership blocks setup separately',()=>{
+ const game=dcs();assert.match(gameIntegrationSetupBlockedReason(game,undefined,''),/cleanup metadata is unavailable/);
+ for(const phase of ['idle','failed'])assert.equal(gameIntegrationSetupBlockedReason(game,{phase},''),'');
+ for(const phase of ['restoring','recovery-needed'])assert.match(gameIntegrationSetupBlockedReason(game,{phase},''),/previous owned setup/);
+ assert.equal(gameIntegrationSetupBlockedReason(game,{phase:'idle'},'Exact native profile recovery is pending.'),'Exact native profile recovery is pending.');
+ assert.match(gameIntegrationSetupBlockedReason({...game,installed:false},undefined,''),/Install/);
+ assert.equal(gameIntegrationSetupBlockedReason({...game,integrationSetup:{state:'unsupported-platform',message:'Native setup requires Windows.'}},{phase:'idle'},''),'Native setup requires Windows.');
+ assert.match(gameIntegrationSetupBlockedReason({...game,integrationSetup:{state:'setting-up'}},{phase:'idle'},''),/in progress/);
+ assert.match(gameIntegrationSetupBlockedReason({...game,integrationSetup:{recoveryNeeded:true}},{phase:'idle'},''),/Recover/);
+ assert.equal(gameIntegrationSetupBlockedReason({...game,integrationSetup:{repairable:false,message:'Unrecognized DCS module.'}},{phase:'idle'},''),'Unrecognized DCS module.');
 });
 
-test('profiles warn about controller changes and captured mappings before activation', () => {
-  const value = profile(); assert.equal(profileChangesBindings(value), false);
-  value.devices = [device()]; assert.equal(profileChangesBindings(value), false);
-  value.devices[0].controller = 'disabled'; assert.equal(profileChangesBindings(value), true);
-  value.devices[0].controller = 'enabled'; assert.equal(profileChangesBindings(value), true);
-  value.devices[0].controller = 'keep'; value.devices[0].config = configuration(); assert.equal(profileChangesBindings(value), true);
-});
-
-test('valid profiles support different configurations and keep a copied integration independent', () => {
-  const value = profile(); assert.equal(gameProfileError(value), '');
-  value.devices = [{ ...device(), config: configuration() }]; assert.equal(gameProfileError(value), '');
-  value.gameId = 'assetto-corsa-rally'; value.integration = integration(); assert.equal(gameProfileError(value), '');
-  delete value.integration.connection.processId; assert.equal(gameProfileError(value), '');
-  assert.equal(value.integration.connection.processId, undefined);
-  const copy = cloneGameProfile(value); copy.integration.document.name = 'Changed'; assert.equal(value.integration.document.name, 'Rally rev lights');
-  value.integration = null; assert.equal(gameProfileError(value), '');
-  delete value.integration; assert.equal(gameProfileError(value), '');
-});
-
-test('profile validation explains invalid version, IDs and bounded UTF-8 names', () => {
-  for (const value of [null, [], false, 1, 'profile', {}, { ...profile(), schemaVersion: 4 }, { ...profile(), gameId: 'unknown' }]) assert.match(gameProfileError(value), /supported game/);
-  for (const id of ['', '../profile', 'space here', 'a'.repeat(65), 5, undefined]) assert.match(gameProfileError({ ...profile(), id }), /profile ID/);
-  for (const name of ['', '  ', 'a'.repeat(81), 'é'.repeat(41), 'one\ntwo', '\u0080', 5, undefined]) assert.match(gameProfileError({ ...profile(), name }), /profile name/);
-  assert.equal(gameProfileError({ ...profile(), name: 'é'.repeat(40), id: 'A-_.1' }), '');
-});
-
-test('peripheral validation keeps same identities on separate gateways distinct and rejects duplicate routes', () => {
-  for (const devices of [null, {}, Array.from({ length: 33 }, device)]) assert.match(gameProfileError({ ...profile(), devices }), /32 peripherals/);
-  for (const item of [null, [], {}, { ...device(), gatewayId: '' }, { ...device(), gatewayId: 'x'.repeat(128) }, { ...device(), moduleId: '\n' }, { ...device(), controller: 'maybe' }]) assert.match(gameProfileError({ ...profile(), devices: [item] }), /controller mode/);
-  assert.match(gameProfileError({ ...profile(), devices: [device(), device()] }), /only once/);
-  assert.match(gameProfileError({ ...profile(), devices: [device(), { ...device(), moduleId: moduleId.toUpperCase() }] }), /only once/);
-  assert.equal(gameProfileError({ ...profile(), devices: [device(), { ...device(), gatewayId: 'stm32:222222222222222222222222' }] }), '');
-  assert.equal(gameProfileError({ ...profile(), devices: [device(), { ...device(), moduleId: 'second-module', controller: 'disabled' }] }), '');
-});
-
-test('invalid captured configurations are rejected without changing saved mappings', () => {
-  for (const config of [null, [], {}, { ...configuration(), name: null }, { ...configuration(), expanderMask: -1 }, { ...configuration(), expanderMask: 256 }, { ...configuration(), buttons: null }, { ...configuration(), axes: [1] }]) assert.match(gameProfileError({ ...profile(), devices: [{ ...device(), config }] }), /complete, valid/);
-  const wrongCalibration = configuration(); wrongCalibration.axes[0][2] = 4094; wrongCalibration.axes[0][3] = 4094;
-  assert.match(gameProfileError({ ...profile(), devices: [{ ...device(), config: wrongCalibration }] }), /minimum must be below/);
-  const wrongName = configuration(); wrongName.name = '';
-  assert.match(gameProfileError({ ...profile(), devices: [{ ...device(), config: wrongName }] }), /device name/);
-  const noInputs = configuration(); noInputs.buttons = []; noInputs.axes = [];
-  assert.equal(gameProfileError({ ...profile(), devices: [{ ...device(), config: noInputs }] }), '');
-});
-
-test('integration validation requires a valid copied configuration matching the selected game', () => {
-  assert.match(gameProfileError({ ...profile(), integration: {} }), /JSON profile/i);
-  assert.match(gameProfileError({ ...profile(), integration: integration() }), /provider must match/);
-  const value = integration(); value.document.roles = [];
-  assert.match(gameProfileError({ ...profile(), gameId: 'assetto-corsa-rally', integration: value }), /roles/);
-});
-
-test('every session phase has a user-facing description, including launch and recovery', () => {
-  const phases = ['idle', 'validating', 'applying', 'launching', 'waiting', 'running', 'restoring', 'recovery-needed', 'failed'];
-  for (const phase of phases) assert.ok(gameSessionLabel({ phase }).length > 5);
-  assert.match(gameSessionLabel({ phase: 'recovery-needed' }), /Recovery/);
-  assert.match(gameSessionLabel({ phase: 'restoring' }), /previous setup/);
-});
-
-test('integration readiness stays independent from live telemetry and never assumes installation is ready', () => {
-  const game = { id: 'dcs', installed: true };
-  assert.equal(gameIntegrationLabel(game), 'Integration not checked');
-  const states = ['not-installed', 'setup-required', 'setting-up', 'ready', 'needs-attention', 'unsupported-platform'];
-  for (const state of states) assert.ok(gameIntegrationLabel({ ...game, integrationSetup: { state } }).length > 5);
-  game.integrationSetup = { state: 'ready', live: 'waiting' };
-  assert.equal(gameIntegrationLabel(game), 'Ready for integration');
-  assert.equal(gameIntegrationLiveLabel(game), 'Waiting for game data');
-  game.integrationSetup.live = 'receiving';
-  assert.equal(gameIntegrationLiveLabel(game), 'Receiving game data');
-  game.integrationSetup.live = 'stale';
-  assert.equal(gameIntegrationLiveLabel(game), 'Game data is stale');
-  assert.equal(gameIntegrationLabel(game), 'Ready for integration');
-  game.installed = false;
-  assert.equal(gameIntegrationLabel(game), 'Game not installed');
-  assert.equal(gameIntegrationLiveLabel({}), 'Waiting for game data');
-});
-
-test('DCS setup chooses a single detected folder but requires a choice when several exist', () => {
-  const first = String.raw`C:\Users\Pilot\Saved Games\DCS`, second = String.raw`D:\Profiles\DCS.openbeta`;
-  assert.equal(gameIntegrationUserFolder({}), '');
-  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [] } }), '');
-  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [first] } }), first);
-  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [first, second] } }), '');
-  assert.equal(gameIntegrationUserFolder({ integrationSetup: { candidates: [first, second], userFolder: second } }), second);
-});
-
-test('DCS setup requires an absolute target and rejects control characters before requesting a write', () => {
-  for (const path of ['', ' ', 'DCS', '..\\DCS', 'C:DCS', String.raw`\Saved Games\DCS`]) assert.ok(gameIntegrationFolderError(path));
-  for (const path of [String.raw`C:\Users\Pilot\Saved Games\DCS`, 'D:/Profiles/DCS', String.raw`\\server\Profiles\DCS`, '/home/pilot/Saved Games/DCS', '  /home/pilot/DCS  ']) assert.equal(gameIntegrationFolderError(path), '');
-  assert.match(gameIntegrationFolderError('C:/Users/pilot/\nDCS'), /control/);
-  assert.match(gameIntegrationFolderError('C:/Users/pilot/\u0000DCS'), /control/);
-});
-
-test('setup writes are blocked while a game profile, integration, setup or recovery owns the files', () => {
-  const game = { id: 'dcs', installed: true, integrationSetup: { state: 'setup-required', message: 'Setup required.' } };
-  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), '');
-  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'failed' }, false), '');
-  for (const phase of ['validating', 'applying', 'launching', 'waiting', 'running', 'restoring', 'recovery-needed']) assert.match(gameIntegrationSetupBlockedReason(game, { phase }, false), /game profile/);
-  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, true), /active integration/);
-  assert.match(gameIntegrationSetupBlockedReason({ ...game, installed: false }, { phase: 'idle' }, false), /Install the game/);
-  game.integrationSetup.state = 'unsupported-platform';
-  game.integrationSetup.message = 'Setup requires Windows.';
-  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), 'Setup requires Windows.');
-  game.integrationSetup.state = 'setting-up';
-  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), /in progress/);
-  game.integrationSetup.state = 'needs-attention';
-  game.integrationSetup.recoveryNeeded = true;
-  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), /Recover/);
-});
-
-test('ACR native verification requires shared memory and survives a closed game independently of live data', () => {
-  const game = { id: 'assetto-corsa-rally', installed: true, integrationSetup: { state: 'needs-attention', connection: { source: 'shared-memory' }, verified: false, live: 'waiting', optionalMaxRpm: false } };
-  assert.equal(gameIntegrationLabel(game), 'Telemetry configured · verification needed');
-  assert.equal(gameIntegrationNativeVerified(game), false);
-  assert.equal(gameIntegrationReady(game), false);
-  assert.equal(gameIntegrationVerificationLabel(game), 'Native telemetry not verified');
-  game.integrationSetup.verified = true;
-  game.integrationSetup.state = 'ready';
-  assert.equal(gameIntegrationNativeVerified(game), true);
-  assert.equal(gameIntegrationReady(game), true);
-  assert.equal(gameIntegrationLabel(game), 'Ready for integration');
-  assert.equal(gameIntegrationVerificationLabel(game), 'Native telemetry verified');
-  assert.equal(gameIntegrationLiveLabel(game), 'Waiting for game data');
-  game.integrationSetup.live = 'stale';
-  assert.equal(gameIntegrationReady(game), true);
-  assert.equal(gameIntegrationLiveLabel(game), 'Game data is stale');
-  game.installed = false;
-  assert.equal(gameIntegrationReady(game), false);
-});
-
-test('synthetic ACR telemetry can never present as native verification or native readiness', () => {
-  const game = { id: 'assetto-corsa-rally', installed: true, integrationSetup: { state: 'ready', connection: { source: 'synthetic' }, verified: true, live: 'receiving' } };
-  assert.equal(gameIntegrationNativeVerified(game), false);
-  assert.equal(gameIntegrationReady(game), false);
-  assert.equal(gameIntegrationLabel(game), 'Synthetic test telemetry configured');
-  assert.equal(gameIntegrationVerificationLabel(game), 'Native telemetry not verified');
-  assert.equal(gameIntegrationLiveLabel(game), 'Receiving synthetic test data');
-  game.integrationSetup.live = 'stale';
-  assert.equal(gameIntegrationLiveLabel(game), 'Synthetic test data is stale');
-  game.integrationSetup.live = 'waiting';
-  assert.equal(gameIntegrationLiveLabel(game), 'Waiting for synthetic test data');
-  delete game.integrationSetup.connection;
-  assert.equal(gameIntegrationNativeVerified(game), false);
-  assert.equal(gameIntegrationLabel(game), 'Native telemetry not verified');
-  const dcs = { id: 'dcs', installed: true, integrationSetup: { state: 'ready' } };
-  assert.equal(gameIntegrationReady(dcs), true);
-  assert.equal(gameIntegrationNativeVerified(dcs), false);
-});
-
-test('ACR setup needs neither a Saved Games folder nor a durable process ID', () => {
-  const game = { id: 'assetto-corsa-rally', installed: true, integrationSetup: { state: 'setup-required' } };
-  assert.equal(gameIntegrationTargetError(game, ''), '');
-  assert.equal(gameIntegrationTargetError(game, 'relative-dcs-path'), '');
-  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), '');
-  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'running' }, false), /game profile/);
-  assert.match(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, true), /active integration/);
-  for (const command of ['game_integration_check', 'game_integration_setup', 'game_integration_cancel', 'game_integration_recover']) assert.deepEqual(plain(gameIntegrationSetupRequest(game, command, 'C:/Users/Pilot/Saved Games/DCS')), { command, gameId: 'assetto-corsa-rally' });
-  const dcs = { id: 'dcs' };
-  assert.ok(gameIntegrationTargetError(dcs, ''));
-  assert.equal(gameIntegrationTargetError(dcs, 'C:/Users/Pilot/Saved Games/DCS'), '');
-  assert.deepEqual(plain(gameIntegrationSetupRequest(dcs, 'game_integration_setup', '  C:/Users/Pilot/Saved Games/DCS  ')), { command: 'game_integration_setup', gameId: 'dcs', userFolder: 'C:/Users/Pilot/Saved Games/DCS' });
-  assert.deepEqual(plain(gameIntegrationSetupRequest(dcs, 'game_integration_check', '')), { command: 'game_integration_check', gameId: 'dcs' });
-});
-
-test('ACR game profiles capture deferred native telemetry without inventing or requiring a process', () => {
-  const value = plain(newGameProfile('assetto-corsa-rally'));
-  value.integration = integration();
-  delete value.integration.connection.processId;
-  assert.equal(gameProfileError(value), '');
-  assert.equal('processId' in value.integration.connection, false);
-  const captured = cloneGameProfile(value);
-  assert.equal(gameProfileError(captured), '');
-  assert.equal('processId' in captured.integration.connection, false);
-  captured.integration.connection.processId = null;
-  assert.equal(gameProfileError(captured), '');
-  captured.integration.connection.processId = 0;
-  assert.match(gameProfileError(captured), /process ID/);
-  assert.equal('processId' in value.integration.connection, false, 'The original settings remain deferred');
-});
-
-test('unknown DCS modules require manual attention before setup can change their files', () => {
-  const game = { id: 'dcs', installed: true, integrationSetup: { state: 'needs-attention', repairable: false, message: 'Restore the compatible official module or choose a clean user folder.' } };
-  assert.equal(gameIntegrationSetupBlockedReason(game, { phase: 'idle' }, false), game.integrationSetup.message);
-});
-
-test('mapping capture requires explicit schema migration and survives cloning',()=>{const legacy=profile();assert.match(gameProfileError({...legacy,mapping:null}),/upgrade/);const captured={profile:{name:'Frozen'},assignments:[],targets:[],visibility:null};const next={...legacy,schemaVersion:2,mapping:captured};assert.equal(gameProfileError(next),'');const copy=cloneGameProfile(next);copy.mapping.profile.name='Later';assert.equal(next.mapping.profile.name,'Frozen');assert.match(gameProfileError({...next,mapping:{}}),/complete/);assert.equal(gameProfileError({...next,mapping:null}),'');});
-
-const companionCapture=()=>({schemaVersion:1,assignments:[{instanceId:'panel-a',companionId:'installation-a',publicationHash:'sha256:'+'a'.repeat(64),capabilityFingerprint:'sha256:'+'b'.repeat(64)}]});
-test('companion capture explicitly migrates game schema and freezes revision references',()=>{
-  for(const version of [1,2]){const old={...profile(),schemaVersion:version};assert.match(gameProfileError({...old,companions:null}),/upgrade/);const capture=companionCapture();const next=captureGameCompanions(old,capture);assert.equal(next.schemaVersion,3);assert.equal(gameProfileError(next),'');capture.assignments[0].publicationHash='sha256:'+'c'.repeat(64);assert.notEqual(next.companions.assignments[0].publicationHash,capture.assignments[0].publicationHash);assert.equal(old.schemaVersion,version);assert.equal('companions' in old,false);}
-  const captured={...profile(),schemaVersion:3,companions:companionCapture(),mapping:{profile:{name:'Frozen mapping'},assignments:[],targets:[],visibility:null}};assert.equal(gameProfileError(captured),'');const copy=cloneGameProfile(captured);copy.companions.assignments[0].companionId='edited';assert.equal(captured.companions.assignments[0].companionId,'installation-a');assert.equal(gameProfileError({...captured,companions:null}),'');
-});
-test('companion captures reject invalid identities, hashes, unknown fields, duplicates and budgets',()=>{
-  for(const value of [null,{}, {schemaVersion:1,assignments:[]},{...companionCapture(),extra:true},{...companionCapture(),schemaVersion:2},{schemaVersion:1,assignments:Array.from({length:9},()=>companionCapture().assignments[0])},{schemaVersion:1,assignments:[companionCapture().assignments[0],companionCapture().assignments[0]]},{schemaVersion:1,assignments:[{...companionCapture().assignments[0],extra:true}]},{schemaVersion:1,assignments:[{instanceId:'x'.repeat(4097)}]}]){assert.ok(gameCompanionCaptureError(value));assert.throws(()=>captureGameCompanions(profile(),value));}
-  for(const [key,value] of [['instanceId','bad/id'],['instanceId','x'.repeat(65)],['companionId',''],['companionId',null],['publicationHash','sha256:x'],['capabilityFingerprint','sha256:'+'A'.repeat(64)]]){const capture=companionCapture();capture.assignments[0][key]=value;assert.ok(gameCompanionCaptureError(capture));assert.ok(gameProfileError({...profile(),schemaVersion:3,companions:capture}));}
+test('cleanup labels cannot represent running profiles, process launches or applying a graph',()=>{
+ for(const [phase,label]of [['idle','Nothing to restore'],['restoring','Restoring previous owned setup'],['recovery-needed','Recovery needed'],['failed','Cleanup failed']])assert.equal(gameCleanupLabel({phase}),label);
+ assert.equal(gameCleanupLabel({phase:'running'}),undefined);assert.equal(gameCleanupLabel({phase:'launching'}),undefined);
 });

@@ -7,26 +7,23 @@
   import GameProfileRule from './GameProfileRule.svelte';
   import GameProfileLaunch from './GameProfileLaunch.svelte';
   import {gameContextLabel} from './game-provider-settings';
-  import type {DcsBiosStatus} from './dcs-bios';
-  import type {DcsTarget} from './dcs-profile';
-  import type {RuntimeConfig} from './runtime-config';
-  import {gameExecutableName,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameSessionLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
-  let {status,busy,request,integrationActive=false,dcsStatus,returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>('')}: {
+  import {gameExecutableName,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameCleanupLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
+  let {status,busy,request,profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>('')}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
-    targets?:DcsTarget[];readConfig?:(gatewayId:string,moduleId:string)=>Promise<RuntimeConfig|null>;
-    integrationActive?:boolean;dcsStatus?:DcsBiosStatus;selectedGameId?:GameId|'';returnLabel?:string;returnToEditor?:()=>void;
+    profileBlockedReason?:string;selectedGameId?:GameId|'';returnLabel?:string;returnToEditor?:()=>void;
   }=$props();
   let response=$state<GamesState>(),initializedGameId:GameId|''='';
   let showAll=$state(false),pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
   let recoveryDialog:HTMLDialogElement|undefined;
   function attachRecoveryDialog(node:HTMLDialogElement){recoveryDialog=node;return()=>{recoveryDialog=undefined;};}
-  const gameState:GamesState=$derived(status??response??{catalogue:supportedGames,profiles:[],defaultProfiles:{},session:{phase:'idle' as const}});
+  const gameState:GamesState=$derived(status??response??{catalogue:supportedGames});
   const games=$derived(visibleGames(gameState.catalogue,showAll));
   const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
-  const occupied=$derived(!['idle','failed'].includes(gameState.session.phase));
+  const cleanup=$derived(gameState.cleanup);
+  const occupied=$derived(!!cleanup&&!['idle','failed'].includes(cleanup.phase));
   const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up'));
   const locked=$derived(busy||pending||occupied||setupRunning);
-  const setupBlocked=$derived(selected?gameIntegrationSetupBlockedReason(selected,gameState.session,integrationActive):'');
+  const setupBlocked=$derived(selected?gameIntegrationSetupBlockedReason(selected,cleanup,profileBlockedReason):'');
   const folderError=$derived(selected?gameIntegrationTargetError(selected,integrationFolder):'');
   const setupDisabled=$derived(locked||!!setupBlocked||!!folderError);
   onMount(()=>{if(!status)void send({command:'game_get_state'});});
@@ -51,17 +48,16 @@
 </script>
 
 <section class="games-workspace" aria-label="Games">
-  {#if gameState.session.phase !== 'idle'}
-    <div class={['session-banner', { 'session-warning': ['failed', 'recovery-needed'].includes(gameState.session.phase) }]} role="status" aria-live="polite">
-      <div class="session-icon"><Icon name={gameState.session.phase === 'running' ? 'play' : 'refresh'} size={20} /></div>
-      <div class="session-copy"><strong>Previous game-session recovery · {gameSessionLabel(gameState.session)}</strong><p>Existing saved session only. New launches use unified Profiles.<br />{gameState.catalogue.find(game => game.id === gameState.session.gameId)?.name ?? 'Game session'}{#if gameState.session.pid} · Process {gameState.session.pid}{/if}</p>
-        {#if gameState.session.error}<Notification message={String(gameState.session.error)} kind="error" />{/if}
-        {#if gameState.session.bindingWarning}<Notification message={String(typeof gameState.session.bindingWarning === 'string' ? gameState.session.bindingWarning : 'Controller changes can reconnect USB and affect game bindings.')} kind="error" />{/if}
-        {#if gameState.session.steps?.length}<details><summary>Session progress</summary><ol>{#each gameState.session.steps as step, index (index)}<li>{step}</li>{/each}</ol></details>{/if}
+  {#if !cleanup}<Notification message="Native cleanup metadata is unavailable. Refresh game status before changing provider setup." kind="error" />{:else if cleanup.phase !== 'idle'}
+    <div class={['session-banner', { 'session-warning': ['failed', 'recovery-needed'].includes(cleanup.phase) }]} role="status" aria-live="polite">
+      <div class="session-icon"><Icon name={'refresh'} size={20} /></div>
+      <div class="session-copy"><strong>Previous owned setup recovery · {gameCleanupLabel(cleanup)}</strong><p>Existing saved session only. New launches use unified Profiles.<br />{gameState.catalogue.find(game => game.id === cleanup.gameId)?.name ?? 'Game session'}</p>
+        {#if cleanup.error}<Notification message={String(cleanup.error)} kind="error" />{/if}
+        {#if cleanup.steps?.length}<details><summary>Session progress</summary><ol>{#each cleanup.steps as step, index (index)}<li>{step}</li>{/each}</ol></details>{/if}
       </div>
-      {#if gameState.session.phase === 'recovery-needed' || gameState.session.phase === 'failed'}<button class="secondary-button" disabled={busy || pending} onclick={() => send({ command: 'game_recover' })}><Icon name="refresh" size={14} /> Recover setup</button>
-      {:else if ['validating', 'applying', 'launching', 'waiting', 'running'].includes(gameState.session.phase)}<button class="secondary-button" disabled={busy || pending} onclick={() => send({ command: 'game_deactivate' })}><Icon name="stop" size={14} /> {gameState.session.phase === 'running' ? 'Restore setup' : 'Cancel activation'}</button>{/if}
-      {#if gameState.session.phase === 'recovery-needed'}<button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.showModal()}>Keep current setup</button>{/if}
+      {#if cleanup.phase === 'recovery-needed' || cleanup.phase === 'failed'}<button class="secondary-button" disabled={busy || pending} onclick={() => send({ command: 'game_recover' })}><Icon name="refresh" size={14} /> Recover setup</button>
+      {/if}
+      {#if cleanup.phase === 'recovery-needed'}<button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.showModal()}>Keep current setup</button>{/if}
     </div>
   {/if}
   {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} />{/if}
@@ -108,15 +104,13 @@
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
           {/if}
           {#key selected.id}<GameProviderSettings game={selected} busy={busy || pending || setupRunning} bind:userFolder={integrationFolder} request={send} />{/key}
-          {#if selected.id === 'dcs' && dcsStatus}
-            <details class="telemetry-channel-details"><summary>DCS-BIOS diagnostics</summary><dl><div><dt>Aircraft reported</dt><dd>{dcsStatus.aircraft ?? 'Unknown'}</dd></div><div><dt>Mission</dt><dd>{dcsStatus.missionActive ? 'Active' : 'Waiting'}</dd></div><div><dt>Feedback age</dt><dd>{dcsStatus.feedbackAgeMs === null ? 'Unknown' : `${dcsStatus.feedbackAgeMs} ms`}</dd></div><div><dt>Input event gaps / overflow</dt><dd>{dcsStatus.eventGaps ?? 0} / {dcsStatus.eventOverflow}</dd></div></dl>{#if dcsStatus.error}<Notification message={dcsStatus.error} kind="error" />{/if}</details>
-          {/if}
+          {#if selected.id === 'dcs'}<p class="field-help">Inspect the applied profile in Profiles for its actual observed DCS port samples and command requests.</p>{/if}
           {#if selected.integrationSetup?.state === 'setting-up'}
             <div class="setup-progress" role="status" aria-live="polite"><Icon name="refresh" size={14} /><span>{selected.integrationSetup.progress ?? 'Preparing integration…'}</span></div>
             <button class="secondary-button setup-main-action" disabled={busy || pending} onclick={() => integrationCommand('game_integration_cancel')}>Cancel setup</button>
           {:else if selected.integrationSetup?.recoveryNeeded}
             <p class="setup-warning">Recover the interrupted setup before trying again.</p>
-            <button class="secondary-button setup-main-action" disabled={locked || integrationActive} onclick={() => integrationCommand('game_integration_recover')}><Icon name="refresh" size={14} /> Recover integration setup</button>
+            <button class="secondary-button setup-main-action" disabled={locked || !!profileBlockedReason} onclick={() => integrationCommand('game_integration_recover')}><Icon name="refresh" size={14} /> Recover integration setup</button>
           {:else}
             <button class="primary-button setup-main-action" disabled={setupDisabled} onclick={() => integrationCommand('game_integration_setup')}><Icon name={selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'refresh' : selected.id === 'dcs' ? 'download' : 'link'} size={14} /> {selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'Repair integration' : selected.id === 'dcs' ? 'Set up integration' : 'Set up telemetry'}</button>
             {#if setupBlocked}<p class="field-help">{setupBlocked}</p>{/if}

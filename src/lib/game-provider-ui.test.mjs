@@ -8,7 +8,7 @@ import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./profiles','./profile-runtime','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation']);
+const modules = await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation']);
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
 async function component(name) {
@@ -36,18 +36,18 @@ const IntegrationsPanel = await component('./IntegrationsPanel.svelte');
 const { supportedGames } = modules.get('./games');
 const { defaultProviderConnection } = modules.get('./game-provider-settings');
 const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup:{state:'setup-required',message:'Configure this provider',providerSetupRevision:`sha256:${'1'.repeat(64)}`,userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}},integrationContext:{status:'waiting-profile',message:'An active matching profile is required',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
-const state = g => ({catalogue:[g],profiles:[],defaultProfiles:{},session:{phase:'idle'}});
+const state = g => ({catalogue:[g],cleanup:{phase:'idle'}});
 
 test('DCS game details own connection, catalogue, aircraft, installer recovery and separate readiness',()=>{
   const g=game('dcs');g.integrationSetup.recoveryNeeded=true;
-  const html=render(GamesPanel,{props:{status:state(g),selectedGameId:'dcs',busy:false,targets:[],request:noRequest,readConfig:noRequest,returnLabel:'Return to profile',returnToEditor:noRequest}}).body;
+  const html=render(GamesPanel,{props:{status:state(g),selectedGameId:'dcs',busy:false,request:noRequest,returnLabel:'Return to profile',returnToEditor:noRequest}}).body;
   for(const label of ['Automatic profile rule','Current installation executable','Saved unified profile','DCS-BIOS connection and catalogue','DCS Saved Games folder','DCS-BIOS doc/json directory','Aircraft module','Command UDP port','Provider setup','Game context','Telemetry freshness','Waiting for an active profile','No verified matching process','Recover integration setup','Save game settings','Return to profile'])assert.ok(html.includes(label),label);
   for(const obsolete of ['Start DCS-BIOS','Use saved integration','Update from saved integration','Save and open integrations','Synthetic test telemetry'])assert.ok(!html.includes(obsolete),obsolete);
   assert.ok(html.includes('C:\\DCS-BIOS\\doc\\json'));
 });
 test('telemetry-only game forms expose no simulator command or synthetic/process-identity editor',()=>{
   for(const id of ['assetto-corsa-rally','x-plane-11','x-plane-12']){
-    const g=game(id);const html=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,targets:[],request:noRequest,readConfig:noRequest}}).body;
+    const g=game(id);const html=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,request:noRequest}}).body;
     assert.ok(html.includes('Save game settings'));assert.ok(html.includes('telemetry only'));
     assert.ok(!html.includes('Command UDP port'));assert.ok(!html.includes('Aircraft module'));assert.ok(!html.includes('Synthetic test telemetry'));
     if(id.startsWith('x-plane')){assert.ok(html.includes('Simulator UDP port'));assert.ok(html.includes(`X-Plane ${id.slice(-2)}`));}

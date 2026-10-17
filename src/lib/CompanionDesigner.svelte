@@ -6,6 +6,7 @@
   import Icon from './Icon.svelte';
   import CompanionConnections from './CompanionConnections.svelte';
   import { gatewayRequest } from './gateway';
+  import { ProfilesClient } from './profiles';
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import {
@@ -111,10 +112,11 @@
     const saved = await store.save({ schemaVersion: 1, library: next, publications: revisions }); library = saved.library; publications = saved.publications;
   }
   async function compactSnapshots(state: CompanionHostState, beforeUpload = false) {
-    const games=(await gatewayRequest({command:'game_get_state'})).games;
-    if(!games) return; // Preserve captured game layouts when their references cannot be checked.
+    let references;
+    try { references = await new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {}).companionReferences(); }
+    catch { return; } // Preserve every snapshot if the native saved library cannot prove its references.
     const pins=(state.host?.instances ?? []).flatMap(i => typeof i.publicationHash==='string'?[i.publicationHash]:[]);
-    pins.push(...games.profiles.flatMap(p => p.companions?.assignments.map(a => a.publicationHash) ?? []));
+    pins.push(...references.hashes);
     const managedIds=[...new Set([...library.drafts.map(d => d.document.ui.id),...Object.values(publications).flat().map(p => p.document.ui.id)])];
     if(!beforeUpload){const compacted=await store!.compact(pins);library=compacted.library;publications=compacted.publications;}
     const current=currentPublications.map(p => p.publicationHash);

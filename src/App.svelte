@@ -21,13 +21,13 @@
   import OverviewPanel from './lib/OverviewPanel.svelte';
   import DesktopPreferences from './lib/DesktopPreferences.svelte';
   import { supportedGames, type GameId, type GamesState, type GameRequest } from './lib/games';
-  import type { IntegrationState } from './lib/integration-profile';
   import { OPEN_GAME_SETTINGS_EVENT, RETURN_FROM_GAME_SETTINGS_EVENT, gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings, type GameSettingsVisit } from './lib/game-settings-navigation';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { gatewayRequest, GatewayError, releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
-  import type { DcsBiosStatus } from './lib/dcs-bios';
-  import { managedDcsActions, type DcsTarget } from './lib/dcs-profile';
+  import { ProfilesClient, captureProfileSummaries, type DeepReadonly, type ProfileSummary } from './lib/profiles';
+  import { ProfileRuntimeClient } from './lib/profile-runtime';
+  import { ProfileRuntimeController, type RuntimeControlState } from './lib/profile-runtime-controller';
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
@@ -110,10 +110,16 @@
   let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
   let gamesPolling = false;
-  let integration = $state<IntegrationState>();
-  let integrationPolling = false;
-  let dcsBios = $state<DcsBiosStatus>();
-  let dcsPolling = false;
+  const profileRuntime = new ProfileRuntimeController(new ProfileRuntimeClient(async request => (await gatewayRequest(request)).profiles?.profileSession));
+  const savedProfiles = new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {});
+  let profileState = $state.raw<DeepReadonly<RuntimeControlState>>(profileRuntime.state);
+  let profileSummaries = $state.raw<DeepReadonly<ProfileSummary[]>>([]);
+  let profileNamesPending = false;
+  let profileNamesEpoch = 0;
+  const profileMutationBlock = $derived(profileState.stale || !profileState.status
+    ? 'Current native profile ownership is unavailable. Refresh native status before making independent changes.'
+    : profileState.status.owner || ['transitioning', 'recovery-needed', 'awaiting-game', 'running', 'degraded'].includes(profileState.status.state)
+      ? 'The native profile session owns this runtime state. Stop or recover it in Profiles before making independent changes.' : '');
   let inventoryError = $state('');
   let drafts = $state<Record<string, Settings>>({});
   let runtimeDrafts = $state<Record<string, RuntimeConfig>>({});
@@ -144,7 +150,7 @@
   const connectedGateways = $derived(entries.filter(entry => entry.state?.connected));
   const selected = $derived(devices.find(device => device.key === selectedId)!);
   const selectedEntry = $derived(entries.find(entry => entry.id === selected?.gatewayId));
-  const gateway = $derived(selectedEntry?.state ? { ...selectedEntry.state, dcsBios: dcsBios ?? selectedEntry.state.dcsBios } : null);
+  const gateway = $derived(selectedEntry?.state ?? null);
   const gatewayBusy = $derived(!!selectedEntry?.busy);
   const gatewayError = $derived(selectedEntry?.error ?? '');
   const gatewayConnected = $derived(!!gateway?.connected);
@@ -152,7 +158,6 @@
   const gatewayName = $derived(nameForGateway(gateway?.backend));
   const needsReconnect = $derived(!!gateway?.needsReconnect);
   const sessionDevice = $derived(devices.find(device => device.key === sessionId));
-  const dcsTargets = $derived(entries.flatMap(entry => supportsDeviceContracts(entry.state) && entry.state ? entry.state.modules.map((module): DcsTarget => ({ gatewayId: entry.id, module, state: entry.state, busy: entry.busy, label: module.settings.label || module.name })) : []));
   const removeEntry = $derived(entries.find(entry => entry.id === removeTarget.gatewayId));
   const canRemove = $derived(!!removeEntry?.state?.connected && !removeEntry.busy && !removeEntry.state.reconnecting && !removeEntry.state.claimedModules?.length && !!removeEntry.state.modules.find(module => module.id === removeTarget.id)?.registered);
   const controllerEntry = $derived(entries.find(entry => entry.id === controllerTarget.gatewayId));
@@ -211,40 +216,30 @@
   function scopedGatewayRequest(gatewayId: string, quiet = false) {
     return (request: GatewayRequest) => sendGateway(gatewayId, request, quiet);
   }
-  async function refreshDcs() {
-    if (dcsPolling) return false;
-    dcsPolling = true;
+  async function refreshProfileNames() {
+    if (disposed || profileNamesPending) return;
+    const epoch = ++profileNamesEpoch; profileNamesPending = true;
     try {
-      const result = await gatewayRequest({ command: 'dcs_status' });
-      if (!disposed && result.dcsBios) dcsBios = result.dcsBios;
-      return result;
-    } catch (error) {
-      if (!disposed && error instanceof GatewayError && error.state?.dcsBios) dcsBios = error.state.dcsBios;
-      return false;
-    } finally { dcsPolling = false; }
+      const result = await savedProfiles.list();
+      const summaries = captureProfileSummaries(result.profiles);
+      if (!disposed && epoch === profileNamesEpoch) profileSummaries = summaries;
+    } catch { /* A missing saved label never substitutes for native applied identity. */ }
+    finally { if (epoch === profileNamesEpoch) profileNamesPending = false; }
   }
-  async function refreshIntegration(): Promise<IntegrationState | false> {
-    if (integrationPolling) return false;
-    integrationPolling = true;
-    try {
-      const result = await gatewayRequest({ command: 'integration_get_state' });
-      if (!disposed && result.integration) integration = result.integration;
-      if (!disposed && result.dcsBios) dcsBios = result.dcsBios;
-      return result.integration ?? false;
-    } catch (error) {
-      if (!disposed && error instanceof GatewayError && error.state?.integration) integration = error.state.integration;
-      return false;
-    } finally { integrationPolling = false; }
+  async function refreshProfileStatus() {
+    if (disposed || document.hidden || !['overview', 'games', 'device'].includes(view)) return;
+    if (await profileRuntime.refresh()) {
+      const id = profileRuntime.state.status?.appliedSnapshot?.profileId;
+      if (id && !profileSummaries.some(profile => profile.id === id)) void refreshProfileNames();
+    }
   }
   async function sendGames(request: GameRequest, quiet = request.command === 'game_get_state'): Promise<GamesState | false> {
-    if (gamesBusy || quiet && gamesPolling) return false;
+    if (gamesBusy || quiet && (gamesPolling || document.hidden || !['overview', 'games', 'integrations'].includes(view))) return false;
     if (quiet) gamesPolling = true; else gamesBusy = true;
     try {
       const result = await gatewayRequest(request);
       if (!disposed) {
         if (result.games) games = result.games;
-        if (result.integration) integration = result.integration;
-        if (result.dcsBios) dcsBios = result.dcsBios;
       }
       return result.games ?? false;
     } catch (error) {
@@ -252,14 +247,6 @@
       if (!quiet) notify(error instanceof Error ? error.message : 'Game request failed.');
       return false;
     } finally { if (quiet) gamesPolling = false; else gamesBusy = false; }
-  }
-  function managedOutputs(gatewayId: string, moduleId: string) {
-    const actions = managedDcsActions(dcsBios, gatewayId, moduleId);
-    if (integration?.running && integration.config) {
-      const roles = integration.config.assignments.filter(a => a.gatewayId === gatewayId && a.moduleId === moduleId).map(a => a.role);
-      actions.push(...integration.config.document.outputs.filter(o => roles.includes(o.role)).map(o => o.actionId));
-    }
-    return actions;
   }
   async function retryGateway(gatewayId: string) {
     try { await workspace?.retry(gatewayId); }
@@ -299,12 +286,12 @@
     void restoreCompanionPanels().catch(error => notify(String(error)));
     workspace = new GatewayWorkspace({ onChange: syncWorkspace });
     void workspace.refresh();
-    void refreshDcs();
-    void refreshIntegration();
+    const unsubscribeProfile = profileRuntime.subscribe(next => { if (!disposed) profileState = next; });
+    void refreshProfileStatus();
+    void refreshProfileNames();
     void sendGames({ command: 'game_get_state' }, true);
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
-    const integrationTimer = setInterval(() => { void refreshIntegration(); }, 1000);
-    const dcsTimer = setInterval(() => { void refreshDcs(); }, 1000);
+    const profileTimer = setInterval(() => { void refreshProfileStatus(); }, 1000);
     const gamesTimer = setInterval(() => { void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     const openSettingsEvent = (event: Event) => {
@@ -316,7 +303,7 @@
     window.addEventListener('hashchange', readSettingsHash);
     window.addEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent);
     window.addEventListener('pagehide', release);
-    return () => { release(); disposed = true; clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
+    return () => { release(); disposed = true; clearInterval(timer); clearInterval(profileTimer); unsubscribeProfile(); profileRuntime.dispose(); profileNamesEpoch++; clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
@@ -426,7 +413,7 @@
         {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} active={view==='profiles'} /></div>{/if}
         {#if view === 'mappings' || settingsVisit?.origin.view === 'mappings'}<div hidden={view !== 'mappings'}><MappingsPanel active={view === 'mappings'} /></div>{/if}
         {#if view === 'overview'}
-          <OverviewPanel {games} {integration} {dcsBios} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
+          <OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
@@ -442,7 +429,7 @@
         {:else if view === 'companions'}
           <CompanionDesigner openSettings={() => navigate('preferences')} />
         {:else if view === 'games'}
-          <GamesPanel bind:selectedGameId status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} dcsStatus={dcsBios} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
+          <GamesPanel bind:selectedGameId status={games} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'integrations'}
           <div class="page-heading"><div><div class="eyebrow">GAME RESOURCES</div><h1>Integrations</h1><p>Provider resources and links to their game settings.</p></div></div>
           <section class="panel dcs-profile-panel"><IntegrationsPanel setups={games?.catalogue} {openGameSettings} /></section>
@@ -557,7 +544,7 @@
                 <section class="panel device-stage"><div class="stage-title"><div><span class="eyebrow">DEVICE WORKSPACE</span><h2>{selected.name}</h2><p>{selected.subtitle}</p></div><span class="connection-badge"><span class="status-dot" class:offline={!selected.online}></span>{selected.online ? 'Connected' : 'Offline'}</span></div><div class="large-device"><DeviceIllustration kind={selected.kind} /></div><div class="stage-metadata"><div><small>STABLE IDENTITY</small><strong>{selected.id}</strong></div><div><small>ACTIVE ROUTE</small><strong>{selected.route}</strong></div><div><small>CAPABILITIES</small><strong>{selected.inputs}</strong></div></div></section>
                 {#if !hidModule?.outputOnly}<section class="panel device-inputs"><div class="panel-heading"><h2>Live inputs</h2><span class="quiet-tag">{controlsReady ? 'Live HID output' : 'Device inputs'}</span></div>{@render inputTester()}</section>{/if}
                 {#if gateway?.debug && hidModule}{#key `${selected.key}/${gateway.debug.devices.find(device => device.id === selected.id)?.boot ?? hidModule.boot}`}<DebugControls state={gateway} module={hidModule} request={scopedGatewayRequest(selected.gatewayId)} read={scopedGatewayRequest(selected.gatewayId, true)} />{/key}{/if}
-                {#key selected.key}<ManualActions state={gateway} module={hidModule} busy={gatewayBusy} request={request => sendGateway(selected.gatewayId, request)} managedActionIds={managedOutputs(selected.gatewayId, selected.id)} />{/key}
+                {#key selected.key}<ManualActions state={gateway} module={hidModule} busy={gatewayBusy} request={request => sendGateway(selected.gatewayId, request)} profileBlockedReason={profileMutationBlock} />{/key}
             </div>
             <section class="panel inspector" aria-label="Selected device settings">
               <div class="inspector-heading"><div><span class="eyebrow">CONFIGURATION</span><h2>{selected.settings.label}</h2></div><span class="model-badge">{selected.kind === 'shifter' ? 'SQ' : selected.kind === 'pedals' ? 'PD' : selected.kind === 'panel' ? 'BP' : selected.kind === 'wheel' ? 'WH' : 'HB'}</span></div>

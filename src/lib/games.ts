@@ -1,7 +1,4 @@
-import type { CapturedMapping } from './mappings';
-import { configurationError, type RuntimeConfig } from './runtime-config';
-import { integrationError, type IntegrationConfig, type IntegrationProvider } from './integration-profile';
-
+export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'x-plane';
 export type GameId = 'dcs' | 'assetto-corsa-rally' | 'x-plane-11' | 'x-plane-12';
 export type GameIntegrationSetup = {
   state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
@@ -17,17 +14,13 @@ export type GameIntegrationContext = {
   message: string; processVerified: boolean; contextSession: string | null;
   providerSetupRevision: string | null; catalogueRevision: string | null;
 };
-export type Game = { id: GameId; name: string; provider: IntegrationProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext };
-export type GameDevice = { gatewayId: string; moduleId: string; controller: 'keep' | 'enabled' | 'disabled'; config?: RuntimeConfig };
-export type CapturedCompanionAssignment = { instanceId:string; companionId:string; publicationHash:string; capabilityFingerprint:string };
-export type CapturedGameCompanions = { schemaVersion:1; assignments:CapturedCompanionAssignment[] };
-export type GameProfile = { schemaVersion: 1 | 2 | 3; id: string; gameId: GameId; name: string; devices: GameDevice[]; integration?: IntegrationConfig | null; mapping?: CapturedMapping | null; companions?: CapturedGameCompanions | null };
-export type GameSession = { phase: 'idle' | 'validating' | 'applying' | 'launching' | 'waiting' | 'running' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; profileId?: string | null; pid?: number | null; error?: string | null; steps?: string[]; bindingWarning?: boolean | string | null };
-export type DetectedGame = { gameId: GameId; name: string; pid: number };
-export type GamesState = { detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; profiles: GameProfile[]; defaultProfiles: Record<string, string>; session: GameSession; error?: string | null };
-export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_profile_save' | 'game_profile_delete' | 'game_profile_default' | 'game_launch' | 'game_activate' | 'game_deactivate' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_settings_save';
+export type Game = { id: GameId; name: string; provider: GameProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext };
+export type GameCleanup = { phase: 'idle' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; retiredProfileId?: string | null; error?: string | null; steps?: string[]; recoveryArchive?: string | null };
+export type DetectedGame = { gameId: GameId; name: string };
+export type GamesState = { detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };
+export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; gameProfile?: GameProfile; profileId?: string; acceptBindingChanges?: boolean; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
+export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export const supportedGames: Game[] = [
   { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },
@@ -97,100 +90,19 @@ export function gameIntegrationSetupRequest(game: Game, command: 'game_integrati
   return { command, gameId: game.id, ...(game.id === 'dcs' && folder.trim() ? { userFolder: folder.trim() } : {}) };
 }
 
-export function gameIntegrationSetupBlockedReason(game: Game, session: GameSession, integrationActive: boolean): string {
+export function gameIntegrationSetupBlockedReason(game: Game, cleanup: GameCleanup | undefined, profileBlockedReason: string): string {
   if (!game.installed) return 'Install the game or select its executable first.';
   if (game.integrationSetup?.state === 'unsupported-platform') return game.integrationSetup.message;
   if (game.integrationSetup?.state === 'setting-up') return 'Integration setup is in progress.';
   if (game.integrationSetup?.recoveryNeeded) return 'Recover the interrupted setup before trying again.';
   if (game.id === 'dcs' && game.integrationSetup?.repairable === false) return game.integrationSetup.message;
-  if (!['idle', 'failed'].includes(session.phase)) return 'Restore the active game profile before setting up integration.';
-  if (integrationActive) return 'Stop the active integration before setting up integration.';
+  if (!cleanup) return 'Native cleanup metadata is unavailable. Refresh game status before changing provider setup.';
+  if (!['idle', 'failed'].includes(cleanup.phase)) return 'Recover the previous owned setup before changing game integration.';
+  if (profileBlockedReason) return profileBlockedReason;
   return '';
 }
 
-export function defaultGameProfile(state: Pick<GamesState, 'profiles' | 'defaultProfiles'>, gameId: GameId): GameProfile | undefined {
-  const profiles = state.profiles.filter(profile => profile.gameId === gameId);
-  return profiles.find(profile => profile.id === state.defaultProfiles[gameId]) ?? profiles[0];
-}
-
-export function newGameProfile(gameId: GameId, profiles: GameProfile[] = []): GameProfile {
-  let number = 1;
-  while (profiles.some(profile => profile.id === `${gameId}-${number}`)) number++;
-  return { schemaVersion: 1, id: `${gameId}-${number}`, gameId, name: number === 1 ? 'Default' : `Profile ${number}`, devices: [], integration: null };
-}
-
-export function cloneGameProfile(profile: GameProfile): GameProfile {
-  return JSON.parse(JSON.stringify(profile));
-}
-
-function sorted(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sorted);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sorted(item)]));
-  return value;
-}
-
-export function gameProfileEqual(a: GameProfile, b?: GameProfile | null): boolean {
-  return !!b && JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
-}
-
-export function gameDeviceKey(device: Pick<GameDevice, 'gatewayId' | 'moduleId'>): string {
-  return JSON.stringify([device.gatewayId, device.moduleId]);
-}
-
-export function profileChangesBindings(profile: GameProfile): boolean {
-  return profile.devices.some(device => device.controller !== 'keep' || !!device.config);
-}
-
-const text = (value: unknown, limit: number): value is string => typeof value === 'string' && !!value.trim() && new TextEncoder().encode(value).length <= limit && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
-const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-
-export function gameCompanionCaptureError(value: unknown): string {
-  if (!object(value) || Object.keys(value).some(key=>!['schemaVersion','assignments'].includes(key)) || value.schemaVersion !== 1 || !Array.isArray(value.assignments) || value.assignments.length === 0 || value.assignments.length > 8 || new TextEncoder().encode(JSON.stringify(value)).length > 4096) return 'Capture at most eight complete companion assignments.';
-  const ids=new Set<string>();
-  for (const a of value.assignments) {
-    if (!object(a) || Object.keys(a).some(key=>!['instanceId','companionId','publicationHash','capabilityFingerprint'].includes(key)) || typeof a.instanceId!=='string' || !/^[a-zA-Z0-9_.-]{1,64}$/.test(a.instanceId) || typeof a.companionId!=='string' || !/^[a-zA-Z0-9_.-]{1,64}$/.test(a.companionId) || typeof a.publicationHash!=='string' || !/^sha256:[0-9a-f]{64}$/.test(a.publicationHash) || typeof a.capabilityFingerprint!=='string' || !/^sha256:[0-9a-f]{64}$/.test(a.capabilityFingerprint) || ids.has(a.instanceId)) return 'Companion capture needs unique instance identities and complete immutable publication hashes.';
-    ids.add(a.instanceId);
-  }
-  return '';
-}
-/** Explicit migration stores detached revision references, never live designer objects. */
-export function captureGameCompanions(profile:GameProfile, capture:CapturedGameCompanions):GameProfile {
-  const error=gameCompanionCaptureError(capture); if(error)throw new Error(error);
-  return {...cloneGameProfile(profile),schemaVersion:3,companions:JSON.parse(JSON.stringify(capture))};
-}
-
-export function gameProfileError(value: unknown): string {
-  if (!object(value) || ![1,2,3].includes(value.schemaVersion as number) || !supportedGames.some(g => g.id === value.gameId)) return 'Choose a supported game and profile schema version 1, 2 or 3.';
-  if (value.schemaVersion !== 3 && 'companions' in value) return 'Capture companion assignments through an explicit upgrade to schema 3.';
-  if (value.companions != null) { const error = gameCompanionCaptureError(value.companions); if (error) return error; }
-  if (value.schemaVersion === 1 && 'mapping' in value) return 'Capture mapping through an explicit upgrade to schema 2.';
-  if (value.mapping != null && (!object(value.mapping) || !object(value.mapping.profile) || !Array.isArray(value.mapping.assignments) || !Array.isArray(value.mapping.targets))) return 'Capture a complete mapping snapshot.';
-  if (typeof value.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(value.id)) return 'Choose a profile ID of 1–64 letters, numbers, dots, underscores or hyphens.';
-  if (!text(value.name, 80)) return 'Choose a profile name of 1–80 UTF-8 bytes without control characters.';
-  if (!Array.isArray(value.devices) || value.devices.length > 32) return 'A game profile supports up to 32 peripherals.';
-  const assigned = new Set<string>();
-  for (const device of value.devices) {
-    if (!object(device) || !text(device.gatewayId, 127) || !text(device.moduleId, 127) || !['keep', 'enabled', 'disabled'].includes(String(device.controller))) return 'Choose a gateway, peripheral and controller mode for every assignment.';
-    const key = gameDeviceKey({ gatewayId: device.gatewayId, moduleId: device.moduleId.toLowerCase() });
-    if (assigned.has(key)) return 'A peripheral may appear only once on each gateway in a profile.';
-    assigned.add(key);
-    if (device.config !== undefined) {
-      if (!object(device.config) || typeof device.config.name !== 'string' || !Number.isInteger(device.config.expanderMask) || Number(device.config.expanderMask) < 0 || Number(device.config.expanderMask) > 255 || !['buttons', 'axes', 'hats', 'encoders', 'selectors'].every(kind => Array.isArray((device.config as Record<string, unknown>)[kind]) && ((device.config as Record<string, unknown>)[kind] as unknown[]).every(Array.isArray))) return 'Capture a complete, valid peripheral configuration.';
-      const error = configurationError(device.config as RuntimeConfig);
-      if (error) return error;
-    }
-  }
-  if (value.integration != null) {
-    const error = integrationError(value.integration);
-    if (error) return error;
-    const provider = (value.integration as IntegrationConfig).document.provider;
-    if (provider !== supportedGames.find(g => g.id === value.gameId)?.provider) return 'The integration provider must match the selected game.';
-    if (provider === 'x-plane' && (value.integration as IntegrationConfig).connection.version !== Number(String(value.gameId).slice(-2))) return 'The X-Plane connection version must match the selected game.';
-  }
-  return '';
-}
-
-export function gameSessionLabel(session: GameSession): string {
-  const labels: Record<GameSession['phase'], string> = { idle: 'Ready to play', validating: 'Checking your setup', applying: 'Activating profile', launching: 'Launching game', waiting: 'Waiting for game', running: 'Profile active', restoring: 'Restoring previous setup', 'recovery-needed': 'Recovery needed', failed: 'Launch failed' };
-  return labels[session.phase];
+export function gameCleanupLabel(cleanup: GameCleanup): string {
+  const labels: Record<GameCleanup['phase'], string> = { idle: 'Nothing to restore', restoring: 'Restoring previous owned setup', 'recovery-needed': 'Recovery needed', failed: 'Cleanup failed' };
+  return labels[cleanup.phase];
 }

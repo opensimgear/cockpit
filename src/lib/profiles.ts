@@ -68,9 +68,10 @@ export type ProfileSession = {
   appliedSnapshot: AppliedProfileSnapshot | null; fault: string | null;
 };
 export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string };
-export type ProfileCommand = 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_pause' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
+export type ProfilePublicationReferences = { schemaVersion: 1; libraryFingerprint: string; hashes: string[] };
+export type ProfileCommand = 'profile_companion_references' | 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_pause' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
 export type ProfileRequest =
-  | { command: 'profile_list' | 'profile_status' }
+  | { command: 'profile_list' | 'profile_status' | 'profile_companion_references' }
   | { command: 'profile_get' | 'profile_export' | 'profile_assignments_get'; id: string }
   | { command: 'profile_assignments_save'; id: string; expectedRevision: number; assignments: ProfileLocalAssignment[] }
   | { command: 'profile_create'; name: string }
@@ -86,7 +87,7 @@ export type ProfileRequest =
   | { command: 'profile_pause'; paused: boolean }
   | { command: 'profile_selection_mode'; mode: ProfileSelectionMode }
   | { command: 'profile_reset'; confirm: true };
-export type ProfileResult = { document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; profileSession?: import('./profile-runtime').NativeProfileStatus; automatic?: import('./profile-automatic').ProfileAutomaticStatus; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
+export type ProfileResult = { publicationReferences?: ProfilePublicationReferences; document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; profileSession?: import('./profile-runtime').NativeProfileStatus; automatic?: import('./profile-automatic').ProfileAutomaticStatus; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
 export type ProfileEditorSaveResult = { document: ProfileDocument; assignments: ProfileLocalAssignment[]; profiles: ProfileSummary[]; session: ProfileSession };
 export type ProfileSend = (request: ProfileRequest) => Promise<ProfileResult>;
 export type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
@@ -240,6 +241,19 @@ function freeze<T>(value: T): DeepReadonly<T> {
 function validProfileSummaries(value: unknown): value is ProfileSummary[] {
   return list(value, MAX_PROFILES) && value.length > 0 && value.every(summary => exact(summary, ['id', 'name', 'revision', 'isDefault', 'semanticHash']) && uuid(summary.id) && text(summary.name) && whole(summary.revision, 1, Number.MAX_SAFE_INTEGER) && summary.isDefault === (summary.id === DEFAULT_PROFILE_ID) && typeof summary.semanticHash === 'string' && /^sha256:[0-9a-f]{64}$/.test(summary.semanticHash)) && new Set(value.map(summary => (summary as ProfileSummary).id)).size === value.length && value.some(summary => (summary as ProfileSummary).id === DEFAULT_PROFILE_ID);
 }
+/** Saved display metadata only; it cannot substitute for an applied snapshot. */
+export function captureProfileSummaries(value: unknown): DeepReadonly<ProfileSummary[]> {
+  if (!validProfileSummaries(value)) throw new Error('Native saved profile summaries are malformed. Refresh the profile list.');
+  return freeze(clone(value));
+}
+/** This immutable library projection is metadata, never permission to prune. */
+export function captureProfilePublicationReferences(value: unknown): DeepReadonly<ProfilePublicationReferences> {
+  const digest = (value: unknown): value is string => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
+  if (!exact(value, ['schemaVersion', 'libraryFingerprint', 'hashes']) || value.schemaVersion !== 1 || !digest(value.libraryFingerprint)
+    || !list(value.hashes, MAX_PROFILES * 64) || !value.hashes.every(digest) || value.hashes.some((hash, index, hashes) => index > 0 && String(hashes[index - 1]) >= String(hash)))
+    throw new Error('Native profile publication references are unavailable or malformed. Preserve retained snapshots.');
+  return freeze(clone(value as ProfilePublicationReferences));
+}
 /** Local pins are separate from portable JSON and complete for every assigned resource. */
 export function profileDocumentAssignmentsError(document: ProfileDocument, assignments: unknown): string {
   const error = profileAssignmentsError(assignments);
@@ -274,6 +288,7 @@ export class ProfilesClient {
   }
   async list(): Promise<ProfileResult> { return this.request({ command: 'profile_list' }); }
   async status(): Promise<ProfileResult> { return this.request({ command: 'profile_status' }); }
+  async companionReferences(): Promise<DeepReadonly<ProfilePublicationReferences>> { return captureProfilePublicationReferences((await this.request({ command: 'profile_companion_references' })).publicationReferences); }
   async get(id: string): Promise<ProfileDocument> { return documentResult(await this.request({ command: 'profile_get', id })); }
   async open(id: string): Promise<ProfileEditorState> {
     const epoch = ++this.editorEpoch;

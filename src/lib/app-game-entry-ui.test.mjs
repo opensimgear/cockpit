@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./profiles','./profile-runtime','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation','./gateway-capabilities','./controller-lifecycle','./devices','./dcs-profile']);
+const modules=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation','./gateway-capabilities','./controller-lifecycle','./devices','./dcs-profile']);
 const noRequest=()=>{throw new Error('Opening Games must not acquire hardware, read configurations or start a runtime.');};
 const components=new Map();
 function evaluate(code,filename,require,extra={}){
@@ -50,7 +50,7 @@ async function appGames(selectedGameId=''){
     if(name.endsWith('/companion-startup'))return{restoreCompanionPanels:noRequest};
     if(name.endsWith('/notifications'))return{notify:noRequest};
     throw new Error(`Unexpected App dependency ${name}`);
-  },{fixtureGameState:{catalogue:[game],profiles:[],defaultProfiles:{},session:{phase:'idle'}},fixtureSelectedGame:selectedGameId});
+  },{fixtureGameState:{catalogue:[game],cleanup:{phase:'idle'}},fixtureSelectedGame:selectedGameId});
   return{body:render(App).body,props,source:original};
 }
 

@@ -4,17 +4,14 @@
   import ActionControl from './ActionControl.svelte';
   import { actionReady, type ActionValue, type DeviceAction } from './device-actions';
   import type { GatewayModule, GatewayRequest, GatewayState } from './gateway';
-  let { state, module, busy, request, managedActionIds = [] }: {
+  let { state, module, busy, request, profileBlockedReason = '' }: {
     state: GatewayState | null; module: GatewayModule | undefined; busy: boolean;
     request: (request: GatewayRequest) => Promise<boolean>;
-    managedActionIds?: string[];
+    profileBlockedReason?: string;
   } = $props();
   const ready = $derived(actionReady(state, module));
   const snapshot = $derived(module ? state?.moduleActions?.[module.id] : undefined);
   const supported = $derived(supportsDeviceContracts(state) && !!module?.boot);
-  function managed(action: DeviceAction) {
-    return managedActionIds.includes(action.id) || !!snapshot?.actions.some(bound => managedActionIds.includes(bound.id) && bound.endpoint === action.endpoint);
-  }
   async function invoke(action: DeviceAction, values: ActionValue[]) {
     return request({ command: 'action_invoke', moduleId: module?.id, boot: module?.boot,
       catalogueRevision: snapshot?.catalogueRevision, actionId: action.id, values });
@@ -30,9 +27,10 @@
     {:else if snapshot?.error}<Notification message={String(snapshot.error)} kind="error" />
     {:else if snapshot?.status === 'ready' && !snapshot.actions.length}<p class="help">The device advertises no manual actions.</p>{/if}
     {#if snapshot?.status === 'uncertain'}<p class="help">The last command may have applied. Refresh state before another action.</p>{/if}
+    {#if profileBlockedReason}<p class="help" role="status">{profileBlockedReason}</p>{/if}
     {#each snapshot?.actions ?? [] as action (`${module?.boot}/${snapshot?.catalogueRevision}/${action.id}`)}
-      {#if managed(action)}<p class="help">{action.label} is managed by the running profile. {#if state?.integration?.running}Open Integrations for a temporary override, or Stop to control it manually.{:else}Stop DCS-BIOS to control it manually.{/if}</p>{/if}
-      <ActionControl {action} snapshot={snapshot!} ready={ready && !managed(action)} {busy} {invoke} />
+
+      <ActionControl {action} snapshot={snapshot!} ready={ready && !profileBlockedReason} {busy} {invoke} />
     {/each}
     <div class="toolbar"><button disabled={!ready || busy} onclick={() => request({ command: 'action_describe', moduleId: module?.id })}>{snapshot?.actions.length ? 'Discover again' : 'Discover actions'}</button><button disabled={!ready || busy || !snapshot?.catalogueRevision} onclick={() => request({ command: 'action_state', moduleId: module?.id })}>Refresh state</button></div>
     <p class="help">Actions work while this device’s USB controller is disabled or its direct USB owns the inputs. Applied state is device readback; physical output verification is separate.</p>

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
-  DEFAULT_PROFILE_ID, MAX_PROFILE_BYTES, ProfilesClient, captureProfileSession,
+  DEFAULT_PROFILE_ID, MAX_PROFILE_BYTES, ProfilesClient, captureProfileSession, captureProfileSummaries, captureProfilePublicationReferences,
   exportProfileDocument, parseProfileDocument, profileDocumentError, profileDraft, profileDraftDirty, profileContractError, profileScalarValid, profileScalarAccepts, profileAssignmentsError, profilePortIdValid, profileDocumentAssignmentsError,
 } from './profiles.ts';
 
@@ -15,6 +15,19 @@ const port = (id = 'button') => ({ id, name: id, direction: 'output', contract: 
 const resource = () => ({ id: 'wheel', name: 'Wheel', kind: 'device', required: true, ports: [port()] });
 const withResource = () => ({ ...blank(), resources: [resource()] });
 const invalid = document => assert.ok(profileDocumentError(document));
+
+test('saved display summaries are bounded immutable metadata and reject runtime or editor fields', () => {
+  const rows=[{id:DEFAULT_PROFILE_ID,name:'Default',revision:1,isDefault:true,semanticHash:'sha256:'+'a'.repeat(64)}];
+  const captured=captureProfileSummaries(rows);rows[0].name='Newer label';assert.equal(captured[0].name,'Default');assert.ok(Object.isFrozen(captured));assert.ok(Object.isFrozen(captured[0]));
+  for(const value of [null,[],[null],Array(33).fill(captured[0]),[captured[0],captured[0]],[{...captured[0],owner:'browser'}],[{...captured[0],name:'  '}],[{...captured[0],revision:0}],[{...captured[0],isDefault:false}],[{...captured[0],semanticHash:''}],[{...captured[0],id:'11111111-1111-4111-8111-111111111111',isDefault:false}]])assert.throws(()=>captureProfileSummaries(value),/summaries/);
+});
+
+test('saved publication references require a bounded sorted native library capture and never start or prune anything',async()=>{
+ const a='sha256:'+'a'.repeat(64),b='sha256:'+'b'.repeat(64),reply={schemaVersion:1,libraryFingerprint:a,hashes:[a,b]};
+ const captured=captureProfilePublicationReferences(reply);reply.hashes.length=0;assert.deepEqual(captured.hashes,[a,b]);assert.ok(Object.isFrozen(captured));assert.ok(Object.isFrozen(captured.hashes));assert.deepEqual(captureProfilePublicationReferences({...reply,hashes:[]}).hashes,[]);
+ for(const value of [undefined,null,{}, {...reply,schemaVersion:2},{...reply,libraryFingerprint:''},{...reply,hashes:[a,a]},{...reply,hashes:[b,a]},{...reply,hashes:Array(2049).fill(a)},{...reply,hashes:['sha256:'+'A'.repeat(64)]},{...reply,permission:true}])assert.throws(()=>captureProfilePublicationReferences(value),/Preserve/);
+ const calls=[];let native=captured;const client=new ProfilesClient(async request=>{calls.push(request);return{publicationReferences:native};});assert.deepEqual((await client.companionReferences()).hashes,[a,b]);native=undefined;await assert.rejects(client.companionReferences(),/Preserve/);assert.deepEqual(calls,[{command:'profile_companion_references'},{command:'profile_companion_references'}]);assert.equal(client.editor,null);assert.equal(client.session,null);
+});
 
 // The same versioned documents are loaded by the Rust contract tests.
 for (const name of ['default', 'blank', 'mixed']) {
