@@ -9,6 +9,13 @@ editor-metadata tests pass; all 15 native profile coverage gates exceed 71%.
 The additional native validation exercises storage and schema, without activating
 the authored graph or qualifying its hardware routes.
 
+The policy extension selects **Disable while active** for CAN A through its
+resource inspector, checks the descriptor/reconnect warning, Undo/Redo and
+Save/reopen, and retains the exact false intent in portable export. The policy
+helper/component suite passes 45 cases and graph coverage exceeds all 71%
+gates. Native publication admission and physical effects remain separate from
+this intercepted frontend fixture.
+
 This is frontend fixture evidence for #79, #87 and #89. Microsoft Edge ran the production UI from the existing frontend on port 1420. The fixture intercepts every IPC before navigation and rejects unexpected commands and HTTP gateway fallbacks. It starts no service, native session, driver, device or game. Its Apply reply and sample pages are authored fixture captures, not proof of native activation, reduction, delivery or device acknowledgements. Qualification flags are unchanged.
 
 `tests/ui/complete-profile-authoring.mjs` supplies only advertised inventory and retained-panel port metadata. It does **not** inject a final document, seed graph edges or bypass the authoring controls. Starting with Add, the browser:

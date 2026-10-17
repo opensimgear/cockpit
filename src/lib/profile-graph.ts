@@ -168,3 +168,26 @@ export function graphSetVisibility(value: DeepReadonly<ProfileGraphDraft>, resou
   const next=graphDraft(value);if(!next.document.resources.some(resource=>resource.id===resourceId&&resource.kind==='device'))throw new Error('Visibility intent belongs to an existing physical device resource.');
   next.document.visibility=next.document.visibility.filter(intent=>intent.resourceId!==resourceId);next.document.visibility.push({resourceId,mode});return checked(next);
 }
+/** Save publication intent only; native admission owns capability and device effects. */
+export function graphSetRuntimeOverride(value: DeepReadonly<ProfileGraphDraft>, resourceId: string, enabled: boolean|null): ProfileGraphDraft {
+  const next=graphDraft(value);if(!next.document.resources.some(resource=>resource.id===resourceId&&resource.kind==='device'))throw new Error('Controller publication intent belongs to an existing physical device resource.');
+  if(enabled!==null&&typeof enabled!=='boolean')throw new Error('Keep configured, enable or disable controller publication explicitly.');
+  next.document.overrides=next.document.overrides.filter(intent=>intent.resourceId!==resourceId);if(enabled!==null)next.document.overrides.push({resourceId,enabled});return checked(next);
+}
+export type PublicationPolicyCapability = {status:'advertised'|'unsupported'|'unavailable';configuredEnabled:boolean|null;message:string};
+/** Advisory native metadata only. This cannot authorize or claim publication. */
+export function graphPublicationCapability(resource?:DeepReadonly<ResourceSummary>):PublicationPolicyCapability{
+  const unavailable={status:'unavailable' as const,configuredEnabled:null,message:'Controller publication capability is unavailable. The saved policy is retained; Apply must verify current native support and ownership.'};
+  const unsupported={status:'unsupported' as const,configuredEnabled:null,message:'This current resource does not advertise a supported nonpersistent controller publication capability. Keep configured or reconcile to a supported resource.'};
+  if(!resource)return unavailable;if(resource.resourceType!=='osg-module')return unsupported;if(resource.availability!=='online')return unavailable;
+  const source=resource.attributes.controllerPublicationOverride;if(!source||new TextEncoder().encode(source).length>4096||!resource.connections.some(connection=>connection.route.transport==='can'))return unsupported;
+  const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
+  const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+  const integer=(value:unknown,min:number,max:number):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=min&&value<=max;
+  try{
+    const proof:unknown=JSON.parse(source);if(!exact(proof,['schema','epoch','revision','module'])||proof.schema!==1||!integer(proof.epoch,1,0xffffffff)||!integer(proof.revision,1,0xffffffff)||!exact(proof.module,['id','boot','configurationGeneration','node','sourceNode','profile','publicationSlot','configuredEnabled','publicationReportId','configuredDescriptorIndex']))return unsupported;
+    const module=proof.module;if(typeof module.id!=='string'||!/^[0-9a-f]{32}$/.test(module.id)||/^(0{32}|f{32})$/.test(module.id)||!integer(module.boot,1,0xffffffff)||!integer(module.configurationGeneration,1,0xffffffff)||!integer(module.node,1,32)||!integer(module.sourceNode,0,0xffffffff)||!integer(module.publicationSlot,0,31)||typeof module.configuredEnabled!=='boolean'||!integer(module.publicationReportId,1,32)||!integer(module.configuredDescriptorIndex,-1,31)||module.configuredEnabled!==(module.configuredDescriptorIndex>=0))return unsupported;
+    const profile=module.profile;if(!exact(profile,['revision','buttons','axes','hats','neutral','axisUsage'])||!integer(profile.revision,1,65535)||!integer(profile.buttons,0,128)||!integer(profile.axes,0,8)||!integer(profile.hats,0,4)||!Array.isArray(profile.neutral)||profile.neutral.length!==profile.axes||!Array.from(profile.neutral).every(value=>integer(value,0,65535))||!Array.isArray(profile.axisUsage)||profile.axisUsage.length!==profile.axes||!Array.from(profile.axisUsage).every(value=>integer(value,0x30,0x38))||new Set(profile.axisUsage).size!==profile.axisUsage.length)return unsupported;
+    return{status:'advertised',configuredEnabled:module.configuredEnabled,message:'Gateway CAN capability advertised. Apply rechecks the actual route, availability, publication set and ownership; this is not a Ready result.'};
+  }catch{return unsupported;}
+}

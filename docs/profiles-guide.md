@@ -58,6 +58,15 @@ sections follow Save, reopening, copies, portable import/export and Undo/Redo.
 These editor preferences leave the profile's semantic and compiled program
 identity unchanged.
 
+For a physical device, **Controller publication policy** can keep its configured
+setting or request Enable/Disable while the profile is active. This requires an
+advertised nonpersistent gateway CAN capability; native Apply verifies the exact
+device and ownership again. Offline policies remain saved without implying
+readiness. Publication changes can reconnect USB controller collections and
+require game rebinding. They leave saved device flash settings alone and are
+separate from the **Game visibility intent** that hides a device through HidHide.
+Direct USB and Pico publication overrides remain unsupported.
+
 Select an output and an input/action using the canvas or **Connect exact ports**.
 Different units, types, ranges or delivery kinds require a visible processing
 node. Use the bindings table as a keyboard alternative. Its diagnostics identify
