@@ -125,6 +125,31 @@ export function graphSetProcessing(value: DeepReadonly<ProfileGraphDraft>, node:
   if(node.inputs.length>128||node.outputs.length>16||node.inputs.some(port=>port.direction!=='input')||node.outputs.some(port=>port.direction!=='output')||!node.outputs.length||new Set([...node.inputs,...node.outputs].map(port=>port.id)).size!==node.inputs.length+node.outputs.length)throw new Error('Processing blocks need unique directed ports and 1–16 declared outputs.');
   next.document.processingNodes=next.document.processingNodes.filter(row=>row.id!==node.id);next.document.processingNodes.push(clone(node));return checked(next);
 }
+export function graphInsertProcessing(value: DeepReadonly<ProfileGraphDraft>, bindingId: string, node: ProfileProcessingNode, inputPortId: string, outputPortId: string): ProfileGraphDraft {
+  const binding=value.document.bindings.find(binding=>binding.id===bindingId);if(!binding)throw new Error('Choose an existing route for this visible transformation.');
+  if(nodes(value.document).some(existing=>existing.id===node.id))throw new Error('Insert a new transformation identity.');
+  let next=graphSetProcessing(graphDisconnect(value,bindingId),node);
+  next=graphConnect(next,clone(binding.from),{nodeId:node.id,portId:inputPortId});
+  return graphConnect(next,{nodeId:node.id,portId:outputPortId},clone(binding.to));
+}
+export function graphBypassProcessing(value: DeepReadonly<ProfileGraphDraft>, nodeId: string): ProfileGraphDraft {
+  const node=value.document.processingNodes.find(node=>node.id===nodeId),incoming=value.document.bindings.filter(binding=>binding.to.nodeId===nodeId),outgoing=value.document.bindings.filter(binding=>binding.from.nodeId===nodeId);
+  if(!node||node.inputs.length!==1||node.outputs.length!==1||incoming.length!==1||!outgoing.length)throw new Error('Joining a removed transformation requires one connected input and one output. Otherwise remove its routes explicitly.');
+  const next=graphRemoveNode(value,nodeId);
+  for(const binding of outgoing)next.document.bindings.push({id:binding.id,from:clone(incoming[0].from),to:clone(binding.to)});
+  return checked(next);
+}
+export function graphReorderProcessing(value: DeepReadonly<ProfileGraphDraft>, orderedNodeIds: readonly string[]): ProfileGraphDraft {
+  const selected=new Set(orderedNodeIds),document=value.document;
+  if(selected.size!==orderedNodeIds.length||selected.size<2||orderedNodeIds.some(id=>{const node=document.processingNodes.find(node=>node.id===id);return !node||node.inputs.length!==1||node.outputs.length!==1;}))throw new Error('Choose at least two unique single-input/output transformations in one linear route.');
+  const routes=document.bindings.filter(binding=>selected.has(binding.from.nodeId)||selected.has(binding.to.nodeId)),enter=routes.filter(binding=>!selected.has(binding.from.nodeId)),exit=routes.filter(binding=>!selected.has(binding.to.nodeId));
+  if(routes.length!==selected.size+1||enter.length!==1||exit.length!==1||orderedNodeIds.some(id=>routes.filter(binding=>binding.from.nodeId===id).length!==1||routes.filter(binding=>binding.to.nodeId===id).length!==1))throw new Error('Reorder one linear route without fan-in or fan-out. Edit branched connections individually.');
+  const next=graphDraft(value),removed=new Set(routes.map(binding=>binding.id));next.document.bindings=next.document.bindings.filter(binding=>!removed.has(binding.id));
+  const remaining=routes.filter(binding=>binding!==enter[0]&&binding!==exit[0]).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0),ids=[enter[0].id,...remaining.map(binding=>binding.id),exit[0].id];
+  let from=clone<ProfileEndpoint>(enter[0].from);
+  for(let i=0;i<orderedNodeIds.length;i++){const node=next.document.processingNodes.find(node=>node.id===orderedNodeIds[i])!;next.document.bindings.push({id:ids[i],from,to:{nodeId:node.id,portId:node.inputs[0].id}});from={nodeId:node.id,portId:node.outputs[0].id};}
+  next.document.bindings.push({id:ids.at(-1)!,from,to:clone(exit[0].to)});return checked(next);
+}
 export function graphVirtualPorts(layout: DeepReadonly<ProfileControllerLayout>): ProfilePort[] {
   if(layout.buttons.length>128||layout.axes.length>16||layout.hats.length>4||layout.buttons.length+layout.axes.length+layout.hats.length>128||layout.buttons.length+layout.axes.length+layout.hats.length===0)throw new Error('Choose 1–128 total virtual controls, at most 16 axes and four hats.');
   const state=(id:string,name:string,schema:ProfileScalarSchema,fallback:boolean|number):ProfilePort=>({id,name,direction:'input',contract:{delivery:'state',schema,freshnessMs:1000,fallback}});
