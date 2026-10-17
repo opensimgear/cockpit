@@ -291,7 +291,19 @@ impl CompanionSources {
         }
         let hub = runtime.profile_metadata()?;
         for instance in &self.instances {
-            hub.validate_profile_preparation(&instance.proof)?;
+            if self.acquired {
+                if self.stopped {
+                    return Err("The owned companion assignment is stopped.".into());
+                }
+                hub.validate_profile_assignment(
+                    instance
+                        .receipt
+                        .as_ref()
+                        .ok_or("The owned companion receipt is missing.")?,
+                )?;
+            } else {
+                hub.validate_profile_preparation(&instance.proof)?;
+            }
         }
         Ok(())
     }

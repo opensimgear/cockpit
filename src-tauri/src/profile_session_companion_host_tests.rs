@@ -249,7 +249,7 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
     assert!(prepare_catalogues(&hub, &captured, &candidate).is_err());
 }
 
-struct NativeFixture {
+pub(crate) struct NativeFixture {
     _directory: tempfile::TempDir,
     hub: Hub,
     original: Publication,
@@ -264,7 +264,7 @@ struct NativeFixture {
     reply: Arc<std::sync::Mutex<serde_json::Value>>,
 }
 impl NativeFixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         use osg_profiles::resources::{EvidenceKind, IdentityEvidence, Observation, ProviderBatch};
         use osg_profiles::resources_ports::PortUpdate;
         let directory = tempfile::tempdir().unwrap();
@@ -444,7 +444,7 @@ impl NativeFixture {
             reply,
         }
     }
-    fn host(&self) -> NativeProfileHost {
+    pub(crate) fn host(&self) -> NativeProfileHost {
         NativeProfileHost::new(
             self.resources.clone(),
             self.controllers.clone(),
@@ -455,7 +455,7 @@ impl NativeFixture {
             self.epoch.clone(),
         )
     }
-    fn candidate(&self, default: bool) -> Candidate {
+    pub(crate) fn candidate(&self, default: bool) -> Candidate {
         let mut candidate = Candidate {
             document: osg_profiles::default_document(),
             assignments: vec![],

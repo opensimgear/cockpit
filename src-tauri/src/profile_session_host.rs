@@ -4,6 +4,8 @@
 mod companion;
 #[path = "profile_session_visibility_host.rs"]
 mod visibility;
+#[path = "profile_session_launch_host.rs"]
+mod launch;
 #[path = "profile_session_action_host.rs"]
 mod action;
 
@@ -55,6 +57,9 @@ struct NativeRun {
     scripts: crate::profile_session_scripts::Scripts,
     game: crate::profile_session_games::GameSources,
     game_preparation: Option<crate::games::PreparedGame>,
+    child_game_owner: Option<crate::game_context::ProfileOwner>,
+    launch_epoch_bound: bool,
+    launch_context_installed: bool,
     companions: crate::profile_session_companions::CompanionSources,
     companion_catalogues: Vec<crate::profile_resources::CompanionCatalogue>,
     companion_retry: Option<u64>,
@@ -503,6 +508,7 @@ impl Host for NativeProfileHost {
             document: candidate.document.clone(), backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, scripts, game, game_preparation,
+            child_game_owner: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_retry: None, visibility,
             actions,
         });
@@ -571,30 +577,18 @@ impl Host for NativeProfileHost {
     }
 
     fn set_authority(&mut self, owner: Option<&RunOwner>) -> Result<(), String> {
-        if self.authority.as_ref() == owner {
+        let context = self.effective_context_owner(owner)?;
+        let previous_context = self.effective_context_owner(self.authority.as_ref())?;
+        let retained_child = owner.is_none() && self.prepared.values().any(|run|run.child_game_owner.is_some());
+        if self.authority.as_ref() == owner && !retained_child {
             return Ok(());
         }
-        if self
-            .authority
-            .as_ref()
-            .and_then(|owner| owner.game_id.as_ref())
-            .is_none()
-            && owner.and_then(|owner| owner.game_id.as_ref()).is_none()
-        {
+        if previous_context.is_none() && context.is_none() && !retained_child {
             self.authority = owner.cloned();
             return Ok(());
         }
         self.authority = None;
-        self.games
-            .set_profile_context_owner(owner.filter(|owner| owner.game_id.is_some()).map(
-                |owner| crate::game_context::ProfileOwner {
-                    session: owner.session.clone(),
-                    profile_id: owner.profile_id.clone(),
-                    applied_revision: owner.profile_revision,
-                    run_generation: owner.generation,
-                    game_id: owner.game_id.clone(),
-                },
-            ))?;
+        self.games.set_profile_context_owner(context)?;
         self.authority = owner.cloned();
         Ok(())
     }
@@ -902,6 +896,10 @@ impl Host for NativeProfileHost {
             stop,
         })
     }
+    fn supports_launch_hold(&self) -> bool { true }
+    fn hold_health(&mut self, run:&OwnedRun)->Result<Health,String> {self.held_health(run)}
+    fn bind_launch_epoch(&mut self, run:&OwnedRun, epoch:u64)->Result<(),String> {self.bind_held_epoch(run,epoch)}
+    fn install_launch_context(&mut self, run:&OwnedRun, candidate:&Candidate)->Result<Prepared,String> {self.install_held_context(run,candidate)}
     fn discard_preparation(&mut self, owner: &RunOwner) {
         if let Some(mut state) = self.prepared.remove(&key(owner)) {
             let _=state.actions.stop();

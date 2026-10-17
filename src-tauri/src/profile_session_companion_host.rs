@@ -277,4 +277,4 @@ impl NativeProfileHost {
 
 #[cfg(test)]
 #[path = "profile_session_companion_host_tests.rs"]
-mod tests;
+pub(super) mod tests;

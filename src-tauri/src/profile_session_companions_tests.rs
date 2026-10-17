@@ -272,6 +272,20 @@ fn default_needs_no_companion_initialization_or_dependencies() {
     adapter.acquire(&runtime, &[]).unwrap();
     assert!(runtime.profile_metadata().is_err());
 }
+
+#[test]
+fn revalidation_after_acquire_uses_owned_receipt_instead_of_obsolete_unowned_proof() {
+    let fixture=Fixture::new();
+    let directory=tempfile::tempdir().unwrap();
+    let runtime=crate::companion_host::Runtime::with_profile_metadata(fixture.hub.clone(),fixture.provider.clone(),directory.path().to_owned());
+    let mut adapter=fixture.prepared();
+    adapter.validate_preparation(&runtime).unwrap();
+    fixture.acquire(&mut adapter,&[]);
+    assert!(fixture.hub.validate_profile_preparation(&adapter.instances[0].proof).is_err());
+    adapter.validate_preparation(&runtime).unwrap();
+    adapter.stop(&fixture.hub).unwrap();
+    assert!(adapter.validate_preparation(&runtime).unwrap_err().contains("stopped"));
+}
 #[test]
 fn actual_baseline_and_delivery_tokens_are_required_before_arming_feedback() {
     let fixture = Fixture::new();
