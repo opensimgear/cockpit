@@ -6,11 +6,19 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 
-def command(args, cwd, env=None):
-    return subprocess.check_output(args, cwd=cwd, env=env, text=True)
+def command(args, cwd, env=None, log_path=None):
+    result = subprocess.run(args, cwd=cwd, env=env, text=True, encoding='utf-8',
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if log_path is not None:
+        log_path.write_text(result.stdout, encoding='utf-8')
+    if result.returncode:
+        print(result.stdout, file=sys.stderr, end='')
+        result.check_returncode()
+    return result.stdout
 
 
 def main():
@@ -20,6 +28,8 @@ def main():
     args = parser.parse_args()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    for name in ['native-tests.log', 'action-summary.json', 'lines.txt']:
+        (output / name).unlink(missing_ok=True)
     build_profiles = output / 'build-profiles'
     build_profiles.mkdir(exist_ok=True)
     environment = dict(os.environ, CARGO_TARGET_DIR=os.environ.get('CARGO_TARGET_DIR', str(output / 'target')),
@@ -34,8 +44,7 @@ def main():
         raise RuntimeError('Expected one instrumented Cockpit library test executable.')
     profiles = Path(tempfile.mkdtemp(prefix='test-profiles-', dir=output))
     test_environment = dict(environment, LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
-    tests = command([binaries[0]], root, test_environment)
-    (output / 'native-tests.log').write_text(tests)
+    command([binaries[0]], root, test_environment, output / 'native-tests.log')
     sysroot = Path(command(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', command(['rustc', '-vV'], root), re.M).group(1)
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
