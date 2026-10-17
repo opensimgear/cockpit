@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@opensimgear/companion-contracts':
+        specifier: workspace:*
+        version: link:packages/companion-contracts
       '@opensimgear/companion-designer':
         specifier: workspace:*
         version: link:packages/companion-designer

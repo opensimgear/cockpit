@@ -63,6 +63,18 @@ test('an obsolete browser tab cannot erase replacement credentials',()=>{
  clearCredential(storage,fresh.token);assert.equal(readCredential(storage),null);
 });
 
+test('accepted replies feed visuals before resolving; invalid feedback closes once and cannot replay queued input',async()=>{
+ const savedSocket=globalThis.WebSocket,savedLocation=globalThis.location;let socket;const sent=[],visuals=[];
+ class Socket{static OPEN=1;readyState=1;constructor(){socket=this;queueMicrotask(()=>this.onopen());}send(raw){sent.push(JSON.parse(raw));}close(){this.readyState=3;this.onclose?.();}reply(reply){this.onmessage({data:JSON.stringify(reply)});}}
+ globalThis.WebSocket=Socket;globalThis.location={origin:'https://localhost:54437'};
+ try{
+  const transport=new BrowserTransport();transport.onreply=reply=>{if(reply.feedback==='invalid')throw Error('Wrong panel feedback');visuals.push(reply.feedback);};await transport.connect();
+  const baseline=transport.request({type:'baseline'});await new Promise(resolve=>setImmediate(resolve));socket.reply({ok:true,type:'baseline',feedback:'current'});await baseline;assert.deepEqual(visuals,['current']);
+  const bad=transport.request({type:'heartbeat'}),queued=transport.request({type:'input',changes:[{controlId:'primary',value:true}]});const rejected=Promise.all([assert.rejects(bad,/Wrong panel/),assert.rejects(queued,/expired|stopped|Connection/)]);await new Promise(resolve=>setImmediate(resolve));socket.reply({ok:true,type:'ack',feedback:'invalid'});await rejected;
+  assert.equal(socket.readyState,3);assert.equal(sent.some(frame=>frame.type==='input'),false);assert.deepEqual(visuals,['current']);
+ }finally{globalThis.WebSocket=savedSocket;globalThis.location=savedLocation;}
+});
+
 test('legacy tabs cannot delete migrated browser credentials',()=>{
  const values=new Map();const storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
  const old={token:'a'.repeat(43),companionId:'legacy',hostId:'host'};

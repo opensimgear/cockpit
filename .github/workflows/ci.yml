@@ -24,6 +24,7 @@ jobs:
       - run: pnpm check
       - run: pnpm transport:test
       - run: pnpm browser:test
+      - run: pnpm browser-feedback:coverage
       - run: pnpm controllers:coverage
       - run: pnpm profiles:coverage
       - run: pnpm profile-library:coverage

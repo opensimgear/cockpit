@@ -61,6 +61,7 @@
     "browser:build": "vite build --config apps/browser-companion/vite.config.ts",
     "browser:check": "svelte-check --tsconfig apps/browser-companion/tsconfig.json",
     "browser:test": "node --test apps/browser-companion/src/*.test.mjs",
+    "browser-feedback:coverage": "node --experimental-test-coverage --test-coverage-include=apps/browser-companion/src/feedback.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test apps/browser-companion/src/feedback.test.mjs",
     "profile-retired-recovery:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-retired-recovery.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-retired-recovery.test.mjs",
     "profile-library:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-library.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-library.test.mjs"
   },
@@ -68,6 +69,7 @@
     "@tauri-apps/api": "^2.12.3",
     "@tauri-apps/plugin-opener": "^2.7.1",
     "svelte": "^5.55.4",
+    "@opensimgear/companion-contracts": "workspace:*",
     "@opensimgear/companion-ui": "workspace:*",
     "@opensimgear/companion-designer": "workspace:*"
   },

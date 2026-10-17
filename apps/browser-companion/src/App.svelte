@@ -1,16 +1,19 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { PanelCanvas, createPreviewController, fallbackValue, type PreviewChange } from '@opensimgear/companion-ui';
+  import { PanelCanvas, createPreviewController, fallbackValue, type FeedbackSamples } from '@opensimgear/companion-ui';
   import { flightTemplate, type DesignerDocument } from '@opensimgear/companion-designer';
   import { verifyPublishedPayload } from '../../companion/src/lib/companion-cache';
   import { createOrderedInputQueue } from '../../companion/src/lib/input-queue';
   import { BrowserTransport, readCredential, saveCredential, clearCredential, type Credential } from './transport';
+  import { createBrowserFeedback, type FeedbackIdentity } from './feedback';
   let credential=$state<Credential|null>(null), error=$state(''), warning=$state(''), status=$state('Connecting…');
   let panel=$state<DesignerDocument|null>(null), pageId=$state(''), assets=$state<Record<string,string>>({});
   let assignments=$state<{instanceId:string;publicationHash:string;name:string}[]>([]), selected=$state('');
   let active=$state(false), name=$state('Browser companion'), secret=$state(''), fullscreen=$state(false);
+  let feedback=$state<FeedbackSamples>({}), feedbackNotice=$state('');
+  const feedbackView=createBrowserFeedback();
   let installPrompt=$state<any>(null), installHelp=$state(false), owner=$state(false);
-  let connection:BrowserTransport|null=null, epoch=0, session:Record<string,any>|null=null, sequence=0, heartbeat=0;
+  let connection:BrowserTransport|null=null, epoch=0, session:Record<string,any>|null=null, sequence=0, heartbeat=0, resyncSequence=0;
   let connecting=$state(false);
   let disposed=false, nextAttempt=0, lastTick=performance.now();
   const visible=()=>document.visibilityState==='visible'&&document.hasFocus();
@@ -25,7 +28,19 @@
   }
   function stop(reason:string) {
     epoch++; active=false;queue.stop();controller.disarm(reason);session=null;
+    feedbackView.disconnect();feedback=feedbackView.snapshot();
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
+  }
+  function consume(reply:Record<string,any>,version:number){
+    if(version!==epoch||!session||!panel||!reply.feedback)return;
+    if(feedbackView.accept(session as FeedbackIdentity,reply.feedback,panel.ui,performance.now(),reply.type==='feedback-resync'))feedback=feedbackView.snapshot();
+  }
+  function resetFeedback(){feedbackView.reset();feedback={};feedbackNotice='Visual state cleared locally. Controls are unchanged.';}
+  async function resyncFeedback(){
+    if(!connection||!session||!active)return;
+    const version=epoch;
+    try{await connection.request(frame('feedback-resync',{sequence:String(++resyncSequence)}));if(version===epoch)feedbackNotice='Fresh visual snapshot requested; controls were not replayed.';}
+    catch(e){if(version===epoch){feedbackNotice=String(e);stop('Feedback resync unavailable');}}
   }
   async function loadAssigned(socket:BrowserTransport, version:number, rows:typeof assignments){
     assignments=rows;
@@ -39,7 +54,7 @@
     if(opened.publicationHash!==assignment.publicationHash || verified.publicationHash!==assignment.publicationHash)throw new Error('Panel assignment changed during delivery');
     panel=verified.document;pageId=panel.ui.pages.some(p=>p.id===pageId)?pageId:panel.ui.pages[0].id;
     assets=Object.fromEntries(verified.assets.map(a=>[a.assetId,'data:'+panel!.ui.assets.find(m=>m.id===a.assetId)!.mime+';base64,'+a.base64]));
-    session=opened;sequence=0;heartbeat=0;
+    session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};feedbackNotice='';
     await tick();if(version!==epoch || !visible())return;
     const values=Object.fromEntries(panel.ui.controls.map(c=>[c.id,fallbackValue(c)]));
     await socket.request(frame('baseline',{sequence:'0',values}));
@@ -49,6 +64,7 @@
   async function connect(){
     if(!owner || connecting || connection || !credential || disposed || performance.now()<nextAttempt)return;
     connecting=true;const savedCredential=credential;const version=epoch,socket=new BrowserTransport();connection=socket;
+    socket.onreply=reply=>consume(reply,version);
     socket.onclose=()=>{if(connection===socket)stop('Offline · reconnecting to Cockpit');};
     try {
       await socket.connect();if(version!==epoch)return;
@@ -157,7 +173,8 @@
       {#if assignments.length>1}<label>Panel<select value={selected} onchange={e=>{stop('Switching panel');selected=e.currentTarget.value;nextAttempt=0;}}>{#each assignments as a}<option value={a.instanceId}>{a.name}</option>{/each}</select></label>{/if}
       {#if panel && panel.ui.pages.length>1}<label>Page<select value={pageId} onchange={e=>changedPage(e.currentTarget.value)}>{#each panel.ui.pages as page}<option value={page.id}>{page.title}</option>{/each}</select></label>{/if}
     </div>
-    {#if panel}<main class:inactive={!active}><PanelCanvas document={panel} {pageId} {assets} {controller} /></main>
+    {#if panel}<main class:inactive={!active}><PanelCanvas document={panel} {pageId} {assets} {controller} {feedback} /></main>
+      <div class="toolbar"><span>Visuals: requested, host accepted, host submitted and game confirmed are separate states.</span><button onclick={resetFeedback}>Clear visual state</button><button onclick={resyncFeedback} disabled={!active}>Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
     {:else}<section class="empty"><h1>{status}</h1><p>Choose a panel for this companion in Cockpit. It will appear here automatically.</p></section>{/if}
   {/if}
   {#if warning && !error}<aside role="alert">{warning}<button aria-label="Dismiss notification" onclick={()=>warning=''}>×</button></aside>{/if}
