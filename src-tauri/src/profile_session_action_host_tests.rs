@@ -358,6 +358,23 @@ fn eventually(mut ready: impl FnMut() -> bool) {
     }
 }
 #[test]
+fn actual_host_dispatches_the_compiled_constant_setter_once_at_start() {
+    let mut f = Fixture::new();
+    assert_eq!(f.probe.count("invoke"), 0);
+    f.arm();
+    eventually(|| f.probe.count("invoke") == 1);
+    for _ in 0..3 {
+        f.host.health(&f.run).unwrap();
+    }
+    assert_eq!(f.probe.count("invoke"), 1);
+    assert_eq!(f.probe.count("claim"), 1);
+    f.host.neutralize(&f.run).unwrap();
+    assert_eq!(f.probe.count("release"), 1);
+    f.host.restore(&f.run, false).unwrap();
+    assert_eq!(f.probe.count("invoke"), 1);
+}
+
+#[test]
 fn actual_host_acquires_neutral_lease_then_starts_and_restores_without_reclaim() {
     let mut f = Fixture::new();
     assert!(has_receipts(&f.run.receipts));

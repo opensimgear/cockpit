@@ -901,6 +901,69 @@ fn action_program(setter: bool, args: bool) -> Program {
 }
 
 #[test]
+fn constant_setter_emits_its_initial_tuple_once_without_tick_replay() {
+    let contract = boolean_contract();
+    let parameters = vec![parameter("enabled", ScalarSchema::Boolean {})];
+    let mut engine = phase(Program {
+        sources: vec![],
+        nodes: vec![
+            Node {
+                id: "constant".into(),
+                inputs: vec![],
+                outputs: vec![descriptor("value", Direction::Output, contract.clone())],
+                operation: Operation::Constant { value: PortValue::Boolean(true) },
+            },
+            Node {
+                id: "setter".into(),
+                inputs: vec![input("enabled", "constant", "value", contract)],
+                outputs: vec![descriptor("invoke", Direction::Output,
+                    invocation(parameters.clone(), ActionSemantics::Setter))],
+                operation: Operation::SetOnChange { arguments: vec!["enabled".into()] },
+            },
+        ],
+        sinks: vec![resource_sink("action", endpoint("setter", "invoke"),
+            action(parameters, ActionSemantics::Setter))],
+        controllers: vec![],
+    });
+    let effects = engine.drain();
+    assert_eq!(effects.len(), 1, "The initial known setter tuple must reach its sink");
+    assert_eq!(effects[0].reason, ReportReason::Start);
+    assert_eq!(effects[0].sample, SignalSample::Known(packed(&[("enabled", PortValue::Boolean(true))])));
+    for at in [1, 1_000_000, 5_000_000] {
+        engine.advance(Counter(at)).unwrap();
+        assert!(engine.drain().is_empty(), "An unchanged constant must not replay its setter");
+    }
+}
+
+#[test]
+fn constant_held_edge_does_not_emit_a_startup_one_shot() {
+    let contract = boolean_contract();
+    let mut program = action_program(false, false);
+    program.sources.clear();
+    program.nodes[0].inputs[0].from = endpoint("edge", "event");
+    program.nodes.splice(0..0, [
+        Node {
+            id: "constant".into(),
+            inputs: vec![],
+            outputs: vec![descriptor("value", Direction::Output, contract.clone())],
+            operation: Operation::Constant { value: PortValue::Boolean(true) },
+        },
+        Node {
+            id: "edge".into(),
+            inputs: vec![input("input", "constant", "value", contract)],
+            outputs: vec![descriptor("event", Direction::Output, event())],
+            operation: Operation::EventEdge { edge: Edge::Rising },
+        },
+    ]);
+    let mut engine = phase(program);
+    assert!(engine.drain().iter().all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
+    for at in [1, 1_000_000, 5_000_000] {
+        engine.advance(Counter(at)).unwrap();
+        assert!(engine.drain().is_empty(), "A held startup edge must not replay a one-shot");
+    }
+}
+
+#[test]
 fn action_pack_is_atomic_named_ordered_and_only_fires_on_event_occurrence() {
     let mut engine = phase(action_program(false, true));
     engine.drain();

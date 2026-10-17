@@ -233,8 +233,8 @@ impl Phase {
             last: BTreeMap::new(),
             last_controllers: BTreeMap::new(),
         };
-        phase.evaluate(BTreeSet::new(), BTreeSet::new(), true)?;
-        phase.publish(BTreeSet::new(), ReportReason::Start, true);
+        let events = phase.evaluate(BTreeSet::new(), BTreeSet::new(), true)?;
+        phase.publish(events, ReportReason::Start, true);
         Ok(phase)
     }
     pub fn run_token(&self) -> RunToken {
