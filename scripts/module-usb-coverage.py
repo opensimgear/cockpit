@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,38 @@ def run(args, root, env=None):
     return result.stdout
 
 
+def run_test_filters(binary, filters, root, env, profiles, output):
+    evidence = []
+    invocations = []
+    logs = []
+    for index, test_filter in enumerate(filters):
+        # Windows can reuse a PID during this sequential suite. LLVM's %m-%p
+        # basename then repeats, so global file counts cannot prove that each
+        # invocation wrote evidence. Give every invocation its own empty scope.
+        directory = profiles / f"test-{index:03d}"
+        directory.mkdir()
+        test_env = dict(env, LLVM_PROFILE_FILE=str(directory / "test-%m-%p.profraw"))
+        tests = subprocess.run([binary, test_filter, "--test-threads=1"],
+                               cwd=root, env=test_env, text=True, encoding="utf-8",
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        logs.append(tests.stdout)
+        (output / "tests.log").write_text("\n".join(logs), encoding="utf-8")
+        if tests.returncode:
+            print(tests.stdout, file=sys.stderr, end="")
+            tests.check_returncode()
+        files = sorted(directory.glob("test-*.profraw"))
+        if not files or any(not path.is_file() or path.is_symlink() or path.stat().st_size == 0
+                            for path in files):
+            raise RuntimeError(
+                f"Successful USB test filter {test_filter!r} produced missing or empty "
+                f"coverage evidence in {directory}.")
+        evidence.extend(files)
+        invocations.append({"testFilter": test_filter, "profiles": [
+            {"path": str(path.relative_to(output)), "bytes": path.stat().st_size}
+            for path in files]})
+    return evidence, invocations
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -80,6 +113,7 @@ def main():
     tracked.extend(root / f"src-tauri/src/{name}.rs" for name in
                    ["profile_session_overrides", "profile_session_overrides_tests"])
     tracked.extend([root / "src-tauri/src/lib.rs", root / "src-tauri/src/profile_session_host.rs", root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/stm32.rs", root / "src-tauri/src/pico.rs", root / "src-tauri/src/games.rs", root / "src-tauri/src/game_discovery.rs", root / "src-tauri/src/game_context.rs", root / "src-tauri/src/game_context_runtime.rs", root / "src-tauri/src/profile_session.rs", root / "src-tauri/src/profile_session_stage.rs", root / "src-tauri/src/profile_session_journal.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
+    tracked.extend([Path(__file__).resolve(), root / "scripts/test_module_usb_coverage.py"])
     if not args.module or "profile_automatic" in measured or "profile_game_orchestration_runtime" in measured or "profile_companion_retention" in measured:
         # The full gate also pins Manager construction/admission. A focused
         # production-module report is explicitly not whole-Manager evidence.
@@ -122,20 +156,10 @@ def main():
             binaries.append(entry["executable"])
     if len(binaries) != 1:
         raise RuntimeError("Expected one instrumented Cockpit library test executable.")
-    test_env = dict(env, LLVM_PROFILE_FILE=str(profiles / "test-%m-%p.profraw"))
-    logs = []
-    for test_filter in filters:
-        tests = subprocess.run([binaries[0], test_filter, "--test-threads=1"],
-                               cwd=root, env=test_env, text=True, encoding="utf-8",
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        logs.append(tests.stdout)
-        (output / "tests.log").write_text("\n".join(logs), encoding="utf-8")
-        if tests.returncode:
-            print(tests.stdout, file=sys.stderr, end="")
-            tests.check_returncode()
-    evidence = list(profiles.glob("test-*.profraw"))
-    if len(evidence) < len(filters):
-        raise RuntimeError("Successful USB test processes produced incomplete coverage evidence.")
+    binary = profiles / Path(binaries[0]).name
+    shutil.copy2(binaries[0], binary)
+    binary_hash = hashlib.sha256(binary.read_bytes()).hexdigest()
+    evidence, invocations = run_test_filters(binary, filters, root, env, profiles, output)
     final_stamp = source_stamp(tracked, root)
     if initial_stamp != final_stamp:
         changed = [name for name in initial_stamp if initial_stamp[name] != final_stamp[name]]
@@ -149,7 +173,7 @@ def main():
     summary = {}
     for module in measured:
         source = root / f"src-tauri/src/{module}.rs"
-        annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0],
+        annotated = run([llvm / f"llvm-cov{suffix}", "show", binary,
                          f"-instr-profile={profile}", "-show-line-counts-or-regions", source], root)
         (output / f"{module}-lines.txt").write_text(annotated, encoding="utf-8")
         lines = source.read_text(encoding="utf-8").splitlines()
@@ -169,6 +193,8 @@ def main():
         summary[module] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
         print(f"{module}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
     (output / "evidence.json").write_text(json.dumps({"sources": final_stamp, "testFilters": filters,
+        "testInvocations": invocations,
+        "executable": str(binary), "executableSha256": binary_hash, "cargoArtifact": binaries[0],
         "measuredModules": measured, "focused": bool(args.module), "rustc": run(["rustc", "-vV"], root)}, indent=2) + "\n", encoding="utf-8")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if any(item["percent"] < 71 for item in summary.values()):
