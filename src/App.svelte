@@ -15,22 +15,23 @@
   import DebugDevices from './lib/DebugDevices.svelte';
   import { supportsDeviceContracts } from './lib/gateway-capabilities';
   import ManualActions from './lib/ManualActions.svelte';
-  import DcsBiosPanel from './lib/DcsBiosPanel.svelte';
   import IntegrationsPanel from './lib/IntegrationsPanel.svelte';
   import GamesPanel from './lib/GamesPanel.svelte';
   import OverviewPanel from './lib/OverviewPanel.svelte';
   import DesktopPreferences from './lib/DesktopPreferences.svelte';
   import { supportedGames, type GameId, type GamesState, type GameRequest } from './lib/games';
-  import type { IntegrationConfig, IntegrationRequest, IntegrationState } from './lib/integration-profile';
+  import type { IntegrationState } from './lib/integration-profile';
+  import { OPEN_GAME_SETTINGS_EVENT, RETURN_FROM_GAME_SETTINGS_EVENT, gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings, type GameSettingsVisit } from './lib/game-settings-navigation';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { gatewayRequest, GatewayError, releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
-  import { dcsStatusLabel, type DcsBiosStatus } from './lib/dcs-bios';
-  import { managedDcsActions, type DcsProfileConfig, type DcsTarget } from './lib/dcs-profile';
+  import type { DcsBiosStatus } from './lib/dcs-bios';
+  import { managedDcsActions, type DcsTarget } from './lib/dcs-profile';
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'overview' | 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'dcs-bios' | 'topology' | 'activity' | 'preferences';
+  type View = 'overview' | 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'preferences';
+  type SettingsOrigin = { view: View; selectedGameId: GameId | ''; hash: string; returnState?: unknown };
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
     { id: 'overview', label: 'Overview', icon: 'activity' },
@@ -40,7 +41,6 @@
     { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
     { id: 'integrations', label: 'Integrations', icon: 'play' },
-    { id: 'dcs-bios', label: 'DCS-BIOS', icon: 'play' },
     { id: 'topology', label: 'Topology', icon: 'network' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
   ];
@@ -62,24 +62,34 @@
   let view = $state<View>('overview');
   let games = $state<GamesState>();
   let selectedGameId = $state<GameId | ''>('');
+  let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
   const selectedGameName = $derived((games?.catalogue ?? supportedGames).find(game => game.id === selectedGameId)?.name);
   const section = $derived(view === 'device' ? 'devices' : view);
   const sectionLabel = $derived(navigation.find(item => item.id === section)?.label ?? 'Settings');
   function navigate(section: View) {
+    settingsVisit = null;
+    if (gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     selectedGameId = '';
     view = section;
+  }
+  function openGameSettings(gameId: GameId, returnState?: unknown) {
+    if (!settingsVisit) settingsVisit = visitGameSettings(gameId, { view, selectedGameId, hash: window.location.hash, ...(returnState === undefined ? {} : { returnState }) });
+    selectedGameId = gameId; view = 'games';
+    if (window.location.hash !== gameSettingsHref(gameId)) history.pushState(null, '', gameSettingsHref(gameId));
+  }
+  function returnToSettingsOrigin(updateHash = true) {
+    if (!settingsVisit) return;
+    const origin = returnFromGameSettings(settingsVisit);
+    settingsVisit = null; view = origin.view; selectedGameId = origin.selectedGameId;
+    if (updateHash) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${origin.hash}`);
+    if ('returnState' in origin) window.dispatchEvent(new CustomEvent(RETURN_FROM_GAME_SETTINGS_EVENT, { detail: origin.returnState }));
   }
   let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
   let gamesPolling = false;
   let integration = $state<IntegrationState>();
-  let integrationDraft = $state<IntegrationConfig | null>(null);
-  let integrationBusy = $state(false);
   let integrationPolling = false;
   let dcsBios = $state<DcsBiosStatus>();
-  let dcsDraft = $state<DcsProfileConfig | null>(null);
-  let dcsSelectedTarget = $state('');
-  let dcsBusy = $state(false);
   let dcsPolling = false;
   let inventoryError = $state('');
   let drafts = $state<Record<string, Settings>>({});
@@ -178,38 +188,30 @@
   function scopedGatewayRequest(gatewayId: string, quiet = false) {
     return (request: GatewayRequest) => sendGateway(gatewayId, request, quiet);
   }
-  async function sendDcs(request: GatewayRequest, quiet = false) {
-    if (dcsBusy || (quiet && dcsPolling)) return false;
-    if (quiet) dcsPolling = true; else dcsBusy = true;
+  async function refreshDcs() {
+    if (dcsPolling) return false;
+    dcsPolling = true;
     try {
-      const result = await gatewayRequest(request);
+      const result = await gatewayRequest({ command: 'dcs_status' });
       if (!disposed && result.dcsBios) dcsBios = result.dcsBios;
       return result;
     } catch (error) {
       if (!disposed && error instanceof GatewayError && error.state?.dcsBios) dcsBios = error.state.dcsBios;
-      if (!quiet) notify(error instanceof Error ? error.message : 'DCS-BIOS request failed.');
       return false;
-    } finally { if (quiet) dcsPolling = false; else dcsBusy = false; }
+    } finally { dcsPolling = false; }
   }
-  async function sendIntegration(request: IntegrationRequest, quiet = request.command === 'integration_simulate'): Promise<IntegrationState | false> {
-    if (integrationBusy || quiet && integrationPolling) return false;
-    if (quiet) integrationPolling = true; else integrationBusy = true;
+  async function refreshIntegration(): Promise<IntegrationState | false> {
+    if (integrationPolling) return false;
+    integrationPolling = true;
     try {
-      const result = await gatewayRequest(request);
+      const result = await gatewayRequest({ command: 'integration_get_state' });
       if (!disposed && result.integration) integration = result.integration;
       if (!disposed && result.dcsBios) dcsBios = result.dcsBios;
       return result.integration ?? false;
     } catch (error) {
       if (!disposed && error instanceof GatewayError && error.state?.integration) integration = error.state.integration;
-      if (!quiet) notify(error instanceof Error ? error.message : 'Integration request failed.');
       return false;
-    } finally { if (quiet) integrationPolling = false; else integrationBusy = false; }
-  }
-  async function refreshIntegrationTarget(gatewayId: string, moduleId: string) {
-    const actions = await sendGateway(gatewayId, { command: 'action_describe', moduleId });
-    const module = entries.find(entry => entry.id === gatewayId)?.state?.modules.find(module => module.id === moduleId);
-    if (!actions || !module || module.outputOnly || module.buttonCount + module.axisCount + (module.hatCount ?? 0) === 0) return actions;
-    return sendGateway(gatewayId, { command: 'events_state', moduleId, boot: module.boot });
+    } finally { integrationPolling = false; }
   }
   async function sendGames(request: GameRequest, quiet = request.command === 'game_get_state'): Promise<GamesState | false> {
     if (gamesBusy || quiet && gamesPolling) return false;
@@ -245,18 +247,6 @@
       actions.push(...integration.config.document.outputs.filter(o => roles.includes(o.role)).map(o => o.actionId));
     }
     return actions;
-  }
-  function openDcsProfile(gatewayId?: string, moduleId?: string) {
-    if (gatewayId && moduleId) dcsSelectedTarget = deviceKey(gatewayId, moduleId);
-    view = 'dcs-bios';
-  }
-  function disableDcsController(gatewayId: string, moduleId: string) {
-    const device = devices.find(device => device.gatewayId === gatewayId && device.id === moduleId);
-    if (device) confirmController(device, 'disable');
-  }
-  function canDisableDcs(gatewayId: string, moduleId: string) {
-    const entry = entries.find(entry => entry.id === gatewayId);
-    return !entry?.busy && canChangeController(entry?.state, entry?.state?.modules.find(module => module.id === moduleId), 'disable');
   }
   async function retryGateway(gatewayId: string) {
     try { await workspace?.retry(gatewayId); }
@@ -296,16 +286,30 @@
     void restoreCompanionPanels().catch(error => notify(String(error)));
     workspace = new GatewayWorkspace({ onChange: syncWorkspace });
     void workspace.refresh();
-    void sendDcs({ command: 'dcs_status' }, true);
-    void sendIntegration({ command: 'integration_get_state' }, true);
+    void refreshDcs();
+    void refreshIntegration();
     void sendGames({ command: 'game_get_state' }, true);
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
-    const integrationTimer = setInterval(() => { void sendIntegration({ command: 'integration_get_state' }, true); }, 1000);
-    const dcsTimer = setInterval(() => { void sendDcs({ command: 'dcs_status' }, true); }, 1000);
+    const integrationTimer = setInterval(() => { void refreshIntegration(); }, 1000);
+    const dcsTimer = setInterval(() => { void refreshDcs(); }, 1000);
     const gamesTimer = setInterval(() => { void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
+    const readSettingsHash = () => {
+      const gameId = gameSettingsFromHash(window.location.hash);
+      if (gameId) { selectedGameId = gameId; view = 'games'; }
+      else if (settingsVisit) returnToSettingsOrigin(false);
+      else if (view === 'games') selectedGameId = '';
+    };
+    const openSettingsEvent = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const link = gameSettingsLink(event.detail);
+      if (link) openGameSettings(link.gameId, link.returnState);
+    };
+    readSettingsHash();
+    window.addEventListener('hashchange', readSettingsHash);
+    window.addEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent);
     window.addEventListener('pagehide', release);
-    return () => { release(); disposed = true; clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); workspace?.dispose(); };
+    return () => { release(); disposed = true; clearInterval(timer); clearInterval(dcsTimer); clearInterval(integrationTimer); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
@@ -412,6 +416,7 @@
     <div class="main-shell">
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><span class="connection-pill">{connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
+        {#if view === 'mappings' || settingsVisit?.origin.view === 'mappings'}<div hidden={view !== 'mappings'}><MappingsPanel active={view === 'mappings'} /></div>{/if}
         {#if view === 'overview'}
           <OverviewPanel {games} {integration} {dcsBios} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
@@ -423,29 +428,17 @@
           <DesktopPreferences />
           <CompanionListenerSettings />
         {:else if view === 'mappings'}
-          <MappingsPanel />
+          <!-- The editor above stays mounted during a game-settings visit. -->
         {:else if view === 'companions'}
           <CompanionDesigner openSettings={() => navigate('preferences')} />
         {:else if view === 'games'}
-          <GamesPanel bind:selectedGameId status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} integration={integration?.config} readConfig={readGameConfig} openIntegrations={() => navigate('integrations')} />
+          <GamesPanel bind:selectedGameId status={games} integrationActive={!!integration?.running || !!dcsBios?.running} busy={gamesBusy} request={sendGames} targets={dcsTargets} dcsStatus={dcsBios} readConfig={readGameConfig} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'integrations'}
-          <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO YOUR GAMES</div><h1>Integrations</h1><p>Reusable profiles, device assignments and telemetry outputs.</p></div></div>
-          <section class="panel dcs-profile-panel"><IntegrationsPanel setups={games?.catalogue} bind:draft={integrationDraft} status={integration} targets={dcsTargets} busy={integrationBusy} request={sendIntegration} refresh={refreshIntegrationTarget} /></section>
-        {:else if view === 'dcs-bios'}
-          <div class="page-heading"><div><div class="eyebrow">YOUR PANELS, CONNECTED TO DCS</div><h1>DCS-BIOS</h1><p>One saved aircraft profile across your connected devices.</p></div></div>
-          <section class="panel dcs-profile-panel"><DcsBiosPanel bind:draft={dcsDraft} bind:selectedTarget={dcsSelectedTarget} status={dcsBios} targets={dcsTargets} busy={dcsBusy} request={sendDcs} requestGateway={sendGateway} disableController={disableDcsController} canDisable={canDisableDcs} /></section>
+          <div class="page-heading"><div><div class="eyebrow">GAME RESOURCES</div><h1>Integrations</h1><p>Provider resources and links to their game settings.</p></div></div>
+          <section class="panel dcs-profile-panel"><IntegrationsPanel setups={games?.catalogue} {openGameSettings} /></section>
         {:else if view === 'gateways'}
           <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Gateways</h1><p>All your gateways stay connected and run independently.</p></div><span class="quiet-tag">{connectedGateways.length} connected</span></div>
           {#if inventoryError}<Notification message={String(inventoryError)} kind="error" /><button class="text-button" onclick={rescan}>Retry discovery</button>{/if}
-          {#if dcsBios?.configured || dcsBios?.error}
-            <section class="panel preferences-panel" aria-label="DCS-BIOS integration">
-              <div class="panel-heading"><h2>DCS-BIOS · panel profile</h2><span class="quiet-tag">{dcsStatusLabel(dcsBios)}</span></div>
-              <div class="preference-row"><div><strong>{dcsBios.config?.schemaVersion === 2 ? `${dcsBios.config.inputs.length} inputs · ${dcsBios.config.outputs.length} outputs` : 'Master-caution profile'}</strong><p>{dcsBios.running ? `Running · ${dcsBios.aircraft ?? 'waiting for aircraft'}` : 'Open the profile to review bindings and start.'}</p>{#if dcsBios.error}<Notification message={String(dcsBios.error)} kind="error" />{/if}</div>
-                <button class="secondary-button" onclick={() => openDcsProfile()}>Open DCS-BIOS settings</button>
-                <button class="secondary-button" disabled={dcsBusy || !dcsBios.running} onclick={() => sendDcs({ command: 'dcs_stop' })}>Stop DCS-BIOS</button>
-              </div>
-            </section>
-          {/if}
           <section class="gateway-list" aria-label="Gateways">
             {#each entries as entry (entry.id)}
               {@const state = entry.state}
@@ -558,12 +551,10 @@
             </div>
             <section class="panel inspector" aria-label="Selected device settings">
               <div class="inspector-heading"><div><span class="eyebrow">CONFIGURATION</span><h2>{selected.settings.label}</h2></div><span class="model-badge">{selected.kind === 'shifter' ? 'SQ' : selected.kind === 'pedals' ? 'PD' : selected.kind === 'panel' ? 'BP' : selected.kind === 'wheel' ? 'WH' : 'HB'}</span></div>
-              <div class="inspector-tabs" aria-label="Device sections">{#each physicalGateway ? ['setup', 'dcs-bios', 'details'] : ['setup', 'details'] as item (item)}<button class:active={tab === item} aria-pressed={tab === item} onclick={() => { tab = item; }}>{item === 'dcs-bios' ? 'DCS-BIOS' : item.charAt(0).toUpperCase() + item.slice(1)}</button>{/each}</div>
+              <div class="inspector-tabs" aria-label="Device sections">{#each ['setup', 'details'] as item (item)}<button class:active={tab === item} aria-pressed={tab === item} onclick={() => { tab = item; }}>{item.charAt(0).toUpperCase() + item.slice(1)}</button>{/each}</div>
               <div class="inspector-body">
                 {#if !selected.online}<div class="notice offline-notice"><Icon name="alert" size={17} /><div><strong>Device is offline</strong><p>Reconnect this module to configure it. Its saved identity and settings are preserved.</p></div></div>{/if}
-                {#if physicalGateway && tab === 'dcs-bios'}
-                  <div class="notice"><p>Bind this device’s buttons, switches, encoders, calibrated axes and outputs in the shared aircraft profile. Draft bindings remain available when you switch devices.</p><button class="secondary-button" onclick={() => openDcsProfile(selected.gatewayId, selected.id)}>Open DCS-BIOS profile</button></div>
-                {:else if physicalGateway && tab === 'setup'}
+                {#if physicalGateway && tab === 'setup'}
                   {#if runtimeSnapshot&&runtimeDrafts[selectedId]}<RuntimeEditor bind:config={runtimeDrafts[selectedId]} snapshot={runtimeSnapshot} {editing} busy={gatewayBusy} request={runtimeRequest} automatic={lifecycle} controllerEnabled={hidModule?.enabled !== false} />
                   {:else}<div class="notice"><Icon name="info" size={17} /><p>{hidModule?.canConfigure ? 'Read module configuration by opening a setup session.' : 'This module firmware does not expose runtime configuration. Inputs remain available.'}</p></div>{/if}
                   <dl class="device-details"><div><dt>{lifecycle ? 'USB controller' : 'Controller registration'}</dt><dd>{lifecycle ? controllerStatus(hidModule) : hidModule?.registered ? 'Registered' : 'Discovered'}</dd></div><div><dt>USB report ID</dt><dd>{hidModule?.reportId ?? (lifecycle && !hidModule?.enabled ? 'None' : 'Pending')}</dd></div><div><dt>Input owner</dt><dd>{hidModule?.directUsb ? 'Device USB' : 'Gateway'}</dd></div></dl>
@@ -583,10 +574,10 @@
                   <dl class="device-details"><div><dt>Stable identity</dt><dd>{selected.id}</dd></div><div><dt>Connection</dt><dd>{selected.route}</dd></div><div><dt>Firmware</dt><dd>{selected.firmware}</dd></div><div><dt>Capabilities</dt><dd>{selected.inputs}</dd></div><div><dt>Configuration owner</dt><dd>{editing ? 'Cockpit' : 'None'}</dd></div></dl><div class="notice"><Icon name="info" size={17} /><p>{lifecycle ? `The gateway serial is ${gateway?.gatewaySerial ?? ''}. Enabled devices append to its USB controller order. Disable removes the controller but remembers the device. Changes are saved by the gateway automatically.` : physicalGateway ? `The gateway serial is ${gateway?.gatewaySerial ?? ''}. This older gateway uses manual registration and layout Apply.` : `USB interfaces share the Pico serial ${gateway?.gatewaySerial ?? ''}. This module maps to USB interface ${hidModule?.hidInterface ?? 'pending'}. Settings stay in RAM until the Pico resets.`}</p></div>
                 {/if}
               </div>
-              {#if tab !== 'dcs-bios'}<div class="inspector-footer">
+              <div class="inspector-footer">
                 <button class={editing || sessionId ? 'secondary-button session-button' : 'primary-button session-button'} disabled={sessionTransition || gatewayBusy || (!selected.online && !sessionId) || (physicalGateway&&!hidModule?.canConfigure&&!sessionId)} onclick={toggleSession}><Icon name={sessionId ? 'stop' : 'play'} size={15} />{sessionId && !editing ? `End ${sessionDevice?.settings.label} session` : sessionId ? 'End setup session' : 'Start setup session'}</button>
                 {#if !physicalGateway&&dirty}<div class="save-actions"><button class="text-button" onclick={discard}>Discard</button><button class="primary-button" disabled={gatewayBusy || !editing || !draft.label.trim()} onclick={applySettings}><Icon name="check" size={15} />Apply & save</button></div>{/if}
-              </div>{/if}
+              </div>
             </section>
           </div>
         {/if}
