@@ -570,10 +570,42 @@ impl CompanionSources {
         if !self.baseline_ready(hub)? {
             return Ok(None);
         }
-        let mut result = vec![];
+        let mut baselines = vec![];
         for instance in &mut self.instances {
             instance.validate_inputs(hub, &validate)?;
-            let frames = instance.feed.as_mut().unwrap().baseline()?;
+            baselines.push(instance.feed.as_mut().unwrap().baseline()?);
+        }
+        if self.run.is_none() {
+            // A genuine peer can reconnect after inventory capture but before
+            // this neutral baseline is read. Keep acquisition passive until
+            // the Host refreshes and binds that exact new native generation.
+            // Check every source before conversion changes any instance state.
+            let mut generation_changed = false;
+            for (instance, frames) in self.instances.iter().zip(&baselines) {
+                for frame in frames {
+                    if frame.source.id != instance.proof.instance_id() {
+                        return Err(
+                            "The companion frame came from another physical instance.".into()
+                        );
+                    }
+                    if instance
+                        .inputs
+                        .iter()
+                        .map(|input| &input.token)
+                        .chain(instance.outputs.iter().map(|output| &output.token))
+                        .flatten()
+                        .any(|token| token.provider_generation != frame.generation.0.to_string())
+                    {
+                        generation_changed = true;
+                    }
+                }
+            }
+            if generation_changed {
+                return Ok(None);
+            }
+        }
+        let mut result = vec![];
+        for (instance, frames) in self.instances.iter_mut().zip(baselines) {
             for frame in frames {
                 if let Some(frame) = instance.convert(frame, now_us)? {
                     result.push(frame);
@@ -593,6 +625,7 @@ impl CompanionSources {
             return result;
         }
         for instance in &mut self.instances {
+            let was_ready = instance.ready;
             let outcome = (|| {
                 instance.validate_inputs(hub, &validate)?;
                 let frames = instance
@@ -611,8 +644,11 @@ impl CompanionSources {
             match outcome {
                 Ok(frames) => result.frames.extend(frames),
                 Err(error) => {
-                    let clear = instance.ready || instance.feedback_live;
-                    if instance.ready {
+                    // A discarded batch may already have converted a Gap and
+                    // cleared ready before a later frame failed. Preserve its
+                    // loss fence even though none of that batch is delivered.
+                    let clear = was_ready || instance.ready || instance.feedback_live;
+                    if was_ready || instance.ready {
                         if let Ok(frame) = instance.loss(now_us) {
                             result.frames.extend(frame);
                         }

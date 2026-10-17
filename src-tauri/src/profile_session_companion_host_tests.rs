@@ -252,6 +252,8 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
     assert!(prepare_catalogues(&hub, &captured, &candidate).is_err());
 }
 
+type InventoryBoundary = Arc<std::sync::Mutex<Option<(u64, Box<dyn FnOnce() + Send>)>>>;
+
 pub(crate) struct NativeFixture {
     _directory: tempfile::TempDir,
     hub: Hub,
@@ -265,6 +267,7 @@ pub(crate) struct NativeFixture {
     quit: Arc<std::sync::atomic::AtomicBool>,
     peer: Option<std::thread::JoinHandle<()>>,
     reply: Arc<std::sync::Mutex<serde_json::Value>>,
+    inventory_boundary: InventoryBoundary,
 }
 impl NativeFixture {
     pub(crate) fn new() -> Self {
@@ -304,6 +307,8 @@ impl NativeFixture {
         ));
         let observed = provider.clone();
         let metadata = companions.clone();
+        let inventory_boundary: InventoryBoundary = Arc::default();
+        let before_publish = inventory_boundary.clone();
         let collect: crate::profile_resources::Collect = Arc::new(move |revision| {
             let result = (|| {
                 let observations = observed
@@ -357,6 +362,24 @@ impl NativeFixture {
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?;
+                let callback = {
+                    let mut boundary = before_publish.lock().unwrap();
+                    let ready = boundary.as_ref().is_some_and(|(minimum, _)| {
+                        observations.iter().any(|source| {
+                            source.route.as_ref().is_some_and(|route| {
+                                route.baseline_ready
+                                    && route
+                                        .provider_generation
+                                        .parse::<u64>()
+                                        .is_ok_and(|value| value >= *minimum)
+                            })
+                        })
+                    });
+                    ready.then(|| boundary.take().unwrap().1)
+                };
+                if let Some(callback) = callback {
+                    callback();
+                }
                 Ok(ProviderBatch {
                     scope: "companions".into(),
                     session: "actual-companion-provider".into(),
@@ -444,7 +467,8 @@ impl NativeFixture {
                     recovery: fixture_metadata_path.with_extension("recovery.json"),
                 }
             },
-            Arc::new(crate::game_discovery::NativePlatform)));
+            Arc::new(crate::game_discovery::NativePlatform),
+        ));
         Self {
             _directory: directory,
             hub,
@@ -458,6 +482,7 @@ impl NativeFixture {
             quit,
             peer: Some(peer),
             reply,
+            inventory_boundary,
         }
     }
     pub(crate) fn host(&self) -> NativeProfileHost {
@@ -617,15 +642,82 @@ fn assignment_takeover_captures_actual_generation_before_periodic_inventory_refr
     assert!(before > 0);
     let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
     coordinator.apply(fixture.candidate(false)).unwrap();
-    assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
+    assert_eq!(
+        coordinator.status().state,
+        crate::profile_session::State::Running
+    );
     let current = provider.resource_inventory()[0].generation;
-    assert!(current > before, "Takeover must establish a new actual native baseline");
-    let listed = fixture.resources.request(&json!({"command":"profile_resources_list"})).unwrap();
+    assert!(
+        current > before,
+        "Takeover must establish a new actual native baseline"
+    );
+    let listed = fixture
+        .resources
+        .request(&json!({"command":"profile_resources_list"}))
+        .unwrap();
     let connections = listed["resources"][0]["connections"].as_array().unwrap();
-    assert_eq!(connections.len(), 1, "Only the exact verified native route is admitted");
-    assert_eq!(connections[0]["route"]["providerGeneration"], current.to_string());
+    assert_eq!(
+        connections.len(),
+        1,
+        "Only the exact verified native route is admitted"
+    );
+    assert_eq!(
+        connections[0]["route"]["providerGeneration"],
+        current.to_string()
+    );
     assert_eq!(connections[0]["route"]["baselineReady"], true);
     coordinator.poll().unwrap();
+    coordinator.stop().unwrap();
+}
+
+#[test]
+fn actual_peer_reconnect_between_inventory_capture_and_baseline_never_arms_the_old_generation() {
+    let mut fixture = NativeFixture::with_inventory_interval(std::time::Duration::from_secs(60));
+    fixture.desired = fixture.original.clone();
+    let candidate = fixture.candidate(false);
+    let provider = fixture.companions.profile_provider();
+    let initial = provider.resource_inventory()[0].generation;
+    let reconnected = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let captured = reconnected.clone();
+    let current = provider.clone();
+    let hub = fixture.hub.clone();
+    *fixture.inventory_boundary.lock().unwrap() = Some((
+        initial + 1,
+        Box::new(move || {
+            let old = current.resource_inventory()[0].generation;
+            hub.disconnect_connection("peer", hub.now_ms());
+            let deadline = Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let observed = current.resource_inventory();
+                if observed[0].generation > old && observed[0].online && observed[0].baseline_ready
+                {
+                    captured.store(observed[0].generation, Ordering::Release);
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "The actual wire peer did not reconnect with its fresh neutral baseline"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }),
+    ));
+    let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
+    let result = coordinator.apply(candidate);
+    assert!(reconnected.load(Ordering::Acquire) > initial + 1);
+    assert!(result.is_ok(), "A fresh exact-owned peer should finish bounded acquisition after a crossed inventory snapshot: {result:?}");
+    assert_eq!(
+        coordinator.status().state,
+        crate::profile_session::State::Running
+    );
+    let listed = fixture
+        .resources
+        .request(&json!({"command":"profile_resources_list"}))
+        .unwrap();
+    assert_eq!(
+        listed["resources"][0]["connections"][0]["route"]["providerGeneration"],
+        reconnected.load(Ordering::Acquire).to_string()
+    );
     coordinator.stop().unwrap();
 }
 

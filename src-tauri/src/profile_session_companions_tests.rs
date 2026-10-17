@@ -275,16 +275,26 @@ fn default_needs_no_companion_initialization_or_dependencies() {
 
 #[test]
 fn revalidation_after_acquire_uses_owned_receipt_instead_of_obsolete_unowned_proof() {
-    let fixture=Fixture::new();
-    let directory=crate::test_directory();
-    let runtime=crate::companion_host::Runtime::with_profile_metadata(fixture.hub.clone(),fixture.provider.clone(),directory.path().to_owned());
-    let mut adapter=fixture.prepared();
+    let fixture = Fixture::new();
+    let directory = crate::test_directory();
+    let runtime = crate::companion_host::Runtime::with_profile_metadata(
+        fixture.hub.clone(),
+        fixture.provider.clone(),
+        directory.path().to_owned(),
+    );
+    let mut adapter = fixture.prepared();
     adapter.validate_preparation(&runtime).unwrap();
-    fixture.acquire(&mut adapter,&[]);
-    assert!(fixture.hub.validate_profile_preparation(&adapter.instances[0].proof).is_err());
+    fixture.acquire(&mut adapter, &[]);
+    assert!(fixture
+        .hub
+        .validate_profile_preparation(&adapter.instances[0].proof)
+        .is_err());
     adapter.validate_preparation(&runtime).unwrap();
     adapter.stop(&fixture.hub).unwrap();
-    assert!(adapter.validate_preparation(&runtime).unwrap_err().contains("stopped"));
+    assert!(adapter
+        .validate_preparation(&runtime)
+        .unwrap_err()
+        .contains("stopped"));
 }
 #[test]
 fn actual_baseline_and_delivery_tokens_are_required_before_arming_feedback() {
@@ -366,6 +376,91 @@ fn actual_baseline_and_delivery_tokens_are_required_before_arming_feedback() {
         Reason::Disconnect
     );
 }
+#[test]
+fn passive_generation_crossing_does_not_convert_and_live_reconnect_still_revokes() {
+    let fixture = Fixture::new();
+    let mut adapter = fixture.prepared();
+    fixture.acquire(&mut adapter, &[]);
+    fixture.connect();
+    adapter.bind_delivery_plan(&fixture.delivery()).unwrap();
+    let before = adapter
+        .instances
+        .iter()
+        .map(|instance| {
+            (
+                instance.ready,
+                instance.generation,
+                instance.sequence,
+                instance.at,
+            )
+        })
+        .collect::<Vec<_>>();
+    fixture.connect();
+    assert!(adapter
+        .baseline(&fixture.hub, |_| Ok(()), 100)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        adapter
+            .instances
+            .iter()
+            .map(|instance| {
+                (
+                    instance.ready,
+                    instance.generation,
+                    instance.sequence,
+                    instance.at,
+                )
+            })
+            .collect::<Vec<_>>(),
+        before,
+        "A crossed acquisition snapshot must not mutate any converted source state"
+    );
+    let fresh = fixture.delivery();
+    let mut phase = Phase::new(
+        fresh.program.clone(),
+        Counter(1),
+        uuid::Uuid::new_v4().to_string(),
+    )
+    .unwrap();
+    assert!(adapter.arm(phase.run_token()).is_err());
+    adapter.bind_delivery_plan(&fresh).unwrap();
+    for frame in adapter
+        .baseline(&fixture.hub, |_| Ok(()), 100)
+        .unwrap()
+        .unwrap()
+    {
+        phase.accept(frame).unwrap();
+    }
+    adapter.arm(phase.run_token()).unwrap();
+    assert!(matches!(
+        phase.sample(&endpoint("button")),
+        Some(SignalSample::Known(_))
+    ));
+    phase.drain();
+    fixture.connect();
+    let lost = adapter.poll(&fixture.hub, |_| Ok(()), 100);
+    assert!(lost
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("input generation changed")));
+    assert_eq!(lost.frames.len(), 1);
+    assert_eq!(lost.frames[0].reason, Reason::Disconnect);
+    phase
+        .accept(lost.frames.into_iter().next().unwrap())
+        .unwrap();
+    assert_eq!(
+        phase.sample(&endpoint("button")),
+        Some(&SignalSample::Unavailable)
+    );
+    assert!(phase.drain().iter().any(|effect| {
+        effect.endpoint == endpoint("indicator")
+            && effect.sample == SignalSample::Unavailable
+            && effect.reason == osg_mapping::engine::ReportReason::SourceLost
+    }), "The actual reducer must clear the destination immediately despite the discarded batch's skipped loss sequence");
+    assert!(!adapter.instances[0].ready);
+}
+
 #[test]
 fn native_input_preserves_transition_order_and_old_owner_cleanup_cannot_clear_incoming() {
     let fixture = Fixture::new();
