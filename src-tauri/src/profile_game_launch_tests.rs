@@ -97,7 +97,7 @@ fn admission(candidate: &Candidate) -> LaunchAdmission {
         admission_epoch: 42,
         locks: Locks::default(),
         status: Status {
-            state: State::Running,
+            state: State::AwaitingGame,
             paused: false,
             applied_snapshot: Some(
                 osg_profiles::session::AppliedSnapshot::capture(&candidate.document)
@@ -186,7 +186,7 @@ fn unstaged_read_only_game_scoped_ineligible_and_already_running_candidates_do_n
 #[test]
 fn arming_requires_exact_ready_snapshot_and_respects_every_native_operator_latch() {
     let (runtime, platform, candidate, _directory) = fixture();
-    for variant in 0..12 {
+    for variant in 0..13 {
         let mut state = admission(&candidate);
         match variant {
             0 => state.status.state = State::Degraded,
@@ -207,6 +207,7 @@ fn arming_requires_exact_ready_snapshot_and_respects_every_native_operator_latch
                     .semantic_hash = "sha256:changed".into()
             }
             10 => state.status.owner.as_mut().unwrap().profile_revision += 1,
+            11 => state.status.state = State::Running,
             _ => state.candidate.document.revision += 1,
         }
         let prepared = runtime.prepare_profile_launch("dcs", &candidate).unwrap();
@@ -219,6 +220,41 @@ fn arming_requires_exact_ready_snapshot_and_respects_every_native_operator_latch
     prepared.prepared_at = Instant::now() - PREPARATION_TTL - Duration::from_secs(1);
     assert!(runtime
         .arm_profile_launch(prepared, &admission(&candidate))
+        .is_err());
+    assert_eq!(platform.spawns.load(Ordering::Acquire), 0);
+    runtime.shutdown();
+}
+
+#[test]
+fn started_process_proof_is_reverified_without_optional_integration_setup() {
+    let (runtime, platform, candidate, _directory) = fixture();
+    let started = runtime
+        .wait_profile_launch(spawn(&runtime, &candidate), |_, _| Ok(()))
+        .unwrap();
+    runtime.validate_started_profile_game(&started).unwrap();
+    platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
+    assert!(runtime.validate_started_profile_game(&started).is_err());
+    *platform.process.lock().unwrap() = Some(started.process.clone());
+    runtime.validate_started_profile_game(&started).unwrap();
+    platform.alive.store(false, Ordering::Release);
+    assert!(runtime.validate_started_profile_game(&started).is_err());
+    runtime.shutdown();
+}
+
+#[test]
+fn effective_native_context_controls_eligibility_without_fabricating_a_process_for_the_request() {
+    let (runtime, platform, mut candidate, _directory) = fixture();
+    candidate.document.eligibility.game_ids = vec!["x-plane-12".into()];
+    candidate.stage = Some(Stage::new(&candidate, ()).unwrap());
+    assert!(runtime.prepare_profile_launch("dcs", &candidate).is_err());
+    runtime
+        .prepare_profile_launch_for_selection("dcs", &candidate, None)
+        .unwrap();
+    runtime
+        .prepare_profile_launch_for_selection("dcs", &candidate, Some("x-plane-12"))
+        .unwrap();
+    assert!(runtime
+        .prepare_profile_launch_for_selection("dcs", &candidate, Some("unknown"))
         .is_err());
     assert_eq!(platform.spawns.load(Ordering::Acquire), 0);
     runtime.shutdown();

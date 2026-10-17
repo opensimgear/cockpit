@@ -111,7 +111,7 @@ fn candidate() -> Candidate {
     }
 }
 fn context(c: &Coordinator<Fake>, owner: &RunOwner) -> Candidate {
-    let mut candidate = c.launch_candidate(owner, "dcs", 42).unwrap();
+    let mut candidate = c.launch_candidate(owner, Some("dcs"), 42).unwrap();
     candidate.stage = Some(Stage::new(&candidate, compile(&candidate)).unwrap());
     candidate
 }
@@ -210,10 +210,10 @@ fn stop_or_pause_cancels_hold_and_late_context_cannot_stop_a_newer_owner() {
 fn pending_launch_rejects_replacement_or_modified_candidate_and_epoch_adoption() {
     let (mut c, _) = fixture(None);
     let owner = c.begin_launch(candidate()).unwrap();
-    assert!(c.launch_candidate(&owner, "dcs", 42).is_err());
+    assert!(c.launch_candidate(&owner, Some("dcs"), 42).is_err());
     c.bind_launch_epoch(&owner, 42).unwrap();
     assert!(c.bind_launch_epoch(&owner, 43).is_err());
-    assert!(c.launch_candidate(&owner, "dcs", 43).is_err());
+    assert!(c.launch_candidate(&owner, Some("dcs"), 43).is_err());
     assert!(c.apply(candidate()).is_err());
     let mut fresh = context(&c, &owner);
     fresh.document.revision += 1;
@@ -265,7 +265,7 @@ fn altered_context_program_is_compensated_before_start() {
     let (mut c, p) = fixture(None);
     let owner = c.begin_launch(candidate()).unwrap();
     c.bind_launch_epoch(&owner, 42).unwrap();
-    let mut fresh = c.launch_candidate(&owner, "dcs", 42).unwrap();
+    let mut fresh = c.launch_candidate(&owner, Some("dcs"), 42).unwrap();
     let mut prepared = compile(&fresh);
     prepared.program_hash = format!("sha256:{}", "b".repeat(64));
     fresh.stage = Some(Stage::new(&fresh, prepared).unwrap());
@@ -287,4 +287,30 @@ fn crash_in_waiting_state_is_restore_only_and_journal_cannot_restart_launch() {
     recovered.recover().unwrap();
     assert!(p.lock().unwrap().phases.is_empty());
     assert_eq!(recovered.status.state, State::Stopped);
+}
+
+#[test]
+fn hardware_only_completion_keeps_game_branches_dormant_and_rechecks_exact_hold_health() {
+    let (mut c, p) = fixture(None);
+    let owner = c.begin_launch(candidate()).unwrap();
+    c.bind_launch_epoch(&owner, 42).unwrap();
+    assert_eq!(
+        c.check_launch_hold(&owner, 42).unwrap().state,
+        State::AwaitingGame
+    );
+    assert!(c.check_launch_hold(&owner, 43).is_err());
+    let mut fresh = c.launch_candidate(&owner, None, 42).unwrap();
+    fresh.stage = Some(Stage::new(&fresh, compile(&fresh)).unwrap());
+    c.finish_launch(&owner, fresh).unwrap();
+    assert_eq!(c.status.owner, Some(owner));
+    assert_eq!(c.active_candidate.as_ref().unwrap().game_id, None);
+    assert_eq!(
+        p.lock()
+            .unwrap()
+            .phases
+            .iter()
+            .filter(|p| **p == ApplyPhase::Start)
+            .count(),
+        1
+    );
 }

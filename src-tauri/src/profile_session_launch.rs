@@ -68,24 +68,43 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn launch_candidate(
         &self,
         owner: &RunOwner,
-        game_id: &str,
+        game_id: Option<&str>,
         epoch: u64,
     ) -> Result<Candidate, String> {
         self.held_run(owner)?;
         let held = self.launch.as_ref().unwrap();
         if held.epoch != Some(epoch)
-            || !matches!(
-                game_id,
-                "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
-            )
+            || game_id.is_some_and(|id| {
+                !matches!(
+                    id,
+                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+                )
+            })
         {
             return Err("The game or committed launch epoch is invalid.".into());
         }
         let mut candidate = held.candidate.clone();
-        candidate.game_id = Some(game_id.into());
+        candidate.game_id = game_id.map(str::to_owned);
         candidate.admission_epoch = Some(epoch);
         candidate.stage = None;
         Ok(candidate)
+    }
+    pub(crate) fn check_launch_hold(
+        &mut self,
+        owner: &RunOwner,
+        epoch: u64,
+    ) -> Result<Status, String> {
+        let run = self.held_run(owner)?.clone();
+        if self.launch.as_ref().unwrap().epoch != Some(epoch) {
+            return Err("The exact committed launch epoch changed.".into());
+        }
+        let health = self.host.hold_health(&run)?;
+        if let Some(reason) = health.stop {
+            return Err(reason);
+        }
+        let mut status = self.status.clone();
+        status.degradation = health.degraded;
+        Ok(status)
     }
     /// Admission remains native and short; the caller stages/acquires the game
     /// reader off-lock before passing its one-use context payload here.
@@ -98,10 +117,7 @@ impl<H: Host> Coordinator<H> {
         let held = self.launch.as_ref().unwrap();
         let expected = self.launch_candidate(
             owner,
-            candidate
-                .game_id
-                .as_deref()
-                .ok_or("A launch needs a verified native game context.")?,
+            candidate.game_id.as_deref(),
             held.epoch.ok_or("Bind the committed launch epoch first.")?,
         )?;
         if candidate.stage.is_none()
@@ -156,7 +172,9 @@ impl<H: Host> Coordinator<H> {
             self.complete_transition(candidate, owner.clone(), prepared)
         })();
         if let Err(error) = result {
-            if self.status.state == State::RecoveryNeeded { return Err(error); }
+            if self.status.state == State::RecoveryNeeded {
+                return Err(error);
+            }
             return self.fail_transition(error);
         }
         self.launch = None;

@@ -107,11 +107,11 @@ impl PreparedLaunch {
             || admission.locks.recovery_needed
             || admission.locks.faulted
             || admission.status.paused
-            || admission.status.state != State::Running
+            || admission.status.state != State::AwaitingGame
             || admission.status.fault.is_some()
             || admission.status.applied_snapshot.as_ref() != Some(&self.snapshot)
         {
-            return Err("Launch requires the unchanged, active hardware profile without Pause, Stop or recovery.".into());
+            return Err("Launch requires the unchanged neutral hardware hold without Pause, Stop or recovery.".into());
         }
         self.candidate
             .stage
@@ -135,6 +135,25 @@ impl PreparedLaunch {
     }
 }
 impl GamesRuntime {
+    /// Process evidence stays independent of optional simulator integration.
+    pub(crate) fn validate_started_profile_game(
+        &self,
+        started: &StartedGame,
+    ) -> Result<(), String> {
+        started.identity.validate()?;
+        ProcessIdentity::parse(&started.process.value())?;
+        let (installation, identity) = self.launch_installation(&started.identity.game_id)?;
+        if identity != started.identity
+            || self.inner.platform.find(&installation)?.as_ref() != Some(&started.process)
+            || !self.inner.platform.alive(&started.process)?
+        {
+            return Err(
+                "The launched game installation or process changed; no context was admitted."
+                    .into(),
+            );
+        }
+        Ok(())
+    }
     fn launch_installation(&self, id: &str) -> Result<(Value, GameIdentity), String> {
         if self.inner.closed.load(std::sync::atomic::Ordering::Acquire) || self.active() {
             return Err(
@@ -162,6 +181,24 @@ impl GamesRuntime {
         game_id: &str,
         candidate: &Candidate,
     ) -> Result<PreparedLaunch, String> {
+        self.prepare_profile_launch_for_selection(game_id, candidate, Some(game_id))
+    }
+    /// The effective context follows native Manual/Automatic policy. Launching
+    /// one game does not select its integration over a higher-priority game.
+    pub(crate) fn prepare_profile_launch_for_selection(
+        &self,
+        game_id: &str,
+        candidate: &Candidate,
+        selected_game: Option<&str>,
+    ) -> Result<PreparedLaunch, String> {
+        if selected_game.is_some_and(|id| {
+            !matches!(
+                id,
+                "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+            )
+        }) {
+            return Err("Choose a supported native selected context.".into());
+        }
         if candidate.game_id.is_some() || candidate.read_only || candidate.admission_epoch.is_none()
         {
             return Err("Prepare a writable hardware-only profile candidate before launch.".into());
@@ -171,14 +208,15 @@ impl GamesRuntime {
             .as_ref()
             .ok_or("Launch requires an actual native profile Stage.")?
             .validate(candidate)?;
-        if !candidate.document.eligibility.game_ids.is_empty()
-            && !candidate
-                .document
-                .eligibility
-                .game_ids
-                .iter()
-                .any(|id| id == game_id)
-        {
+        if selected_game.is_some_and(|game| {
+            !candidate.document.eligibility.game_ids.is_empty()
+                && !candidate
+                    .document
+                    .eligibility
+                    .game_ids
+                    .iter()
+                    .any(|id| id == game)
+        }) {
             return Err("The selected profile is not eligible for this game.".into());
         }
         let (installation, identity) = self.launch_installation(game_id)?;
