@@ -240,3 +240,127 @@ fn transform_summaries_are_bounded_even_for_extreme_numbers_and_never_expose_tex
     assert_eq!(number(0.25), "0.25");
     assert_eq!(number(0.0), "0");
 }
+
+#[test]
+fn builtin_summaries_show_configured_timing_polarity_thresholds_and_curve_values() {
+    let cases = [
+        (
+            json!({"kind":"axis","deadZone":120,"invert":true,"scale":950,"curve":[{"input":0,"output":123},{"input":32767,"output":32767}]}),
+            vec!["deadzone 120", "inverted", "scale 950", "0→123"],
+        ),
+        (
+            json!({"kind":"axis","deadZone":0,"invert":false,"scale":1000,"curve":[]}),
+            vec!["normal", "curve linear"],
+        ),
+        (
+            json!({"kind":"split","positive":true}),
+            vec!["positive half"],
+        ),
+        (
+            json!({"kind":"split","positive":false}),
+            vec!["negative half"],
+        ),
+        (
+            json!({"kind":"button-axis","range":"bipolar","pressed":32767,"released":-32768}),
+            vec!["bipolar", "pressed 32767, released -32768"],
+        ),
+        (
+            json!({"kind":"threshold","press":20000,"release":10000}),
+            vec!["press 20000, release 10000"],
+        ),
+        (
+            json!({"kind":"gesture","gesture":"tap","holdUs":750000,"doubleUs":250000,"pulseUs":100000}),
+            vec!["tap", "hold 750 ms", "double 250 ms", "pulse 100 ms"],
+        ),
+        (
+            json!({"kind":"gesture","gesture":"hold","holdUs":750000,"doubleUs":250000,"pulseUs":100000}),
+            vec!["hold 750 ms"],
+        ),
+        (
+            json!({"kind":"gesture","gesture":"double-tap","holdUs":750000,"doubleUs":250000,"pulseUs":100000}),
+            vec!["double-tap"],
+        ),
+        (
+            json!({"kind":"pulse","durationUs":125000,"repeatUs":500000}),
+            vec!["duration 125 ms", "repeat 500 ms"],
+        ),
+        (
+            json!({"kind":"pulse","durationUs":100000,"repeatUs":0}),
+            vec!["duration 100 ms", "no repeat"],
+        ),
+        (
+            json!({"kind":"macro","steps":[{"afterUs":0,"pressed":true},{"afterUs":123456,"pressed":false}]}),
+            vec!["2 steps", "0 µs on → 123.456 ms off"],
+        ),
+        (json!({"kind":"merge"}), vec!["merge"]),
+        (json!({"kind":"chord"}), vec!["chord"]),
+        (json!({"kind":"gate"}), vec!["gate"]),
+        (json!({"kind":"toggle"}), vec!["toggle"]),
+    ];
+    for (rule, expected) in cases {
+        let operation = Operation::Builtin {
+            rule: serde_json::from_value(rule).unwrap(),
+            inputs: vec!["in".into()],
+        };
+        let before = serde_json::to_value(&operation).unwrap();
+        let text = summary(&operation);
+        for value in expected {
+            assert!(text.contains(value), "{value}: {text}");
+        }
+        assert!(text.contains("explicit inputs: in"));
+        assert!(text.len() < 256);
+        assert_eq!(serde_json::to_value(&operation).unwrap(), before);
+    }
+    let mut pulse = Operation::Builtin {
+        rule: osg_mapping::rules::Rule::Pulse {
+            duration_us: 100000,
+            repeat_us: 0,
+        },
+        inputs: vec!["in".into()],
+    };
+    let original = summary(&pulse);
+    if let Operation::Builtin {
+        rule: osg_mapping::rules::Rule::Pulse { duration_us, .. },
+        ..
+    } = &mut pulse
+    {
+        *duration_us = 125000;
+    }
+    assert_ne!(summary(&pulse), original);
+    assert_eq!(
+        summary(&pulse),
+        "pulse · duration 125 ms · no repeat · explicit inputs: in"
+    );
+}
+
+#[test]
+fn builtin_summary_truncation_preserves_utf8_and_keeps_long_macro_parameters_private_to_inspector()
+{
+    let operation = Operation::Builtin {
+        rule: osg_mapping::rules::Rule::Macro {
+            steps: (0..16)
+                .map(|index| osg_mapping::rules::Step {
+                    after_us: index * 3000000,
+                    pressed: index % 2 == 0,
+                })
+                .collect(),
+        },
+        inputs: vec!["in".into()],
+    };
+    let text = summary(&operation);
+    assert!(text.len() < 256);
+    assert!(text.ends_with('…'));
+    assert!(text.contains("16 steps"));
+    assert!(text.contains("duration 45000 ms"));
+    let unicode = summary(&Operation::Builtin {
+        rule: osg_mapping::rules::Rule::Toggle,
+        inputs: vec!["é".repeat(40); 8],
+    });
+    assert!(unicode.len() < 256);
+    assert!(unicode.ends_with('…'));
+    assert!(!unicode.contains('�'));
+    assert_eq!(
+        bounded_summary("é".repeat(126) + "abc"),
+        "é".repeat(126) + "abc"
+    );
+}

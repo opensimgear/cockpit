@@ -16,6 +16,25 @@ const port=(id:string,direction:'input'|'output',contract:ProfilePortContract):P
 const sample=(schema:DeepReadonly<ProfileScalarSchema>):Exclude<ProfileValue,null>=>schema.type==='boolean'?false:schema.type==='rgb'?'000000':schema.type==='text'?'':schema.type==='enum'?schema.values[0]:schema.min;
 const conversionTable:Record<string,Record<string,[number,number]>>={m:{ft:[1250/381,0],km:[.001,0]},ft:{m:[381/1250,0]},km:{m:[1000,0]},s:{ms:[1000,0]},ms:{s:[.001,0]},'m/s':{kn:[900/463,0]},kn:{'m/s':[463/900,0]},deg:{rad:[Math.PI/180,0]},rad:{deg:[180/Math.PI,0]},degC:{degF:[1.8,32]},degF:{degC:[1/1.8,-32/1.8]}};
 export function processingUnitConversion(from:string,to:string):[number,number]|null{if(from===to)return[1,0];if(!Object.hasOwn(conversionTable,from)||!Object.hasOwn(conversionTable[from],to))return null;return[...conversionTable[from][to]];}
+function boundedSummary(value:string):string{
+  const encoder=new TextEncoder();if(encoder.encode(value).length<=255)return value;
+  let result='',used=0;for(const character of value){const size=encoder.encode(character).length;if(used+size>252)break;result+=character;used+=size;}return `${result}…`;
+}
+function builtinSummary(rule:DeepReadonly<ProfileBuiltin>,inputs:readonly string[]):string{
+  const time=(value:number)=>value>=1000?`${value/1000} ms`:`${value} µs`;
+  let parameters:string;
+  switch(rule.kind){
+    case 'axis':parameters=`axis · deadzone ${rule.deadZone} · ${rule.invert?'inverted':'normal'} · scale ${rule.scale} · curve ${rule.curve.length?`${rule.curve.length} points [${rule.curve.map(point=>`${point.input}→${point.output}`).join(', ')}]`:'linear'}`;break;
+    case 'split':parameters=`split · ${rule.positive?'positive':'negative'} half`;break;
+    case 'button-axis':parameters=`button-axis · ${rule.range} · pressed ${rule.pressed}, released ${rule.released}`;break;
+    case 'threshold':parameters=`threshold · press ${rule.press}, release ${rule.release}`;break;
+    case 'gesture':parameters=`${rule.gesture} · hold ${time(rule.holdUs)} · double ${time(rule.doubleUs)} · pulse ${time(rule.pulseUs)}`;break;
+    case 'pulse':parameters=`pulse · duration ${time(rule.durationUs)} · ${rule.repeatUs?`repeat ${time(rule.repeatUs)}`:'no repeat'}`;break;
+    case 'macro':parameters=`macro · ${rule.steps.length} steps · duration ${time(rule.steps.at(-1)?.afterUs??0)} · ${rule.steps.map(step=>`${time(step.afterUs)} ${step.pressed?'on':'off'}`).join(' → ')}`;break;
+    default:parameters=rule.kind;
+  }
+  return boundedSummary(`${parameters} · explicit inputs: ${inputs.join(', ')}`);
+}
 export function processingSummary(node:DeepReadonly<ProfileProcessingNode>):string{
   const op=node.operation;
   if(op.kind==='script')return `Script · ${node.inputs.length} declared inputs → ${node.outputs.length} outputs`;
@@ -24,7 +43,7 @@ export function processingSummary(node:DeepReadonly<ProfileProcessingNode>):stri
   if(op.kind==='range-map')return `${op.inputMin}…${op.inputMax} → ${op.outputMin}…${op.outputMax} · ${op.rounding}`;
   if(op.kind==='scale')return `× ${op.factor} + ${op.offset}`;
   if(op.kind==='priority')return `Priority: ${op.order.join(' → ')}`;
-  if(op.kind==='builtin')return `${op.rule.kind} · explicit inputs: ${op.inputs.join(', ')}`;
+  if(op.kind==='builtin')return builtinSummary(op.rule,op.inputs);
   return Object.entries(op).map(([key,value])=>key==='kind'?String(value):`${key}: ${Array.isArray(value)?`${value.length} entries`:String(value)}`).join(' · ');
 }
 /** Create a visible node only; connections are separate explicit graph edits. */

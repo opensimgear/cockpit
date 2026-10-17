@@ -3,6 +3,17 @@ const modules=await loadModules(['./profiles','./profile-editor','./profile-canv
 const id='11111111-1111-4111-8111-111111111111';const plain=v=>JSON.parse(JSON.stringify(v));
 const resource={id:'native:can-usb',name:'Panel',resourceType:'osg-module',availability:'online',connections:[{route:{transport:'can'}},{route:{transport:'usb'}}],attributes:{gateway:'G'},portCount:20000};
 
+test('controller effects summarize exact authored device choices independently of inventory and runtime observations',()=>{
+  const {canvasControllerEffects}=modules.get('./profile-canvas'),document=blankProfile(id);
+  assert.deepEqual(plain(canvasControllerEffects(document)),{enabled:0,disabled:0,configured:0,hidden:0,virtual:0});
+  document.resources=['enabled','disabled','configured'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));
+  document.resources.push({id:'game',name:'Game',kind:'game',required:false,ports:[]},{id:'companion',name:'Companion',kind:'companion',required:false,ports:[]});
+  document.overrides=[{resourceId:'enabled',enabled:true},{resourceId:'disabled',enabled:false}];document.visibility=[{resourceId:'disabled',mode:'hidden-while-active'},{resourceId:'configured',mode:'visible'}];
+  document.virtualOutputs=[{id:'virtual',name:'Virtual',required:false,ports:[],layout:{buttons:['fire'],axes:[],hats:[]}}];
+  const before=plain(document);assert.deepEqual(plain(canvasControllerEffects(document)),{enabled:1,disabled:1,configured:1,hidden:1,virtual:1});assert.deepEqual(plain(document),before);
+  document.overrides=[];assert.deepEqual(plain(canvasControllerEffects(document)),{enabled:0,disabled:0,configured:3,hidden:1,virtual:1});
+});
+
 test('named editor groups frame their current members and edit independently of graph semantics',()=>{
   const {canvasSaveGroup,canvasDeleteGroup,canvasGroups,canvasTogglePorts,canvasPortCollapsed}=modules.get('./profile-canvas');
   const doc=blankProfile(id);doc.resources=['a','b','c'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));doc.editor.positions=[{nodeId:'a',x:100,y:100},{nodeId:'b',x:500,y:300}];

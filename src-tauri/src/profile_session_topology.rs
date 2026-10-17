@@ -118,6 +118,120 @@ fn scalar(value: &osg_profiles::PortValue) -> String {
         osg_profiles::PortValue::Text(value) => format!("text ({} bytes)", value.len()),
     }
 }
+fn bounded_summary(mut value: String) -> String {
+    if value.len() > 255 {
+        let mut end = 252;
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        value.truncate(end);
+        value.push('…');
+    }
+    value
+}
+fn builtin_summary(rule: &osg_mapping::rules::Rule, inputs: &[String]) -> String {
+    use osg_mapping::rules::{Gesture, Rule};
+    let time = |value: u32| {
+        if value >= 1000 {
+            format!("{} ms", number(f64::from(value) / 1000.0))
+        } else {
+            format!("{value} µs")
+        }
+    };
+    let parameters = match rule {
+        Rule::Axis {
+            dead_zone,
+            invert,
+            scale,
+            curve,
+        } => {
+            let curve = if curve.is_empty() {
+                "linear".into()
+            } else {
+                format!(
+                    "{} points [{}]",
+                    curve.len(),
+                    curve
+                        .iter()
+                        .map(|p| format!("{}→{}", p.input, p.output))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            format!(
+                "axis · deadzone {dead_zone} · {} · scale {scale} · curve {curve}",
+                if *invert { "inverted" } else { "normal" }
+            )
+        }
+        Rule::Split { positive } => format!(
+            "split · {} half",
+            if *positive { "positive" } else { "negative" }
+        ),
+        Rule::ButtonAxis {
+            range,
+            pressed,
+            released,
+        } => format!(
+            "button-axis · {} · pressed {pressed}, released {released}",
+            format!("{range:?}").to_lowercase()
+        ),
+        Rule::Threshold { press, release } => {
+            format!("threshold · press {press}, release {release}")
+        }
+        Rule::Gesture {
+            gesture,
+            hold_us,
+            double_us,
+            pulse_us,
+        } => {
+            let gesture = match gesture {
+                Gesture::Tap => "tap",
+                Gesture::Hold => "hold",
+                Gesture::DoubleTap => "double-tap",
+            };
+            format!(
+                "{gesture} · hold {} · double {} · pulse {}",
+                time(*hold_us),
+                time(*double_us),
+                time(*pulse_us)
+            )
+        }
+        Rule::Pulse {
+            duration_us,
+            repeat_us,
+        } => format!(
+            "pulse · duration {} · {}",
+            time(*duration_us),
+            if *repeat_us > 0 {
+                format!("repeat {}", time(*repeat_us))
+            } else {
+                "no repeat".into()
+            }
+        ),
+        Rule::Macro { steps } => format!(
+            "macro · {} steps · duration {} · {}",
+            steps.len(),
+            time(steps.last().map_or(0, |step| step.after_us)),
+            steps
+                .iter()
+                .map(|step| format!(
+                    "{} {}",
+                    time(step.after_us),
+                    if step.pressed { "on" } else { "off" }
+                ))
+                .collect::<Vec<_>>()
+                .join(" → ")
+        ),
+        Rule::Merge => "merge".into(),
+        Rule::Chord => "chord".into(),
+        Rule::Gate => "gate".into(),
+        Rule::Toggle => "toggle".into(),
+    };
+    bounded_summary(format!(
+        "{parameters} · explicit inputs: {}",
+        inputs.join(", ")
+    ))
+}
 fn summary(operation: &Operation) -> String {
     match operation {
         Operation::Identity{}=>"Identity".into(),Operation::Not{}=>"Boolean NOT".into(),Operation::Invert{}=>"Invert numeric value".into(),
@@ -137,10 +251,7 @@ fn summary(operation: &Operation) -> String {
         Operation::Fallback{..}=>"Explicit unknown / stale / unavailable fallback".into(),
         Operation::ActionPack{arguments}=>format!("Event-triggered action pack · {} ordered arguments",arguments.len()),
         Operation::SetOnChange{arguments}=>format!("Setter on argument change · {} ordered arguments",arguments.len()),
-        Operation::Builtin{rule,inputs}=>{
-            let kind=serde_json::to_value(rule).ok().and_then(|value|value["kind"].as_str().map(str::to_owned)).unwrap_or_else(||"transformation".into());
-            format!("Built-in {kind} · {} ordered inputs",inputs.len())
-        },
+        Operation::Builtin{rule,inputs}=>builtin_summary(rule,inputs),
         Operation::Script{..}=>"Isolated script · declared ports only; code is not exposed".into(),
     }
 }

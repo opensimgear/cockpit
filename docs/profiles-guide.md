@@ -67,6 +67,19 @@ require game rebinding. They leave saved device flash settings alone and are
 separate from the **Game visibility intent** that hides a device through HidHide.
 Direct USB and Pico publication overrides remain unsupported.
 
+The canvas's **Draft controller effects** summary counts Enable, Disable and
+Keep configured choices alongside hiding requests and requested virtual
+controllers. These counts describe the editor draft. They do not confirm that a
+controller is currently published, hidden or delivering output; the applied run
+keeps its own captured revision until another Apply.
+
+Built-in transformation blocks show their configured rule parameters, including
+pulse and gesture timing, polarity, thresholds, axis curves and macro steps.
+Summaries are bounded previews; select a block for its complete declared
+parameters. Editing them changes that visible draft node. Applied path activity
+shows the parameters captured by its separate immutable native run, independently
+of newer editor previews.
+
 Select an output and an input/action using the canvas or **Connect exact ports**.
 Different units, types, ranges or delivery kinds require a visible processing
 node. Use the bindings table as a keyboard alternative. Its diagnostics identify

@@ -5,6 +5,12 @@ import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout, profileCa
 export type CanvasPoint = {x:number;y:number};
 export type CanvasViewport = CanvasPoint & {zoom:number};
 export type CanvasNode = {id:string;name:string;kind:'resource'|'processing'|'virtual';category:string;position:CanvasPoint;resource?:DeepReadonly<ProfileDocument['resources'][number]>;processing?:DeepReadonly<ProfileDocument['processingNodes'][number]>;virtual?:DeepReadonly<ProfileDocument['virtualOutputs'][number]>;assignment?:DeepReadonly<ProfileLocalAssignment>;observation?:DeepReadonly<ResourceSummary>};
+/** Authored choices only: inventory or an applied run cannot change these counts. */
+export function canvasControllerEffects(document:DeepReadonly<ProfileDocument>):{enabled:number;disabled:number;configured:number;hidden:number;virtual:number}{
+  const devices=document.resources.filter(resource=>resource.kind==='device');
+  const choices=devices.map(resource=>document.overrides.find(intent=>intent.resourceId===resource.id)?.enabled);
+  return{enabled:choices.filter(value=>value===true).length,disabled:choices.filter(value=>value===false).length,configured:choices.filter(value=>value===undefined).length,hidden:document.visibility.filter(intent=>intent.mode==='hidden-while-active').length,virtual:document.virtualOutputs.length};
+}
 const clamp=(value:number,min:number,max:number)=>Math.min(max,Math.max(min,value));
 const finite=(value:number)=>Number.isFinite(value);
 export function canvasNodes(document:DeepReadonly<ProfileDocument>,assignments:readonly DeepReadonly<ProfileLocalAssignment>[],inventory:readonly DeepReadonly<ResourceSummary>[]):CanvasNode[]{

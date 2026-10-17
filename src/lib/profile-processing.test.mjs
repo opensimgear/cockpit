@@ -5,6 +5,27 @@ const plain=value=>JSON.parse(JSON.stringify(value));const bool={type:'boolean'}
 const action=(parameters=[],semantics='one-shot')=>({delivery:'action',parameters,semantics,endpoint:'device/endpoint',readable:semantics==='setter',display:null,ownership:null});
 const assertValid=node=>assert.equal(error(node),'',node.name);
 
+test('built-in summaries expose the actual rule parameters and change with timing, polarity and curve edits',()=>{
+  const pulse=make('pulse','pulse');const before=summary(pulse);pulse.operation.rule.durationUs=125000;pulse.operation.rule.repeatUs=500000;
+  assert.notEqual(summary(pulse),before);assert.ok(summary(pulse).includes('duration 125 ms'));assert.ok(summary(pulse).includes('repeat 500 ms'));assertValid(pulse);
+  for(const preset of ['tap','hold','double-tap']){const node=make(preset,preset),before=summary(node);node.operation.rule.holdUs=750000;assert.notEqual(summary(node),before);for(const value of [preset,'hold 750 ms','double 250 ms','pulse 100 ms','explicit inputs: in'])assert.ok(summary(node).includes(value),value);}
+  const macro=make('macro','macro');macro.operation.rule.steps[1].afterUs=123456;assertValid(macro);assert.ok(summary(macro).includes('2 steps'));assert.ok(summary(macro).includes('0 µs on → 123.456 ms off'));
+  const rules=[
+    [{kind:'axis',deadZone:120,invert:true,scale:950,curve:[{input:0,output:123},{input:32767,output:32767}]},['deadzone 120','inverted','scale 950','0→123']],
+    [{kind:'axis',deadZone:0,invert:false,scale:1000,curve:[]},['normal','curve linear']],
+    [{kind:'split',positive:true},['positive half']],[{kind:'split',positive:false},['negative half']],
+    [{kind:'button-axis',range:'bipolar',pressed:32767,released:-32768},['bipolar','pressed 32767, released -32768']],
+    [{kind:'threshold',press:20000,release:10000},['press 20000, release 10000']],
+    ...['merge','chord','gate','toggle'].map(kind=>[{kind},[kind,'explicit inputs: in']]),
+  ];
+  for(const [rule,values]of rules){const node=make('identity','summary');node.operation={kind:'builtin',rule,inputs:['in']};const before=plain(node);for(const value of values)assert.ok(summary(node).includes(value),value);assert.deepEqual(plain(node),before);}
+});
+test('built-in summaries remain bounded UTF-8 previews with complete parameters available in the inspector',()=>{
+  const node=make('macro','bounded');node.operation.rule.steps=Array.from({length:16},(_,index)=>({afterUs:index*3000000,pressed:index%2===0}));node.operation.inputs=Array.from({length:8},()=> 'é'.repeat(40));
+  const text=summary(node);assert.ok(new TextEncoder().encode(text).length<256);assert.ok(text.endsWith('…'));assert.ok(!text.includes('�'));assert.ok(text.includes('16 steps'));assert.ok(text.includes('duration 45000 ms'));assert.equal(node.operation.rule.steps.length,16);
+  const pulse=make('pulse','microseconds');pulse.operation.rule.durationUs=999;assert.ok(summary(pulse).includes('999 µs'));assert.ok(summary(pulse).includes('no repeat'));
+});
+
 test('numeric presets preserve raw ranges and expose every conversion, condition and formatting parameter',()=>{
   const numeric=['identity','invert','scale','range-map','unit-convert','deadzone','curve','compare','hysteresis','format','fallback','constant','script'];
   for(const kind of numeric){const node=make(kind,`node-${kind}`,state(number(-100,100,kind==='unit-convert'?'ft':null)));assertValid(node);assert.equal(node.outputs.length,1);assert.equal(node.inputs.length,kind==='constant'?0:1);assert.ok(summary(node).length>0);}
