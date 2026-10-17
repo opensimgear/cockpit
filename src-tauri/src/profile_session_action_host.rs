@@ -250,9 +250,46 @@ impl NativeProfileHost {
             || state.output.as_mut().map_or(Ok(()), |o| o.keep_alive()),
         )
     }
+    pub(super) fn prepare_action_recovery(&mut self, run: &OwnedRun) -> Result<(), String> {
+        if !run.attempted.contains(&ApplyPhase::Acquire) {
+            return Ok(());
+        }
+        let owner_key = key(&run.owner);
+        let actor = if let Some(state) = self.prepared.get_mut(&owner_key) {
+            Some(&mut state.actions)
+        } else {
+            self.recovery_actions.get_mut(&owner_key)
+        };
+        if let Some(actor) = actor {
+            exact_receipts(run, actor)?;
+            let status = actor.poll();
+            if status.stopped && !status.cleanup_complete {
+                // Only an explicit, storage-verified Recover reaches here.
+                // The replacement is born revoked and must inspect the old
+                // private owner before Release; it cannot Claim or Invoke.
+                *actor = PanelActions::recover(run, self.resources.clone(), self.panels.clone())?;
+            }
+        }
+        Ok(())
+    }
     pub(super) fn restore_actions(&mut self, run: &OwnedRun, recovery: bool) -> Result<(), String> {
         let owner_key = key(&run.owner);
         if let Some(state) = self.prepared.get_mut(&owner_key) {
+            if !run.attempted.contains(&ApplyPhase::Acquire) {
+                // Phase recapture may have replaced an unused preparation
+                // before its new receipt could be journaled. Validate the
+                // durable seals without starting recovery workers, then allow
+                // only demonstrably undispatched preparation to be discarded.
+                if exact_receipts(run, &state.actions).is_err() {
+                    let _validated =
+                        PanelActions::recover(run, self.resources.clone(), self.panels.clone())?;
+                }
+                if !state.actions.is_unstarted_preparation() {
+                    return Err("Physical action workers exist without a journaled Acquire phase; preserve their cleanup receipts.".into());
+                }
+                state.actions.stop()?;
+                return Ok(());
+            }
             exact_receipts(run, &state.actions)?;
             if recovery {
                 let status = state.actions.poll();

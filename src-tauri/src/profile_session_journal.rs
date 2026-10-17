@@ -136,6 +136,8 @@ pub(super) struct Store {
     error: Option<String>,
     #[cfg(test)]
     pub(super) fail_save: bool,
+    #[cfg(test)]
+    pub(super) fail_save_phase: Option<super::ApplyPhase>,
 }
 impl Drop for Store {
     fn drop(&mut self) {
@@ -153,6 +155,8 @@ impl Store {
             error: None,
             #[cfg(test)]
             fail_save: false,
+            #[cfg(test)]
+            fail_save_phase: None,
         };
         let loaded = (|| {
             let Some(path) = &store.path else {
@@ -207,6 +211,19 @@ impl Store {
         #[cfg(test)]
         if self.fail_save {
             return Err("Injected profile journal failure.".into());
+        }
+        #[cfg(test)]
+        if self.fail_save_phase.is_some()
+            && value
+                .pending
+                .as_ref()
+                .and_then(|pending| pending.incoming.as_ref())
+                .and_then(|run| run.attempted.last())
+                .copied()
+                == self.fail_save_phase
+        {
+            self.fail_save_phase = None;
+            return Err("Injected profile journal failure before phase admission.".into());
         }
         if let Some(path) = &self.path {
             crate::dcs_setup::replace(path, &data)?;

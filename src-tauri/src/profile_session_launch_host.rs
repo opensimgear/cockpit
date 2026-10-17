@@ -373,6 +373,7 @@ impl NativeProfileHost {
             return Err("A waiting launch cannot run scripts, timers or a game context.".into());
         }
         visibility::active(&mut state.visibility)?;
+        publication::active(state)?;
         let mut degraded = action::held(state)?;
         if let Some(output) = state.output.as_mut() {
             output.keep_alive()?;

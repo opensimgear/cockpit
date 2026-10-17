@@ -271,6 +271,139 @@ impl Runtime {
         }
         Ok(plan)
     }
+
+    /// A sealed native publication actor may advance only the CAN delivery lease
+    /// and event stream of its exact settled targets. Generic hardware binding
+    /// above remains strict and cannot use this permission.
+    pub(crate) fn validate_publication_rebind(
+        &self,
+        before: &ExecutionPlan,
+        after: &ExecutionPlan,
+        proof: &crate::profile_session_overrides::VerifiedPublication,
+    ) -> Result<(), String> {
+        use osg_profiles::resources::{PortPreparation, Route, Transport};
+        proof.validate()?;
+        let pins = |physical: Option<&str>,
+                    old: Option<&PortPreparation>,
+                    new: Option<&PortPreparation>,
+                    a: Option<&Route>,
+                    b: Option<&Route>|
+         -> Result<(), String> {
+            // Outgoing and incoming profiles may name the same physical module
+            // differently. Their own endpoints remain equal across recompiles;
+            // only this exact sealed inventory/UID/route can inherit restoration.
+            let target = proof
+                .targets()
+                .iter()
+                .find(|t| Some(t.inventory.as_str()) == physical);
+            if let (Some(old), Some(new)) = (old, new) {
+                let x = old.resolved();
+                let y = new.resolved();
+                if old.inventory_session() != new.inventory_session()
+                    || old.provider_session() != new.provider_session()
+                    || old.access() != new.access()
+                    || x.resource_id != y.resource_id
+                    || Some(x.resource_id.as_str()) != physical
+                    || x.scope != y.scope
+                    || x.key != y.key
+                    || x.port != y.port
+                    || a != Some(&x.route)
+                    || b != Some(&y.route)
+                {
+                    return Err(
+                        "The native publication changed a prepared port identity or contract."
+                            .into(),
+                    );
+                }
+                if target.is_none() && old.capability_revision() != new.capability_revision() {
+                    return Err(
+                        "An unrelated resource catalogue changed during publication.".into(),
+                    );
+                }
+            } else if old.is_some() != new.is_some() {
+                return Err("A native preparation disappeared during publication.".into());
+            }
+            if a == b {
+                return Ok(());
+            }
+            let (Some(target), Some(a), Some(b)) = (target, a, b) else {
+                return Err("An unrelated native route changed during publication.".into());
+            };
+            if old.is_none()
+                || new.is_none()
+                || a.transport != Transport::Can
+                || b.transport != Transport::Can
+                || a.id != b.id
+                || a.attributes != b.attributes
+                || a.priority != b.priority
+                || a.writable != b.writable
+                || a.id != format!("can:{}:{}", target.gateway, target.module)
+            {
+                return Err("Publication cannot transfer a physical route or adopt another action catalogue.".into());
+            }
+            let x: Vec<Value> = serde_json::from_str(&a.provider_generation)
+                .map_err(|_| "Invalid original CAN generation.")?;
+            let y: Vec<Value> = serde_json::from_str(&b.provider_generation)
+                .map_err(|_| "Invalid current CAN generation.")?;
+            if x.len() != 5
+                || y.len() != 5
+                || x[0] != y[0]
+                || x[1] != y[1]
+                || x[3] != y[3]
+                || y[0] != target.epoch
+                || y[1] != target.boot
+                || y[3] != target.configuration
+                || x[2].as_u64().is_none_or(|old| {
+                    old == 0
+                        || y[2]
+                            .as_u64()
+                            .is_none_or(|new| new < old || new == old && x[4] != y[4])
+                })
+                || y[2].as_u64() != proof.delivery_lease(target)
+            {
+                return Err("Publication cannot adopt another gateway boot, module boot, configuration or unproved delivery lease.".into());
+            }
+            Ok(())
+        };
+        if before.sources.len() != after.sources.len() || before.sinks.len() != after.sinks.len() {
+            return Err("The publication delivery graph changed.".into());
+        }
+        for (a, b) in before.sources.iter().zip(&after.sources) {
+            if a.endpoint != b.endpoint
+                || a.inventory_resource_id != b.inventory_resource_id
+                || a.observed_port_id != b.observed_port_id
+                || a.contract != b.contract
+            {
+                return Err("The publication input graph changed.".into());
+            }
+            pins(
+                a.inventory_resource_id.as_deref(),
+                a.preparation.as_ref(),
+                b.preparation.as_ref(),
+                a.route.as_ref(),
+                b.route.as_ref(),
+            )?;
+        }
+        for (a, b) in before.sinks.iter().zip(&after.sinks) {
+            if a.endpoint != b.endpoint
+                || a.adapter != b.adapter
+                || a.inventory_resource_id != b.inventory_resource_id
+                || a.observed_port_id != b.observed_port_id
+                || a.contract != b.contract
+            {
+                return Err("The publication output graph changed.".into());
+            }
+            pins(
+                a.inventory_resource_id.as_deref(),
+                a.preparation.as_ref(),
+                b.preparation.as_ref(),
+                a.route.as_ref(),
+                b.route.as_ref(),
+            )?;
+        }
+        proof.validate()
+    }
+
 }
 
 #[cfg(test)]

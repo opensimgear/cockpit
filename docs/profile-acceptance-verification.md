@@ -4,9 +4,21 @@ The P9 acceptance cutover uses unified Profile schema2 documents and native reso
 
 The native service scenarios run on isolated CI hosts. Running another gateway service beside the Cockpit development desktop would create a second native discovery/hardware owner, so local verification deliberately did not start it. CI exercises the actual Profile Host with production-C gateway/peripheral processes, including owned Setter output, competing writer rejection, atomically captured prior-state restoration on Pause/Stop, no persistent configuration writes and restart without automatic output activation.
 
-The initiating E2E manifest explicitly pins firmware-common `ac2bacd2383ad2f9b720c2fc96268e9da9bf8d66`. Application refs are unchanged. The bootstrap requires their declared common baselines to agree, resolves the initiating manifest's full common SHA, and records declared and resolved revisions separately. A local-Git regression verifies the actual selected checkout contents, not only the resolver argument.
+The initiating E2E manifest pins gateway
+`b47a19ab489935eefee08623866ddb3b450d866b`, module
+`74cd82483524ba441ec0733ff148aa1bf3022fc1` and firmware-common
+`b76fa216c5a48299139de7ffb1b41817d91a219b`. The bootstrap requires their declared
+common baselines to agree, resolves the initiating manifest's full common SHA,
+and records declared and resolved revisions separately. A local-Git regression
+verifies actual selected checkout contents. Current independent production-C
+cross-firmware E2E passes 15/15 checks, and all eight module JSON simulation
+tests pass with ASan/UBSan against the current common baseline. These runs start
+no second Cockpit and use no hardware.
 
-On 2026-10-17 an independent output-only production-C device simulator was built with `-fsanitize=address,undefined` against that exact common commit. It ran alone in a private simulation namespace with private Linux temporary flash state; no native service or gateway process was started. Actual readback verified:
+Earlier on 2026-10-17, the standalone output-only simulation below was recorded
+against common `ac2bacd2383ad2f9b720c2fc96268e9da9bf8d66`. It used
+`-fsanitize=address,undefined` in a private namespace with private temporary flash
+state; no native service or gateway process was started. Actual readback verified:
 
 | Operation | Observed result |
 | --- | --- |

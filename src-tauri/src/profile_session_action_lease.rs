@@ -16,6 +16,7 @@ use osg_profiles::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc};
 
 pub(crate) const TTL_MS: u32 = 5_000;
@@ -23,6 +24,7 @@ pub(crate) const MAX_ENDPOINTS: usize = 16;
 const KIND: &str = "physical-action-lease";
 const RECEIPT_BYTES: usize = 8_192;
 const INVALID: &str = "The physical output no longer matches its exact native lease.";
+const PENDING_ROUTE: &str = "Physical cleanup remains pending: the changed CAN route has no authenticated retired action receipt.";
 
 trait Io: Send + Sync {
     fn preparation(&self, pin: &PortPreparation) -> Result<Route, String>;
@@ -333,6 +335,105 @@ struct Cleanup {
     setter_id: String,
     setter_hash: String,
     secret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    can_cleanup: Option<CanCleanupProof>,
+}
+/// This is identity evidence for cleanup only. It cannot authorize Claim,
+/// Invoke or Renew, and a public expired ownership page is never a secret proof.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CanCleanupProof {
+    gateway_serial: String,
+    source_node: Value,
+    profile: Value,
+    catalogue_hash: String,
+}
+fn catalogue_hash(cache: &Value) -> Result<String, String> {
+    catalogue(cache)?;
+    let bytes = serde_json::to_vec(&json!({
+        "revision": cache["catalogueRevision"],
+        "actions": cache["actions"],
+        "ownership": cache["ownership"],
+    }))
+    .map_err(|_| INVALID)?;
+    Ok(hex(&Sha256::digest(bytes)))
+}
+impl CanCleanupProof {
+    fn capture(target: &Target, io: &dyn Io) -> Option<Self> {
+        let Target::Can {
+            gateway, module, ..
+        } = target
+        else {
+            return None;
+        };
+        let state = io.can_cached(gateway).ok()?;
+        let cache = target.cache_from_can(&state).ok()?;
+        let current = state["modules"]
+            .as_array()?
+            .iter()
+            .find(|m| m["id"] == *module)?;
+        let serial = state["gatewaySerial"].as_str()?;
+        // Only the normalized STM32 gateway/module identity can survive a CAN
+        // publication lease transition. Older receipts retain strict routing.
+        if state["backend"] != "stm32"
+            || serial.len() != 24
+            || !serial
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || gateway != &format!("stm32:{serial}")
+            || current["sourceNode"]
+                .as_u64()
+                .is_none_or(|n| n > u32::MAX as u64)
+            || !current["profile"].is_object()
+            || serde_json::to_vec(&current["profile"]).ok()?.len() > 1024
+        {
+            return None;
+        }
+        Some(Self {
+            gateway_serial: serial.into(),
+            source_node: current["sourceNode"].clone(),
+            profile: current["profile"].clone(),
+            catalogue_hash: catalogue_hash(&cache).ok()?,
+        })
+    }
+    fn check(&self, target: &Target, state: &Value) -> Result<Value, String> {
+        let Target::Can {
+            gateway, module, ..
+        } = target
+        else {
+            return Err(INVALID.into());
+        };
+        let current = state["modules"]
+            .as_array()
+            .and_then(|a| a.iter().find(|m| m["id"] == *module))
+            .ok_or(INVALID)?;
+        let cache = target.cache_from_can(state)?;
+        if state["backend"] != "stm32"
+            || state["gatewaySerial"] != self.gateway_serial
+            || gateway != &format!("stm32:{}", self.gateway_serial)
+            || current["sourceNode"] != self.source_node
+            || current["profile"] != self.profile
+            || catalogue_hash(&cache)? != self.catalogue_hash
+        {
+            return Err(INVALID.into());
+        }
+        Ok(cache)
+    }
+}
+// The changed-route path has no representation for a productive command.
+enum CleanupCommand {
+    State,
+    Ownership(u32),
+    Release { secret: String, lease: u32 },
+}
+impl CleanupCommand {
+    fn command(self) -> Command {
+        match self {
+            Self::State => Command::State,
+            Self::Ownership(offset) => Command::Ownership(offset),
+            Self::Release { secret, lease } => Command::Release { secret, lease },
+        }
+    }
 }
 impl Drop for Cleanup {
     fn drop(&mut self) {
@@ -443,6 +544,9 @@ pub(crate) struct Lease {
     release_attempted: bool,
     released: Option<Released>,
     lease: Option<u32>,
+    // This postclaim evidence is intentionally absent from the preclaim journal.
+    // A recovered, already-retired lease must not borrow a public fallback.
+    fallback: Option<Vec<Value>>,
 }
 impl Lease {
     pub(crate) fn prepare(
@@ -509,6 +613,7 @@ impl Lease {
             .and_then(|a| a.iter().find(|a| a["id"] == action_id))
             .cloned()
             .ok_or(INVALID)?;
+        let can_cleanup = CanCleanupProof::capture(&target, io.as_ref());
         let cleanup = Cleanup {
             schema_version: 1,
             owner: owner.clone(),
@@ -519,6 +624,7 @@ impl Lease {
             setter_id: setter.id.strip_prefix("action:").ok_or(INVALID)?.into(),
             setter_hash: setter.contract_hash()?,
             secret: uuid::Uuid::new_v4().simple().to_string(),
+            can_cleanup,
         };
         let mut plain = serde_json::to_vec(&cleanup).map_err(|_| INVALID)?;
         let sealed_result = protector.seal(&plain);
@@ -553,6 +659,7 @@ impl Lease {
             release_attempted: false,
             released: None,
             lease: None,
+            fallback: None,
         })
     }
     pub(crate) fn receipt(&self) -> Receipt {
@@ -619,6 +726,18 @@ impl Lease {
             self.verify(&cache)?;
             let lease = self.ack(&cache, None, false)?;
             self.lease = Some(lease);
+            if self.cleanup.can_cleanup.is_some() {
+                let entry = self.cleanup_endpoint(&self.cleanup.target, false)?;
+                if entry["owned"] != true
+                    || entry["leaseId"] != lease
+                    || entry["actionId"] != self.cleanup.setter_id
+                {
+                    return Err(INVALID.into());
+                }
+                let values = entry["fallback"].as_array().ok_or(INVALID)?.clone();
+                self.check_fallback(&cache, &values)?;
+                self.fallback = Some(values);
+            }
             Ok(())
         })();
         if result.is_err() {
@@ -777,6 +896,108 @@ impl Lease {
         self.revoked = true;
         self.token = None;
     }
+    fn check_fallback(&self, cache: &Value, values: &[Value]) -> Result<(), String> {
+        let setter = cache["actions"]
+            .as_array()
+            .and_then(|a| a.iter().find(|a| a["id"] == self.cleanup.setter_id))
+            .ok_or(INVALID)?;
+        crate::actions::arguments(setter, &json!(values))?;
+        Ok(())
+    }
+    fn cleanup_target(&self) -> Result<(Target, bool), String> {
+        if self.cleanup.target.cached(self.io.as_ref()).is_ok() {
+            return Ok((self.cleanup.target.clone(), false));
+        }
+        let proof = self.cleanup.can_cleanup.as_ref().ok_or(INVALID)?;
+        let Target::Can {
+            gateway,
+            module,
+            lease,
+            ..
+        } = &self.cleanup.target
+        else {
+            return Err(INVALID.into());
+        };
+        let state = self.io.can_cached(gateway)?;
+        let current = state["modules"]
+            .as_array()
+            .and_then(|a| a.iter().find(|m| m["id"] == *module))
+            .ok_or(INVALID)?;
+        let current_lease = current["lease"]
+            .as_u64()
+            .filter(|n| *n > 0 && *n <= u32::MAX as u64)
+            .ok_or(INVALID)?;
+        if current["lease"] == *lease {
+            return Err(INVALID.into());
+        }
+        let mut target = self.cleanup.target.clone();
+        let Target::Can { lease, .. } = &mut target else {
+            unreachable!()
+        };
+        *lease = json!(current_lease);
+        proof.check(&target, &state)?;
+        Ok((target, true))
+    }
+    fn cleanup_request(
+        &self,
+        target: &Target,
+        changed: bool,
+        command: CleanupCommand,
+    ) -> Result<Value, String> {
+        if changed {
+            let Target::Can { gateway, .. } = target else {
+                return Err(INVALID.into());
+            };
+            self.cleanup
+                .can_cleanup
+                .as_ref()
+                .ok_or(INVALID)?
+                .check(target, &self.io.can_cached(gateway)?)?;
+        }
+        let cache = target.request(self.io.as_ref(), command.command())?;
+        self.verify(&cache)?;
+        if changed {
+            let Target::Can { gateway, .. } = target else {
+                return Err(INVALID.into());
+            };
+            let proof = self.cleanup.can_cleanup.as_ref().ok_or(INVALID)?;
+            proof.check(target, &self.io.can_cached(gateway)?)?;
+            if catalogue_hash(&cache)? != proof.catalogue_hash {
+                return Err(INVALID.into());
+            }
+        }
+        Ok(cache)
+    }
+    fn cleanup_endpoint(&self, target: &Target, changed: bool) -> Result<Value, String> {
+        let mut offset = 0;
+        let mut endpoint = None;
+        loop {
+            let cache = self.cleanup_request(target, changed, CleanupCommand::Ownership(offset))?;
+            let mut wire_page = cache["ownershipPage"].clone();
+            wire_page["ok"] = json!(true);
+            let page = crate::output_leases::ownership_page(
+                &wire_page,
+                u64::from(self.cleanup.revision),
+                offset as usize,
+            )?;
+            if page["catalogueRevision"] != self.cleanup.revision || !page["ownership"].is_array() {
+                return Err(INVALID.into());
+            }
+            for entry in page["ownership"].as_array().unwrap() {
+                if entry["endpoint"] == self.cleanup.endpoint
+                    && endpoint.replace(entry.clone()).is_some()
+                {
+                    return Err(INVALID.into());
+                }
+            }
+            match page["next"].as_u64() {
+                None if page["next"].is_null() => break,
+                Some(next) if next > offset as u64 && next <= 16 => offset = next as u32,
+                _ => return Err(INVALID.into()),
+            }
+        }
+        endpoint.ok_or(INVALID.into())
+    }
     pub(crate) fn release(&mut self) -> Result<Released, String> {
         self.revoke();
         if let Some(done) = self.released {
@@ -794,47 +1015,33 @@ impl Lease {
         }
         // Refresh is read-only. It clears uncertain host cache state, never a
         // failed mutation or the firmware's last-owned comparison authority.
-        let state = self
-            .cleanup
-            .target
-            .request(self.io.as_ref(), Command::State)?;
-        self.verify(&state)?;
-        let mut offset = 0;
-        let mut endpoint = None;
-        loop {
-            let cache = self
-                .cleanup
-                .target
-                .request(self.io.as_ref(), Command::Ownership(offset))?;
-            self.verify(&cache)?;
-            let mut wire_page = cache["ownershipPage"].clone();
-            wire_page["ok"] = json!(true);
-            let checked = crate::output_leases::ownership_page(
-                &wire_page,
-                u64::from(self.cleanup.revision),
-                offset as usize,
-            )?;
-            let page = &checked;
-            if page["catalogueRevision"] != self.cleanup.revision || !page["ownership"].is_array() {
-                return Err(INVALID.into());
-            }
-            for entry in page["ownership"].as_array().unwrap() {
-                if entry["endpoint"] == self.cleanup.endpoint {
-                    if endpoint.replace(entry.clone()).is_some() {
-                        return Err(INVALID.into());
-                    }
-                }
-            }
-            match page["next"].as_u64() {
-                None if page["next"].is_null() => break,
-                Some(next) if next > offset as u64 && next <= 16 => offset = next as u32,
-                _ => return Err(INVALID.into()),
-            }
-        }
-        let entry = endpoint.ok_or(INVALID)?;
+        let (target, changed) = self.cleanup_target()?;
+        let state = self.cleanup_request(&target, changed, CleanupCommand::State)?;
+        let entry = self.cleanup_endpoint(&target, changed)?;
         if entry["owned"] == false {
             if entry["fallbackStatus"] == "failed" {
                 return Err("The device reported failed physical output restoration.".into());
+            }
+            if changed {
+                let old_lease = self.lease.ok_or(PENDING_ROUTE)?;
+                let fallback = self.fallback.as_ref().ok_or(PENDING_ROUTE)?;
+                self.check_fallback(&state, fallback)?;
+                let actual = state["states"]
+                    .as_array()
+                    .and_then(|a| a.iter().find(|v| v["id"] == self.cleanup.setter_id))
+                    .ok_or(PENDING_ROUTE)?;
+                if entry["leaseId"] != old_lease
+                    || entry["actionId"] != self.cleanup.setter_id
+                    || entry["remainingMs"] != 0
+                    || entry["fallbackStatus"] != "applied"
+                    || entry["fallback"] != json!(fallback)
+                    || actual["values"] != json!(fallback)
+                    || self.cleanup_endpoint(&target, changed)? != entry
+                {
+                    return Err(PENDING_ROUTE.into());
+                }
+                self.released = Some(Released::Restored);
+                return Ok(Released::Restored);
             }
             self.released = Some(Released::Preserved);
             return Ok(Released::Preserved);
@@ -844,24 +1051,30 @@ impl Lease {
             .and_then(|n| u32::try_from(n).ok())
             .filter(|n| *n > 0)
             .ok_or(INVALID)?;
+        if changed && entry["actionId"] != self.cleanup.setter_id {
+            return Err(INVALID.into());
+        }
         if self.lease.is_some_and(|id| id != lease) {
             return Err(
                 "A later owner now holds this physical endpoint; its state was preserved.".into(),
             );
         }
         self.release_attempted = true;
-        let cache = self.cleanup.target.request(
-            self.io.as_ref(),
-            Command::Release {
+        let cache = self.cleanup_request(
+            &target,
+            changed,
+            CleanupCommand::Release {
                 secret: self.cleanup.secret.clone(),
                 lease,
             },
         )?;
-        self.verify(&cache)?;
         self.ack(&cache, Some(lease), true)?;
         let result = if cache["lastLease"]["fallbackStatus"] == "applied" {
             Released::Restored
         } else {
+            if changed {
+                return Err(PENDING_ROUTE.into());
+            }
             Released::Preserved
         };
         self.released = Some(result);
@@ -965,6 +1178,7 @@ impl Lease {
             release_attempted: false,
             released: None,
             lease: None,
+            fallback: None,
         })
     }
 }

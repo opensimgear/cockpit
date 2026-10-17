@@ -8,6 +8,8 @@ mod visibility;
 mod launch;
 #[path = "profile_session_action_host.rs"]
 mod action;
+#[path = "profile_session_publication_host.rs"]
+mod publication;
 
 use crate::profile_session::{
     Admission, AdmissionBlocker, ApplyPhase, BlockerKind, Candidate, Health, Host, OwnedRun,
@@ -35,6 +37,7 @@ struct NativePreparation {
     companions: crate::profile_session_companions::CompanionSources,
     companion_catalogues: Vec<crate::profile_resources::CompanionCatalogue>,
     visibility: crate::profile_session_visibility::StagedVisibility,
+    publication: crate::profile_session_overrides::Staged,
 }
 struct NativeRun {
     owner: RunOwner,
@@ -64,6 +67,8 @@ struct NativeRun {
     companion_catalogues: Vec<crate::profile_resources::CompanionCatalogue>,
     companion_retry: Option<u64>,
     visibility: crate::profile_session_visibility::Visibility,
+    publication: crate::profile_session_overrides::Overrides,
+    acquisition_plan: Option<ExecutionPlan>,
 }
 pub(crate) struct NativeProfileHost {
     resources: Arc<crate::profile_resources::Runtime>,
@@ -77,6 +82,7 @@ pub(crate) struct NativeProfileHost {
     prepared: BTreeMap<String, NativeRun>,
     recovery_visibility: BTreeMap<String, crate::profile_session_visibility::Visibility>,
     recovery_actions: BTreeMap<String, crate::profile_session_actions::PanelActions>,
+    recovery_publications: BTreeMap<String, crate::profile_session_overrides::Overrides>,
 }
 fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
@@ -103,6 +109,7 @@ impl NativeProfileHost {
             prepared: BTreeMap::new(),
             recovery_visibility: BTreeMap::new(),
             recovery_actions: BTreeMap::new(),
+            recovery_publications: BTreeMap::new(),
         }
     }
     fn run(&mut self, owner: &RunOwner) -> Result<&mut NativeRun, String> {
@@ -111,13 +118,15 @@ impl NativeProfileHost {
             .filter(|run| run.owner == *owner)
             .ok_or_else(|| "The native prepared run expired; capture a fresh profile plan.".into())
     }
-    fn panel_baseline(&mut self, owner: &RunOwner, delivery: &ExecutionPlan) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
+    fn panel_baseline(&mut self, owner: &RunOwner, delivery: &ExecutionPlan, live: bool) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
         let resources = self.resources.clone();
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        if live {self.check_transition(owner)?;self.run(owner)?.panels.begin_live_baseline()?;}
         loop {
             self.check_transition(owner)?;
             let state = self.run(owner)?;
-            if let Some(frames) = state.panels.baseline(delivery, |token| Self::validate_token(&resources, token))? {
+            let baseline=if live {state.panels.live_baseline(delivery,|token|Self::validate_token(&resources,token))?}else{state.panels.baseline(delivery,|token|Self::validate_token(&resources,token))?};
+            if let Some(frames) = baseline {
                 return Ok(frames);
             }
             if Instant::now() >= deadline {
@@ -188,9 +197,6 @@ impl NativeProfileHost {
                     ),
                 });
             }
-        }
-        if let Err(message)=crate::profile_session_overrides::validate(plan) {
-            blockers.push(AdmissionBlocker {kind:BlockerKind::Backend,message});
         }
         if plan.program.nodes.iter().any(|node| {
             matches!(
@@ -387,6 +393,7 @@ impl NativeProfileHost {
             .plan
             .clone()
             .ok_or("The profile compiler did not produce an executable plan.")?;
+        let publication=crate::profile_session_overrides::Staged::prepare(&plan,&snapshot)?;
         let mut admission = Admission::default();
         if matches!(
             report.readiness,
@@ -483,7 +490,7 @@ impl NativeProfileHost {
         let visibility=crate::profile_session_visibility::Visibility::stage_with_handoff(&prepared.plan,&snapshot,controllers,outgoing.as_ref())?;
         crate::profile_session::Stage::new(candidate, NativePreparation {
             prepared, report, backend: snapshot.backend, bindings, scripts, game, game_preparation,
-            companions, companion_catalogues, visibility,
+            companions, companion_catalogues, visibility, publication,
         })
     }
 }
@@ -507,12 +514,13 @@ impl Host for NativeProfileHost {
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
-        let NativePreparation {mut prepared, report, backend, bindings, scripts, game, game_preparation, companions, companion_catalogues, visibility} = candidate.stage.as_ref()
+        let NativePreparation {mut prepared, report, backend, bindings, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
         let visibility=visibility.bind(owner)?;
         let actions=crate::profile_session_actions::PanelActions::prepare(&prepared.plan, owner, self.resources.clone(), self.panels.clone())?;
+        let publication=crate::profile_session_overrides::Overrides::prepare(&publication,owner,self.panels.clone(),self.admission_epoch.clone(),admission_epoch)?;
         prepared.admission.optional_unavailable.extend(actions.optional_unavailable().iter().cloned());
         self.prepared.insert(key(owner), NativeRun {
             owner: owner.clone(), admission_epoch, report, assignments: candidate.assignments.clone(),
@@ -522,6 +530,7 @@ impl Host for NativeProfileHost {
             child_game_owner: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_retry: None, visibility,
             actions,
+            publication, acquisition_plan: None,
         });
         self.validate_prepared(&prepared, owner)?;
         Ok(prepared)
@@ -541,6 +550,7 @@ impl Host for NativeProfileHost {
         let companions = self.companions.clone();
         let run = self.run(owner)?;
         run.companions.validate_preparation(&companions)?;
+        run.publication.validate()?;
         if current.read_only
             || current.inventory_session.is_empty()
             || run.report.capture_fingerprint != prepared.capture_fingerprint
@@ -581,6 +591,7 @@ impl Host for NativeProfileHost {
         } else { vec![] };
         receipts.extend(state.visibility.receipts()?);
         receipts.extend(state.actions.capture_receipts());
+        receipts.extend(state.publication.receipts());
         if !state.bindings.is_empty() {
             receipts.push(Receipt { kind: "virtual-output".into(), resource_id:"virtual-output".into(),
                 state: json!({"journal":crate::profile_session_virtual::journal_name(owner)?}) });
@@ -604,11 +615,23 @@ impl Host for NativeProfileHost {
         self.authority = owner.cloned();
         Ok(())
     }
+    fn recapture_phase(&mut self,phase:ApplyPhase,prepared:&mut Prepared,run:&OwnedRun,previous:Option<&OwnedRun>)->Result<Option<Vec<Receipt>>,String>{
+        self.recapture_publication_phase(phase,prepared,run,previous)
+    }
+    fn prepare_recovery(&mut self, run: &OwnedRun) -> Result<(), String> {
+        self.prepare_action_recovery(run)
+    }
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
+        // Stop extending the volatile overlay at the first neutralization
+        // fence. Release still follows physical action restoration below.
+        if let Some(actor) = self.recovery_publications.get(&key(&run.owner)) {
+            actor.revoke_renewal();
+        }
         let resources = self.resources.clone();
         let companions = self.companions.clone();
         let mut adapter_result=Ok(());
         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
+            state.publication.revoke_renewal();
             if let Some(reducer) = state.reducer.as_mut() {
                 reducer.stop();
                 state.recording.record(reducer.drain_reports());
@@ -630,7 +653,8 @@ impl Host for NativeProfileHost {
         }
         let visibility_result=self.restore_visibility(run);
         let action_result=self.restore_actions(run,false);
-        adapter_result.and(visibility_result).and(action_result)
+        adapter_result.and(visibility_result).and(action_result)?;
+        self.restore_publication(run)
     }
     fn enter(
         &mut self,
@@ -639,8 +663,9 @@ impl Host for NativeProfileHost {
         run: &OwnedRun,
     ) -> Result<(), String> {
         self.check_transition(&run.owner)?;
+        if phase!=ApplyPhase::Overrides { publication::active(self.run(&run.owner)?)?; }
         match phase {
-            ApplyPhase::Overrides => Ok(()),
+            ApplyPhase::Overrides => self.acquire_publication(&run.owner),
             ApplyPhase::Acquire => {
                 let native = self.native;
                 let origin = self.controllers.stream_page("", 0).captured_us;
@@ -710,7 +735,7 @@ impl Host for NativeProfileHost {
                 }
                 self.check_transition(&run.owner)?;
                 let (delivery, companion_frames) = self.companion_baseline(&run.owner, &prepared.plan)?;
-                let panel_frames = self.panel_baseline(&run.owner, &delivery)?;
+                let panel_frames = self.panel_baseline(&run.owner, &delivery, false)?;
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
                     self.controllers.as_ref(),
@@ -732,6 +757,7 @@ impl Host for NativeProfileHost {
                 let games = self.games.clone();
                 let resources = self.resources.clone();
                 let controllers = self.controllers.clone();
+                let admission_epoch=self.admission_epoch.clone();
                 let (assignments, document, backend, game_preparation) = {
                     let state = self.run(&run.owner)?;
                     (
@@ -771,7 +797,7 @@ impl Host for NativeProfileHost {
                 let delivery = delivery
                     .plan
                     .ok_or("The compiler did not produce the final native delivery plan.")?;
-                let panel_frames = self.panel_baseline(&run.owner, &delivery)?;
+                let panel_frames = self.panel_baseline(&run.owner, &delivery, true)?;
                 self.bind_actions(&run.owner, &delivery)?;
                 let companion_hub = if self.run(&run.owner)?.companions.is_empty() { None } else { Some(self.companions.profile_metadata()?) };
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
@@ -800,6 +826,7 @@ impl Host for NativeProfileHost {
                 state.baselines.extend(panel_frames);
                 state.baselines.extend(companion_frames);
                 state.delivery = Some(delivery);
+                Self::check_epoch(&admission_epoch,state.admission_epoch)?;
                 let mut reducer = Phase::new(
                     prepared.plan.program.clone(),
                     Counter(run.owner.generation),
@@ -810,12 +837,13 @@ impl Host for NativeProfileHost {
                     reducer.accept(baseline)?;
                 }
                 visibility::active(&mut state.visibility)?;
+                publication::active(state)?;
                 state.companions.arm(reducer.run_token())?;
                 state.scripts.poll(&mut reducer);
                 state.recording.record(reducer.drain_reports());
                 let effects = reducer.drain();
                 state.reducer = Some(reducer);
-                state.panels.start()?;
+                Self::check_epoch(&admission_epoch,state.admission_epoch)?;
                 action::start(state)?;
                 state.started = Instant::now();
                 let _physical_diagnostics = action::dispatch(state,&effects);
@@ -833,9 +861,10 @@ impl Host for NativeProfileHost {
             Self::withdraw_game(&self.resources, state)?;
         }
         let captured = companion::receipts(&run.receipts)?;
+        let _publication_receipts=crate::profile_session_overrides::Overrides::from_run(run,self.panels.clone())?;
         let visibility_receipt=crate::profile_session_visibility::Visibility::from_receipts(run,self.controllers.clone())?;
         for receipt in &run.receipts {
-            if companion::has_receipts(std::slice::from_ref(receipt)) || action::has_receipts(std::slice::from_ref(receipt)) || receipt.kind=="controller-visibility" && visibility_receipt.is_some() { continue; }
+            if companion::has_receipts(std::slice::from_ref(receipt)) || action::has_receipts(std::slice::from_ref(receipt)) || receipt.kind==crate::profile_session_overrides::KIND || receipt.kind=="controller-visibility" && visibility_receipt.is_some() { continue; }
             if receipt.kind != "virtual-output" || receipt.resource_id != "virtual-output"
                 || receipt.state != json!({"journal":crate::profile_session_virtual::journal_name(&run.owner)?}) {
                 return Err("Unknown native recovery receipts require inspection; external state was preserved.".into());
@@ -843,6 +872,7 @@ impl Host for NativeProfileHost {
         }
         self.restore_visibility(run)?;
         self.restore_actions(run,recovery)?;
+        self.restore_publication(run)?;
         if run.attempted.contains(&ApplyPhase::Acquire) {
             if run.receipts.iter().any(|r|r.kind=="virtual-output") { crate::profile_session_virtual::recover(&run.owner)?; }
             if !captured.is_empty() { companion::restore(&self.companions.profile_metadata()?, &captured, false)?; }
@@ -857,6 +887,7 @@ impl Host for NativeProfileHost {
         let games = self.games.clone();
         let companions = self.companions.clone();
         let state = self.run(&run.owner)?;
+        publication::active(state)?;
         visibility::active(&mut state.visibility)?;
         let (frames, mut degraded) = state
             .inputs
@@ -914,6 +945,7 @@ impl Host for NativeProfileHost {
     fn install_launch_context(&mut self, run:&OwnedRun, candidate:&Candidate)->Result<Prepared,String> {self.install_held_context(run,candidate)}
     fn discard_preparation(&mut self, owner: &RunOwner) {
         if let Some(mut state) = self.prepared.remove(&key(owner)) {
+            state.publication.revoke_renewal();
             let _=state.actions.stop();
             state.scripts.stop();
             state.game.stop();
@@ -921,6 +953,7 @@ impl Host for NativeProfileHost {
             let _ = state.companions.stop_native(&self.companions);
             let _ = Self::withdraw_game(&self.resources, &state);
             if state.visibility.needs_cleanup() { self.recovery_visibility.insert(key(owner),state.visibility); }
+            if state.publication.needs_cleanup(){self.recovery_publications.insert(key(owner),state.publication);}
             self.discard_actions(owner,state.actions);
         }
     }

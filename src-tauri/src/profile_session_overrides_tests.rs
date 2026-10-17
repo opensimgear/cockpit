@@ -15,16 +15,16 @@ fn runtime_enable_or_disable_never_uses_persistent_device_lifecycle() {
     let mut plan = osg_profiles::compiler::compile(&osg_profiles::default_document(), &snapshot)
         .plan
         .unwrap();
-    assert!(validate(&plan).is_ok());
+    assert!(Staged::prepare(&plan, &snapshot)
+        .unwrap()
+        .targets
+        .is_empty());
     for enabled in [true, false] {
         plan.runtime_overrides = vec![osg_profiles::RuntimeOverride {
             resource_id: "physical".into(),
             enabled,
         }];
-        let error = validate(&plan).unwrap_err();
-        assert!(
-            error.contains("nonpersistent publication lease")
-                && error.contains("no persistent device setting was changed")
-        );
+        let error = Staged::prepare(&plan, &snapshot).err().unwrap();
+        assert!(error.contains("Bind an exact native CAN controller"));
     }
 }

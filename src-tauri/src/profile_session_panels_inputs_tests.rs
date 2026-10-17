@@ -6,6 +6,150 @@ use osg_profiles::{
 };
 use std::sync::Condvar;
 
+#[test]
+fn activation_requires_a_new_live_read_and_consumes_its_baseline_exactly_once() {
+    for can in [false, true] {
+        let (plan, io) = fixture(can, 1);
+        io.automatic_clock.store(true, Ordering::Release);
+        let mut inputs = PanelInputs::prepare_io(&plan, io.clone()).unwrap();
+        inputs.acquire(0).unwrap();
+        let original = eventually(|| inputs.baseline(&plan, |_| Ok(())).unwrap());
+
+        let inactive = Arc::new(Block::new());
+        *io.block.lock().unwrap() = Some(("panel0".into(), inactive.clone()));
+        inactive.entered();
+        // These edges predate activation and must never become occurrences.
+        io.press(true);
+        io.press(false);
+        inputs.begin_live_baseline().unwrap();
+        assert!(inputs.live_baseline(&plan, |_| Ok(())).unwrap().is_none());
+
+        let live = Arc::new(Block::new());
+        *io.block.lock().unwrap() = Some(("panel0".into(), live.clone()));
+        inactive.release();
+        live.entered();
+        assert!(
+            inputs.live_baseline(&plan, |_| Ok(())).unwrap().is_none(),
+            "A late inactive reply cannot acknowledge live activation"
+        );
+        assert!(inputs.mailbox.lock().unwrap().frames.is_empty());
+
+        live.release();
+        let baseline = eventually(|| inputs.live_baseline(&plan, |_| Ok(())).unwrap());
+        assert_eq!(baseline.len(), 1);
+        assert_eq!(baseline[0].reason, Reason::Baseline);
+        assert!(baseline[0].sequence > original[0].sequence);
+        assert_eq!(
+            sample(&baseline[0], "button-event:0"),
+            Some(&SignalSample::Unknown)
+        );
+        let pending = inputs.poll(|_| Ok(())).unwrap();
+        assert!(
+            pending
+                .frames
+                .iter()
+                .all(|frame| frame.reason != Reason::Baseline),
+            "The baseline already admitted by the Host cannot reset its live reducer"
+        );
+        io.press(true);
+        let changes = eventually(|| {
+            let poll = inputs.poll(|_| Ok(())).unwrap();
+            poll.frames
+                .iter()
+                .any(|frame| {
+                    sample(frame, "button-event:0")
+                        == Some(&SignalSample::scalar(PortValue::Boolean(true)))
+                })
+                .then_some(poll.frames)
+        });
+        assert!(changes
+            .iter()
+            .all(|frame| frame.sequence > baseline[0].sequence));
+        inputs.stop();
+    }
+}
+
+#[test]
+fn delayed_live_peer_keeps_other_baselines_fresh_and_admits_only_postbaseline_changes() {
+    let (plan, io) = fixture(true, 2);
+    io.automatic_clock.store(true, Ordering::Release);
+    let mut inputs = PanelInputs::prepare_io(&plan, io.clone()).unwrap();
+    inputs.acquire(0).unwrap();
+    eventually(|| inputs.baseline(&plan, |_| Ok(())).unwrap());
+    let fast = inputs
+        .specs
+        .iter()
+        .find(|spec| matches!(&spec.target,Target::Can{gateway,..} if gateway=="panel1"))
+        .unwrap()
+        .logical
+        .clone();
+    let slow = Arc::new(Block::new());
+    *io.block.lock().unwrap() = Some(("panel0".into(), slow.clone()));
+    inputs.begin_live_baseline().unwrap();
+    {
+        let mut mailbox = inputs.mailbox.lock().unwrap();
+        mailbox.loss_epoch += 1;
+        mailbox.baselines.clear();
+    }
+    slow.entered();
+    eventually(|| {
+        inputs
+            .mailbox
+            .lock()
+            .unwrap()
+            .baselines
+            .contains_key(&fast)
+            .then_some(())
+    });
+    thread::sleep(Duration::from_millis(320));
+    assert!(inputs.live_baseline(&plan, |_| Ok(())).unwrap().is_none());
+    assert!(
+        inputs.mailbox.lock().unwrap().frames.is_empty(),
+        "Unadmitted snapshots cannot queue event delivery"
+    );
+
+    let in_flight = Arc::new(Block::new());
+    *io.block.lock().unwrap() = Some(("panel1".into(), in_flight.clone()));
+    in_flight.entered();
+    slow.release();
+    let baseline = eventually(|| inputs.live_baseline(&plan, |_| Ok(())).unwrap());
+    assert_eq!(baseline.len(), 2);
+    let accepted = baseline
+        .iter()
+        .find(|frame| frame.source == fast)
+        .unwrap()
+        .clone();
+    let first = inputs.poll(|_| Ok(())).unwrap();
+    assert!(
+        first
+            .frames
+            .iter()
+            .all(|frame| !matches!(frame.reason, Reason::Baseline | Reason::Gap)),
+        "The admitted newer generation cannot immediately gap again"
+    );
+    io.press(true);
+    in_flight.release();
+    let frames = eventually(|| {
+        let poll = inputs.poll(|_| Ok(())).unwrap();
+        poll.frames
+            .iter()
+            .any(|frame| {
+                frame.source == fast
+                    && sample(frame, "button-event:0")
+                        == Some(&SignalSample::scalar(PortValue::Boolean(true)))
+            })
+            .then_some(poll.frames)
+    });
+    assert!(
+        frames
+            .iter()
+            .filter(|frame| frame.source == fast)
+            .all(|frame| frame.sequence > accepted.sequence
+                && frame.generation == accepted.generation)
+    );
+    inputs.stop();
+}
+
 fn events() -> Value {
     json!({"ok":true,"schemaVersion":1,"stream":7,"head":0,"oldest":1,"overflow":0,
         "buttonCount":1,"held":[false],"contactButtonCount":1,"maintainedButtons":[0],"encoderButtons":[],"selectorButtons":[],

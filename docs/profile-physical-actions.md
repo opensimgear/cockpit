@@ -8,6 +8,20 @@ Delivery needs a separately bound, current native Invoke token and the exact pro
 
 Cleanup reads current state and bounded endpoint ownership pages, then sends only the token-fenced release for the exact still-owned lease. Firmware compares its actual output with the last value successfully read back under that lease before applying the captured prior value; external edits are preserved. An uncertain release is not reissued by the same adapter. Explicit recovery may only inspect and release an existing lease; recovered objects cannot claim, bind delivery or invoke. A later owner's lease is preserved. Changed or unavailable route, boot, configuration or catalogue remains an actionable unresolved receipt instead of selecting another device or replaying output.
 
+Publication changes can advance a CAN delivery lease during cleanup. A sealed
+cleanup-only proof permits passive state/ownership reads and exact-secret Release
+through the current route of the same gateway/module, boot, configuration,
+profile and action catalogue. It never authorizes Claim, Invoke or Renew. An
+acknowledged in-memory action lease can also verify its exact original fallback
+after autonomous expiry. A crash-recovered preclaim receipt lacks that later
+acknowledgement: if the route changed and ownership already expired, public
+fallback state cannot authenticate its history, so recovery remains pending.
+Foreign owners and independently changed values remain preserved.
+
 Focused native tests cover USB and CAN, atomic prior capture after preparation, ordered Boolean/integer/enum/UTF-8 arguments, one-shot endpoint aliases, external edits, lost replies, owner/token/route substitution, stale boot/configuration, bounded receipts and cleanup-only OS-protected roundtrips. These tests establish software protocol behavior; physical hardware qualification remains separate.
 
-All 14 focused tests pass. The independent native module gate covers 667/754 production lines (88.46%) with unchanged source stamps and the existing 71% minimum. Worker dispatch and actual Host composition remain separate implementation units.
+All 21 focused lease tests pass. The source-stamped native lease gate covers
+880/918 production lines (95.86%), above the existing 71% minimum. The combined
+30-case publication suite also exercises actual Host input-to-Setter delivery,
+action cleanup before descriptor changes and autonomous expiry after an advanced
+CAN delivery lease. See [publication composition](profile-publication.md).

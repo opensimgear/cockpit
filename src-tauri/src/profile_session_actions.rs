@@ -644,6 +644,12 @@ impl PanelActions {
         }
         result
     }
+    /// Every dispatched driver is moved into its worker. A retained driver
+    /// proves that this preparation never reached an action I/O worker, even
+    /// after stop() has marked an inert preparation acquired for shutdown.
+    pub(crate) fn is_unstarted_preparation(&self) -> bool {
+        !self.recovery && self.slots.iter().all(|slot| slot.driver.is_some())
+    }
     pub(crate) fn stop(&mut self) -> Result<ActionPoll, String> {
         self.active.store(false, Ordering::Release);
         // Recovery workers never enter the acquisition/claim branch.

@@ -9,6 +9,7 @@ use osg_profiles::resources::{
 use osg_profiles::resources_ports::PortUpdate;
 use osg_profiles::Direction;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
@@ -565,6 +566,9 @@ impl Sources {
                 }
             }
             item.attributes = attributes([("moduleId", id.into()), ("gatewayId", gateway.into())]);
+            if let Some(publication) = crate::profile_session_overrides::advertised(state, module) {
+                item.attributes.insert("controllerPublicationOverride".into(), publication.to_string());
+            }
             let events = &state["moduleEvents"][id];
             let actions = &state["moduleActions"][id];
             let expected_route = json!([
@@ -604,6 +608,26 @@ impl Sources {
                 );
             }
             if state["connected"] == true && module["online"] == true {
+                let mut route_attributes = attributes([
+                    ("gatewayId", gateway.into()),
+                    ("moduleId", id.into()),
+                    ("boot", module["boot"].to_string()),
+                    ("node", module["node"].to_string()),
+                ]);
+                if actions_current {
+                    // Publication may renew a CAN delivery lease, but it cannot
+                    // authorize a different action catalogue with equal ports.
+                    let catalogue = serde_json::to_vec(&json!({
+                        "revision": actions["catalogueRevision"],
+                        "actions": actions["actions"],
+                        "ownership": actions["ownership"],
+                    }))
+                    .map_err(|error| error.to_string())?;
+                    route_attributes.insert(
+                        "actionCatalogueHash".into(),
+                        format!("{:x}", Sha256::digest(catalogue)),
+                    );
+                }
                 item.route = Some(Route {
                     id: format!("can:{gateway}:{id}"),
                     transport: Transport::Can,
@@ -615,12 +639,7 @@ impl Sources {
                         events["stream"]
                     ])
                     .to_string(),
-                    attributes: attributes([
-                        ("gatewayId", gateway.into()),
-                        ("moduleId", id.into()),
-                        ("boot", module["boot"].to_string()),
-                        ("node", module["node"].to_string()),
-                    ]),
+                    attributes: route_attributes,
                     baseline_ready: events_current,
                     writable: !identity_conflict
                         && module["canConfigure"] == true

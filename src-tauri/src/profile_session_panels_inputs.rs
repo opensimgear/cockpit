@@ -264,6 +264,7 @@ struct Spec {
     target: Target,
     ports: Vec<Port>,
 }
+#[derive(Clone)]
 struct Source {
     spec: Spec,
     cursor: Option<(u32, u32)>,
@@ -483,6 +484,7 @@ pub(crate) struct PanelInputs {
     mailbox: Arc<Mutex<Mailbox>>,
     revoked: Arc<AtomicBool>,
     active: Arc<AtomicBool>,
+    admitted: Arc<AtomicBool>,
     workers: Vec<JoinHandle<()>>,
     tokens: BTreeMap<String, Vec<ResourceToken>>,
     accepted: BTreeMap<String, (u64, u64, u64)>,
@@ -572,6 +574,7 @@ impl PanelInputs {
             mailbox: Arc::new(Mutex::new(Mailbox::default())),
             revoked: Arc::new(AtomicBool::new(false)),
             active: Arc::new(AtomicBool::new(false)),
+            admitted: Arc::new(AtomicBool::new(false)),
             workers: vec![],
             tokens: BTreeMap::new(),
             accepted: BTreeMap::new(),
@@ -596,6 +599,7 @@ impl PanelInputs {
             let mailbox = self.mailbox.clone();
             let revoked = self.revoked.clone();
             let active = self.active.clone();
+            let admitted = self.admitted.clone();
             let worker = thread::Builder::new()
                 .name("profile-panel-inputs".into())
                 .spawn(move || {
@@ -604,16 +608,25 @@ impl PanelInputs {
                         retry: Instant::now(), generation: 1, sampled_at: None,
                     };
                     let mut was_active = false;
+                    let mut was_admitted = false;
+                    let mut startup:Option<Source>=None;
                     let mut epoch = 0;
                     let now = || clock_origin_us.saturating_add(
                         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
                     while !revoked.load(Ordering::Acquire) {
                         let running = active.load(Ordering::Acquire);
+                        let delivering = admitted.load(Ordering::Acquire);
                         if running && !was_active {
                             // Events that predate activation are not replayable.
                             source.cursor = None;
                         }
                         was_active = running;
+                        if delivering&&!was_admitted {
+                            // Restore the exact snapshot accepted by the Host,
+                            // discarding any later unadmitted read's cursor.
+                            if let Some(checkpoint)=startup.take(){source=checkpoint;}
+                        }
+                        was_admitted=delivering;
                         {
                             let state = mailbox.lock().unwrap_or_else(|p| p.into_inner());
                             if state.blocked.contains(&source.spec.logical) { break; }
@@ -631,7 +644,7 @@ impl PanelInputs {
                             thread::sleep(Duration::from_millis(5));
                             continue;
                         };
-                        let baseline = !running || source.cursor.is_none();
+                        let baseline = !running || !delivering || source.cursor.is_none();
                         let result = if baseline {
                             source.baseline(io.as_ref(), now()).map(|frame| vec![frame])
                         } else {
@@ -644,6 +657,10 @@ impl PanelInputs {
                         // Check again under the publication lock so Stop cannot
                         // clear the mailbox immediately before a late append.
                         if revoked.load(Ordering::Acquire) || state.blocked.contains(&source.spec.logical) { break; }
+                        // An inactive read already in flight when Start armed
+                        // the reader cannot supply the first live baseline.
+                        if running != active.load(Ordering::Acquire) { continue; }
+                        if delivering != admitted.load(Ordering::Acquire) { continue; }
                         if state.loss_epoch != epoch { continue; }
                         match result {
                             Ok(mut frames) => {
@@ -653,8 +670,9 @@ impl PanelInputs {
                                     if let Some(frame) = frames.first() {
                                         state.baselines.insert(source.spec.logical.clone(), frame.clone());
                                     }
+                                    if running&&!delivering {startup=Some(source.clone());}
                                 }
-                                if running {
+                                if running&&delivering {
                                     if state.frames.len() + frames.len() > MAX_QUEUE {
                                         state.frames.clear();
                                         state.baselines.clear();
@@ -668,7 +686,7 @@ impl PanelInputs {
                                 source.cursor = None;
                                 source.retry = Instant::now() + Duration::from_millis(100);
                                 state.baselines.remove(&source.spec.logical);
-                                if running {
+                                if running&&delivering {
                                     if let Ok(gap) = source.frame(after, Reason::Gap, vec![]) {
                                         if state.frames.len() == MAX_QUEUE {
                                             state.frames.clear();
@@ -694,13 +712,31 @@ impl PanelInputs {
         delivery: &ExecutionPlan,
         validate: impl Fn(&ResourceToken) -> Result<(), String>,
     ) -> Result<Option<Vec<Frame>>, String> {
+        self.capture_baseline(delivery, validate, false)
+    }
+    /// Capture the actual first live snapshot before the Host arms its reducer.
+    /// This consumes only duplicate baseline frames, retaining later changes.
+    pub(crate) fn live_baseline(
+        &mut self,
+        delivery: &ExecutionPlan,
+        validate: impl Fn(&ResourceToken) -> Result<(), String>,
+    ) -> Result<Option<Vec<Frame>>, String> {
+        self.capture_baseline(delivery, validate, true)
+    }
+    fn capture_baseline(
+        &mut self,
+        delivery: &ExecutionPlan,
+        validate: impl Fn(&ResourceToken) -> Result<(), String>,
+        live: bool,
+    ) -> Result<Option<Vec<Frame>>, String> {
         if self.revoked.load(Ordering::Acquire)
             || self.clock.is_none()
-            || self.active.load(Ordering::Acquire)
+            || self.active.load(Ordering::Acquire) != live
+            || live && self.admitted.load(Ordering::Acquire)
         {
             return Err("The native panel reader is not acquired.".into());
         }
-        let state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
         if self
             .specs
             .iter()
@@ -770,6 +806,20 @@ impl PanelInputs {
             .iter()
             .map(|s| state.baselines[&s.logical].clone())
             .collect::<Vec<_>>();
+        if live {
+            state.frames.retain(|frame| {
+                !frames.iter().any(|baseline| {
+                    baseline.source == frame.source
+                        && (frame.generation < baseline.generation
+                            || frame.generation == baseline.generation
+                                && frame.sequence <= baseline.sequence)
+                })
+            });
+            // No page/event queue is published before this common admission.
+            // All sources now use exactly the baselines captured under this lock.
+            self.loss_epoch = state.loss_epoch;
+            self.admitted.store(true, Ordering::Release);
+        }
         drop(state);
         for frame in &frames {
             self.accepted.insert(
@@ -806,9 +856,24 @@ impl PanelInputs {
         }
     }
     pub(crate) fn start(&mut self) -> Result<(), String> {
-        if !self.bound || self.revoked.load(Ordering::Acquire) {
+        self.activate(true)
+    }
+    pub(crate) fn begin_live_baseline(&mut self) -> Result<(), String> {
+        self.activate(false)
+    }
+    fn activate(&mut self, admitted: bool) -> Result<(), String> {
+        if !self.bound
+            || self.revoked.load(Ordering::Acquire)
+            || self.active.load(Ordering::Acquire)
+        {
             return Err("Admit real panel baselines before starting this reader.".into());
         }
+        // Publish the activation fence under the same lock as worker results.
+        // The Host must consume a new live baseline before exposing outputs.
+        let mut state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
+        state.frames.clear();
+        state.baselines.clear();
+        self.admitted.store(admitted, Ordering::Release);
         self.active.store(true, Ordering::Release);
         Ok(())
     }
@@ -902,6 +967,7 @@ impl PanelInputs {
     pub(crate) fn stop(&mut self) {
         self.revoked.store(true, Ordering::Release);
         self.active.store(false, Ordering::Release);
+        self.admitted.store(false,Ordering::Release);
         self.bound = false;
         let mut state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
         state.frames.clear();

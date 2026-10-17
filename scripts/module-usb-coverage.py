@@ -18,6 +18,17 @@ TEST_FILTERS = ["gateways::companion_retention::tests", "profile_retired_recover
 
 MODULES.append("stm32_publication")
 TEST_FILTERS.append("stm32::publication::tests")
+# The overrides module is a declaration-only facade; gate its actual native
+# ownership actor and Coordinator integration, with their real shared fixtures.
+MODULES.remove("profile_session_overrides")
+MODULES.extend(["profile_publication", "profile_session_publication_host"])
+TEST_FILTERS.append("profile_session_overrides::publication")
+MODULE_TEST_SOURCES = {
+    "profile_publication": ["profile_publication_tests", "profile_publication_rebind_tests",
+                            "profile_publication_action_tests"],
+    "profile_session_publication_host": ["profile_publication_tests",
+                                         "profile_publication_action_tests"],
+}
 
 
 def source_stamp(paths, root):
@@ -63,8 +74,11 @@ def main():
     # Never leave a previous successful summary behind after a failed rerun.
     for name in ["summary.json", "evidence.json", "tests.log"]:
         (output / name).unlink(missing_ok=True)
-    tracked = [root / f"src-tauri/src/{module}{suffix}.rs"
-               for module in MODULES for suffix in ["", "_tests"]]
+    tracked = [root / f"src-tauri/src/{name}.rs"
+               for module in MODULES
+               for name in [module, *MODULE_TEST_SOURCES.get(module, [f"{module}_tests"])]]
+    tracked.extend(root / f"src-tauri/src/{name}.rs" for name in
+                   ["profile_session_overrides", "profile_session_overrides_tests"])
     tracked.extend([root / "src-tauri/src/lib.rs", root / "src-tauri/src/profile_session_host.rs", root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/stm32.rs", root / "src-tauri/src/pico.rs", root / "src-tauri/src/games.rs", root / "src-tauri/src/game_discovery.rs", root / "src-tauri/src/game_context.rs", root / "src-tauri/src/game_context_runtime.rs", root / "src-tauri/src/profile_session.rs", root / "src-tauri/src/profile_session_stage.rs", root / "src-tauri/src/profile_session_journal.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
     if not args.module or "profile_automatic" in measured or "profile_game_orchestration_runtime" in measured or "profile_companion_retention" in measured:
         # The full gate also pins Manager construction/admission. A focused

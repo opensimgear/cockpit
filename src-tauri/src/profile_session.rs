@@ -150,6 +150,15 @@ pub(crate) trait Host: Send {
     ) -> Result<Vec<Receipt>, String>;
     fn set_authority(&mut self, owner: Option<&RunOwner>) -> Result<(), String>;
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String>;
+    /// Explicit Recover may rebuild a finished, unresolved cleanup worker from
+    /// the same durable private receipt. This hook cannot acquire or replay any
+    /// output; ordinary Stop and failed activation never invoke it.
+    fn prepare_recovery(&mut self, _: &OwnedRun) -> Result<(), String> { Ok(()) }
+    /// Native publication can renew CAN delivery identities after restoring an
+    /// outgoing layout or settling an incoming one. Capture replacement cleanup
+    /// receipts and exact preparation pins before the next phase is journaled;
+    /// this read-only hook must preserve the authored graph and physical targets.
+    fn recapture_phase(&mut self, _: ApplyPhase, _: &mut Prepared, _: &OwnedRun, _: Option<&OwnedRun>) -> Result<Option<Vec<Receipt>>, String> { Ok(None) }
     fn enter(
         &mut self,
         phase: ApplyPhase,
@@ -310,7 +319,7 @@ impl<H: Host> Coordinator<H> {
         &mut self,
         candidate: Candidate,
         owner: RunOwner,
-        prepared: Prepared,
+        mut prepared: Prepared,
         hold: bool,
     ) -> Result<(), String> {
         if !prepared.admission.blockers.is_empty() {
@@ -351,10 +360,18 @@ impl<H: Host> Coordinator<H> {
             if let Some(previous) = self.manifest.pending.as_ref().unwrap().outgoing.as_ref() {
                 self.host.neutralize(previous)?;
             }
-            self.host.validate_prepared(&prepared, &owner)?;
             for phase in APPLY_PHASES {
                 if hold && phase == ApplyPhase::Start { break; }
+                let incoming=self.manifest.pending.as_ref().unwrap().incoming.as_ref().unwrap().clone();
+                let outgoing=self.manifest.pending.as_ref().unwrap().outgoing.clone();
+                let refreshed=self.host.recapture_phase(phase,&mut prepared,&incoming,outgoing.as_ref())?;
+                if phase==ApplyPhase::Overrides { self.host.validate_prepared(&prepared,&owner)?; }
                 let mut next = self.manifest.clone();
+                if let Some(receipts)=refreshed {
+                    let incoming=next.pending.as_mut().unwrap().incoming.as_mut().unwrap();
+                    incoming.receipts=receipts;
+                    incoming.capture_fingerprint=prepared.capture_fingerprint.clone();
+                }
                 next.pending
                     .as_mut()
                     .unwrap()
@@ -545,9 +562,22 @@ impl<H: Host> Coordinator<H> {
         self.launch = None;
         self.status.owner = None;
         let revoke = self.host.set_authority(None);
+        let retry = self.store.verify().and_then(|_| {
+            let mut runs = Vec::new();
+            if let Some(pending) = &self.manifest.pending {
+                runs.extend(pending.incoming.iter().cloned());
+                runs.extend(pending.outgoing.iter().cloned());
+            } else {
+                runs.extend(self.manifest.active.iter().cloned());
+            }
+            for run in runs {
+                self.host.prepare_recovery(&run)?;
+            }
+            Ok(())
+        });
         let neutralize = self.neutralize_owned();
         let restore = self.compensate(true);
-        revoke.and(neutralize).and(restore)?;
+        revoke.and(retry).and(neutralize).and(restore)?;
         self.status.state = if self.status.paused {
             State::Paused
         } else {
@@ -626,3 +656,10 @@ impl<H: Host> Coordinator<H> {
 #[cfg(test)]
 #[path = "profile_session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+impl<H: Host> Coordinator<H> {
+    pub(crate) fn fail_save_when_attempting(&mut self, phase: ApplyPhase) {
+        self.store.fail_save_phase = Some(phase);
+    }
+}

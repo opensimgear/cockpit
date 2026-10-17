@@ -18,11 +18,13 @@ existing action lease protocol; ownership secrets never become public snapshots.
 The native entry point cannot create or disconnect transport sessions, save
 firmware settings, reset devices, forget remembered devices or replay a lost
 mutation. Configuration apply is explicitly runtime-only (`save=false`). Direct
-USB firmware currently advertises no HID publication enable operation; an enabled
-override for that transport must remain explicitly unsupported. Existing CAN Enable/Disable lifecycle operations save permanent registry state;
-profiles never use them as temporary overrides. Current controller enable
-intent remains blocked until firmware advertises an owned nonpersistent
-publication lease with compare-if-unchanged restoration.
+USB firmware currently advertises no HID publication enable operation; a
+publication override for that transport remains unsupported. Existing CAN
+Enable/Disable lifecycle operations save permanent registry state; profiles never
+use them as temporary overrides. Compatible STM32 CAN gateways instead expose a
+separate nonpersistent publication lease with compare-if-unchanged restoration.
+The native adapter requires that exact capability, full physical identity and
+private ownership proof. See [publication composition](profile-publication.md).
 
 Shutdown closes public admission and joins the profile poller first. Private
 native IO remains available for the coordinator's owned cleanup, then closes
@@ -53,8 +55,9 @@ whole pending event batch and advances the local source generation before new
 baselines are admitted. Stop revokes admission immediately, clears pending data,
 and discards late replies without waiting for transport timeouts. The read-only
 worker claims no configuration writer or action lease and has no restoration
-receipts. Owned Setter dispatch and HID publication overrides remain separate,
-blocked adapters until their actual advertised restoration guarantees are met.
+receipts. Owned Setter dispatch and HID publication overrides use separate
+adapters and require their own advertised restoration guarantees and native
+admission.
 
 The native Host now composes this reader into actual profile activation. Acquire
 uses the controller service's monotonic timeline. Both initial and final

@@ -45,6 +45,7 @@ struct Device {
     lost: Option<String>,
     bad_ack: Option<String>,
     bad_page: bool,
+    fallback_status: String,
 }
 impl Device {
     fn new() -> Self {
@@ -60,6 +61,7 @@ impl Device {
             lost: None,
             bad_ack: None,
             bad_page: false,
+            fallback_status: "none".into(),
         }
     }
     fn run(&mut self, r: Value) -> Result<(), String> {
@@ -81,6 +83,7 @@ impl Device {
                 self.owned = true;
                 self.secret = r["ownershipToken"].as_str().unwrap().into();
                 self.fallback = self.current.clone();
+                self.fallback_status = "none".into();
                 self.last = Some(self.current.clone());
                 self.cache["lastLease"] = json!({"leaseId":self.id,"endpoint":"display","remainingMs":5000,"released":null});
             }
@@ -111,10 +114,11 @@ impl Device {
                     self.current = self.fallback.clone();
                 }
                 self.owned = false;
-                self.cache["lastLease"] = json!({"leaseId":self.id,"endpoint":"display","released":true,"fallbackStatus":if applied{"applied"}else{"preserved"}});
+                self.fallback_status = if applied { "applied" } else { "preserved" }.into();
+                self.cache["lastLease"] = json!({"leaseId":self.id,"endpoint":"display","released":true,"fallbackStatus":self.fallback_status});
             }
             "action_ownership" => {
-                self.cache["ownershipPage"] = json!({"schemaVersion":1,"catalogueRevision":7,"total":1,"next":null,"ownership":[{"endpoint":"display","actionId":"display.set","owned":self.owned,"leaseId":self.id,"remainingMs":if self.owned{5000}else{0},"fallback":self.fallback,"fallbackStatus":"none"}]});
+                self.cache["ownershipPage"] = json!({"schemaVersion":1,"catalogueRevision":7,"total":1,"next":null,"ownership":[{"endpoint":"display","actionId":"display.set","owned":self.owned,"leaseId":self.id,"remainingMs":if self.owned{5000}else{0},"fallback":self.fallback,"fallbackStatus":self.fallback_status}]});
                 if self.bad_page {
                     self.cache["ownershipPage"]["next"] = json!(r["offset"]);
                 }
@@ -138,6 +142,8 @@ struct Fake {
     route: Mutex<Route>,
     usb_route: Mutex<UsbRouteToken>,
     fail_authority: AtomicBool,
+    // Native normalized identity fields; edits model independent discoveries.
+    can_identity: Mutex<Value>,
 }
 impl Fake {
     fn snapshot(&self) -> UsbSnapshot {
@@ -158,7 +164,8 @@ impl Fake {
         let mut cache = self.device.lock().unwrap().cache.clone();
         cache["route"] = json!([v[0], node, v[2], v[1]]);
         cache["configurationGeneration"] = v[3].clone();
-        json!({"connected":true,"epoch":v[0],"modules":[{"id":MODULE,"online":true,"node":node,"lease":v[2],"boot":v[1],"configurationGeneration":v[3]}],"moduleActions":{MODULE:cache}})
+        let identity = self.can_identity.lock().unwrap();
+        json!({"backend":"stm32","gatewaySerial":identity["gatewaySerial"],"connected":true,"epoch":v[0],"modules":[{"id":identity["id"],"online":true,"node":node,"lease":v[2],"boot":v[1],"configurationGeneration":v[3],"sourceNode":identity["sourceNode"],"profile":identity["profile"]}],"moduleActions":{MODULE:cache}})
     }
     fn calls(&self, command: &str) -> usize {
         self.device
@@ -357,6 +364,9 @@ fn fixture(can: bool, one_shot: bool) -> (SinkPlan, Arc<Fake>, RunOwner) {
             route: Mutex::new(route),
             usb_route: Mutex::new(usb),
             fail_authority: AtomicBool::new(false),
+            can_identity: Mutex::new(
+                json!({"gatewaySerial":"ffeeddccbbaa998877665544","id":MODULE,"sourceNode":50,"profile":{"revision":1,"buttons":12,"axes":1,"hats":0,"neutral":[32768],"axisUsage":[48]}}),
+            ),
         }),
         owner(),
     )
@@ -449,7 +459,13 @@ fn one_shot_alias_uses_same_readable_endpoint_lease_and_preserves_external_edits
         "display.set"
     );
     assert_eq!(
-        io.device.lock().unwrap().writes[1]["actionId"],
+        io.device
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .find(|r| r["command"] == "action_invoke_owned")
+            .unwrap()["actionId"],
         "display.flash"
     );
     io.device.lock().unwrap().current[3] = json!("external edit");
@@ -682,4 +698,225 @@ fn portable_argument_labels_are_cosmetic_but_actual_provider_contract_stays_pinn
         json!("New native label");
     assert!(lease.renew(&owner).is_err());
     assert_eq!(io.calls("action_renew"), 0);
+}
+
+fn advance_can_route(io: &Fake, field: usize) {
+    let mut route = io.route.lock().unwrap();
+    let mut generation: Vec<Value> = serde_json::from_str(&route.provider_generation).unwrap();
+    generation[field] = json!(generation[field].as_u64().unwrap() + 1);
+    route.provider_generation = json!(generation).to_string();
+}
+fn expire_action(io: &Fake) {
+    let mut device = io.device.lock().unwrap();
+    assert!(device.owned);
+    if device.last.as_ref() == Some(&device.current) {
+        device.current = device.fallback.clone();
+        device.fallback_status = "applied".into();
+    } else {
+        device.fallback_status = "preserved".into();
+    }
+    device.owned = false;
+    // Firmware deliberately retires the secret at TTL expiry.
+    device.secret.clear();
+}
+
+#[test]
+fn publication_can_lease_change_allows_only_cleanup_of_the_exact_old_action_owner() {
+    let (sink, io, owner) = fixture(true, false);
+    let mut lease = prepared(&sink, &io, &owner);
+    assert!(lease.cleanup.can_cleanup.is_some());
+    lease.claim().unwrap();
+    lease.bind_delivery(&sink).unwrap();
+    lease.invoke(&owner, &args()).unwrap();
+    let old_target = lease.cleanup.target.clone();
+    advance_can_route(&io, 2);
+    assert!(old_target.cached(io.as_ref()).is_err());
+    assert!(lease.invoke(&owner, &args()).is_err());
+    assert!(lease.renew(&owner).is_err());
+    assert!(lease.claim().is_err());
+    assert_eq!(lease.release().unwrap(), Released::Restored);
+    assert_eq!(
+        lease.cleanup.target, old_target,
+        "productive routing was never rebound"
+    );
+    assert_eq!(io.calls("action_claim_current"), 1);
+    assert_eq!(io.calls("action_invoke_owned"), 1);
+    assert_eq!(io.calls("action_renew"), 0);
+    assert_eq!(io.calls("action_release"), 1);
+    assert_eq!(
+        io.device.lock().unwrap().current,
+        lease.fallback.clone().unwrap()
+    );
+}
+
+#[test]
+fn recovered_active_action_can_release_after_publication_route_change_without_reclaim_or_replay() {
+    let (sink, io, owner) = fixture(true, false);
+    let mut lease = prepared(&sink, &io, &owner);
+    let receipt = lease.receipt();
+    lease.claim().unwrap();
+    lease.bind_delivery(&sink).unwrap();
+    lease.invoke(&owner, &args()).unwrap();
+    advance_can_route(&io, 2);
+    let mut recovery = Lease::recover_io(&receipt, &owner, io.clone(), &TestProtector).unwrap();
+    assert!(recovery.claim().is_err());
+    assert!(recovery.invoke(&owner, &args()).is_err());
+    assert!(recovery.renew(&owner).is_err());
+    assert_eq!(recovery.release().unwrap(), Released::Restored);
+    assert_eq!(io.calls("action_claim_current"), 1);
+    assert_eq!(io.calls("action_invoke_owned"), 1);
+    assert_eq!(io.calls("action_release"), 1);
+}
+
+#[test]
+fn in_memory_expiry_reconciles_only_exact_captured_fallback_and_stable_old_lease() {
+    for changed in ["none", "value", "fallback", "lease", "status"] {
+        let (sink, io, owner) = fixture(true, false);
+        let mut lease = prepared(&sink, &io, &owner);
+        lease.claim().unwrap();
+        lease.bind_delivery(&sink).unwrap();
+        lease.invoke(&owner, &args()).unwrap();
+        expire_action(&io);
+        advance_can_route(&io, 2);
+        {
+            let mut d = io.device.lock().unwrap();
+            match changed {
+                "value" => d.current[3] = json!("independent edit"),
+                "fallback" => d.fallback[3] = json!("unrelated prior state"),
+                "lease" => d.id += 1,
+                "status" => d.fallback_status = "preserved".into(),
+                _ => (),
+            }
+        }
+        if changed == "none" {
+            assert_eq!(lease.release().unwrap(), Released::Restored);
+        } else {
+            assert!(lease.release().is_err(), "{changed}");
+        }
+        assert_eq!(
+            io.calls("action_release"),
+            0,
+            "retired leases are read only"
+        );
+        assert_eq!(io.calls("action_claim_current"), 1);
+        assert_eq!(io.calls("action_invoke_owned"), 1);
+    }
+}
+
+#[test]
+fn recovered_retired_action_on_changed_route_stays_pending_without_secret_bound_receipt() {
+    let (sink, io, owner) = fixture(true, false);
+    let mut lease = prepared(&sink, &io, &owner);
+    let receipt = lease.receipt();
+    lease.claim().unwrap();
+    expire_action(&io);
+    advance_can_route(&io, 2);
+    let mut recovery = Lease::recover_io(&receipt, &owner, io.clone(), &TestProtector).unwrap();
+    let error = recovery.release().unwrap_err();
+    assert!(error.contains("pending"));
+    assert!(error.contains("authenticated retired action receipt"));
+    assert_eq!(io.calls("action_release"), 0);
+    assert_eq!(io.calls("action_claim_current"), 1);
+    assert_eq!(io.calls("action_invoke_owned"), 0);
+}
+
+#[test]
+fn changed_can_cleanup_rejects_wrong_gateway_module_epoch_boot_configuration_profile_and_catalogue()
+{
+    for changed in [
+        "gateway",
+        "module",
+        "epoch",
+        "boot",
+        "configuration",
+        "node",
+        "source",
+        "profile",
+        "catalogue",
+    ] {
+        let (sink, io, owner) = fixture(true, false);
+        let mut lease = prepared(&sink, &io, &owner);
+        lease.claim().unwrap();
+        advance_can_route(&io, 2);
+        match changed {
+            "gateway" => {
+                io.can_identity.lock().unwrap()["gatewaySerial"] = json!("112233445566778899aabbcc")
+            }
+            "module" => {
+                io.can_identity.lock().unwrap()["id"] = json!("4f53474411112233445566778899aabb")
+            }
+            "epoch" => advance_can_route(&io, 0),
+            "boot" => advance_can_route(&io, 1),
+            "configuration" => advance_can_route(&io, 3),
+            "node" => {
+                io.route
+                    .lock()
+                    .unwrap()
+                    .attributes
+                    .insert("node".into(), "51".into());
+            }
+            "source" => io.can_identity.lock().unwrap()["sourceNode"] = json!(51),
+            "profile" => io.can_identity.lock().unwrap()["profile"]["neutral"][0] = json!(32767),
+            // The selected setter is unchanged: the whole catalogue is pinned.
+            _ => {
+                io.device.lock().unwrap().cache["actions"][1]["label"] =
+                    json!("Independent catalogue")
+            }
+        }
+        let before = io.device.lock().unwrap().writes.len();
+        assert!(lease.release().is_err(), "{changed}");
+        assert_eq!(io.device.lock().unwrap().writes.len(), before, "{changed}");
+        assert!(io.device.lock().unwrap().owned);
+    }
+}
+
+#[test]
+fn changed_route_preserves_new_owner_and_compare_fenced_external_values_without_retry() {
+    for recovered in [false, true] {
+        let (sink, io, owner) = fixture(true, false);
+        let mut lease = prepared(&sink, &io, &owner);
+        let receipt = lease.receipt();
+        lease.claim().unwrap();
+        advance_can_route(&io, 2);
+        {
+            let mut d = io.device.lock().unwrap();
+            d.id += 1;
+            d.secret = "new private owner".into();
+            d.current[3] = json!("new owner's value");
+        }
+        if recovered {
+            lease = Lease::recover_io(&receipt, &owner, io.clone(), &TestProtector).unwrap();
+        }
+        assert!(lease.release().is_err());
+        assert!(lease.release().is_err());
+        assert!(io.device.lock().unwrap().owned);
+        assert_eq!(io.device.lock().unwrap().current[3], "new owner's value");
+        assert_eq!(io.calls("action_release"), usize::from(recovered));
+    }
+    let (sink, io, owner) = fixture(true, false);
+    let mut lease = prepared(&sink, &io, &owner);
+    lease.claim().unwrap();
+    lease.bind_delivery(&sink).unwrap();
+    lease.invoke(&owner, &args()).unwrap();
+    advance_can_route(&io, 2);
+    io.device.lock().unwrap().current[3] = json!("external edit");
+    assert!(
+        lease.release().is_err(),
+        "preserved values remain pending on changed route"
+    );
+    assert!(lease.release().is_err());
+    assert_eq!(io.calls("action_release"), 1);
+    assert_eq!(io.device.lock().unwrap().current[3], "external edit");
+}
+
+#[test]
+fn receipts_without_full_can_identity_remain_strict_and_cannot_rebind_cleanup() {
+    let (sink, io, owner) = fixture(true, false);
+    io.can_identity.lock().unwrap()["profile"] = Value::Null;
+    let mut lease = prepared(&sink, &io, &owner);
+    assert!(lease.cleanup.can_cleanup.is_none());
+    lease.claim().unwrap();
+    advance_can_route(&io, 2);
+    assert!(lease.release().is_err());
+    assert_eq!(io.calls("action_release"), 0);
 }
