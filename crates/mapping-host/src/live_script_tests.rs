@@ -62,9 +62,10 @@ fn start(service: &Service, profile: &Profile) -> Value {
     let started = service
         .request(&json!({"command":"mapping_virtual_start","profileId":profile.id}))
         .unwrap();
-    wait_for(service, |v| {
+    let ready=wait_for(service, |v| {
         v["scripts"][0]["pending"] == 0 && v["scripts"][0]["inflight"] == false
     });
+    assert!(ready["scripts"][0]["fault"].is_null(),"Script startup must be healthy before fixture input: {ready}");
     started["token"].clone()
 }
 fn press(service: &Service, token: &Value, assignment: &Assignment, pressed: bool) {
@@ -241,7 +242,8 @@ fn on_timer(ctx) { transaction(ctx.state,[],[]) }
             .creation_flags(0x08000000);
         c
     };
-    assert!(command.output().unwrap().status.success());
+    let killed=command.output().unwrap();
+    assert!(killed.status.success(),"Cannot terminate the owned test helper {pid}: status={:?}, stdout={}, stderr={}, runtime={}",killed.status,String::from_utf8_lossy(&killed.stdout),String::from_utf8_lossy(&killed.stderr),service.request(&json!({"command":"mapping_status"})).unwrap());
     wait_for(&service, |v| {
         v["scripts"][0]["fault"]
             .as_str()
