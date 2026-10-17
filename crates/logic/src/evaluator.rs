@@ -12,6 +12,12 @@ pub struct Program {
 }
 impl Program {
     pub fn compile(source: &str) -> Result<Self, String> {
+        Self::compile_mode(source, false)
+    }
+    pub(crate) fn compile_typed(source: &str) -> Result<Self, String> {
+        Self::compile_mode(source, true)
+    }
+    fn compile_mode(source: &str, typed: bool) -> Result<Self, String> {
         if source.is_empty() || source.len() > 16_384 {
             return Err("Script source must contain 1–16384 bytes.".into());
         }
@@ -41,38 +47,47 @@ impl Program {
                 .then_some(Dynamic::UNIT)
         });
         // No standard package, resolver, clock, randomness, printing or native handles.
-        engine.register_fn("button",|output:rhai::ImmutableString,value:bool|->Map {rhai::serde::to_dynamic(serde_json::json!({"output":output.as_str(),"value":{"kind":"button","value":value}})).unwrap().cast()});
-        engine.register_fn("axis", |output: rhai::ImmutableString, value: i64| -> Map {
-            rhai::serde::to_dynamic(
+        if typed {
+            crate::typed_evaluator::register(&mut engine);
+        } else {
+            engine.register_fn("button",|output:rhai::ImmutableString,value:bool|->Map {rhai::serde::to_dynamic(serde_json::json!({"output":output.as_str(),"value":{"kind":"button","value":value}})).unwrap().cast()});
+            engine.register_fn("axis", |output: rhai::ImmutableString, value: i64| -> Map {
+                rhai::serde::to_dynamic(
                 serde_json::json!({"output":output.as_str(),"value":{"kind":"axis","value":value}}),
             )
             .unwrap()
             .cast()
-        });
-        engine.register_fn("hat",|output:rhai::ImmutableString,value:i64|->Map {rhai::serde::to_dynamic(serde_json::json!({"output":output.as_str(),"value":{"kind":"hat","value":if value<0 {serde_json::Value::Null}else{value.into()}}})).unwrap().cast()});
-        engine.register_fn("timer", |id: rhai::ImmutableString, after: i64| -> Map {
-            rhai::serde::to_dynamic(serde_json::json!({"id":id.as_str(),"afterUs":after}))
-                .unwrap()
-                .cast()
-        });
-        engine.register_fn(
-            "transaction",
-            |state: Map, outputs: rhai::Array, timers: rhai::Array| -> Map {
-                let mut result = Map::new();
-                result.insert("state".into(), state.into());
-                result.insert("outputs".into(), outputs.into());
-                result.insert("timers".into(), timers.into());
-                result
-            },
-        );
+            });
+            engine.register_fn("hat",|output:rhai::ImmutableString,value:i64|->Map {rhai::serde::to_dynamic(serde_json::json!({"output":output.as_str(),"value":{"kind":"hat","value":if value<0 {serde_json::Value::Null}else{value.into()}}})).unwrap().cast()});
+            engine.register_fn("timer", |id: rhai::ImmutableString, after: i64| -> Map {
+                rhai::serde::to_dynamic(serde_json::json!({"id":id.as_str(),"afterUs":after}))
+                    .unwrap()
+                    .cast()
+            });
+            engine.register_fn(
+                "transaction",
+                |state: Map, outputs: rhai::Array, timers: rhai::Array| -> Map {
+                    let mut result = Map::new();
+                    result.insert("state".into(), state.into());
+                    result.insert("outputs".into(), outputs.into());
+                    result.insert("timers".into(), timers.into());
+                    result
+                },
+            );
+        }
         let ast = engine
             .compile(source)
             .map_err(|e| e.to_string())?
             .clone_functions_only();
-        for name in ["on_start", "on_event", "on_timer"] {
+        let callbacks: &[&str] = if typed {
+            &["on_start", "on_event"]
+        } else {
+            &["on_start", "on_event", "on_timer"]
+        };
+        for name in callbacks {
             if !ast
                 .iter_functions()
-                .any(|f| f.name == name && f.params.len() == 1)
+                .any(|f| f.name == *name && f.params.len() == 1)
             {
                 return Err(format!(
                     "Define {name}(ctx). Store persistent values in the returned state."
@@ -94,21 +109,7 @@ impl Program {
         context["nowUs"] = i64::try_from(request.at_us.0)
             .map_err(|_| "Clock exceeds signed script range.")?
             .into();
-        let input = rhai::serde::to_dynamic(context).map_err(|e| e.to_string())?;
-        *self.deadline.borrow_mut() = Some(Instant::now() + Duration::from_millis(5));
-        let result = self.engine.call_fn_with_options::<Dynamic>(
-            CallFnOptions::new().eval_ast(false),
-            &mut Scope::new(),
-            &self.ast,
-            &request.callback,
-            (input,),
-        );
-        let expired = self.deadline.borrow().is_some_and(|at| Instant::now() > at);
-        *self.deadline.borrow_mut() = None;
-        let result = result.map_err(|e| e.to_string())?;
-        if expired {
-            return Err("Script evaluation exceeded 5 ms.".into());
-        }
+        let result = self.call_context(&request.callback, context)?;
         let transaction: Transaction =
             rhai::serde::from_dynamic(&result).map_err(|e| e.to_string())?;
         if serde_json::to_vec(&transaction)
@@ -119,6 +120,28 @@ impl Program {
             return Err("Script reply exceeds 32 KiB.".into());
         }
         Ok(transaction)
+    }
+    pub(crate) fn call_context(
+        &self,
+        callback: &str,
+        context: serde_json::Value,
+    ) -> Result<Dynamic, String> {
+        let input = rhai::serde::to_dynamic(context).map_err(|e| e.to_string())?;
+        *self.deadline.borrow_mut() = Some(Instant::now() + Duration::from_millis(5));
+        let result = self.engine.call_fn_with_options::<Dynamic>(
+            CallFnOptions::new().eval_ast(false),
+            &mut Scope::new(),
+            &self.ast,
+            callback,
+            (input,),
+        );
+        let expired = self.deadline.borrow().is_some_and(|at| Instant::now() > at);
+        *self.deadline.borrow_mut() = None;
+        let result = result.map_err(|e| e.to_string())?;
+        if expired {
+            return Err("Script evaluation exceeded 5 ms.".into());
+        }
+        Ok(result)
     }
 }
 

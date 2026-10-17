@@ -12,3 +12,10 @@ mod heap;
 #[cfg(target_os = "macos")]
 #[global_allocator]
 static HELPER_HEAP: heap::Bounded = heap::Bounded::new();
+
+pub mod typed;
+mod typed_evaluator;
+pub mod typed_worker;
+
+#[cfg(test)]
+mod typed_test_support;
