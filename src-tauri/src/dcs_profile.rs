@@ -2,15 +2,225 @@
 //! The runtime owns panel routing and command queues; this module has no I/O loop.
 use crate::dcs_bios::{self, Catalogue, ExportEvent, IntegerOutput, Memory, Network, Parser};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    time::{Duration, Instant, SystemTime},
 };
 
 const INVALID: &str = "Invalid DCS-BIOS panel profile.";
 const CATALOGUE_ERROR: &str = "The installed DCS-BIOS catalogue is incompatible or malformed.";
+const SOURCE_CHANGED: &str = "The selected DCS aircraft, alias, CommonData or metadata catalogue changed; prepare a new native reader.";
+const COMMON_PREFIX: &str = "common:CommonData:";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CatalogueFile {
+    length: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+}
+
+fn catalogue_file(path: &Path) -> Result<Option<CatalogueFile>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("DCS source catalogues must be regular files, not symbolic links.".into());
+    }
+    Ok(Some(CatalogueFile {
+        length: metadata.len(),
+        modified: metadata.modified().ok(),
+        created: metadata.created().ok(),
+    }))
+}
+struct TelemetryCatalogue {
+    path: PathBuf,
+    module: String,
+    selected: Value,
+    common: Option<Value>,
+    metadata: Catalogue,
+    revision: String,
+    files: Vec<(PathBuf, Option<CatalogueFile>)>,
+}
+impl TelemetryCatalogue {
+    fn load(path: &Path, module: &str) -> Result<Self, String> {
+        if module.is_empty()
+            || module.len() > 63
+            || !module
+                .bytes()
+                .all(|value| value.is_ascii_alphanumeric() || b"_-".contains(&value))
+            || module == "CommonData"
+        {
+            return Err(
+                "Choose an actual aircraft catalogue; CommonData is read-only shared telemetry."
+                    .into(),
+            );
+        }
+        let mut files = Vec::new();
+        let mut documents = BTreeMap::new();
+        let mut read = |name: &str, optional: bool| -> Result<Option<Value>, String> {
+            let file = path.join(name);
+            let before = catalogue_file(&file)?;
+            files.push((file.clone(), before.clone()));
+            if before.is_none() && optional {
+                return Ok(None);
+            }
+            let value = dcs_bios::read_json(&file, dcs_bios::MAX_DOCUMENT)?;
+            if catalogue_file(&file)? != before {
+                return Err(SOURCE_CHANGED.into());
+            }
+            documents.insert(name.to_owned(), value.clone());
+            Ok(Some(value))
+        };
+        let selected = read(&format!("{module}.json"), false)?.unwrap();
+        let aliases = read("AircraftAliases.json", false)?.unwrap();
+        let authorized = aliases[module].as_array().is_some_and(|values| {
+            values.iter().any(|value| value == module)
+                && values.iter().any(|value| value == "CommonData")
+        });
+        let mut metadata_documents = Vec::new();
+        for (canonical, legacy) in [
+            ("MetadataStart.json", "MetaDataStart.json"),
+            ("MetadataEnd.json", "MetaDataEnd.json"),
+        ] {
+            metadata_documents.push(match read(canonical, true)? {
+                Some(value) => value,
+                None => read(legacy, false)?.unwrap(),
+            });
+        }
+        let common = if authorized {
+            read("CommonData.json", true)?
+        } else {
+            None
+        };
+        // The selected aircraft remains the sole mission/metadata authority.
+        // This validates the complete alias table, never a browser module hint.
+        let metadata = Catalogue::from_metadata(
+            module,
+            &metadata_documents[0],
+            &metadata_documents[1],
+            &aliases,
+            None,
+        )?;
+        if let Some(common) = &common {
+            let mut count = 0;
+            for controls in common.as_object().ok_or(CATALOGUE_ERROR)?.values() {
+                for (id, control) in controls.as_object().ok_or(CATALOGUE_ERROR)? {
+                    count += 1;
+                    if count > 20_000
+                        || !identifier(id, 64, false)
+                        || control["identifier"] != *id
+                        || !control["inputs"].as_array().is_some_and(|v| v.len() <= 16)
+                        || !control["outputs"].as_array().is_some_and(|v| v.len() <= 16)
+                    {
+                        return Err(CATALOGUE_ERROR.into());
+                    }
+                    for output in control["outputs"].as_array().unwrap() {
+                        match output["type"].as_str() {
+                            Some("integer") => {
+                                let integer = IntegerOutput::parse(output)?;
+                                if overlaps(integer.address as usize, 2, &metadata) {
+                                    return Err(CATALOGUE_ERROR.into());
+                                }
+                            }
+                            Some("string")
+                                if output["max_length"]
+                                    .as_u64()
+                                    .is_some_and(|n| (1..=1024).contains(&n))
+                                    && output["address"].as_u64().is_some_and(|n| {
+                                        n <= 65534
+                                            && n % 2 == 0
+                                            && n + output["max_length"].as_u64().unwrap() <= 65536
+                                            && !overlaps(
+                                                n as usize,
+                                                output["max_length"].as_u64().unwrap() as usize,
+                                                &metadata,
+                                            )
+                                    }) => {}
+                            _ => return Err(CATALOGUE_ERROR.into()),
+                        }
+                    }
+                }
+            }
+        }
+        for (file, before) in &files {
+            if catalogue_file(file)? != *before {
+                return Err(SOURCE_CHANGED.into());
+            }
+        }
+        let revision = format!(
+            "sha256:{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&json!([
+                    "dcs-profile-source-documents-v1",
+                    module,
+                    documents
+                ]))
+                .map_err(|error| error.to_string())?
+            )
+        );
+        Ok(Self {
+            path: path.into(),
+            module: module.into(),
+            selected,
+            common,
+            metadata,
+            revision,
+            files,
+        })
+    }
+    fn guard(&self) -> DcsCatalogueGuard {
+        DcsCatalogueGuard {
+            path: self.path.clone(),
+            module: self.module.clone(),
+            revision: self.revision.clone(),
+            files: self.files.clone(),
+            checked: Instant::now(),
+            full_checked: Instant::now(),
+        }
+    }
+}
+
+/// Bounded passive invalidation only. Changed files never refresh an active
+/// reader's captured addresses, quantity interpretation or command authority.
+pub(crate) struct DcsCatalogueGuard {
+    path: PathBuf,
+    module: String,
+    revision: String,
+    files: Vec<(PathBuf, Option<CatalogueFile>)>,
+    checked: Instant,
+    full_checked: Instant,
+}
+impl DcsCatalogueGuard {
+    #[cfg(test)]
+    pub(crate) fn expire_for_test(&mut self) {
+        self.checked -= Duration::from_millis(251);
+    }
+    pub(crate) fn validate(&mut self, force: bool) -> Result<(), String> {
+        let now = Instant::now();
+        if !force && now.duration_since(self.checked) < Duration::from_millis(250) {
+            return Ok(());
+        }
+        for (path, captured) in &self.files {
+            if catalogue_file(path)? != *captured {
+                return Err(SOURCE_CHANGED.into());
+            }
+        }
+        if now.duration_since(self.full_checked) >= Duration::from_secs(2) {
+            if TelemetryCatalogue::load(&self.path, &self.module)?.revision != self.revision {
+                return Err(SOURCE_CHANGED.into());
+            }
+            self.full_checked = now;
+        }
+        self.checked = now;
+        Ok(())
+    }
+}
 fn text(value: &Value, max: usize, empty: bool) -> Option<&str> {
     value
         .as_str()
@@ -557,11 +767,31 @@ pub(crate) fn telemetry_sources_from_catalogue(
     if rows.is_empty() {
         return Ok(vec![]);
     }
-    let document =
-        dcs_bios::read_json(&path.join(format!("{module}.json")), dcs_bios::MAX_DOCUMENT)?;
+    let capture = TelemetryCatalogue::load(path, module)?;
+    telemetry_sources_from_capture(&capture, catalogue, rows)
+}
+fn telemetry_sources_from_capture(
+    capture: &TelemetryCatalogue,
+    catalogue: &Catalogue,
+    rows: &[Value],
+) -> Result<Vec<(String, OutputSource)>, String> {
     let mut sources = Vec::new();
     for row in rows {
-        let control = dcs_bios::control(&document, row["channel"].as_str().ok_or(INVALID)?)?;
+        let channel = row["channel"].as_str().ok_or(INVALID)?;
+        let (document, channel) = if let Some(channel) = channel.strip_prefix(COMMON_PREFIX) {
+            (
+                capture.common.as_ref().ok_or(
+                    "The selected aircraft has no authorized CommonData telemetry catalogue.",
+                )?,
+                channel,
+            )
+        } else {
+            if channel.starts_with("common:") {
+                return Err("Unadvertised common telemetry module.".into());
+            }
+            (&capture.selected, channel)
+        };
+        let control = dcs_bios::control(document, channel)?;
         let output = control["outputs"]
             .as_array()
             .and_then(|a| a.get(row["output"].as_u64().unwrap_or(0) as usize))
@@ -593,6 +823,22 @@ pub(crate) fn telemetry_sources_from_catalogue(
         sources.push((row["id"].as_str().ok_or(INVALID)?.into(), source));
     }
     Ok(sources)
+}
+pub(crate) fn guarded_telemetry_sources(
+    path: &Path,
+    module: &str,
+    rows: &[Value],
+    expected: &str,
+) -> Result<(Vec<(String, OutputSource)>, DcsCatalogueGuard, Catalogue), String> {
+    let capture = TelemetryCatalogue::load(path, module)?;
+    if capture.revision != expected {
+        return Err(SOURCE_CHANGED.into());
+    }
+    let sources = telemetry_sources_from_capture(&capture, &capture.metadata, rows)?;
+    let mut guard = capture.guard();
+    guard.full_checked -= Duration::from_secs(2);
+    guard.validate(true)?;
+    Ok((sources, guard, capture.metadata))
 }
 pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
     query_catalogue_page(request, false)
@@ -638,95 +884,132 @@ fn query_catalogue_page(request: &Value, complete: bool) -> Result<Value, String
             .filter(|n| (1..=64).contains(n))
             .ok_or(INVALID)? as usize
     };
-    let document = dcs_bios::read_json(
-        &Path::new(path).join(format!("{aircraft_module}.json")),
-        dcs_bios::MAX_DOCUMENT,
-    )?;
-    let metadata = Catalogue::load_module(Path::new(path), aircraft_module)?;
-    let categories = document.as_object().ok_or(CATALOGUE_ERROR)?;
+    let capture = complete
+        .then(|| TelemetryCatalogue::load(Path::new(path), aircraft_module))
+        .transpose()?;
+    let document = if let Some(capture) = &capture {
+        capture.selected.clone()
+    } else {
+        dcs_bios::read_json(
+            &Path::new(path).join(format!("{aircraft_module}.json")),
+            dcs_bios::MAX_DOCUMENT,
+        )?
+    };
+    let metadata = if let Some(capture) = &capture {
+        capture.metadata.clone()
+    } else {
+        Catalogue::load_module(Path::new(path), aircraft_module)?
+    };
     let mut controls = Vec::new();
     let mut seen = HashSet::new();
     let mut count = 0;
-    for (category, entries) in categories {
-        for (id, control) in entries.as_object().ok_or(CATALOGUE_ERROR)? {
-            count += 1;
-            if count > 20000 || !seen.insert(id.clone()) {
-                return Err(CATALOGUE_ERROR.into());
-            }
-            if !identifier(id, 64, false) || control["identifier"] != *id {
-                continue;
-            }
-            let label = text(&control["description"], 128, false).unwrap_or(id);
-            let category = text(&control["category"], 63, false).unwrap_or_else(|| {
-                if !category.is_empty()
-                    && category.len() <= 63
-                    && !category.chars().any(char::is_control)
-                {
-                    category
-                } else {
-                    "Other"
+    let mut documents = vec![(false, &document)];
+    if let Some(common) = capture.as_ref().and_then(|capture| capture.common.as_ref()) {
+        documents.push((true, common));
+    }
+    for (common, document) in documents {
+        let categories = document.as_object().ok_or(CATALOGUE_ERROR)?;
+        for (category, entries) in categories {
+            for (id, control) in entries.as_object().ok_or(CATALOGUE_ERROR)? {
+                count += 1;
+                if count > 20000 || !seen.insert((common, id.clone())) {
+                    return Err(CATALOGUE_ERROR.into());
                 }
-            });
-            if !format!("{id} {label} {category}")
-                .to_ascii_lowercase()
-                .contains(&query)
-            {
-                continue;
-            }
-            let mut interfaces = HashSet::new();
-            let inputs = control["inputs"]
-                .as_array()
-                .filter(|inputs| inputs.len() <= 16)
-                .into_iter()
-                .flatten()
-                .filter_map(input_interface)
-                .filter(|(interface, _, _)| interfaces.insert(*interface))
-                .map(|(interface, max, suggested)| {
-                    let mut value = json!({"interface":interface});
-                    if let Some(max) = max {
-                        value["maxValue"] = json!(max);
+                if !identifier(id, 64, false) || control["identifier"] != *id {
+                    continue;
+                }
+                let label = text(&control["description"], 128, false).unwrap_or(id);
+                let category = text(&control["category"], 63, false).unwrap_or_else(|| {
+                    if !category.is_empty()
+                        && category.len() <= 63
+                        && !category.chars().any(char::is_control)
+                    {
+                        category
+                    } else {
+                        "Other"
                     }
-                    if let Some(step) = suggested {
-                        value["suggestedStep"] = json!(step);
-                    }
-                    value
-                })
-                .collect::<Vec<_>>();
-            let outputs = control["outputs"]
-                .as_array()
-                .filter(|outputs| outputs.len() <= 16)
-                .into_iter()
-                .flatten()
-                .enumerate()
-                .filter_map(|(index, output)| {
-                    let mut normalized = match output["type"].as_str() {
-                        Some("integer") => IntegerOutput::parse(output)
-                            .ok()
-                            .filter(|integer| !overlaps(integer.address as usize, 2, &metadata))
-                            .map(|v| json!({"type":"integer","maxValue":v.maximum})),
-                        Some("string") => output["max_length"]
-                            .as_u64()
-                            .zip(output["address"].as_u64())
-                            .filter(|(length, address)| {
-                                (1..=1024).contains(length)
-                                    && *address <= 65534
-                                    && *address % 2 == 0
-                                    && !overlaps(*address as usize, *length as usize, &metadata)
-                            })
-                            .map(|(length, _)| json!({"type":"string","maxLength":length})),
-                        _ => None,
-                    }?;
-                    normalized["index"] = json!(index);
-                    Some(normalized)
-                })
-                .collect::<Vec<_>>();
-            if (kind == "input" && inputs.is_empty())
-                || (kind == "output" && outputs.is_empty())
-                || (inputs.is_empty() && outputs.is_empty())
-            {
-                continue;
+                });
+                if !format!("{id} {label} {category}")
+                    .to_ascii_lowercase()
+                    .contains(&query)
+                {
+                    continue;
+                }
+                let mut interfaces = HashSet::new();
+                let mut inputs = control["inputs"]
+                    .as_array()
+                    .filter(|inputs| inputs.len() <= 16)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(input_interface)
+                    .filter(|(interface, _, _)| interfaces.insert(*interface))
+                    .map(|(interface, max, suggested)| {
+                        let mut value = json!({"interface":interface});
+                        if let Some(max) = max {
+                            value["maxValue"] = json!(max);
+                        }
+                        if let Some(step) = suggested {
+                            value["suggestedStep"] = json!(step);
+                        }
+                        value
+                    })
+                    .collect::<Vec<_>>();
+                if common {
+                    inputs.clear();
+                }
+                let outputs = control["outputs"]
+                    .as_array()
+                    .filter(|outputs| outputs.len() <= 16)
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .filter_map(|(index, output)| {
+                        let mut normalized = match output["type"].as_str() {
+                            Some("integer") => IntegerOutput::parse(output)
+                                .ok()
+                                .filter(|integer| !overlaps(integer.address as usize, 2, &metadata))
+                                .map(|v| json!({"type":"integer","maxValue":v.maximum})),
+                            Some("string") => output["max_length"]
+                                .as_u64()
+                                .zip(output["address"].as_u64())
+                                .filter(|(length, address)| {
+                                    (1..=1024).contains(length)
+                                        && *address <= 65534
+                                        && *address % 2 == 0
+                                        && !overlaps(*address as usize, *length as usize, &metadata)
+                                })
+                                .map(|(length, _)| json!({"type":"string","maxLength":length})),
+                            _ => None,
+                        }?;
+                        normalized["index"] = json!(index);
+                        Some(normalized)
+                    })
+                    .collect::<Vec<_>>();
+                if (kind == "input" && inputs.is_empty())
+                    || (kind == "output" && outputs.is_empty())
+                    || (inputs.is_empty() && outputs.is_empty())
+                {
+                    continue;
+                }
+                let control_id = if common {
+                    format!("{COMMON_PREFIX}{id}")
+                } else {
+                    id.clone()
+                };
+                let displayed = if common {
+                    format!("CommonData reported · {label} (measurement validity unavailable)")
+                } else {
+                    label.into()
+                };
+                let mut normalized = json!({"id":control_id,"label":displayed,"category":category,"inputs":inputs,"outputs":outputs});
+                if common {
+                    normalized["sourceModule"] = json!("CommonData");
+                    normalized["sourceControl"] = json!(id);
+                    normalized["reportedQuality"] =
+                        json!("exported-value; ownship measurement validity is not advertised");
+                }
+                controls.push(normalized);
             }
-            controls.push(json!({"id":id,"label":label,"category":category,"inputs":inputs,"outputs":outputs}));
         }
     }
     controls.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
@@ -734,7 +1017,11 @@ fn query_catalogue_page(request: &Value, complete: bool) -> Result<Value, String
     if offset > total {
         return Err(INVALID.into());
     }
-    let reply = json!({"cataloguePath":path,"aircraftModule":aircraft_module,"query":query,"kind":kind,"offset":offset,"total":total,"controls":controls.into_iter().skip(offset).take(limit).collect::<Vec<_>>()});
+    let mut reply = json!({"cataloguePath":path,"aircraftModule":aircraft_module,"query":query,"kind":kind,"offset":offset,"total":total,"controls":controls.into_iter().skip(offset).take(limit).collect::<Vec<_>>()});
+    if let Some(capture) = capture {
+        capture.guard().validate(true)?;
+        reply["sourceRevision"] = json!(capture.revision);
+    }
     if reply.to_string().len() > if complete { 16 * 1024 * 1024 } else { 65536 } {
         return Err("The catalogue page exceeds the response budget; reduce its limit.".into());
     }
@@ -1830,3 +2117,7 @@ mod tests {
         assert!(Catalogue::load_module(&fixture.0, "../SyntheticJet").is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "dcs_commondata_tests.rs"]
+mod common_tests;

@@ -398,7 +398,9 @@ impl Catalogue {
         }
         Self::from_metadata("A-10C", start, end, aliases, Some(feedback))
     }
-    fn from_metadata(
+    /// Pure construction from one caller-owned document capture; no file is
+    /// reopened while deriving the selected aircraft/counter authority.
+    pub(crate) fn from_metadata(
         module: &str,
         start: &Value,
         end: &Value,

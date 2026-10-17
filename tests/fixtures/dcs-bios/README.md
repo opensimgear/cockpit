@@ -11,6 +11,17 @@ installed aircraft catalogue. The feedback address `0x1234` and mask `0x0040`
 are deliberately illustrative: production resolves these values from the user's
 installed `doc/json` files. The metadata addresses reflect the upstream format.
 
+`CommonData-altitude.json` is a factual descriptor subset of the checksum-pinned
+official v0.11.7 archive (`3272bc07210fa6c560f115cfb5dc8881accf7af5e7a5e218e2c46e1fd89e3292`),
+not an invented altitude address. `CommonData.ALT_MSL_FT` reports integer MSL feet
+at address 1076, mask 65535, shift 0. [Its primary definition](https://github.com/DCS-Skunkworks/dcs-bios/blob/30125bd4231f87769f46bacd6050f25e2d25d1f8/Scripts/DCS-BIOS/lib/modules/common_modules/CommonData.lua)
+computes `floor(selfData.LatLongAlt.Alt / 0.304)`. Cockpit preserves these reported
+counts and does not silently correct the upstream approximation or call them AGL.
+The getter retains its previous value when ownship export or self data is absent;
+its wire descriptor provides no measurement-validity flag. These fixtures prove
+protocol-reported values, selected-aircraft and stream-progress fences, not a
+fresh physical altitude measurement or simulator qualification.
+
 Shape and named-control provenance:
 
 - [A-10C module](https://github.com/DCS-Skunkworks/dcs-bios/blob/11c6209beca4e5aae201a5cf62a7c346ebabbfc8/Scripts/DCS-BIOS/lib/modules/aircraft_modules/A-10C.lua): `UFC_MASTER_CAUTION`, `MASTER_CAUTION`, and A-10C/A-10C_2 aliases.

@@ -1,0 +1,20 @@
+{
+  "Altitude": {
+    "ALT_MSL_FT": {
+      "category": "Altitude",
+      "control_type": "metadata",
+      "description": "Altitude MSL (ft)",
+      "identifier": "ALT_MSL_FT",
+      "inputs": [],
+      "outputs": [{
+        "address": 1076,
+        "description": "Altitude MSL (ft)",
+        "mask": 65535,
+        "max_value": 65535,
+        "shift_by": 0,
+        "suffix": "",
+        "type": "integer"
+      }]
+    }
+  }
+}

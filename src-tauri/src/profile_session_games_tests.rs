@@ -8,6 +8,7 @@ use osg_profiles::{
     compiler_models::{BackendCapabilities, CompileSnapshot, PlanReadiness, SinkPlan, SourcePlan},
     Endpoint,
 };
+use std::fs;
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -277,7 +278,10 @@ fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frame
             if snapshot.counter == Some(counter) {
                 return snapshot;
             }
-            assert!(Instant::now() < deadline, "UDP counter {counter} was not decoded");
+            assert!(
+                Instant::now() < deadline,
+                "UDP counter {counter} was not decoded"
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     };
@@ -292,7 +296,10 @@ fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frame
     let snapshot = receive_counter(&mut source, 2, 10_000);
     let baseline = source.frames(snapshot, 10_000);
     assert!(baseline.fresh);
-    assert_eq!(baseline.frames[0].changes[0].sample, SignalSample::scalar(PortValue::Number(1.0)));
+    assert_eq!(
+        baseline.frames[0].changes[0].sample,
+        SignalSample::scalar(PortValue::Number(1.0))
+    );
     let lost = source.lose(20_000, "Verified process exited".into());
     assert!(lost.context_lost);
     assert_eq!(lost.frames.len(), 1);
@@ -333,6 +340,46 @@ fn commands_are_exact_ordered_owner_fenced_and_ambiguous_sends_cannot_be_replaye
     let mut stale = effect(&fixture.command, 2);
     stale.at_us = Counter(120_000);
     assert!(source.command_request(&stale).is_err());
+}
+
+#[test]
+fn publication_command_withdrawal_is_permanent_without_stopping_fresh_telemetry() {
+    let fixture = Dcs::new();
+    let mut reader = fixture.sources();
+    feed(&mut reader, 1, true, 0);
+    feed(&mut reader, 2, true, 10_000);
+    authorize(&mut reader);
+    assert!(reader.command_request(&effect(&fixture.command, 1)).is_ok());
+    let identity = reader.reader_session.clone();
+    let first = reader.commands.values().next().unwrap();
+    let other_key = ("independent".into(), "command".into());
+    reader.commands.insert(
+        other_key,
+        CommandPort {
+            descriptor: first.descriptor.clone(),
+            command: first.command.clone(),
+        },
+    );
+    let affected = fixture.plan.sinks[0].endpoint.clone();
+    reader.revoke_commands(&[affected.clone()]);
+    assert!(reader
+        .command_request(&effect(&fixture.command, 2))
+        .is_err());
+    let mut unrelated = effect(&fixture.command, 2);
+    unrelated.endpoint.node_id = "independent".into();
+    unrelated.endpoint.port_id = "command".into();
+    assert!(reader.command_request(&unrelated).is_ok());
+    let update = feed(&mut reader, 3, false, 20_000);
+    assert!(update.fresh && !update.context_lost && reader.reader.is_some());
+    assert_eq!(reader.reader_session, identity);
+    assert!(reader.delivery_batch().is_some());
+    reader.revoke_commands(&[affected]);
+    assert!(reader
+        .command_request(&effect(&fixture.command, 3))
+        .is_err());
+    unrelated.sequence = Counter(3);
+    assert!(reader.command_request(&unrelated).is_ok());
+    assert!(reader.fresh);
 }
 #[test]
 fn missing_wrong_game_and_unadvertised_contracts_never_open_sources() {
@@ -406,7 +453,8 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
                 recovery: fixture_metadata_path.with_extension("recovery.json"),
             }
         },
-        platform.clone());
+        platform.clone(),
+    );
     let state = games.resource_catalogue();
     let revision = state
         .iter()
@@ -720,4 +768,105 @@ fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_ud
     assert!(lost.context_lost);
     assert_eq!(lost.frames[0].reason, Reason::Disconnect);
     assert!(source.delivery_batch().is_none());
+}
+
+#[test]
+fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebinding() {
+    for changed in ["CommonData.json", "AircraftAliases.json"] {
+        let mut fixture = Dcs::new();
+        let root = fixture.folder.path();
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../tests/fixtures/dcs-bios/CommonData-altitude.json"),
+            root.join("CommonData.json"),
+        )
+        .unwrap();
+        let aliases_path = root.join("AircraftAliases.json");
+        let mut aliases =
+            crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+        aliases["A-10C"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("CommonData"));
+        fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+        fixture.game.catalogue = crate::dcs_profile::resource_catalogue(
+            &json!({"cataloguePath":root,"aircraftModule":"A-10C"}),
+        )
+        .unwrap();
+        let port = crate::profile_resource_ports::integration(&fixture.game.catalogue)
+            .unwrap()
+            .into_iter()
+            .find(|port| port.id == "channel:common:CommonData:ALT_MSL_FT:0")
+            .unwrap();
+        let mut plan = empty_plan();
+        source(&mut plan, "dcs", &port);
+        let mut reader = GameSources::prepare(&plan, Some(fixture.game.clone())).unwrap();
+        reader.acquired = true;
+        for counter in [1u8, 2] {
+            let mut frame = vec![0x55; 4];
+            for (address, data) in [
+                (0u16, b"A-10C                   ".to_vec()),
+                (1076, 12000u16.to_le_bytes().to_vec()),
+                (65534, vec![counter, 0]),
+            ] {
+                frame.extend(address.to_le_bytes());
+                frame.extend((data.len() as u16).to_le_bytes());
+                frame.extend(data);
+            }
+            let Some(Reader::Dcs { decoder, .. }) = &mut reader.reader else {
+                panic!()
+            };
+            decoder.feed(&frame, u64::from(counter));
+            let snapshot = decoder.snapshot(u64::from(counter));
+            reader.frames(snapshot, u64::from(counter) * 1000);
+        }
+        assert!(reader.fresh);
+        if changed == "CommonData.json" {
+            let path = root.join(changed);
+            let mut common =
+                crate::dcs_bios::read_json(&path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+            common["Altitude"]["ALT_MSL_FT"]["outputs"][0]["address"] = json!(1078);
+            fs::write(path, serde_json::to_vec(&common).unwrap()).unwrap();
+        } else {
+            aliases["A-10C"] = json!(["A-10C"]);
+            fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+        }
+        let Some(Reader::Dcs {
+            catalogue_guard, ..
+        }) = &mut reader.reader
+        else {
+            panic!()
+        };
+        // Exercise the bounded live validation tick without a timing sleep.
+        catalogue_guard.expire_for_test();
+        let folder = crate::test_directory();
+        let metadata = folder.path().join("games.json");
+        let games = GamesRuntime::new(
+            Arc::new(|_| json!({"ok":true})),
+            crate::games::Paths {
+                installations: metadata.with_extension("installations-v1.json"),
+                provider_setup: metadata.with_extension("integration-setup.json"),
+                recovery: metadata.with_extension("recovery.json"),
+            },
+            Arc::new(ProcessFixture {
+                process: Mutex::new(None),
+            }),
+        );
+        let lost = reader.poll(&games, 3000);
+        assert!(lost.context_lost && !lost.fresh, "{changed}");
+        assert!(
+            lost.diagnostics
+                .iter()
+                .any(|message| message.contains("catalogue changed")),
+            "{:?}",
+            lost.diagnostics
+        );
+        assert_eq!(lost.frames.len(), 1);
+        assert_eq!(lost.frames[0].reason, Reason::Disconnect);
+        assert!(reader.delivery_batch().is_none());
+        assert!(
+            reader.reader.is_none(),
+            "Loss cannot refresh captured addresses or reopen a reader"
+        );
+    }
 }

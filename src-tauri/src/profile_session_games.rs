@@ -20,7 +20,11 @@ use osg_profiles::{
     resources_ports::{PortContract, PortDescriptor, PortUpdate, PortValue},
 };
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::Path, time::Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    time::Instant,
+};
 
 struct SourcePort {
     logical: String,
@@ -45,6 +49,7 @@ enum Reader {
         network: crate::dcs_bios::Network,
         transport: Option<crate::dcs_bios::Transport>,
         decoder: crate::dcs_profile::ExportSession,
+        catalogue_guard: crate::dcs_profile::DcsCatalogueGuard,
     },
     Xplane {
         connection: Value,
@@ -69,6 +74,7 @@ pub(crate) struct GameSources {
     epoch: u64,
     revision: u64,
     last_command_sequence: u64,
+    revoked_commands: BTreeSet<(String, String)>,
     witness: Option<(u64, u16)>,
     witnessed_progress: bool,
     reader_session: String,
@@ -128,6 +134,7 @@ impl GameSources {
             epoch: 1,
             revision: 0,
             last_command_sequence: 0,
+            revoked_commands: BTreeSet::new(),
             witness: None,
             witnessed_progress: false,
             reader_session: uuid::Uuid::new_v4().to_string(),
@@ -236,10 +243,15 @@ impl GameSources {
                         .as_str()
                         .ok_or("DCS catalogue path is missing.")?,
                 );
-                let catalogue = crate::dcs_bios::Catalogue::load_module(path, module)?;
-                let sources = crate::dcs_profile::telemetry_sources_from_catalogue(
-                    path, module, &catalogue, &rows,
-                )?;
+                let (sources, catalogue_guard, catalogue) =
+                    crate::dcs_profile::guarded_telemetry_sources(
+                        path,
+                        module,
+                        &rows,
+                        game.catalogue["sourceRevision"]
+                            .as_str()
+                            .ok_or("The DCS source catalogue has no captured native revision.")?,
+                    )?;
                 let network = crate::dcs_bios::Network::parse(&game.connection)?;
                 let decoder = crate::dcs_profile::ExportSession::from_sources(
                     catalogue,
@@ -250,6 +262,7 @@ impl GameSources {
                     network,
                     transport: None,
                     decoder,
+                    catalogue_guard,
                 }
             }
             "x-plane-11" | "x-plane-12" => {
@@ -276,6 +289,7 @@ impl GameSources {
         Ok(result)
     }
     pub(crate) fn acquire(&mut self, games: &GamesRuntime) -> Result<(), String> {
+        self.validate_catalogue(true)?;
         let Some(game) = &self.game else {
             return Ok(());
         };
@@ -311,6 +325,7 @@ impl GameSources {
         Ok(())
     }
     pub(crate) fn admit(&mut self, games: &GamesRuntime) -> Result<(), String> {
+        self.validate_catalogue(true)?;
         let Some(game) = &self.game else {
             return Ok(());
         };
@@ -324,7 +339,17 @@ impl GameSources {
         self.context = Some(context);
         Ok(())
     }
-    fn validate(&self, games: &GamesRuntime) -> Result<(), String> {
+    fn validate_catalogue(&mut self, force: bool) -> Result<(), String> {
+        if let Some(Reader::Dcs {
+            catalogue_guard, ..
+        }) = &mut self.reader
+        {
+            catalogue_guard.validate(force)?;
+        }
+        Ok(())
+    }
+    fn validate(&mut self, games: &GamesRuntime) -> Result<(), String> {
+        self.validate_catalogue(false)?;
         let Some(game) = &self.game else {
             return Ok(());
         };
@@ -354,6 +379,9 @@ impl GameSources {
     /// Drain native acquisition into one current baseline immediately before
     /// arming. Pre-Start transitions never acquire event/one-shot authority.
     pub(crate) fn baseline(&mut self, games: &GamesRuntime, now_us: u64) -> GamePoll {
+        if let Err(error) = self.validate_catalogue(true) {
+            return self.lose(now_us, error);
+        }
         for source in self.sources.values_mut() {
             source.available = false;
         }
@@ -570,6 +598,9 @@ impl GameSources {
             .map(|game| (game.proof.game_id.as_str(), self.reader_session.as_str()))
     }
     pub(crate) fn invoke(&mut self, games: &GamesRuntime, effect: &Effect) -> Result<(), String> {
+        if self.command_revoked(effect) {
+            return Err("Native simulator command publication authority was withdrawn; prepare a new reader to command again.".into());
+        }
         self.validate(games)?;
         let (command, argument) = self.command_request(effect)?;
         let Some(Reader::Dcs {
@@ -582,6 +613,10 @@ impl GameSources {
         transport.send_control(&command, &argument)
     }
     fn command_request(&mut self, effect: &Effect) -> Result<(String, String), String> {
+        if self.command_revoked(effect) {
+            return Err("Native simulator command publication authority was withdrawn; prepare a new reader to command again.".into());
+        }
+        self.validate_catalogue(true)?;
         let context = self
             .context
             .as_ref()
@@ -662,6 +697,25 @@ impl GameSources {
         }
         self.last_command_sequence = effect.sequence.0;
         Ok((command.command.clone(), argument))
+    }
+
+    fn command_revoked(&self, effect: &Effect) -> bool {
+        self.revoked_commands.iter().any(|(resource, port)| {
+            resource == &effect.endpoint.node_id && port == &effect.endpoint.port_id
+        })
+    }
+    /// Publication loss withdraws only the affected logical command endpoints.
+    /// Telemetry and unrelated commands retain their reader and freshness; a
+    /// withdrawn endpoint cannot rearm within this reader instance.
+    pub(crate) fn revoke_commands(&mut self, endpoints: &[osg_profiles::Endpoint]) {
+        for key in self.commands.keys() {
+            if endpoints
+                .iter()
+                .any(|endpoint| endpoint.node_id == key.0 && endpoint.port_id == key.1)
+            {
+                self.revoked_commands.insert(key.clone());
+            }
+        }
     }
     pub(crate) fn stop(&mut self) {
         if let Some(Reader::Acr {
