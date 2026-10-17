@@ -9,7 +9,7 @@ const compile = async name => ts.transpileModule(await readFile(new URL(name, im
 }).outputText;
 const capabilities = {};
 vm.runInNewContext(await compile('./gateway-capabilities.ts'), { exports: capabilities });
-const requireCapabilities = name => { if (name === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
+const requireCapabilities = name => { if (name.replace(/\.ts$/,'') === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
 const actions = {};
 vm.runInNewContext(await compile('./device-actions.ts'), { exports: actions, require: requireCapabilities });
 const automation = {};
@@ -18,6 +18,7 @@ class GatewayError extends Error { constructor(message, state) { super(message);
 const exported = {};
 vm.runInNewContext(await compile('./gateway-workspace.ts'), {
   exports: exported, require(name) {
+    name=name.replace(/\.ts$/,'');
     if (name === './gateway-capabilities') return capabilities;
     if (name === './gateway-automation') return automation;
     if (name === './device-actions') return actions;
