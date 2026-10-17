@@ -3,6 +3,9 @@
   import ProfileCanvas from './ProfileCanvas.svelte';
   import ProfileProcessingEditor from './ProfileProcessingEditor.svelte';
   import ProfileVirtualEditor from './ProfileVirtualEditor.svelte';
+  import ProfileInputLearning from './ProfileInputLearning.svelte';
+  import {ProfileLearningController}from'./profile-learning-controller';
+  import type{ProfileLearningClient}from'./profile-learning';
   import {canvasNodes,portContractLabel,type CanvasNode} from './profile-canvas';
   import {graphAssignResource,graphBypassProcessing,graphConnect,graphConnectionError,graphDisconnect,graphFreshId,graphInsertProcessing,graphInventorySignature,graphPort,graphPorts,graphRemoveNode,graphRemovePort,graphReorderProcessing,graphSelectProviderPort,graphSetProcessing,graphSetVirtual,graphSetVisibility,type ProfileGraphDraft}from'./profile-graph';
   import {PROCESSING_PRESETS,processingActionPack,processingNodeError,processingTemplate,type ProcessingPreset}from'./profile-processing';
@@ -11,15 +14,17 @@
   import type{DeepReadonly,ProfileDocument,ProfileLocalAssignment,ProfilePortContract,ProfileProcessingNode,ProfileVirtualOutput}from'./profiles';
   import type{ObservedResourcePort,ProfileInventoryClient,ResourceDetails,ResourceSummary}from'./profile-inventory';
   import type{GameId}from'./games';
-  let{document,assignments,inventory,inventoryClient,compilerClient,inventoryRevision=0,readOnly=false,selectedId=$bindable(''),change,openGameSettings,undo,redo,canUndo=false,canRedo=false,undoLabel='',redoLabel=''}:{
+  let{document,assignments,inventory,inventoryClient,compilerClient,learningClient,editorContext='',active=true,runtimeIdle=false,inventoryRevision=0,readOnly=false,selectedId=$bindable(''),change,openGameSettings,undo,redo,canUndo=false,canRedo=false,undoLabel='',redoLabel=''}:{
     document:DeepReadonly<ProfileDocument>;assignments:readonly DeepReadonly<ProfileLocalAssignment>[];inventory:readonly DeepReadonly<ResourceSummary>[];inventoryClient:Pick<ProfileInventoryClient,'inspect'>;compilerClient?:Pick<ProfileCompilerClient,'compile'|'inspect'>;inventoryRevision?:number;readOnly?:boolean;selectedId?:string;
     change:(draft:ProfileGraphDraft,label:string)=>void;openGameSettings?:(gameId:GameId,returnState?:unknown)=>void;undo?:()=>void;redo?:()=>void;canUndo?:boolean;canRedo?:boolean;undoLabel?:string;redoLabel?:string;
+    learningClient?:Pick<ProfileLearningClient,'start'|'status'|'cancel'>;editorContext?:string;active?:boolean;runtimeIdle?:boolean;
   }=$props();
   const copy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value));
   let message=$state(''),routeOpen=$state(false),fromNode=$state(''),fromPort=$state(''),toNode=$state(''),toPort=$state(''),editingRoute=$state(''),highlighted=$state<string[]>([]),preset=$state<ProcessingPreset>('identity'),chainOrder=$state<string[]>([]);
   let preview=$state.raw<DeepReadonly<CompilationSummary>|null>(null),previewSignature=$state(''),previewEnvironment=$state(''),previewBusy=$state(false),previewError=$state(''),diagnostics=$state.raw<readonly DeepReadonly<CompileDiagnostic>[]>([]),diagnosticOffset=$state(0),diagnosticOffsets=$state([0]),previewEpoch=0;
   let assignmentFor=$state(''),assignmentSource=$state(''),assignmentPage=$state.raw<DeepReadonly<ResourceDetails>|null>(null),assignmentBusy=$state(false),assignmentError=$state(''),selectedMappings=$state.raw<Record<string,DeepReadonly<ObservedResourcePort>>>({}),assignmentEpoch=0;
   const assignmentBrowser=new ProfilePortBrowser(untrack(()=>inventoryClient));
+  const learning=untrack(()=>learningClient)?new ProfileLearningController(untrack(()=>learningClient)!):null;
   const nodes=$derived(canvasNodes(document,assignments,inventory)),selected=$derived(nodes.find(node=>node.id===selectedId));
   const graph=$derived({document,assignments}),graphSignature=$derived(JSON.stringify(graph));
   const environmentSignature=$derived(`${inventoryRevision}/${graphInventorySignature(inventory)}`);
@@ -32,7 +37,7 @@
   const assignmentResources=$derived(inventory.filter(resource=>selected?.resource?.kind===(resource.resourceType==='game-integration'?'game':resource.resourceType==='companion'?'companion':'device')));
   const mappingOptions=$derived.by(()=>{const ports=[...(assignmentPage?.ports??[]),...Object.values(selectedMappings)],seen=new Set<string>();return ports.filter(port=>{const key=optionKey(port);if(seen.has(key))return false;seen.add(key);return true;});});
   $effect(()=>{const id=selectedId;if(id!==assignmentFor){assignmentFor=id;assignmentSource='';assignmentPage=null;selectedMappings={};assignmentError='';assignmentBusy=false;assignmentEpoch++;assignmentBrowser.clear();}});
-  onDestroy(()=>{previewEpoch++;assignmentEpoch++;assignmentBrowser.clear();});
+  onDestroy(()=>{previewEpoch++;assignmentEpoch++;assignmentBrowser.clear();learning?.dispose();});
   function apply(edit:()=>ProfileGraphDraft,label:string){if(readOnly)return;message='';try{change(edit(),label);}catch(error){message=error instanceof Error?error.message:String(error);}}
   function source(id:string){fromNode=id;fromPort='';editingRoute='';routeOpen=true;message='';}
   function destination(id:string){toNode=id;toPort='';routeOpen=true;message='';}
@@ -83,6 +88,7 @@
         {#if node.virtual}<ProfileVirtualEditor output={node.virtual} change={updateVirtual}/>{/if}
         <p class="remove-help">Removing this block also removes {document.bindings.filter(binding=>binding.from.nodeId===node.id||binding.to.nodeId===node.id).length} exact routes.</p><button class="text-button" onclick={()=>removeNode(node.id)}>Remove block and its routes</button>
       </fieldset>
+      {#if learning&&node.resource&&node.assignment&&node.observation?.resourceType==='host-controller'}<ProfileInputLearning controller={learning} resource={node.observation} context={`${editorContext}/${node.id}/${node.assignment.sourceId}`} {active} disabled={readOnly} {runtimeIdle} choose={port=>selectPort(node.id,port)}/>{/if}
     {/snippet}
   </ProfileCanvas>
   <section class="bindings-panel panel" aria-label="Exact bindings table"><div class="route-heading"><h3>Exact signal bindings · {document.bindings.length}</h3><button class="text-button" onclick={()=>highlighted=[]}>Clear route highlight</button></div><p>Each row is one directed edge in this graph. Choose a row to inspect or retarget exact ports; insert a visible transformation using the selected preset.</p><div class="bindings-scroll"><table><thead><tr><th>Route</th><th>Source output</th><th>Destination input / action</th><th>Graph editing</th></tr></thead><tbody>{#each document.bindings as binding (binding.id)}<tr class:highlighted={highlighted.includes(binding.id)}><td><button class="text-button" onclick={()=>editRoute(binding.id)}>{binding.id}</button></td><td><button class="endpoint-button" onclick={()=>selectedId=binding.from.nodeId}>{nodes.find(node=>node.id===binding.from.nodeId)?.name??binding.from.nodeId}<code>{binding.from.portId}</code></button></td><td><button class="endpoint-button" onclick={()=>selectedId=binding.to.nodeId}>{nodes.find(node=>node.id===binding.to.nodeId)?.name??binding.to.nodeId}<code>{binding.to.portId}</code></button>{#if previewCurrent}{#each diagnostics.filter(diagnostic=>diagnostic.location.edgeIds.includes(binding.id)) as diagnostic,index (index)}<p class="connection-problem"><strong>{diagnostic.code}</strong>: {diagnostic.message}</p>{/each}{/if}</td><td><div class="small-actions"><button class="text-button" disabled={readOnly} onclick={()=>editRoute(binding.id)}>Edit ports</button><button class="text-button" disabled={readOnly||preset==='constant'} onclick={()=>addProcessing(binding.id)}>Insert {PROCESSING_PRESETS.find(([kind])=>kind===preset)![1]}</button><button class="text-button" disabled={readOnly} onclick={()=>apply(()=>graphDisconnect(graph,binding.id),'Remove exact route')}>Remove</button></div></td></tr>{:else}<tr><td colspan="4">No routes yet. Select provider ports, then connect exact outputs and inputs.</td></tr>{/each}</tbody></table></div>

@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+import ts from 'typescript';
+import {compile} from 'svelte/compiler';
+import {render} from 'svelte/server';
+import * as server from 'svelte/internal/server';
+import * as svelte from 'svelte';
+import {loadModules} from './test-module-loader.mjs';
+const modules=await loadModules(['./profiles','./profile-inventory','./profile-graph','./profile-learning','./profile-learning-controller']);
+const {ProfileLearningClient}=modules.get('./profile-learning'),{ProfileLearningController}=modules.get('./profile-learning-controller'),{graphSelectProviderPort}=modules.get('./profile-graph');
+const id='11111111-1111-4111-8111-111111111111',physical='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`;
+const source=()=>({resourceId:'native:controller',generation:'1',capabilityRevision:hash});
+const candidate=(index=1)=>({descriptor:{id:`hid:0009:000${index}:0:0:1`,name:`Button ${index}`,direction:'output',contract:{delivery:'state',schema:{type:'boolean'},freshnessMs:1500,fallback:false}},contractHash:hash,routeIds:['hid:'+physical],current:true});
+const status=(phase='listening',candidates=[candidate(),candidate(2)])=>({schemaVersion:1,learnId:id,...source(),phase,reason:phase==='learned'?'Choose an exact candidate.':'',capturedUs:'100',untilUs:'30000100',candidates:phase==='learned'?candidates:[]});
+const resource=()=>({id:source().resourceId,name:'Physical controller',resourceType:'host-controller',availability:'online',generation:'1',capabilityRevision:hash,portCount:2,cachedPortCount:2,connections:[{scope:'host-controllers',key:physical,route:{id:'hid:'+physical,transport:'hid',providerGeneration:'1',attributes:{},baselineReady:true,writable:false,priority:1}}],attributes:{},diagnostics:[]});
+const plain=value=>JSON.parse(JSON.stringify(value)),settle=()=>new Promise(resolve=>setImmediate(resolve));
+const deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve};};
+function harness(){const calls=[];let observed=status('learned');const client=new ProfileLearningClient(async request=>{calls.push(plain(request));return request.command==='profile_input_learn_start'?status():request.command==='profile_input_learn_cancel'?status('stopped'):observed;});return{calls,client,controller:new ProfileLearningController(client),setStatus(value){observed=value;}};}
+async function component(){
+  const filename=new URL('./ProfileInputLearning.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureLearning({start,cancel,select,mountLearning,syncContext,watchLearning,get view(){return view;}});</script>');
+  const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
+  const timers=new Map(),events=new Map(),document={hidden:false,addEventListener(name,callback){events.set(name,callback);},removeEventListener(name,callback){if(events.get(name)===callback)events.delete(name);}};
+  const window={setInterval(callback){timers.set(1,callback);return 1;},clearInterval(id){timers.delete(id);}};
+  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,document,window,captureLearning(value){handlers=value;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);throw new Error(`Unexpected learning UI dependency ${name}`);}},{filename:filename.pathname});
+  return{render(controller,props={}){return{html:render(exports.default,{props:{controller,resource:resource(),context:'editor/1/controller',runtimeIdle:true,choose(){throw new Error('Opening or polling cannot edit a draft.');},...props}}).body,get handlers(){return handlers;}};},timers,events,document};
+}
+const button=(html,label)=>html.match(new RegExp(`<button\\b[^>]*>\\s*${label}[^]*?<\\/button>`))?.[0]??'';
+test('learning UI is passive on opening, requires idle exact physical input, and never supplies browser samples',async()=>{
+  const view=await component(),h=harness();let result=view.render(h.controller);assert.deepEqual(h.calls,[]);assert.ok(result.html.includes('Native capture sends no output'));assert.ok(!result.html.includes('Explicit learned input candidates'));
+  for(const props of [{runtimeIdle:false},{active:false},{disabled:true},{resource:{...resource(),availability:'offline'}},{resource:{...resource(),resourceType:'osg-module'}},{resource:{...resource(),connections:[]}}]){result=view.render(h.controller,props);assert.match(button(result.html,'Learn input without output'),/disabled/);await result.handlers.start();}
+  assert.deepEqual(h.calls,[]);result=view.render(h.controller);result.handlers.syncContext();const cleanup=result.handlers.mountLearning();await result.handlers.start();assert.deepEqual(h.calls,[{command:'profile_input_learn_start',...source()}]);assert.equal(result.handlers.view.status.phase,'listening');cleanup();await settle();assert.equal(h.calls.at(-1).command,'profile_input_learn_cancel');
+});
+test('ambiguity is displayed and only an explicit exact choice adds one pinned logical port without routes, Save or Apply',async()=>{
+  const view=await component(),h=harness();await h.controller.start(source());await h.controller.refresh();let value={document:{schemaVersion:2,id,name:'Learning draft',revision:1,eligibility:{gameIds:[]},resources:[{id:'controller',name:'Physical controller',kind:'device',required:false,ports:[]}],bindings:[],processingNodes:[],virtualOutputs:[],visibility:[],overrides:[],companionAssignments:[],editor:{positions:[],viewport:{x:0,y:0,zoom:1}}},assignments:[{resourceId:'controller',sourceId:source().resourceId,ports:[]}]};let edits=0;
+  const result=view.render(h.controller,{choose(port){value=graphSelectProviderPort(value,'controller',source().resourceId,port);edits++;}});for(const label of ['Button 1','Button 2','Choose an exact candidate.'])assert.ok(result.html.includes(label));assert.equal((result.html.match(/Add this input port/g)??[]).length,2);assert.equal(edits,0);await result.handlers.select(candidate(2));assert.equal(edits,1);assert.equal(value.document.resources[0].ports.length,1);assert.deepEqual(plain(value.document.resources[0].ports[0].contract),candidate(2).descriptor.contract);assert.deepEqual(plain(value.assignments[0].ports),[{profilePortId:value.document.resources[0].ports[0].id,observedPortId:candidate(2).descriptor.id,expectedContractHash:hash}]);assert.deepEqual(plain(value.document.bindings),[]);assert.ok(h.calls.every(call=>['profile_input_learn_start','profile_input_learn_status'].includes(call.command)));
+});
+test('choice rechecks native expiry and current selected resource before any draft edit',async()=>{
+  const view=await component(),h=harness();await h.controller.start(source());await h.controller.refresh();let edits=0;h.setStatus(status('stopped'));let result=view.render(h.controller,{choose(){edits++;}});await result.handlers.select(candidate());assert.equal(edits,0);assert.equal(h.controller.state.status.phase,'stopped');
+  const changed=harness();await changed.controller.start(source());await changed.controller.refresh();result=view.render(changed.controller,{resource:{...resource(),generation:'2'},choose(){edits++;}});await result.handlers.select(candidate());assert.equal(edits,0);
+  const pending=deferred(),race=harness();await race.controller.start(source());await race.controller.refresh();race.client.status=()=>pending.promise;result=view.render(race.controller,{choose(){edits++;}});const choosing=result.handlers.select(candidate());race.controller.setContext('other-editor');pending.resolve(status('learned'));await choosing;assert.equal(edits,0);assert.equal(race.controller.state.status,null);
+});
+test('Cancel stays available while baseline start is pending and late capture acknowledgements cannot install candidates',async()=>{
+  const view=await component(),h=harness(),pending=deferred();h.client.start=()=>{h.calls.push({command:'profile_input_learn_start'});return pending.promise;};const result=view.render(h.controller);result.handlers.syncContext();const cleanup=result.handlers.mountLearning(),starting=result.handlers.start();await settle();assert.equal(result.handlers.view.pending,'start');const during=view.render(h.controller);assert.ok(!button(during.html,'Cancel learning').includes('disabled'));const cancelling=result.handlers.cancel();pending.resolve(status());await starting;await cancelling;assert.equal(h.controller.state.status.phase,'stopped');assert.equal(h.calls.filter(call=>call.command==='profile_input_learn_cancel').length,1);cleanup();
+});
+test('mounted polling only reads the native capture, suspends when hidden/inactive/owned, and context cleanup cancels only learning',async()=>{
+  const view=await component(),h=harness();await h.controller.start(source());const result=view.render(h.controller),unmount=result.handlers.mountLearning(),cleanup=result.handlers.watchLearning();await settle();assert.equal(h.calls.at(-1).command,'profile_input_learn_status');const count=h.calls.length;view.document.hidden=true;view.timers.get(1)();assert.equal(h.calls.length,count);view.document.hidden=false;view.events.get('visibilitychange')();await settle();assert.equal(h.calls.length,count+1);cleanup();assert.equal(view.events.size,0);assert.equal(view.timers.size,0);unmount();await settle();assert.equal(h.calls.at(-1).command,'profile_input_learn_cancel');assert.ok(h.calls.every(call=>call.command.startsWith('profile_input_learn_')));
+  for(const props of [{active:false},{runtimeIdle:false}]){const live=harness();await live.controller.start(source());const inactive=view.render(live.controller,props);inactive.handlers.mountLearning();assert.equal(inactive.handlers.watchLearning(),undefined);inactive.handlers.syncContext();await settle();assert.equal(live.controller.state.status,null);assert.equal(live.calls.at(-1).command,'profile_input_learn_cancel');}
+});
