@@ -158,6 +158,7 @@ class FeedbackPeer(c4.Peer):
                     return
 
     def _open_locked(self,instance,publication):
+        self.baseline_session = None
         result=self.socket.request(dict(type='open',instanceId=instance,publicationHash=publication['publicationHash']))
         assert result['ok'],result
         self.opened=result;self.publication=publication;self.feedback=FeedbackState(result,publication)
@@ -165,6 +166,7 @@ class FeedbackPeer(c4.Peer):
         controls=json.loads(publication['canonicalDocument'])['ui']['controls']
         values={control['id']:False if control['kind']=='button' else control.get('fallback',-1) for control in controls}
         self.consume(self.socket.request(self.message('baseline',sequence='0',values=values)))
+        self.baseline_session = self.opened['sessionId']
 
     def open(self,instance,publication):
         with self.lock:
@@ -266,10 +268,11 @@ def main():
         try:
             c4.operator(service,'companion_enable',address='127.0.0.1',advertisedHost='127.0.0.1',port=unused_port(),discovery=False)
             c4.publish(service,publication);instances=['feedback-left','feedback-right']
+            configurations=[(instance,publication) for instance in instances]
             for instance in instances:
                 peer=FeedbackPeer(service,instance);peers.append(peer)
                 c4.operator(service,'companion_assign',companionId=instance,instanceId=instance,publicationHash=publication['publicationHash']);peer.open(instance,publication)
-            document,assignments,models=feedback_profile(service,[(instance,publication) for instance in instances])
+            document,assignments,models=feedback_profile(service,configurations)
             saved=c4.mapping.save(service,document,assignments);owner=c4.mapping.apply(service,saved)
             for peer in peers:
                 peer.input([dict(controlId='flight-input-0',value=True)])
@@ -288,16 +291,20 @@ def main():
             peers[0].paused.set()
             c4.wait_for(lambda:peers[0].snapshot().get('flight-channel-0',{}).get('status')=='stale','Paused receiver failed to age retained values')
             wait_sample(peers[1],0,local_fresh(True));peers[0].paused.clear()
-            service.profiles('profile_stop');assert not service.request('profile_runtime_inspect',owner=owner)['ok']
+            c4.stop_and_wait_native_companions(service,configurations,peers,owner)
             owner=c4.mapping.apply(service,saved)
             for peer in peers:peer.input([dict(controlId='flight-input-0',value=True)]);wait_sample(peer,0,local_fresh(True))
             evidence['checks'].append('one expired/unread peer ages its retained samples while independent peer remains fresh; fresh explicit Apply reacquires its baseline')
-            service.profiles('profile_stop')
-            assert not service.request('profile_runtime_inspect',owner=owner)['ok']
+            c4.stop_and_wait_native_companions(service,configurations,peers,owner)
             bounded=bounded_text_publication(publication);c4.publish(service,bounded)
+            # Close the restored session before changing its assignment; the
+            # assignment change correctly invalidates any remaining old session.
+            peers[0].end()
             c4.operator(service,'companion_assign',companionId=instances[0],instanceId=instances[0],publicationHash=bounded['publicationHash'])
-            peers[0].end();peers[0].open(instances[0],bounded)
-            large,local,_=feedback_profile(service,[(instances[0],bounded),(instances[1],publication)],large=True)
+            peers[0].open(instances[0],bounded)
+            large_configurations=[(instances[0],bounded),(instances[1],publication)]
+            c4.wait_native_companions(service,large_configurations,peers)
+            large,local,_=feedback_profile(service,large_configurations,large=True)
             large=c4.mapping.save(service,large,local);large_owner=c4.mapping.apply(service,large)
             c4.wait_for(lambda:len(peers[0].snapshot())==64 and all(local_fresh('L'*256)(sample) for sample in peers[0].snapshot().values()),'64-channel applied feedback did not arrive')
             assert c4.FRAME_BYTES<peers[0].max_feedback_bytes<=FEEDBACK_BYTES

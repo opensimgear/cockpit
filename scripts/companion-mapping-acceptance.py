@@ -127,6 +127,7 @@ class Peer:
         self.paused = threading.Event()
         self.failure = None
         self.opened = None
+        self.baseline_session = None
         self.sequence = 0
         self.heartbeat = 0
         self.thread = threading.Thread(target=self.renew, daemon=True)
@@ -153,12 +154,14 @@ class Peer:
         return dict(version=1, type=kind, **{key: self.opened[key] for key in ["clientId", "sessionId", "generation", "publicationHash"]}, **fields)
 
     def _open_locked(self, instance, publication):
+        self.baseline_session = None
         result=self.socket.request(dict(type='open',instanceId=instance,publicationHash=publication['publicationHash']))
         assert result['ok'],result
         self.opened=result;self.sequence=self.heartbeat=0
         controls=json.loads(publication['canonicalDocument'])['ui']['controls']
         values={control['id']:False if control['kind']=='button' else control.get('fallback',-1) for control in controls}
         assert self.socket.request(self.message('baseline',sequence='0',values=values))['ok']
+        self.baseline_session = self.opened['sessionId']
 
     def open(self, instance, publication):
         with self.lock:
@@ -171,6 +174,15 @@ class Peer:
             self.sequence += 1
             result = self.socket.request(self.message("input", sequence=str(self.sequence), changes=changes))
             assert result["ok"], result
+
+    def ready_session(self):
+        # The same lock spans open and the real neutral-baseline acknowledgement.
+        # A received session-open reply alone cannot witness usable native input.
+        with self.lock:
+            assert self.failure is None, self.failure
+            if self.opened is None or self.baseline_session != self.opened['sessionId']:
+                return None
+            return {key: self.opened[key] for key in ['clientId', 'sessionId', 'generation', 'controllerInstanceId', 'publicationHash']}
 
     def end(self):
         with self.lock:
@@ -231,6 +243,73 @@ def selected_resource(service,instance):
             assert all(port['current'] for port in detail['ports']),detail
             return detail
     return None
+
+
+def native_route(detail, instance):
+    connections = detail['resource']['connections']
+    if not connections:
+        return None
+    assert len(connections) == 1, 'Expected one exact native companion route'
+    route = connections[0]['route']
+    assert route['id'] == f'companion:{instance}' and route['transport'] == 'network', route
+    generation = route['providerGeneration']
+    assert isinstance(generation, str) and generation.isdecimal() and str(int(generation)) == generation and int(generation) > 0, route
+    return route
+
+
+def companion_checkpoint(service, configurations, peers):
+    assert len(configurations) == len(peers)
+    result = {}
+    for peer, (instance, publication) in zip(peers, configurations):
+        session = peer.ready_session()
+        assert session is not None, 'The peer has no acknowledged neutral baseline'
+        assert peer.name == instance and session['controllerInstanceId'] == instance and session['publicationHash'] == publication['publicationHash'], session
+        detail = selected_resource(service, instance)
+        assert detail is not None, f'The retained native companion {instance} disappeared'
+        route = native_route(detail, instance)
+        result[instance] = dict(session=session, resourceId=detail['resource']['id'], generation=int(route['providerGeneration']) if route else 0)
+    return result
+
+
+def wait_native_companions(service, configurations, peers, previous=None):
+    assert len(configurations) == len(peers)
+    def ready():
+        complete = True
+        for peer, (instance, publication) in zip(peers, configurations):
+            session = peer.ready_session()
+            if session is None:
+                complete = False
+            else:
+                assert peer.name == instance and session['controllerInstanceId'] == instance and session['publicationHash'] == publication['publicationHash'], session
+                if previous is not None and session['sessionId'] == previous[instance]['session']['sessionId']:
+                    complete = False
+            detail = selected_resource(service, instance)
+            if detail is None:
+                complete = False
+                continue
+            if previous is not None:
+                assert detail['resource']['id'] == previous[instance]['resourceId'], 'Native companion identity changed during reconnect'
+            if detail['resource']['attributes'].get('publicationHash') != publication['publicationHash']:
+                complete = False
+            route = native_route(detail, instance)
+            if route is None:
+                complete = False
+            elif route['baselineReady'] is not True or route['writable'] is not True:
+                complete = False
+            elif previous is not None and int(route['providerGeneration']) <= previous[instance]['generation']:
+                complete = False
+        return complete
+    # Stop restores assignment ownership and invalidates the old sessions. The
+    # peers must actually reopen/acknowledge a neutral baseline, and the native
+    # collector must observe their replacement routes before the one new Apply.
+    return wait_for(ready, 'The exact native companions did not reconnect with fresh neutral baselines')
+
+
+def stop_and_wait_native_companions(service, configurations, peers, owner):
+    previous = companion_checkpoint(service, configurations, peers)
+    service.profiles('profile_stop')
+    assert not service.request('profile_runtime_inspect', owner=owner)['ok']
+    wait_native_companions(service, configurations, peers, previous)
 
 
 def add_port(document,assignment,resource,logical,observed):
@@ -305,8 +384,7 @@ def main():
             peers[0].open('flight-left',flight)
             time.sleep(.2)
             assert reading(service,owner,models['flight-left']['nodes']['button'])['status']!='known','Reconnect silently reacquired a lost profile input'
-            service.profiles('profile_stop')
-            assert not service.request('profile_runtime_inspect',owner=owner)['ok']
+            stop_and_wait_native_companions(service,configurations,peers,owner)
             fresh=mapping.apply(service,saved);assert fresh!=owner
             peers[0].input(sample(flight));wait_for(lambda:exact_readings(service,fresh,models['flight-left'],expected(flight)),'Fresh explicit Apply did not acquire a new baseline')
             evidence['checks'].append('optional source close preserves independent branches; reconnect stays disarmed until explicit new Apply; old owner cannot inspect')

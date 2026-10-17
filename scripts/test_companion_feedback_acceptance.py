@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import struct
 import unittest
+import threading
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('companion_feedback_acceptance', Path(__file__).with_name('companion-feedback-acceptance.py'))
@@ -31,6 +32,36 @@ def frame(mode='snapshot', sequence='1', generation='1', values=None):
 
 
 class FeedbackAcceptanceTests(unittest.TestCase):
+    def test_reconnect_is_ready_only_after_the_real_neutral_baseline_acknowledgement(self):
+        peer = acceptance.FeedbackPeer.__new__(acceptance.FeedbackPeer)
+        peer.name = 'instance'
+        peer.lock = threading.Lock()
+        peer.failure = None
+        peer.opened = None
+        peer.baseline_session = None
+        peer.modes = set()
+        peer.max_feedback_bytes = 0
+        peer.feedback = None
+        calls = []
+        class Socket:
+            def request(self, value):
+                calls.append(value)
+                if value['type'] == 'open':
+                    return dict(ok=True, **IDENTITY)
+                self_test.assertIsNone(peer.baseline_session)
+                return dict(ok=True)
+        self_test = self
+        peer.socket = Socket()
+        peer.open('instance', PUBLICATION)
+        self.assertEqual(peer.ready_session()['sessionId'], IDENTITY['sessionId'])
+        controls = json.loads(PUBLICATION['canonicalDocument'])['ui']['controls']
+        expected = {control['id']: False if control['kind'] == 'button' else control.get('fallback', -1) for control in controls}
+        self.assertEqual([call['type'] for call in calls], ['open', 'baseline'])
+        self.assertEqual(calls[1]['values'], expected)
+        self.assertEqual(calls[1]['sequence'], '0')
+        peer.baseline_session = None
+        self.assertIsNone(peer.ready_session(), 'An open reply without acknowledged baseline is not ready')
+
     def test_decimal_counters_are_lossless_and_strict(self):
         self.assertEqual(acceptance.counter(str(2**64 - 1)), 2**64 - 1)
         self.assertEqual(acceptance.counter('0'), 0)
