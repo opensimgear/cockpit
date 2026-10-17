@@ -190,8 +190,35 @@ impl VisibilityIo for Fake {
                     .collect::<BTreeMap<_, _>>();
                 Ok(json!({"mode":value["mode"],"sourceIds":ids,"policies":policies}))
             }
-            "preflight" => {
-                let intent: CapturedIntent = serde_json::from_value(value.clone()).unwrap();
+            "preflight" | "handoff_preflight" => {
+                let (captured, before, handoff) = if operation == "handoff_preflight" {
+                    let owner = value["owner"].as_str().unwrap();
+                    if self.owned.lock().unwrap().as_deref() != Some(owner) {
+                        return Err("Another native visibility owner".into());
+                    }
+                    let record =
+                        journal::inspect(&self.path(owner))?.ok_or("Missing outgoing journal")?;
+                    let status = osg_controller_input::visibility::runtime::Status {
+                        job_id: self.job.clone(),
+                        active: true,
+                        phase: "active".into(),
+                        message: String::new(),
+                        session_id: Some(record.id.clone()),
+                    };
+                    let proof =
+                        Proof::capture(owner, &record, &status, &self.driver.lock().unwrap())?;
+                    (
+                        value["intent"].clone(),
+                        proof.plan.before.clone(),
+                        Some(proof),
+                    )
+                } else {
+                    if self.owned.lock().unwrap().is_some() {
+                        return Err("Existing native hiding blocks ordinary preflight".into());
+                    }
+                    (value.clone(), self.driver.lock().unwrap().clone(), None)
+                };
+                let intent: CapturedIntent = serde_json::from_value(captured).unwrap();
                 let selections = intent
                     .source_ids
                     .iter()
@@ -206,12 +233,27 @@ impl VisibilityIo for Fake {
                         },
                     })
                     .collect();
-                let policy = Plan::build(
-                    self.driver.lock().unwrap().clone(),
-                    selections,
-                    r"\Device\Volume1\Cockpit.exe".into(),
-                )?;
-                Ok(json!({"intent":intent,"policy":policy}))
+                let policy =
+                    Plan::build(before, selections, r"\Device\Volume1\Cockpit.exe".into())?;
+                Ok(json!({"intent":intent,"policy":policy,"handoff":handoff}))
+            }
+            "handoff_validate" => {
+                let proof: Proof =
+                    serde_json::from_value(value["proof"].clone()).map_err(|e| e.to_string())?;
+                if self.owned.lock().unwrap().as_ref() != Some(&proof.owner) {
+                    return Err("Outgoing native owner changed".into());
+                }
+                let record = journal::inspect(&self.path(&proof.owner))?
+                    .ok_or("Missing outgoing journal")?;
+                let status = osg_controller_input::visibility::runtime::Status {
+                    job_id: self.job.clone(),
+                    active: true,
+                    phase: "active".into(),
+                    message: String::new(),
+                    session_id: Some(record.id.clone()),
+                };
+                proof.validate_metadata_active(&record, &status)?;
+                Ok(json!({"valid":true}))
             }
             "start" => {
                 let owner = value["owner"].as_str().unwrap();
@@ -220,6 +262,18 @@ impl VisibilityIo for Fake {
                 }
                 let prepared: Preparation =
                     serde_json::from_value(value["prepared"].clone()).unwrap();
+                if let Some(proof) = prepared.handoff {
+                    let record = journal::inspect(&self.path(&proof.owner))?
+                        .ok_or("Missing outgoing journal")?;
+                    let status = osg_controller_input::visibility::runtime::Status {
+                        job_id: self.job.clone(),
+                        active: false,
+                        phase: "restored".into(),
+                        message: String::new(),
+                        session_id: Some(record.id.clone()),
+                    };
+                    proof.validate_restored(&record, &status, &self.driver.lock().unwrap())?;
+                }
                 let policy = prepared.policy.unwrap();
                 let mut store = Store::open(self.path(owner))?;
                 journal::apply(&mut Driver(self.driver.clone()), &mut store, policy, || {
@@ -579,4 +633,118 @@ fn lost_first_stop_reply_retains_restoration_instead_of_recancelling() {
         .unwrap();
     assert_eq!(calls[first_stop + 1].0, "poll");
     assert!(!visibility.needs_cleanup());
+}
+
+#[test]
+fn protected_hidden_handoff_uses_journal_original_and_exact_previous_owner() {
+    let io = Fake::new();
+    let snapshot = snapshot();
+    let plan = plan(&snapshot);
+    let old_owner = owner();
+    let before = io.driver.lock().unwrap().clone();
+    let mut old = Visibility::prepare(&plan, &snapshot, &old_owner, io.clone()).unwrap();
+    let mut outgoing = owned_run(old_owner, old.receipts().unwrap());
+    outgoing
+        .attempted
+        .push(crate::profile_session::ApplyPhase::Start);
+    old.start().unwrap();
+    assert!(Visibility::stage(&plan, &snapshot, io.clone()).is_err());
+    let staged =
+        Visibility::stage_with_handoff(&plan, &snapshot, io.clone(), Some(&outgoing)).unwrap();
+    let mut incoming = staged.bind(&owner()).unwrap();
+    assert!(incoming.validate_handoff(None).is_err());
+    let mut changed = outgoing.clone();
+    changed.owner.generation += 1;
+    assert!(incoming.validate_handoff(Some(&changed)).is_err());
+    changed = outgoing.clone();
+    changed.receipts[0].state["preparationHash"] = json!(format!("sha256:{}", "a".repeat(64)));
+    assert!(incoming.validate_handoff(Some(&changed)).is_err());
+    incoming.validate_handoff(Some(&outgoing)).unwrap();
+    let actual_prepared: Preparation =
+        serde_json::from_value(incoming.prepared.clone().unwrap()).unwrap();
+    assert_eq!(actual_prepared.policy.unwrap().before, before);
+    old.stop().unwrap();
+    assert_eq!(*io.driver.lock().unwrap(), before);
+    assert!(incoming.validate_handoff(Some(&outgoing)).is_err());
+    incoming.start().unwrap();
+    let native_owner = incoming.receipt.as_ref().unwrap().visibility_owner.clone();
+    let record = journal::inspect(&io.path(&native_owner)).unwrap().unwrap();
+    assert_eq!(record.plan.before, before);
+    incoming.stop().unwrap();
+    assert_eq!(*io.driver.lock().unwrap(), before);
+}
+#[test]
+fn handoff_external_edits_and_unapplied_receipts_block_without_neutralizing_old_owner() {
+    let io = Fake::new();
+    let snapshot = snapshot();
+    let plan = plan(&snapshot);
+    let mut old = Visibility::prepare(&plan, &snapshot, &owner(), io.clone()).unwrap();
+    let mut outgoing = owned_run(
+        old.receipt.as_ref().unwrap().owner.clone(),
+        old.receipts().unwrap(),
+    );
+    old.start().unwrap();
+    assert!(Visibility::stage_with_handoff(&plan, &snapshot, io.clone(), Some(&outgoing)).is_err());
+    outgoing
+        .attempted
+        .push(crate::profile_session::ApplyPhase::Start);
+    let incoming = Visibility::stage_with_handoff(&plan, &snapshot, io.clone(), Some(&outgoing))
+        .unwrap()
+        .bind(&owner())
+        .unwrap();
+    io.driver
+        .lock()
+        .unwrap()
+        .applications
+        .push(r"\Device\Volume1\External.exe".into());
+    let external = io.driver.lock().unwrap().clone();
+    // The final check truthfully validates metadata, not a new driver sample.
+    incoming.validate_handoff(Some(&outgoing)).unwrap();
+    assert_eq!(*io.driver.lock().unwrap(), external);
+    assert!(io.owned.lock().unwrap().is_some());
+    assert!(old.stop().is_err());
+    let mut incoming = incoming;
+    assert!(incoming.start().is_err());
+    assert_eq!(*io.driver.lock().unwrap(), external);
+}
+#[test]
+fn crash_cleanup_of_incoming_handoff_never_rehides_or_replays_original_proof() {
+    let io = Fake::new();
+    let snapshot = snapshot();
+    let plan = plan(&snapshot);
+    let before = io.driver.lock().unwrap().clone();
+    let old_owner = owner();
+    let mut old = Visibility::prepare(&plan, &snapshot, &old_owner, io.clone()).unwrap();
+    let mut outgoing = owned_run(old_owner, old.receipts().unwrap());
+    outgoing
+        .attempted
+        .push(crate::profile_session::ApplyPhase::Start);
+    old.start().unwrap();
+    let incoming_owner = owner();
+    let mut incoming =
+        Visibility::stage_with_handoff(&plan, &snapshot, io.clone(), Some(&outgoing))
+            .unwrap()
+            .bind(&incoming_owner)
+            .unwrap();
+    incoming.validate_handoff(Some(&outgoing)).unwrap();
+    let run = owned_run(incoming_owner, incoming.receipts().unwrap());
+    old.stop().unwrap();
+    incoming.start().unwrap();
+    *io.owned.lock().unwrap() = None;
+    let mut recovery = Visibility::from_receipts(&run, io.clone())
+        .unwrap()
+        .unwrap();
+    assert!(recovery.handoff.is_none());
+    assert!(recovery.start().is_err());
+    recovery.stop().unwrap();
+    assert_eq!(*io.driver.lock().unwrap(), before);
+    assert_eq!(
+        io.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(op, _)| op == "start")
+            .count(),
+        2
+    );
 }

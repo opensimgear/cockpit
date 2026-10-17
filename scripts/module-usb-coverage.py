@@ -80,6 +80,12 @@ def main():
                     root / "crates/companion-service/src/profile.rs",
                     root / "crates/companion-service/src/publication.rs",
                     root / "crates/mapping-host/src/companions.rs"])
+    # Profile hide handoff depends on the exact native owner/journal proof,
+    # including restore-only worker admission rather than current hidden state.
+    tracked.append(root / "crates/controller-input/src/lib.rs")
+    tracked.extend(root / f"crates/controller-input/src/visibility/{name}.rs" for name in
+                   ["mod", "game", "game_tests", "game_handoff_tests", "handoff", "handoff_tests",
+                    "journal", "policy", "runtime", "service", "service_tests"])
     initial_stamp = source_stamp(tracked, root)
     profiles = Path(tempfile.mkdtemp(prefix="profiles-", dir=output))
     env = dict(os.environ,

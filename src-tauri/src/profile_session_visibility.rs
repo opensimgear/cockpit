@@ -1,7 +1,7 @@
 //! Profile-owned use of the existing visibility worker and compare-fenced journal.
 //! Receipts reference a native owner; recovery never carries an Apply policy.
 use crate::profile_session::{OwnedRun, Receipt, RunOwner};
-use osg_controller_input::visibility::{policy::Plan, settings::Intent};
+use osg_controller_input::visibility::{handoff::Proof, policy::Plan, settings::Intent};
 use osg_profiles::{
     compiler_models::{CompileSnapshot, ExecutionPlan, PlanReadiness},
     resources::{Availability, ResourceType, Transport},
@@ -37,8 +37,10 @@ struct CapturedIntent {
 struct Preparation {
     intent: CapturedIntent,
     policy: Option<Plan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handoff: Option<Proof>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RecoveryReceipt {
     schema_version: u32,
@@ -64,11 +66,17 @@ pub(crate) struct Visibility {
     restored: bool,
     job: Option<String>,
     session: Option<String>,
+    handoff: Option<Outgoing>,
 }
 /// An unowned native capture. Binding a coordinator owner performs no I/O.
 pub(crate) struct StagedVisibility {
     io: Arc<dyn VisibilityIo>,
     captured: Option<(Vec<String>, String, Value)>,
+    handoff: Option<Outgoing>,
+}
+struct Outgoing {
+    receipt: RecoveryReceipt,
+    proof: Proof,
 }
 impl StagedVisibility {
     pub(crate) fn bind(self, owner: &RunOwner) -> Result<Visibility, String> {
@@ -97,6 +105,7 @@ impl StagedVisibility {
             restored: false,
             job: None,
             session: None,
+            handoff: self.handoff,
         })
     }
 }
@@ -140,11 +149,42 @@ impl RecoveryReceipt {
         Ok(())
     }
 }
+fn reference(run: &OwnedRun) -> Result<Option<RecoveryReceipt>, String> {
+    let receipts = run
+        .receipts
+        .iter()
+        .filter(|r| r.kind == KIND)
+        .collect::<Vec<_>>();
+    if receipts.is_empty() {
+        return Ok(None);
+    }
+    if receipts.len() != 1
+        || receipts[0].resource_id != RESOURCE
+        || serde_json::to_vec(&receipts[0].state)
+            .map_err(|e| e.to_string())?
+            .len()
+            > 16_384
+    {
+        return Err("Malformed or duplicated profile visibility receipt.".into());
+    }
+    let receipt: RecoveryReceipt = serde_json::from_value(receipts[0].state.clone())
+        .map_err(|_| "Malformed profile visibility recovery reference.")?;
+    receipt.validate(&run.owner)?;
+    Ok(Some(receipt))
+}
 impl Visibility {
     pub(crate) fn stage(
         plan: &ExecutionPlan,
         snapshot: &CompileSnapshot,
         io: Arc<dyn VisibilityIo>,
+    ) -> Result<StagedVisibility, String> {
+        Self::stage_with_handoff(plan, snapshot, io, None)
+    }
+    pub(crate) fn stage_with_handoff(
+        plan: &ExecutionPlan,
+        snapshot: &CompileSnapshot,
+        io: Arc<dyn VisibilityIo>,
+        outgoing: Option<&OwnedRun>,
     ) -> Result<StagedVisibility, String> {
         let mut selected = BTreeMap::new();
         let mut logical = BTreeSet::new();
@@ -204,7 +244,11 @@ impl Visibility {
                 );
             }
         }
-        let mut result = StagedVisibility { io, captured: None };
+        let mut result = StagedVisibility {
+            io,
+            captured: None,
+            handoff: None,
+        };
         if selected.is_empty() {
             return Ok(result);
         }
@@ -244,7 +288,34 @@ impl Visibility {
         for policy in intent.policies.values() {
             policy.validate()?;
         }
-        let prepared = result.io.request("preflight", &captured)?;
+        let outgoing = outgoing
+            .map(|run| {
+                let receipt = reference(run)?;
+                if receipt.is_some()
+                    && (!run
+                        .attempted
+                        .contains(&crate::profile_session::ApplyPhase::Visibility)
+                        || !run
+                            .attempted
+                            .contains(&crate::profile_session::ApplyPhase::Start))
+                {
+                    return Err(
+                        "Only an exact applied profile can provide outgoing visibility proof."
+                            .to_owned(),
+                    );
+                }
+                Ok(receipt)
+            })
+            .transpose()?
+            .flatten();
+        let prepared = if let Some(receipt) = &outgoing {
+            result.io.request(
+                "handoff_preflight",
+                &json!({"owner":receipt.visibility_owner,"intent":captured}),
+            )?
+        } else {
+            result.io.request("preflight", &captured)?
+        };
         if serde_json::to_vec(&prepared)
             .map_err(|e| e.to_string())?
             .len()
@@ -256,6 +327,20 @@ impl Visibility {
             .map_err(|_| "Malformed native visibility preparation.")?;
         if proof.intent != intent {
             return Err("Native visibility scope changed during preflight.".into());
+        }
+        match (outgoing, proof.handoff.as_ref()) {
+            (Some(receipt), Some(handoff)) if handoff.owner == receipt.visibility_owner => {
+                handoff.validate()?;
+                result.handoff = Some(Outgoing {
+                    receipt,
+                    proof: handoff.clone(),
+                });
+            }
+            (None, None) => {}
+            _ => return Err(
+                "The native outgoing visibility proof does not match its applied profile receipt."
+                    .into(),
+            ),
         }
         let policy = proof
             .policy
@@ -271,6 +356,35 @@ impl Visibility {
         );
         result.captured = Some((ids, digest, prepared));
         Ok(result)
+    }
+    /// Runs under final coordinator admission, before outgoing authority is
+    /// revoked or transition intent can mutate external visibility.
+    pub(crate) fn validate_handoff(&self, previous: Option<&OwnedRun>) -> Result<(), String> {
+        let Some(handoff) = &self.handoff else {
+            return Ok(());
+        };
+        let previous =
+            previous.ok_or("The outgoing hidden profile changed during native preflight.")?;
+        if !previous
+            .attempted
+            .contains(&crate::profile_session::ApplyPhase::Visibility)
+            || !previous
+                .attempted
+                .contains(&crate::profile_session::ApplyPhase::Start)
+            || reference(previous)?.as_ref() != Some(&handoff.receipt)
+        {
+            return Err(
+                "The outgoing visibility owner/receipt changed before profile admission.".into(),
+            );
+        }
+        if self
+            .io
+            .request("handoff_validate", &json!({"proof":handoff.proof}))?
+            != json!({"valid":true})
+        {
+            return Err("The outgoing native hide session could not be revalidated.".into());
+        }
+        Ok(())
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.receipt.is_none()
@@ -432,26 +546,9 @@ impl Visibility {
         run: &OwnedRun,
         io: Arc<dyn VisibilityIo>,
     ) -> Result<Option<Self>, String> {
-        let receipts = run
-            .receipts
-            .iter()
-            .filter(|r| r.kind == KIND)
-            .collect::<Vec<_>>();
-        if receipts.is_empty() {
+        let Some(receipt) = reference(run)? else {
             return Ok(None);
-        }
-        if receipts.len() != 1
-            || receipts[0].resource_id != RESOURCE
-            || serde_json::to_vec(&receipts[0].state)
-                .map_err(|e| e.to_string())?
-                .len()
-                > 16_384
-        {
-            return Err("Malformed or duplicated profile visibility receipt.".into());
-        }
-        let receipt: RecoveryReceipt = serde_json::from_value(receipts[0].state.clone())
-            .map_err(|_| "Malformed profile visibility recovery reference.")?;
-        receipt.validate(&run.owner)?;
+        };
         Ok(Some(Self {
             io,
             receipt: Some(receipt),
@@ -461,6 +558,7 @@ impl Visibility {
             restored: false,
             job: None,
             session: None,
+            handoff: None,
         }))
     }
 }

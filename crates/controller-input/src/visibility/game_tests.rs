@@ -253,3 +253,6 @@ fn restart_reports_owned_hiding_and_only_explicit_recovery_restores_it() {
     assert!(journal::inspect(&path).unwrap().unwrap().clean);
     assert!(!s.active());
 }
+
+#[path="game_handoff_tests.rs"]
+mod handoff_tests;

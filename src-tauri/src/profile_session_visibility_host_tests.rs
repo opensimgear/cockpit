@@ -238,3 +238,100 @@ fn actual_host_retains_exact_cleanup_after_conflict_and_releases_it_after_restor
     run.attempted.clear();
     host.restore_visibility(&run).unwrap();
 }
+
+#[test]
+fn actual_host_final_admission_validates_applied_hide_owner_before_any_neutralization() {
+    use crate::profile_session_visibility::tests::owned_run;
+    let directory = tempfile::tempdir().unwrap();
+    let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
+    let resources = Arc::new(crate::profile_resources::Runtime::new(
+        None,
+        Arc::new(|_| vec![]),
+        false,
+    ));
+    let games = Arc::new(crate::games::GamesRuntime::new(
+        Arc::new(|_| json!({"ok":false})),
+        directory.path().join("games.json"),
+        Arc::new(crate::game_discovery::NativePlatform),
+    ));
+    let companions = Arc::new(crate::companion_host::Runtime::new(
+        None,
+        Arc::new(osg_mapping_host::companions::CompanionProvider::new(
+            Arc::new(|| 0),
+        )),
+    ));
+    let mut host = NativeProfileHost::new(
+        resources.clone(),
+        controllers.clone(),
+        games.clone(),
+        companions.clone(),
+        Arc::new(crate::gateways::ProfilePanelIo::empty()),
+        false,
+        Arc::new(AtomicU64::new(1)),
+    );
+    let io = Fake::new();
+    let snapshot = snapshot();
+    let policy_plan = plan(&snapshot);
+    let old_owner = owner();
+    let before = io.driver.lock().unwrap().clone();
+    let mut old = Visibility::stage(&policy_plan, &snapshot, io.clone())
+        .unwrap()
+        .bind(&old_owner)
+        .unwrap();
+    let mut outgoing = owned_run(old_owner.clone(), old.receipts().unwrap());
+    outgoing.attempted.push(ApplyPhase::Start);
+    old.start().unwrap();
+    let incoming_owner = owner();
+    let mut candidate = Candidate {
+        document: osg_profiles::default_document(),
+        assignments: vec![],
+        read_only: false,
+        game_id: None,
+        admission_epoch: Some(1),
+        stage: None,
+    };
+    candidate.stage = Some(
+        NativeProfileHost::stage_with_handoff(
+            &resources,
+            &games,
+            &companions,
+            controllers,
+            false,
+            &candidate,
+            Some(outgoing.clone()),
+        )
+        .unwrap(),
+    );
+    let prepared = host.prepare(&candidate, &incoming_owner).unwrap();
+    // Only driver metadata is substituted. Capture/neutralize/Visibility/restore
+    // remain the real Host operations; native qualification remains unchanged.
+    host.run(&incoming_owner).unwrap().visibility =
+        Visibility::stage_with_handoff(&policy_plan, &snapshot, io.clone(), Some(&outgoing))
+            .unwrap()
+            .bind(&incoming_owner)
+            .unwrap();
+    let active = io.driver.lock().unwrap().clone();
+    assert!(host.capture(&prepared, &incoming_owner, None).is_err());
+    let mut changed = outgoing.clone();
+    changed.owner.generation += 1;
+    assert!(host
+        .capture(&prepared, &incoming_owner, Some(&changed))
+        .is_err());
+    assert_eq!(*io.driver.lock().unwrap(), active);
+    let receipts = host
+        .capture(&prepared, &incoming_owner, Some(&outgoing))
+        .unwrap();
+    assert_eq!(receipts.len(), 1);
+    host.recovery_visibility.insert(key(&old_owner), old);
+    host.neutralize(&outgoing).unwrap();
+    assert_eq!(*io.driver.lock().unwrap(), before);
+    let incoming = owned_run(incoming_owner, receipts);
+    host.enter(ApplyPhase::Visibility, &prepared, &incoming)
+        .unwrap();
+    assert_ne!(*io.driver.lock().unwrap(), before);
+    host.neutralize(&incoming).unwrap();
+    host.restore(&incoming, false).unwrap();
+    assert_eq!(*io.driver.lock().unwrap(), before);
+    resources.shutdown();
+    games.shutdown();
+}

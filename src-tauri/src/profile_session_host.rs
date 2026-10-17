@@ -336,6 +336,17 @@ impl NativeProfileHost {
         native: bool,
         candidate: &Candidate,
     ) -> Result<Arc<crate::profile_session::Stage>, String> {
+        Self::stage_with_handoff(resources,games,companions,controllers,native,candidate,None)
+    }
+    pub(crate) fn stage_with_handoff(
+        resources:&crate::profile_resources::Runtime,
+        games:&crate::games::GamesRuntime,
+        companions:&crate::companion_host::Runtime,
+        controllers:Arc<osg_controller_input::ControllerService>,
+        native:bool,
+        candidate:&Candidate,
+        outgoing:Option<OwnedRun>,
+    )->Result<Arc<crate::profile_session::Stage>,String> {
         let game_preparation = match candidate.game_id.as_deref() {
             Some(id) => games.prepare_profile_game_context(id)?,
             None => None,
@@ -469,7 +480,7 @@ impl NativeProfileHost {
             game_preparation.clone(),
         )?;
         let companions = crate::profile_session_companions::CompanionSources::prepare(&prepared.plan, companion_bindings)?;
-        let visibility=crate::profile_session_visibility::Visibility::stage(&prepared.plan,&snapshot,controllers)?;
+        let visibility=crate::profile_session_visibility::Visibility::stage_with_handoff(&prepared.plan,&snapshot,controllers,outgoing.as_ref())?;
         crate::profile_session::Stage::new(candidate, NativePreparation {
             prepared, report, backend: snapshot.backend, bindings, scripts, game, game_preparation,
             companions, companion_catalogues, visibility,
@@ -563,6 +574,7 @@ impl Host for NativeProfileHost {
         self.validate_prepared(prepared, owner)?;
         let runtime = self.companions.clone();
         let state = self.run(owner)?;
+        state.visibility.validate_handoff(previous)?;
         let previous = previous.map_or(&[][..], |run|run.receipts.as_slice());
         let mut receipts = if !state.companions.is_empty() || companion::has_receipts(previous) {
             companion::capture(&runtime.profile_metadata()?, &state.companions, previous)?

@@ -21,6 +21,8 @@ struct IntentCapture {
 struct Prepared {
     intent: IntentCapture,
     policy: Option<Plan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handoff: Option<super::super::handoff::Proof>,
 }
 pub(super) struct Owner {
     owner: String,
@@ -143,6 +145,13 @@ impl Service {
         Ok(())
     }
     fn game_policy(&self, intent: &IntentCapture) -> Result<Option<Plan>, String> {
+        self.game_policy_from(intent, None)
+    }
+    fn game_policy_from(
+        &self,
+        intent: &IntentCapture,
+        original: Option<super::super::policy::State>,
+    ) -> Result<Option<Plan>, String> {
         let preferences = intent.preferences(self.platform)?;
         if self.platform != Platform::Windows {
             let backend = if self.platform == Platform::Linux {
@@ -182,7 +191,103 @@ impl Service {
                 policy,
             });
         }
-        Ok(Some(Plan::build(adapter.read()?, selections, image)?))
+        Ok(Some(Plan::build(
+            match original {
+                Some(state) => state,
+                None => adapter.read()?,
+            },
+            selections,
+            image,
+        )?))
+    }
+    fn handoff_metadata_snapshot(
+        &self,
+        owner: &str,
+    ) -> Result<(journal::Record, super::super::runtime::Status), String> {
+        if self.platform != Platform::Windows {
+            return Err("Persistent visibility handoff is unavailable on this platform.".into());
+        }
+        if self
+            .path
+            .as_ref()
+            .map(|path| journal::inspect(path))
+            .transpose()?
+            .flatten()
+            .is_some_and(|record| !record.clean)
+            || self.suppression.active()
+            || self
+                .launch
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .active()
+        {
+            return Err(
+                "A foreign visibility scope must be restored before profile handoff.".into(),
+            );
+        }
+        let job = self
+            .game_owner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|active| active.owner == owner)
+            .map(|active| active.job.clone())
+            .ok_or("The outgoing profile does not own the active native hide session.")?;
+        let pending = self.pending_games()?;
+        if pending.len() != 1 || pending[0] != owner {
+            return Err("Other pending visibility journals block handoff.".into());
+        }
+        let path = self.game_path(owner)?;
+        let record =
+            journal::inspect(&path)?.ok_or("The outgoing visibility journal is missing.")?;
+        let status = self
+            .worker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .snapshot()
+            .filter(|status| status.job_id == job)
+            .ok_or("The outgoing native visibility worker changed.")?;
+        Ok((record, status))
+    }
+    fn handoff_proof(&self, owner: &str) -> Result<super::super::handoff::Proof, String> {
+        let (record, status) = self.handoff_metadata_snapshot(owner)?;
+        let actual = (self.factory)()?.read()?;
+        let proof = super::super::handoff::Proof::capture(owner, &record, &status, &actual)?;
+        self.handoff_validate_metadata(&proof)?;
+        Ok(proof)
+    }
+    fn handoff_validate_metadata(
+        &self,
+        proof: &super::super::handoff::Proof,
+    ) -> Result<(), String> {
+        let (record, status) = self.handoff_metadata_snapshot(&proof.owner)?;
+        proof.validate_metadata_active(&record, &status)?;
+        if !self
+            .game_owner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(|active| active.owner == proof.owner && active.job == proof.job_id)
+        {
+            return Err(
+                "The outgoing native visibility owner changed during proof capture.".into(),
+            );
+        }
+        Ok(())
+    }
+    fn handoff_restored(&self, proof: &super::super::handoff::Proof) -> Result<(), String> {
+        if self.platform != Platform::Windows {
+            return Err("Persistent visibility handoff is unavailable on this platform.".into());
+        }
+        let record = journal::inspect(&self.game_path(&proof.owner)?)?
+            .ok_or("The outgoing visibility journal disappeared before incoming hiding.")?;
+        let status = self
+            .worker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .snapshot()
+            .ok_or("The outgoing native visibility restore proof is missing.")?;
+        proof.validate_restored(&record, &status, &(self.factory)()?.read()?)
     }
     fn game_status(&self) -> Value {
         if self.platform == Platform::Windows {
@@ -197,14 +302,37 @@ impl Service {
         }
     }
     pub(crate) fn game_request(&self, operation: &str, value: &Value) -> Result<Value, String> {
+        // Read-only native proof I/O must not hold the mutation admission
+        // mutex: the outgoing owner still needs responsive health/Stop.
+        if operation == "handoff_preflight" {
+            self.game_enabled()?;
+            let owner = value["owner"]
+                .as_str()
+                .ok_or("Missing outgoing visibility owner.")?;
+            let proof = self.handoff_proof(owner)?;
+            let intent = IntentCapture::parse(&value["intent"])?;
+            let policy = self.game_policy_from(&intent, Some(proof.plan.before.clone()))?;
+            self.handoff_validate_metadata(&proof)?;
+            return Ok(json!(Prepared {
+                intent,
+                policy,
+                handoff: Some(proof)
+            }));
+        }
+        if operation == "handoff_validate" {
+            self.game_enabled()?;
+            let proof: super::super::handoff::Proof =
+                serde_json::from_value(value["proof"].clone()).map_err(|e| e.to_string())?;
+            proof.validate()?;
+            self.handoff_validate_metadata(&proof)?;
+            return Ok(json!({"valid":true}));
+        }
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         if operation == "capture" {
             let mut intent = IntentCapture::parse(value)?;
             let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
             // Capture current explicit policies once; later editor changes do not alter the run.
-            intent.policies=intent.source_ids.iter().map(|id| {
-                settings.value.devices.get(id).cloned().map(|p|(id.clone(),p)).ok_or("Save an explicit policy for every selected controller before capturing a game profile.")
-            }).collect::<Result<_,_>>()?;
+            intent.policies=intent.source_ids.iter().map(|id|settings.value.devices.get(id).cloned().map(|policy|(id.clone(),policy)).ok_or("Save an explicit policy for every selected controller before capturing a game profile.")).collect::<Result<_,_>>()?;
             intent.preferences(self.platform)?;
             return Ok(json!(intent));
         }
@@ -216,13 +344,17 @@ impl Service {
                 );
             }
             if let Some(path) = &self.path {
-                if journal::inspect(path)?.is_some_and(|r| !r.clean) {
+                if journal::inspect(path)?.is_some_and(|record| !record.clean) {
                     return Err("Recover standalone visibility before game activation.".into());
                 }
             }
             let intent = IntentCapture::parse(value)?;
             let policy = self.game_policy(&intent)?;
-            return Ok(json!(Prepared { intent, policy }));
+            return Ok(json!(Prepared {
+                intent,
+                policy,
+                handoff: None
+            }));
         }
         let owner = value["owner"]
             .as_str()
@@ -236,6 +368,14 @@ impl Service {
                 }
                 let prepared: Prepared =
                     serde_json::from_value(value["prepared"].clone()).map_err(|e| e.to_string())?;
+                if let Some(proof) = &prepared.handoff {
+                    if proof.owner == owner {
+                        return Err(
+                            "An incoming hide session requires a distinct native owner.".into()
+                        );
+                    }
+                    self.handoff_restored(proof)?;
+                }
                 let intent = IntentCapture::parse(&json!(prepared.intent))?;
                 let policy = self.game_policy(&intent)?;
                 if policy != prepared.policy {

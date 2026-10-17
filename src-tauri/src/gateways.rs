@@ -374,19 +374,21 @@ impl GatewayManager {
             module_usb.clone(), native,
         );
         let profile_resources = Arc::new(crate::profile_resources::Runtime::new(native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-resources-v1")), collect, native));
-        let prepare_resources = profile_resources.clone();
-        let prepare_games = games.clone();
-        let prepare_companions = companion_host.clone();
-        let prepare_controllers = controllers.clone();
-        let profile_prepare: ProfilePrepare = Arc::new(move |candidate| {
-            crate::profile_session_host::NativeProfileHost::stage(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate)
-        });
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
         let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone()),
             native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-session-v1.json")),
         )));
+        let prepare_resources = profile_resources.clone();
+        let prepare_games = games.clone();
+        let prepare_companions = companion_host.clone();
+        let prepare_controllers = controllers.clone();
+        let prepare_session = profile_session.clone();
+        let profile_prepare: ProfilePrepare = Arc::new(move |candidate| {
+            let outgoing = prepare_session.lock().unwrap_or_else(|p| p.into_inner()).visibility_handoff_source()?;
+            crate::profile_session_host::NativeProfileHost::stage_with_handoff(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate, outgoing)
+        });
         let profile_closed = Arc::new(AtomicBool::new(false));
         let profile_worker = native.then(|| {
             let runtime = profile_session.clone();
