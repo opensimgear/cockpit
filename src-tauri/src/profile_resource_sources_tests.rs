@@ -57,6 +57,35 @@ fn can_state() -> Value {
             "moduleActions":{MODULE:{"status":"unsupported","route":[1,1,2,100],"configurationGeneration":1}}})
 }
 #[test]
+fn bounded_publication_metadata_keeps_ordinary_input_token_valid_when_publication_changes() {
+    let (sources,_temporary)=sources();
+    let gateway="stm32:0123456789abcdef01234567";
+    let mut state=can_state();
+    state["gatewaySerial"]=json!("0123456789abcdef01234567");
+    state["layoutPending"]=json!(false);
+    state["nativeSnapshotAtMs"]=json!(hid_publication::now_ms());
+    state["publication"]=json!({"phase":"idle","outcome":"no_change"});
+    state["modules"][0]["published"]=json!(false);
+    state["modules"][0]["directUsb"]=json!(false);
+    let mut registry=Registry::new();
+    let observe=|state:&Value|sources.can_observations(gateway,state,&BTreeMap::new()).unwrap();
+    registry.reconcile(batch(&format!("gateway:{gateway}"),"native-fixture",1,observe(&state))).unwrap();
+    let before=registry.list(0,32).unwrap().resources.remove(0);
+    let token=registry.token(&before.id,"button:0",Access::Read).unwrap();
+    let key=osg_profiles::compiler::hid_policy::attribute(&before.connections[0].route.id);
+    assert_eq!(key.len(),71);
+    let proof:Value=serde_json::from_str(&before.attributes[&key]).unwrap();
+    assert_eq!(proof["status"],"disabled");
+    state["modules"][0]["published"]=json!(true);
+    registry.reconcile(batch(&format!("gateway:{gateway}"),"native-fixture",2,observe(&state))).unwrap();
+    let after=registry.inspect(&before.id,0,32).unwrap().resource;
+    assert_eq!(before.generation,after.generation);
+    registry.validate_token(&token,"button:0",Access::Read).unwrap();
+    let proof:Value=serde_json::from_str(&after.attributes[&key]).unwrap();
+    assert_eq!(proof["status"],"published");
+}
+
+#[test]
 fn inventory_retains_distinct_gateway_modules_and_closed_game_ports_without_effects() {
     let (mut sources, _temporary) = sources();
     sources.gateways = Arc::new(|| {

@@ -38,6 +38,7 @@ struct State {
     pending_save: bool,
     game_metadata: BTreeMap<String, Observation>,
     game_deliveries: BTreeMap<String, ProviderBatch>,
+    game_command_withdrawals: BTreeMap<(String, String), BTreeSet<String>>,
 }
 pub(crate) struct Runtime {
     state: Arc<Mutex<State>>,
@@ -135,7 +136,7 @@ impl Runtime {
                         .registry
                         .token(&details.resource.id, &observed.descriptor.id, access)
                 {
-                    if token.contract_hash == observed.contract_hash && !tokens.contains(&token) {
+                    if token.contract_hash == observed.contract_hash && !Self::command_withdrawn(state, &token) && !tokens.contains(&token) {
                         tokens.push(token);
                     }
                 }
@@ -324,6 +325,9 @@ impl Runtime {
         if state.read_only && token.access != Access::Read {
             return Err("Repair retained inventory before output delivery.".into());
         }
+        if Self::command_withdrawn(&state, token) {
+            return Err("This DCS command's publication authority was withdrawn; Apply a fresh profile.".into());
+        }
         Ok(state
             .registry
             .validate_token(token, &token.port_id, token.access)?
@@ -369,6 +373,7 @@ impl Runtime {
             pending_save: false,
             game_metadata: BTreeMap::new(),
             game_deliveries: BTreeMap::new(),
+            game_command_withdrawals: BTreeMap::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let local_revision = Arc::new(AtomicU64::new(0));

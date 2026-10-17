@@ -1,4 +1,6 @@
 //! Read-only provider composition. Transport topology remains resource metadata.
+#[path = "profile_hid_publication.rs"]
+pub(crate) mod hid_publication;
 use crate::{
     profile_resource_ports as ports,
     profile_resources::{attributes, batch, Collect},
@@ -393,6 +395,7 @@ impl Sources {
     fn usb_observation(
         slot: crate::module_usb_fleet::SlotSnapshot,
     ) -> Result<Option<Observation>, String> {
+        let publication = hid_publication::usb_status(&slot);
         let snapshot = slot.snapshot;
         let route = json!(snapshot.route);
         let events_current = snapshot.connected
@@ -472,6 +475,9 @@ impl Sources {
                     writable,
                     priority: 100,
                 });
+                let route = item.route.as_ref().unwrap();
+                item.attributes.insert(osg_profiles::compiler::hid_policy::attribute(&route.id),
+                    osg_profiles::compiler::hid_policy::evidence(route, publication));
             }
         }
         Ok(Some(item))
@@ -646,6 +652,10 @@ impl Sources {
                         && actions["status"] != "uncertain",
                     priority: 50,
                 });
+                let route = item.route.as_ref().unwrap();
+                item.attributes.insert(osg_profiles::compiler::hid_policy::attribute(&route.id),
+                    osg_profiles::compiler::hid_policy::evidence(route,
+                        hid_publication::can_status(gateway, state, module)));
             }
             observed.push(item);
         }

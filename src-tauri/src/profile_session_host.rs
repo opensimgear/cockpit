@@ -10,6 +10,8 @@ mod launch;
 mod action;
 #[path = "profile_session_publication_host.rs"]
 mod publication;
+#[path = "profile_session_dcs_hid.rs"]
+mod dcs_hid;
 
 use crate::profile_session::{
     Admission, AdmissionBlocker, ApplyPhase, BlockerKind, Candidate, Health, Host, OwnedRun,
@@ -38,6 +40,7 @@ struct NativePreparation {
     companion_catalogues: Vec<crate::profile_resources::CompanionCatalogue>,
     visibility: crate::profile_session_visibility::StagedVisibility,
     publication: crate::profile_session_overrides::Staged,
+    dcs_hid: dcs_hid::Guard,
 }
 struct NativeRun {
     owner: RunOwner,
@@ -68,6 +71,7 @@ struct NativeRun {
     companion_retry: Option<u64>,
     visibility: crate::profile_session_visibility::Visibility,
     publication: crate::profile_session_overrides::Overrides,
+    dcs_hid: dcs_hid::Guard,
     acquisition_plan: Option<ExecutionPlan>,
 }
 pub(crate) struct NativeProfileHost {
@@ -279,6 +283,7 @@ impl NativeProfileHost {
         resources: &crate::profile_resources::Runtime,
         games: &crate::games::GamesRuntime,
         state: &mut NativeRun,
+        panels: &crate::gateways::ProfilePanelIo,
         effects: Vec<osg_mapping::engine::typed::Effect>,
     ) -> Result<Vec<String>, String> {
         let mut diagnostics = vec![];
@@ -294,6 +299,8 @@ impl NativeProfileHost {
             if !matches!(effect.sample, osg_mapping::program::SignalSample::Known(_)) {
                 continue;
             }
+            diagnostics.extend(dcs_hid::refresh(state, resources, panels));
+            if state.dcs_hid.blocked(&effect.endpoint) { continue; }
             let result = (|| {
                 let stale = sink.readiness != PlanReadiness::Ready || sink.token.as_ref()
                     .is_none_or(|token| resources.validate_delivery(token).is_err());
@@ -488,9 +495,10 @@ impl NativeProfileHost {
         )?;
         let companions = crate::profile_session_companions::CompanionSources::prepare(&prepared.plan, companion_bindings)?;
         let visibility=crate::profile_session_visibility::Visibility::stage_with_handoff(&prepared.plan,&snapshot,controllers,outgoing.as_ref())?;
+        let dcs_hid = dcs_hid::Guard::capture(&prepared.plan, &snapshot);
         crate::profile_session::Stage::new(candidate, NativePreparation {
             prepared, report, backend: snapshot.backend, bindings, scripts, game, game_preparation,
-            companions, companion_catalogues, visibility, publication,
+            companions, companion_catalogues, visibility, publication, dcs_hid,
         })
     }
 }
@@ -514,7 +522,7 @@ impl Host for NativeProfileHost {
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
-        let NativePreparation {mut prepared, report, backend, bindings, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication} = candidate.stage.as_ref()
+        let NativePreparation {mut prepared, report, backend, bindings, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
@@ -530,7 +538,7 @@ impl Host for NativeProfileHost {
             child_game_owner: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_retry: None, visibility,
             actions,
-            publication, acquisition_plan: None,
+            publication, dcs_hid, acquisition_plan: None,
         });
         self.validate_prepared(&prepared, owner)?;
         Ok(prepared)
@@ -757,6 +765,7 @@ impl Host for NativeProfileHost {
                 let games = self.games.clone();
                 let resources = self.resources.clone();
                 let controllers = self.controllers.clone();
+                let panels_io = self.panels.clone();
                 let admission_epoch=self.admission_epoch.clone();
                 let (assignments, document, backend, game_preparation) = {
                     let state = self.run(&run.owner)?;
@@ -826,6 +835,7 @@ impl Host for NativeProfileHost {
                 state.baselines.extend(panel_frames);
                 state.baselines.extend(companion_frames);
                 state.delivery = Some(delivery);
+                dcs_hid::validate(state, &resources, &panels_io)?;
                 Self::check_epoch(&admission_epoch,state.admission_epoch)?;
                 let mut reducer = Phase::new(
                     prepared.plan.program.clone(),
@@ -847,7 +857,7 @@ impl Host for NativeProfileHost {
                 action::start(state)?;
                 state.started = Instant::now();
                 let _physical_diagnostics = action::dispatch(state,&effects);
-                let diagnostics = Self::dispatch_game(&resources, &games, state, effects)?;
+                let diagnostics = Self::dispatch_game(&resources, &games, state, &panels_io, effects)?;
                 if !diagnostics.is_empty() { return Err(diagnostics.join("; ")); }
                 if let Some(output) = state.output.as_mut() {
                     output.poll(&state.recording)?;
@@ -886,6 +896,7 @@ impl Host for NativeProfileHost {
         let resources = self.resources.clone();
         let games = self.games.clone();
         let companions = self.companions.clone();
+        let panels_io = self.panels.clone();
         let state = self.run(&run.owner)?;
         publication::active(state)?;
         visibility::active(&mut state.visibility)?;
@@ -898,7 +909,9 @@ impl Host for NativeProfileHost {
             })?;
         // Native context loss reaches the reducer before timers/scripts can
         // emit effects, withdrawing only branches that depend on that game.
-        let game = Self::game_poll(&resources, &games, state, controllers.stream_page("", 0).captured_us)?;
+        let now_us = controllers.stream_page("", 0).captured_us;
+        let game = Self::game_poll(&resources, &games, state, now_us)?;
+        degraded.extend(dcs_hid::refresh(state, &resources, &panels_io));
         degraded.extend(game.diagnostics);
         let panels = state.panels.poll(|token| Self::validate_token(&resources, token))?;
         degraded.extend(panels.diagnostics);
@@ -930,7 +943,7 @@ impl Host for NativeProfileHost {
             }
         }
         degraded.extend(action::dispatch(state,&effects));
-        degraded.extend(Self::dispatch_game(&resources, &games, state, effects)?);
+        degraded.extend(Self::dispatch_game(&resources, &games, state, &panels_io, effects)?);
         if let Some(output) = state.output.as_mut() {
             output.poll(&state.recording)?;
         }

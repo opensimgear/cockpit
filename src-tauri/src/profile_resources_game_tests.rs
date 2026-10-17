@@ -109,6 +109,58 @@ fn runtime() -> Runtime {
 }
 
 #[test]
+fn dcs_publication_withdrawal_revokes_only_exact_command_tokens_and_preserves_live_telemetry() {
+    let runtime = runtime();
+    let mut native_metadata=metadata("dcs");
+    let mut other=native_metadata.ports.as_ref().unwrap().ports[1].clone();
+    other.id="command-other".into();
+    if let PortContract::Action { endpoint, .. } = &mut other.contract { *endpoint="command-other".into(); }
+    native_metadata.ports.as_mut().unwrap().ports.push(other.clone());
+    native_metadata.ports = Some(PortUpdate::complete(native_metadata.ports.take().unwrap().ports).unwrap());
+    Runtime::adopt(&runtime.state,vec![("game:dcs".into(),Ok(batch("game:dcs","metadata",2,vec![native_metadata])))]);
+    let current = |reader:&str, revision| {
+        let mut value=delivery("dcs",reader,revision);
+        value.observations[0].route.as_mut().unwrap().writable=true;
+        value.observations[0].ports.as_mut().unwrap().ports.push(other.clone());
+        value.observations[0].ports = Some(PortUpdate::complete(value.observations[0].ports.take().unwrap().ports).unwrap());
+        value
+    };
+    runtime.publish_profile_game_delivery(current("reader-one",1)).unwrap();
+    let (id,command,unrelated,telemetry) = {
+        let state=runtime.state.lock().unwrap();
+        let id=state.registry.list(0,32).unwrap().resources.into_iter()
+            .find(|r|r.connections.iter().any(|c|c.route.id=="profile-game:dcs")).unwrap().id;
+        (id.clone(),state.registry.token(&id,"command",Access::Invoke).unwrap(),
+            state.registry.token(&id,"command-other",Access::Invoke).unwrap(),
+            state.registry.token(&id,"altitude",Access::Read).unwrap())
+    };
+    runtime.validate_delivery(&command).unwrap();
+    assert!(runtime.withdraw_profile_game_commands("dcs","foreign-reader",&["command".into()]).is_err());
+    assert!(runtime.withdraw_profile_game_commands("dcs","reader-one",&["unknown".into()]).is_err());
+    runtime.validate_delivery(&command).unwrap();
+    runtime.withdraw_profile_game_commands("dcs","reader-one",&["command".into()]).unwrap();
+    assert!(runtime.validate_delivery(&command).is_err());
+    runtime.validate_delivery(&unrelated).unwrap();
+    runtime.validate_delivery(&telemetry).unwrap();
+    runtime.validate_profile_game_delivery("dcs","reader-one").unwrap();
+    runtime.publish_profile_game_delivery(current("reader-one",2)).unwrap();
+    assert!(runtime.validate_delivery(&command).is_err(),"Fresh telemetry cannot re-enable a withdrawn command");
+    runtime.validate_delivery(&telemetry).unwrap();
+    let expected=[&telemetry,&command,&unrelated].into_iter().map(|token|PortExpectation {
+        profile_port_id:token.port_id.clone(),observed_port_id:token.port_id.clone(),expected_contract_hash:token.contract_hash.clone()
+    }).collect();
+    let captured=runtime.snapshot_for_compile(vec![LocalAssignment{resource_id:"game".into(),source_id:id.clone(),ports:expected}]).unwrap();
+    assert!(captured.resources[0].tokens.iter().any(|t|t==&telemetry));
+    assert!(!captured.resources[0].tokens.iter().any(|t|t==&command));
+    runtime.publish_profile_game_delivery(current("reader-two",1)).unwrap();
+    let replacement=runtime.state.lock().unwrap().registry.token(&id,"command",Access::Invoke).unwrap();
+    runtime.validate_delivery(&replacement).unwrap();
+    assert!(runtime.withdraw_profile_game_commands("dcs","reader-one",&["command".into()]).is_err());
+    runtime.validate_delivery(&replacement).unwrap();
+    runtime.shutdown();
+}
+
+#[test]
 fn cached_delivery_check_observes_replacement_metadata_loss_and_closed_inventory_without_discovery() {
     let runtime=runtime();
     assert!(runtime.validate_profile_game_delivery("dcs","reader-one").is_err());

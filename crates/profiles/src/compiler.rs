@@ -17,6 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod capture;
 #[path = "compiler_conflicts.rs"]
 mod conflicts;
+#[path = "compiler_hid_policy.rs"]
+pub mod hid_policy;
 
 pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> CompilationReport {
     compile_mode(document, snapshot, None)
@@ -376,6 +378,7 @@ fn compile_mode(
     for sink in &mut program.sinks {
         canonical_contract_labels(&mut sink.contract);
     }
+    hid_policy::apply(document, snapshot, &source_plans, &mut sink_plans, preparations.is_some(), &mut report.diagnostics);
     conflicts::check(
         document,
         snapshot,

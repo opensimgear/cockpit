@@ -92,6 +92,9 @@ pub(super) fn check(
             .iter()
             .find(|sink| sink.endpoint == branch.sink)
             .unwrap();
+        if sink.adapter == SinkAdapter::SimulatorCommand && sink.readiness == PlanReadiness::Dormant {
+            continue;
+        }
         let domain = match sink.adapter {
             SinkAdapter::VirtualController => "virtual",
             SinkAdapter::SimulatorCommand => "simulator",

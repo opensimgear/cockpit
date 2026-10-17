@@ -67,6 +67,11 @@ impl ProfilePanelIo {
             .ok_or("Connect the bound gateway first.")?;
         Ok(adapter.cached_state())
     }
+    /// Read-only current native publisher inventory; no serial request or scan.
+    pub(crate) fn publication_snapshots(&self) -> Result<Vec<(String, Value)>, String> {
+        if self.closed.load(Ordering::Acquire) { return Err("Cockpit gateway manager has closed.".into()); }
+        Ok(self.states())
+    }
     /// Sealed native owner operations share the configuration writer gate.
     /// There is deliberately no JSON/IPC command that accepts their owner.
     pub(crate) fn publication(&self,gateway:&str,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String> {

@@ -5,6 +5,9 @@ use crate::store::LocalAssignment;
 use crate::{ControllerLayout, Operation, Port, ProcessingNode, Resource, VirtualOutput};
 use osg_mapping::program::{Rounding, SignalSample, SignalValue};
 
+#[path = "compiler_hid_policy_tests.rs"]
+mod hid_policy_tests;
+
 fn mixed() -> ProfileDocument {
     ProfileDocument::parse(include_bytes!(
         "../../../tests/fixtures/profiles/mixed.json"
@@ -84,7 +87,7 @@ fn snapshot(document: &ProfileDocument) -> CompileSnapshot {
                 .collect::<Vec<_>>(),
         )
         .unwrap();
-        let summary = ResourceSummary {
+        let mut summary = ResourceSummary {
             id: id.clone(),
             name: logical.name.clone(),
             resource_type: match logical.kind {
@@ -106,6 +109,11 @@ fn snapshot(document: &ProfileDocument) -> CompileSnapshot {
             attributes: BTreeMap::new(),
             diagnostics: vec![],
         };
+        if osg {
+            // Authored compiler fixture only. Production facts come from the
+            // native USB/gateway snapshots, independently tested there.
+            summary.attributes.insert(hid_policy::attribute(&route.id), hid_policy::evidence(&route, "disabled"));
+        }
         let tokens = ports
             .iter()
             .map(|port| ResourceToken {

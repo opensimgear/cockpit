@@ -105,6 +105,27 @@ pub(super) fn validate_game_delivery(
     Ok(())
 }
 impl Runtime {
+    pub(super) fn command_withdrawn(state: &State, token: &ResourceToken) -> bool {
+        token.access == Access::Invoke && token.route_id.strip_prefix("profile-game:")
+            .and_then(|game| state.game_command_withdrawals.get(&(game.into(), token.provider_session.clone())))
+            .is_some_and(|ports| ports.contains(&token.port_id))
+    }
+    /// Revoke only exact command ports of the current reader. Read tokens and
+    /// the independently advancing telemetry catalogue remain unchanged.
+    pub(crate) fn withdraw_profile_game_commands(&self, game: &str, reader: &str, ports: &[String]) -> Result<(), String> {
+        if self.stop.load(Ordering::Acquire) { return Err("Resource inventory has stopped.".into()); }
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let batch = state.game_deliveries.get(game).filter(|batch| batch.session == reader)
+            .ok_or("The exact command reader is no longer current; its replacement was preserved.")?;
+        let known = batch.observations.iter().flat_map(|item| item.ports.iter().flat_map(|p| &p.ports))
+            .filter(|p| p.direction == osg_profiles::Direction::Input && matches!(p.contract, osg_profiles::PortContract::Action { .. }))
+            .map(|p| p.id.as_str()).collect::<BTreeSet<_>>();
+        if ports.len() > 128 || ports.iter().any(|port| !known.contains(port.as_str())) {
+            return Err("Command withdrawal needs exact current native command ports.".into());
+        }
+        state.game_command_withdrawals.entry((game.into(),reader.into())).or_default().extend(ports.iter().cloned());
+        Ok(())
+    }
     /// Publication is deduplicated by native reader state. This cheap owner check
     /// still observes metadata revocation on every health tick without cloning
     /// or rescanning the provider catalogue.
@@ -156,6 +177,7 @@ impl Runtime {
             return Err(error);
         }
         state.registry.reconcile(batch.clone())?;
+        state.game_command_withdrawals.retain(|(id, reader), _| id != &game || reader == &batch.session);
         state.game_deliveries.insert(game, batch);
         Self::persist_locked(&mut state);
         Ok(())
@@ -178,6 +200,7 @@ impl Runtime {
             .cloned()
         {
             state.game_deliveries.remove(game);
+            state.game_command_withdrawals.remove(&(game.into(), provider_session.into()));
             state
                 .registry
                 .provider_failed(&old.scope, "The native profile game reader stopped.");

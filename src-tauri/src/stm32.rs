@@ -737,6 +737,9 @@ impl Gateway {
                     && module["configurationGeneration"].as_u64() == *generation
             })
         });
+        // Native receipt time is independent of firmware-provided clocks and
+        // changes only when a complete wire snapshot was actually accepted.
+        state["nativeSnapshotAtMs"] = json!(crate::profile_resource_sources::hid_publication::now_ms());
         self.state = state;
         Ok(())
     }

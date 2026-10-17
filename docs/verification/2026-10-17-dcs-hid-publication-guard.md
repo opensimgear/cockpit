@@ -1,0 +1,26 @@
+# Direct DCS command publication admission
+
+The P4 audit found that a simulator-only OSG input branch could bypass the existing disabled-HID requirement. The compiler previously rejected a simultaneous virtual-controller/direct-command route, but did not require actual disabled publication for a direct-command branch on its own.
+
+The compiler now checks every OSG source ancestor of an eligible native DCS command sink, including ancestors through processing nodes. Each current USB/CAN publisher needs native publication evidence. A visible HID capture route, published controller, unknown state, stale evidence or mismatched route blocks that command branch. A no-game or wrong-game integration remains dormant. Companion inputs, read-only game telemetry and ordinary virtual-controller routes do not acquire this requirement. OS hiding is distinct from disabling firmware publication and supplies no exception.
+
+During preparation, an explicit temporary Disable can be prospective only for the exact supported native CAN lease target. Delivery compilation requires the actual settled disabled state. The native Host additionally requires the private owned lease proof and the existing fresh post-publication input-baseline admission. Unsupported direct USB/Pico publication overrides remain rejected; no persistent Enable/Disable command or flash save substitutes for the lease.
+
+Native USB evidence comes from the current active configuration's descriptor layout, exact connection/boot/configuration tuple and actual configuration observation time. CAN evidence comes from an accepted complete native gateway snapshot, its exact gateway/module identity and input route, settled publication state, `directUsb=false` and `published=false`. Observations older than three seconds, or apparently from the future, fail closed. Cached reads do not renew observation time. The shipped workers refresh actual configuration/snapshots independently; live input reads also retain their existing freshness checks.
+
+The Host retains immutable DCS source obligations, including dormant branches that might later receive an eligible game context. Current missing resources, changed resource types or changed selected routes cannot erase those obligations or adopt a replacement CAN lease. Before command dispatch, it checks all current publishers of the same native module, including newly attached publishers. An external publication change can therefore revoke a command even when its input token and route otherwise remain unchanged.
+
+Revocation is permanent for the affected command sink during that applied run. Only its exact native reader/command invocation tokens are withdrawn. Telemetry read tokens, the advancing game reader, unrelated commands and ordinary hardware work remain available. Fresh telemetry or disabling the controller again cannot replay or re-enable a withdrawn command. A new Apply must establish authority again. Retained diagnostics survive a later blocked delivery branch. Ordinary profiles and entirely revoked guards skip cached inventory projection when there is no eligible command obligation.
+
+Publication evidence uses a bounded 71-byte SHA-256 metadata key. Its value separately binds the complete route ID and provider generation. It does not change immutable route attributes or ordinary input-token fingerprints. A production observation-to-registry test verifies that a publication-only metadata change preserves the existing read token.
+
+## Validation
+
+- All 106 portable profile library tests pass. All 16 unchanged production coverage gates pass; the new compiler policy is 103/103 lines (100%).
+- The frozen copied native executable passes 145 focused tests with all 19 owned source hashes unchanged. Coverage is 96.92% for native publication evidence and 82.25% for the DCS command guard. Affected inventory, game-delivery, source projection and panel-I/O modules measure 92.08–96.64%, above the unchanged 71% gates.
+- Regressions cover published/unknown/unsupported preflight, acquisition-only Disable, exact route/generation evidence, all publishers, immutable missing/type-changed resources, unchanged-input-route publication drift, foreign lease refusal, USB descriptor facts, per-sink permanent withdrawal, preserved telemetry/unrelated commands, replacement reader ownership and retained diagnostics.
+- Both ignored pinned official archive tests actually run and pass: `official_pinned_archive_smoke` and `pinned_official_archive_commondata_normalization_and_native_guard`. The existing setup coverage runner now requires a nonzero passing result from each and retains separate logs.
+
+Private evidence is under `.research/p9-p4-acceptance-audit/`: `profiles-coverage/`, `native-gate-final-3/manifest.json`, `native-build-manifest.json` and `pinned-smokes/manifest.json`. The copied instrumented executable SHA-256 is `dd15662ae2fe0a340f5698eee5181d403fa5a82acfef9e890caff0bcddbfb90f`; it was copied from the actual Cargo JSON artifact, not selected by an executable glob.
+
+These tests use authored native/protocol fixtures and the pinned official data archive. They do not qualify physical CAN/USB publication behavior, vJoy/HidHide, actual DCS command delivery or an assembled Windows rig. No qualification flag changed and no additional local gateway service was started.

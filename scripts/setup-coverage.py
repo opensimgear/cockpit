@@ -30,7 +30,8 @@ def main():
                     'game_context.rs', 'game_context_runtime.rs', 'game_provider_settings.rs',
                     'profile_session.rs', 'profile_session_journal.rs', 'profile_session_games.rs',
                     'profile_session_stage.rs', 'profile_session_inputs.rs',
-                    'profile_session_scripts.rs', 'profile_session_virtual.rs']
+                    'profile_session_scripts.rs', 'profile_session_virtual.rs',
+                    'profile_hid_publication.rs', 'profile_session_dcs_hid.rs']
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=root / '.research/setup-coverage')
     parser.add_argument('--module', action='append', choices=module_names,
@@ -69,10 +70,15 @@ def main():
     test_environment = dict(environment, LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
     tests = ''.join(command([binaries[0], *([test_filter] if test_filter else []), '--test-threads=1'],
                             root, test_environment) for test_filter in args.test_filter or [''])
-    smoke = command([binaries[0], 'official_pinned_archive_smoke', '--ignored'], root, test_environment)
-    if not re.search(r'test result: ok\. [1-9]\d* passed;', smoke):
-        raise RuntimeError('The official archive smoke test did not run; production runtime coverage cannot be qualified.')
-    (output / 'native-tests.log').write_text(tests + '\n' + smoke, encoding='utf-8')
+    smoke_logs = []
+    for smoke_filter in ['official_pinned_archive_smoke',
+                         'pinned_official_archive_commondata_normalization_and_native_guard']:
+        smoke = command([binaries[0], smoke_filter, '--ignored', '--test-threads=1'], root, test_environment)
+        (output / f'{smoke_filter}.log').write_text(smoke, encoding='utf-8')
+        if not re.search(r'test result: ok\. [1-9]\d* passed;', smoke):
+            raise RuntimeError(f'The required official archive smoke test {smoke_filter} did not run.')
+        smoke_logs.append(smoke)
+    (output / 'native-tests.log').write_text(tests + '\n' + '\n'.join(smoke_logs), encoding='utf-8')
     profile = output / 'coverage.profdata'
     command([str(llvm / f'llvm-profdata{suffix}'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
