@@ -37,9 +37,9 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
         envelope["response"].clone()
     };
 
-    // Full bounded pages are legal synthetic provider input. Without an active
-    // run, the runtime rejects the operation after parsing the telemetry; the
-    // transport must not mistake it for an oversized or uncorrelated request.
+    // A full bounded payload reaches the native context guard. Standalone
+    // simulation is retired; this must be a context rejection rather than an
+    // oversized or uncorrelated transport request.
     let mut graphics = vec![0u8; 4096];
     graphics[4] = 2;
     let request = json!({"command":"integration_simulate","clientId":"cockpit-service-boundary-test",
@@ -49,7 +49,7 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     assert!(request.to_string().len() < 65_536);
     let response = exchange("large-frame", request);
     assert_eq!(response["ok"], false);
-    assert_eq!(response["error"], "Start a synthetic Rally profile first.");
+    assert_eq!(response["error"], "Provider setup belongs to game details, and simulator bindings belong to the unified profile graph. Integration execution requires its applied profile and matching verified game context.");
 
     let mut request = json!({"command":"integration_get_state","clientId":"cockpit-service-boundary-test","padding":""});
     let overhead = request.to_string().len();
