@@ -284,3 +284,6 @@ fn framed_worker_exits_cleanly_on_eof_and_rejects_recompilation() {
         }
     }
 }
+
+#[path = "worker/typed.rs"]
+mod typed;

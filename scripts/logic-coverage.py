@@ -33,13 +33,16 @@ def main():
     run([llvm/f'llvm-profdata{suffix}','merge','-sparse','--failure-mode=all',*profiles.glob('*.profraw'),'-o',profile],root)
     objects=[item for binary in binaries[1:] for item in ['-object',binary]]
     summary={}
-    for module in ['evaluator','wire','worker','resources','replay','main','heap']:
+    for module in ['evaluator','wire','worker','resources','replay','main','heap','typed','typed_evaluator','typed_worker']:
         source=root/f'crates/logic/src/{module}.rs'
         annotated=run([llvm/f'llvm-cov{suffix}','show',binaries[0],*objects,f'-instr-profile={profile}','-show-line-counts-or-regions',source],root)
         (output/f'{module}-lines.txt').write_text(annotated,encoding='utf-8')
         lines=source.read_text(encoding='utf-8').splitlines()
         end=next((i+1 for i,line in enumerate(lines) if line.strip()=='#[cfg(test)]'),len(lines)+1)
-        counts={int(m[1]):int(m[2]) for line in annotated.splitlines() if (m:=re.match(r'^\s*(\d+)\|\s*(\d+)\|',line)) and int(m[1])<end}
+        counts={}
+        for line in annotated.splitlines():
+            if not (match:=re.match(r'^\s*(\d+)\|\s*(\d+(?:\.\d+)?)([kMGT]?)\|',line)) or int(match[1])>=end: continue
+            counts[int(match[1])]=float(match[2])*{'':1,'k':1000,'M':1000000,'G':1000000000,'T':1000000000000}[match[3]]
         if not counts: raise RuntimeError(f'No production coverage for {module}.')
         covered=sum(n>0 for n in counts.values());percent=100*covered/len(counts)
         summary[module]=dict(covered=covered,lines=len(counts),percent=round(percent,2))

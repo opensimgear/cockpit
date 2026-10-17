@@ -165,6 +165,9 @@ impl Drop for Worker {
     }
 }
 pub fn helper_main() -> Option<i32> {
+    if std::env::args().nth(1).as_deref() == Some(crate::typed_worker::ARG) {
+        return crate::typed_worker::helper_main();
+    }
     if std::env::args().nth(1).as_deref() != Some(ARG) {
         return None;
     }
