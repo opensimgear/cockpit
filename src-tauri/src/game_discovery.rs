@@ -836,13 +836,15 @@ mod native {
             }) {
                 if let Some(handle) = open(entry.pid)? {
                     if let Some(identity) = identity(&handle, entry.pid)? {
-                        if exclusive {
+                        if exclusive || paths.iter().any(|p| paths_match(p, &identity.path)) {
                             if selected.is_some() {
-                                return Err("Multiple X-Plane processes are running. Close the other installations before using telemetry.".into());
+                                return Err(if exclusive {
+                                    "Multiple X-Plane processes are running. Close the other installations before using telemetry."
+                                } else {
+                                    "Multiple game processes match the selected installation. Close the other instances before activating its profile."
+                                }.into());
                             }
                             selected = Some(identity);
-                        } else if paths.iter().any(|p| paths_match(p, &identity.path)) {
-                            return Ok(Some(identity));
                         }
                     }
                 }

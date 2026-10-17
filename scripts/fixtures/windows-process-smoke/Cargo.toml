@@ -1,0 +1,20 @@
+[package]
+name = "osg-windows-process-smoke"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+osg-profiles = { path = "../../../crates/profiles" }
+
+[[bin]]
+name = "native-process-smoke"
+path = "main.rs"
+
+[[bin]]
+name = "DCS"
+path = "stub.rs"
