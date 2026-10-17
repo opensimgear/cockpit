@@ -69,7 +69,10 @@ impl Channel for Child {
             while !g.release {
                 let (next, result) = cv.wait_timeout(g, remaining).unwrap();
                 g = next;
-                assert!(!result.timed_out(), "test feeder gate timed out");
+                if result.timed_out() {
+                    drop(g);
+                    panic!("test feeder gate timed out");
+                }
                 remaining = deadline.saturating_duration_since(Instant::now());
             }
         }
@@ -257,23 +260,29 @@ impl Fixture {
         .unwrap()
     }
     fn start(&self, id: &str, mode: &str) -> Value {
+        Self::start_result(&self.service, id, mode)
+            .unwrap_or_else(|error| panic!("Unexpected companion Start failure: {error}"))
+    }
+    fn preownership_busy(error: &str) -> bool {
+        matches!(error,
+            "The manual mapping is preparing; retry explicitly."
+            | "Companion route is not ready: The manual mapping is preparing or busy; retry readiness."
+            | "Companion route is not ready: The manual mapping is busy; retry readiness."
+            | "Companion route is not ready: The manual mapping is preparing or busy; retry readiness.; The manual mapping is busy; retry readiness.")
+    }
+    fn start_result(service: &Service, id: &str, mode: &str) -> Result<Value, String> {
         let deadline = Instant::now() + Duration::from_secs(3);
         let ready = if mode == "live" { "liveReady" } else { "recordingReady" };
         loop {
-            let view = self.request(id, "inspect", json!({})).unwrap();
+            let view = service.request(&json!({"command":"mapping_companion_route","companion":{"action":"inspect","instanceId":id}}))?["companionRoute"].clone();
             if view["preflight"][ready] == true {
-                match self.request(id, "start", json!({"mode":mode})) {
-                    Ok(started) => return started,
+                match service.request(&json!({"command":"mapping_companion_route","companion":{"action":"start","instanceId":id,"mode":mode}})) {
+                    Ok(started) => return Ok(started["companionRoute"].clone()),
                     // A native clock can take the manual router between the
                     // read-only preflight and admission. These exact errors
                     // happen before any route or feeder ownership is created.
-                    Err(error) if error == "The manual mapping is preparing; retry explicitly."
-                        || error.strip_prefix("Companion route is not ready: ").is_some_and(|reasons| {
-                            reasons.split("; ").all(|reason| matches!(reason,
-                                "The manual mapping is preparing or busy; retry readiness."
-                                | "The manual mapping is busy; retry readiness."))
-                        }) => {}
-                    Err(error) => panic!("Unexpected companion Start failure: {error}"),
+                    Err(error) if Self::preownership_busy(&error) => {}
+                    Err(error) => return Err(error),
                 }
             }
             assert!(Instant::now() < deadline, "route never became ready for {mode}: {view}");
@@ -341,11 +350,13 @@ impl Fixture {
         let (g, r) = cv
             .wait_timeout_while(g, Duration::from_secs(3), |g| !g.entered)
             .unwrap();
-        assert!(g.entered && !r.timed_out());
+        let entered = g.entered && !r.timed_out();
+        drop(g);
+        assert!(entered, "test feeder gate was not entered before timeout");
     }
     fn release_gate(&self) {
         let (lock, cv) = &*self.gate;
-        lock.lock().unwrap().release = true;
+        lock.lock().unwrap_or_else(|p| p.into_inner()).release = true;
         cv.notify_all();
     }
     fn enable(&self) {
@@ -359,6 +370,84 @@ impl Drop for Fixture {
         self.release_gate();
         self.service.shutdown();
     }
+}
+
+#[test]
+fn preownership_clock_contention_waits_before_feeder_acquisition() {
+    let f = Fixture::new(true);
+    f.add("panel", publication());
+    f.baseline("panel", 1);
+    f.save("panel", Some(2));
+    f.enable();
+    {
+        let mut gate = f.gate.0.lock().unwrap();
+        gate.slot = 2;
+        gate.start = true;
+    }
+    let global = f.service.router.lock().unwrap();
+    let error = f.request("panel", "start", json!({"mode":"live"})).unwrap_err();
+    assert_eq!(error, "Companion route is not ready: The manual mapping is preparing or busy; retry readiness.; The manual mapping is busy; retry readiness.");
+    assert!(Fixture::preownership_busy(&error));
+    assert!(!Fixture::preownership_busy("Companion Start was superseded by Stop before admission."));
+    assert!(!Fixture::preownership_busy("uncertain native acquisition"));
+    assert!(!Fixture::preownership_busy(&format!("{error}; Assignment was revoked")));
+    assert!(f.messages.lock().unwrap().is_empty());
+    assert!(f.service.companion_runs.lock().unwrap().routes.is_empty());
+
+    let publications = f.publications.clone();
+    let calls = Arc::new(AtomicU64::new(0));
+    let observed = calls.clone();
+    let (send, receive) = mpsc::channel();
+    f.service.set_companion_blueprint_provider(Arc::new(move |id| {
+        if observed.fetch_add(1, Ordering::Relaxed) == 1 {
+            send.send(()).unwrap();
+        }
+        publications.lock().unwrap().get(id).cloned().ok_or("Assignment was revoked".into())
+    }));
+    let service = f.service.clone();
+    let start = std::thread::spawn(move || Fixture::start_result(&service, "panel", "live"));
+    // Two serial inspections prove that the bounded helper observed the first
+    // failed readiness check while the real manual router was still locked.
+    let waiting = receive.recv_timeout(Duration::from_secs(3));
+    let untouched = f.messages.lock().unwrap().is_empty()
+        && f.service.companion_runs.lock().unwrap().routes.is_empty();
+    drop(global);
+    waiting.unwrap();
+    assert!(untouched);
+    f.wait_gate();
+    assert!(f.messages.lock().unwrap().is_empty());
+    f.release_gate();
+    start.join().unwrap().unwrap();
+    f.request("panel", "stop", json!({})).unwrap();
+    f.wait("panel", |v| v["session"]["cleanupComplete"] == true);
+    let messages = f.messages.lock().unwrap();
+    assert_eq!(messages.iter().filter(|m| m["message"]["command"] == "start").count(), 1);
+    assert_eq!(messages.iter().filter(|m| m["message"]["command"] == "stop").count(), 1);
+}
+
+#[test]
+fn gate_timeout_preserves_its_failure_while_fixture_cleanup_completes() {
+    let f = Fixture::new(false);
+    let gate = f.gate.clone();
+    let error = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        f.wait_gate();
+    })).unwrap_err();
+    assert_eq!(error.downcast_ref::<&str>(), Some(&"test feeder gate was not entered before timeout"));
+    assert!(!gate.0.is_poisoned());
+    assert!(gate.0.lock().unwrap().release);
+}
+
+#[test]
+fn fixture_cleanup_wakes_a_poisoned_gate_without_a_second_panic() {
+    let f = Fixture::new(false);
+    let gate = f.gate.clone();
+    let error = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _guard = f.gate.0.lock().unwrap();
+        panic!("injected primary gate failure");
+    })).unwrap_err();
+    assert_eq!(error.downcast_ref::<&str>(), Some(&"injected primary gate failure"));
+    assert!(gate.0.is_poisoned());
+    assert!(gate.0.lock().unwrap_or_else(|p| p.into_inner()).release);
 }
 
 #[test]
@@ -632,7 +721,7 @@ fn pending_acquisition_can_be_stopped_without_waiting_and_cannot_flush_a_stale_r
         let service = f.service.clone();
         let (tx, rx) = mpsc::channel();
         let start = std::thread::spawn(move || {
-            tx.send(service.request(&json!({"command":"mapping_companion_route","companion":{"action":"start","instanceId":"panel","mode":"live"}}))).unwrap();
+            tx.send(Fixture::start_result(&service, "panel", "live")).unwrap();
         });
         f.wait_gate();
         match fault {
