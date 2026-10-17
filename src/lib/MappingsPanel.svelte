@@ -8,6 +8,7 @@
   import { gatewayRequest } from './gateway';
   import { controlLabel, type ControllerControl, type HostController } from './controllers';
   import { capturedKind, compatibleControl, directProfile, oneToOneProfile, importMapping, savedAssignments, type CompanionMappingSource, type PanelMappingSource, type MappingAssignment, type MappingKind, type MappingProfile, type MappingRequest, type MappingResult, type MappingValue, type RecordedMapping } from './mappings';
+  let { active = true }: { active?: boolean } = $props();
   let createSlot = $state(2);
   let createButtons = $state(32);
   let createHats = $state(1);
@@ -114,7 +115,7 @@
     await refresh();
   }
   async function refresh() {
-    if (disposed || polling || busy) return;
+    if (!active || disposed || polling || busy) return;
     polling = true;
     try {
       status = await request({ command: 'mapping_status', inspect: true, offset: inspectOffset });
