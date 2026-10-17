@@ -5,7 +5,7 @@
   import Notification from './lib/Notification.svelte';
   import { onMount } from 'svelte';
   import HostControllers from './lib/HostControllers.svelte';
-  import MappingsPanel from './lib/MappingsPanel.svelte';
+  import ProfileRetiredRecovery from './lib/ProfileRetiredRecovery.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import CompanionDesigner from './lib/CompanionDesigner.svelte';
   import CompanionListenerSettings from './lib/CompanionListenerSettings.svelte';
@@ -31,7 +31,7 @@
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'overview' | 'profiles' | 'mappings' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'preferences';
+  type View = 'overview' | 'profiles' | 'companions' | 'games' | 'integrations' | 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'preferences';
   type SettingsOrigin = { view: View; selectedGameId: GameId | ''; hash: string; returnState?: unknown };
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
@@ -39,7 +39,6 @@
     { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'profiles', label: 'Profiles', icon: 'network' },
-    { id: 'mappings', label: 'Mappings', icon: 'network' },
     { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
     { id: 'integrations', label: 'Integrations', icon: 'play' },
@@ -411,9 +410,8 @@
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><span class="connection-pill">{connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
         {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} active={view==='profiles'} /></div>{/if}
-        {#if view === 'mappings' || settingsVisit?.origin.view === 'mappings'}<div hidden={view !== 'mappings'}><MappingsPanel active={view === 'mappings'} /></div>{/if}
         {#if view === 'overview'}
-          <OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
+          <ProfileRetiredRecovery active={view === 'overview'} /><OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
@@ -424,8 +422,6 @@
           <CompanionListenerSettings />
         {:else if view === 'profiles'}
           <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->
-        {:else if view === 'mappings'}
-          <!-- The editor above stays mounted during a game-settings visit. -->
         {:else if view === 'companions'}
           <CompanionDesigner openSettings={() => navigate('preferences')} />
         {:else if view === 'games'}

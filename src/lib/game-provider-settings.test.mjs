@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings']);
+const modules = await loadModules(['./runtime-config','./panel-input-metadata','./games','./game-provider-settings']);
 const { defaultProviderConnection, providerSettingsDraft, providerSettingsError, providerSettingsEqual, prepareProviderSettingsSave, settleProviderSettingsSave, gameContextLabel } = modules.get('./game-provider-settings');
 const plain = value => JSON.parse(JSON.stringify(value));
 const rev = n => `sha256:${String(n).repeat(64)}`;

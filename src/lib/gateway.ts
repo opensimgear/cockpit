@@ -1,16 +1,14 @@
+import type {RetiredRecoveryCommand,RetiredRecoveryStatus,RetiredJournalRef,RetiredProvisionRef} from './profile-retired-recovery';
 import type { CompanionCommand, CompanionHostState } from './companions';
 import type { VisibilityIntent, IsolatedLaunch } from './visibility';
-import type { MappingCommand, MappingResult, MappingAssignment, MappingSource, MappingToken, MappingValue, VirtualBinding } from './mappings';
 import type { ControllerResult, ControllerCommand } from './controllers';
 import type { DeviceKind, Settings } from './devices';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { RuntimeSnapshot, RuntimeConfig } from './runtime-config';
 import type { DeviceActions, ActionValue } from './device-actions';
-import type { DcsBiosConfig, DcsBiosStatus } from './dcs-bios';
 import type { DebugGateway, DebugOperation } from './debug-inputs';
-import type { PanelInputState } from './dcs-profile';
-import type { IntegrationConfig, IntegrationState, IntegrationCommandName, TelemetryFrame } from './integration-profile';
+import type { PanelInputState } from './panel-input-metadata';
 import type { GamesState, GameId, GameCommand } from './games';
 import type { ProfileCommand, ProfileResult, ProfileDocument, ProfileLocalAssignment } from './profiles';
 import type { ProfileCompilationCommand, ProfileCompilationResult } from './profile-compilation';
@@ -67,12 +65,9 @@ export type GatewayState = {
   moduleConfigs?: Record<string, RuntimeSnapshot>;
   moduleActions?: Record<string, DeviceActions>;
   moduleEvents?: Record<string, PanelInputState>;
-  dcsBios?: DcsBiosStatus;
   debug?: DebugGateway;
-  integration?: IntegrationState;
   games?: GamesState;
   controllers?: ControllerResult;
-  mappings?: MappingResult;
   companions?: CompanionHostState;
   profiles?: ProfileResult;
   profileResources?: ProfileResourcesResult;
@@ -82,10 +77,11 @@ export type GatewayState = {
   profileLearning?:ProfileLearningStatus;
   profileCompanionAuthoring?:ProfileCompanionAuthoringResult;
   moduleUsb?: ModuleUsbResult;
+  retiredRecovery?: RetiredRecoveryStatus;
 };
-export type GatewayCommand = 'profile_game_launch' | ProfileTopologyRequest['command'] | ProfileCompanionAuthoringCommand | ProfileAutomaticCommand | ProfileLearningCommand | ProfileInspectionRequest['command'] | ProfileCompilationCommand | ModuleUsbCommand | ProfileInventoryCommand | ProfileCommand | CompanionCommand | MappingCommand | ControllerCommand | GameCommand | IntegrationCommandName | 'action_claim' | 'action_renew' | 'action_release' | 'action_ownership' | 'action_invoke_owned' | 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'dcs_status' | 'dcs_catalogue' | 'dcs_configure' | 'dcs_start' | 'dcs_stop' | 'debug_describe' | 'debug_invoke';
+export type GatewayCommand = RetiredRecoveryCommand | 'profile_game_launch' | ProfileTopologyRequest['command'] | ProfileCompanionAuthoringCommand | ProfileAutomaticCommand | ProfileLearningCommand | ProfileInspectionRequest['command'] | ProfileCompilationCommand | ModuleUsbCommand | ProfileInventoryCommand | ProfileCommand | CompanionCommand | ControllerCommand | GameCommand | 'action_claim' | 'action_renew' | 'action_release' | 'action_ownership' | 'action_invoke_owned' | 'status' | 'start' | 'stop' | 'register' | 'reconnect' | 'apply' | 'save' | 'unregister' | 'enable' | 'disable' | 'forget' | 'update-profile' | 'configure' | 'claim' | 'release' | 'ports' | 'connect' | 'disconnect' | 'remove' | 'config_read' | 'config_apply' | 'config_apply_save' | 'config_save' | 'config_discard' | 'config_reset' | 'action_describe' | 'action_state' | 'action_invoke' | 'events_state' | 'events_read' | 'debug_describe' | 'debug_invoke';
 type ProfileRequestFields = { publicationHash?:string;priority?:number;learnId?:string;generation?:string;capabilityRevision?:string; owner?: ProfileInspectionRequest['owner']; nodeId?: string; id?: string; document?: ProfileDocument; expectedRevision?: number | null; expectedSetupRevision?: string; mode?: 'manual' | 'automatic'; paused?: boolean; selectionSource?: 'manual' | 'automatic'; confirm?: boolean; resourceId?: string; portId?: string; resourceToken?: ResourceToken; access?: ResourceAccess; compilationId?: string; section?: string };
-export type GatewayRequest = ProfileRequestFields & { key?: string; route?: UsbRouteToken; save?: boolean; companion?: Record<string, unknown>; launch?: IsolatedLaunch; visibility?: {mode: string; sourceIds: string[]} | null; sourceCode?: string; intent?: VisibilityIntent; sourceIds?: string[]; sessionId?: string; jobId?: string; enabled?: boolean; bindings?: VirtualBinding[]; uploadId?: string; size?: number; bytes?: number[]; assignments?: MappingAssignment[] | ProfileLocalAssignment[]; source?: MappingSource; token?: MappingToken; changes?: { control: string; value: MappingValue }[]; sourceId?: string; observedId?: string; name?: string; role?: string; gameId?: GameId; profileId?: string; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; integrationConfig?: IntegrationConfig; bindingId?: string; durationMs?: number; resume?: boolean; revision?: number; telemetryFrame?: TelemetryFrame; ownershipToken?: string; leaseId?: number; ttlMs?: number; command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; dcsConfig?: DcsBiosConfig; stream?: number; after?: number | string; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number; debugOperation?: DebugOperation; debugArgs?: number[]; preset?: string };
+export type GatewayRequest = ProfileRequestFields & { key?: string; route?: UsbRouteToken; save?: boolean; companion?: Record<string, unknown>; launch?: IsolatedLaunch; visibility?: {mode: string; sourceIds: string[]} | null; sourceCode?: string; intent?: VisibilityIntent; sourceIds?: string[]; sessionId?: string; jobId?: string; enabled?: boolean; uploadId?: string; size?: number; bytes?: number[]; assignments?: ProfileLocalAssignment[]; reference?: RetiredJournalRef | RetiredProvisionRef; sourceId?: string; observedId?: string; name?: string; role?: string; gameId?: GameId; profileId?: string; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; bindingId?: string; durationMs?: number; resume?: boolean; revision?: number; ownershipToken?: string; leaseId?: number; ttlMs?: number; command: GatewayCommand; gatewayId?: string; backend?: GatewayBackend; moduleId?: string; settings?: Settings; port?: string; config?: RuntimeConfig; boot?: number; catalogueRevision?: number; actionId?: string; values?: ActionValue[]; stream?: number; after?: number | string; cataloguePath?: string; aircraftModule?: string; kind?: 'input' | 'output' | 'all'; query?: string; offset?: number; limit?: number; debugOperation?: DebugOperation; debugArgs?: number[]; preset?: string };
 
 const clientId = crypto.randomUUID();
 const browserEndpoint = '/api/gateway/';
@@ -98,42 +94,29 @@ type GatewayResult = { ok: boolean; state?: GatewayState; error?: string };
 // Each gateway owns its command queue. A blocked serial connection must not
 // hold up discovery or requests for another gateway, including the same backend.
 const requestQueues = new Map<string, Promise<unknown>>();
-// Stop has a priority queue and invalidates starts that have not reached native
-// code yet. Track lifetime with pending requests so arbitrary stale IDs do not
-// leave an ever-growing epoch map behind.
-const companionRoutes = new Map<string, { epoch: number; pending: number }>();
 const usbRoutes = new Map<string, { epoch: number; pending: number }>();
 // One native ProfileSession owns every profile. An opaque identity cancels
 // unsent Apply requests without accumulating per-profile cancellation state.
 let profileApplyEpoch = {};
 let profileControlBarrier: Promise<void> = Promise.resolve();
 let learningEpoch={};
+let retiredRecoveryEpoch={};
 function learningInterrupt(request:GatewayRequest):boolean{
   const command=request.command;
-  if(command.startsWith('profile_'))return ['profile_apply','profile_game_launch','profile_pause','profile_stop','profile_recover','profile_reset','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','profile_input_learn_cancel'].includes(command);
-  if(command==='mapping_companion_route')return !['inspect','recording'].includes(String(request.companion?.action));
-  if(command==='companion_feedback_routes')return request.companion?.action!=='inspect';
-  if(/^(mapping_|module_usb_|controller_|integration_|dcs_|game_|companion_)/.test(command))return !['mapping_profiles','mapping_get','mapping_export','mapping_status','mapping_targets_get','mapping_assignments_get','mapping_trace_export','mapping_script_validate','mapping_panel_sources','mapping_panel_inspect','mapping_companion_sources','mapping_companion_inspect','mapping_virtual_inspect','mapping_recording','module_usb_ports','module_usb_list','module_usb_status','module_usb_config_read','module_usb_actions_describe','module_usb_actions_state','module_usb_events_state','module_usb_events_read','controller_list','controller_inspect','controller_visibility_status','controller_visibility_inspect','controller_visibility_processes','integration_get_state','integration_catalogue','dcs_status','dcs_catalogue','game_get_state','companion_status','companion_usb_ports','companion_usb_status','companion_browser_certificate'].includes(command);
+  if(command.startsWith('profile_'))return ['profile_apply','profile_game_launch','profile_pause','profile_stop','profile_recover','profile_reset','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','profile_input_learn_cancel','profile_retired_recovery_recover','profile_retired_recovery_acknowledge','profile_retired_recovery_provision_recover','profile_retired_recovery_provision_cancel'].includes(command);
+  if(/^(module_usb_|controller_|game_|companion_)/.test(command))return !['module_usb_ports','module_usb_list','module_usb_status','module_usb_config_read','module_usb_actions_describe','module_usb_actions_state','module_usb_events_state','module_usb_events_read','controller_list','controller_inspect','controller_visibility_status','controller_visibility_inspect','controller_visibility_processes','game_get_state','companion_status','companion_usb_ports','companion_usb_status','companion_browser_certificate'].includes(command);
   return ['start','stop','apply','save','register','unregister','enable','disable','forget','update-profile','configure','claim','release','connect','disconnect','reconnect','remove','config_apply','config_apply_save','config_save','config_discard','config_reset','action_claim','action_renew','action_release','action_invoke','action_invoke_owned','debug_invoke'].includes(command);
 }
 function queuedRequest(request: GatewayRequest, operation: () => Promise<GatewayState>): Promise<GatewayState> {
+  if(request.command==='profile_retired_recovery_provision_cancel')retiredRecoveryEpoch={};
+  const retiredStart=request.command==='profile_retired_recovery_provision_recover',retiredEpoch=retiredRecoveryEpoch;
   if(learningInterrupt(request))learningEpoch={};
   const learningStart=request.command==='profile_input_learn_start',capturedLearningEpoch=learningEpoch;
   const profileApply = request.command === 'profile_apply' || request.command === 'profile_game_launch';
   const profileControl = ['profile_stop', 'profile_pause', 'profile_recover'].includes(request.command);
-  const profileInterrupt = ['profile_stop', 'profile_pause', 'profile_recover', 'mapping_stop', 'integration_stop', 'dcs_stop', 'controller_visibility_restore'].includes(request.command);
+  const profileInterrupt = ['profile_stop', 'profile_pause', 'profile_recover', 'controller_visibility_restore'].includes(request.command);
   if (profileInterrupt) profileApplyEpoch = {};
   const applyEpoch = profileApplyEpoch;
-  const route = request.command === 'mapping_companion_route';
-  const instance = typeof request.companion?.instanceId === 'string' ? request.companion.instanceId : 'invalid';
-  const action = request.companion?.action;
-  let ticket: { epoch: number; pending: number } | undefined;
-  if (route) {
-    ticket = companionRoutes.get(instance) ?? { epoch: 0, pending: 0 };
-    companionRoutes.set(instance, ticket); ticket.pending++;
-    if (action === 'stop') ticket.epoch++;
-  }
-  const epoch = ticket?.epoch;
   const usb = request.command.startsWith('module_usb_') && request.command !== 'module_usb_ports' && request.command !== 'module_usb_list';
   const usbEndpoint = request.key ?? request.port ?? 'invalid';
   let usbTicket: { epoch: number; pending: number } | undefined;
@@ -145,12 +128,11 @@ function queuedRequest(request: GatewayRequest, operation: () => Promise<Gateway
     if (request.command === 'module_usb_disconnect') usbTicket.epoch++;
   }
   const usbEpoch = usbTicket?.epoch;
-  const key = request.command.startsWith('profile_input_learn_')?`profile-learning:${request.command.slice('profile_input_learn_'.length)}`:profileControl ? 'profile-control' : profileApply ? 'profile-apply' : request.command === 'profile_automatic_status' ? 'profile-automatic-status' : request.command === 'profile_status' ? 'profile-status' : request.command === 'profile_runtime_topology' ? 'profile-topology' : request.command === 'profile_runtime_inspect' ? 'profile-inspection' : usb ? `module-usb:${usbEndpoint}` : request.command.startsWith('module_usb_') ? 'module-usb-inventory' : route ? `companion-route:${instance}:${action === 'stop' ? 'stop' : 'requests'}` : request.command.startsWith('profile_companion_') ? 'profile-companion-authoring' : request.command.startsWith('profile_resources_') ? 'profile-resources' : request.command.startsWith('profile_') ? 'profiles' : request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command === 'mapping_stop' ? 'mapping-stop' : request.command === 'mapping_virtual_inspect' ? 'mapping-inspect' : request.command.startsWith('mapping_') ? 'mapping' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.command.startsWith('dcs_') || request.command.startsWith('integration_') ? 'integration' : request.gatewayId ?? 'inventory';
+  const key = request.command.startsWith('profile_retired_recovery_') ? (request.command==='profile_retired_recovery_status'?'retired-status':request.command==='profile_retired_recovery_provision_cancel'?'retired-cancel':'retired-recovery') : request.command.startsWith('profile_input_learn_')?`profile-learning:${request.command.slice('profile_input_learn_'.length)}`:profileControl ? 'profile-control' : profileApply ? 'profile-apply' : request.command === 'profile_automatic_status' ? 'profile-automatic-status' : request.command === 'profile_status' ? 'profile-status' : request.command === 'profile_runtime_topology' ? 'profile-topology' : request.command === 'profile_runtime_inspect' ? 'profile-inspection' : usb ? `module-usb:${usbEndpoint}` : request.command.startsWith('module_usb_') ? 'module-usb-inventory' : request.command.startsWith('profile_companion_') ? 'profile-companion-authoring' : request.command.startsWith('profile_resources_') ? 'profile-resources' : request.command.startsWith('profile_') ? 'profiles' : request.command.startsWith('companion_') ? 'companions' : request.command === 'controller_visibility_restore' ? 'visibility-stop' : request.command.startsWith('controller_') ? 'controllers' : request.command.startsWith('game_') ? 'games' : request.gatewayId ?? 'inventory';
   const previous = requestQueues.get(key) ?? Promise.resolve();
-  const stopping = route && action === 'start' ? requestQueues.get(`companion-route:${instance}:stop`) : undefined;
-  const before = learningStart?Promise.all([previous,requestQueues.get('profile-learning:cancel')]):profileApply ? Promise.all([previous, requestQueues.get('profiles'), profileControlBarrier]) : stopping ? Promise.all([previous, stopping]) : previous;
+  const before = retiredStart?Promise.all([previous,requestQueues.get('retired-cancel')]):learningStart?Promise.all([previous,requestQueues.get('profile-learning:cancel')]):profileApply ? Promise.all([previous, requestQueues.get('profiles'), profileControlBarrier]) : previous;
   const pending = before.catch(() => {}).then(() => {
-    if (action === 'start' && ticket && epoch !== ticket.epoch) throw new GatewayError('Companion Start was cancelled by Stop; start explicitly again.');
+    if(retiredStart&&retiredEpoch!==retiredRecoveryEpoch)throw new GatewayError('Retained setup recovery was cancelled before dispatch; refresh its exact native record and request explicitly again.');
     if (usbTicket && request.command !== 'module_usb_disconnect' && usbEpoch !== usbTicket.epoch) throw new GatewayError('USB request was cancelled by Disconnect; refresh and request it explicitly again.');
     if (profileApply && applyEpoch !== profileApplyEpoch) throw new GatewayError(request.command === 'profile_game_launch' ? 'Profile game launch was cancelled by Stop, Pause or recovery; launch explicitly again.' : 'Profile Apply was cancelled by Stop, Pause or recovery; apply explicitly again.');
     if(learningStart&&capturedLearningEpoch!==learningEpoch)throw new GatewayError('Input learning Start was cancelled by a native control request; start explicitly again.');
@@ -161,7 +143,6 @@ function queuedRequest(request: GatewayRequest, operation: () => Promise<Gateway
   requestQueues.set(key, settled);
   void settled.then(() => {
     if (requestQueues.get(key) === settled) requestQueues.delete(key);
-    if (ticket && --ticket.pending === 0 && companionRoutes.get(instance) === ticket) companionRoutes.delete(instance);
     if (usbTicket && --usbTicket.pending === 0 && usbRoutes.get(usbEndpoint) === usbTicket) usbRoutes.delete(usbEndpoint);
   });
   return pending;
@@ -176,6 +157,7 @@ function resultState(result: GatewayResult): GatewayState {
 }
 
 export function gatewayRequest(request: GatewayRequest): Promise<GatewayState> {
+  if (/^(mapping_|dcs_|integration_)/.test(request.command) || ['companion_feedback','companion_feedback_routes','companion_game_capture'].includes(request.command)) return Promise.reject(new GatewayError('This standalone route is retired. Use Profiles for authoring and activation, or retained recovery for previous ownership records.'));
   return queuedRequest(request, async () => {
     if (isTauri()) {
       let result: GatewayResult;

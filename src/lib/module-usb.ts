@@ -3,7 +3,7 @@ import { configurationError } from './runtime-config.ts';
 import type { RuntimeConfig, RuntimeSnapshot } from './runtime-config';
 import { actionOwnershipValid } from './device-actions.ts';
 import type { DeviceAction, DeviceActions, ActionValue } from './device-actions';
-import type { PanelInputState } from './dcs-profile';
+import type { PanelInputState } from './panel-input-metadata';
 import type { DeepReadonly } from './profiles';
 
 export type UsbRouteToken = { moduleId: string; serial: string; connectionGeneration: number; boot: number; configurationGeneration: number };

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-settings-navigation']);
+const modules = await loadModules(['./runtime-config','./panel-input-metadata','./games','./game-settings-navigation']);
 const { supportedGames } = modules.get('./games');
 const { gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings } = modules.get('./game-settings-navigation');
 

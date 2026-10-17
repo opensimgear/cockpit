@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation','./gateway-capabilities','./controller-lifecycle','./devices','./dcs-profile']);
+const modules=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-provider-settings','./game-settings-navigation','./gateway-capabilities','./controller-lifecycle','./devices',]);
 const noRequest=()=>{throw new Error('Opening Games must not acquire hardware, read configurations or start a runtime.');};
 const components=new Map();
 function evaluate(code,filename,require,extra={}){
@@ -60,7 +60,7 @@ test('actual App Games tiles expose unified launch without injecting hardware ta
   assert.equal('targets' in props,false);assert.equal('readConfig' in props,false);assert.equal(typeof props.request,'function');
   assert.ok(!source.includes('readGameConfig'));
   const invocation=source.split('\n').find(line=>line.includes('<GamesPanel '));assert.ok(invocation);assert.ok(!/\b(?:targets|readConfig)=/.test(invocation));
-  assert.ok(source.includes("{ id: 'mappings', label: 'Mappings'"));assert.ok(source.includes('<HostControllers'));
+  assert.ok(!source.includes("{ id: 'mappings', label: 'Mappings'"));assert.ok(source.includes('<HostControllers'));assert.ok(source.includes('<ProfileRetiredRecovery'));
 });
 
 test('actual App game details retain provider setup and native rule selection without the retired per-game hardware editor',async()=>{

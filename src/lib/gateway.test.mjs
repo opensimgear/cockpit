@@ -50,6 +50,17 @@ test('desktop routes the complete explicitly scoped request through one native m
   ]);
 });
 
+test('retired standalone authoring, synthetic and companion feedback routes never reach desktop or HTTP transport',async()=>{
+ for(const desktop of[true,false]){const api=transport({desktop});for(const command of['mapping_status','mapping_start','mapping_stop','mapping_import','mapping_virtual_inspect','mapping_companion_route','integration_get_state','integration_start','integration_inject','dcs_status','dcs_catalogue','dcs_start','companion_feedback_routes','companion_feedback','companion_game_capture'])await assert.rejects(api.gatewayRequest({command}),/retired/);assert.equal(api.calls.length,0);}
+});
+
+test('retained cleanup forwards exact native references while status, cancellation and profile Stop bypass slow cleanup; cancelled unsent recovery never restarts a job',async()=>{
+ const waiting=deferred(),cancelled=deferred(),reference={operation:'native-operation',recordHash:'native-record-hash',target:2,refreshUncertain:true};
+ const api=transport({invokeResults:async(_name,request)=>{if(request.command==='profile_retired_recovery_provision_recover')await waiting.promise;if(request.command==='profile_retired_recovery_provision_cancel')await cancelled.promise;return{ok:true,state:{retiredRecovery:{required:true}}};}});
+ const recovering=api.gatewayRequest({command:'profile_retired_recovery_provision_recover',reference}),old=api.gatewayRequest({command:'profile_retired_recovery_provision_recover',reference}),rejected=assert.rejects(old,/cancelled before dispatch/);await tick();const cancel=api.gatewayRequest({command:'profile_retired_recovery_provision_cancel',jobId:'exact-native-job'});await api.gatewayRequest({command:'profile_retired_recovery_status'});await api.gatewayRequest({command:'profile_stop'});const fresh=api.gatewayRequest({command:'profile_retired_recovery_provision_recover',reference});
+ assert.deepEqual(api.calls.map(v=>v.args.request.command),['profile_retired_recovery_provision_recover','profile_retired_recovery_provision_cancel','profile_retired_recovery_status','profile_stop']);assert.deepEqual(api.calls[0].args.request.reference,reference);waiting.resolve();await Promise.all([recovering,rejected]);await tick();assert.equal(api.calls.filter(v=>v.args.request.command.endsWith('_provision_recover')).length,1);cancelled.resolve();await Promise.all([cancel,fresh]);assert.equal(api.calls.filter(v=>v.args.request.command.endsWith('_provision_recover')).length,2);
+});
+
 test('unified profile writes remain ordered without blocking gateway discovery or capture', async () => {
   const waiting = deferred();
   const api = transport({ invokeResults: async (_command, request) => {
@@ -94,7 +105,7 @@ test('applied topology metadata is an independent read lane and cannot delay sam
   assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_runtime_topology','profile_runtime_inspect','profile_stop','profile_save']);assert.deepEqual(api.calls[0].args.request,{command:'profile_runtime_topology',owner,section:'edges',offset:0,limit:64,clientId:'test-client-uuid'});pending.resolve();await reading;
 });
 test('learning cached status and priority cancel bypass a blocked start, and controls cancel unsent starts',async()=>{
-  for(const command of ['profile_input_learn_cancel','profile_apply','profile_game_launch','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','mapping_preview_start','action_invoke']){
+  for(const command of ['profile_input_learn_cancel','profile_apply','profile_game_launch','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','profile_retired_recovery_recover','action_invoke']){
     const wait=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='profile_input_learn_start')await wait.promise;return{ok:true,state};}});
     const fields={resourceId:'physical',generation:'1',capabilityRevision:'sha256:'+'1'.repeat(64)},active=api.gatewayRequest({command:'profile_input_learn_start',...fields});
     const old=api.gatewayRequest({command:'profile_input_learn_start',...fields}),rejected=assert.rejects(old,/learning Start was cancelled/);await tick();
@@ -126,7 +137,7 @@ test('profile runtime controls and status bypass slow Apply while older unsent A
 });
 
 test('new explicit Apply waits for prior Save and priority control completion without replaying cancelled requests',async()=>{
-  for(const command of ['profile_stop','profile_pause','profile_recover','mapping_stop','integration_stop','dcs_stop','controller_visibility_restore']){
+  for(const command of ['profile_stop','profile_pause','profile_recover','controller_visibility_restore']){
     const saved=deferred(),stopping=deferred();
     const api=transport({invokeResults:async(_name,request)=>{
       if(request.command==='profile_editor_save')await saved.promise;
@@ -240,62 +251,6 @@ test('native game file selection returns the absolute path or cancellation and d
   assert.deepEqual(cancelled.calls[0].args,{gameId:'x-plane-11',currentPath:null});
   const browser=transport({desktop:false});await assert.rejects(browser.pickGameExecutable('x-plane-12'),/desktop app/);assert.equal(browser.calls.length,0);
   const failed=transport({invokeError:new Error('Picker failed')});await assert.rejects(failed.pickGameExecutable('dcs'),/Picker failed/);
-});
-
-test('DCS-BIOS profile and lifecycle use the same native request in desktop and browser', async () => {
-  const config = { schemaVersion: 1, cataloguePath: '/DCS-BIOS/doc/json', gatewayId: first, moduleId: 'panel',
-    button: 0, ledActionId: 'led.boolean.set_enabled', commandHost: '127.0.0.1', commandPort: 7778,
-    listenAddress: '0.0.0.0', listenPort: 5010, multicastGroup: '239.255.50.10', multicastInterface: '127.0.0.1', freshnessMs: 1500 };
-  const result = { ok: true, state: { running: false, needsReconnect: false, modules: [],
-    dcsBios: { configured: true, running: false, config, status: 'stopped' } } };
-  for (const desktop of [true, false]) {
-    const api = transport({ desktop, result });
-    const requests = [{ command: 'dcs_configure', gatewayId: first, dcsConfig: config },
-      ...['dcs_status', 'dcs_start', 'dcs_stop'].map(command => ({ command, gatewayId: first }))];
-    for (const request of requests) assert.deepEqual(plain((await api.gatewayRequest(request)).dcsBios), result.state.dcsBios);
-    assert.deepEqual(api.calls.map(call => desktop ? call.args.request : JSON.parse(call.options.body)),
-      requests.map(request => ({ ...request, clientId: 'test-client-uuid' })));
-  }
-});
-
-test('global DCS requests stay ordered while gateway and inventory requests are slow', async () => {
-  const gatewayWaiting = deferred();
-  const inventoryWaiting = deferred();
-  const dcsWaiting = deferred();
-  const api = transport({ invokeResults: async (_command, request) => {
-    if (request.command === 'status') await gatewayWaiting.promise;
-    if (request.command === 'ports') await inventoryWaiting.promise;
-    if (request.command === 'dcs_configure') await dcsWaiting.promise;
-    return { ok: true, state };
-  } });
-  const pendingGateway = api.gatewayRequest({ command: 'status', gatewayId: first });
-  const pendingInventory = api.gatewayRequest({ command: 'ports' });
-  const pendingConfig = api.gatewayRequest({ command: 'dcs_configure' });
-  const pendingStop = api.gatewayRequest({ command: 'dcs_stop' });
-  await tick();
-  assert.deepEqual(api.calls.map(call => call.args.request.command), ['status', 'ports', 'dcs_configure']);
-  dcsWaiting.resolve();
-  await Promise.all([pendingConfig, pendingStop]);
-  assert.equal(api.calls.at(-1).args.request.command, 'dcs_stop');
-  gatewayWaiting.resolve(); inventoryWaiting.resolve();
-  await Promise.all([pendingGateway, pendingInventory]);
-});
-
-test('typed multi-gateway profiles and address-free catalogue pages use the same desktop and browser API', async () => {
-  const dcsConfig = { schemaVersion: 2, aircraftModule: 'A-10C', cataloguePath: '/installed/doc/json', inputs: [
-    { id: 'tuning', gatewayId: first, moduleId: 'radio', kind: 'encoder', control: 0, command: 'VHFAM_FREQ1', interface: 'fixed_step' },
-    { id: 'volume', gatewayId: second, moduleId: 'axes', kind: 'axis', control: 0, command: 'VHFAM_VOL', interface: 'set_state', deadband: 128 },
-  ], outputs: [{ id: 'frequency', gatewayId: first, moduleId: 'radio', control: 'VHFAM_FREQ', actionId: 'display.radio.set_text', format: { kind: 'text', overflow: 'truncate' } }] };
-  const catalogue = { cataloguePath: dcsConfig.cataloguePath, aircraftModule: 'A-10C', kind: 'all', query: 'VHFAM', offset: 0, total: 1,
-    controls: [{ id: 'VHFAM_FREQ', label: 'Radio frequency', category: 'VHF AM', inputs: [], outputs: [{ type: 'string', maxLength: 7 }] }] };
-  const result = { ok: true, state: { modules: [], dcsBios: { config: dcsConfig, catalogue } } };
-  const requests = [{ command: 'dcs_configure', dcsConfig }, { command: 'dcs_catalogue', cataloguePath: dcsConfig.cataloguePath,
-    aircraftModule: 'A-10C', kind: 'all', query: 'VHFAM', offset: 0, limit: 32 }];
-  for (const desktop of [true,false]) {
-    const api = transport({ desktop, result });
-    for (const request of requests) assert.deepEqual(plain((await api.gatewayRequest(request)).dcsBios), result.state.dcsBios);
-    assert.deepEqual(api.calls.map(call => desktop ? call.args.request : JSON.parse(call.options.body)), requests.map(request => ({ ...request, clientId: 'test-client-uuid' })));
-  }
 });
 
 test('discovery is one aggregate request and never changes or disconnects either connection', async () => {
@@ -416,70 +371,6 @@ test('host controller reads bypass a blocked gateway and inventory queue', async
   assert.equal(controllers.controllers.total, 0);
   blocked.resolve(); await inventory;
 });
-test('mapping stop and driver inspection cannot wait behind an uploading profile', async () => {
-  const upload = deferred();
-  const api = transport({ invokeResults: async (_command, request) => {
-    if (request.command === 'mapping_import_chunk') await upload.promise;
-    return { ok: true, state: { mappings: { running: false } } };
-  } });
-  const blocked = api.gatewayRequest({ command: 'mapping_import_chunk', uploadId: 'u', offset: 0, bytes: [1] });
-  await tick();
-  await api.gatewayRequest({ command: 'mapping_stop' });
-  await api.gatewayRequest({ command: 'mapping_virtual_inspect' });
-  assert.deepEqual(api.calls.map(c => c.args.request.command), ['mapping_import_chunk', 'mapping_stop', 'mapping_virtual_inspect']);
-  upload.resolve();
-  await blocked;
-});
-
-test('companion instances have independent queues and Stop cancels an older queued Start', async () => {
-  const inspection = deferred();
-  const api = transport({ invokeResults: async (_command, request) => {
-    if (request.companion?.instanceId === 'panel-a' && request.companion?.action === 'inspect') await inspection.promise;
-    return { ok: true, state: { mappings: { companionRoute: { running: false } } } };
-  } });
-  const inspect = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'inspect', instanceId: 'panel-a' } });
-  const start = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel-a', mode: 'recording' } });
-  const rejectedStart = assert.rejects(start, /cancelled by Stop/);
-  await tick();
-  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'inspect', instanceId: 'panel-b' } });
-  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'stop', instanceId: 'panel-a' } });
-  await api.gatewayRequest({ command: 'controller_list' });
-  assert.deepEqual(api.calls.map(call => call.args.request.companion?.action ?? call.args.request.command), ['inspect', 'inspect', 'stop', 'controller_list']);
-  inspection.resolve(); await inspect; await rejectedStart;
-  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel-a', mode: 'recording' } });
-  assert.equal(api.calls.at(-1).args.request.companion.action, 'start');
-});
-
-test('companion priority Stop does not bypass ordering for saves or cancel another instance Start', async () => {
-  const blocked = deferred();
-  const api = transport({ invokeResults: async (_command, request) => {
-    if (request.command === 'mapping_companion_route' && request.companion.action === 'save') await blocked.promise;
-    return { ok: true, state: { mappings: {} } };
-  } });
-  const save = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'save', instanceId: 'panel-a' } });
-  const reconcile = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'reconcile', instanceId: 'panel-a' } });
-  await tick();
-  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'stop', instanceId: 'panel-a' } });
-  await api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel-b', mode: 'recording' } });
-  assert.deepEqual(api.calls.map(call => call.args.request.companion.action), ['save', 'stop', 'start']);
-  blocked.resolve(); await Promise.all([save, reconcile]);
-  assert.equal(api.calls.at(-1).args.request.companion.action, 'reconcile');
-});
-
-test('a new explicit companion Start waits for its prior priority Stop to finish', async () => {
-  const stopping = deferred();
-  const api = transport({ invokeResults: async (_command, request) => {
-    if (request.companion?.action === 'stop') await stopping.promise;
-    return { ok: true, state: { mappings: {} } };
-  } });
-  const stop = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'stop', instanceId: 'panel' } });
-  const start = api.gatewayRequest({ command: 'mapping_companion_route', companion: { action: 'start', instanceId: 'panel', mode: 'recording' } });
-  await tick();
-  assert.deepEqual(api.calls.map(call => call.args.request.companion.action), ['stop']);
-  stopping.resolve(); await Promise.all([stop, start]);
-  assert.deepEqual(api.calls.map(call => call.args.request.companion.action), ['stop', 'start']);
-});
-
 test('passive companion panel metadata bypasses blocked profile saves without delaying emergency controls', async () => {
   const saving=deferred(),metadata=deferred();
   const api=transport({invokeResults:async(_command,request)=>{

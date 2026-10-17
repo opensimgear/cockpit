@@ -8,7 +8,7 @@ import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./integration-profile','./games','./game-provider-settings','./game-settings-navigation']);
+const modules = await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-provider-settings','./game-settings-navigation']);
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
 async function component(name) {
@@ -25,7 +25,6 @@ async function component(name) {
     if(dependencies.has(name))return dependencies.get(name);
     if(modules.has(name))return modules.get(name);
     if(name==='./gateway')return {gatewayRequest:noRequest,pickGameExecutable:noRequest};
-    if(name==='./mappings')return {savedAssignments:noRequest};
     if(name==='./notifications')return {notify:noRequest};
     throw new Error(`Unexpected component dependency ${name}`);
   }},{filename:filename.pathname});
@@ -59,10 +58,9 @@ test('provider resource index includes closed games and offers only owning-game 
   assert.ok(html.includes('Resources remain available to author while a game is closed'));
   assert.ok(!html.includes('<input'));assert.ok(!html.includes('<select'));assert.ok(!html.includes('Start integration'));
 });
-test('App removes standalone DCS entry points and retains only a previously mounted editor with polling suspended',async()=>{
+test('App exposes one profile authoring path and retains only a previously opened Profiles editor during game settings',async()=>{
   const source=await readFile(new URL('../App.svelte',import.meta.url),'utf8');
-  assert.ok(!source.includes('DcsBiosPanel'));assert.ok(!source.includes("view === 'dcs-bios'"));assert.ok(!source.includes("command: 'dcs_start'"));assert.ok(!source.includes("command: 'integration_start'"));
-  assert.match(source,/view === 'mappings' \|\| settingsVisit\?\.origin.view === 'mappings'/);
-  assert.match(source,/<MappingsPanel active=\{view === 'mappings'\}/);
-  const mapping=await readFile(new URL('./MappingsPanel.svelte',import.meta.url),'utf8');assert.match(mapping,/if \(!active \|\| disposed \|\| polling \|\| busy\) return/);
+  for(const retired of ['DcsBiosPanel','MappingsPanel',"id: 'mappings'","command: 'dcs_start'","command: 'integration_start'"])assert.ok(!source.includes(retired),retired);
+  assert.match(source,/view === 'profiles' \|\| settingsVisit\?\.origin.view === 'profiles'/);
+  assert.match(source,/<ProfilesPanel[^\n]* active=\{view\s*===\s*'profiles'\}/);
 });

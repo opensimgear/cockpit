@@ -25,8 +25,8 @@ jobs:
       - run: pnpm transport:test
       - run: pnpm browser:test
       - run: pnpm controllers:coverage
-      - run: pnpm mappings:coverage
       - run: pnpm profiles:coverage
+      - run: pnpm profile-retired-recovery:coverage
       - run: pnpm profile-inventory:coverage
       - run: pnpm profile-compilation:coverage
       - run: pnpm profile-editor:coverage
@@ -49,10 +49,7 @@ jobs:
       - run: pnpm profile-automatic-controller:coverage
       - run: pnpm module-usb:coverage
       - run: pnpm actions:coverage
-      - run: pnpm dcs:coverage
-      - run: pnpm dcs-profile:coverage
       - run: pnpm debug:coverage
-      - run: pnpm integration:coverage
       - run: pnpm games:coverage
       - run: pnpm game-provider:coverage
       - run: pnpm game-launch:test
