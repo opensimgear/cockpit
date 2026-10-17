@@ -100,17 +100,31 @@ For a combined rig:
 3. Select an OSG event output and the exact game command action. For actions with
    arguments, add **Action pack**, connect its event trigger and every ordered
    argument explicitly. Zero-argument commands need only their declared trigger.
-4. Connect the game's altitude state through visible unit conversion,
-   comparison/hysteresis and formatting nodes to declared companion indicator
-   and text ports. A physical setter uses **Set on change** with its exact typed
-   argument. Select the companion's retained panel publication explicitly.
+4. Select the game's actual altitude quantity. For DCS-BIOS's raw CommonData
+   reported MSL altitude, add **Interpret raw quantity**, name the reported
+   quantity and declare `ft`, then connect a visible `ft` to `m` conversion and
+   comparison/hysteresis nodes to a declared companion indicator input. Use a
+   separate formatting node for a text port. The [quantity guide](profile-quantities.md)
+   explains the exporter's measurement-validity limitation. A physical setter
+   uses **Set on change** with its exact typed argument. Select the companion's
+   retained panel publication explicitly.
 5. Inspect draft preflight, resolve required-resource or contract errors, and
    save. Preflight is read-only and cannot grant output ownership.
 
+Direct OSG-to-DCS command branches require every direct USB and gateway HID
+publisher of their input devices to be disabled. Hiding a controller is a
+separate policy. A profile can request temporary **Disable** only when the
+exact native CAN route advertises that capability; delivery then requires its
+owned lease and a fresh input baseline. An unsupported or unknown publisher
+keeps the command branch blocked. Publication changes during a run permanently
+withdraw the affected commands until a fresh Apply, while unrelated controller
+routes and read-only game telemetry continue.
+
 Game/provider catalogues determine which ports are available. A directly
 connected OSG device exposes only the controls/actions supported by its adapter.
-Virtual output, physical writes, scripts and hiding still require their native
-capabilities and qualification gates; a saved graph does not enable them.
+Physical writes require their advertised native capabilities and owned leases.
+Virtual output, scripts and hiding retain their backend qualification gates;
+a saved graph does not enable those backends.
 
 ## Apply and inspect
 

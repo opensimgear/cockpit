@@ -208,18 +208,18 @@
       "ports": [
         {
           "id": "altitude",
-          "name": "Altitude feet",
+          "name": "CommonData ALT_MSL_FT · reported MSL altitude (raw)",
           "direction": "output",
           "contract": {
             "delivery": "state",
             "schema": {
-              "type": "number",
+              "type": "integer",
               "min": 0,
-              "max": 60000,
-              "unit": "ft"
+              "max": 65535,
+              "unit": null
             },
-            "freshnessMs": 1000,
-            "fallback": 0
+            "freshnessMs": 1500,
+            "fallback": null
           }
         },
         {
@@ -357,8 +357,8 @@
     {
       "id": "altitude-feet",
       "from": {
-        "nodeId": "dcs",
-        "portId": "altitude"
+        "nodeId": "altitude-quantity",
+        "portId": "feet"
       },
       "to": {
         "nodeId": "feet-to-metres",
@@ -452,6 +452,17 @@
         "nodeId": "companion-panel",
         "portId": "altitude-label"
       }
+    },
+    {
+      "id": "altitude-raw",
+      "from": {
+        "nodeId": "dcs",
+        "portId": "altitude"
+      },
+      "to": {
+        "nodeId": "altitude-quantity",
+        "portId": "raw"
+      }
     }
   ],
   "processingNodes": [
@@ -505,13 +516,13 @@
           "contract": {
             "delivery": "state",
             "schema": {
-              "type": "number",
+              "type": "integer",
               "min": 0,
-              "max": 60000,
+              "max": 65535,
               "unit": "ft"
             },
-            "freshnessMs": 1000,
-            "fallback": 0
+            "freshnessMs": 1500,
+            "fallback": null
           }
         }
       ],
@@ -525,11 +536,11 @@
             "schema": {
               "type": "number",
               "min": 0,
-              "max": 18288,
+              "max": 19975.068,
               "unit": "m"
             },
-            "freshnessMs": 1000,
-            "fallback": 0
+            "freshnessMs": 1500,
+            "fallback": null
           }
         }
       ]
@@ -553,11 +564,11 @@
             "schema": {
               "type": "number",
               "min": 0,
-              "max": 18288,
+              "max": 19975.068,
               "unit": "m"
             },
-            "freshnessMs": 1000,
-            "fallback": 0
+            "freshnessMs": 1500,
+            "fallback": null
           }
         }
       ],
@@ -638,11 +649,11 @@
             "schema": {
               "type": "number",
               "min": 0,
-              "max": 18288,
+              "max": 19975.068,
               "unit": "m"
             },
-            "freshnessMs": 1000,
-            "fallback": 0
+            "freshnessMs": 1500,
+            "fallback": null
           }
         },
         {
@@ -669,11 +680,11 @@
             "schema": {
               "type": "number",
               "min": 0,
-              "max": 18288,
+              "max": 19975.068,
               "unit": "m"
             },
-            "freshnessMs": 1000,
-            "fallback": 0
+            "freshnessMs": 1500,
+            "fallback": null
           }
         }
       ]
@@ -699,11 +710,11 @@
             "schema": {
               "type": "number",
               "min": 0,
-              "max": 18288,
+              "max": 19975.068,
               "unit": "m"
             },
-            "freshnessMs": 1000,
-            "fallback": 0
+            "freshnessMs": 1500,
+            "fallback": null
           }
         }
       ],
@@ -721,6 +732,51 @@
             },
             "freshnessMs": 1000,
             "fallback": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "altitude-quantity",
+      "name": "Interpret MSL altitude",
+      "operation": {
+        "kind": "declare-quantity",
+        "quantity": "Reported MSL altitude",
+        "unit": "ft"
+      },
+      "inputs": [
+        {
+          "id": "raw",
+          "name": "Reported raw MSL altitude",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 65535,
+              "unit": null
+            },
+            "freshnessMs": 1500,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "feet",
+          "name": "Reported MSL altitude feet",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "integer",
+              "min": 0,
+              "max": 65535,
+              "unit": "ft"
+            },
+            "freshnessMs": 1500,
+            "fallback": null
           }
         }
       ]
@@ -982,6 +1038,11 @@
         "nodeId": "can-controller",
         "x": 0,
         "y": 880
+      },
+      {
+        "nodeId": "altitude-quantity",
+        "x": 350,
+        "y": 440
       }
     ],
     "viewport": {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "evidence": "Computed samples and requested effects from the real portable compiler and typed reducer; no driver, game, display or HidHide acknowledgement.",
-  "documentSha256": "sha256:6602799ed14dc349a8b1424061ed9cea12d2a657808b54a843dbfc41afdccd2d",
+  "documentSha256": "sha256:e8272afd309f2bbe8a05953c71fc04c8e21312f1fdba49a9ac006b78bc11dec2",
   "routeVariants": [
     {
       "id": "can-only",
@@ -192,6 +192,17 @@
       {
         "nodeId": "dcs",
         "portId": "altitude",
+        "sample": {
+          "status": "known",
+          "value": {
+            "kind": "scalar",
+            "value": 10000
+          }
+        }
+      },
+      {
+        "nodeId": "altitude-quantity",
+        "portId": "feet",
         "sample": {
           "status": "known",
           "value": {

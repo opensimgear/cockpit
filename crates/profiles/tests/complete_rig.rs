@@ -26,6 +26,15 @@ use std::collections::{BTreeMap, BTreeSet};
 const DOCUMENT: &[u8] = include_bytes!("../../../tests/fixtures/profiles/complete-rig.json");
 const REPLAY: &[u8] = include_bytes!("../../../tests/fixtures/profiles/complete-rig-replay.json");
 const SETUP: &str = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+const RAW_ALTITUDE: &str = "channel:common:CommonData:ALT_MSL_FT:0";
+
+fn observed_port(resource: &str, port: &str) -> String {
+    if resource == "dcs" && port == "altitude" {
+        RAW_ALTITUDE.into()
+    } else {
+        port.into()
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -135,7 +144,7 @@ impl Rig {
                     Transport::Integration,
                 ),
             };
-            let attributes = BTreeMap::from([("logicalFixtureId".into(), resource.id.clone())]);
+            let mut attributes = BTreeMap::from([("logicalFixtureId".into(), resource.id.clone())]);
             let route = Route {
                 id: format!("{}-route", resource.id),
                 transport,
@@ -152,6 +161,21 @@ impl Rig {
                 writable: true,
                 priority: 10,
             };
+            if osg {
+                // These are injected publisher observations, not a claimed hardware effect.
+                // Only the separate configured-disabled command module feeds DCS commands.
+                attributes.insert(
+                    osg_profiles::compiler::hid_policy::attribute(&route.id),
+                    osg_profiles::compiler::hid_policy::evidence(
+                        &route,
+                        if resource.id == "can-command" {
+                            "disabled"
+                        } else {
+                            "published"
+                        },
+                    ),
+                );
+            }
             let observed = Observation {
                 key: resource.id.clone(),
                 name: resource.name.clone(),
@@ -164,8 +188,18 @@ impl Rig {
                 diagnostics: vec![],
                 route: Some(route),
                 ports: Some(
-                    PortUpdate::complete(resource.ports.iter().map(|p| p.descriptor()).collect())
-                        .unwrap(),
+                    PortUpdate::complete(
+                        resource
+                            .ports
+                            .iter()
+                            .map(|p| {
+                                let mut descriptor = p.descriptor();
+                                descriptor.id = observed_port(&resource.id, &p.id);
+                                descriptor
+                            })
+                            .collect(),
+                    )
+                    .unwrap(),
                 ),
             };
             if direct_usb && resource.id == "direct-usb" {
@@ -183,12 +217,17 @@ impl Rig {
                     priority: 100,
                     ..observed.route.as_ref().unwrap().clone()
                 });
+                let usb_route = usb.route.as_ref().unwrap();
+                usb.attributes.insert(
+                    osg_profiles::compiler::hid_policy::attribute(&usb_route.id),
+                    osg_profiles::compiler::hid_policy::evidence(usb_route, "published"),
+                );
                 observations.push(usb);
             }
             observations.push(observed);
         }
         let batch = ProviderBatch {
-            scope: "complete-rig-fixture".into(),
+            scope: "gateway:complete-rig-fixture".into(),
             session: "fixture-provider-session-1".into(),
             revision: 1,
             complete: true,
@@ -223,7 +262,7 @@ impl Rig {
                             let selected = observed
                                 .ports
                                 .iter()
-                                .find(|p| p.descriptor.id == port.id)
+                                .find(|p| p.descriptor.id == observed_port(&logical.id, &port.id))
                                 .unwrap();
                             PortExpectation {
                                 profile_port_id: port.id.clone(),
@@ -265,7 +304,11 @@ impl Rig {
                         .iter()
                         .filter_map(|p| {
                             self.registry
-                                .token(&assignment.source_id, &p.id, access(p))
+                                .token(
+                                    &assignment.source_id,
+                                    &observed_port(&logical.id, &p.id),
+                                    access(p),
+                                )
                                 .ok()
                         })
                         .collect(),
@@ -387,7 +430,32 @@ fn complete_rig_has_explicit_pipelines_and_transport_metadata_never_becomes_grap
         let plan = execution_plan(report);
         assert_eq!(plan.budgets.used_sources, 8);
         assert_eq!(plan.controllers.len(), 2);
-        assert_eq!(plan.budgets.bindings, 17);
+        assert_eq!(plan.budgets.bindings, 18);
+        assert_eq!(plan.budgets.processing_nodes, 7);
+        let altitude = plan
+            .sources
+            .iter()
+            .find(|source| source.endpoint.node_id == "dcs")
+            .unwrap();
+        assert_eq!(altitude.observed_port_id.as_deref(), Some(RAW_ALTITUDE));
+        assert_eq!(
+            serde_json::to_value(&altitude.contract).unwrap(),
+            json!({"delivery":"state","schema":{"type":"integer","min":0,"max":65535,"unit":null},"freshnessMs":1500,"fallback":null})
+        );
+        let declaration = document
+            .processing_nodes
+            .iter()
+            .find(|node| node.id == "altitude-quantity")
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&declaration.operation).unwrap(),
+            json!({"kind":"declare-quantity","quantity":"Reported MSL altitude","unit":"ft"})
+        );
+        assert_eq!(declaration.inputs[0].contract, altitude.contract);
+        assert_eq!(
+            serde_json::to_value(&declaration.outputs[0].contract).unwrap(),
+            json!({"delivery":"state","schema":{"type":"integer","min":0,"max":65535,"unit":"ft"},"freshnessMs":1500,"fallback":null})
+        );
         assert!(plan
             .visibility
             .iter()
@@ -419,6 +487,7 @@ fn complete_rig_has_explicit_pipelines_and_transport_metadata_never_becomes_grap
                 .map(String::as_str)
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from([
+                "altitude-quantity",
                 "feet-to-metres",
                 "altitude-threshold",
                 "altitude-visible",
@@ -432,6 +501,7 @@ fn complete_rig_has_explicit_pipelines_and_transport_metadata_never_becomes_grap
                 .map(String::as_str)
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from([
+                "altitude-raw",
                 "altitude-feet",
                 "altitude-metres",
                 "altitude-display-value",
@@ -445,8 +515,40 @@ fn complete_rig_has_explicit_pipelines_and_transport_metadata_never_becomes_grap
             .iter()
             .find(|b| b.sink.node_id == "dcs")
             .unwrap();
+        assert_eq!(command.readiness, PlanReadiness::Ready);
         assert_eq!(command.source_ports[0].node_id, "can-command");
         assert_eq!(command.processing_nodes, ["command-trigger"]);
+        let mut republished = capture.clone();
+        let command_module = republished
+            .resources
+            .iter_mut()
+            .find(|resource| resource.summary.id == rig.ids["can-command"])
+            .unwrap();
+        let route = &command_module.summary.connections[0].route;
+        command_module.summary.attributes.insert(
+            osg_profiles::compiler::hid_policy::attribute(&route.id),
+            osg_profiles::compiler::hid_policy::evidence(route, "published"),
+        );
+        let unsafe_command = compile(&document, &republished);
+        assert!(unsafe_command
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "dcsHidPublicationRequired"
+                && diagnostic.location.resource_id.as_deref() == Some("can-command")
+                && diagnostic
+                    .location
+                    .edge_ids
+                    .iter()
+                    .any(|id| id == "dcs-command")));
+        assert_eq!(
+            execution_plan(unsafe_command)
+                .branches
+                .iter()
+                .find(|branch| branch.sink.node_id == "dcs")
+                .unwrap()
+                .readiness,
+            PlanReadiness::Blocked
+        );
         let module = capture
             .resources
             .iter()
@@ -578,7 +680,7 @@ fn complete_rig_replay_computes_controllers_conditional_text_and_requests_withou
         command.captured_us = Counter(704);
         runtime.accept_signal_for(&run, command).unwrap();
         requests(&runtime.drain_effects(), &[], 1);
-        runtime.advance_for(&run, Counter(1_100_000)).unwrap();
+        runtime.advance_for(&run, Counter(1_600_000)).unwrap();
         let stale = runtime.drain_effects();
         assert!(stale
             .iter()
@@ -590,6 +692,13 @@ fn complete_rig_replay_computes_controllers_conditional_text_and_requests_withou
             runtime.typed_engine().unwrap().sample(&Endpoint {
                 node_id: "dcs".into(),
                 port_id: "altitude".into()
+            }),
+            Some(&SignalSample::Stale)
+        );
+        assert_eq!(
+            runtime.typed_engine().unwrap().sample(&Endpoint {
+                node_id: "altitude-quantity".into(),
+                port_id: "feet".into()
             }),
             Some(&SignalSample::Stale)
         );

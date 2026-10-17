@@ -33,3 +33,38 @@ unit. Quantity names and units are nonempty, have no surrounding whitespace or
 control characters, and contain at most 128 UTF-8 bytes. Existing unit-bearing
 ports use **Convert units**. Scale and range mapping retain their existing unit
 checks.
+
+## DCS-BIOS reported MSL altitude
+
+In DCS game details, choose the installed aircraft catalogue. When that
+aircraft's alias explicitly includes CommonData and the installed CommonData
+catalogue advertises it, the profile port catalogue includes
+`channel:common:CommonData:ALT_MSL_FT:0`. Its label identifies a reported value
+whose measurement validity is unavailable. CommonData supplies read-only
+outputs; it cannot be selected as an aircraft or used to add commands.
+
+The port is a raw integer from 0 to 65535. Add **Interpret raw quantity** with
+quantity **DCS-BIOS reported MSL altitude** and unit `ft`, then **Convert units**
+from `ft` to `m`. Connect its result to an explicit comparison or hysteresis
+node and the companion's declared indicator input. This identifies MSL, rather
+than above-ground, altitude. Select a separate formatting node for a text input.
+
+The [pinned upstream definition](https://github.com/DCS-Skunkworks/dcs-bios/blob/30125bd4231f87769f46bacd6050f25e2d25d1f8/Scripts/DCS-BIOS/lib/modules/common_modules/CommonData.lua)
+divides simulator metres by `0.304` before flooring the exported count. Cockpit
+preserves that reported value. The subsequent explicit feet-to-metres conversion
+uses `0.3048`; it does not silently repair the exporter's approximation.
+
+The exporter may retain an earlier altitude when ownship data or its export
+permission is absent. It advertises no measurement-validity flag for this
+quantity. A progressing stream with the selected aircraft establishes a fresh
+reported export, without establishing fresh physical measurement validity or
+game-confirmed output. Zero received on the wire remains a value. Before its
+bytes arrive the value is unknown; stream loss or the wrong aircraft withdraws
+freshness.
+
+The reader captures the aircraft, aliases, CommonData and metadata documents.
+Catalogue metadata is checked at admission and commands. Polling checks it
+after each 250 ms interval and checks a full semantic digest after each
+two-second interval to catch content changes with preserved file metadata.
+A changed capture requires preparing a new reader; it never silently
+substitutes new channel addresses.
