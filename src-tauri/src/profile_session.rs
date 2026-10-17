@@ -16,6 +16,8 @@ mod staging;
 pub(crate) use staging::{apply_staged, apply_staged_admitted, Stage};
 #[path = "profile_session_inspection.rs"]
 pub(crate) mod inspection;
+#[path = "profile_session_launch.rs"]
+mod launch;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Candidate {
@@ -154,6 +156,16 @@ pub(crate) trait Host: Send {
     ) -> Result<(), String>;
     fn restore(&mut self, run: &OwnedRun, recovery: bool) -> Result<(), String>;
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String>;
+    fn supports_launch_hold(&self) -> bool { false }
+    fn hold_health(&mut self, _: &OwnedRun) -> Result<Health, String> {
+        Err("This native adapter cannot renew a pending game launch.".into())
+    }
+    fn bind_launch_epoch(&mut self, _: &OwnedRun, _: u64) -> Result<(), String> {
+        Err("This native adapter cannot bind a pending game launch.".into())
+    }
+    fn install_launch_context(&mut self, _: &OwnedRun, _: &Candidate) -> Result<Prepared, String> {
+        Err("This native adapter cannot install a prepared launch context.".into())
+    }
     fn inspect(&self, _: &OwnedRun, _: &inspection::Request) -> Result<inspection::Page, String> {
         Err("This native profile adapter has no applied-port inspector.".into())
     }
@@ -170,6 +182,7 @@ pub(crate) enum State {
     Faulted,
     RecoveryNeeded,
     Transitioning,
+    AwaitingGame,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -190,6 +203,7 @@ pub(crate) struct Coordinator<H: Host> {
     session: String,
     generation: u64,
     active_candidate: Option<Candidate>,
+    launch: Option<launch::Held>,
 }
 
 impl<H: Host> Coordinator<H> {
@@ -212,6 +226,7 @@ impl<H: Host> Coordinator<H> {
             session: uuid::Uuid::new_v4().to_string(),
             generation: 0,
             active_candidate: None,
+            launch: None,
         }
     }
     pub(crate) fn status(&self) -> &Status {
@@ -223,6 +238,9 @@ impl<H: Host> Coordinator<H> {
             && !self.status.paused
     }
     pub(crate) fn apply(&mut self, candidate: Candidate) -> Result<(), String> {
+        self.apply_mode(candidate, false)
+    }
+    fn apply_mode(&mut self, candidate: Candidate, hold: bool) -> Result<(), String> {
         self.check_apply()?;
         if candidate.read_only {
             return Err("Profile storage is read-only; repair it before activation.".into());
@@ -246,13 +264,16 @@ impl<H: Host> Coordinator<H> {
                 return Err(error);
             }
         };
-        let result = self.takeover(candidate, owner.clone(), prepared);
+        let result = self.takeover(candidate, owner.clone(), prepared, hold);
         if result.is_err() {
             self.host.discard_preparation(&owner);
         }
         result
     }
     fn check_apply(&self) -> Result<(), String> {
+        if self.launch.is_some() || self.manifest.pending.is_some() {
+            return Err("Stop or recover the pending profile transition before another Apply.".into());
+        }
         if self.status.paused {
             return Err(
                 "The profile session is paused. Explicitly resume before applying a profile."
@@ -271,6 +292,7 @@ impl<H: Host> Coordinator<H> {
         candidate: Candidate,
         owner: RunOwner,
         prepared: Prepared,
+        hold: bool,
     ) -> Result<(), String> {
         if !prepared.admission.blockers.is_empty() {
             return Err(prepared
@@ -312,6 +334,7 @@ impl<H: Host> Coordinator<H> {
             }
             self.host.validate_prepared(&prepared, &owner)?;
             for phase in APPLY_PHASES {
+                if hold && phase == ApplyPhase::Start { break; }
                 let mut next = self.manifest.clone();
                 next.pending
                     .as_mut()
@@ -340,6 +363,17 @@ impl<H: Host> Coordinator<H> {
         if let Err(error) = effects {
             return self.fail_transition(error);
         }
+        if hold {
+            let run = self.manifest.pending.as_ref().unwrap().incoming.as_ref().unwrap();
+            self.status = Status { state: State::AwaitingGame, paused: false,
+                applied_snapshot: Some(run.snapshot.clone()), owner: Some(owner.clone()),
+                degradation: prepared.admission.optional_unavailable.clone(), fault: None };
+            self.launch = Some(launch::Held::new(candidate, prepared, owner));
+            return Ok(());
+        }
+        self.complete_transition(candidate, owner, prepared)
+    }
+    fn complete_transition(&mut self, candidate: Candidate, owner: RunOwner, prepared: Prepared) -> Result<(), String> {
         let run = self
             .manifest
             .pending
@@ -379,6 +413,7 @@ impl<H: Host> Coordinator<H> {
         Ok(())
     }
     fn fail_transition(&mut self, error: String) -> Result<(), String> {
+        self.launch = None;
         let _ = self.host.set_authority(None);
         self.status.owner = None;
         let neutralize = self.neutralize_owned();
@@ -412,6 +447,7 @@ impl<H: Host> Coordinator<H> {
         Ok(())
     }
     pub(crate) fn stop(&mut self) -> Result<(), String> {
+        self.launch = None;
         self.status.owner = None;
         let revoke = self.host.set_authority(None);
         // Emergency neutralization uses trusted in-memory owner fences even if
@@ -487,6 +523,7 @@ impl<H: Host> Coordinator<H> {
         }
     }
     pub(crate) fn recover(&mut self) -> Result<(), String> {
+        self.launch = None;
         self.status.owner = None;
         let revoke = self.host.set_authority(None);
         let neutralize = self.neutralize_owned();
@@ -502,6 +539,7 @@ impl<H: Host> Coordinator<H> {
         Ok(())
     }
     pub(crate) fn poll(&mut self) -> Result<(), String> {
+        if self.launch.is_some() { return self.poll_launch(); }
         let Some(active) = self
             .manifest
             .active

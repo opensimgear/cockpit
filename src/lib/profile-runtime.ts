@@ -6,7 +6,7 @@ export type NativeProfileOwner = {
   session: string; generation: number; profileId: string; profileRevision: number; gameId: ProfileGameId | null;
 };
 export type NativeProfileStatus = {
-  state: 'stopped' | 'running' | 'degraded' | 'paused' | 'faulted' | 'recovery-needed' | 'transitioning';
+  state: 'stopped' | 'running' | 'degraded' | 'paused' | 'faulted' | 'recovery-needed' | 'transitioning' | 'awaiting-game';
   paused: boolean; appliedSnapshot: AppliedProfileSnapshot | null; owner: NativeProfileOwner | null;
   degradation: string[]; fault: string | null;
 };
@@ -19,23 +19,23 @@ const object = (value: unknown): value is Record<string, unknown> => value !== n
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const revision = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && new TextEncoder().encode(value).length <= 16384 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value);
-const game = (value: unknown): value is ProfileGameId => ['dcs', 'x-plane-11', 'x-plane-12', 'assetto-corsa-rally'].includes(String(value));
+const game = (value: unknown): value is ProfileGameId => typeof value === 'string' && ['dcs', 'x-plane-11', 'x-plane-12', 'assetto-corsa-rally'].includes(value);
 const snapshot = (value: unknown): value is AppliedProfileSnapshot => object(value) && uuid(value.profileId) && revision(value.revision)
   && typeof value.semanticHash === 'string' && /^sha256:[a-f0-9]{64}$/.test(value.semanticHash);
 const owner = (value: unknown): value is NativeProfileOwner => object(value) && uuid(value.session) && revision(value.generation)
   && uuid(value.profileId) && revision(value.profileRevision) && (value.gameId === null || game(value.gameId));
 
 export function nativeProfileStatus(value: unknown): DeepReadonly<NativeProfileStatus> {
-  if (!object(value) || !['stopped', 'running', 'degraded', 'paused', 'faulted', 'recovery-needed', 'transitioning'].includes(String(value.state))
+  if (!object(value) || typeof value.state !== 'string' || !['stopped', 'running', 'degraded', 'paused', 'faulted', 'recovery-needed', 'transitioning', 'awaiting-game'].includes(value.state)
     || typeof value.paused !== 'boolean' || !(value.appliedSnapshot === null || snapshot(value.appliedSnapshot))
     || !(value.owner === null || owner(value.owner)) || !(value.fault === null || text(value.fault))
     || !Array.isArray(value.degradation) || value.degradation.length > 1024 || !value.degradation.every(text)) {
     throw new Error('Native profile runtime status is malformed. Refresh its current state.');
   }
-  if (value.owner !== null && (value.paused || !['running', 'degraded'].includes(String(value.state))
+  if (value.owner !== null && (value.paused || !['running', 'degraded', 'awaiting-game'].includes(value.state)
     || !snapshot(value.appliedSnapshot) || value.owner.profileId !== value.appliedSnapshot.profileId
     || value.owner.profileRevision !== value.appliedSnapshot.revision)
-    || ['running', 'degraded'].includes(String(value.state)) && value.owner === null) {
+    || ['running', 'degraded', 'awaiting-game'].includes(value.state) && value.owner === null) {
     throw new Error('Native profile runtime ownership is inconsistent. Refresh its current state.');
   }
   const captured = JSON.parse(JSON.stringify(value)) as NativeProfileStatus;

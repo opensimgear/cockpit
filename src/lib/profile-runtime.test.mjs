@@ -11,6 +11,7 @@ test('native runtime snapshots retain exact applied authority and never share mu
   assert.throws(()=>{captured.owner.profileRevision=99;},TypeError);
   for(const state of ['stopped','paused','faulted','recovery-needed','transitioning'])assert.equal(nativeProfileStatus({...stopped(),state,paused:state==='paused'}).state,state);
   assert.equal(nativeProfileStatus({...running(),state:'degraded',degradation:['Game telemetry is stale.']}).state,'degraded');
+  assert.equal(nativeProfileStatus({...running(),state:'awaiting-game'}).state,'awaiting-game');
 });
 test('explicit controls send saved identity and revision without document, resource tokens, telemetry or inferred context',async()=>{
   const calls=[],client=new ProfileRuntimeClient(async request=>{calls.push(request);return stopped();});
@@ -31,4 +32,8 @@ test('malformed and inconsistent native evidence cannot become running UI state'
 test('control responses require complete native status and do not imply simulator confirmation',async()=>{
   const client=new ProfileRuntimeClient(async()=>({state:'running'}));await assert.rejects(client.status(),/malformed/);
   const status=nativeProfileStatus({...stopped(),state:'recovery-needed',fault:'Inspect owned receipts.\nNo workers restarted.'});assert.equal(status.owner,null);assert.equal(status.appliedSnapshot,null);
+});
+
+test('held launch status retains exact owner without accepting coerced states or game identities',()=>{
+  for(const value of [{...running(),state:['running']},{...running(),owner:{...running().owner,gameId:['dcs']}},{...running(),state:'awaiting-game',owner:null},{...running(),state:'awaiting-game',paused:true}])assert.throws(()=>nativeProfileStatus(value),/malformed|inconsistent/);
 });

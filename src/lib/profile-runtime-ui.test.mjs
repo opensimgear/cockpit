@@ -60,3 +60,8 @@ test('actual status poll lifecycle is read-only, suspends during game settings o
   const view=await component(),h=harness();const result=view.render({controller:h.controller,active:false});assert.equal(result.handlers.mountStatus(),undefined);assert.deepEqual(h.calls,[]);result.handlers.setActive(true);const cleanup=result.handlers.watchStatus();await Promise.resolve();assert.deepEqual(h.calls,[{command:'profile_status'}]);await new Promise(resolve=>setImmediate(resolve));
   view.document.hidden=true;view.timers.get(1)();assert.equal(h.calls.length,1);view.document.hidden=false;view.events.get('visibilitychange')();await new Promise(resolve=>setImmediate(resolve));assert.equal(h.calls.length,2);cleanup();assert.equal(view.timers.size,0);assert.equal(view.events.size,0);result.handlers.setActive(false);assert.equal(result.handlers.watchStatus(),undefined);assert.ok(h.calls.every(call=>call.command==='profile_status'));
 });
+
+test('waiting launch displays neutral hardware, blocks Apply and keeps actual Stop and Pause available',async()=>{
+  const view=await component(),h=harness();h.setStatus({...running(),state:'awaiting-game',owner:{...running().owner,gameId:null}});await h.controller.refresh();h.calls.length=0;
+  const result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('held neutral'));assert.ok(result.html.includes('Processing has not started'));assert.match(button(result.html,'Apply saved revision'),/disabled/);assert.ok(!button(result.html,'Stop').includes('disabled'));assert.ok(!button(result.html,'Pause').includes('disabled'));await result.handlers.apply();assert.deepEqual(h.calls,[]);await result.handlers.stop();assert.deepEqual(h.calls,[{command:'profile_stop'}]);
+});

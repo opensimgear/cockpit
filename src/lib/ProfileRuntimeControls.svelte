@@ -16,7 +16,7 @@
   const selectedGame = $derived(choices.some(game=>game.id===gameId)?gameId as ProfileGameId:undefined);
   const invalidGame = $derived(gameId!==''&&!selectedGame);
   const saved = $derived(!!editor&&!editor.readOnly&&!editor.dirty&&editor.baseRevision!==null&&editor.baseRevision===editor.revision);
-  const applyDisabled = $derived(!saved||invalidGame||!native||view.stale||!!view.pending||native.paused||native.state==='recovery-needed'||native.state==='transitioning');
+  const applyDisabled = $derived(!saved||invalidGame||!native||view.stale||!!view.pending||native.paused||native.state==='recovery-needed'||native.state==='transitioning'||native.state==='awaiting-game');
   const appliedName = $derived(profiles.find(profile=>profile.id===native?.appliedSnapshot?.profileId)?.name??native?.appliedSnapshot?.profileId??'None');
   onMount(()=>{ mounted=true;const stop=runtime.subscribe(next=>{view=next;onState?.(next);});return()=>{mounted=false;stop();}; });
   function watchStatus(){
@@ -38,6 +38,7 @@
     <dl><div><dt>Applied snapshot</dt><dd>{native.appliedSnapshot?`${appliedName} · revision ${native.appliedSnapshot.revision}`:'None'}</dd></div><div><dt>Current run</dt><dd>{native.owner?`Generation ${native.owner.generation} · ${native.owner.gameId??'Hardware only'}`:'No running session'}</dd></div></dl>
     {#if native.owner}<p class="run-identity">Session <code>{native.owner.session}</code> · Editing or saving another revision leaves this run unchanged.</p>{/if}
     {#if native.paused}<p class="runtime-notice">Pause is persisted. Clear pause, then explicitly Apply a saved revision to start a new run.</p>{/if}
+    {#if native.state==='awaiting-game'}<p class="runtime-notice">Hardware is prepared and held neutral while the game context is verified. Processing has not started. Stop or Pause cancels this launch.</p>{/if}
     {#if native.fault}<p class="runtime-error" role="alert">{native.fault}</p>{/if}
     {#if native.degradation.length}<ul class="runtime-notice" aria-label="Native runtime degradation">{#each native.degradation as reason,index (index)}<li>{reason}</li>{/each}</ul>{/if}
   {/if}

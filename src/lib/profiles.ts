@@ -64,7 +64,7 @@ export type ProfileLocalAssignment = { resourceId: string; sourceId: string; por
 export type ProfileSelectionMode = 'manual' | 'automatic';
 export type AppliedProfileSnapshot = { profileId: string; revision: number; semanticHash: string };
 export type ProfileSession = {
-  selectedProfileId: string; selectionMode: ProfileSelectionMode; state: 'stopped' | 'running' | 'degraded' | 'paused' | 'faulted' | 'recovery-needed' | 'transitioning';
+  selectedProfileId: string; selectionMode: ProfileSelectionMode; state: 'stopped' | 'running' | 'degraded' | 'paused' | 'faulted' | 'recovery-needed' | 'transitioning' | 'awaiting-game';
   appliedSnapshot: AppliedProfileSnapshot | null; fault: string | null;
 };
 export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string };
