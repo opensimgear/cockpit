@@ -623,8 +623,16 @@ fn pre_start_real_token_refresh_rebinds_and_renews_same_lease_once_without_recla
     eventually(|| a.poll().acquired);
     eventually(|| a.bind_delivery(&p).unwrap());
     assert!(a.owns_endpoint(&p.sinks[0].endpoint));
+    // A completed bind may already be visible on the first poll. Hold the
+    // refresh itself so the pending assertion has a deterministic cause.
+    let refresh = probes[0].hold("bind");
     p.sinks[0].token = Some(fresh_token("2"));
-    assert!(!a.bind_delivery(&p).unwrap());
+    let ready_while_blocked = a.bind_delivery(&p).unwrap();
+    refresh.entered();
+    let start_while_blocked = a.start();
+    refresh.release();
+    assert!(!ready_while_blocked);
+    assert!(start_while_blocked.is_err());
     eventually(|| a.bind_delivery(&p).unwrap());
     assert_eq!(probes[0].count("claim"), 1);
     assert_eq!(probes[0].count("bind"), 2);
