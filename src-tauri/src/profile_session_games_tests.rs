@@ -10,6 +10,7 @@ use osg_profiles::{
 };
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 fn empty_plan() -> ExecutionPlan {
     osg_profiles::compiler::compile(
@@ -80,7 +81,7 @@ struct Dcs {
 }
 impl Dcs {
     fn new() -> Self {
-        let folder = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let folder = crate::test_directory();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios");
         for name in [
             "A-10C.json",
@@ -266,16 +267,32 @@ fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frame
     network.listen_port = port;
     *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    // UDP delivery is asynchronous even on loopback. Observe each actual
+    // decoded counter before sending the next; otherwise both packets may be
+    // drained together and the first-witness guard correctly withholds fresh.
+    let receive_counter = |source: &mut GameSources, counter: u16, now_us| {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let snapshot = source.read(now_us).unwrap().unwrap();
+            if snapshot.counter == Some(counter) {
+                return snapshot;
+            }
+            assert!(Instant::now() < deadline, "UDP counter {counter} was not decoded");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
     sender
         .send_to(&bytes(1, true), ("127.0.0.1", port))
         .unwrap();
-    let snapshot = source.read(0).unwrap().unwrap();
+    let snapshot = receive_counter(&mut source, 1, 0);
     assert!(!source.frames(snapshot, 0).fresh);
     sender
         .send_to(&bytes(2, true), ("127.0.0.1", port))
         .unwrap();
-    let snapshot = source.read(10_000).unwrap().unwrap();
-    assert!(source.frames(snapshot, 10_000).fresh);
+    let snapshot = receive_counter(&mut source, 2, 10_000);
+    let baseline = source.frames(snapshot, 10_000);
+    assert!(baseline.fresh);
+    assert_eq!(baseline.frames[0].changes[0].sample, SignalSample::scalar(PortValue::Number(1.0)));
     let lost = source.lose(20_000, "Verified process exited".into());
     assert!(lost.context_lost);
     assert_eq!(lost.frames.len(), 1);
@@ -369,7 +386,7 @@ impl crate::game_discovery::Platform for ProcessFixture {
 }
 #[test]
 fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline() {
-    let folder = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let folder = crate::test_directory();
     let platform = Arc::new(ProcessFixture {
         process: Mutex::new(Some(crate::game_discovery::ProcessIdentity {
             pid: 42,

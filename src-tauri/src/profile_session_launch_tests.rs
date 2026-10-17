@@ -275,7 +275,7 @@ fn altered_context_program_is_compensated_before_start() {
 }
 #[test]
 fn crash_in_waiting_state_is_restore_only_and_journal_cannot_restart_launch() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let path = directory.path().join("session.json");
     let (mut c, _) = fixture(Some(path.clone()));
     let owner = c.begin_launch(candidate()).unwrap();

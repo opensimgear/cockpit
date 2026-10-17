@@ -286,18 +286,17 @@ mod tests {
     use super::*;
     use crate::game_discovery::ProcessIdentity;
     use std::collections::BTreeMap;
-    struct Scratch(PathBuf);
+    struct Scratch {
+        path: PathBuf,
+        _directory: tempfile::TempDir,
+    }
     impl Scratch {
         fn new() -> Self {
-            let path =
-                std::env::temp_dir().join(format!("osg-game-context-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-    }
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            let directory = crate::test_directory();
+            Self {
+                path: directory.path().to_owned(),
+                _directory: directory,
+            }
         }
     }
     struct FakePlatform {
@@ -366,7 +365,7 @@ mod tests {
                 .push(request["command"].as_str().unwrap_or("").to_owned());
             panic!("Context metadata must never call cleanup or a retired provider: {request}");
         });
-        let runtime = GamesRuntime::new(panel, Paths::in_directory(&scratch.0), platform.clone());
+        let runtime = GamesRuntime::new(panel, Paths::in_directory(&scratch.path), platform.clone());
         let revision = runtime.inner.setup.provider_setup_revision("x-plane-12");
         runtime.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":revision,"connection":crate::xplane::defaults(12)})).unwrap();
         (runtime, platform, calls)

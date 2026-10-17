@@ -134,7 +134,7 @@ pub(crate) struct Fake {
 impl Fake {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            root: tempfile::tempdir().unwrap(),
+            root: crate::test_directory(),
             driver: Arc::new(Mutex::new(state())),
             calls: Mutex::new(vec![]),
             owned: Mutex::new(None),

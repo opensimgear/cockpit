@@ -276,7 +276,7 @@ fn default_needs_no_companion_initialization_or_dependencies() {
 #[test]
 fn revalidation_after_acquire_uses_owned_receipt_instead_of_obsolete_unowned_proof() {
     let fixture=Fixture::new();
-    let directory=tempfile::tempdir().unwrap();
+    let directory=crate::test_directory();
     let runtime=crate::companion_host::Runtime::with_profile_metadata(fixture.hub.clone(),fixture.provider.clone(),directory.path().to_owned());
     let mut adapter=fixture.prepared();
     adapter.validate_preparation(&runtime).unwrap();

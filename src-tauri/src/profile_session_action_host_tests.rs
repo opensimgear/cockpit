@@ -157,7 +157,7 @@ impl Fixture {
         Self::with_required(true)
     }
     fn with_required(required: bool) -> Self {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let generation = Arc::new(AtomicU64::new(1));
         let observed = generation.clone();
         let resources = Arc::new(crate::profile_resources::Runtime::new(

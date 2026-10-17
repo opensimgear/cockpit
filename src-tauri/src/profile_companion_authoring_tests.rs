@@ -15,7 +15,7 @@ fn publish(hub:&Hub,changed:bool)->Publication {
     let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");hub.command(&command).unwrap();publication
 }
 fn fixture()->(Runtime,Hub,Publication,Publication,tempfile::TempDir) {
-    let directory=tempfile::tempdir().unwrap();
+    let directory=crate::test_directory();
     let provider=Arc::new(CompanionProvider::new(Arc::new(||1)));
     let hub=Hub::new("passive-authoring".into(),provider.clone());
     let offer=hub.command(&json!({"command":"companion_pair_offer"})).unwrap();
@@ -85,7 +85,7 @@ fn malformed_unknown_unpaired_and_oversized_requests_fail_without_initializing_t
 }
 #[test]
 fn authoring_read_of_missing_setup_never_creates_state_or_listener() {
-    let directory=tempfile::tempdir().unwrap();let missing=directory.path().join("missing");
+    let directory=crate::test_directory();let missing=directory.path().join("missing");
     let runtime=Runtime::new(Some(missing.clone()),Arc::new(CompanionProvider::new(Arc::new(||1))));
     assert!(runtime.profile_authoring_catalogue().is_err());
     assert!(runtime.profile_authoring_inspect("r","instance",&format!("sha256:{}","0".repeat(64)),0,1).is_err());

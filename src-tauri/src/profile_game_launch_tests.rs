@@ -73,7 +73,7 @@ fn fixture() -> (
     Candidate,
     tempfile::TempDir,
 ) {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let platform = Arc::new(PlatformFixture::new());
     let runtime = GamesRuntime::new(
         Arc::new(|_| panic!("launch helper must not touch hardware/provider commands")),

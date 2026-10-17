@@ -58,7 +58,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let process = Arc::new(Process(
             Mutex::new(Some(ProcessIdentity {
                 pid: 42,

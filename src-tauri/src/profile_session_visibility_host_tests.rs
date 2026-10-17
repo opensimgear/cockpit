@@ -184,7 +184,7 @@ fn visible_empty_plan_skips_native_dependencies_guards_and_renewals() {
 #[test]
 fn actual_host_retains_exact_cleanup_after_conflict_and_releases_it_after_restore() {
     use crate::profile_session_visibility::tests::owned_run;
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
     let games = Arc::new(crate::games::GamesRuntime::new(
         Arc::new(|_| json!({"ok":false})),
@@ -248,7 +248,7 @@ fn actual_host_retains_exact_cleanup_after_conflict_and_releases_it_after_restor
 #[test]
 fn actual_host_final_admission_validates_applied_hide_owner_before_any_neutralization() {
     use crate::profile_session_visibility::tests::owned_run;
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
     let resources = Arc::new(crate::profile_resources::Runtime::new(
         None,

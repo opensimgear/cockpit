@@ -51,9 +51,9 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     assert!(request.to_string().len() < 65_536);
     let response = exchange("large-frame", request);
     assert_eq!(response["ok"], false);
-    assert_eq!(response["error"], "Provider setup belongs to game details, and simulator bindings belong to the unified profile graph. Integration execution requires its applied profile and matching verified game context.");
+    assert!(response["error"].as_str().unwrap().contains("retired"), "{response}");
 
-    let mut request = json!({"command":"integration_get_state","clientId":"cockpit-service-boundary-test","padding":""});
+    let mut request = json!({"command":"game_get_state","clientId":"cockpit-service-boundary-test","padding":""});
     let overhead = request.to_string().len();
     request["padding"] = json!("x".repeat(65_536 - overhead));
     assert_eq!(request.to_string().len(), 65_536);
@@ -67,7 +67,7 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     assert_eq!(
         exchange(
             "still-alive",
-            json!({"command":"integration_get_state","clientId":"cockpit-service-boundary-test"})
+            json!({"command":"game_get_state","clientId":"cockpit-service-boundary-test"})
         )["ok"],
         true
     );
@@ -83,65 +83,45 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     assert!(catalogue.iter().any(|g| g["id"] == "assetto-corsa-rally"));
     assert!(catalogue.iter().any(|g| g["id"] == "x-plane-11"));
     assert!(catalogue.iter().any(|g| g["id"] == "x-plane-12"));
-    let profile = json!({"schemaVersion":1,"id":"service-dcs","gameId":"dcs","name":"Service test","devices":[]});
-    assert_eq!(
-        exchange(
-            "save-game",
-            json!({"command":"game_profile_save","clientId":"cockpit-service-boundary-test","gameProfile":profile})
-        )["ok"],
-        true
-    );
-    let saved = exchange(
-        "read-game",
-        json!({"command":"game_get_state","clientId":"cockpit-service-boundary-test"}),
-    );
-    assert!(saved["state"]["games"]["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|p| p["id"] == "service-dcs"));
-
-    // A maximum document uses bounded byte chunks, retaining native correlation.
-    let mut document = include_bytes!("../../crates/mapping/fixtures/direct-profile.json").to_vec();
-    document.resize(65_536, b' ');
-    let begin = exchange(
-        "mapping-begin",
-        json!({"command":"mapping_import_begin",
-        "clientId":"cockpit-service-boundary-test","size":document.len()}),
-    );
-    assert_eq!(begin["ok"], true);
-    let upload = begin["state"]["mappings"]["uploadId"].clone();
-    for (index, chunk) in document.chunks(8192).enumerate() {
-        let response = exchange(
-            &format!("mapping-chunk-{index}"),
-            json!({
-                "command":"mapping_import_chunk","clientId":"cockpit-service-boundary-test",
-                "uploadId":upload,"offset":index * 8192,"bytes":chunk
-            }),
-        );
-        assert_eq!(response["ok"], true);
+    let game_state = games["state"]["games"].as_object().unwrap();
+    for retired_field in ["profiles", "defaultProfiles", "session"] {
+        assert!(!game_state.contains_key(retired_field), "{retired_field}");
     }
-    let committed = exchange(
-        "mapping-commit",
-        json!({"command":"mapping_import_commit",
-        "clientId":"cockpit-service-boundary-test","uploadId":upload}),
+    assert!(game_state.contains_key("cleanup"));
+
+    // CRUD uses the unified schema-v2 profile service. The transport retains
+    // correlation for both supported commands and explicit retired rejections.
+    let created = exchange(
+        "create-profile",
+        json!({"command":"profile_create","clientId":"cockpit-service-boundary-test","name":"Service test"}),
     );
-    assert_eq!(committed["ok"], true, "{committed}");
-    let profile = &committed["state"]["mappings"]["document"];
-    assert!(profile.is_object());
-    assert!(scratch
-        .join("mappings")
-        .join(format!("{}.json", profile["id"].as_str().unwrap()))
-        .exists());
-    assert!(committed.to_string().len() < 66_560);
-    assert_eq!(
-        exchange(
-            "mapping-oversize",
-            json!({"command":"mapping_import_begin",
-        "clientId":"cockpit-service-boundary-test","size":65_537})
-        )["ok"],
-        false
+    assert_eq!(created["ok"], true, "{created}");
+    let profile = &created["state"]["profiles"]["document"];
+    assert_eq!(profile["schemaVersion"], 2);
+    let id = profile["id"].as_str().unwrap();
+    let renamed = exchange(
+        "rename-profile",
+        json!({"command":"profile_rename","clientId":"cockpit-service-boundary-test",
+            "id":id,"expectedRevision":1,"name":"Renamed service test"}),
     );
+    assert_eq!(renamed["ok"], true, "{renamed}");
+    assert_eq!(renamed["state"]["profiles"]["document"]["revision"], 2);
+    let exported = exchange(
+        "export-profile",
+        json!({"command":"profile_export","clientId":"cockpit-service-boundary-test","id":id}),
+    );
+    assert_eq!(exported["ok"], true, "{exported}");
+    assert_eq!(exported["state"]["profiles"]["document"]["name"], "Renamed service test");
+    for command in ["game_profile_save", "mapping_import_begin", "integration_get_state"] {
+        let rejected = exchange(
+            command,
+            json!({"command":command,"clientId":"cockpit-service-boundary-test"}),
+        );
+        assert_eq!(rejected["ok"], false, "{rejected}");
+        assert!(rejected["error"].as_str().unwrap().contains("retired"), "{rejected}");
+    }
+    assert!(!scratch.join("games.json").exists());
+    assert!(!scratch.join("mappings").exists());
     let mut editor = editor_boundary_request();
     editor["clientId"] = json!("cockpit-service-boundary-test");
     assert!(editor.to_string().len() > osg_cockpit::gateways::PROFILE_REQUEST_LIMIT);

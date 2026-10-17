@@ -77,7 +77,7 @@ fn invalid_browser_pins_or_unreadable_saved_references_never_reach_prune() {
     for hashes in [Value::Null, json!(["invalid"]), json!([1]), json!(vec![format!("sha256:{}", "a".repeat(64));101])] {
         assert!(with_saved_references(&healthy, &json!({"companion":{"hashes":hashes}}), |_| panic!("invalid retention reached native pruning")).is_err());
     }
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let original = b"{unreadable saved profiles";
     std::fs::write(directory.path().join("library.json"), original).unwrap();
     let corrupt = Mutex::new(osg_profiles::service::Service::new(Some(directory.path().to_owned())));

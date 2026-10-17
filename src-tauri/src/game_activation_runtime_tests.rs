@@ -20,7 +20,7 @@ impl Platform for Unsupported {
 }
 #[test]
 fn unsupported_monitoring_stays_explicit_and_cannot_invent_a_context() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let runtime = GamesRuntime::new(
         Arc::new(|_| panic!("no provider calls")),
         {
@@ -85,7 +85,7 @@ fn corrupt_installation_store_never_verifies_or_launches_the_discovered_fallback
             Ok(true)
         }
     }
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     let file = paths.installations.clone();
     let corrupt=br#"{"schemaVersion":1,"manualInstallations":{"dcs":"Z:\\Pinned\\DCS.exe"},"interrupted":true}"#;

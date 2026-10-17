@@ -62,7 +62,7 @@ fn physical_journal(baseline_enabled: bool, desired_enabled: bool) -> Value {
 
 #[test]
 fn fresh_runtime_ignores_old_profile_store_and_never_seeds_authoring_state() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let old = directory.path().join("games.json");
     let legacy = br#"{"profiles":"malicious old data","manualInstallations":{"dcs":"old"}}"#;
     fs::write(&old, legacy).unwrap();
@@ -80,7 +80,7 @@ fn fresh_runtime_ignores_old_profile_store_and_never_seeds_authoring_state() {
 }
 #[test]
 fn manual_installations_save_restart_remove_and_corruption_is_preserved() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     let file = paths.installations.clone();
     let runtime = GamesRuntime::new(no_io(), paths, Arc::new(FakePlatform::default()));
@@ -121,7 +121,7 @@ fn manual_installations_save_restart_remove_and_corruption_is_preserved() {
 }
 #[test]
 fn retired_commands_and_unknown_metadata_fields_have_no_effects_or_files() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let platform = Arc::new(FakePlatform::default());
     let runtime = GamesRuntime::new(
         no_io(),
@@ -154,7 +154,7 @@ fn retired_commands_and_unknown_metadata_fields_have_no_effects_or_files() {
 }
 #[test]
 fn retained_volatile_binding_intents_cleanup_without_reading_or_restarting_old_graphs() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     save_journal(&paths, &journal());
     let recovery = paths.recovery.clone();
@@ -171,7 +171,7 @@ fn retained_volatile_binding_intents_cleanup_without_reading_or_restarting_old_g
 }
 #[test]
 fn mapping_cleanup_carries_native_exact_reference_and_never_uses_baseline_recording() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     let mut value = journal();
     value["mapping"] = json!({"owner":OWNER,"taken":true,"armed":true,"stopped":false,"resumed":false,"desired":{"profile":{"requirements":{"virtualDevices":true}},"visibility":{"legacy":"marker"}},"baseline":"must not parse or resume","baselineToken":"must not parse","settings":"must not read"});
@@ -268,7 +268,7 @@ fn hardware() -> (CleanupIo, Arc<Mutex<Hardware>>) {
 #[test]
 fn physical_cleanup_reconciles_lost_ack_once_and_publishes_only_owned_baseline() {
     for baseline_enabled in [true, false] {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let paths = Paths::in_directory(directory.path());
         save_journal(&paths, &physical_journal(baseline_enabled, true));
         let (io, state) = hardware();
@@ -301,7 +301,7 @@ fn physical_cleanup_reconciles_lost_ack_once_and_publishes_only_owned_baseline()
 }
 #[test]
 fn offline_readback_preserves_journal_and_retry_does_not_repeat_a_confirmed_write() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     save_journal(&paths, &physical_journal(true, true));
     let recovery = paths.recovery.clone();
@@ -333,7 +333,7 @@ fn offline_readback_preserves_journal_and_retry_does_not_repeat_a_confirmed_writ
 }
 #[test]
 fn foreign_hardware_or_replaced_journal_is_preserved_without_cleanup_mutation() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     save_journal(&paths, &physical_journal(true, true));
     let recovery = paths.recovery.clone();
@@ -365,7 +365,7 @@ fn foreign_hardware_or_replaced_journal_is_preserved_without_cleanup_mutation() 
 }
 #[test]
 fn malformed_cleanup_requires_explicit_acknowledgement_without_output_recovery() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     let recovery = paths.recovery.clone();
     fs::write(&recovery, b"malformed retained journal").unwrap();
@@ -382,7 +382,7 @@ fn malformed_cleanup_requires_explicit_acknowledgement_without_output_recovery()
 }
 #[test]
 fn acknowledgement_cannot_archive_a_replacement_or_unbounded_rejected_journal() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     let recovery = paths.recovery.clone();
     fs::write(&recovery, b"malformed retained journal").unwrap();
@@ -411,7 +411,7 @@ fn acknowledgement_cannot_archive_a_replacement_or_unbounded_rejected_journal() 
 
 #[test]
 fn competing_cleanup_instances_cannot_restore_or_acknowledge_the_owned_file() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());
     save_journal(&paths, &physical_journal(true, true));
     let entered = Arc::new(std::sync::Barrier::new(2));
@@ -478,7 +478,7 @@ fn malformed_identity_phase_or_physical_evidence_never_reaches_cleanup_io() {
     duplicates["devices"].as_array_mut().unwrap().push(row);
     cases.push(duplicates);
     for value in cases {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let paths = Paths::in_directory(directory.path());
         save_journal(&paths, &value);
         let file = paths.recovery.clone();

@@ -158,7 +158,7 @@ fn stale_unsupported_malformed_and_duplicate_catalogues_never_grant_authority() 
 #[test]
 fn actual_games_runtime_detects_external_start_and_exit_without_ui_or_provider_setup() {
     let platform = std::sync::Arc::new(fake());
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let runtime = crate::games::GamesRuntime::new(
         std::sync::Arc::new(|_| {
             panic!("Process observation must not call provider or device output")

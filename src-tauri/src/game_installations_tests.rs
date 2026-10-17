@@ -11,7 +11,7 @@ fn settings() -> Settings {
 }
 #[test]
 fn fresh_store_does_not_read_seed_or_modify_an_old_profile_library() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let old = directory.path().join("games.json");
     let legacy=br#"{"schemaVersion":1,"profiles":[{"id":"old","devices":["unsafe"]}],"defaultProfiles":{"dcs":"old"},"manualInstallations":{"dcs":"C:\\Old\\DCS.exe"}}"#;
     fs::write(&old, legacy).unwrap();
@@ -35,7 +35,7 @@ fn fresh_store_does_not_read_seed_or_modify_an_old_profile_library() {
 }
 #[test]
 fn atomic_replacement_failure_preserves_old_bytes_and_restart_state() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let path = directory.path().join("new/settings.json");
     let store = Store::new(path.clone());
     let original = settings();
@@ -59,7 +59,7 @@ fn atomic_replacement_failure_preserves_old_bytes_and_restart_state() {
 }
 #[test]
 fn strict_envelope_rejects_profiles_tokens_duplicate_keys_and_oversized_files() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let path = directory.path().join("game-installations-v1.json");
     let store = Store::new(path.clone());
     for bytes in [
@@ -110,7 +110,7 @@ fn paths_are_bounded_absolute_and_cannot_smuggle_runtime_or_extra_games() {
     assert!(Store::new(PathBuf::from("relative/settings.json"))
         .load()
         .is_err());
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     assert!(Store::new(directory.path().to_owned()).load().is_err());
     assert!(Store::new(directory.path().join("sub/../settings.json"))
         .load()
@@ -123,7 +123,7 @@ fn paths_are_bounded_absolute_and_cannot_smuggle_runtime_or_extra_games() {
 }
 #[test]
 fn symbolic_target_and_parent_are_never_followed() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let real = directory.path().join("real");
     fs::create_dir(&real).unwrap();
     let target = real.join("settings.json");
@@ -175,7 +175,7 @@ fn symbolic_target_and_parent_are_never_followed() {
 }
 #[test]
 fn native_canonical_metadata_paths_keep_their_actual_platform_prefix() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let absolute = directory.path().canonicalize().unwrap();
     let store = Store::new(absolute.join("installations.json"));
     assert!(store.load().unwrap().is_none());

@@ -64,7 +64,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let mut manager = GatewayManager::with_provider(Arc::new(NoPorts));
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let games = Arc::new(Games::default());
         manager.games = Arc::new(crate::games::GamesRuntime::new(
             Arc::new(|request| {

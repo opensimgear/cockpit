@@ -17,7 +17,7 @@ fn settings() -> Settings {
 }
 #[test]
 fn missing_state_is_passive_and_rules_round_trip_without_process_authority() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let path = directory.path().join("new").join("automatic.json");
     let store = Store::new(Some(path.clone()));
     assert!(store.load().unwrap().is_none());
@@ -36,7 +36,7 @@ fn missing_state_is_passive_and_rules_round_trip_without_process_authority() {
 }
 #[test]
 fn corrupt_unknown_oversized_and_nonregular_settings_are_preserved() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_directory();
     let path = directory.path().join("automatic.json");
     let store = Store::new(Some(path.clone()));
     let mut forged = serde_json::to_value(settings()).unwrap();

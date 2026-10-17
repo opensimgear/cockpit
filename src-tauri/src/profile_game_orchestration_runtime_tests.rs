@@ -90,7 +90,7 @@ impl Fixture {
     }
     fn with_installations(corrupt: bool) -> Self {
         let mut manager = GatewayManager::with_provider(Arc::new(NoPorts));
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         if corrupt {
             std::fs::write(directory.path().join("games.installations-v1.json"),b"interrupted pinned executable metadata").unwrap();
         }

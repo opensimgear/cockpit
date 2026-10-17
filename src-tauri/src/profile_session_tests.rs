@@ -140,7 +140,7 @@ fn coordinator(path: Option<PathBuf>) -> (Coordinator<Fake>, Arc<Mutex<Probe>>) 
     (Coordinator::new(Fake(probe.clone()), path), probe)
 }
 fn temp() -> tempfile::TempDir {
-    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+    crate::test_directory()
 }
 
 #[test]

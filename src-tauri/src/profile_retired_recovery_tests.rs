@@ -96,7 +96,7 @@ impl Operations for Arc<Fake> {
     }
 }
 fn setup() -> (tempfile::TempDir, Recovery, Arc<Fake>) {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_directory();
     let fake = Arc::new(Fake::default());
     fake.0.lock().unwrap().qualified = true;
     fake.0.lock().unwrap().provision_qualified = true;
@@ -176,7 +176,7 @@ fn job(operation: &str) -> ProvisionJob {
 }
 #[test]
 fn construction_and_status_ignore_obsolete_configs_and_do_not_create_storage() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_directory();
     for name in [
         "local-settings.json",
         "companion-routes.json",
@@ -483,7 +483,7 @@ fn disabled_native_operators_preserve_qualification_and_have_no_background_job()
     assert!(!native.provision_qualified());
     assert!(native.provisioning().unwrap().is_empty());
     assert!(native.job().is_none());
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let (path, saved) = record(temp.path(), JournalId::Manual, Phase::Confirmed);
     assert!(native.recover_output(path, &saved).is_err());
     assert!(native
