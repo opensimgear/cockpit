@@ -1,0 +1,11 @@
+# Profile library product controls
+
+Profiles list rows expose Export and, for named profiles, Delete. The editor exposes saved export/deletion and Import. Default remains undeletable. Delete and Import from an editor use the existing Save/Discard/Keep navigation guard; exporting a saved revision leaves dirty edits intact. Deletion captures the post-guard saved revision and uses native optimistic concurrency. A conflict keeps the dialog open without retrying.
+
+Import accepts a bounded portable JSON file or pasted document and a new name. Native import must confirm a fresh non-Default identity, revision 1 and the same graph/layout apart from identity/name/revision. Machine assignments and unknown authority fields are rejected before transport. Imported resources need explicit reassignment. Successful import refreshes the list and opens the saved editor only while the same navigation epoch still owns the operation. A corrupt/read-only or full library cannot import or delete. Export remains a read of the current saved portable revision, with a selectable JSON view and a download action; unsaved edits and local assignments are excluded.
+
+Four client/helper tests pass with 100% line/function and 98.08% branch coverage against the unchanged 71% gates. Five actual Svelte dialog/handler tests cover protected/read-only metadata, phase-specific confirmation, optimistic errors, file bounds, newer edits and late/disposed replies. The actual list component also tests corrupt-library mutation protection. The complete workspace suite passes 78 cases.
+
+An Edge keyboard fixture on the existing dev page intercepts every IPC before navigation. It exports a dirty editor's saved revision without replacing the draft, keeps editing after cancelling Import, saves through the navigation guard, imports a JSON file into a fresh saved editor, cancels and confirms Delete, rejects a stale revision, refreshes and deletes the exact new revision, and verifies that Default and its immutable applied owner/revision remain. This is frontend fixture evidence, not a native library, device or runtime qualification.
+
+CI runs the new pure helper coverage gate and includes the new actual component tests in the existing workspace command. No runtime Apply, selection, Pause or Stop is sent by these product controls.

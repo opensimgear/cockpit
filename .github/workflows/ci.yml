@@ -26,6 +26,7 @@ jobs:
       - run: pnpm browser:test
       - run: pnpm controllers:coverage
       - run: pnpm profiles:coverage
+      - run: pnpm profile-library:coverage
       - run: pnpm profile-retired-recovery:coverage
       - run: pnpm profile-inventory:coverage
       - run: pnpm profile-compilation:coverage

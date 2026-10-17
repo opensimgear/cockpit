@@ -40,7 +40,7 @@
     "profile-port-browser:test": "node --test src/lib/profile-port-browser.test.mjs",
     "profile-port-browser:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-port-browser.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-port-browser.test.mjs",
     "profile-companion-authoring:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-companion-authoring.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-companion-authoring.test.mjs",
-    "profile-workspace:test": "node --test src/lib/profile-overview-ui.test.mjs src/lib/profile-activity-ui.test.mjs src/lib/profile-companion-ui.test.mjs src/lib/profile-workspace-ui.test.mjs src/lib/profile-routing-ui.test.mjs src/lib/profile-runtime-ui.test.mjs src/lib/profile-inspection-ui.test.mjs src/lib/profile-learning-ui.test.mjs src/lib/profile-automatic-ui.test.mjs src/lib/profile-retired-recovery-ui.test.mjs src/lib/device-visibility-ui.test.mjs",
+    "profile-workspace:test": "node --test src/lib/profile-overview-ui.test.mjs src/lib/profile-activity-ui.test.mjs src/lib/profile-companion-ui.test.mjs src/lib/profile-workspace-ui.test.mjs src/lib/profile-routing-ui.test.mjs src/lib/profile-runtime-ui.test.mjs src/lib/profile-inspection-ui.test.mjs src/lib/profile-learning-ui.test.mjs src/lib/profile-automatic-ui.test.mjs src/lib/profile-retired-recovery-ui.test.mjs src/lib/device-visibility-ui.test.mjs src/lib/profile-library-ui.test.mjs",
     "profile-graph:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-graph.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-graph.test.mjs",
     "profile-graph-history:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-graph-history.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-graph-history.test.mjs",
     "profile-processing:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-processing.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-processing.test.mjs",
@@ -61,7 +61,8 @@
     "browser:build": "vite build --config apps/browser-companion/vite.config.ts",
     "browser:check": "svelte-check --tsconfig apps/browser-companion/tsconfig.json",
     "browser:test": "node --test apps/browser-companion/src/*.test.mjs",
-    "profile-retired-recovery:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-retired-recovery.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-retired-recovery.test.mjs"
+    "profile-retired-recovery:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-retired-recovery.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-retired-recovery.test.mjs",
+    "profile-library:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-library.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-library.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",
