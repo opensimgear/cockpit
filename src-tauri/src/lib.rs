@@ -34,6 +34,7 @@ mod profile_session_games;
 mod profile_session_companions;
 mod profile_session_inputs;
 mod profile_session_panels_inputs;
+mod profile_session_action_lease;
 mod profile_session_host;
 mod profile_session_virtual;
 mod profile_session_visibility;
