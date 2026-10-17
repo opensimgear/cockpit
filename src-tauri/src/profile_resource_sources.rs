@@ -6,8 +6,8 @@ use crate::{
 use osg_profiles::resources::{
     EvidenceKind, IdentityEvidence, Observation, ProviderBatch, ResourceType, Route, Transport,
 };
-use osg_profiles::resources_ports::{PortUpdate, ScalarSchema, TextEncoding};
-use osg_profiles::{Direction, PortValue};
+use osg_profiles::resources_ports::PortUpdate;
+use osg_profiles::Direction;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -491,69 +491,31 @@ impl Sources {
         publication: Result<osg_companion_service::Publication, String>,
         transport: Option<osg_companion_service::SourceTransport>,
     ) -> Result<Observation, String> {
-        use osg_mapping::profile::{Kind, Value as Input};
         let definition = source.definition;
         let mut item = observation(
             definition.source_id.clone(),
-            definition.name,
+            definition.name.clone(),
             ResourceType::Companion,
         );
         item.evidence = vec![evidence(
             EvidenceKind::CompanionInstance,
             definition.source_id.clone(),
         )];
-        item.attributes = attributes([("publicationHash", definition.publication_hash)]);
+        item.attributes = attributes([("publicationHash", definition.publication_hash.clone())]);
         if let Some(fault) = source.fault {
             item.diagnostics.push(fault);
         }
-        let mut descriptors = definition
-            .controls
-            .into_iter()
-            .map(|control| {
-                let schema = match control.kind {
-                    Kind::Button => ScalarSchema::Boolean {},
-                    Kind::Hat => ScalarSchema::Integer {
-                        min: -1,
-                        max: 7,
-                        unit: None,
-                    },
-                    Kind::Axis { range } => ScalarSchema::Integer {
-                        min: range.min() as i64,
-                        max: 32767,
-                        unit: None,
-                    },
-                };
-                let fallback = match control.fallback {
-                    Input::Button(value) => PortValue::Boolean(value),
-                    Input::Axis(value) => PortValue::Number(value as f64),
-                    Input::Hat(value) => PortValue::Number(value.map_or(-1, i32::from) as f64),
-                };
-                ports::state(
-                    control.id.clone(),
-                    control.id,
-                    Direction::Output,
-                    schema,
-                    Some(fallback),
-                )
-            })
-            .collect::<Vec<_>>();
         let mut publication_verified = false;
-        match publication {
-                Ok(publication) if publication.publication_hash == item.attributes["publicationHash"] => { publication_verified = true; for feedback in publication.feedback {
-                    use osg_companion_service::FeedbackKind;
-                    let schema = match feedback.kind {
-                        FeedbackKind::Boolean => ScalarSchema::Boolean {},
-                        FeedbackKind::Text => ScalarSchema::Text { max_bytes: 256, encoding: TextEncoding::Utf8 },
-                        FeedbackKind::Number => { let range = feedback.range.ok_or("Published feedback numeric range is missing.")?; ScalarSchema::Number { min: range.min, max: range.max, unit: feedback.unit } },
-                    };
-                    for output in feedback.output_ids { descriptors.push(ports::state(format!("feedback:{}:{output}", feedback.channel_id), feedback.channel_id.clone(), Direction::Input, schema.clone(), None)); }
-                } },
-                Ok(_) => item.diagnostics.push("Companion publication changed during inspection; capture its complete replacement descriptors.".into()),
-                Err(error) => item.diagnostics.push(error),
-            }
-        item.ports = publication_verified
-            .then(|| PortUpdate::complete(descriptors))
-            .transpose()?;
+        item.ports = match publication {
+            Ok(publication) if publication.publication_hash == definition.publication_hash => {
+                let descriptors=ports::companion(&definition,&publication.feedback)?;
+                item.attributes.insert("capabilityFingerprint".into(),publication.capability_fingerprint);
+                publication_verified=true;
+                Some(PortUpdate::complete(descriptors)?)
+            },
+            Ok(_) => { item.diagnostics.push("Companion publication changed during inspection; capture its complete replacement descriptors.".into()); None },
+            Err(error) => { item.diagnostics.push(error); None },
+        };
         let transport = transport.map(|transport| match transport {
             osg_companion_service::SourceTransport::Usb => Transport::Usb,
             osg_companion_service::SourceTransport::Network => Transport::Network,

@@ -38,6 +38,46 @@ fn observed(generation: u64) -> Observation {
 }
 
 #[test]
+fn desired_companion_capture_never_borrows_current_ports_and_only_binds_actual_matching_delivery() {
+    use osg_profiles::{resources::{EvidenceKind,IdentityEvidence,PortExpectation},store::LocalAssignment};
+    let digest=|c:char|format!("sha256:{}",c.to_string().repeat(64));
+    let runtime=Runtime::new(None,Arc::new(|_|vec![]),false);
+    let mut current=observed(1);current.key="instance".into();current.resource_type=ResourceType::Companion;
+    current.evidence=vec![IdentityEvidence{kind:EvidenceKind::CompanionInstance,value:"instance".into()}];
+    current.attributes=BTreeMap::from([("publicationHash".into(),digest('a')),("capabilityFingerprint".into(),digest('c'))]);
+    let route=current.route.as_mut().unwrap();route.id="companion:instance".into();route.transport=Transport::Network;
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","provider",1,vec![current.clone()])).unwrap();
+    let id=runtime.state.lock().unwrap().registry.list(0,1).unwrap().resources[0].id.clone();
+    let old=current.ports.as_ref().unwrap().ports[0].clone();let mut future=old.clone();future.id="future-button".into();
+    let mut catalogue=CompanionCatalogue{logical_resource_id:"panel".into(),inventory_resource_id:id.clone(),instance_id:"instance".into(),publication_hash:digest('b'),capability_fingerprint:digest('d'),ports:vec![future.clone()]};
+    let mut assignment=LocalAssignment{resource_id:"panel".into(),source_id:id.clone(),ports:vec![PortExpectation{profile_port_id:"pressed".into(),observed_port_id:old.id.clone(),expected_contract_hash:old.contract_hash().unwrap()}]};
+    let(_,pins)=runtime.snapshot_for_preparation_with_companions(vec![assignment.clone()],std::slice::from_ref(&catalogue)).unwrap();
+    assert!(pins.is_empty(),"An old advertised port absent from the desired publication cannot be prepared.");
+    assignment.ports[0].observed_port_id=future.id.clone();assignment.ports[0].expected_contract_hash=future.contract_hash().unwrap();
+    let(snapshot,pins)=runtime.snapshot_for_preparation_with_companions(vec![assignment.clone()],std::slice::from_ref(&catalogue)).unwrap();
+    assert_eq!(pins.len(),1);assert!(pins[0].requires_baseline());assert!(snapshot.resources[0].ports.is_empty());
+    assert_eq!(snapshot.resources[0].summary.attributes["publicationHash"],digest('a'));
+    let mut document=osg_profiles::default_document();
+    document.resources.push(osg_profiles::Resource{id:"panel".into(),name:"Panel".into(),kind:osg_profiles::ResourceKind::Companion,required:true,ports:vec![osg_profiles::Port{id:"pressed".into(),name:"Pressed".into(),direction:Direction::Output,contract:future.contract.clone()}]});
+    document.processing_nodes.push(osg_profiles::ProcessingNode{id:"invert".into(),name:"Invert".into(),operation:osg_mapping::program::Operation::Not{},inputs:vec![osg_profiles::Port{id:"input".into(),name:"Input".into(),direction:Direction::Input,contract:future.contract.clone()}],outputs:vec![osg_profiles::Port{id:"output".into(),name:"Output".into(),direction:Direction::Output,contract:future.contract.clone()}]});
+    document.bindings.push(osg_profiles::Binding{id:"to-invert".into(),from:osg_profiles::Endpoint{node_id:"panel".into(),port_id:"pressed".into()},to:osg_profiles::Endpoint{node_id:"invert".into(),port_id:"input".into()}});
+    document.companion_assignments.push(osg_profiles::CompanionAssignment{resource_id:"panel".into(),publication_hash:catalogue.publication_hash.clone()});
+    let report=osg_profiles::compiler::compile_for_preparation(&document,&snapshot,&pins);
+    assert_eq!(report.readiness,osg_profiles::compiler::PlanReadiness::Ready,"{:?}",report.diagnostics);let plan=report.plan.unwrap();
+    assert!(runtime.bind_delivery_reads(&plan).is_err());
+    current.ports=Some(PortUpdate::complete(vec![future]).unwrap());current.attributes.insert("publicationHash".into(),digest('b'));current.attributes.insert("capabilityFingerprint".into(),digest('d'));
+    current.route.as_mut().unwrap().provider_generation="2".into();current.route.as_mut().unwrap().baseline_ready=false;
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","provider",2,vec![current.clone()])).unwrap();assert!(runtime.bind_delivery_reads(&plan).is_err());
+    current.route.as_mut().unwrap().baseline_ready=true;
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","provider",3,vec![current.clone()])).unwrap();
+    let delivered=runtime.bind_delivery_reads(&plan).unwrap();assert!(delivered.sources[0].token.is_some());assert!(runtime.validate_preparation(&pins[0]).is_err());
+    current.attributes.insert("capabilityFingerprint".into(),digest('e'));
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","provider",4,vec![current])).unwrap();assert!(runtime.bind_delivery_reads(&plan).is_err());
+    catalogue.logical_resource_id="unknown".into();assert!(runtime.snapshot_for_preparation_with_companions(vec![assignment.clone()],std::slice::from_ref(&catalogue)).is_err());
+    catalogue.logical_resource_id="panel".into();assert!(runtime.snapshot_for_preparation_with_companions(vec![assignment],&[catalogue.clone(),catalogue.clone()]).is_err());
+}
+
+#[test]
 fn compiler_capture_uses_one_cached_native_snapshot_without_discovery_or_normalization() {
     use osg_profiles::resources::PortExpectation;
     use osg_profiles::store::LocalAssignment;

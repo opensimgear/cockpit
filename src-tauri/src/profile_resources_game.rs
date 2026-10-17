@@ -243,6 +243,15 @@ impl Runtime {
                 {
                     return Err("The native game reader does not match the prepared game setup and catalogue.".into());
                 }
+            } else if let Some((instance, publication, capability))=pin.companion_publication() {
+                let summary=state.registry.inspect(&expected.resource_id,0,1)?.resource;
+                if current.scope!=expected.scope || current.key!=instance || expected.key!=instance
+                    || current.route.id!=format!("companion:{instance}") || current.route.transport!=expected.route.transport
+                    || token.provider_session!=pin.provider_session()
+                    || summary.attributes.get("publicationHash").map(String::as_str)!=Some(publication)
+                    || summary.attributes.get("capabilityFingerprint").map(String::as_str)!=Some(capability) {
+                    return Err("The actual companion baseline differs from the prepared paired instance and immutable publication.".into());
+                }
             } else {
                 let mut route = current.route.clone();
                 route.baseline_ready = expected.route.baseline_ready;

@@ -63,6 +63,43 @@ pub(crate) fn controls(
         .collect()
 }
 
+/// One translation for actual and prospective immutable companion publications.
+pub(crate) fn companion(
+    definition: &osg_mapping_host::companions::Definition,
+    feedback: &[osg_companion_service::FeedbackDescriptor],
+) -> Result<Vec<PortDescriptor>, String> {
+    use osg_mapping::profile::{Kind, Value as Input};
+    let mut descriptors=definition.controls.iter().map(|control| {
+        let schema=match control.kind {
+            Kind::Button=>ScalarSchema::Boolean {},
+            Kind::Hat=>ScalarSchema::Integer {min:-1,max:7,unit:None},
+            Kind::Axis {range}=>ScalarSchema::Integer {min:range.min() as i64,max:32767,unit:None},
+        };
+        let fallback=match control.fallback {
+            Input::Button(value)=>PortValue::Boolean(value),
+            Input::Axis(value)=>PortValue::Number(value as f64),
+            Input::Hat(value)=>PortValue::Number(value.map_or(-1,i32::from) as f64),
+        };
+        state(control.id.clone(),control.id.clone(),Direction::Output,schema,Some(fallback))
+    }).collect::<Vec<_>>();
+    for item in feedback {
+        use osg_companion_service::FeedbackKind;
+        let schema=match item.kind {
+            FeedbackKind::Boolean=>ScalarSchema::Boolean {},
+            FeedbackKind::Text=>ScalarSchema::Text {max_bytes:256,encoding:TextEncoding::Utf8},
+            FeedbackKind::Number=>{
+                let range=item.range.as_ref().ok_or("Published feedback numeric range is missing.")?;
+                ScalarSchema::Number {min:range.min,max:range.max,unit:item.unit.clone()}
+            }
+        };
+        for output in &item.output_ids {
+            descriptors.push(state(format!("feedback:{}:{output}",item.channel_id),item.channel_id.clone(),Direction::Input,schema.clone(),None));
+        }
+    }
+    osg_profiles::resources_ports::PortUpdate::complete(descriptors.clone())?;
+    Ok(descriptors)
+}
+
 pub(crate) fn events(events: &Value) -> Result<Vec<PortDescriptor>, String> {
     crate::panel_events::validate(events, None)?;
     let mut result = Vec::new();

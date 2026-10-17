@@ -18,6 +18,16 @@ use std::{
 
 pub(crate) type Collect =
     Arc<dyn Fn(u64) -> Vec<(String, Result<ProviderBatch, String>)> + Send + Sync>;
+/// Native Hub-verified desired metadata. Never accepted from an IPC request.
+#[derive(Clone)]
+pub(crate) struct CompanionCatalogue {
+    pub logical_resource_id: String,
+    pub inventory_resource_id: String,
+    pub instance_id: String,
+    pub publication_hash: String,
+    pub capability_fingerprint: String,
+    pub ports: Vec<osg_profiles::resources_ports::PortDescriptor>,
+}
 struct State {
     registry: Registry,
     store: Option<Store>,
@@ -190,6 +200,13 @@ impl Runtime {
         ),
         String,
     > {
+        self.snapshot_for_preparation_with_companions(assignments, &[])
+    }
+    pub(crate) fn snapshot_for_preparation_with_companions(
+        &self,
+        assignments: Vec<osg_profiles::store::LocalAssignment>,
+        companions: &[CompanionCatalogue],
+    ) -> Result<(osg_profiles::compiler_models::CompileSnapshot, Vec<PortPreparation>), String> {
         if self.stop.load(Ordering::Acquire) {
             return Err("Resource inventory has stopped.".into());
         }
@@ -197,14 +214,24 @@ impl Runtime {
         {
             return Err("Preparation capture exceeds bounded assignments.".into());
         }
+        let mut selected = BTreeSet::new();
+        let mut instances = BTreeSet::new();
+        if companions.len()>8 || companions.iter().map(|c|c.ports.len()).sum::<usize>()>1024
+            || companions.iter().any(|c| !selected.insert(&c.logical_resource_id) || !instances.insert(&c.instance_id)
+                || !assignments.iter().any(|a|a.resource_id==c.logical_resource_id && a.source_id==c.inventory_resource_id)) {
+            return Err("Companion preparation needs unique exact assigned instances within its bounded catalogue.".into());
+        }
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut snapshot = Self::snapshot_locked(&state, assignments)?;
         let mut preparations = Vec::new();
         let mut fingerprints = BTreeSet::new();
         if !state.read_only {
             for assignment in &snapshot.assignments {
+                let companion=companions.iter().find(|c|c.logical_resource_id==assignment.resource_id);
                 for expected in &assignment.ports {
-                    let Some(observed) = snapshot
+                    let descriptor = if let Some(companion)=companion {
+                        companion.ports.iter().find(|p|p.id==expected.observed_port_id && p.contract_hash().ok().as_ref()==Some(&expected.expected_contract_hash))
+                    } else { snapshot
                         .resources
                         .iter()
                         .find(|r| r.summary.id == assignment.source_id)
@@ -212,25 +239,28 @@ impl Runtime {
                             resource.ports.iter().find(|p| {
                                 p.descriptor.id == expected.observed_port_id
                                     && p.contract_hash == expected.expected_contract_hash
-                            })
-                        })
+                            }).map(|p|&p.descriptor)
+                        }) };
+                    let Some(descriptor) = descriptor
                     else {
                         continue;
                     };
                     let access = match (
-                        &observed.descriptor.direction,
-                        &observed.descriptor.contract,
+                        &descriptor.direction,
+                        &descriptor.contract,
                     ) {
                         (osg_profiles::Direction::Output, _) => Access::Read,
                         (_, osg_profiles::PortContract::Action { .. }) => Access::Invoke,
                         _ => Access::Write,
                     };
-                    let captured = snapshot
+                    let Some(captured) = snapshot
                         .resources
                         .iter()
                         .find(|r| r.summary.id == assignment.source_id)
-                        .unwrap();
-                    let preparation = if captured.summary.resource_type
+                    else { continue; };
+                    let preparation = if let Some(companion)=companion {
+                        state.registry.prepare_companion_port(&assignment.source_id,&companion.instance_id,&companion.publication_hash,&companion.capability_fingerprint,descriptor.clone(),access)
+                    } else if captured.summary.resource_type
                         == osg_profiles::resources::ResourceType::GameIntegration
                     {
                         captured

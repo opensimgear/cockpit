@@ -1,6 +1,29 @@
 use super::*;
 use serde_json::json;
 #[test]
+fn actual_and_prospective_companion_contracts_preserve_native_ranges_and_declared_feedback() {
+    use osg_mapping::profile::{Kind,Value as Input,AxisRange};
+    use osg_mapping_host::companions::{Definition,ControlDefinition};
+    use osg_companion_service::{FeedbackDescriptor,FeedbackKind,FeedbackRange};
+    let mut definition=Definition {source_id:"instance".into(),name:"Panel".into(),publication_hash:format!("sha256:{}","a".repeat(64)),controls:vec![
+        ControlDefinition{id:"button".into(),kind:Kind::Button,fallback:Input::Button(false)},
+        ControlDefinition{id:"axis".into(),kind:Kind::Axis{range:AxisRange::Bipolar},fallback:Input::Axis(0)},
+        ControlDefinition{id:"hat".into(),kind:Kind::Hat,fallback:Input::Hat(None)},
+    ]};
+    let mut feedback=vec![
+        FeedbackDescriptor{channel_id:"active".into(),output_ids:vec!["indicator".into()],kind:FeedbackKind::Boolean,unit:None,range:None},
+        FeedbackDescriptor{channel_id:"label".into(),output_ids:vec!["text".into()],kind:FeedbackKind::Text,unit:None,range:None},
+        FeedbackDescriptor{channel_id:"height".into(),output_ids:vec!["gauge".into()],kind:FeedbackKind::Number,unit:Some("m".into()),range:Some(FeedbackRange{min:-100.0,max:10000.0})},
+    ];
+    let ports=companion(&definition,&feedback).unwrap();assert_eq!(ports.len(),6);
+    assert!(matches!(ports[1].contract,PortContract::State{schema:ScalarSchema::Integer{min:-32768,max:32767,..},..}));
+    assert!(matches!(ports[2].contract,PortContract::State{schema:ScalarSchema::Integer{min:-1,max:7,..},..}));
+    assert_eq!(ports[5].id,"feedback:height:gauge");assert!(matches!(&ports[5].contract,PortContract::State{schema:ScalarSchema::Number{unit:Some(unit),..},fallback:None,..} if unit=="m"));
+    feedback[2].range=None;assert!(companion(&definition,&feedback).is_err());feedback.pop();
+    feedback.push(feedback[0].clone());assert!(companion(&definition,&feedback).is_err());feedback.pop();
+    definition.controls[0].fallback=Input::Axis(2);assert!(companion(&definition,&feedback).is_err());
+}
+#[test]
 fn read_only_catalogues_keep_real_units_and_never_invent_commands() {
     for catalogue in [
         crate::xplane::catalogue(),
