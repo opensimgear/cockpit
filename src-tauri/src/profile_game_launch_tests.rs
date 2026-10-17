@@ -77,9 +77,15 @@ fn fixture() -> (
     let platform = Arc::new(PlatformFixture::new());
     let runtime = GamesRuntime::new(
         Arc::new(|_| panic!("launch helper must not touch hardware/provider commands")),
-        directory.path().join("games.json"),
-        platform.clone(),
-    );
+        {
+            let fixture_metadata_path = directory.path().join("games.json");
+            crate::games::Paths {
+                installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                recovery: fixture_metadata_path.with_extension("recovery.json"),
+            }
+        },
+        platform.clone());
     let mut candidate = Candidate {
         document: osg_profiles::default_document(),
         assignments: vec![],

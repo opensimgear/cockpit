@@ -131,11 +131,12 @@ jobs:
             cargo test --locked --manifest-path src-tauri/Cargo.toml
           '
 
-      - name: Native mapping acceptance without optional drivers
+      - name: Unified profile acceptance without optional output drivers
         run: |
           cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
+          python3 -m unittest discover -s scripts -p test_profile_acceptance.py -v
           python3 scripts/mapping-acceptance.py --service .e2e/build/cockpit/debug/osg-gateway-service --expect-unavailable --output .research/mapping-m3/native-acceptance.json
-      - name: Native mapping startup with uinput absent
+      - name: Unified profile startup with uinput absent
         run: |
           mkdir -p .research/mapping-m3
           bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp \
@@ -164,7 +165,9 @@ jobs:
             'https://github.com/DCS-Skunkworks/dcs-bios/releases/download/v0.11.7/DCS-BIOS_v0.11.7.zip'
           python3 scripts/setup-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/setup-coverage"
       - name: Bootstrap behavior tests
-        run: python3 -m unittest discover -s tests/e2e -p 'test_*.py'
+        run: |
+          python3 -m unittest discover -s tests/e2e -p 'test_*.py'
+          node --test tests/e2e/profile-graph-fixtures.test.mjs
       - name: Independent gateway and device acceptance
         run: python3 tests/e2e/run.py --sanitize
       - name: Upload integration evidence
@@ -184,9 +187,11 @@ jobs:
             .research/action-coverage/action-summary.json
             .research/action-coverage/native-tests.log
             .research/action-coverage/lines.txt
+            .research/dcs-bios-coverage/evidence.json
             .research/dcs-bios-coverage/dcs-bios-summary.json
             .research/dcs-bios-coverage/native-tests.log
             .research/dcs-bios-coverage/lines.txt
+            .research/integration-coverage/evidence.json
             .research/integration-coverage/integration-summary.json
             .research/integration-coverage/native-tests.log
             .research/integration-coverage/lines.txt
@@ -273,6 +278,8 @@ jobs:
           # with its children confined by the distro profile. Keep global userns
           # restrictions enabled; never replace them with a sysctl exception.
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+      - name: Unified profile acceptance protocol oracle tests
+        run: python -m unittest discover -s scripts -p test_profile_acceptance.py -v
       - name: Native controller tests with per-module coverage
         run: python scripts/controller-coverage.py
       - name: Native virtual-output tests with per-module coverage
@@ -296,15 +303,15 @@ jobs:
       - name: Build Windows desktop and service binaries
         if: runner.os == 'Windows'
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service --bin osg-cockpit
-      - name: Windows native mapping acceptance
+      - name: Windows unified profile acceptance
         if: runner.os == 'Windows'
         run: python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --expect-unavailable --output .research/mapping-m3/native-acceptance.json
-      - name: Companion recording-route acceptance without virtual output
+      - name: Companion inputs through the unified applied profile
         if: runner.os == 'Windows'
         run: |
           python -m unittest discover -s scripts -p test_companion_mapping_acceptance.py -v
           python scripts/companion-mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --output .research/companion-c4/native-acceptance.json
-      - name: Companion feedback through native integration and real WSS
+      - name: Companion feedback through the unified applied profile and real WSS
         if: runner.os == 'Windows'
         run: |
           python -m unittest discover -s scripts -p test_companion_feedback_acceptance.py -v
@@ -313,7 +320,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/package-windows-mapping.ps1 -Executable src-tauri/target/debug/osg-cockpit.exe -OutputDirectory .research/windows-mapping-package -BuildKind development
-      - name: macOS native startup and preview without an authorized helper
+      - name: macOS unified profile lifecycle without an authorized output helper
         if: runner.os == 'macOS'
         run: |
           cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service

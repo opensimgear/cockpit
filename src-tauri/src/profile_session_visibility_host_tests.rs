@@ -188,9 +188,15 @@ fn actual_host_retains_exact_cleanup_after_conflict_and_releases_it_after_restor
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
     let games = Arc::new(crate::games::GamesRuntime::new(
         Arc::new(|_| json!({"ok":false})),
-        directory.path().join("games.json"),
-        Arc::new(crate::game_discovery::NativePlatform),
-    ));
+        {
+            let fixture_metadata_path = directory.path().join("games.json");
+            crate::games::Paths {
+                installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                recovery: fixture_metadata_path.with_extension("recovery.json"),
+            }
+        },
+        Arc::new(crate::game_discovery::NativePlatform)));
     let resources = Arc::new(crate::profile_resources::Runtime::new(
         None,
         Arc::new(|_| vec![]),
@@ -251,9 +257,15 @@ fn actual_host_final_admission_validates_applied_hide_owner_before_any_neutraliz
     ));
     let games = Arc::new(crate::games::GamesRuntime::new(
         Arc::new(|_| json!({"ok":false})),
-        directory.path().join("games.json"),
-        Arc::new(crate::game_discovery::NativePlatform),
-    ));
+        {
+            let fixture_metadata_path = directory.path().join("games.json");
+            crate::games::Paths {
+                installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                recovery: fixture_metadata_path.with_extension("recovery.json"),
+            }
+        },
+        Arc::new(crate::game_discovery::NativePlatform)));
     let companions = Arc::new(crate::companion_host::Runtime::new(
         None,
         Arc::new(osg_mapping_host::companions::CompanionProvider::new(

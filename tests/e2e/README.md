@@ -4,129 +4,35 @@
 
 This project is heavily under development and is not ready for use. Use it entirely at your own risk. To the fullest extent permitted by applicable law, the authors and contributors disclaim all liability for any damage, loss, or other issues arising from its use.
 
-Run from the repository root with Python 3.10+, Git and a C11 compiler:
+Run from the repository root with Python 3.10+, Git, Node.js, pnpm, a C11 compiler and the Rust/Tauri platform prerequisites:
 
 ```sh
 python3 tests/e2e/run.py --sanitize
 ```
 
-Cockpit tests also require Node.js, pnpm and the Rust/Tauri platform prerequisites.
-Close other Cockpit desktop/browser sessions and stop their development watchers
-for the run. A gateway has one CDC client; another Cockpit instance can automatically
-connect to a test gateway while its layout is being applied or its test client reconnects.
+Use an isolated test host. Close other Cockpit sessions and development watchers before starting the normal native service: it owns real discovery providers as well as the simulated endpoints. Local checks while Cockpit is running must use pure fixture/oracle tests or isolated production-C simulation without another native service.
 
-The initiating repository owns the runner. It clones remote repositories listed in
-`dependencies.json` into its ignored `.e2e/deps/`, initializes submodules recursively,
-checks that both firmware repositories declare the same firmware-common commit,
-and builds each runtime through that repository’s `simulation/build.py`.
-The exact common pin is cloned automatically. No parent setup or adjacent checkout
-is consulted. Checkouts, builds, state and reports all stay under `.e2e/`.
+The runner clones the exact application refs in `dependencies.json`, initializes their submodules and requires both applications to declare the same firmware-common baseline. The initiating suite's explicit full firmware-common ref selects the shared contract actually built. `resolved-dependencies.json` records each resolved commit and the firmware-declared baseline separately. This permits testing the published atomic capture-at-claim contract against unchanged application sources without silently changing application refs.
 
-`--prepare-only` provisions components without starting processes. The resulting
-`.e2e/launch.json` names the binaries and owning source trees; `.e2e/resolved-dependencies.json`
-records repository commits and any local working-tree snapshot hashes. Test evidence
-is stored under `.e2e/runs/`. Remote application refs are intentionally `main` while
-the project is work in progress; the resolved manifest records what a run actually used.
+Checkouts, builds, state and reports stay in ignored `.e2e/`. `--prepare-only` builds components and writes `launch.json` without starting acceptance processes. `--output-dir /absolute/path/to/.research/cockpit-e2e` selects a separate evidence directory. Only checkouts with a bootstrap receipt are replaced. `--source device-template=/absolute/path` and `--source device-gateway=/absolute/path` snapshot explicit local sources into isolated clones; source repositories are never built or modified. Dirty nested submodules are rejected. A firmware-common source override uses the exact manifest commit without local edits.
 
-For unpublished cross-repository development, pass explicit source overrides:
+Pure provisioning and portable graph tests run without the native service:
 
 ```sh
-python3 tests/e2e/run.py --sanitize \
-  --source device-gateway=/absolute/path/to/device-gateway \
-  --source device-template=/absolute/path/to/device-template
+python3 -m unittest discover -s tests/e2e -p 'test_*.py'
+node --test tests/e2e/profile-graph-fixtures.test.mjs
 ```
 
-An override still creates an isolated Git clone, applies the source’s tracked diff
-and nonignored new files, and initializes its dependencies. It never modifies or
-builds inside the source checkout. Clean submodule commit changes are initialized
-after the snapshot is applied; uncommitted nested submodule contents are rejected
-with a clear error. `.e2e/`, `.simulation/`, build outputs and other
-ignored files are not copied. This is how coordinated changes can be tested before
-they are published; default remote runs require those changes to exist on the
-configured remote refs. A pinned firmware-common override uses the exact declared
-commit, without local changes.
+Each simulation uses a fresh `OSG_SIMULATION_NAMESPACE`, selecting a separate loopback discovery directory. This isolates C peers from other simulation scenarios; it does not make a second native service safe beside an active desktop.
 
-Only checkouts with a bootstrap receipt are replaced when sources change. Delete
-this repository’s `.e2e/` to force clean provisioning. Run one bootstrap per repository
-at a time. Bootstrap retry, executable-mode and submodule behavior can be checked
-without network access using `python3 -m unittest discover -s tests/e2e -p 'test_*.py'`.
+The existing device lifecycle scenario starts the native service before a gateway, then enrolls three independent production-C devices. It checks persistent configuration, explicit layout updates, real input reports, released startup baselines, neutral offline ghosts, disabled online configuration, offline Forget and independent device/gateway restarts. The simultaneous-gateway scenario preserves gateway-scoped caches/writers/layouts, identical module identities on two gateways, peer isolation and responsiveness. The manual action scenario retains descriptor/revision/argument validation, actual readback, unchanged persistent settings, endpoint contention and ambiguous-acknowledgement no-replay assertions.
 
-For workspace research directories, add `--output-dir /absolute/path/to/.research/cockpit-e2e`; dependency checkouts, builds, launch manifests and evidence then stay under that directory.
+The unified physical Setter scenario uses the ordinary native Profile service, cached native inventory and exact observed port/contract pins. An explicit SetOnChange node requests an advertised readable RGB Setter. Production-C readback verifies its output, a competing writer is rejected, and Pause/Stop restore the actual prior RGB captured atomically at claim. A fresh Apply gets a new owner. Configuration flash counters, configuration contents and controller layout remain unchanged. Restart retains the portable document without resuming its old output owner. Legacy independent mapping/DCS/integration/game/visibility starts are rejected. Evidence is written as **software simulation**, with hardware and platform qualification flags false.
 
-Each acceptance scenario supplies a fresh `OSG_SIMULATION_NAMESPACE` to its
-Cockpit service, gateways and devices. Their discovery directory is
-`/tmp/opensimgear-<user-id>/gateways-<namespace>`, isolating local CDC endpoints
-from any already running desktop and other acceptance runs. All participating
-simulation binaries must support this optional namespace variable.
+The Games scenario uses fresh installation metadata with an inert `DCS.exe` fixture that is never executed. It rejects retired game-profile authoring/activation and forged browser launch authority, retains explicit installation metadata across restart, and leaves obsolete game configuration bytes untouched. Actual game process/context launch acceptance remains in the native Manager/Broker tests; the inert file does not prove a running game.
 
-The Games scenario uses the normal Rust manager and independent production C
-gateway/peripheral simulations. It activates a saved game profile, verifies
-temporary settings and controller disable without saving device flash, checks
-the manual-settings guard, then restores configuration and controller
-publication. Restart verifies saved profiles and manual installation discovery
-without automatic activation. The authored `DCS.exe` file is only an installation
-fixture; the scenario uses **Activate profile** and never executes that file.
+The independent DCS-BIOS radio peer scenario retains named command handling, bounded diagnostics, complete/fragmented/frozen export counters and malformed-frame rejection. It supplies a transport/decoder oracle without reviving a standalone DCS runtime.
 
-The first Cockpit scenario starts its normal native gateway service before the gateway,
-then launches three JSON-configured devices. It verifies automatic enable/append,
-configuration Apply & save, explicit changed-profile refresh, real input reports,
-neutral offline ghosts, disabled online configuration, persistent Disable across
-announcements and gateway restart, append-on-Enable, offline Forget and automatic
-arrival of a forgotten identity. It also covers device/gateway crash recovery,
-writer contention after Cockpit restart and independent process lifetimes.
+The three repository-owned native acceptance scripts exercise saved unified Profile CRUD/compile/Apply/Pause/Stop, immutable applied revisions and old-owner rejection, plus real pinned-CA WSS pairing and isolation. Companion tests use exact native observed port hashes, actual reducer values and local/host feedback provenance, including 64-output chunked transfer and per-peer freshness. Retired standalone authoring/start/feedback namespaces fail without replacing the applied owner. Private feeder startup, unavailable optional backend checks and platform qualification gates remain unchanged.
 
-Before the lifecycle scenario presses momentary contacts, it waits for current
-active input on a settled published route, explicitly releases the exclusive
-group and hat contacts, and confirms selector-center and released input state.
-Each simulation contact command advances acquisition by 30 ms, exceeding the
-10 ms release debounce. Publication alone does not establish button readiness:
-contacts held during route initialization stay suppressed until released. The
-held-input and Disable-neutrality assertions run after this released baseline.
-
-The simultaneous-gateway scenario connects two gateway processes through one normal
-Cockpit service. Each gateway has a device with the same identity, which verifies
-that configuration caches, writer sessions, HID layouts and input reports are scoped
-to the gateway. It checks aggregate discovery, rejected commands without a gateway
-identity, independent errors/disconnects, and crash recovery while the other gateway
-keeps its configuration writer and accepts saved changes. Correlated browser requests
-also verify that a paused gateway cannot block status requests to its peer.
-
-The manual-action scenario discovers the production device's RGB and boolean LED
-descriptors, invokes them through the normal Rust adapter and reads applied state
-from the independent device. It verifies unchanged HID descriptors/configuration,
-no writer claim, argument and revision validation, stale boot rejection, disabled
-HID and direct USB ownership, and isolation of identical device IDs on two
-gateways. Dropping the action acknowledgement establishes uncertain state and
-recovery through reconnect/readback without replaying the action.
-
-The master-caution scenario connects the production event/action routes to the
-independent DCS-BIOS UDP peer. It covers HID/direct USB exclusion, held startup,
-short presses, gateway isolation, feedback loss, counter and aircraft changes,
-fragmented exports, reboot, mission restart and one-time Stop release. Recovery
-can update the LED before the worker establishes its new input baseline. The
-fixture observes disarmed status during loss and waits for fresh active feedback,
-`needsBaseline=false` and `armed=true` before injecting a valid new press, while
-continuing to assert that historical presses never replay.
-
-The radio-panel scenario adds a schema2 profile with six typed inputs and eight
-outputs on two gateways containing the same module identity. It exercises the
-production board-compatible LED and output callbacks, calibrated axes with HID
-disabled, named encoder/switch/button interfaces, full-width atomic strings,
-UTF-8 cell/byte limits, stale and unknown fallbacks, reboot/gap recovery, and
-current-state readback after a selectively lost setter acknowledgement.
-A 200 Hz export flood and simulated 40 ms display callbacks measure bounded
-pending queues, coalescing, per-gateway throughput/latency and sampled-input-to-UDP
-responsiveness. Every latest output must converge and queues finish empty. The
-standalone radio peer test also validates named commands and bounded diagnostics.
-Both tests are imported by acceptance.mjs and run in ordinary CI.
-
-Native simulations execute the production configuration, flash journal, Cyphal
-transport, registry and descriptor code. Loopback TCP carries CDC bytes and UDP
-carries CAN frames. These tests validate protocol/report behavior; native streams
-do not enumerate OS USB/HID devices. Physical USB/CAN acceptance remains separate.
-
-## Milestone 4 integration acceptance
-
-`integration-acceptance.mjs` adds a provider-neutral portable Rally profile over two real gateway processes and three production simulated output-only devices. It checks no HID publication, identical identities on different gateways, RGB/boolean/current-board status actions, USB versus CAN ownership contention, typed rev formatting, temporary override expiry/resumption, missing maximum RPM, paused/frozen source fallback, reboot/current-route reacquisition, host-crash lease expiry and persistent configuration without automatic Start. Authored byte prefixes go through the same parser as Windows shared memory. The evidence records software simulation; live ACR/DCS and electrical hardware qualification remain deferred.
-
-The portable DCS Master Caution scenario also runs the generic service against production nodes and the independent DCS peer. It verifies claim-before-input, advertised board enum feedback, disabled HID, competing clients, short press/release ordering, held startup/recovery and one-time Stop neutral/fallback/release.
+Native C simulation executes production configuration, flash journals, Cyphal, registry, endpoint actions and descriptors. Loopback TCP carries CDC bytes and UDP carries CAN frames. It does not enumerate OS USB/HID devices, qualify electrical hardware, confirm game delivery, or enable virtual/script/HidHide qualification.

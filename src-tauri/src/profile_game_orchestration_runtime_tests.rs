@@ -86,8 +86,14 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_installations(false)
+    }
+    fn with_installations(corrupt: bool) -> Self {
         let mut manager = GatewayManager::with_provider(Arc::new(NoPorts));
         let directory = tempfile::tempdir().unwrap();
+        if corrupt {
+            std::fs::write(directory.path().join("games.installations-v1.json"),b"interrupted pinned executable metadata").unwrap();
+        }
         let games = Arc::new(Games::default());
         games.appear.store(true, Ordering::Release);
         manager.games = Arc::new(crate::games::GamesRuntime::new(
@@ -95,9 +101,15 @@ impl Fixture {
                 assert_eq!(request["command"], "integration_get_state");
                 json!({"ok":true,"state":{"integration":{"running":false}}})
             }),
-            directory.path().join("games.json"),
-            games.clone(),
-        ));
+            {
+                let fixture_metadata_path = directory.path().join("games.json");
+                crate::games::Paths {
+                    installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                    provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                    recovery: fixture_metadata_path.with_extension("recovery.json"),
+                }
+            },
+            games.clone()));
         let resources = manager.profile_resources.clone();
         let runtime_games = manager.games.clone();
         let companions = manager.companion_host.clone();
@@ -575,4 +587,25 @@ fn failed_preflight_preserves_prior_owner_and_cannot_resume_a_previous_stop() {
     ok(manager, "profile_stop", json!({}));
     assert!(launch(manager, "dcs").is_err());
     assert!(manager.profile_automatic.emergency.load(Ordering::Acquire));
+}
+
+#[test]
+fn corrupt_installation_metadata_blocks_game_launch_and_auto_but_keeps_hardware_apply() {
+    let fixture=Fixture::with_installations(true);
+    let manager=&fixture.manager;
+    let setup=request(manager,"game_integration_setup",json!({"gameId":"dcs"}));
+    assert_eq!(setup["ok"],false);
+    assert!(setup["error"].as_str().unwrap().contains("Repair game installation metadata"),"{setup}");
+    ok(manager,"profile_apply",json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+    let owner=manager.profile_session.lock().unwrap().status().owner.clone();
+    assert!(owner.is_some());
+    assert!(launch(manager,"dcs").unwrap_err().contains("Repair game installation metadata"));
+    ok(manager,"profile_selection_mode",json!({"mode":"automatic"}));
+    let(decision,observed,_)=manager.automatic_decision().unwrap();
+    assert!(matches!(decision,Decision::Hold(message) if message.contains("Repair game installation metadata")));
+    assert!(observed.is_empty());
+    manager.poll_automatic();
+    assert_eq!(manager.profile_session.lock().unwrap().status().owner,owner);
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),0);
+    assert_eq!(std::fs::read(fixture._directory.path().join("games.installations-v1.json")).unwrap(),b"interrupted pinned executable metadata");
 }

@@ -536,7 +536,7 @@ impl GatewayManager {
                     admission_epoch: Some(admission_epoch),
                     stage: None,
                 },
-                |candidate| (self.profile_prepare)(candidate),
+                |candidate| self.prepare_profile_at(candidate,admission_epoch),
                 |candidate| {
                     let admission = self
                         .profile_admission
@@ -553,6 +553,7 @@ impl GatewayManager {
                     {
                         return Err("Automatic profile preparation was cancelled by a newer native control.".into());
                     }
+                    self.guard_retired_recovery()?;
                     let (current, _, current_epoch) = self.automatic_decision()?;
                     if current_epoch != epoch || current != Decision::Select(target.clone()) {
                         return Err("Automatic profile selection changed during preparation; no stale context was activated.".into());

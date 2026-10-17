@@ -9,6 +9,6 @@
   },
   "firmware-common": {
     "url": "https://github.com/opensimgear/firmware-common.git",
-    "ref": "6ba8ad0c3c0a35fce2c9f0e256503ebba3957976"
+    "ref": "ac2bacd2383ad2f9b720c2fc96268e9da9bf8d66"
   }
 }

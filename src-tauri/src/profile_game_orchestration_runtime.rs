@@ -78,6 +78,7 @@ impl GatewayManager {
     /// Called under short native admission. The request owns exactly one pending
     /// slot/control guard; another queued control cancels it before effects.
     fn launch_current(&self, capture: &Capture, epoch: u64) -> Result<(), String> {
+        self.guard_retired_recovery()?;
         if self.closed.load(Ordering::Acquire)
             || self.profile_admission_epoch.load(Ordering::Acquire) != epoch
             || self.profile_pending.load(Ordering::Acquire) != 1

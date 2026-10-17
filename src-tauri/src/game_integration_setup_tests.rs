@@ -9,12 +9,7 @@ fn xplane_setup_is_repeatable_preserves_overrides_and_separates_live_status() {
     assert_eq!(setup.inner.inspect(&game, None)["state"], "setup-required");
     let request = json!({"command":"game_integration_setup","connection":{"port":49005,"updateHz":5,"freshnessMs":2000}});
     setup
-        .request(
-            &request,
-            &game,
-            Arc::new(FakePlatform(false)),
-            &panel(false),
-        )
+        .request(&request, &game, Arc::new(FakePlatform(false)))
         .unwrap();
     let before = read_settings(&path).unwrap();
     assert_eq!(before["games"]["x-plane-11"]["connection"]["port"], 49005);
@@ -23,26 +18,22 @@ fn xplane_setup_is_repeatable_preserves_overrides_and_separates_live_status() {
             &json!({"command":"game_integration_setup"}),
             &game,
             Arc::new(FakePlatform(false)),
-            &panel(false),
         )
         .unwrap();
     assert_eq!(read_settings(&path).unwrap(), before);
     let mut catalogue = vec![game.clone()];
-    setup.decorate(&mut catalogue, &json!({}), &json!({}));
+    setup.decorate(&mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "ready");
     assert_eq!(catalogue[0]["integrationSetup"]["live"], "waiting");
     assert_eq!(catalogue[0]["integrationSetup"]["verified"], false);
-    setup.decorate(&mut catalogue,&json!({"running":true,"config":{"document":{"provider":"x-plane"},"connection":{"version":11}},"telemetry":{"fresh":true}}),&json!({}));
-    assert_eq!(catalogue[0]["integrationSetup"]["live"], "receiving");
+    setup.decorate(&mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["live"], "waiting");
     let mut changed = game.clone();
     changed["executable"] = json!("/another/X-Plane.exe");
     assert_eq!(
         setup.inner.inspect(&changed, None)["state"],
         "setup-required"
     );
-    let profile = json!({"gameId":"x-plane-11","integration":{"connection":before["games"]["x-plane-11"]["connection"]}});
-    assert!(setup.preflight(&profile, &game).is_ok());
-    assert!(setup.preflight(&profile, &changed).is_err());
     for connection in [
         json!({"host":"192.168.0.5"}),
         json!({"version":12}),
@@ -52,8 +43,7 @@ fn xplane_setup_is_repeatable_preserves_overrides_and_separates_live_status() {
             .request(
                 &json!({"command":"game_integration_setup","connection":connection}),
                 &game,
-                Arc::new(FakePlatform(false)),
-                &panel(false)
+                Arc::new(FakePlatform(false))
             )
             .is_err());
     }
@@ -94,11 +84,6 @@ impl Platform for FakePlatform {
         Ok(self.0)
     }
 }
-fn panel(running: bool) -> Panel {
-    Arc::new(
-        move |_| json!({"ok":true,"state":{"integration":{"running":running,"config":{"document":{"provider":"dcs-bios"}},"feedbackFresh":running},"dcsBios":{"running":false}}}),
-    )
-}
 fn game() -> Value {
     json!({"id":"dcs","provider":"dcs-bios","installed":true})
 }
@@ -107,20 +92,19 @@ fn setup_is_separate_from_game_availability_and_live_telemetry() {
     let scratch = Scratch::new();
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), false);
     let mut catalogue = vec![game()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(
         catalogue[0]["integrationSetup"]["state"],
         "unsupported-platform"
     );
     assert_eq!(catalogue[0]["integrationSetup"]["live"], "waiting");
-    decorate(&runtime, &mut catalogue, &panel(true));
-    assert_eq!(catalogue[0]["integrationSetup"]["live"], "receiving");
+    decorate(&runtime, &mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["live"], "waiting");
     assert!(runtime
         .request(
             &json!({"command":"game_integration_setup"}),
             &game(),
-            Arc::new(FakePlatform(false)),
-            &panel(false)
+            Arc::new(FakePlatform(false))
         )
         .unwrap_err()
         .contains("Windows"));
@@ -134,14 +118,13 @@ fn invalid_saved_settings_remain_visible_after_recheck_and_are_not_overwritten()
     let runtime = GameIntegrationSetup::new(path.clone(), true);
     runtime.refresh(&[game()]);
     let mut catalogue = vec![game()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
     assert!(runtime
         .request(
             &json!({"command":"game_integration_setup"}),
             &game(),
-            Arc::new(FakePlatform(false)),
-            &panel(false)
+            Arc::new(FakePlatform(false))
         )
         .is_err());
     assert_eq!(fs::read(path).unwrap(), b"broken");
@@ -156,18 +139,16 @@ fn checks_and_cancel_have_no_provisioning_side_effects() {
             &json!({"command":"game_integration_check"}),
             &missing,
             Arc::new(FakePlatform(false)),
-            &panel(false),
         )
         .unwrap();
     let mut catalogue = vec![missing.clone()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "not-installed");
     assert!(runtime
         .request(
             &json!({"command":"game_integration_setup"}),
             &missing,
-            Arc::new(FakePlatform(false)),
-            &panel(false)
+            Arc::new(FakePlatform(false))
         )
         .is_err());
     runtime
@@ -175,31 +156,19 @@ fn checks_and_cancel_have_no_provisioning_side_effects() {
             &json!({"command":"game_integration_cancel"}),
             &missing,
             Arc::new(FakePlatform(false)),
-            &panel(false),
         )
         .unwrap();
     assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 0);
 }
 #[test]
-fn active_integration_or_running_dcs_blocks_installation_before_files_change() {
+fn running_native_dcs_blocks_installation_before_files_change() {
     let scratch = Scratch::new();
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
-    let request = json!({"command":"game_integration_setup","userFolder":scratch.0});
     assert!(runtime
         .request(
-            &request,
+            &json!({"command":"game_integration_setup","userFolder":scratch.0}),
             &game(),
-            Arc::new(FakePlatform(false)),
-            &panel(true)
-        )
-        .unwrap_err()
-        .contains("Stop"));
-    assert!(runtime
-        .request(
-            &request,
-            &game(),
-            Arc::new(FakePlatform(true)),
-            &panel(false)
+            Arc::new(FakePlatform(true))
         )
         .unwrap_err()
         .contains("Close DCS"));
@@ -270,16 +239,11 @@ fn existing_compatible_install_is_configured_without_network_or_profile_writes()
     let runtime = GameIntegrationSetup::new(path.clone(), true);
     let request = json!({"command":"game_integration_setup","userFolder":target});
     runtime
-        .request(
-            &request,
-            &game(),
-            Arc::new(FakePlatform(false)),
-            &panel(false),
-        )
+        .request(&request, &game(), Arc::new(FakePlatform(false)))
         .unwrap();
     wait_setup(&runtime);
     let mut catalogue = vec![game()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(
         catalogue[0]["integrationSetup"]["state"], "ready",
         "{}",
@@ -288,12 +252,7 @@ fn existing_compatible_install_is_configured_without_network_or_profile_writes()
     assert_eq!(catalogue[0]["integrationSetup"]["live"], "waiting");
     let before = fs::read(target.join("Scripts/Export.lua")).unwrap();
     runtime
-        .request(
-            &request,
-            &game(),
-            Arc::new(FakePlatform(false)),
-            &panel(false),
-        )
+        .request(&request, &game(), Arc::new(FakePlatform(false)))
         .unwrap();
     wait_setup(&runtime);
     assert_eq!(fs::read(target.join("Scripts/Export.lua")).unwrap(), before);
@@ -302,21 +261,19 @@ fn existing_compatible_install_is_configured_without_network_or_profile_writes()
         saved["games"]["dcs"]["connection"]["cataloguePath"],
         json!(target.join("Scripts/DCS-BIOS/doc/json"))
     );
-    let profile =
-        json!({"gameId":"dcs","integration":{"connection":saved["games"]["dcs"]["connection"]}});
-    runtime.preflight(&profile, &game()).unwrap();
+    assert_eq!(runtime.inner.inspect(&game(), None)["state"], "ready");
     runtime.shutdown();
     let restarted = GameIntegrationSetup::new(path, true);
-    decorate(&restarted, &mut catalogue, &panel(false));
+    decorate(&restarted, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "ready");
     fs::write(
         target.join("Scripts/Export.lua"),
         b"-- loader was removed externally\n",
     )
     .unwrap();
-    assert!(restarted.preflight(&profile, &game()).is_err());
+    assert_ne!(restarted.inner.inspect(&game(), None)["state"], "ready");
     restarted.refresh(&[game()]);
-    decorate(&restarted, &mut catalogue, &panel(false));
+    decorate(&restarted, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "setup-required");
 }
 
@@ -331,15 +288,11 @@ fn installer_preserves_game_owned_aircraft_and_never_imports_retired_connection_
     let mut connection = dcs_connection(&target.join("Scripts/DCS-BIOS/doc/json"));
     connection["freshnessMs"] = json!(2200);
     runtime.save_provider_settings(&json!({"command":"game_integration_settings_save","expectedSetupRevision":runtime.provider_setup_revision("dcs"),"userFolder":target,"connection":connection,"aircraftModule":"A-10C"}),&game()).unwrap();
-    let obsolete: Panel = Arc::new(
-        move |_| json!({"ok":true,"state":{"integration":{"running":false,"config":{"document":{"provider":"dcs-bios"},"connection":{"commandPort":9000,"freshnessMs":9999}}},"dcsBios":{"running":false}}}),
-    );
     runtime
         .request(
             &json!({"command":"game_integration_setup","userFolder":target}),
             &game(),
             Arc::new(FakePlatform(false)),
-            &obsolete,
         )
         .unwrap();
     wait_setup(&runtime);
@@ -356,36 +309,32 @@ fn incompatible_udp_overrides_are_preserved_and_never_reported_ready() {
     crate::dcs_setup::fixture_module(&target);
     let path = scratch.0.join("setup.json");
     let runtime = GameIntegrationSetup::new(path.clone(), true);
-    runtime.request(&json!({"command":"game_integration_setup","userFolder":target,"connection":{"commandPort":9000,"freshnessMs":2400}}),&game(),Arc::new(FakePlatform(false)),&panel(false)).unwrap();
+    runtime.request(&json!({"command":"game_integration_setup","userFolder":target,"connection":{"commandPort":9000,"freshnessMs":2400}}),&game(),Arc::new(FakePlatform(false))).unwrap();
     wait_setup(&runtime);
     let saved = read_settings(&path).unwrap();
     assert_eq!(saved["games"]["dcs"]["connection"]["commandPort"], 9000);
     assert_eq!(saved["games"]["dcs"]["connection"]["freshnessMs"], 2400);
     let mut catalogue = vec![game()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
-    assert!(runtime.preflight(&json!({"gameId":"dcs","integration":{"connection":saved["games"]["dcs"]["connection"]}}), &game()).is_err());
+    assert_eq!(
+        runtime.inner.inspect(&game(), None)["state"],
+        "needs-attention"
+    );
 }
 #[test]
 fn invalid_target_and_unknown_command_do_not_write_scripts() {
     let scratch = Scratch::new();
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
     let platform = Arc::new(FakePlatform(false));
-    let panel = panel(false);
     assert!(runtime
-        .request(
-            &json!({"command":"unknown"}),
-            &game(),
-            platform.clone(),
-            &panel
-        )
+        .request(&json!({"command":"unknown"}), &game(), platform.clone())
         .is_err());
     assert!(runtime
         .request(
             &json!({"command":"game_integration_setup","userFolder":"relative"}),
             &game(),
-            platform.clone(),
-            &panel
+            platform.clone()
         )
         .is_err());
     runtime
@@ -393,7 +342,6 @@ fn invalid_target_and_unknown_command_do_not_write_scripts() {
             &json!({"command":"game_integration_check","userFolder":"relative"}),
             &game(),
             platform,
-            &panel,
         )
         .unwrap();
     assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 0);
@@ -407,7 +355,7 @@ fn removed_user_folder_can_be_replaced_without_destroying_saved_configuration() 
     write_settings(&path, &value).unwrap();
     let runtime = GameIntegrationSetup::new(path.clone(), true);
     let mut catalogue = vec![game()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "setup-required");
     let target = scratch.0.join("DCS");
     fs::create_dir(&target).unwrap();
@@ -417,7 +365,6 @@ fn removed_user_folder_can_be_replaced_without_destroying_saved_configuration() 
             &json!({"command":"game_integration_setup","userFolder":target}),
             &game(),
             Arc::new(FakePlatform(false)),
-            &panel(false),
         )
         .unwrap();
     wait_setup(&runtime);
@@ -427,13 +374,8 @@ fn removed_user_folder_can_be_replaced_without_destroying_saved_configuration() 
     );
 }
 
-fn decorate(runtime: &GameIntegrationSetup, catalogue: &mut [Value], panel: &Panel) {
-    let response = panel(json!({"command":"integration_get_state"}));
-    runtime.decorate(
-        catalogue,
-        &response["state"]["integration"],
-        &response["state"]["dcsBios"],
-    );
+fn decorate(runtime: &GameIntegrationSetup, catalogue: &mut [Value]) {
+    runtime.decorate(catalogue);
 }
 fn acr_game(scratch: &Scratch) -> Value {
     let executable = scratch.0.join("acr.exe");
@@ -465,7 +407,6 @@ fn acr_setup_preserves_freshness_and_never_modifies_game_files_or_persists_pid()
             &json!({"command":"game_integration_setup","connection":{"freshnessMs":2200}}),
             &game,
             Arc::new(FakePlatform(false)),
-            &panel(false),
         )
         .unwrap();
     wait_setup(&runtime);
@@ -479,34 +420,35 @@ fn acr_setup_preserves_freshness_and_never_modifies_game_files_or_persists_pid()
     assert_eq!(fs::read(executable).unwrap(), bytes);
     assert!(!scratch.0.join("Scripts").exists());
     let mut catalogue = vec![game.clone()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["verified"], false);
 }
 #[test]
-fn acr_exact_build_preflight_allows_first_launch_and_requires_setup_after_update() {
+fn acr_setup_is_native_and_bound_to_the_exact_executable_fingerprint() {
     let scratch = Scratch::new();
     let game = acr_game(&scratch);
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
-    let profile = json!({"gameId":"assetto-corsa-rally","integration":{"connection":{"source":"shared-memory","freshnessMs":1700}}});
-    assert!(runtime.preflight(&profile, &game).is_err());
+    assert_eq!(
+        runtime.inner.inspect(&game, None)["state"],
+        "setup-required"
+    );
     acr_record(&runtime, &game, false);
-    runtime.preflight(&profile, &game).unwrap();
-    let mut catalogue = vec![game.clone()];
-    decorate(&runtime, &mut catalogue, &panel(false));
-    assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
+    assert_eq!(
+        runtime.inner.inspect(&game, None)["state"],
+        "needs-attention"
+    );
     fs::write(
         game["executable"].as_str().unwrap(),
         b"Updated authored build",
     )
     .unwrap();
-    assert!(runtime.preflight(&profile, &game).is_err());
     runtime.refresh(&[game.clone()]);
-    decorate(&runtime, &mut catalogue, &panel(false));
+    let mut catalogue = vec![game.clone()];
+    runtime.decorate(&mut catalogue);
     assert!(catalogue[0]["integrationSetup"]["message"]
         .as_str()
         .unwrap()
         .contains("changed"));
-    runtime.preflight(&json!({"gameId":"assetto-corsa-rally","integration":{"connection":{"source":"synthetic"}}}),&game).unwrap();
 }
 #[test]
 fn acr_layout_failures_invalidate_build_proof_and_diagnostics_survive_restart() {
@@ -523,39 +465,30 @@ fn acr_layout_failures_invalidate_build_proof_and_diagnostics_survive_restart() 
     runtime.inner.accept_acr_proof(&json!({"nativeVerified":false,"status":"unsupported-layout","fingerprint":identity,"diagnostics":["Unsupported ACR layout"]})).unwrap();
     let restarted = GameIntegrationSetup::new(path, true);
     let mut catalogue = vec![game.clone()];
-    decorate(&restarted, &mut catalogue, &panel(false));
+    decorate(&restarted, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
     assert_eq!(catalogue[0]["integrationSetup"]["verified"], false);
     assert_eq!(
         catalogue[0]["integrationSetup"]["message"],
         "Unsupported ACR layout"
     );
-    assert!(restarted.preflight(&json!({"gameId":"assetto-corsa-rally","integration":{"connection":{"source":"shared-memory"}}}),&game).is_err());
 }
 #[test]
-fn synthetic_data_cannot_verify_native_setup_and_shutdown_cannot_admit_another_probe() {
+fn metadata_cannot_claim_live_delivery_and_shutdown_cannot_admit_another_probe() {
     let scratch = Scratch::new();
     let game = acr_game(&scratch);
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
     acr_record(&runtime, &game, false);
-    let synthetic = json!({"running":true,"feedbackFresh":true,"config":{"document":{"provider":"assetto-corsa-rally"},"connection":{"source":"synthetic"}}});
-    runtime.auto_check(&[game.clone()], Arc::new(FakePlatform(false)), &synthetic);
-    assert!(!runtime.busy());
     let mut catalogue = vec![game.clone()];
-    runtime.decorate(&mut catalogue, &synthetic, &Value::Null);
+    runtime.decorate(&mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["live"], "waiting");
     assert_eq!(catalogue[0]["integrationSetup"]["verified"], false);
     runtime.shutdown();
-    let mut native = synthetic;
-    native["config"]["connection"]["source"] = json!("shared-memory");
-    runtime.auto_check(&[game.clone()], Arc::new(FakePlatform(false)), &native);
-    assert!(!runtime.busy());
     assert!(runtime
         .request(
             &json!({"command":"game_integration_check"}),
             &game,
-            Arc::new(FakePlatform(false)),
-            &panel(false)
+            Arc::new(FakePlatform(false))
         )
         .unwrap_err()
         .contains("closed"));
@@ -574,8 +507,7 @@ fn dcs_setup_rejects_game_installation_descendants_before_download_or_file_chang
         .request(
             &json!({"command":"game_integration_setup","userFolder":target}),
             &game,
-            Arc::new(FakePlatform(false)),
-            &panel(false)
+            Arc::new(FakePlatform(false))
         )
         .unwrap_err()
         .contains("outside the game installation"));
@@ -632,7 +564,6 @@ fn dcs_started_after_async_admission_blocks_worker_before_game_files_change() {
             &json!({"command":"game_integration_setup","userFolder":target}),
             &game(),
             platform.clone(),
-            &panel(false),
         )
         .unwrap();
     wait_setup(&runtime);
@@ -648,7 +579,7 @@ fn dcs_started_after_async_admission_blocks_worker_before_game_files_change() {
         "No owned changes should remain after restoration"
     );
     let mut catalogue = vec![game()];
-    decorate(&runtime, &mut catalogue, &panel(false));
+    decorate(&runtime, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
     assert!(catalogue[0]["integrationSetup"]["message"]
         .as_str()

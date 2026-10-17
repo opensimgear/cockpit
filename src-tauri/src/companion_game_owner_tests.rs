@@ -25,14 +25,14 @@ fn paired(h: &Hub, id: &str) -> String {
         .unwrap()
         .into()
 }
-fn assign(h: &Hub, id: &str, companion: &str, hash: &str) {
-    h.command(&json!({"command":"companion_assign","instanceId":id,"companionId":companion,"publicationHash":hash})).unwrap();
+fn assign(h: &Hub, instance: &str, companion: &str, publication: &Publication) {
+    h.command(&json!({"command":"companion_assign","instanceId":instance,"companionId":companion,"publicationHash":publication.publication_hash})).unwrap();
 }
 fn setup() -> (Hub, Publication, String) {
-    let h = Hub::new("game-host".into(), Arc::new(NullSourceSink));
-    let token = paired(&h, "installation-a");
-    paired(&h, "installation-b");
-    paired(&h, "installation-c");
+    let hub = Hub::new("retained-cleanup".into(), Arc::new(NullSourceSink));
+    let token = paired(&hub, "installation-a");
+    paired(&hub, "installation-b");
+    paired(&hub, "installation-c");
     let upload: PublicationUpload = serde_json::from_str(include_str!(
         "../../crates/companion-service/tests/fixtures/c1-flight-publication.json"
     ))
@@ -40,19 +40,12 @@ fn setup() -> (Hub, Publication, String) {
     let publication = Publication::validate(upload.clone()).unwrap();
     let mut request = serde_json::to_value(upload).unwrap();
     request["command"] = json!("companion_publish");
-    h.command(&request).unwrap();
-    assign(
-        &h,
-        "panel-a",
-        "installation-a",
-        &publication.publication_hash,
-    );
-    (h, publication, token)
+    hub.command(&request).unwrap();
+    assign(&hub, "panel-a", "installation-b", &publication);
+    (hub, publication, token)
 }
-fn desired(h: &Hub) -> Value {
-    let mut c = capture(h, &json!({"instanceIds":["panel-a"]})).unwrap();
-    c["assignments"][0]["companionId"] = json!("installation-b");
-    c
+fn receipt(publication: &Publication, baseline: Option<&str>) -> Value {
+    json!({"owner":"667891ca-e20a-459e-9d3c-c0e1c30a2bb0","desired":{"schemaVersion":1,"assignments":[{"instanceId":"panel-a","companionId":"installation-b","publicationHash":publication.publication_hash,"capabilityFingerprint":publication.capability_fingerprint}]},"baseline":{"schemaVersion":1,"assignments":[{"instanceId":"panel-a","companionId":baseline,"publicationHash":baseline.map(|_|&publication.publication_hash),"capabilityFingerprint":baseline.map(|_|&publication.capability_fingerprint)}]},"taken":true,"restored":false})
 }
 fn armed(h: &Hub, id: &str, token: &str, p: &Publication) {
     wire(h, id, json!({"type":"auth","token":token}));
@@ -60,7 +53,7 @@ fn armed(h: &Hub, id: &str, token: &str, p: &Publication) {
     let values = p
         .controls
         .iter()
-        .map(|c| (c.id.clone(), c.fallback()))
+        .map(|control| (control.id.clone(), control.fallback()))
         .collect::<std::collections::BTreeMap<_, _>>();
     wire(
         h,
@@ -69,140 +62,84 @@ fn armed(h: &Hub, id: &str, token: &str, p: &Publication) {
     );
 }
 #[test]
-fn capture_and_preflight_are_read_only_and_require_complete_selected_assignments() {
-    let (h, _, _) = setup();
-    let before = h.command(&json!({"command":"companion_status"})).unwrap();
-    let c = capture(&h, &json!({})).unwrap();
-    assert_eq!(c["assignments"].as_array().unwrap().len(), 1);
-    let snapshot = snapshot(&h, &c).unwrap();
-    assert_eq!(snapshot["taken"], false);
-    assert_eq!(snapshot["restored"], false);
-    assert_eq!(
-        h.command(&json!({"command":"companion_status"})).unwrap(),
-        before
-    );
-    for payload in [
-        json!({"instanceIds":[]}),
-        json!({"instanceIds":"panel-a"}),
-        json!({"instanceIds":["panel-a","panel-a"]}),
-        json!({"instanceIds":["bad/id"]}),
-        json!({"instanceIds":["missing"]}),
-        json!({"instanceIds":vec!["panel-a";9]}),
-    ] {
-        assert!(capture(&h, &payload).is_err());
-    }
-    let empty = Hub::new("empty".into(), Arc::new(NullSourceSink));
-    assert!(capture(&empty, &json!({})).is_err());
-}
-#[test]
-fn apply_and_restore_are_idempotent_and_release_only_the_changed_instance() {
+fn restore_is_idempotent_and_only_disarms_the_captured_changed_instance() {
     let (h, p, token) = setup();
-    assign(&h, "panel-b", "installation-a", &p.publication_hash);
-    armed(&h, "panel-a", &token, &p);
+    assign(&h, "panel-b", "installation-a", &p);
     armed(&h, "panel-b", &token, &p);
-    let mut journal = snapshot(&h, &desired(&h)).unwrap();
-    assert!(take(&h, &journal).is_err());
-    journal["taken"] = json!(true);
-    let result = take(&h, &journal).unwrap();
-    assert_eq!(take(&h, &journal).unwrap(), result);
+    let journal = receipt(&p, Some("installation-a"));
+    let restored = restore(&h, &journal, true).unwrap();
+    assert_eq!(restored["assignments"][0]["companionId"], "installation-a");
+    assert_eq!(restore(&h, &journal, true).unwrap(), restored);
     let status = h.command(&json!({"command":"companion_status"})).unwrap();
-    let instances = status["instances"].as_array().unwrap();
     assert_eq!(
-        instances
+        status["instances"]
+            .as_array()
+            .unwrap()
             .iter()
-            .find(|a| a["instanceId"] == "panel-a")
-            .unwrap()["armed"],
-        false
-    );
-    assert_eq!(
-        instances
-            .iter()
-            .find(|a| a["instanceId"] == "panel-b")
+            .find(|row| row["instanceId"] == "panel-b")
             .unwrap()["armed"],
         true
     );
-    let restored = restore(&h, &journal, false).unwrap();
-    assert_eq!(restore(&h, &journal, true).unwrap(), restored);
-    assert_eq!(restored["assignments"][0]["companionId"], "installation-a");
-    assert!(abandon(&h, &journal).is_ok());
-    journal["restored"] = json!(true);
-    assert!(take(&h, &journal).is_err());
+    assert_eq!(abandon(&h, &journal).unwrap(), json!({"abandoned":true}));
 }
 #[test]
-fn external_changes_are_preserved_before_apply_and_during_recovery() {
+fn foreign_assignment_and_new_unified_owner_are_preserved() {
     let (h, p, _) = setup();
-    let mut journal = snapshot(&h, &desired(&h)).unwrap();
-    journal["taken"] = json!(true);
-    assign(&h, "panel-a", "installation-c", &p.publication_hash);
-    assert!(take(&h, &journal).unwrap_err().contains("changed"));
+    let journal = receipt(&p, Some("installation-a"));
+    assign(&h, "panel-a", "installation-c", &p);
     assert!(restore(&h, &journal, true)
         .unwrap_err()
         .contains("preserved"));
-    assert_eq!(
-        capture(&h, &json!({"instanceIds":["panel-a"]})).unwrap()["assignments"][0]["companionId"],
-        "installation-c"
-    );
-    assign(&h, "panel-a", "installation-a", &p.publication_hash);
-    take(&h, &journal).unwrap();
-    assign(&h, "panel-a", "installation-c", &p.publication_hash);
-    assert!(restore(&h, &journal, true).is_err());
-    assert_eq!(
-        capture(&h, &json!({"instanceIds":["panel-a"]})).unwrap()["assignments"][0]["companionId"],
-        "installation-c"
-    );
+    assign(&h, "panel-a", "installation-b", &p);
+    let proof = h
+        .prepare_profile_assignment("panel-a", &p.publication_hash)
+        .unwrap();
+    let owned = h
+        .capture_profile_assignment(&proof, &uuid::Uuid::new_v4().to_string(), None)
+        .unwrap();
+    h.acquire_profile_assignment(&owned).unwrap();
+    assert!(restore(&h, &journal, true)
+        .unwrap_err()
+        .contains("unified profile"));
+    h.validate_profile_assignment_owner(&owned).unwrap();
 }
 #[test]
-fn absent_baseline_is_explicitly_compared_and_new_assignment_is_removed_on_restore() {
-    let (h, _, _) = setup();
-    let mut c = desired(&h);
-    c["assignments"][0]["instanceId"] = json!("new-panel");
-    let mut journal = snapshot(&h, &c).unwrap();
-    assert!(journal["baseline"]["assignments"][0]["companionId"].is_null());
-    journal["taken"] = json!(true);
-    take(&h, &journal).unwrap();
-    assert!(capture(&h, &json!({"instanceIds":["new-panel"]})).is_ok());
-    restore(&h, &journal, true).unwrap();
-    assert!(capture(&h, &json!({"instanceIds":["new-panel"]})).is_err());
-}
-#[test]
-fn invalid_credentials_revisions_and_recovery_scope_fail_without_changing_assignments() {
-    let (h, _, _) = setup();
-    let before = capture(&h, &json!({})).unwrap();
-    for (key, v) in [
-        ("companionId", json!("unknown")),
-        (
-            "publicationHash",
-            json!(format!("sha256:{}", "c".repeat(64))),
-        ),
-        (
-            "capabilityFingerprint",
-            json!(format!("sha256:{}", "c".repeat(64))),
-        ),
-    ] {
-        let mut c = desired(&h);
-        c["assignments"][0][key] = v;
-        assert!(snapshot(&h, &c).is_err());
-    }
-    assert_eq!(capture(&h, &json!({})).unwrap(), before);
-    let mut journal = snapshot(&h, &desired(&h)).unwrap();
-    journal["baseline"]["assignments"][0]["instanceId"] = json!("other");
-    assert!(take(&h, &journal).is_err());
-    assert!(restore(&h, &journal, true).is_err());
-    assert!(abandon(&h, &journal).is_err());
-}
-#[test]
-fn row_order_does_not_create_false_conflicts_and_restored_phase_cannot_overwrite_current_state() {
+fn explicit_absence_baseline_removes_only_the_captured_assignment() {
     let (h, p, _) = setup();
-    assign(&h, "panel-b", "installation-a", &p.publication_hash);
-    let c = capture(&h, &json!({"instanceIds":["panel-b","panel-a"]})).unwrap();
-    let mut journal = snapshot(&h, &c).unwrap();
-    journal["baseline"]["assignments"]
-        .as_array_mut()
-        .unwrap()
-        .reverse();
-    journal["taken"] = json!(true);
-    take(&h, &journal).unwrap();
-    journal["restored"] = json!(true);
-    assign(&h, "panel-a", "installation-c", &p.publication_hash);
-    assert!(restore(&h, &journal, true).is_err());
+    assign(&h, "panel-b", "installation-c", &p);
+    let journal = receipt(&p, None);
+    restore(&h, &journal, true).unwrap();
+    assert!(
+        h.assignment_snapshot(&["panel-a".into()]).unwrap()["assignments"][0]["companionId"]
+            .is_null()
+    );
+    assert_eq!(
+        h.assignment_snapshot(&["panel-b".into()]).unwrap()["assignments"][0]["companionId"],
+        "installation-c"
+    );
+}
+#[test]
+fn malformed_or_finished_receipts_cannot_overwrite_current_authority() {
+    let (h, p, _) = setup();
+    let original = receipt(&p, Some("installation-a"));
+    for (key, value) in [
+        ("owner", json!("forged")),
+        ("desired", Value::Null),
+        ("baseline", json!({})),
+        ("taken", Value::Null),
+    ] {
+        let mut journal = original.clone();
+        journal[key] = value;
+        assert!(restore(&h, &journal, true).is_err());
+        assert!(abandon(&h, &journal).is_err());
+    }
+    for (key, value) in [("taken", false), ("restored", true)] {
+        let mut journal = original.clone();
+        journal[key] = json!(value);
+        assert!(restore(&h, &journal, true).is_err());
+    }
+    assert_eq!(
+        h.assignment_snapshot(&["panel-a".into()]).unwrap()["assignments"][0]["companionId"],
+        "installation-b"
+    );
 }

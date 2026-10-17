@@ -13,7 +13,8 @@ impl GamesRuntime {
             .any(|game| game["processMonitoringSupported"] == true)
     }
     pub(super) fn start_activation_observer(&self) {
-        if !self.process_monitoring_supported() {
+        if self.inner.guard_installation_metadata().is_err() || !self.process_monitoring_supported()
+        {
             return;
         }
         let inner = self.inner.clone();
@@ -43,6 +44,7 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner()) = worker;
     }
     pub(crate) fn profile_activation_observations(&self) -> Result<Vec<VerifiedGame>, String> {
+        self.inner.guard_installation_metadata()?;
         if !self.process_monitoring_supported() {
             return Err(
                 "Automatic game profile selection requires native Windows process monitoring."
@@ -65,6 +67,7 @@ impl GamesRuntime {
         &self,
         game_id: &str,
     ) -> Result<GameIdentity, String> {
+        self.inner.guard_installation_metadata()?;
         let game = self
             .inner
             .settings
@@ -81,6 +84,7 @@ impl GamesRuntime {
         &self,
         expected: &VerifiedGame,
     ) -> Result<(), String> {
+        self.inner.guard_installation_metadata()?;
         let game = self
             .inner
             .settings

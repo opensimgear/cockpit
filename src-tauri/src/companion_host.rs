@@ -188,10 +188,11 @@ impl Runtime {
         self.provider.clone()
     }
     pub(crate) fn game_command(&self, command: &str, request: &Value) -> Result<Value, String> {
-        let hub = self.hub()?;
+        if !matches!(command,"_game_companion_restore"|"_game_companion_abandon") {
+            return Err("Retired independent game companion operation.".into());
+        }
+        let hub = self.profile_metadata()?;
         match command {
-            "_game_companion_snapshot" => game_owner::snapshot(&hub, &request["capture"]),
-            "_game_companion_take" => game_owner::take(&hub, &request["companions"]),
             "_game_companion_restore" => {
                 game_owner::restore(&hub, &request["companions"], request["recovery"] == true)
             }
@@ -203,6 +204,9 @@ impl Runtime {
         let command = request["command"]
             .as_str()
             .ok_or("Missing companion command.")?;
+        if command=="companion_game_capture" {
+            return Err("Independent game companion capture is retired; edit the unified profile.".into());
+        }
         let payload = request
             .get("companion")
             .cloned()
@@ -454,9 +458,6 @@ impl Runtime {
                 }
                 services.usb.provision(record, id)?;
                 Ok(json!({"usb":services.usb.status()}))
-            }
-            "companion_game_capture" => {
-                Ok(json!({"capture":game_owner::capture(&services.hub,&payload)?}))
             }
             "companion_status" => self.status(services),
             "companion_enable" => {
@@ -967,19 +968,9 @@ mod tests {
             fixture["publicationHash"].as_str().unwrap()
         );
         assert!(runtime.assigned_publication("unknown-instance").is_err());
-        let mut capture = call(&runtime, "companion_game_capture", json!({"instanceIds":["saved-panel"]})).unwrap()["capture"].clone();
-        capture["assignments"][0]["instanceId"] = json!("game-panel");
-        let mut journal = runtime.game_command("_game_companion_snapshot", &json!({"capture":capture})).unwrap();
-        assert_eq!(journal["taken"], false);
-        assert!(runtime.assigned_publication("game-panel").is_err());
-        assert!(runtime.game_command("_game_companion_take", &json!({"companions":journal})).is_err());
-        journal["taken"] = json!(true);
-        runtime.game_command("_game_companion_take", &json!({"companions":journal})).unwrap();
-        assert_eq!(runtime.assigned_publication("game-panel").unwrap().publication_hash, fixture["publicationHash"]);
-        runtime.game_command("_game_companion_restore", &json!({"companions":journal,"recovery":true})).unwrap();
-        assert!(runtime.assigned_publication("game-panel").is_err());
-        assert!(runtime.assigned_publication("saved-panel").is_ok());
-        assert_eq!(runtime.game_command("_game_companion_abandon", &json!({"companions":journal})).unwrap(), json!({"abandoned":true}));
+        assert!(call(&runtime,"companion_game_capture",json!({"instanceIds":["saved-panel"]})).unwrap_err().contains("retired"));
+        assert!(runtime.game_command("_game_companion_snapshot",&json!({})).is_err());
+        assert!(runtime.game_command("_game_companion_take",&json!({})).is_err());
         assert!(runtime.game_command("_game_companion_unknown", &json!({})).is_err());
         assert!(call(&runtime, "companion_status", json!({})).unwrap()["host"]["instances"]
             .as_array().unwrap().iter().all(|instance| instance["armed"] == false));
@@ -1017,7 +1008,5 @@ mod tests {
     }
 }
 
-#[path = "companion_feedback.rs"]
-pub(crate) mod feedback;
 #[path = "companion_game_owner.rs"]
 pub(crate) mod game_owner;

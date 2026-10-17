@@ -6,17 +6,14 @@ This project is heavily under development and is not ready for use. Use it entir
 
 Cockpit is a Tauri 2 desktop application. `pnpm dev` launches the desktop; `pnpm build` packages it. Rust 1.90.0 is pinned in the repository. The installed app communicates directly with gateway transports and does not depend on firmware source, simulation executables or external development tools.
 
-The same `gateway_request` transport serves the global `game_*` commands.
-`game_discovery.rs` checks the fixed DCS World and Assetto Corsa Rally registry,
-Steam manifests and manual installations, and handles native Windows launches
-and process identity checks. `games.rs` persists named profiles and coordinates
-peripheral runtime Apply, controller publication and integrations through a
-native worker. Its journal records the previous setup before mutations, and
-readback reconciles uncertain replies without replaying writes. Activation
-admission waits for earlier manual requests and fences incompatible settings
-changes until deactivation or recovery. Native integration preflight forecasts
-the desired input setup using read-only requests before hardware changes.
-See [the Games guide](../docs/games.md) for recovery and validation limits.
+The shared `gateway_request` transport serves fresh schema-2 `profile_*`
+authoring and one native ProfileSession coordinator. Games owns installations,
+provider setup and verified process observations; it does not save separate
+hardware profiles. Manual/Automatic selection captures a saved unified graph.
+Launch prepares hardware neutral, spawns once and waits for the exact independent
+native watcher identity before admitting game-dependent execution. Status and
+emergency Stop remain independent of slow preparation. See the
+[Profiles contracts](../docs/unified-profiles.md) and [Games guide](../docs/games.md).
 
 ## Adapters and lifecycle
 
@@ -64,79 +61,35 @@ sent to the simulator. The canonical
 [event contract](https://github.com/opensimgear/protocol/blob/main/serial/panel-input-events.md)
 also specifies ring overflow and encoder pairs.
 
-The global `dcs_status`, `dcs_configure`, `dcs_start` and `dcs_stop` operations
-manage one saved profile through `gateway_request`. Configure takes `dcsConfig`;
-responses expose `state.dcsBios` independently of gateway inventory. This global
-state must be merged without replacing a selected gateway's state. Schema 1 Start
-requires a connected, online CAN module with settled layout, HID disabled and
-unpublished, no report ID and no active direct USB input. It validates a mapped
-non-encoder button and a readable boolean setter or board status LED mode setter.
-The manager protects the bound LED from manual invocations while running.
+The DCS decoder, named-control catalogue and ordered panel events feed the
+unified profile compiler and native adapters. Provider settings belong to DCS
+game details. Actual native process/context, applied owner, resource capabilities
+and freshness authorize each branch; browser process labels do not. Commands are
+never replayed after an uncertain send. Physical outputs use endpoint leases,
+atomic capture-at-claim and compare-if-unchanged restoration.
 
-The legacy Rust worker receives DCS-BIOS UDP export, decodes bounded synchronized
-little-endian writes, verifies advancing update counters and resolves
-`UFC_MASTER_CAUTION`/`MASTER_CAUTION` from the installed `doc/json` catalogue.
-Aircraft name and fresh feedback gate command delivery. It drains ordered panel
-events independently of frontend status polling. A baseline held button must
-release before arming. Disarm/Stop sends one release for a previously forwarded
-press, without replaying presses. Retention overwrites and actual cursor gaps
-have separate diagnostic counters. Missing/stale export, unsupported aircraft
-and explicit Stop request LED off; output failure is visible and recovery reads
-applied state before setting it again. Ambiguous simulator sends do not replay.
+Independent `dcs_*`, `integration_*`, `mapping_*`, per-game profile/capture and
+standalone visibility Apply/launch commands are rejected before selection,
+learning or output effects. Their old runtime modules are not constructed or
+registered. Retained journal codecs exist only for explicit ownership cleanup;
+cleanup cannot configure/start an old runtime, resume mappings/scripts or reapply
+hiding. `config_paths.rs` preserves the shared path anchor without reading an old
+configuration file. `OSG_DCS_BIOS_CONFIG` overrides this anchor in isolated tests.
 
-Configuration is stored as `dcs-bios.json` under the platform's Cockpit settings
-directory. `OSG_DCS_BIOS_CONFIG` overrides that path for isolated tests.
-Application startup loads settings without starting UDP or event processing;
-Start is explicit, settings changes require Stop, and shutdown stops the worker.
-Global Stop remains accessible without a present module. The local
-[DCS-BIOS peer and synthetic catalogue](../simulation/dcs-bios/README.md) exercise
-this path without a simulator installation. Current-board firmware exposes the
-same button/event/LED contract, but physical hardware and live DCS acceptance are
-deferred.
+CI keeps per-module production coverage for the retained DCS decoder, catalogue
+and events above 70%, and integration/profile modules at least 71%. The native
+coverage runners pin production/test source hashes and reject concurrent edits.
+Historical [Milestone 3 verification](../docs/verification/2026-10-14-dcs-bios-panels.md)
+describes the retired standalone workflow; current graph authoring is documented
+in the [Profiles guide](../docs/profiles-guide.md).
 
-CI's `scripts/dcs-bios-coverage.py` measures instrumented native tests and gates
-the production sections of `dcs_bios.rs`, `dcs_runtime.rs`, `panel_events.rs`,
-`dcs_profile.rs` and `dcs_profile_runtime.rs`
-individually above 70% line coverage. Frontend profile helpers have a separate
-line/branch/function gates through `pnpm dcs:coverage` and `pnpm dcs-profile:coverage`.
-
-Schema2 generalizes the saved profile to named catalogue bindings: momentary
-buttons, maintained switches, fixed/variable-step encoders and calibrated axes,
-plus readable LED and bounded text/numeric display setters. `dcs_catalogue`
-returns bounded filtered pages from the installed A-10C catalogue, with raw
-output indexes and supported interfaces, without exposing wire addresses to the
-editor. Existing schema1 profiles still use the legacy worker until explicitly
-saved as schema2.
-
-`dcs_profile_runtime` keeps UDP decoding independent of one I/O worker per
-gateway. It commits feedback after complete advancing-counter frames, retains
-one latest pending value per output and prioritizes ordered event pages before
-the next setter. Output-only panels may keep HID enabled; input-bound panels
-retain the HID/direct-USB exclusion above. Switches and available axes send
-their current absolute state on a fresh baseline. Momentary held startup needs
-release, and encoder deltas never enter the coalescing queue. Slow reads
-recheck export freshness and physical capability metadata before commands.
-
-Missing/stale/wrong-aircraft feedback applies configured fallback text or LED
-off. Route/boot/stream changes and event gaps rebaseline current input and
-reconcile current output. Readable state is checked before any new setter after
-an uncertain acknowledgement; one-shot actions cannot be feedback bindings.
-Boolean enum outputs must advertise both on and off before Start. Stop discards
-new commands from outstanding input reads and pending feedback setters; known
-forwarded button presses still receive their neutral cleanup release, and output
-fallbacks remain allowed.
-Gateway diagnostics include bounded pending depth/high-water, coalescing,
-latency mean/p95/max, throughput and maximum input polling interval. Local IPC
-allows 64 KiB profiles and 128 KiB replies; CDC/CAN budgets are unchanged. See the
-[Milestone 3 verification record](../docs/verification/2026-10-14-dcs-bios-panels.md).
-
-The Pico adapter probes the selected endpoint only on Connect and chooses the legacy JSON protocol-1 service or the shared production CDC3 service for the new Pico debug role. The latter validates serial/UID, epoch and bounded debug metadata before providing configuration, lifecycle, actions, events and guarded input injection. Debug mutations validate arguments and current device boot and are sent once. DCS schema-2 targets accept Pico identities; schema-1 saved profiles retain compatibility. Debug definitions hydrate truthful device labels/kinds. Legacy images retain RAM-only settings, setup leases, liveness/neutral recovery and macOS IOKit interface names. New board firmware persists gateway/device journals and retains the existing board serial.
+The Pico adapter probes the selected endpoint only on Connect and chooses the legacy JSON protocol-1 service or the shared production CDC3 service for the new Pico debug role. The latter validates serial/UID, epoch and bounded debug metadata before providing configuration, lifecycle, actions, events and guarded input injection. Debug mutations validate arguments and current device boot and are sent once. Unified profile assignments accept verified Pico routes. Debug definitions hydrate truthful device labels/kinds. Legacy images retain RAM-only settings, setup leases, liveness/neutral recovery and macOS IOKit interface names. New board firmware persists gateway/device journals and retains the existing board serial.
 
 ## Local gateway transport
 
 Normal macOS/Linux discovery also reads bounded gateway advertisements from `/tmp/opensimgear-<user-id>/gateways/`. Directories and files must belong to the current user with private permissions; stale process advertisements and invalid paths are ignored. Valid metadata selects a loopback TCP endpoint or a private Unix stream. Opening revalidates discovery, then applies the same CDC identity and epoch checks as a USB serial connection.
 
-The gateway owns its advertisement and lifetime. Device inventory is obtained exclusively through the gateway protocol. Strictly validated protocol-3 Pico debug advertisements can also use this transport; input controls are provided only by the connected firmware's debug capability. The transport starts no simulation processes. For isolated debug-build tests, `OSG_LOCAL_GATEWAYS_ONLY=1` excludes physical serial ports; release builds ignore that flag. Set `OSG_DCS_BIOS_CONFIG` to a scratch file when testing saved profiles.
+The gateway owns its advertisement and lifetime. Device inventory is obtained exclusively through the gateway protocol. Strictly validated protocol-3 Pico debug advertisements can also use this transport; input controls are provided only by the connected firmware's debug capability. The transport starts no simulation processes. For isolated debug-build tests, `OSG_LOCAL_GATEWAYS_ONLY=1` excludes physical serial ports; release builds ignore that flag. Set `OSG_DCS_BIOS_CONFIG` to a scratch anchor when testing profile storage.
 
 For isolated local simulation runs, set `OSG_SIMULATION_NAMESPACE` to the same
 value on Cockpit/service, gateway and device processes. Names use 1–31 ASCII
@@ -173,11 +126,20 @@ pnpm e2e
 
 Frontend tests cover native IPC, browser transport, discovery, ownership, error reconciliation and configuration validation. Rust tests cover fleet routing, same-backend and cross-backend isolation, duplicate module IDs, identity mismatches, concurrent operations and shutdown, plus transport boundaries, protocol validation, setup ownership, reconnect, stale replies, layout recovery and local discovery. The native service process test checks full-size correlated requests, larger authored telemetry pages and recovery after rejecting an oversized payload. Browser bridge tests verify out-of-order response correlation and rejection of unmatched responses. C formatter [fixtures](tests/fixtures/README.md) verify production wire compatibility without requiring another checkout for unit tests. Repository-owned E2E bootstrapping builds the production gateway/device simulations in `.e2e/`; it requires no workspace parent setup. Local stream tests do not establish physical USB/HID enumeration or hardware CAN behavior.
 
-## Provider-neutral integration service
+## Provider-neutral integration execution
 
-`integration_runtime` validates/saves portable role profiles and local assignments, then starts the shared bounded `dcs_profile_runtime` gateway workers. `integration_profile` validates named identities and formats. `game_telemetry` decodes bounded ACR byte pages and tracks producer progression; `acr_windows` provides read-only Windows shared-memory acquisition. Synthetic snapshots use the identical parser on every platform. `output_leases` validates the additive endpoint claim protocol without returning secret capabilities in status. Global DCS/integration requests share an admission guard; only one run starts at a time.
+`profile_session_games`, the native context broker and resource adapters execute
+only branches owned by the captured applied profile. `game_telemetry` decodes
+bounded ACR pages; `acr_windows` observes native shared memory. X-Plane uses its
+typed read-only provider. Synthetic snapshots exercise parsers without granting
+native readiness. `output_leases` validates exact device endpoint claims; secret
+capabilities never appear in passive status. Configuration changes revoke stale
+contexts; ordinary hardware routes can remain useful with game branches dormant.
 
-IPC commands are `integration_get_state`, `integration_catalogue`, `integration_validate`, `integration_save`, `integration_start`, `integration_stop`, `integration_override` and `integration_simulate`. Device routing adds `action_claim`, `action_renew`, `action_release`, `action_ownership` and `action_invoke_owned`. See [the integration guide](../docs/simulator-integrations.md). Acquisition/parser tests and simulated firmware acceptance are distinct from deferred Windows live-game/hardware qualification.
+Device routing retains `action_claim`, `action_renew`, `action_release`,
+`action_ownership` and `action_invoke_owned` for actual guarded device operations.
+Profile ownership guards independent writes to participating resources. Hardware,
+driver and live-game qualification remain separate from software fixtures.
 
 ## Windows download releases
 

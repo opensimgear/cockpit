@@ -134,5 +134,64 @@ class BootstrapTests(unittest.TestCase):
             self.dependencies.acquire('device-template')
 
 
+class CommonPinTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.common = self.root / 'common'
+        self.common.mkdir()
+        for args in [('init', '--initial-branch=main'), ('config', 'commit.gpgsign', 'false'), ('config', 'user.name', 'Fixture'), ('config', 'user.email', 'fixture@example.invalid')]:
+            self.git(self.common, *args)
+        (self.common / 'contract.txt').write_text('original contract')
+        self.old = self.commit()
+        (self.common / 'contract.txt').write_text('atomic capture-at-claim contract')
+        self.new = self.commit()
+        self.runner = self.root / 'runner'
+        (self.runner / 'tests/e2e').mkdir(parents=True)
+        (self.runner / 'tests/e2e/dependencies.json').write_text(json.dumps({'firmware-common': {'url': str(self.common), 'ref': self.new}}))
+        self.dependencies = bootstrap.Dependencies(self.runner, {})
+        self.firmware = []
+        for name in ['gateway', 'device']:
+            repository = self.root / name
+            (repository / 'firmware/cmake').mkdir(parents=True)
+            (repository / 'firmware/cmake/common-revision.cmake').write_text(f'set(OSG_COMMON_REVISION {self.old})\n')
+            self.firmware.append(repository)
+
+    def git(self, path, *args):
+        return subprocess.check_output(['git', '-C', str(path), *args], stderr=subprocess.PIPE).decode().strip()
+
+    def commit(self):
+        self.git(self.common, 'add', '--all')
+        self.git(self.common, 'commit', '-m', 'Fixture contract')
+        return self.git(self.common, 'rev-parse', 'HEAD')
+
+    def test_explicit_shared_contract_resolves_actual_manifest_commit_and_records_declared_baseline(self):
+        checkout = self.dependencies.common(*self.firmware)
+        self.assertEqual(self.git(checkout, 'rev-parse', 'HEAD'), self.new)
+        self.assertEqual((checkout / 'contract.txt').read_text(), 'atomic capture-at-claim contract')
+        evidence = json.loads((self.dependencies.directory / 'resolved-dependencies.json').read_text())['firmware-common']
+        self.assertEqual(evidence['commit'], self.new)
+        self.assertEqual(evidence['request']['ref'], self.new)
+        self.assertEqual(evidence['firmwareDeclaredRevision'], self.old)
+        # A warm reuse must preserve the same explicit contract evidence.
+        self.assertEqual(self.dependencies.common(*self.firmware), checkout)
+
+    def test_disagreeing_application_baselines_fail_before_shared_acquisition(self):
+        (self.firmware[1] / 'firmware/cmake/common-revision.cmake').write_text(f'set(OSG_COMMON_REVISION {self.new})\n')
+        with mock.patch.object(self.dependencies, 'acquire') as acquire:
+            with self.assertRaisesRegex(ValueError, 'different firmware-common'):
+                self.dependencies.common(*self.firmware)
+            acquire.assert_not_called()
+
+    def test_missing_or_symbolic_initiating_common_pin_fails_before_acquisition(self):
+        for value in ['', 'main', 'AC2BACD' + '0' * 33]:
+            self.dependencies.manifest['firmware-common']['ref'] = value
+            with mock.patch.object(self.dependencies, 'acquire') as acquire:
+                with self.assertRaisesRegex(ValueError, 'full firmware-common'):
+                    self.dependencies.common(*self.firmware)
+                acquire.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

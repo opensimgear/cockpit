@@ -198,9 +198,15 @@ impl Fixture {
             Arc::new(
                 |_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}}),
             ),
-            directory.path().join("games.json"),
-            Arc::new(NoGame),
-        ));
+            {
+                let fixture_metadata_path = directory.path().join("games.json");
+                crate::games::Paths {
+                    installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                    provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                    recovery: fixture_metadata_path.with_extension("recovery.json"),
+                }
+            },
+            Arc::new(NoGame)));
         let companions = Arc::new(crate::companion_host::Runtime::new(
             None,
             Arc::new(osg_mapping_host::companions::CompanionProvider::new(

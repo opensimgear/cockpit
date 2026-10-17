@@ -426,9 +426,15 @@ impl NativeFixture {
         }
         let games = Arc::new(crate::games::GamesRuntime::new(
             Arc::new(|_| json!({"ok":false})),
-            directory.path().join("games.json"),
-            Arc::new(crate::game_discovery::NativePlatform),
-        ));
+            {
+                let fixture_metadata_path = directory.path().join("games.json");
+                crate::games::Paths {
+                    installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                    provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                    recovery: fixture_metadata_path.with_extension("recovery.json"),
+                }
+            },
+            Arc::new(crate::game_discovery::NativePlatform)));
         Self {
             _directory: directory,
             hub,

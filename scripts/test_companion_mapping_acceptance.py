@@ -70,33 +70,46 @@ class AcceptanceTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 socket_for(b"".join(server_frame(item) for item in [start, bad, end])).request({})
 
-    def test_recording_page_retries_only_explicit_native_busy_results(self):
-        class Service:
-            def __init__(self, replies):
-                self.replies = iter(replies)
-
-            def request(self, command, **payload):
-                self.command, self.payload = command, payload
-                return next(self.replies)
-
-        busy = {"ok": False, "error": "This companion's feeder is busy; retry its recording page without waiting for native I/O."}
-        expected = {"instanceId": "instance-a", "records": []}
-        service = Service([busy, {"ok": True, "state": {"mappings": {"companionRoute": expected}}}])
-        self.assertEqual(acceptance.route(service, "instance-a", "recording", after="2"), expected)
-        self.assertEqual(service.payload, {"companion": {"instanceId": "instance-a", "action": "recording", "after": "2"}})
-        for action, failure in [("inspect", busy), ("recording", {"ok": False, "error": "Invalid cursor"})]:
-            with self.assertRaises(AssertionError):
-                acceptance.route(Service([failure]), "instance-a", action)
-    def test_expected_reports_check_exact_authored_controls_and_nonzero_axis_fallback(self):
-        document = {"ui": {"controls": [{"id": "axis", "kind": "axis", "fallback": 0.25}, {"id": "button", "kind": "button"}, {"id": "hat", "kind": "hat"}]}, "targets": [{"id": "logical"}], "bindings": [{"controlId": kind, "targetId": "logical", "kind": kind, "index": 0} for kind in ["axis", "button", "hat"]]}
-        publication = {"canonicalDocument": json.dumps(document)}
-        profile = {"targets": [{"id": "instance-target", "layout": {"axes": [{"fallback": 8192}], "buttons": 1, "hats": 1}}]}
-        self.assertEqual(acceptance.expected_sample(profile, publication), {"instance-target": {"axes": [24575], "buttons": [True], "hats": [7]}})
-        profile["targets"][0]["layout"]["axes"][0]["fallback"] = 0
-        with self.assertRaisesRegex(AssertionError, "fallback"):
-            acceptance.expected_sample(profile, publication)
-        self.assertEqual(acceptance.axis_value(-0.5), -16384)
+    def test_profile_uses_only_native_observed_ports_and_exact_contract_hash_pins(self):
+        publication=json.loads((acceptance.ROOT/'crates/companion-service/tests/fixtures/c1-flight-publication.json').read_text())
+        service=FixtureService([('peer-a',publication),('peer-b',publication)])
+        document,assignments,models=acceptance.companion_profile(service,[('peer-a',publication),('peer-b',publication)])
+        self.assertEqual(document['schemaVersion'],2)
+        self.assertEqual(len(document['resources']),2)
+        self.assertEqual(len({row['sourceId'] for row in assignments}),2)
+        self.assertEqual(len(document['bindings']),6)
+        for resource,assignment in zip(document['resources'],assignments):
+            self.assertEqual(len(resource['ports']),3)
+            self.assertEqual({pin['expectedContractHash'] for pin in assignment['ports']},{'sha256:'+'a'*64})
+            self.assertEqual(resource['kind'],'companion')
+        self.assertNotIn('peer-a',json.dumps(document))
+        self.assertEqual(acceptance.expected(publication),{'button':True,'axis':24575,'hat':7})
+        self.assertEqual(acceptance.axis_value(-.5),-16384)
+        self.assertEqual({row['publicationHash'] for row in document['companionAssignments']},{publication['publicationHash']})
 
 
-if __name__ == "__main__":
-    unittest.main()
+class FixtureService:
+    """Only a DTO fixture; actual service scenarios still require native replies."""
+    def __init__(self,configurations):
+        self.details=[]
+        for index,(instance,publication) in enumerate(configurations):
+            resource=dict(id=f'11111111-1111-4111-8111-{index:012d}',resourceType='companion')
+            ui=json.loads(publication['canonicalDocument'])['ui'];ports=[]
+            for control in ui['controls']:
+                schema=dict(type='boolean') if control['kind']=='button' else dict(type='integer',min=-1 if control['kind']=='hat' else -32768 if control.get('axisMode')=='bipolar' else 0,max=7 if control['kind']=='hat' else 32767,unit=None)
+                fallback=False if control['kind']=='button' else -1 if control['kind']=='hat' else acceptance.axis_value(control.get('fallback',0))
+                ports.append(dict(descriptor=dict(id=control['id'],name=control['id'],direction='output',contract=dict(delivery='state',schema=schema,freshnessMs=1000,fallback=fallback)),contractHash='sha256:'+'a'*64,current=True))
+            for feedback in ui['feedbackWidgets']:
+                schema=dict(type='boolean') if feedback['kind']=='indicator' else dict(type='text',maxBytes=256,encoding='utf8') if feedback['kind']=='text' else dict(type='number',min=0,max=100,unit='%')
+                id=f"feedback:{feedback['channelId']}:{feedback['id']}"
+                ports.append(dict(descriptor=dict(id=id,name=id,direction='input',contract=dict(delivery='state',schema=schema,freshnessMs=1000,fallback=None)),contractHash='sha256:'+'a'*64,current=True))
+            self.details.append(dict(resource=resource,evidence=[dict(kind='companion-instance',value=instance)],ports=ports,total=len(ports)))
+
+    def request(self,command,**fields):
+        if command=='profile_resources_list':value=dict(offset=0,total=len(self.details),resources=[row['resource'] for row in self.details])
+        elif command=='profile_resources_inspect':value=next(row for row in self.details if row['resource']['id']==fields['resourceId'])
+        else:raise AssertionError(command)
+        return dict(ok=True,state=dict(profileResources=value))
+
+
+if __name__=='__main__':unittest.main()

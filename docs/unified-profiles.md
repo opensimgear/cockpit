@@ -78,8 +78,9 @@ explicitly enabled, independently requires current verified native observations.
 The native service uses a fresh `profiles-v2` directory beside the other application
 configuration, containing its own library. It never reads or migrates old game,
 mapping, integration or companion-feedback profile configuration into that
-library. Existing domain workflows are removed by the later P9 cutover; they are
-not compatibility readers for this schema.
+library. Independent game-profile, mapping, DCS/integration and companion-feedback
+authoring and activation paths are retired. Existing ownership journals are
+cleanup-only evidence, never compatibility configuration readers for this schema.
 
 Each portable document is limited to **512 KiB**, the library to **32 profiles**
 including Default, and its complete serialized envelope to **17 MiB**. A document

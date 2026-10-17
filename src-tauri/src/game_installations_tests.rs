@@ -1,0 +1,184 @@
+use super::*;
+
+fn settings() -> Settings {
+    Settings {
+        schema_version: 1,
+        manual_installations: BTreeMap::from([(
+            "dcs".into(),
+            "C:\\Games\\DCS\\bin\\DCS.exe".into(),
+        )]),
+    }
+}
+#[test]
+fn fresh_store_does_not_read_seed_or_modify_an_old_profile_library() {
+    let directory = tempfile::tempdir().unwrap();
+    let old = directory.path().join("games.json");
+    let legacy=br#"{"schemaVersion":1,"profiles":[{"id":"old","devices":["unsafe"]}],"defaultProfiles":{"dcs":"old"},"manualInstallations":{"dcs":"C:\\Old\\DCS.exe"}}"#;
+    fs::write(&old, legacy).unwrap();
+    let store = Store::new(directory.path().join("game-installations-v1.json"));
+    assert_eq!(store.load().unwrap(), None);
+    let fresh = Settings::default();
+    assert!(fresh.manual_installations.is_empty());
+    store.save(&fresh).unwrap();
+    assert_eq!(
+        Store::new(directory.path().join("game-installations-v1.json"))
+            .load()
+            .unwrap(),
+        Some(fresh)
+    );
+    assert_eq!(fs::read(old).unwrap(), legacy);
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&store.path).unwrap()).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({"schemaVersion":1,"manualInstallations":{}})
+    );
+}
+#[test]
+fn atomic_replacement_failure_preserves_old_bytes_and_restart_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("new/settings.json");
+    let store = Store::new(path.clone());
+    let original = settings();
+    store.save(&original).unwrap();
+    let bytes = fs::read(&path).unwrap();
+    let mut edited = original.clone();
+    edited
+        .manual_installations
+        .insert("x-plane-12".into(), "C:\\X-Plane\\X-Plane.exe".into());
+    assert!(store
+        .save_with(&edited, |_, _| Err("Injected pre-commit failure".into()))
+        .is_err());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(Store::new(path.clone()).load().unwrap(), Some(original));
+    store.save(&edited).unwrap();
+    assert_eq!(Store::new(path).load().unwrap(), Some(edited));
+    assert_eq!(
+        fs::read_dir(directory.path().join("new")).unwrap().count(),
+        1
+    );
+}
+#[test]
+fn strict_envelope_rejects_profiles_tokens_duplicate_keys_and_oversized_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("game-installations-v1.json");
+    let store = Store::new(path.clone());
+    for bytes in [
+        r#"{"schemaVersion":1,"manualInstallations":{},"profiles":[]}"#,
+        r#"{"schemaVersion":1,"manualInstallations":{},"defaultProfiles":{}}"#,
+        r#"{"schemaVersion":1,"manualInstallations":{},"owner":"forged"}"#,
+        r#"{"schemaVersion":1,"manualInstallations":{"dcs":"C:\\one.exe","dcs":"C:\\two.exe"}}"#,
+        r#"{"schemaVersion":1,"schemaVersion":1,"manualInstallations":{}}"#,
+        r#"{"schemaVersion":1,"manualInstallations":{"unknown":"C:\\one.exe"}}"#,
+        r#"{"schemaVersion":2,"manualInstallations":{}}"#,
+        r#"{"schemaVersion":1}"#,
+        "malformed",
+    ] {
+        fs::write(&path, bytes).unwrap();
+        assert!(store.load().is_err(), "{bytes}");
+        assert_eq!(fs::read(&path).unwrap(), bytes.as_bytes());
+    }
+    fs::write(&path, vec![b' '; MAX_BYTES + 1]).unwrap();
+    assert!(store.load().unwrap_err().contains("size bound"));
+}
+#[test]
+fn paths_are_bounded_absolute_and_cannot_smuggle_runtime_or_extra_games() {
+    for invalid in ["", "relative.exe", "C:relative.exe", "C:\\bad\n.exe"] {
+        let mut value = settings();
+        value
+            .manual_installations
+            .insert("dcs".into(), invalid.into());
+        assert!(value.validate().is_err(), "{invalid}");
+    }
+    let mut value = settings();
+    value.manual_installations.insert(
+        "dcs".into(),
+        format!("C:\\{}", "x".repeat(MAX_EXECUTABLE_BYTES)),
+    );
+    assert!(value.validate().is_err());
+    value.manual_installations.insert(
+        "dcs".into(),
+        format!("C:\\{}", "x".repeat(MAX_EXECUTABLE_BYTES - 3)),
+    );
+    value.validate().unwrap();
+    value
+        .manual_installations
+        .insert("fifth".into(), "C:\\unknown.exe".into());
+    assert!(value.validate().is_err());
+    value = settings();
+    value.schema_version = 0;
+    assert!(value.validate().is_err());
+    assert!(Store::new(PathBuf::from("relative/settings.json"))
+        .load()
+        .is_err());
+    let directory = tempfile::tempdir().unwrap();
+    assert!(Store::new(directory.path().to_owned()).load().is_err());
+    assert!(Store::new(directory.path().join("sub/../settings.json"))
+        .load()
+        .is_err());
+    let parent = directory.path().join("file");
+    fs::write(&parent, b"file").unwrap();
+    assert!(Store::new(parent.join("settings.json"))
+        .save(&settings())
+        .is_err());
+}
+#[test]
+fn symbolic_target_and_parent_are_never_followed() {
+    let directory = tempfile::tempdir().unwrap();
+    let real = directory.path().join("real");
+    fs::create_dir(&real).unwrap();
+    let target = real.join("settings.json");
+    Store::new(target.clone()).save(&settings()).unwrap();
+    let retained = fs::read(&target).unwrap();
+    #[cfg(unix)]
+    let link = |source: &Path, destination: &Path, _directory: bool| {
+        std::os::unix::fs::symlink(source, destination)
+    };
+    #[cfg(unix)]
+    {
+        let linked = directory.path().join("linked.json");
+        link(&target, &linked, false).unwrap();
+        assert!(Store::new(linked).load().unwrap_err().contains("symlink"));
+    }
+    let parent = directory.path().join("alias");
+    #[cfg(unix)]
+    link(&real, &parent, true).unwrap();
+    #[cfg(windows)]
+    {
+        // A junction exercises reparse rejection without requiring the
+        // symlink privilege or developer mode on Windows CI.
+        for path in [&parent, &real] {
+            assert!(!path
+                .to_string_lossy()
+                .chars()
+                .any(|c| "\"&|<>%!\r\n".contains(c)));
+        }
+        let command = format!("mklink /J \"{}\" \"{}\"", parent.display(), real.display());
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("cmd.exe")
+            .raw_arg(format!("/D /C {command}"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(Store::new(parent.join("settings.json"))
+        .load()
+        .unwrap_err()
+        .contains("reparse"));
+    assert!(Store::new(parent.join("new.json"))
+        .save(&settings())
+        .is_err());
+    assert_eq!(fs::read(target).unwrap(), retained);
+}
+#[test]
+fn native_canonical_metadata_paths_keep_their_actual_platform_prefix() {
+    let directory = tempfile::tempdir().unwrap();
+    let absolute = directory.path().canonicalize().unwrap();
+    let store = Store::new(absolute.join("installations.json"));
+    assert!(store.load().unwrap().is_none());
+    store.save(&settings()).unwrap();
+    assert_eq!(store.load().unwrap(), Some(settings()));
+}

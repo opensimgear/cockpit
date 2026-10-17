@@ -371,7 +371,7 @@ mod tests {
         let second = setup.resource_integration_catalogue("x-plane-12").unwrap();
         assert_ne!(first["catalogueRevision"], second["catalogueRevision"]);
         let mut games = vec![game("x-plane-11")];
-        setup.decorate(&mut games, &Value::Null, &Value::Null);
+        setup.decorate(&mut games);
         assert_eq!(games[0]["integrationSetup"]["connection"]["port"], 49000);
         assert!(games[0]["integrationSetup"]["providerSetupRevision"]
             .as_str()

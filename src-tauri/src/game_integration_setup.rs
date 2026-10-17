@@ -1,5 +1,5 @@
 //! Asynchronous game-side provisioning, separate from captured binding profiles.
-use crate::{dcs_profile_runtime::Panel, game_discovery::Platform};
+use crate::game_discovery::Platform;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -12,14 +12,12 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-const CLIENT: &str = "cockpit-game-session-coordinator";
 const MAX_SETTINGS: usize = 32768;
 struct Inner {
     path: PathBuf,
     work: PathBuf,
     native: bool,
     settings_error: Option<String>,
-    auto_attempt: Mutex<Option<std::time::Instant>>,
     saved: Mutex<Value>,
     states: Mutex<BTreeMap<String, Value>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
@@ -221,7 +219,6 @@ impl GameIntegrationSetup {
                 path,
                 native,
                 settings_error: loaded.as_ref().err().cloned(),
-                auto_attempt: Mutex::new(None),
                 saved: Mutex::new(loaded.unwrap_or(json!({"schemaVersion":1,"games":{}}))),
                 states: Mutex::new(states),
                 catalogues: Mutex::new(BTreeMap::new()),
@@ -239,7 +236,7 @@ impl GameIntegrationSetup {
     pub(crate) fn pending(&self) -> bool {
         crate::dcs_setup::recovery_pending(&self.inner.work)
     }
-    pub(crate) fn decorate(&self, catalogue: &mut [Value], integration: &Value, dcs: &Value) {
+    pub(crate) fn decorate(&self, catalogue: &mut [Value]) {
         for game in catalogue {
             let id = game["id"].as_str().unwrap_or("");
             let cached = self
@@ -258,50 +255,11 @@ impl GameIntegrationSetup {
                     .insert(id.into(), status.clone());
                 status
             });
-            let running = integration["running"] == true
-                && integration["config"]["document"]["provider"] == game["provider"]
-                && (game["provider"] != "x-plane"
-                    || integration["config"]["connection"]["version"].as_u64()
-                        == id.trim_start_matches("x-plane-").parse::<u64>().ok());
-            let native_running = running
-                && (id != "assetto-corsa-rally"
-                    || integration["config"]["connection"]["source"] == "shared-memory");
-            let feed = if native_running {
-                integration
-            } else if id == "dcs" && dcs["running"] == true {
-                dcs
-            } else {
-                &Value::Null
-            };
-            let fresh = feed["feedbackFresh"] == true || feed["telemetry"]["fresh"] == true;
-            status["live"] = json!(if fresh {
-                "receiving"
-            } else if feed["status"] == "stale"
-                || feed["telemetry"]["status"] == "stale"
-                || feed["status"] == "error"
-            {
-                "stale"
-            } else {
-                "waiting"
-            });
-            status["liveMessage"] = json!(if fresh {
-                "Receiving fresh game telemetry."
-            } else if feed.is_null() {
-                "Waiting for a game integration. Setup does not start bindings."
-            } else {
-                "Waiting for fresh game/session telemetry."
-            });
-            if id == "assetto-corsa-rally" {
-                if running && !native_running {
-                    status["liveMessage"] = json!("Synthetic test telemetry is running. It does not verify native game integration.");
-                }
-                if native_running {
-                    status["channels"] = feed["telemetry"]["channels"].clone();
-                    status["optionalMaxRpm"] =
-                        json!(feed["telemetry"]["channels"]["max_rpm"]["status"] == "ready");
-                } else {
-                    status.as_object_mut().unwrap().remove("channels");
-                }
+            status["live"] = json!("waiting");
+            status["liveMessage"]=json!("Setup is configuration metadata. Inspect the applied profile for actual source delivery.");
+            if let Some(object) = status.as_object_mut() {
+                object.remove("channels");
+                object.remove("optionalMaxRpm");
             }
             if id == "dcs" {
                 status["version"] = json!(crate::dcs_setup::VERSION);
@@ -328,7 +286,6 @@ impl GameIntegrationSetup {
         request: &Value,
         game: &Value,
         platform: Arc<dyn Platform>,
-        panel: &Panel,
     ) -> Result<(), String> {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         if self.inner.closed.load(Ordering::Acquire) {
@@ -364,12 +321,6 @@ impl GameIntegrationSetup {
         }
         if !self.inner.native {
             return Err("Native integration setup is available on Windows.".into());
-        }
-        let state = panel(json!({"command":"integration_get_state","clientId":CLIENT}));
-        if state["state"]["integration"]["running"] == true
-            || state["state"]["dcsBios"]["running"] == true
-        {
-            return Err("Stop the active simulator integration before changing its setup.".into());
         }
         if command == "game_integration_recover" {
             if id != "dcs" {
@@ -652,135 +603,6 @@ impl GameIntegrationSetup {
         }));
         Ok(())
     }
-    pub(crate) fn auto_check(
-        &self,
-        catalogue: &[Value],
-        platform: Arc<dyn Platform>,
-        integration: &Value,
-    ) {
-        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
-        if self.inner.closed.load(Ordering::Acquire) {
-            return;
-        }
-        if !self.inner.native
-            || self.inner.settings_error.is_some()
-            || self.busy()
-            || integration["running"] != true
-            || integration["config"]["document"]["provider"] != "assetto-corsa-rally"
-            || integration["config"]["connection"]["source"] != "shared-memory"
-            || !(integration["feedbackFresh"] == true || integration["telemetry"]["fresh"] == true)
-        {
-            return;
-        }
-        if self
-            .inner
-            .states
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get("assetto-corsa-rally")
-            .is_some_and(|s| s["verified"] == true)
-        {
-            return;
-        }
-        if self.inner.saved.lock().unwrap_or_else(|p| p.into_inner())["games"]
-            ["assetto-corsa-rally"]["connection"]["source"]
-            != "shared-memory"
-        {
-            return;
-        }
-        let mut attempted = self
-            .inner
-            .auto_attempt
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if attempted.is_some_and(|last| last.elapsed() < std::time::Duration::from_secs(10)) {
-            return;
-        }
-        if let Some(game) = catalogue.iter().find(|g| g["id"] == "assetto-corsa-rally") {
-            *attempted = Some(std::time::Instant::now());
-            let _ = self.begin_acr(&json!({}), game, platform, false);
-        }
-    }
-    pub(crate) fn preflight(&self, profile: &Value, game: &Value) -> Result<(), String> {
-        let result = self.preflight_checked(profile, game);
-        if result.is_err() {
-            let status = self.inner.inspect(game, None);
-            self.inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(game["id"].as_str().unwrap_or("").into(), status);
-        }
-        result
-    }
-    fn preflight_checked(&self, profile: &Value, game: &Value) -> Result<(), String> {
-        if !self.inner.native || profile["integration"].is_null() {
-            return Ok(());
-        }
-        if profile["gameId"]
-            .as_str()
-            .is_some_and(|g| g.starts_with("x-plane-"))
-        {
-            let id = profile["gameId"].as_str().unwrap();
-            let saved =
-                self.inner.saved.lock().unwrap_or_else(|p| p.into_inner())["games"][id].clone();
-            validate_connection(id, &saved["connection"])
-                .map_err(|_| "Set up X-Plane telemetry before activation.")?;
-            if saved["executable"] != game["executable"] {
-                return Err("The selected X-Plane installation changed. Set up telemetry for this installation.".into());
-            }
-            validate_connection(id, &profile["integration"]["connection"])?;
-        }
-        if profile["gameId"] == "dcs" {
-            let catalogue = profile["integration"]["connection"]["cataloguePath"]
-                .as_str()
-                .ok_or("Choose a DCS catalogue.")?;
-            let path = Path::new(catalogue);
-            let target = path
-                .ancestors()
-                .nth(4)
-                .ok_or("Set up DCS-BIOS in the selected Saved Games folder.")?;
-            reject_game_install_folder(target, game)?;
-            let inspected = crate::dcs_setup::inspect(target)?;
-            let expected = inspected["cataloguePath"]
-                .as_str()
-                .ok_or("DCS catalogue is unavailable.")?;
-            if fs::canonicalize(path).map_err(|e| e.to_string())?
-                != fs::canonicalize(expected).map_err(|e| e.to_string())?
-            {
-                return Err("The profile catalogue does not belong to the configured DCS-BIOS module. Review its connection settings.".into());
-            }
-            if inspected["moduleReady"] != true
-                || inspected["loaderReady"] != true
-                || self.pending()
-            {
-                return Err("DCS integration setup needs attention. Recheck or repair it before activating this profile.".into());
-            }
-            compatible_dcs_connection(&profile["integration"]["connection"])?;
-        }
-        if profile["gameId"] == "assetto-corsa-rally"
-            && profile["integration"]["connection"]["source"] == "shared-memory"
-        {
-            let saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner())["games"]
-                ["assetto-corsa-rally"]
-                .clone();
-            validate_connection("assetto-corsa-rally", &saved["connection"])
-                .map_err(|_| "Set up ACR telemetry before activating its native integration.")?;
-            if let Some(issue) = saved["verificationIssue"].as_str() {
-                return Err(format!("ACR integration needs attention: {issue}"));
-            }
-            let executable = game["executable"]
-                .as_str()
-                .ok_or("Choose the ACR executable.")?;
-            let current = crate::acr_setup::fingerprint(Path::new(executable))?;
-            if saved["configuredFingerprint"] != current {
-                return Err("The ACR executable changed. Set up telemetry again before activating its native integration.".into());
-            }
-            // The first launch must be possible before live shared memory exists.
-            // Native data still needs the normal source/session/freshness qualification.
-        }
-        Ok(())
-    }
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
@@ -862,7 +684,7 @@ impl Inner {
             return json!({"state":"needs-attention","message":error,"settingsError":true,"recoveryNeeded":crate::dcs_setup::recovery_pending(&self.work)});
         }
         if !self.native {
-            return json!({"state":"unsupported-platform","message":"Native game integration setup requires Windows. Profile editing and synthetic telemetry remain available."});
+            return json!({"state":"unsupported-platform","message":"Native game integration setup requires Windows. Profile editing and installation metadata remain available."});
         }
         if game["installed"] != true {
             return json!({"state":"not-installed","message":"Find the game installation first."});

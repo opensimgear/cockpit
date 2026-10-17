@@ -123,19 +123,28 @@ class FeedbackAcceptanceTests(unittest.TestCase):
         self.assertEqual({item['refId'] for page in document['ui']['pages'] for item in page['items'] if item['kind'] == 'feedback'}, {output['id'] for output in outputs})
         self.assertEqual(bounded, acceptance.bounded_text_publication(PUBLICATION))
 
-    def test_source_only_configs_have_no_device_roles_outputs_or_input_commands(self):
-        for config in [acceptance.synthetic_config(), acceptance.dcs_config(5010, 7778)]:
-            document = config['document']
-            self.assertEqual(document['schemaVersion'], 2)
-            self.assertEqual(document['roles'], [])
-            self.assertEqual(document['inputs'], [])
-            self.assertEqual(document['outputs'], [])
-            self.assertEqual(config['assignments'], [])
-            self.assertGreater(len(document['feedbackOutputs']), 0)
-        frame = acceptance.synthetic_frame(99, 6300)
-        self.assertEqual(struct.unpack_from('<I', bytes(frame['physics']), 0)[0], 99)
-        self.assertEqual(struct.unpack_from('<i', bytes(frame['physics']), 20)[0], 6300)
+    def test_applied_feedback_profile_has_exact_ports_explicit_constant_nodes_and_no_provider_config(self):
+        path=Path(__file__).with_name('test_companion_mapping_acceptance.py')
+        spec=importlib.util.spec_from_file_location('profile_acceptance_fixtures',path)
+        support=importlib.util.module_from_spec(spec);spec.loader.exec_module(support)
+        service=support.FixtureService([('peer-a',PUBLICATION),('peer-b',PUBLICATION)])
+        document,assignments,_=acceptance.feedback_profile(service,[('peer-a',PUBLICATION),('peer-b',PUBLICATION)])
+        self.assertEqual(document['schemaVersion'],2)
+        self.assertEqual(len(document['resources']),2)
+        self.assertTrue(all(len(row['ports'])==8 for row in document['resources']))
+        self.assertTrue(all(node['operation']['kind'] in ['identity','constant'] for node in document['processingNodes']))
+        self.assertEqual(document['virtualOutputs'],[])
+        for forbidden in ['integrationConfig','provider','baselineToken','ownershipToken','connection']:
+            self.assertNotIn(forbidden,json.dumps(document))
+        bounded=acceptance.bounded_text_publication(PUBLICATION)
+        service=support.FixtureService([('peer-a',bounded)])
+        large,local,_=acceptance.feedback_profile(service,[('peer-a',bounded)],large=True)
+        self.assertEqual(len(large['resources'][0]['ports']),64)
+        self.assertEqual(len(large['bindings']),64)
+        self.assertEqual(len(local[0]['ports']),64)
+        self.assertEqual(len(large['processingNodes']),1)
+        self.assertEqual(len(large['processingNodes'][0]['operation']['value']),256)
+        self.assertTrue(all(pin['expectedContractHash']=='sha256:'+'a'*64 for pin in local[0]['ports']))
 
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__=='__main__':unittest.main()

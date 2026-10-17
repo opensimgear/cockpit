@@ -77,22 +77,6 @@ fn revision(id: &str) -> bool {
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     })
 }
-pub(crate) fn guard_public_provider_request(command: &str) -> Result<(), String> {
-    if (command.starts_with("dcs_") || command.starts_with("integration_"))
-        && !matches!(
-            command,
-            "dcs_status"
-                | "dcs_catalogue"
-                | "dcs_stop"
-                | "integration_get_state"
-                | "integration_catalogue"
-                | "integration_stop"
-        )
-    {
-        return Err("Provider setup belongs to game details, and simulator bindings belong to the unified profile graph. Integration execution requires its applied profile and matching verified game context.".into());
-    }
-    Ok(())
-}
 impl Broker {
     /// Called only by the native applied-profile coordinator, never from IPC.
     pub(crate) fn set_owner(&mut self, owner: Option<ProfileOwner>) -> Result<(), String> {
@@ -197,11 +181,20 @@ impl Broker {
     }
     /// A late reader/preflight failure only retires its own still-current
     /// proof. A replacement observation or owner must retain its capability.
-    pub(crate) fn invalidate_preparation(&mut self, proof:&GamePreparation, reason:String)->bool {
-        if self.games.get(&proof.game_id).and_then(|record|record.preparation.as_ref())!=Some(proof) {
+    pub(crate) fn invalidate_preparation(
+        &mut self,
+        proof: &GamePreparation,
+        reason: String,
+    ) -> bool {
+        if self
+            .games
+            .get(&proof.game_id)
+            .and_then(|record| record.preparation.as_ref())
+            != Some(proof)
+        {
             return false;
         }
-        self.invalidate(&proof.game_id,reason);
+        self.invalidate(&proof.game_id, reason);
         true
     }
     fn mint(
@@ -328,20 +321,26 @@ mod tests {
     }
     #[test]
     fn late_preparation_failure_cannot_revoke_replacement_owner_but_current_failure_does() {
-        let mut broker=Broker::default();broker.observe("dcs",observed()).unwrap();
-        let old=broker.preparation("dcs").unwrap().unwrap();
-        let mut replacement=observed();replacement.process.as_mut().unwrap().epoch+=1;
-        broker.observe("dcs",replacement).unwrap();
-        let current=broker.preparation("dcs").unwrap().unwrap();
-        let mut next=owner(Some("dcs"));next.run_generation+=1;broker.set_owner(Some(next)).unwrap();
-        let token=broker.token("dcs").unwrap();
-        assert!(!broker.invalidate_preparation(&old,"Old preflight failed".into()));
+        let mut broker = Broker::default();
+        broker.observe("dcs", observed()).unwrap();
+        let old = broker.preparation("dcs").unwrap().unwrap();
+        let mut replacement = observed();
+        replacement.process.as_mut().unwrap().epoch += 1;
+        broker.observe("dcs", replacement).unwrap();
+        let current = broker.preparation("dcs").unwrap().unwrap();
+        let mut next = owner(Some("dcs"));
+        next.run_generation += 1;
+        broker.set_owner(Some(next)).unwrap();
+        let token = broker.token("dcs").unwrap();
+        assert!(!broker.invalidate_preparation(&old, "Old preflight failed".into()));
         assert!(broker.validate(&token).is_ok());
-        let mut forged=current.clone();forged.provider_setup_revision=format!("sha256:{}","f".repeat(64));
-        assert!(!broker.invalidate_preparation(&forged,"Wrong setup".into()));
+        let mut forged = current.clone();
+        forged.provider_setup_revision = format!("sha256:{}", "f".repeat(64));
+        assert!(!broker.invalidate_preparation(&forged, "Wrong setup".into()));
         assert!(broker.validate(&token).is_ok());
-        assert!(broker.invalidate_preparation(&current,"Current process inspection failed".into()));
-        assert!(broker.validate(&token).is_err());assert!(broker.preparation("dcs").unwrap().is_none());
+        assert!(broker.invalidate_preparation(&current, "Current process inspection failed".into()));
+        assert!(broker.validate(&token).is_err());
+        assert!(broker.preparation("dcs").unwrap().is_none());
     }
     #[test]
     fn closed_wrong_and_unapplied_game_contexts_cannot_mint_capabilities() {
@@ -450,31 +449,5 @@ mod tests {
         assert_eq!(broker.view("dcs")["processVerified"], false);
         broker.observe("dcs", observed()).unwrap();
         assert!(broker.validate(&token).is_err());
-    }
-    #[test]
-    fn public_provider_paths_allow_inspection_and_stop_but_never_start_or_edit() {
-        for command in [
-            "dcs_status",
-            "dcs_catalogue",
-            "dcs_stop",
-            "integration_get_state",
-            "integration_catalogue",
-            "integration_stop",
-            "game_get_state",
-        ] {
-            assert!(guard_public_provider_request(command).is_ok(), "{command}");
-        }
-        for command in [
-            "dcs_start",
-            "dcs_configure",
-            "integration_start",
-            "integration_save",
-            "integration_validate",
-            "integration_override",
-            "integration_simulate",
-            "integration_reset",
-        ] {
-            assert!(guard_public_provider_request(command).is_err(), "{command}");
-        }
     }
 }

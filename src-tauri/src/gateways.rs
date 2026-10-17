@@ -28,6 +28,8 @@ mod automatic;
 mod companion_authoring;
 #[path = "profile_companion_retention.rs"]
 mod companion_retention;
+#[path = "profile_retired_game_io.rs"]
+mod retired_game_io;
 
 trait Adapter: Send + Sync {
     fn output_activity(&self)->bool{false}
@@ -119,10 +121,10 @@ fn empty_state() -> Value {
 }
 fn profile_guard_operation(command: &str) -> Option<&str> {
     if command=="profile_companion_references" { return None; }
+    if command=="profile_retired_recovery_status" { return None; }
+    if command.starts_with("profile_retired_recovery_") { return Some("claim"); }
     if matches!(command,
-        "mapping_profiles" | "mapping_get" | "mapping_export" | "mapping_status" | "mapping_targets_get" | "mapping_assignments_get" | "mapping_trace_export" | "mapping_script_validate"
-        | "mapping_panel_sources" | "mapping_panel_inspect" | "mapping_companion_sources" | "mapping_companion_inspect" | "mapping_virtual_inspect"
-        | "companion_status" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
+        "companion_status" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_integration_settings_save"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
@@ -133,13 +135,11 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 /// catalogue and editor reads must not keep cancelling the native learner.
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
-    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove");}
-    if command=="mapping_companion_route"{return !matches!(request["companion"]["action"].as_str(),Some("inspect"|"recording"));}
-    if command=="companion_feedback_routes"{return request["companion"]["action"]!="inspect";}
-    if command.starts_with("mapping_")||command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
+    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
+    if command.starts_with("mapping_") || command=="companion_feedback_routes" { return false; }
+    if command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
         return !matches!(command,
-            "mapping_profiles"|"mapping_get"|"mapping_export"|"mapping_status"|"mapping_targets_get"|"mapping_assignments_get"|"mapping_trace_export"|"mapping_script_validate"|"mapping_panel_sources"|"mapping_panel_inspect"|"mapping_companion_sources"|"mapping_companion_inspect"|"mapping_virtual_inspect"|"mapping_recording"
-            |"module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
+            "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
             |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"companion_status"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate");
     }
@@ -173,16 +173,11 @@ pub struct GatewayManager {
     configuration_gate: Arc<Mutex<()>>,
     profile_panels: Arc<ProfilePanelIo>,
     closed: Arc<AtomicBool>,
-    integration_gate: Arc<Mutex<()>>,
-    dcs: Arc<crate::dcs_runtime::DcsRuntime>,
-    integration: Arc<crate::integration_runtime::IntegrationRuntime>,
     games: Arc<crate::games::GamesRuntime>,
     game_admission: RwLock<()>,
     controllers: Arc<osg_controller_input::ControllerService>,
-    mapping_host: Arc<osg_mapping_host::service::Service>,
-    mapping_documents: osg_mapping::documents::Documents,
+    retired_recovery: Arc<crate::profile_retired_recovery::Recovery>,
     companion_host: Arc<crate::companion_host::Runtime>,
-    companion_feedback: Arc<crate::companion_host::feedback::Runtime>,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -209,30 +204,20 @@ impl GatewayManager {
     }
     fn with_options(provider: Arc<dyn Provider>, native: bool) -> Self {
         let controllers = Arc::new(osg_controller_input::ControllerService::new(
-            native.then(|| crate::dcs_runtime::config_path().with_file_name("controllers.json")),
+            native.then(|| crate::config_paths::config_path().with_file_name("controllers.json")),
             native,
         ));
-        let root = native.then(|| crate::dcs_runtime::config_path().with_file_name("mappings"));
-        let mapping_documents = osg_mapping::documents::Documents::new(root.clone());
-        let mapping_host = Arc::new(osg_mapping_host::service::Service::new(
-            controllers.clone(),
-            root,
-            Arc::new(osg_virtual_controller::inspection::current),
-        ));
+        let root = native.then(|| crate::config_paths::config_path().with_file_name("mappings"));
+        let retired_recovery = Arc::new(crate::profile_retired_recovery::Recovery::new(root.clone(), native));
         let companion_clock = controllers.clone();
         let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::new(
             Arc::new(move || companion_clock.stream_page("", 0).captured_us),
         ));
-        mapping_host.set_companion_provider(companion_provider.clone());
         let companion_host = Arc::new(crate::companion_host::Runtime::new(
-            native.then(|| crate::dcs_runtime::config_path().with_file_name("companions")),
+            native.then(|| crate::config_paths::config_path().with_file_name("companions")),
             companion_provider.clone(),
         ));
         if native { companion_host.start_detection(); }
-        let companion_blueprints = companion_host.clone();
-        mapping_host.set_companion_blueprint_provider(Arc::new(move |instance_id| {
-            companion_blueprints.assigned_publication(instance_id)
-        }));
         let sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let targets = sessions.clone();
@@ -247,120 +232,17 @@ impl GatewayManager {
                 |adapter| adapter.request(request),
             )
         });
-        let integration_gate = Arc::new(Mutex::new(()));
-        let dcs = Arc::new(crate::dcs_runtime::DcsRuntime::new(
-            panel.clone(),
-            crate::dcs_runtime::config_path(),
-        ));
-        let integration = Arc::new(crate::integration_runtime::IntegrationRuntime::new(
-            panel.clone(),
-            crate::dcs_runtime::config_path().with_file_name("integration.json"),
-        ));
-        let feedback_host = companion_host.clone();
-        let feedback_source = integration.clone();
-        let feedback_output = mapping_host.clone();
-        let companion_feedback = Arc::new(crate::companion_host::feedback::Runtime::new(
-            native.then(|| {
-                crate::dcs_runtime::config_path()
-                    .with_file_name("companions")
-                    .join("feedback-routes.json")
-            }),
-            Arc::new(move || feedback_host.hub()),
-            Arc::new(move || feedback_source.feedback_snapshot()),
-            Arc::new(move |id| feedback_output.companion_submission(id)),
-        ));
-        let game_companions = companion_host.clone();
-        let game_feedback = companion_feedback.clone();
-        let game_dcs = dcs.clone();
-        let game_integration = integration.clone();
-        let game_gate = integration_gate.clone();
-        let game_mapping = mapping_host.clone();
-        let game_panel = Arc::new(move |request: Value| {
-            let command = request["command"].as_str().unwrap_or("");
-            if command.starts_with("_game_mapping_") {
-                let journal = &request["mapping"];
-                let result = match command {
-                    "_game_mapping_snapshot" => game_mapping.game_snapshot(&request["capture"]),
-                    "_game_mapping_take" => game_mapping.game_take(journal).map(|_| json!({})),
-                    "_game_mapping_arm" => game_mapping.game_arm(journal).map(|_| json!({})),
-                    "_game_mapping_stop" => game_mapping.game_stop(journal).map(|_| json!({})),
-                    "_game_mapping_abandon" => {
-                        game_mapping.game_abandon(journal);
-                        Ok(json!({}))
-                    }
-                    "_game_mapping_resume" => game_mapping
-                        .game_resume(journal, request["recovery"] == true)
-                        .map(|_| json!({})),
-                    _ => Err("Unknown game mapping operation.".into()),
-                };
-                match result {
-                    Ok(state) => json!({"ok":true,"state":state}),
-                    Err(error) => json!({"ok":false,"error":error}),
-                }
-            } else if command.starts_with("_game_companion_") {
-                let result = (|| {
-                    if command == "_game_companion_snapshot" || command == "_game_companion_take" {
-                        let desired = if command == "_game_companion_snapshot" {
-                            &request["capture"]
-                        } else {
-                            &request["companions"]["desired"]
-                        };
-                        game_feedback.preflight_assignments(desired)?;
-                        let capture = crate::game_mapping::companions::Capture::parse(desired)?;
-                        for a in capture.assignments {
-                            game_mapping.companion_assignment_available(&a.instance_id)?;
-                        }
-                    }
-                    game_companions.game_command(command, &request)
-                })();
-                match result {
-                    Ok(state) => json!({"ok":true,"state":state}),
-                    Err(error) => json!({"ok":false,"error":error}),
-                }
-            } else if command.starts_with("integration_") || command.starts_with("dcs_") {
-                let _guard = game_gate.lock().unwrap_or_else(|p| p.into_inner());
-                if matches!(command, "integration_start" | "dcs_start") {
-                    return json!({"ok":false,"error":"A retired game integration cannot restart independently. Apply a unified profile with its matching verified game context.","state":{"integration":game_integration.status(),"dcsBios":game_dcs.status()}});
-                }
-                let result = if command.starts_with("integration_") {
-                    if command == "integration_start" && game_dcs.status()["running"] == true {
-                        Err("Stop DCS-BIOS before starting another integration.".into())
-                    } else {
-                        (|| {
-                            if command == "integration_preflight" {
-                                let config = crate::integration_profile::validate(
-                                    &request["integrationConfig"],
-                                )?;
-                                game_feedback.preflight_integration(
-                                    &request["gameCompanions"],
-                                    &crate::integration_runtime::feedback_revision(&config),
-                                )?;
-                            }
-                            game_integration.request(&request)
-                        })()
-                    }
-                } else if command == "dcs_start" && game_integration.running() {
-                    Err("Stop the active integration before starting DCS-BIOS.".into())
-                } else {
-                    game_dcs.request(&request)
-                };
-                let mut response = json!({"ok":result.is_ok(),"state":{
-                    "integration":game_integration.status(),"dcsBios":game_dcs.status()}});
-                if let Err(error) = result {
-                    response["error"] = json!(error);
-                }
-                response
-            } else {
-                panel(request)
-            }
-        });
-        let games = Arc::new(crate::games::GamesRuntime::new(
-            game_panel,
-            std::env::var_os("OSG_GAMES_CONFIG")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| crate::dcs_runtime::config_path().with_file_name("games.json")),
-            Arc::new(crate::game_discovery::NativePlatform),
-        ));
+        let game_panel = retired_game_io::panel(panel, retired_recovery.clone(), controllers.clone(), companion_host.clone());
+        let anchor = crate::config_paths::config_path();
+        let mut game_paths = crate::games::Paths::in_directory(anchor.parent().unwrap_or_else(|| std::path::Path::new(".")));
+        // Only locate separately retained setup/recovery evidence at an explicit
+        // old anchor. The obsolete game-profile configuration is never opened.
+        if let Some(retained_anchor) = std::env::var_os("OSG_GAMES_CONFIG") {
+            let retained_anchor = std::path::PathBuf::from(retained_anchor);
+            game_paths.provider_setup = retained_anchor.with_extension("integration-setup.json");
+            game_paths.recovery = retained_anchor.with_extension("recovery.json");
+        }
+        let games = Arc::new(crate::games::GamesRuntime::new(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform)));
         let resource_sessions = sessions.clone();
         let resource_requests = sessions.clone();
         let resource_ports = provider.clone();
@@ -377,12 +259,12 @@ impl GatewayManager {
             }),
             module_usb.clone(), native,
         );
-        let profile_resources = Arc::new(crate::profile_resources::Runtime::new(native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-resources-v1")), collect, native));
+        let profile_resources = Arc::new(crate::profile_resources::Runtime::new(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, native));
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
         let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone()),
-            native.then(|| crate::dcs_runtime::config_path().with_file_name("profile-session-v1.json")),
+            native.then(|| crate::config_paths::config_path().with_file_name("profile-session-v1.json")),
         )));
         let prepare_resources = profile_resources.clone();
         let prepare_games = games.clone();
@@ -422,10 +304,10 @@ impl GatewayManager {
             profile_learning,
             profile_closed,
             profile_worker: Mutex::new(profile_worker),
-            profile_automatic: automatic::Runtime::new(native.then(||crate::dcs_runtime::config_path().with_file_name("profiles-activation-v1.json"))),
+            profile_automatic: automatic::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("profiles-activation-v1.json"))),
             profile_automatic_worker: Mutex::new(None),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
-                crate::dcs_runtime::config_path().with_file_name("profiles-v2")
+                crate::config_paths::config_path().with_file_name("profiles-v2")
             }))),
             provider,
             sessions,
@@ -433,47 +315,14 @@ impl GatewayManager {
             configuration_gate,
             profile_panels,
             closed,
-            integration_gate,
-            dcs,
-            integration,
             games,
             game_admission: RwLock::new(()),
             controllers,
-            mapping_host,
-            mapping_documents,
+            retired_recovery,
             companion_host,
-            companion_feedback,
         };
-        manager.attach_panel_capture();
         manager.restore_automatic_selection();
         manager
-    }
-    fn attach_panel_capture(&self) {
-        let sessions = self.sessions.clone();
-        let inventory = sessions.clone();
-        self.mapping_host
-            .set_panel_provider(Arc::new(crate::mapping_panels::Provider {
-                panel: Arc::new(move |request: Value| {
-                    let adapter = sessions
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .get(request["gatewayId"].as_str().unwrap_or(""))
-                        .cloned();
-                    adapter.map_or_else(
-                        || json!({"ok":false,"error":"Connect the assigned gateway first."}),
-                        |adapter| adapter.request(request),
-                    )
-                }),
-                gateways: Arc::new(move || {
-                    inventory
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .keys()
-                        .cloned()
-                        .collect()
-                }),
-                clock: self.controllers.clone(),
-            }));
     }
     fn decorate_profile_session(&self, response: &mut Value) {
         let status = serde_json::to_value(self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).status()).unwrap();
@@ -518,6 +367,7 @@ impl GatewayManager {
                             || self.profile_admission_epoch.load(Ordering::Acquire) != admission_epoch {
                             return Err("Profile Apply was cancelled by Stop, Pause, recovery or a newer activation. Apply again explicitly.".into());
                         }
+                        self.guard_retired_recovery()?;
                         let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
                         let (document, assignments, read_only) = profiles.compile_source(id)?;
                         let saved = crate::profile_session::Candidate {
@@ -546,11 +396,23 @@ impl GatewayManager {
         self.profiles.lock().unwrap_or_else(|p|p.into_inner()).request(&json!({"command":"profile_selection_mode","mode":"manual"}))?;
         Ok(())
     }
+    fn guard_retired_recovery(&self)->Result<(),String>{
+        self.retired_recovery.guard_clear()?;
+        self.games.guard_profile_takeover()
+    }
+    fn retired_recovery_request(&self,request:&Value)->Result<Value,String>{
+        if request["command"]!="profile_retired_recovery_status"{
+            self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("claim")?;
+        }
+        self.retired_recovery.request(request)
+    }
     fn prepare_profile_at(&self,candidate:&crate::profile_session::Candidate,arrival_epoch:u64)->Result<Arc<crate::profile_session::Stage>,String>{
         let current=||self.profile_admission_epoch.load(Ordering::Acquire)==arrival_epoch;
         if !current(){return Err("Profile preparation was cancelled by a newer native control.".into());}
+        self.guard_retired_recovery()?;
         let prepared=(self.profile_prepare)(candidate);
         if !current(){return Err("Profile preparation was cancelled by a newer native control.".into());}
+        self.guard_retired_recovery()?;
         prepared
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
@@ -588,8 +450,6 @@ impl GatewayManager {
             response["state"]["gatewayId"] = json!(id);
             response["state"]["backend"] = json!(id.split_once(':').unwrap().0);
         }
-        response["state"]["dcsBios"] = self.dcs.status();
-        response["state"]["integration"] = self.integration.status();
         response
     }
     fn error(&self, message: &str, id: Option<&str>) -> Value {
@@ -598,12 +458,11 @@ impl GatewayManager {
     fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
     fn guard_learning(&self)->Result<(),String>{
         if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile Apply or selection control to finish before input learning.".into());}
-        self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("mapping_preview_start")?;
-        self.mapping_host.guard_capture_only()?;
+        self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("claim")?;
+        self.guard_retired_recovery()?;
         let adapters=self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values().cloned().collect::<Vec<_>>();
         let retired=self.retired_output_until.lock().unwrap_or_else(|p|p.into_inner()).is_some_and(|until|until>std::time::Instant::now());
         if retired||adapters.iter().any(|adapter|adapter.output_activity())||self.module_usb.output_activity(){return Err("Wait for independent device output leases and uncertain fallback recovery to finish before input learning.".into());}
-        if self.games.active()||self.integration.running()||self.integration.status()["running"]==true||self.dcs.status()["running"]==true{return Err("Stop active or pending game/integration output before input learning.".into());}
         let visibility=self.controllers.request(&json!({"command":"controller_visibility_status"}))?;
         if self.controllers.visibility_active()||visibility["visibility"]["recovery"]["required"]!=false{return Err("Restore active/pending device visibility and its recovery before input learning.".into());}
         if !self.configuration_claims().is_empty()||!self.module_usb.configuration_claims().is_empty(){return Err("Release independent device configuration ownership before input learning.".into());}
@@ -624,10 +483,14 @@ impl GatewayManager {
         }
     }
     pub fn request(&self, request: Value) -> Value {
+        let command = request["command"].as_str().unwrap_or("");
+        if command.starts_with("mapping_") || command.starts_with("dcs_") || command.starts_with("integration_") || command.starts_with("game_profile_") || matches!(command, "companion_feedback_routes" | "companion_game_capture" | "game_activate" | "game_launch" | "game_deactivate" | "controller_visibility_apply" | "controller_visibility_launch") {
+            return self.error("Independent configuration and starts are retired. Use the unified applied profile graph; provider settings belong in game details. Retained ownership has explicit cleanup controls.", None);
+        }
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
-        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         let _policy=self.profile_automatic.begin_control(request["command"].as_str().unwrap_or(""));
         self.profile_automatic.control(request["command"].as_str().unwrap_or(""));
         let staging = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch"));
@@ -694,13 +557,16 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if command.starts_with("mapping_") || command=="companion_feedback_routes" {
+            return json!({"ok":false,"error":"Independent mapping authoring, starts and companion feedback routes are retired. Use unified Profiles; retained ownership cleanup remains explicit."});
+        }
         if command.starts_with("profile_input_learn_"){return match self.learning_request(&request){Ok(learning)=>json!({"ok":true,"state":{"profileLearning":learning}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};}
         if let Some(operation) = profile_guard_operation(&command) {
             if let Err(error) = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).guard_request(operation) {
                 return self.error(&error, None);
             }
         }
-        if matches!(command.as_str(), "mapping_stop" | "integration_stop" | "dcs_stop" | "controller_visibility_restore") {
+        if matches!(command.as_str(), "integration_stop" | "dcs_stop" | "controller_visibility_restore") {
             if let Err(error) = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop() { return self.error(&error, None); }
         }
         // Hold the ownership check and its actual worker dispatch together.
@@ -790,6 +656,9 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if command.starts_with("profile_retired_recovery_"){
+                return match self.retired_recovery_request(&request){Ok(status)=>json!({"ok":true,"state":{"retiredRecovery":status}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
+            }
             if matches!(command.as_str(),"profile_companion_catalogue"|"profile_companion_inspect"){
                 return match self.companion_authoring_request(&request){Ok(page)=>json!({"ok":true,"state":{"profileCompanionAuthoring":page}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
             }
@@ -821,11 +690,7 @@ impl GatewayManager {
             if let Err(error) = self.games.guard_request(&request) {
                 return json!({"ok":false,"error":error});
             }
-            let result = if command == "companion_feedback_routes" {
-                self.companion_feedback.request(&request["companion"])
-            } else {
-                self.companion_request(&request)
-            };
+            let result = self.companion_request(&request);
             return match result {
                 Ok(state) => json!({"ok":true,"state":{"companions":state}}),
                 Err(error) => {
@@ -834,28 +699,17 @@ impl GatewayManager {
             };
         }
         if command.starts_with("game_") {
-            if let Err(error) = self.games.guard_unified_integration_request(&request) {
-                return self.error(&error, None);
-            }
-            if matches!(command.as_str(), "game_activate" | "game_launch")
-                && (self.mapping_host.provisioning_active() || self.controllers.visibility_active())
-            {
-                return self.error("Restore standalone visibility and finish virtual-controller provisioning before activating a captured game profile.", None);
-            }
             let mut response = match self.games.request(&request) {
                 Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
                 Err(error) => self.error(&error, None),
             };
-            response["state"]["games"] = self.games.status_with_telemetry(
-                &response["state"]["integration"],
-                &response["state"]["dcsBios"],
-            );
+            response["state"]["games"] = self.games.status();
             return response;
         }
         if let Err(error) = self.games.guard_request(&request) {
             if !matches!(
                 command.as_str(),
-                "mapping_provision_cancel"
+                "profile_retired_recovery_provision_cancel"
                     | "controller_visibility_status"
                     | "controller_visibility_inspect"
                     | "controller_visibility_processes"
@@ -863,28 +717,6 @@ impl GatewayManager {
             ) {
                 return self.error(&error, None);
             }
-        }
-        if command.starts_with("mapping_") {
-            // Explicit companion discovery restores saved sources on demand;
-            // ordinary gateway/mapping startup never opens OS credentials.
-            if command == "mapping_companion_sources" {
-                if let Err(error) = self.companion_host.hub() {
-                    return self.error(&error, None);
-                }
-            }
-            // Document responses can use the full profile limit. Keep unrelated
-            // gateway inventory out of this separately bounded response.
-            let result = if osg_mapping_host::service::Service::handles(&command) {
-                self.mapping_host.request(&request)
-            } else {
-                self.mapping_documents.request(&request)
-            };
-            return match result {
-                Ok(state) => json!({"ok":true,"state":{"mappings":state}}),
-                Err(error) => {
-                    json!({"ok":false,"error":error.chars().take(256).collect::<String>()})
-                }
-            };
         }
         if command.starts_with("controller_") {
             return match self.controllers.request(&request) {
@@ -894,40 +726,6 @@ impl GatewayManager {
                     response["state"]["controllers"] = state;
                     response
                 }
-                Err(error) => self.error(&error, None),
-            };
-        }
-        let _integration_guard =
-            if command.starts_with("integration_") || command.starts_with("dcs_") {
-                Some(
-                    self.integration_gate
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner()),
-                )
-            } else {
-                None
-            };
-        if let Err(error) = crate::game_context::guard_public_provider_request(&command) {
-            return self.error(&error, None);
-        }
-        if command.starts_with("integration_") {
-            if command == "integration_start" && self.dcs.status()["running"] == true {
-                return self.error("Stop DCS-BIOS before starting another integration.", None);
-            }
-            return match self.integration.request(&request) {
-                Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
-                Err(error) => self.error(&error, None),
-            };
-        }
-        if command.starts_with("dcs_") {
-            if command == "dcs_start" && self.integration.running() {
-                return self.error(
-                    "Stop the active integration before starting DCS-BIOS.",
-                    None,
-                );
-            }
-            return match self.dcs.request(&request) {
-                Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
                 Err(error) => self.error(&error, None),
             };
         }
@@ -1048,17 +846,7 @@ impl GatewayManager {
         };
         request["gatewayId"] = json!(id);
         request.as_object_mut().unwrap().remove("backend");
-        let bound_led = command == "action_invoke" && self.dcs.bound_led(&request);
-        let mut response = adapter.request(if bound_led {
-            json!({"command":"status","clientId":request["clientId"],"gatewayId":id})
-        } else {
-            request
-        });
-        if bound_led {
-            response["ok"] = json!(false);
-            response["error"] =
-                json!("Stop DCS-BIOS before manually controlling its bound output.");
-        }
+        let mut response = adapter.request(request);
         if response["state"]["connected"] == true {
             let backend = id.split_once(':').unwrap().0;
             if response["state"]["gatewaySerial"]
@@ -1094,14 +882,10 @@ impl GatewayManager {
         self.profile_panels.close();
         self.profile_resources.shutdown();
         self.module_usb.shutdown();
-        self.companion_feedback.stop();
+        self.retired_recovery.shutdown();
         self.companion_host.shutdown();
         self.games.shutdown();
-        self.mapping_host.shutdown();
         self.controllers.shutdown();
-        self.mapping_documents.clear();
-        self.integration.stop(true);
-        self.dcs.shutdown();
         let sessions =
             std::mem::take(&mut *self.sessions.lock().unwrap_or_else(|p| p.into_inner()));
         // Cancellation/release happens concurrently, bounded by each adapter's own deadlines.
@@ -1414,13 +1198,13 @@ mod tests {
         assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["owner"],owner);
         assert_eq!(request(&manager,"profile_apply",None,json!({"id":document["id"],"expectedRevision":2}))["ok"],false);
         assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["owner"],owner);
-        for command in ["module_usb_claim","module_usb_config_apply","module_usb_actions_invoke","action_invoke_owned","config_stage","controller_update","mapping_virtual_start","companion_assign","profile_reset"] {
+        for command in ["module_usb_claim","module_usb_config_apply","module_usb_actions_invoke","action_invoke_owned","config_stage","controller_update","companion_assign","profile_reset"] {
             let blocked=request(&manager,command,None,json!({}));
             assert_eq!(blocked["ok"],false,"{command}");
             assert!(blocked["error"].as_str().unwrap().contains("unified profile session"),"{command}: {blocked}");
         }
         assert_eq!(request(&manager,"controller_list",None,json!({}))["ok"],true);
-        assert_eq!(request(&manager,"mapping_status",None,json!({}))["ok"],true);
+        assert_eq!(request(&manager,"mapping_status",None,json!({}))["ok"],false);
         assert_eq!(request(&manager,"module_usb_list",None,json!({}))["ok"],true);
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
     }
@@ -1549,7 +1333,7 @@ mod tests {
         assert_eq!(request(&manager,"profile_pause",None,json!({"paused":false}))["ok"],true);
         assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["session"]["state"],"stopped");
         assert_eq!(request(&manager,"profile_apply",None,fields)["ok"],true);
-        let _=request(&manager,"mapping_stop",None,json!({}));
+        let _=request(&manager,"profile_stop",None,json!({}));
         let status=request(&manager,"profile_status",None,json!({}));
         assert_eq!(status["state"]["profiles"]["session"]["state"],"stopped");
         assert!(status["state"]["profiles"]["profileSession"]["owner"].is_null());
@@ -1955,175 +1739,80 @@ mod tests {
     }
 
     #[test]
-    fn rejected_gateway_selection_does_not_deadlock_native_dcs_preparation() {
-        let (mut manager, _) = setup();
-        let sessions = manager.sessions.clone();
-        let entered = Arc::new(AtomicBool::new(false));
-        let released = Arc::new(AtomicBool::new(false));
-        let (worker_entered, worker_released) = (entered.clone(), released.clone());
-        let panel = Arc::new(move |request: Value| {
-            // Starting DCS holds its settings lock while preparing the panel.
-            // Pause before its fleet lookup so a rejected request can decorate
-            // its response concurrently with this lookup.
-            worker_entered.store(true, Ordering::Release);
-            while !worker_released.load(Ordering::Acquire) {
-                std::thread::yield_now();
-            }
-            let adapter = sessions.lock().unwrap().get(FIRST).cloned().unwrap();
-            adapter.request(request)
-        });
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.research/milestone2/gateway-lock-tests")
-            .join(uuid::Uuid::new_v4().to_string())
-            .join("profile.json");
-        Arc::get_mut(&mut manager).unwrap().dcs =
-            Arc::new(crate::dcs_runtime::DcsRuntime::new(panel, path.clone()));
-        for id in [FIRST, SECOND] {
-            assert_eq!(
-                request(&manager, "connect", Some(id), json!({}))["ok"],
-                true
-            );
+    fn retired_mapping_and_feedback_commands_have_no_authoring_start_or_worker_dispatch() {
+        let (manager, provider) = setup();
+        for command in ["mapping_profiles","mapping_get","mapping_save","mapping_import_begin","mapping_import_chunk","mapping_import_commit","mapping_export","mapping_assignments_save","mapping_preview_start","mapping_virtual_start","mapping_stop","mapping_status","mapping_panel_sources","mapping_companion_sources","mapping_companion_route","mapping_provision","companion_feedback_routes"] {
+            let reply=request(&manager,command,None,json!({"path":"obsolete","profileId":"obsolete","capture":{"resume":true},"companion":{"action":"start"}}));
+            assert_eq!(reply["ok"],false,"{command}: {reply}");
+            assert!(reply["error"].as_str().unwrap().contains("retired"),"{command}: {reply}");
         }
-        let config = json!({"schemaVersion":1,"cataloguePath":PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios"),"gatewayId":FIRST,"moduleId":"00112233445566778899aabbccddeeff","button":0,"ledActionId":"led.boolean"});
-        // Qualify the retained native adapter's lock behavior directly. Its
-        // retired independent configuration/start IPC is separately rejected.
-        manager
-            .dcs
-            .request(&json!({"command":"dcs_configure","dcsConfig":config}))
-            .unwrap();
-        let (sender, receiver) = mpsc::channel();
-        let pending_manager = manager.clone();
-        let started = sender.clone();
-        let start = std::thread::spawn(move || {
-            let result = pending_manager.dcs.request(&json!({"command":"dcs_start"}));
-            started.send(json!({"ok":result.is_ok()})).unwrap();
-        });
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while !entered.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
-            std::thread::yield_now();
-        }
-        assert!(entered.load(Ordering::Acquire));
-        let pending_manager = manager.clone();
-        let rejected = std::thread::spawn(move || {
-            sender
-                .send(request(&pending_manager, "status", None, json!({})))
-                .unwrap();
-        });
-        // The rejected request must wait for DCS status, but must not retain the
-        // fleet lock that DCS preparation needs. Both finish once it resumes.
-        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
-        released.store(true, Ordering::Release);
-        for _ in 0..2 {
-            assert_eq!(
-                receiver.recv_timeout(Duration::from_secs(1)).unwrap()["ok"],
-                false
-            );
-        }
-        start.join().unwrap();
-        rejected.join().unwrap();
-        manager.shutdown();
-        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
-    }
-
-    #[test]
-    fn full_size_mapping_document_uses_bounded_upload_and_no_device_adapter() {
-        let (mut manager, provider) = setup();
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../.research/mapping-transport-tests")
-            .join(uuid::Uuid::new_v4().to_string());
-        Arc::get_mut(&mut manager).unwrap().mapping_documents =
-            osg_mapping::documents::Documents::new(Some(path.clone()));
-        let mut bytes =
-            include_bytes!("../../crates/mapping/fixtures/direct-profile.json").to_vec();
-        bytes.resize(65_536, b' ');
-        let begin = request(
-            &manager,
-            "mapping_import_begin",
-            None,
-            json!({"size":bytes.len()}),
-        );
-        assert_eq!(begin["ok"], true);
-        let id = begin["state"]["mappings"]["uploadId"].clone();
-        for (index, chunk) in bytes.chunks(8192).enumerate() {
-            let payload = json!({"uploadId":id,"offset":index * 8192,"bytes":chunk});
-            assert!(payload.to_string().len() < 65_000);
-            assert_eq!(
-                request(&manager, "mapping_import_chunk", None, payload)["ok"],
-                true
-            );
-        }
-        let committed = request(
-            &manager,
-            "mapping_import_commit",
-            None,
-            json!({"uploadId":id}),
-        );
-        assert_eq!(committed["ok"], true, "{committed}");
-        assert!(committed.to_string().len() < 66_560);
-        let document = &committed["state"]["mappings"]["document"];
-        assert!(document.is_object());
-        let exported = request(
-            &manager,
-            "mapping_export",
-            None,
-            json!({"profileId":document["id"]}),
-        );
-        assert_eq!(&exported["state"]["mappings"]["document"], document);
-        assert_eq!(
-            request(
-                &manager,
-                "mapping_import_begin",
-                None,
-                json!({"size":65_537})
-            )["ok"],
-            false
-        );
         assert!(provider.adapters.lock().unwrap().is_empty());
         assert!(manager.sessions.lock().unwrap().is_empty());
-        manager.shutdown();
-        assert_eq!(
-            request(&manager, "mapping_profiles", None, json!({"offset":0}))["ok"],
-            false
-        );
-        std::fs::remove_dir_all(path).unwrap();
+        assert_eq!(request(&manager,"profile_list",None,json!({}))["ok"],true);
+        assert_eq!(request(&manager,"profile_retired_recovery_status",None,json!({}))["ok"],true);
     }
     #[test]
-    fn independent_provider_mutations_cannot_bypass_profile_context_with_forged_browser_fields() {
+    fn retained_ownership_blocks_apply_learning_and_ambiguous_cleanup_without_loading_old_configuration() {
         let (manager, provider) = setup();
-        for command in [
-            "dcs_configure",
-            "dcs_start",
-            "integration_save",
-            "integration_validate",
-            "integration_start",
-            "integration_override",
-            "integration_simulate",
-        ] {
-            let reply = request(
-                &manager,
-                command,
-                None,
-                json!({"contextSession":"forged","profileOwner":{"session":"browser"},"processIdentity":{"pid":1,"epoch":1,"path":"DCS.exe"}}),
-            );
-            assert_eq!(reply["ok"], false, "{command}");
-            assert!(
-                reply["error"].as_str().unwrap().contains("applied profile"),
-                "{command}: {reply}"
-            );
-            assert_eq!(reply["state"]["integration"]["running"], false);
-            assert_eq!(reply["state"]["dcsBios"]["running"], false);
-        }
+        let mut manager=Arc::try_unwrap(manager).ok().unwrap();
+        let root=tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("output-recovery.json"),b"malformed retained owner").unwrap();
+        std::fs::write(root.path().join("local-settings.json"),b"obsolete config").unwrap();
+        manager.retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().into()),false));
+        let status=request(&manager,"profile_retired_recovery_status",None,json!({}));
+        assert_eq!(status["state"]["retiredRecovery"]["required"],true);
+        let reply=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+        assert_eq!(reply["ok"],false);assert!(reply["error"].as_str().unwrap().contains("retained"));
+        assert!(manager.guard_learning().unwrap_err().contains("retained"));
+        assert_eq!(request(&manager,"profile_retired_recovery_acknowledge",None,json!({"reference":null}))["ok"],false);
+        assert_eq!(std::fs::read(root.path().join("output-recovery.json")).unwrap(),b"malformed retained owner");
         assert!(provider.adapters.lock().unwrap().is_empty());
-        assert_eq!(
-            request(&manager, "integration_get_state", None, json!({}))["ok"],
-            true
-        );
-        assert_eq!(
-            request(&manager, "integration_stop", None, json!({}))["ok"],
-            true
-        );
+        assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
+    }
+    #[test]
+    fn retained_ownership_appearing_during_slow_preparation_blocks_transition_without_driver_calls() {
+        let (mut manager,provider)=setup();
+        let root=tempfile::tempdir().unwrap();
+        Arc::get_mut(&mut manager).unwrap().retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().canonicalize().unwrap()),false));
+        let prepare=manager.profile_prepare.clone();
+        let gate=Arc::new(std::sync::Barrier::new(2));let blocked=gate.clone();
+        let (entered,saw_entered)=mpsc::sync_channel(0);
+        Arc::get_mut(&mut manager).unwrap().profile_prepare=Arc::new(move|candidate|{
+            let stage=prepare(candidate)?;entered.send(()).unwrap();blocked.wait();Ok(stage)
+        });
+        let applying=manager.clone();
+        let pending=std::thread::spawn(move||request(&applying,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1})));
+        saw_entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        let admission=manager.profile_admission.write().unwrap();
+        gate.wait();
+        let path=root.path().join("output-recovery.json");
+        std::fs::write(&path,b"interrupted legacy owner").unwrap();
+        drop(admission);
+        let reply=pending.join().unwrap();assert_eq!(reply["ok"],false,"{reply}");
+        assert!(reply["error"].as_str().unwrap().contains("retained"));
+        assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        assert_eq!(std::fs::read(path).unwrap(),b"interrupted legacy owner");
+    }
+    #[test]
+    fn retired_provider_commands_cannot_cancel_or_reconfigure_a_unified_run() {
+        let (manager, provider) = setup();
+        assert_eq!(request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}))["ok"],true);
+        let before = request(&manager,"profile_status",None,json!({}));
+        let epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+        for command in ["dcs_status","dcs_catalogue","dcs_configure","dcs_start","dcs_stop","integration_get_state","integration_catalogue","integration_save","integration_start","integration_stop","integration_simulate","mapping_stop","game_profile_save","game_activate","game_launch","game_deactivate","companion_feedback_routes","companion_game_capture","controller_visibility_apply","controller_visibility_launch"] {
+            let reply=request(&manager,command,None,json!({"contextSession":"forged","profileOwner":{"session":"browser"},"processIdentity":{"pid":1,"epoch":1,"path":"DCS.exe"}}));
+            assert_eq!(reply["ok"],false,"{command}: {reply}");
+            assert!(reply["error"].as_str().unwrap().contains("retired"),"{reply}");
+            assert!(reply["state"].get("dcsBios").is_none());
+            assert!(reply["state"].get("integration").is_none());
+        }
+        assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"],before["state"]["profiles"]["profileSession"]);
+        assert!(provider.adapters.lock().unwrap().is_empty());
         manager.shutdown();
     }
+
     #[test]
     fn shutdown_during_discovery_cannot_create_a_late_adapter() {
         struct SuspendedDiscovery {

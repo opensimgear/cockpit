@@ -651,7 +651,7 @@ impl Host for NativeProfileHost {
                     if !native || !osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED {
                         return Err(osg_mapping_host::service::QUALIFICATION.into());
                     }
-                    let path = crate::dcs_runtime::config_path()
+                    let path = crate::config_paths::config_path()
                         .with_file_name(crate::profile_session_virtual::journal_name(&run.owner)?);
                     state.output = Some(
                         osg_virtual_controller::session::Session::start_with_journal(

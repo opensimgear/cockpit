@@ -72,9 +72,15 @@ impl Fixture {
             Arc::new(
                 |_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}}),
             ),
-            directory.path().join("games.json"),
-            process.clone(),
-        ));
+            {
+                let fixture_metadata_path = directory.path().join("games.json");
+                crate::games::Paths {
+                    installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                    provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                    recovery: fixture_metadata_path.with_extension("recovery.json"),
+                }
+            },
+            process.clone()));
         let revision = games.resource_catalogue()[0]["integrationSetup"]["providerSetupRevision"]
             .as_str()
             .unwrap()

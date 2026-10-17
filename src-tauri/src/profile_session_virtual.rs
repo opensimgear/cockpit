@@ -57,7 +57,7 @@ pub(crate) fn journal_name(owner: &crate::profile_session::RunOwner) -> Result<S
     ))
 }
 pub(crate) fn recover(owner: &crate::profile_session::RunOwner) -> Result<(), String> {
-    let path = crate::dcs_runtime::config_path().with_file_name(journal_name(owner)?);
+    let path = crate::config_paths::config_path().with_file_name(journal_name(owner)?);
     let store = osg_virtual_controller::output_journal::Store::open(path.clone())?;
     if store
         .record()

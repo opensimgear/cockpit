@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real isolated Gateway -> WSS peers -> companion recording routes. No virtual output."""
+"""Exercise real WSS peers through one applied unified profile. No virtual output."""
 import argparse
 import base64
 import hashlib
@@ -17,8 +17,8 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("mapping_acceptance", ROOT / "scripts/mapping-acceptance.py")
+ROOT = Path(os.environ.get("OSG_ACCEPTANCE_ROOT", Path(__file__).resolve().parents[1]))
+spec = importlib.util.spec_from_file_location("mapping_acceptance", Path(__file__).with_name("mapping-acceptance.py"))
 mapping = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mapping)
 FRAME_BYTES = 16 * 1024
@@ -142,7 +142,9 @@ class Peer:
                 self.heartbeat += 1
                 try:
                     result = self.socket.request(self.message("heartbeat", sequence=str(self.heartbeat)))
-                    assert result["ok"], result
+                    if not result['ok'] and result.get('error') == 'Session is obsolete; explicitly reconnect.':
+                        self._open_locked(self.instance, self.publication)
+                    else: assert result['ok'],result
                 except Exception as error:
                     self.failure = error
                     return
@@ -150,15 +152,18 @@ class Peer:
     def message(self, kind, **fields):
         return dict(version=1, type=kind, **{key: self.opened[key] for key in ["clientId", "sessionId", "generation", "publicationHash"]}, **fields)
 
+    def _open_locked(self, instance, publication):
+        result=self.socket.request(dict(type='open',instanceId=instance,publicationHash=publication['publicationHash']))
+        assert result['ok'],result
+        self.opened=result;self.sequence=self.heartbeat=0
+        controls=json.loads(publication['canonicalDocument'])['ui']['controls']
+        values={control['id']:False if control['kind']=='button' else control.get('fallback',-1) for control in controls}
+        assert self.socket.request(self.message('baseline',sequence='0',values=values))['ok']
+
     def open(self, instance, publication):
         with self.lock:
-            result = self.socket.request(dict(type="open", instanceId=instance, publicationHash=publication["publicationHash"]))
-            assert result["ok"], result
-            self.opened = result
-            self.sequence = self.heartbeat = 0
-            controls = json.loads(publication["canonicalDocument"])["ui"]["controls"]
-            values = {control["id"]: False if control["kind"] == "button" else control.get("fallback", -1) for control in controls}
-            assert self.socket.request(self.message("baseline", sequence="0", values=values))["ok"]
+            self.instance,self.publication=instance,publication
+            self._open_locked(instance,publication)
 
     def input(self, changes):
         with self.lock:
@@ -186,19 +191,6 @@ def operator(service, command, **payload):
     return reply["state"]["companions"]
 
 
-def route(service, instance, action="inspect", **payload):
-    deadline = time.monotonic() + 4
-    while True:
-        reply = service.request("mapping_companion_route", companion=dict(action=action, instanceId=instance, **payload))
-        if reply["ok"]:
-            return reply["state"]["mappings"]["companionRoute"]
-        # Native I/O is intentionally not awaited by recording-page requests.
-        # Retry only this explicit transient response; preserve all other faults.
-        if action != "recording" or not reply.get("error", "").startswith("This companion's feeder is busy;") or time.monotonic() >= deadline:
-            raise AssertionError(reply)
-        time.sleep(0.02)
-
-
 def publish(service, publication):
     payload = json.dumps({key: publication[key] for key in ["canonicalDocument", "publicationHash", "assets"]}, separators=(",", ":")).encode()
     upload = operator(service, "companion_publish_begin", size=len(payload))["uploadId"]
@@ -207,171 +199,138 @@ def publish(service, publication):
     operator(service, "companion_publish_commit", uploadId=upload)
 
 
-def wait_for(predicate, message):
-    deadline = time.monotonic() + 4
-    while time.monotonic() < deadline:
-        value = predicate()
-        if value:
-            return value
-        time.sleep(0.02)
-    raise AssertionError(message)
+wait_for = mapping.wait_for
 
 
 def sample(publication):
-    document = json.loads(publication["canonicalDocument"])
-    controls = {kind: next((control for control in document["ui"]["controls"] if control["kind"] == kind), None) for kind in ["button", "axis", "hat"]}
-    return [dict(controlId=controls[kind]["id"], value=value) for kind, value in [("button", True), ("axis", 0.75), ("hat", 7)] if controls[kind]]
-
-
-def latest_states(service, instance):
-    page = route(service, instance, "recording", after="0")
-    result = {}
-    for record in page.get("records", []):
-        result[record["report"]["target"]] = record["report"]["state"]
-    return result
-
-
-def fallback_states(profile):
-    return {target["id"]: dict(buttons=[False] * target["layout"]["buttons"], axes=[axis["fallback"] for axis in target["layout"]["axes"]], hats=[None] * target["layout"]["hats"]) for target in profile["targets"]}
+    controls=json.loads(publication['canonicalDocument'])['ui']['controls']
+    return [dict(controlId=next(control['id'] for control in controls if control['kind']==kind),value=value) for kind,value in [('button',True),('axis',.75),('hat',7)] if any(control['kind']==kind for control in controls)]
 
 
 def axis_value(value):
-    scaled = value * (32768 if value < 0 else 32767)
-    return math.ceil(scaled - 0.5) if scaled < 0 else math.floor(scaled + 0.5)
+    scaled=value*(32768 if value<0 else 32767)
+    return math.ceil(scaled-.5) if scaled<0 else math.floor(scaled+.5)
 
 
-def expected_sample(profile, publication):
-    document = json.loads(publication["canonicalDocument"])
-    targets = dict(zip((target["id"] for target in document["targets"]), profile["targets"]))
-    result = fallback_states(profile)
-    for control in document["ui"]["controls"]:
-        if control["kind"] != "axis":
-            continue
-        binding = next(binding for binding in document["bindings"] if binding["controlId"] == control["id"])
-        assert targets[binding["targetId"]]["layout"]["axes"][binding["index"]]["fallback"] == axis_value(control["fallback"]), "Authored route discarded a declared axis fallback"
-    for change in sample(publication):
-        binding = next(binding for binding in document["bindings"] if binding["controlId"] == change["controlId"])
-        target = targets[binding["targetId"]]
-        state = result[target["id"]]
-        field = {"button": "buttons", "axis": "axes", "hat": "hats"}[binding["kind"]]
-        state[field][binding["index"]] = axis_value(change["value"]) if binding["kind"] == "axis" else change["value"]
-    return result
+def resources(service):
+    result=[];offset=0
+    while True:
+        page=mapping.state(service,'profile_resources_list','profileResources',offset=offset,limit=128)
+        assert page['offset']==offset and len(page['resources'])<=128
+        result.extend(page['resources']);offset+=len(page['resources'])
+        if offset>=page['total']:return result
+        assert page['resources'],'Inventory paging made no progress'
+
+
+def selected_resource(service,instance):
+    for resource in resources(service):
+        if resource['resourceType']!='companion':continue
+        detail=mapping.state(service,'profile_resources_inspect','profileResources',resourceId=resource['id'],offset=0,limit=128)
+        if any(item==dict(kind='companion-instance',value=instance) for item in detail['evidence']):
+            assert detail['total']<=128,'Acceptance publication unexpectedly exceeds selected descriptor budget'
+            assert all(port['current'] for port in detail['ports']),detail
+            return detail
+    return None
+
+
+def add_port(document,assignment,resource,logical,observed):
+    descriptor=observed['descriptor']
+    resource['ports'].append(mapping.port(logical,descriptor['contract'],descriptor['direction']))
+    assignment['ports'].append(dict(profilePortId=logical,observedPortId=descriptor['id'],expectedContractHash=observed['contractHash']))
+
+
+def companion_profile(service,configurations,read_inputs=True):
+    document=mapping.blank('Unified WSS inputs');assignments=[];models={}
+    for index,(instance,publication) in enumerate(configurations):
+        detail=wait_for(lambda:selected_resource(service,instance),f'No native descriptor for {instance}')
+        logical=f'panel{index}'
+        resource=dict(id=logical,name=f'Panel {index}',kind='companion',required=False,ports=[])
+        assignment=dict(resourceId=logical,sourceId=detail['resource']['id'],ports=[])
+        models[instance]=dict(resource=resource,assignment=assignment,ports=detail['ports'],nodes={})
+        for change in (sample(publication) if read_inputs else []):
+            control=next(control for control in json.loads(publication['canonicalDocument'])['ui']['controls'] if control['id']==change['controlId'])
+            kind=control['kind'];observed=next(port for port in detail['ports'] if port['descriptor']['id']==change['controlId'])
+            add_port(document,assignment,resource,kind,observed)
+            node=f'read{index}-{kind}';contract=observed['descriptor']['contract']
+            document['processingNodes'].append(dict(id=node,name=node,operation=dict(kind='identity'),inputs=[mapping.port('input',contract,'input')],outputs=[mapping.port('value',contract,'output')]))
+            document['bindings'].append(dict(id=f'bind{index}-{kind}',**{'from':dict(nodeId=logical,portId=kind),'to':dict(nodeId=node,portId='input')}))
+            models[instance]['nodes'][kind]=node
+        document['resources'].append(resource);assignments.append(assignment)
+        document['companionAssignments'].append(dict(resourceId=logical,publicationHash=publication['publicationHash']))
+    return document,assignments,models
+
+
+def reading(service,owner,node):
+    page=mapping.inspect(service,owner,node)
+    value=next(port for port in page['ports'] if port['direction']=='output')['sample']
+    return value
+
+
+def expected(publication):
+    return {next(control['kind'] for control in json.loads(publication['canonicalDocument'])['ui']['controls'] if control['id']==change['controlId']):(axis_value(change['value']) if isinstance(change['value'],float) else change['value']) for change in sample(publication)}
+
+
+def exact_readings(service,owner,model,values):
+    return all(reading(service,owner,model['nodes'][kind])==dict(status='known',value=dict(kind='scalar',value=value)) for kind,value in values.items())
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--service", type=Path, required=True)
-    parser.add_argument("--output", type=Path)
-    args = parser.parse_args()
-    flight = json.loads((ROOT / "crates/companion-service/tests/fixtures/c1-flight-publication.json").read_text())
-    racing = json.loads((ROOT / "scripts/fixtures/companion-racing-publication.json").read_text())
-    evidence = dict(qualification=False, virtualReportsSent=False, driverLayoutsChanged=False,
-                    peers="simulated real WSS on loopback", nativeClientPinQualification=False,
-                    physicalGameQualification=False, checks=[])
-    with tempfile.TemporaryDirectory(prefix="osg-companion-mapping-acceptance-") as temporary:
-        directory = Path(temporary)
-        service = mapping.Service(args.service.resolve(), directory)
-        peers = []
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--service',type=Path,required=True);parser.add_argument('--output',type=Path);args=parser.parse_args()
+    flight=json.loads((ROOT/'crates/companion-service/tests/fixtures/c1-flight-publication.json').read_text())
+    racing=json.loads((ROOT/'scripts/fixtures/companion-racing-publication.json').read_text())
+    configurations=[('flight-left',flight),('flight-right',flight),('racing',racing)]
+    evidence=dict(qualification=False,virtualReportsSent=False,driverLayoutsChanged=False,nativeClientPinQualification=False,physicalGameQualification=False,peers='three simulated peers on real loopback pinned-CA WSS',checks=[])
+    with tempfile.TemporaryDirectory(prefix='osg-profile-companions-') as temporary:
+        directory=Path(temporary).resolve();service=mapping.Service(args.service.resolve(),directory);peers=[]
         try:
-            initial = service.mapping("mapping_status")
-            assert not initial["virtualDevices"]["qualified"] and not initial["virtualDevices"]["enabled"]
-            ordinary = json.loads((ROOT / "crates/mapping/fixtures/direct-profile.json").read_text())
-            ordinary["id"] = str(uuid.uuid4())
-            mapping.upload(service, ordinary)
-            service.mapping("mapping_assignments_save", profileId=ordinary["id"], assignments=mapping.assignments(ordinary))
-            ordinary_token = service.mapping("mapping_preview_start", profileId=ordinary["id"])["token"]
-            with socket.socket() as probe:
-                probe.bind(("127.0.0.1", 0))
-                port = probe.getsockname()[1]
-            operator(service, "companion_enable", address="127.0.0.1", advertisedHost="127.0.0.1", port=port, discovery=False)
-            publish(service, flight)
-            publish(service, racing)
-            configurations = [("flight-left", flight), ("flight-right", flight), ("racing", racing)]
-            profiles = {}
-            for instance, publication in configurations:
-                peer = Peer(service, instance)
-                peers.append(peer)
-                operator(service, "companion_assign", companionId=instance, instanceId=instance, publicationHash=publication["publicationHash"])
-                inspected = route(service, instance)
-                assert not inspected["preflight"]["liveReady"]
-                profiles[instance] = inspected["profile"]
-                route(service, instance, "save", publicationHash=publication["publicationHash"], bindings=[])
-                peer.open(instance, publication)
-                route(service, instance, "start", mode="recording")
-            assert len({profile["id"] for profile in profiles.values()}) == 3
-            assert len({target["id"] for profile in profiles.values() for target in profile["targets"]}) == sum(len(profile["targets"]) for profile in profiles.values())
-            evidence["checks"].append("three independent authored routes, including two same-UI instances")
-            for peer, (_, publication) in zip(peers, configurations):
-                peer.input(sample(publication))
-            active = {instance: expected_sample(profiles[instance], publication) for instance, publication in configurations}
-            for instance, _ in configurations:
-                wait_for(lambda i=instance: latest_states(service, i) == active[i], f"{instance} did not record exact axes/buttons/hats")
-            evidence["checks"].append("exact simultaneous axis/button/hat state and each declared axis fallback")
-            assert service.mapping("mapping_status")["running"]
-            route(service, "flight-left", "stop")
-            wait_for(lambda: latest_states(service, "flight-left") == fallback_states(profiles["flight-left"]), "Instance Stop did not apply declared fallback")
-            assert latest_states(service, "flight-right") == active["flight-right"] and latest_states(service, "racing") == active["racing"]
-            evidence["checks"].append("per-instance Stop preserves other routes and ordinary recording")
-            route(service, "flight-left", "start", mode="recording")
-            peers[0].input(sample(flight))
-            wait_for(lambda: latest_states(service, "flight-left") == active["flight-left"], "Explicit recording restart did not resume the chosen route")
-            operator(service, "companion_revoke", companionId="flight-left")
-            wait_for(lambda: latest_states(service, "flight-left") == fallback_states(profiles["flight-left"]), "Revocation did not neutralize its route")
-            assert latest_states(service, "flight-right") == active["flight-right"] and latest_states(service, "racing") == active["racing"]
-            evidence["checks"].append("revocation releases only the affected route")
-            peers[1].end()
-            wait_for(lambda: latest_states(service, "flight-right") == fallback_states(profiles["flight-right"]), "Source Stop did not apply fallback")
-            assert latest_states(service, "racing") == active["racing"]
-            evidence["checks"].append("wire source Stop remains isolated")
-            wait_for(lambda: route(service, "flight-right")["session"]["cleanupComplete"], "Source loss cleanup did not finish")
-            peers[1].open("flight-right", flight)
-            peers[1].input(sample(flight))
-            for _ in range(3):
-                assert latest_states(service, "flight-right") == fallback_states(profiles["flight-right"]), "Reconnect silently revived a stopped mapping"
-                assert not route(service, "flight-right")["session"]["running"]
-                time.sleep(0.05)
-            route(service, "flight-right", "start", mode="recording")
-            wait_for(lambda: latest_states(service, "flight-right") == active["flight-right"], "Fresh explicit Start did not accept the new source baseline")
-            peers[1].end()
-            wait_for(lambda: latest_states(service, "flight-right") == fallback_states(profiles["flight-right"]), "Repeated source Stop did not apply fallback")
-            evidence["checks"].append("source reconnect stays disarmed until fresh explicit mapping Start")
-            peers[2].paused.set()
-            wait_for(lambda: latest_states(service, "racing") == fallback_states(profiles["racing"]), "Native source lease failed to expire")
-            assert service.mapping("mapping_status")["running"]
-            service.mapping("mapping_simulate", token=ordinary_token, source=mapping.assignments(ordinary)[0]["source"], changes=[dict(control="trigger", value=dict(kind="button", value=True))])
-            evidence["checks"].append("source lease loss neutralizes affected route while ordinary mapping stays active")
-            rejected = service.request("mapping_companion_route", companion=dict(action="start", instanceId="flight-right", mode="live"))
-            assert not rejected["ok"], "Unqualified output must not activate"
-            final = service.mapping("mapping_status")
-            assert not final["virtualDevices"]["qualified"] and not final["virtualDevices"]["enabled"]
-            evidence["checks"].append("unqualified live Start rejected; no output enablement or provisioning")
-            for peer in peers:
-                peer.close()
-            peers.clear()
-            operator(service, "companion_disable")
+            with socket.socket() as probe:probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
+            operator(service,'companion_enable',address='127.0.0.1',advertisedHost='127.0.0.1',port=port,discovery=False)
+            publish(service,flight);publish(service,racing)
+            for instance,publication in configurations:
+                peer=Peer(service,instance);peers.append(peer)
+                operator(service,'companion_assign',companionId=instance,instanceId=instance,publicationHash=publication['publicationHash']);peer.open(instance,publication)
+            document,assignments,models=companion_profile(service,configurations)
+            saved=mapping.save(service,document,assignments)
+            copied=service.profiles('profile_duplicate',id=saved['id'],name='Portable Copy')['document']
+            assert service.profiles('profile_assignments_get',id=copied['id'])['assignments']==[]
+            assert not any(instance in json.dumps(copied) for instance,_ in configurations),'Portable profile leaked local instance identity'
+            owner=mapping.apply(service,saved)
+            for peer,(_,publication) in zip(peers,configurations):peer.input(sample(publication))
+            for instance,publication in configurations:wait_for(lambda:exact_readings(service,owner,models[instance],expected(publication)),f'Actual native typed values for {instance} did not arrive')
+            evidence['checks'].append('one real applied profile receives three isolated WSS sources and exact native button/axis/hat values through observed contract/hash pins')
+            peers[0].end()
+            wait_for(lambda:reading(service,owner,models['flight-left']['nodes']['button'])['status']!='known','Closed optional peer retained a Known graph input')
+            assert exact_readings(service,owner,models['flight-right'],expected(flight))
+            assert exact_readings(service,owner,models['racing'],expected(racing))
+            peers[0].open('flight-left',flight)
+            time.sleep(.2)
+            assert reading(service,owner,models['flight-left']['nodes']['button'])['status']!='known','Reconnect silently reacquired a lost profile input'
+            service.profiles('profile_stop')
+            assert not service.request('profile_runtime_inspect',owner=owner)['ok']
+            fresh=mapping.apply(service,saved);assert fresh!=owner
+            peers[0].input(sample(flight));wait_for(lambda:exact_readings(service,fresh,models['flight-left'],expected(flight)),'Fresh explicit Apply did not acquire a new baseline')
+            evidence['checks'].append('optional source close preserves independent branches; reconnect stays disarmed until explicit new Apply; old owner cannot inspect')
+            service.profiles('profile_stop')
+            mapping.retired_boundaries(service)
+            operator(service,'companion_revoke',companionId='flight-left')
+            retained=operator(service,'companion_status')['host']['instances']
+            assert {row['instanceId'] for row in retained}=={'flight-right','racing'}
+            evidence['checks'].append('retired recording/feedback start boundaries rejected and revocation preserves the other paired instances')
+            for peer in peers:peer.close()
+            peers.clear();operator(service,'companion_disable')
         finally:
-            for peer in peers:
-                peer.close()
+            for peer in peers:peer.close()
             service.close()
-        service = mapping.Service(args.service.resolve(), directory)
+        service=mapping.Service(args.service.resolve(),directory)
         try:
-            state = operator(service, "companion_status")
-            assert not state["listener"]["enabled"] and all(not item["armed"] for item in state["host"]["instances"])
-            assert not service.mapping("mapping_status")["running"]
-            assert {item["instanceId"] for item in state["host"]["instances"]} == {"flight-right", "racing"}
-            publish(service, flight)
-            publish(service, racing)
-            for instance in ["flight-right", "racing"]:
-                retained = route(service, instance)
-                assert retained["profile"]["id"] == profiles[instance]["id"] and not retained["session"]["running"]
-            evidence["checks"].append("restart retains intended offline descriptors without activating listener or mapping")
-        finally:
-            service.close()
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(evidence, indent=2))
+            status=operator(service,'companion_status')
+            assert not status['listener']['enabled'] and all(not item['armed'] for item in status['host']['instances'])
+            assert service.profiles('profile_status')['profileSession']['owner'] is None
+            assert service.profiles('profile_export',id=saved['id'])['document']==saved
+            evidence['checks'].append('restart keeps offline intended descriptors/profile document and leaves listener/input/output ownership stopped')
+        finally:service.close()
+    if args.output:args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(evidence,indent=2)+'\n',encoding='utf-8')
+    print(json.dumps(evidence,indent=2))
 
 
-if __name__ == "__main__":
-    main()
+if __name__=='__main__':main()

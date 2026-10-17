@@ -1,5 +1,5 @@
-//! Immutable, optional companion assignment intent for game schema 3.
-//! This module validates data only; it cannot pair, arm, or send game input.
+//! Strict retained companion recovery evidence only.
+//! No profile authoring, assignment capture, transport or input authority.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -155,19 +155,6 @@ impl Snapshot {
         Ok(s)
     }
 }
-pub fn profile(value: &Value) -> Result<(), String> {
-    if value["schemaVersion"] != 3 {
-        if value.get("companions").is_some() {
-            return Err(
-                "Upgrade this game profile to schema 3 before capturing companion assignments."
-                    .into(),
-            );
-        }
-    } else if !value["companions"].is_null() {
-        Capture::parse(&value["companions"])?;
-    }
-    Ok(())
-}
 pub fn journal(value: &Value) -> Result<(), String> {
     if value["companions"].is_null() {
         return Ok(());
@@ -219,16 +206,13 @@ mod tests {
         assert!(Capture::parse(&json!({"schemaVersion":1,"assignments":[]})).is_err());
     }
     #[test]
-    fn old_profiles_and_journals_remain_unchanged_and_migration_is_explicit() {
-        for version in [1, 2] {
-            let old = json!({"schemaVersion":version});
-            assert!(profile(&old).is_ok());
-            assert!(journal(&old).is_ok());
-            assert!(profile(&json!({"schemaVersion":version,"companions":null})).is_err());
+    fn absent_legacy_receipts_do_not_create_or_migrate_assignments() {
+        for version in [1, 2, 3] {
+            let journal_value =
+                serde_json::json!({"schemaVersion":version,"profiles":"unread authoring state"});
+            assert!(journal(&journal_value).is_ok());
         }
-        assert!(profile(&json!({"schemaVersion":3,"companions":capture()})).is_ok());
-        assert!(profile(&json!({"schemaVersion":3,"companions":null})).is_ok());
-        assert!(profile(&json!({"schemaVersion":3,"companions":{}})).is_err());
+        assert!(journal(&serde_json::json!({"schemaVersion":3,"companions":{}})).is_err());
     }
     #[test]
     fn recovery_ownership_phases_and_restore_scope_are_validated() {

@@ -155,6 +155,7 @@ impl GamesRuntime {
         Ok(())
     }
     fn launch_installation(&self, id: &str) -> Result<(Value, GameIdentity), String> {
+        self.inner.guard_installation_metadata()?;
         if self.inner.closed.load(std::sync::atomic::Ordering::Acquire) || self.active() {
             return Err(
                 "Close or recover the independent game session before unified launch.".into(),

@@ -381,9 +381,15 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
         Arc::new(
             |_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}}),
         ),
-        folder.path().join("games.json"),
-        platform.clone(),
-    );
+        {
+            let fixture_metadata_path = folder.path().join("games.json");
+            crate::games::Paths {
+                installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                recovery: fixture_metadata_path.with_extension("recovery.json"),
+            }
+        },
+        platform.clone());
     let state = games.resource_catalogue();
     let revision = state
         .iter()

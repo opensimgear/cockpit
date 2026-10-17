@@ -74,9 +74,15 @@ impl Fixture {
                 );
                 json!({"ok":true,"state":{"integration":{"running":false}}})
             }),
-            directory.path().join("games.json"),
-            games.clone(),
-        ));
+            {
+                let fixture_metadata_path = directory.path().join("games.json");
+                crate::games::Paths {
+                    installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                    provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                    recovery: fixture_metadata_path.with_extension("recovery.json"),
+                }
+            },
+            games.clone()));
         let resources = manager.profile_resources.clone();
         let runtime_games = manager.games.clone();
         let companions = manager.companion_host.clone();

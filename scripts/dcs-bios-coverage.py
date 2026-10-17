@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run native tests and gate each DCS-BIOS production module above 70% line coverage."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,8 +10,21 @@ import subprocess
 import tempfile
 
 
+def source_stamp(root):
+    # The full native suite depends on shared provider/engine/journal contracts.
+    # Pin sources and tests, manifests and locks rather than claim an unstamped
+    # aggregate after a concurrent edit during a long-running instrumented suite.
+    paths = set((root / 'src-tauri/src').rglob('*.rs'))
+    for crate in (root / 'crates').iterdir():
+        if crate.is_dir() and (crate / 'src').is_dir():
+            paths.update((crate / 'src').rglob('*.rs'))
+            paths.update(path for path in [crate / 'Cargo.toml', crate / 'Cargo.lock'] if path.is_file())
+    paths.update(root / name for name in ['src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'rust-toolchain.toml'] if (root / name).is_file())
+    return {str(path.relative_to(root)): {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'modifiedNs': path.stat().st_mtime_ns} for path in sorted(paths)}
+
+
 def command(args, cwd, env=None):
-    return subprocess.check_output(args, cwd=cwd, env=env, text=True)
+    return subprocess.check_output(args, cwd=cwd, env=env, text=True, encoding='utf-8', errors='replace')
 
 
 def main():
@@ -21,10 +35,14 @@ def main():
     args = parser.parse_args()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    for name in ['evidence.json', 'native-tests.log', 'dcs-bios-summary.json']:
+        (output / name).unlink(missing_ok=True)
+    initial_stamp = source_stamp(root)
     sysroot = Path(command(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', command(['rustc', '-vV'], root), re.M).group(1)
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
-    if not all((llvm / tool).exists() for tool in ['llvm-profdata', 'llvm-cov']):
+    suffix = '.exe' if os.name == 'nt' else ''
+    if not all((llvm / f'{tool}{suffix}').exists() for tool in ['llvm-profdata', 'llvm-cov']):
         raise SystemExit('Install the pinned Rust llvm-tools-preview component before measuring coverage.')
     build_profiles = output / 'build-profiles'
     build_profiles.mkdir(exist_ok=True)
@@ -40,29 +58,32 @@ def main():
     if len(binaries) != 1:
         raise RuntimeError('Expected one instrumented Cockpit library test executable.')
     profiles = Path(tempfile.mkdtemp(prefix='test-profiles-', dir=output))
-    tests = command([binaries[0]], root,
+    tests = command([binaries[0], '--test-threads=1'], root,
                     dict(environment, LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw')))
-    (output / 'native-tests.log').write_text(tests)
+    (output / 'native-tests.log').write_text(tests, encoding='utf-8')
+    final_stamp = source_stamp(root)
+    if initial_stamp != final_stamp:
+        changed = sorted(name for name in set(initial_stamp) | set(final_stamp) if initial_stamp.get(name) != final_stamp.get(name))
+        raise RuntimeError(f'Sources or tests changed during coverage; rerun: {changed}')
     profile = output / 'coverage.profdata'
-    command([str(llvm / 'llvm-profdata'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
+    command([str(llvm / f'llvm-profdata{suffix}'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
-    sources = [root / 'src-tauri/src' / name
-               for name in ['dcs_bios.rs', 'dcs_runtime.rs', 'panel_events.rs',
-                            'dcs_profile.rs', 'dcs_profile_runtime.rs']]
-    annotated = command([str(llvm / 'llvm-cov'), 'show', binaries[0], f'-instr-profile={profile}',
+    sources = [root / 'src-tauri/src' / name for name in ['dcs_bios.rs', 'panel_events.rs', 'dcs_profile.rs']]
+    annotated = command([str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
-    (output / 'lines.txt').write_text(annotated)
-    source_paths = {str(path): path for path in sources}
+    (output / 'lines.txt').write_text(annotated, encoding='utf-8')
+    source_paths = {str(path).replace('\\', '/'): path for path in sources}
     counts, current = {}, ''
     for line in annotated.splitlines():
-        if line.endswith(':') and line[:-1] in source_paths:
-            current = source_paths[line[:-1]].name
-        if match := re.match(r'^\s*(\d+)\|\s*(\d+)\|', line):
-            counts.setdefault(current, {})[int(match[1])] = int(match[2])
+        heading = line[:-1].replace('\\', '/') if line.endswith(':') else ''
+        if heading in source_paths:
+            current = source_paths[heading].name
+        if match := re.match(r'^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\s*\|', line):
+            counts.setdefault(current, {})[int(match[1])] = float(match[2].rstrip('kMGT'))
     report = {}
     for source in sources:
-        lines = source.read_text().splitlines()
-        end = next((index + 1 for index, line in enumerate(lines) if '#[cfg(test)]' in line), len(lines) + 1)
+        lines = source.read_text(encoding='utf-8').splitlines()
+        end = next((index + 1 for index, line in enumerate(lines) if line == '#[cfg(test)]'), len(lines) + 1)
         measured = {line: count for line, count in counts.get(source.name, {}).items() if line < end}
         if not measured:
             raise RuntimeError(f'No production coverage recorded for {source.name}.')
@@ -70,7 +91,8 @@ def main():
         percent = 100 * covered / len(measured)
         report[source.name] = {'covered': covered, 'lines': len(measured), 'percent': round(percent, 2)}
         print(f'{source.name}: {covered}/{len(measured)} production lines ({percent:.2f}%)', flush=True)
-    (output / 'dcs-bios-summary.json').write_text(json.dumps(report, indent=2) + '\n')
+    (output / 'dcs-bios-summary.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    (output / 'evidence.json').write_text(json.dumps({'testBinary': binaries[0], 'testArguments': ['--test-threads=1'], 'profile': str(profile), 'sources': final_stamp, 'measuredModules': [source.name for source in sources]}, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] <= 70 for item in report.values()):
         raise SystemExit('Each DCS-BIOS production module must exceed 70% line coverage.')
 

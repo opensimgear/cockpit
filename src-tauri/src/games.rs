@@ -1,11 +1,8 @@
-//! Saved simulator setups and a journaled, native session coordinator.
-//!
-//! Hardware writes are issued once. Recovery reads authoritative state before
-//! restoring, and keeps its journal when a device is absent or changed elsewhere.
-use crate::{dcs_profile_runtime::Panel, game_discovery::Platform};
+//! Installation/provider metadata and explicit restoration of retained ownership.
+//! Unified ProfileSession is the only graph/runtime authoring and launch path.
+use crate::game_discovery::Platform;
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -16,365 +13,51 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-
+type CleanupIo = Arc<dyn Fn(Value) -> Value + Send + Sync>;
 const CLIENT: &str = "cockpit-game-session-coordinator";
 const GAMES: [&str; 4] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12"];
-const MAX_FILE: usize = 2 * 1024 * 1024;
-const MAX_SAVED: usize = 48 * 1024;
-const BINDING_WARNING: &str = "Controller and input mapping changes can rebuild USB descriptors and change game bindings. Accept these changes before activating this profile.";
-
 fn known(value: &Value, keys: &[&str]) -> bool {
     value
         .as_object()
-        .is_some_and(|o| o.keys().all(|k| keys.contains(&k.as_str())))
-}
-fn identifier(value: &Value, max: usize) -> Result<&str, String> {
-    value
-        .as_str()
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() <= max
-                && s.as_bytes()[0].is_ascii_alphanumeric()
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-        })
-        .ok_or_else(|| "Choose a valid game profile identity.".into())
+        .is_some_and(|object| object.keys().all(|key| keys.contains(&key.as_str())))
 }
 fn game_id(value: &Value) -> Result<&str, String> {
     value
         .as_str()
-        .filter(|s| GAMES.contains(s))
+        .filter(|id| GAMES.contains(id))
         .ok_or_else(|| "Choose a supported game.".into())
 }
-fn target(value: &Value) -> Result<(String, String), String> {
-    let gateway = value["gatewayId"]
-        .as_str()
-        .and_then(|s| s.split_once(':'))
-        .and_then(|(b, s)| crate::gateways::canonical_id(b, s))
-        .ok_or("Choose a valid gateway identity.")?;
-    let module = value["moduleId"]
-        .as_str()
-        .filter(|s| {
-            s.len() == 32
-                && s.bytes().all(|b| b.is_ascii_hexdigit())
-                && s.bytes().any(|b| b != b'0')
-                && s.bytes().any(|b| b != b'f' && b != b'F')
-        })
-        .ok_or("Choose a valid peripheral identity.")?
-        .to_ascii_lowercase();
-    Ok((gateway, module))
-}
-fn validate_config(value: &Value) -> Result<(), String> {
-    if !known(
-        value,
-        &[
-            "name",
-            "expanderMask",
-            "buttons",
-            "axes",
-            "hats",
-            "encoders",
-            "selectors",
-        ],
-    ) {
-        return Err("Invalid peripheral configuration fields.".into());
-    }
-    crate::runtime::commands(value, 1)?;
-    let mut contacts = BTreeSet::new();
-    let mask = value["expanderMask"].as_u64().unwrap();
-    for kind in ["buttons", "hats", "encoders", "selectors"] {
-        for row in value[kind].as_array().unwrap() {
-            if kind == "buttons" && row[1] == 1 && row[2] != 0 {
-                return Err("Maintained switches cannot belong to an exclusive group.".into());
-            }
-            let inputs = if kind == "buttons" {
-                &row.as_array().unwrap()[..1]
-            } else {
-                row.as_array().unwrap().as_slice()
-            };
-            for input in inputs {
-                let input = input.as_u64().unwrap();
-                if input >= 24 && mask & (1 << ((input - 24) / 16)) == 0 {
-                    return Err(format!("Contact {input} needs an enabled expansion bank."));
-                }
-                if !contacts.insert(input) {
-                    return Err("A contact is assigned to more than one control.".into());
-                }
-            }
-        }
-    }
-    for column in [0, 1] {
-        let mut axes = BTreeSet::new();
-        for axis in value["axes"].as_array().unwrap() {
-            if !axes.insert(axis[column].as_u64().unwrap()) {
-                return Err("Each axis needs a unique ADC channel and HID usage.".into());
-            }
-        }
-    }
-    Ok(())
-}
-fn game_integration(value: &Value) -> Result<crate::integration_profile::Config, String> {
-    let mut draft = value.clone();
-    if draft["document"]["provider"] == "assetto-corsa-rally"
-        && draft["connection"]["source"] == "shared-memory"
-        && draft["connection"]["processId"].is_null()
-    {
-        // A game setup is saved before a process exists. The actual verified
-        // PID is inserted by the session worker, never persisted as this value.
-        draft["connection"]["processId"] = json!(1);
-    }
-    crate::integration_profile::validate(&draft)
-}
-fn profile(value: &Value) -> Result<Value, String> {
-    if value.to_string().len() > MAX_SAVED
-        || !known(
-            value,
-            &[
-                "schemaVersion",
-                "id",
-                "gameId",
-                "name",
-                "devices",
-                "integration",
-                "mapping",
-                "companions",
-            ],
-        )
-        || !matches!(value["schemaVersion"].as_u64(), Some(1 | 2 | 3))
-    {
-        return Err("Invalid game profile document.".into());
-    }
-    crate::game_mapping::validate(value)?;
-    crate::game_mapping::companions::profile(value)?;
-    identifier(&value["id"], 64)?;
-    let game = game_id(&value["gameId"])?;
-    value["name"]
-        .as_str()
-        .filter(|s| !s.trim().is_empty() && s.len() <= 80 && !s.chars().any(char::is_control))
-        .ok_or("Profile names need 1–80 UTF-8 bytes without control characters.")?;
-    let rows = value["devices"]
-        .as_array()
-        .filter(|d| d.len() <= 32)
-        .ok_or("Choose at most 32 peripherals.")?;
-    let mut seen = BTreeSet::new();
-    let mut devices = Vec::new();
-    for row in rows {
-        if !known(row, &["gatewayId", "moduleId", "controller", "config"])
-            || !matches!(
-                row["controller"].as_str(),
-                Some("keep" | "enabled" | "disabled")
-            )
-        {
-            return Err("Invalid game peripheral settings.".into());
-        }
-        let (gateway, module) = target(row)?;
-        if !seen.insert((gateway.clone(), module.clone())) {
-            return Err(
-                "A peripheral cannot be configured more than once through the same gateway.".into(),
-            );
-        }
-        let mut row = row.clone();
-        row["gatewayId"] = json!(gateway);
-        row["moduleId"] = json!(module);
-        if let Some(config) = row.get("config") {
-            validate_config(config)?;
-        }
-        devices.push(row);
-    }
-    let mut result = value.clone();
-    result["devices"] = json!(devices);
-    if !value["integration"].is_null() {
-        let config = game_integration(&value["integration"])?;
-        let expected = if game == "dcs" {
-            "dcs-bios"
-        } else if game.starts_with("x-plane-") {
-            "x-plane"
-        } else {
-            "assetto-corsa-rally"
-        };
-        if config.provider() != expected {
-            return Err("The integration provider must match this game.".into());
-        }
-        if game.starts_with("x-plane-")
-            && config.connection["version"].as_u64()
-                != game.trim_start_matches("x-plane-").parse::<u64>().ok()
-        {
-            return Err("The X-Plane connection version must match the selected game.".into());
-        }
-        result["integration"] = config.value();
-        if expected == crate::xplane::PROVIDER {
-            result["integration"]["connection"]
-                .as_object_mut()
-                .unwrap()
-                .remove("processIdentity");
-        }
-        if value["integration"]["connection"]["processId"].is_null()
-            && result["integration"]["connection"]["source"] == "shared-memory"
-        {
-            result["integration"]["connection"]
-                .as_object_mut()
-                .unwrap()
-                .remove("processId");
-        }
-    } else {
-        result["integration"] = Value::Null;
-    }
-    Ok(result)
-}
-fn default_profile(game: &str) -> Value {
-    json!({"schemaVersion":1,"id":format!("{game}-default"),"gameId":game,"name":"Default","devices":[],"integration":null})
-}
 
-/// Atomic replacement is also used for the recovery journal before each write.
-fn persist(path: &Path, value: &Value) -> Result<(), String> {
-    let parent = path.parent().ok_or("Invalid games settings path.")?;
-    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
-        file.write_all(&serde_json::to_vec(value).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        fs::rename(&temporary, path).map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+/// Explicit paths prevent installation metadata from loading an old profile
+/// library while retaining separately journaled cleanup and provider settings.
+pub(crate) struct Paths {
+    pub installations: PathBuf,
+    pub provider_setup: PathBuf,
+    pub recovery: PathBuf,
 }
-fn load(path: &Path) -> Result<Option<Value>, String> {
-    match fs::metadata(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.to_string()),
-        Ok(m) if m.len() > MAX_FILE as u64 => Err("Games settings exceed their size limit.".into()),
-        Ok(_) => {
-            let mut bytes = Vec::new();
-            fs::File::open(path)
-                .map_err(|e| e.to_string())?
-                .take(MAX_FILE as u64 + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|e| e.to_string())?;
-            if bytes.len() > MAX_FILE {
-                return Err("Games settings exceed their size limit.".into());
-            }
-            serde_json::from_slice(&bytes)
-                .map(Some)
-                .map_err(|e| e.to_string())
-        }
-    }
-}
-#[derive(Clone)]
-struct Saved {
-    profiles: BTreeMap<String, Value>,
-    defaults: BTreeMap<String, String>,
-    manual: BTreeMap<String, String>,
-}
-impl Saved {
-    fn fresh() -> Self {
+impl Paths {
+    pub(crate) fn in_directory(root: &Path) -> Self {
         Self {
-            profiles: GAMES
-                .iter()
-                .map(|g| (format!("{g}-default"), default_profile(g)))
-                .collect(),
-            defaults: GAMES
-                .iter()
-                .map(|g| (g.to_string(), format!("{g}-default")))
-                .collect(),
-            manual: BTreeMap::new(),
+            installations: root.join("game-installations-v1.json"),
+            provider_setup: root.join("games.integration-setup.json"),
+            recovery: root.join("games.recovery.json"),
         }
-    }
-    fn parse(value: &Value) -> Result<Self, String> {
-        if value.to_string().len() > MAX_SAVED
-            || !known(
-                value,
-                &[
-                    "schemaVersion",
-                    "profiles",
-                    "defaultProfiles",
-                    "manualInstallations",
-                ],
-            )
-            || value["schemaVersion"] != 1
-        {
-            return Err("Invalid saved games settings.".into());
-        }
-        let rows = value["profiles"]
-            .as_array()
-            .filter(|v| v.len() <= 64)
-            .ok_or("Invalid saved game profiles.")?;
-        let mut saved = Self::fresh();
-        saved.profiles.clear();
-        for row in rows {
-            let row = profile(row)?;
-            let id = row["id"].as_str().unwrap().to_string();
-            if saved.profiles.insert(id, row).is_some() {
-                return Err("Duplicate saved game profile.".into());
-            }
-        }
-        for game in GAMES {
-            if game.starts_with("x-plane-") && value["defaultProfiles"][game].is_null() {
-                let mut default = default_profile(game);
-                let mut id = format!("{game}-default");
-                let mut suffix = 1;
-                while saved.profiles.contains_key(&id) {
-                    id = format!("{game}-default-{suffix}");
-                    suffix += 1;
-                }
-                default["id"] = json!(id);
-                saved.profiles.insert(id.clone(), default);
-                saved.defaults.insert(game.into(), id);
-                continue;
-            }
-            let id = identifier(&value["defaultProfiles"][game], 64)?;
-            if saved.profiles.get(id).is_none_or(|p| p["gameId"] != game) {
-                return Err("Invalid default game profile.".into());
-            }
-            saved.defaults.insert(game.into(), id.into());
-        }
-        let manual = value["manualInstallations"]
-            .as_object()
-            .filter(|o| o.len() <= 4)
-            .ok_or("Invalid manual installations.")?;
-        for (game, executable) in manual {
-            game_id(&json!(game))?;
-            let executable = executable
-                .as_str()
-                .filter(|s| !s.is_empty() && s.len() <= 4096 && !s.chars().any(char::is_control))
-                .ok_or("Invalid manual executable path.")?;
-            saved.manual.insert(game.into(), executable.into());
-        }
-        Ok(saved)
-    }
-    fn value(&self) -> Value {
-        json!({"schemaVersion":1,"profiles":self.profiles.values().collect::<Vec<_>>(),"defaultProfiles":self.defaults,"manualInstallations":self.manual})
     }
 }
 struct Settings {
-    saved: Saved,
+    saved: crate::game_installations::Settings,
+    metadata_error: Option<String>,
     catalogue: Vec<Value>,
     journal: Option<Value>,
     error: Option<String>,
 }
 struct Inner {
-    panel: Panel,
+    panel: CleanupIo,
     platform: Arc<dyn Platform>,
-    path: PathBuf,
+    installations: crate::game_installations::Store,
     journal_path: PathBuf,
     setup: crate::game_integration_setup::GameIntegrationSetup,
     contexts: Mutex<crate::game_context::Broker>,
-    admitted_context: Mutex<Option<crate::game_context::ContextToken>>,
     context_setup_check: Mutex<Option<Instant>>,
     activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
@@ -390,53 +73,56 @@ pub(crate) struct GamesRuntime {
     observer: Mutex<Option<JoinHandle<()>>>,
     activation_observer: Mutex<Option<JoinHandle<()>>>,
 }
-#[path = "game_context_runtime.rs"]
-mod context_runtime;
 #[path = "game_activation_runtime.rs"]
 mod activation_runtime;
+#[path = "game_cleanup.rs"]
+mod cleanup;
+#[path = "game_context_runtime.rs"]
+mod context_runtime;
 #[path = "profile_game_launch.rs"]
 pub(crate) mod launch;
 pub(crate) use context_runtime::PreparedGame;
+
 impl GamesRuntime {
-    pub(crate) fn new(panel: Panel, path: PathBuf, platform: Arc<dyn Platform>) -> Self {
-        let (saved, mut error) =
-            match load(&path).and_then(|v| v.as_ref().map(Saved::parse).transpose()) {
-                Ok(s) => (s.unwrap_or_else(Saved::fresh), None),
-                Err(e) => (
-                    Saved::fresh(),
-                    Some(format!("Saved games settings could not be loaded: {e}")),
-                ),
-            };
-        let journal_path = path.with_extension("recovery.json");
-        let journal = match load(&journal_path).and_then(|v| v.map(validate_journal).transpose()) {
-            Ok(v) => v,
-            Err(e) => {
-                error = Some(format!("Recovery journal is invalid: {e}. Preserve it and inspect the hardware before making changes."));
-                Some(json!({"invalid":true}))
+    pub(crate) fn new(panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>) -> Self {
+        let installations = crate::game_installations::Store::new(paths.installations);
+        let (saved, metadata_error) = match installations.load() {
+            Ok(saved) => (saved.unwrap_or_default(), None),
+            Err(error) => (Default::default(), Some(error)),
+        };
+        let mut error = metadata_error.clone();
+        let journal = match cleanup::load(&paths.recovery) {
+            Ok(journal) => journal,
+            Err(issue) => {
+                error=Some(format!("Retained game cleanup is invalid: {issue}. Preserve its journal until inspected."));
+                Some(
+                    json!({"invalid":true,"rawFingerprint":cleanup::fingerprint(&paths.recovery).ok()}),
+                )
             }
         };
-        let state = if journal.is_some() {
-            json!({"phase":"recovery-needed","gameId":journal.as_ref().unwrap()["gameId"],"profileId":journal.as_ref().unwrap()["profileId"],"error":"A previous game session needs explicit recovery. Reconnect its peripherals, then recover."})
-        } else {
-            json!({"phase":"idle","error":null})
+        let state = match &journal {
+            Some(journal) => {
+                json!({"phase":"recovery-needed","gameId":journal["gameId"],"retiredProfileId":journal["profileId"],"error":"A retained game owner needs explicit cleanup; no old profile was loaded or started."})
+            }
+            None => json!({"phase":"idle","error":null}),
         };
-        let catalogue = platform.catalogue(&saved.manual);
+        let catalogue = platform.catalogue(&saved.manual_installations);
         let runtime = Self {
             inner: Arc::new(Inner {
+                panel,
                 setup: crate::game_integration_setup::GameIntegrationSetup::new(
-                    path.with_extension("integration-setup.json"),
+                    paths.provider_setup,
                     platform.integration_setup_supported(),
                 ),
-                contexts: Mutex::new(crate::game_context::Broker::default()),
-                admitted_context: Mutex::new(None),
-                context_setup_check: Mutex::new(None),
-                activation: crate::game_activation::Observer::default(),
-                panel,
                 platform,
-                path,
-                journal_path,
+                installations,
+                journal_path: paths.recovery,
+                contexts: Mutex::new(Default::default()),
+                context_setup_check: Mutex::new(None),
+                activation: Default::default(),
                 settings: Mutex::new(Settings {
                     saved,
+                    metadata_error,
                     catalogue,
                     journal,
                     error,
@@ -455,11 +141,6 @@ impl GamesRuntime {
         runtime.start_activation_observer();
         runtime
     }
-    pub(crate) fn status(&self) -> Value {
-        self.status_with_telemetry(&Value::Null, &Value::Null)
-    }
-    /// Retained installation metadata only. Inventory must not launch discovery,
-    /// perform setup checks or activate the independently scoped game runtime.
     pub(crate) fn resource_catalogue(&self) -> Vec<Value> {
         let mut catalogue = self
             .inner
@@ -468,46 +149,43 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner())
             .catalogue
             .clone();
-        self.inner
-            .setup
-            .decorate(&mut catalogue, &Value::Null, &Value::Null);
+        self.inner.setup.decorate(&mut catalogue);
         self.decorate_game_contexts(&mut catalogue);
-        for game in &mut catalogue { game["profileContext"] = self.inner.activation.view(game["id"].as_str().unwrap_or("")); }
+        for game in &mut catalogue {
+            game["profileContext"] = self
+                .inner
+                .activation
+                .view(game["id"].as_str().unwrap_or(""));
+        }
         catalogue
     }
-    pub(crate) fn status_with_telemetry(&self, integration: &Value, dcs: &Value) -> Value {
-        let s = self
+    pub(crate) fn status(&self) -> Value {
+        let catalogue = self.resource_catalogue();
+        // UI reads consume the background observer cache; they cannot provide a
+        // second process observation or manufacture a live provider identity.
+        let observed = self.inner.activation.snapshot();
+        let detected=observed.as_ref().map(|items|items.iter().map(|item|{
+            let game=catalogue.iter().find(|game|game["id"]==item.identity.game_id);
+            json!({"gameId":item.identity.game_id,"name":game.map(|game|game["name"].clone()).unwrap_or_else(||json!(item.identity.game_id))})
+        }).collect::<Vec<_>>()).unwrap_or_default();
+        let errors = catalogue
+            .iter()
+            .filter_map(|game| {
+                let context = &game["profileContext"];
+                (context["status"] == "unavailable").then(|| {
+                    context["message"]
+                        .as_str()
+                        .unwrap_or("Native process observation is unavailable.")
+                        .to_owned()
+                })
+            })
+            .collect::<Vec<_>>();
+        let settings = self
             .inner
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        let mut catalogue = s.catalogue.clone();
-        self.inner
-            .setup
-            .auto_check(&catalogue, self.inner.platform.clone(), integration);
-        self.inner.setup.decorate(&mut catalogue, integration, dcs);
-        self.decorate_game_contexts(&mut catalogue);
-        for game in &mut catalogue { game["profileContext"] = self.inner.activation.view(game["id"].as_str().unwrap_or("")); }
-        // Detection is independent of profile activation and observes games
-        // launched outside Cockpit without changing their session or settings.
-        let mut detected = Vec::new();
-        let mut detection_errors = Vec::new();
-        for game in &catalogue {
-            if game["installed"] != true {
-                continue;
-            }
-            match self.inner.platform.find(game) {
-                Ok(Some(process)) => detected
-                    .push(json!({"gameId":game["id"],"name":game["name"],"pid":process.pid})),
-                Ok(None) => {}
-                Err(error) => detection_errors.push(format!(
-                    "{}: {error}",
-                    game["name"].as_str().unwrap_or("Game")
-                )),
-            }
-        }
-        json!({"detectedGames":detected,"detectionErrors":detection_errors,"catalogue":catalogue,"profiles":s.saved.profiles.values().collect::<Vec<_>>(),"defaultProfiles":s.saved.defaults,
-            "manualInstallations":s.saved.manual,"session":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":s.error})
+        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"manualInstallations":settings.saved.manual_installations,"cleanup":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":settings.error})
     }
     pub(crate) fn active(&self) -> bool {
         self.inner.busy.load(Ordering::Acquire)
@@ -520,56 +198,37 @@ impl GamesRuntime {
                 .journal
                 .is_some()
     }
-    pub(crate) fn guard_request(&self, request: &Value) -> Result<(), String> {
-        if !self.active() {
-            return Ok(());
-        }
-        let command = request["command"].as_str().unwrap_or("");
-        // An independent telemetry verification must not delay emergency Stop.
-        if matches!(command, "integration_stop" | "dcs_stop")
-            && !self.inner.busy.load(Ordering::Acquire)
-            && self
+    pub(crate) fn guard_profile_takeover(&self) -> Result<(), String> {
+        if self.inner.busy.load(Ordering::Acquire)
+            || self
                 .inner
                 .settings
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .journal
-                .is_none()
+                .is_some()
         {
+            Err("Explicitly clean up or acknowledge retained game ownership before applying or launching a unified profile.".into())
+        } else {
+            Ok(())
+        }
+    }
+    pub(crate) fn guard_request(&self, request: &Value) -> Result<(), String> {
+        if self.guard_profile_takeover().is_ok() {
             return Ok(());
         }
-        if command == "mapping_companion_route"
-            && matches!(
-                request["companion"]["action"].as_str(),
-                Some("inspect" | "recording" | "stop" | "recover")
-            )
-        {
-            return Ok(());
-        }
-        if command == "companion_feedback_routes"
-            && matches!(
-                request["companion"]["action"].as_str(),
-                Some("inspect" | "resync" | "reset")
-            )
-        {
-            return Ok(());
-        }
+        let command = request["command"].as_str().unwrap_or("");
         if command.starts_with("game_")
             || matches!(
                 command,
-                "companion_status"
-                    | "companion_usb_status"
-                    | "companion_usb_ports"
-                    | "companion_usb_connect"
-                    | "companion_usb_disconnect"
-                    | "companion_usb_reconnect"
-                    | "companion_usb_arm"
-                    | "companion_usb_disarm"
-                    | "companion_game_capture"
-                    | "companion_disable"
-                    | "companion_disconnect"
-                    | "companion_revoke"
-                    | "ports"
+                "ports"
+                    | "connect"
+                    | "disconnect"
+                    | "module_usb_ports"
+                    | "module_usb_list"
+                    | "module_usb_status"
+                    | "module_usb_connect"
+                    | "module_usb_disconnect"
                     | "status"
                     | "config_read"
                     | "action_describe"
@@ -577,51 +236,46 @@ impl GamesRuntime {
                     | "action_ownership"
                     | "events_state"
                     | "events_read"
-                    | "integration_get_state"
-                    | "integration_catalogue"
-                    | "dcs_status"
                     | "controller_list"
                     | "controller_inspect"
-                    | "mapping_panel_sources"
-                    | "mapping_panel_inspect"
-                    | "mapping_capture"
-                    | "mapping_virtual_inspect"
-                    | "mapping_trace_export"
                     | "controller_visibility_status"
-                    | "controller_visibility_restore"
                     | "controller_visibility_inspect"
                     | "controller_visibility_processes"
-                    | "mapping_status"
-                    | "mapping_recording"
-                    | "mapping_stop"
-                    | "dcs_catalogue"
-                    | "integration_override"
-                    | "integration_simulate"
+                    | "companion_status"
+                    | "companion_usb_ports"
+                    | "companion_usb_status"
             )
         {
             return Ok(());
         }
-        // Connections and manual edits can change ownership or the global USB
-        // descriptor layout, including when another module is edited.
-        if command == "connect" {
-            return Ok(());
-        }
-        Err("The game session owns peripheral and integration settings. Deactivate or recover it before making manual changes.".into())
+        Err("Retained game cleanup owns its existing hardware evidence. Finish cleanup before independent writes.".into())
     }
     pub(crate) fn request(&self, request: &Value) -> Result<(), String> {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         if self.inner.closed.load(Ordering::Acquire) {
-            return Err("The games runtime has closed.".into());
+            return Err("The game metadata runtime has closed.".into());
         }
-        if !request.is_object() || request.to_string().len() > 65536 {
-            return Err("Invalid game request.".into());
+        if !request.is_object()
+            || serde_json::to_vec(request)
+                .map_err(|e| e.to_string())?
+                .len()
+                > 65536
+        {
+            return Err("Invalid game metadata request.".into());
         }
-        let command = request["command"].as_str().ok_or("Missing game command.")?;
-        if command == "game_get_state" {
-            return Ok(());
+        let command = request["command"]
+            .as_str()
+            .ok_or("Choose a game metadata operation.")?;
+        if command.starts_with("game_profile_")
+            || matches!(command, "game_launch" | "game_activate" | "game_deactivate")
+        {
+            return Err("This independent game profile/activation API is retired. Use a unified profile and profile_game_launch.".into());
         }
         if command.starts_with("game_integration_") {
-            let game_id = game_id(&request["gameId"])?;
+            if command != "game_integration_cancel" {
+                self.inner.guard_installation_metadata()?;
+            }
+            let id = game_id(&request["gameId"])?;
             let settings = self
                 .inner
                 .settings
@@ -630,207 +284,92 @@ impl GamesRuntime {
             let game = settings
                 .catalogue
                 .iter()
-                .find(|g| g["id"] == game_id)
+                .find(|game| game["id"] == id)
                 .cloned()
-                .ok_or("Choose a supported game.")?;
-            let session_active =
-                self.inner.busy.load(Ordering::Acquire) || settings.journal.is_some();
-            drop(settings);
-            if session_active
+                .ok_or("Choose a current game installation.")?;
+            if (settings.journal.is_some() || self.inner.busy.load(Ordering::Acquire))
                 && !matches!(
                     command,
                     "game_integration_check" | "game_integration_cancel"
                 )
             {
                 return Err(
-                    "Deactivate or recover the current game session before integration setup."
-                        .into(),
+                    "Resolve retained game cleanup before changing its provider setup.".into(),
                 );
             }
-            let result = self.inner.setup.request(
-                request,
-                &game,
-                self.inner.platform.clone(),
-                &self.inner.panel,
-            );
+            drop(settings);
+            let result = self
+                .inner
+                .setup
+                .request(request, &game, self.inner.platform.clone());
             if result.is_ok() {
                 self.inner.refresh_game_contexts(true);
-                self.inner.enforce_integration_context();
             }
             return result;
         }
-        if command == "game_deactivate" {
-            if self.inner.busy.load(Ordering::Acquire) {
-                self.inner.cancel.store(true, Ordering::Release);
-                return Ok(());
-            }
-            return self.recover();
+        let fields: &[&str] = match command {
+            "game_get_state" | "game_scan" | "game_recover" => &[],
+            "game_installation" => &["gameId", "executable"],
+            "game_abandon" => &["preserveCurrentSetup"],
+            _ => return Err("Unknown game metadata operation.".into()),
+        };
+        if !known(request, &[&["command", "clientId"][..], fields].concat()) {
+            return Err("Unknown game metadata request field.".into());
+        }
+        if command == "game_get_state" {
+            return Ok(());
         }
         if command == "game_recover" {
             return self.recover();
         }
         if command == "game_abandon" {
-            if request["preserveCurrentSetup"] != true {
-                return Err("Confirm that the current setup should be kept and the previous setup will not be restored.".into());
-            }
-            if self.inner.busy.load(Ordering::Acquire) {
-                return Err("Wait for the current game operation to finish before keeping the current setup.".into());
-            }
-            let mut settings = self
-                .inner
-                .settings
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            if settings.journal.is_none() {
-                return Err("There is no game recovery journal to archive.".into());
-            }
-            let archive = self
-                .inner
-                .journal_path
-                .with_file_name(format!("games.abandoned-{}.json", uuid::Uuid::new_v4()));
-            fs::rename(&self.inner.journal_path, &archive).map_err(|e| e.to_string())?;
-            let abandoned = settings.journal.take();
-            settings.error = None;
-            drop(settings);
-            if let Some(journal) = abandoned {
-                if !journal["mapping"].is_null() {
-                    self.inner.call(
-                        "_game_mapping_abandon",
-                        json!({"mapping":journal["mapping"]}),
-                    )?;
-                }
-                if !journal["companions"].is_null() {
-                    self.inner.call(
-                        "_game_companion_abandon",
-                        json!({"companions":journal["companions"]}),
-                    )?;
-                }
-            }
-            self.inner.phase("idle", None);
-            self.inner.step("Recovery journal archived. The current hardware and integration setup was kept; the previous setup was not restored.");
-            self.inner.state.lock().unwrap_or_else(|p| p.into_inner())["recoveryArchive"] =
-                json!(archive.to_string_lossy());
-            return Ok(());
+            return self.abandon(request);
         }
-        if self.active() {
-            return Err("Deactivate or recover the current game session first.".into());
-        }
-        if matches!(command, "game_launch" | "game_activate") {
-            let game = game_id(&request["gameId"])?;
-            let s = self
-                .inner
-                .settings
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            let id = request
-                .get("profileId")
-                .map(|v| identifier(v, 64))
-                .transpose()?
-                .unwrap_or(&s.saved.defaults[game]);
-            let profile = s
-                .saved
-                .profiles
-                .get(id)
-                .filter(|p| p["gameId"] == game)
-                .ok_or("Choose a profile belonging to this game.")?
-                .clone();
-            let installation = s
-                .catalogue
-                .iter()
-                .find(|g| g["id"] == game && g["installed"] == true)
-                .cloned()
-                .ok_or("Find this game's installation before activating it.")?;
-            if command == "game_launch" && installation["launchSupported"] != true {
-                return Err("Game launching is unavailable on this platform.".into());
-            }
-            self.inner.setup.preflight(&profile, &installation)?;
-            drop(s);
-            self.inner.cancel.store(false, Ordering::Release);
-            self.inner.busy.store(true, Ordering::Release);
-            self.inner.phase("validating", None);
-            {
-                let mut state = self.inner.state.lock().unwrap_or_else(|p| p.into_inner());
-                state["gameId"] = profile["gameId"].clone();
-                state["profileId"] = profile["id"].clone();
-                state["steps"] = json!([]);
-                state["pid"] = Value::Null;
-                state["bindingWarning"] = Value::Null;
-            }
-            let inner = self.inner.clone();
-            let launch = command == "game_launch";
-            let accepted = request["acceptBindingChanges"] == true;
-            self.spawn(move || inner.run(profile, installation, launch, accepted));
-            return Ok(());
-        }
-        let mut s = self
+        self.guard_profile_takeover()?;
+        let mut settings = self
             .inner
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        let mut draft = s.saved.clone();
-        match command {
-            "game_scan" => {
-                s.catalogue = self.inner.platform.catalogue(&s.saved.manual);
-                self.inner.setup.refresh(&s.catalogue);
-                return Ok(());
-            }
-            "game_installation" => {
-                let game = game_id(&request["gameId"])?;
-                if request["executable"].is_null() {
-                    draft.manual.remove(game);
-                } else {
-                    let executable = request["executable"]
-                        .as_str()
-                        .filter(|s| {
-                            !s.is_empty() && s.len() <= 4096 && !s.chars().any(char::is_control)
-                        })
-                        .ok_or("Choose a game executable.")?;
-                    self.inner.platform.validate(game, executable)?;
-                    draft.manual.insert(game.into(), executable.into());
-                }
-            }
-            "game_profile_save" => {
-                let p = profile(&request["gameProfile"])?;
-                let id = p["id"].as_str().unwrap().to_string();
-                if draft
-                    .profiles
-                    .get(&id)
-                    .is_some_and(|old| old["gameId"] != p["gameId"])
-                {
-                    return Err("A saved profile cannot change games.".into());
-                }
-                if draft.profiles.len() >= 64 && !draft.profiles.contains_key(&id) {
-                    return Err("Choose at most 64 game profiles.".into());
-                }
-                draft.profiles.insert(id, p);
-            }
-            "game_profile_delete" => {
-                let id = identifier(&request["profileId"], 64)?;
-                if draft.defaults.values().any(|v| v == id) {
-                    return Err("Choose another default before deleting this profile.".into());
-                }
-                if draft.profiles.remove(id).is_none() {
-                    return Err("Unknown game profile.".into());
-                }
-            }
-            "game_profile_default" => {
-                let game = game_id(&request["gameId"])?;
-                let id = identifier(&request["profileId"], 64)?;
-                if draft.profiles.get(id).is_none_or(|p| p["gameId"] != game) {
-                    return Err("Choose a profile belonging to this game.".into());
-                }
-                draft.defaults.insert(game.into(), id.into());
-            }
-            _ => return Err("Unknown game command.".into()),
+        if command == "game_scan" {
+            settings.catalogue = self
+                .inner
+                .platform
+                .catalogue(&settings.saved.manual_installations);
+            self.inner.setup.refresh(&settings.catalogue);
+            return Ok(());
         }
-        if draft.value().to_string().len() > MAX_SAVED {
-            return Err("Saved game profiles exceed the 48 KiB library limit. Remove unused profiles or mappings.".into());
+        if let Some(error) = &settings.metadata_error {
+            return Err(format!(
+                "Repair installation metadata before changing executable locations: {error}"
+            ));
         }
-        persist(&self.inner.path, &draft.value())?;
-        s.catalogue = self.inner.platform.catalogue(&draft.manual);
-        self.inner.setup.refresh(&s.catalogue);
-        s.saved = draft;
-        s.error = None;
+        let id = game_id(&request["gameId"])?;
+        let mut next = settings.saved.clone();
+        match request.get("executable") {
+            Some(Value::Null) => {
+                next.manual_installations.remove(id);
+            }
+            Some(Value::String(executable)) => {
+                self.inner.platform.validate(id, executable)?;
+                next.manual_installations
+                    .insert(id.into(), executable.clone());
+            }
+            _ => {
+                return Err(
+                    "Choose an executable string or explicit null to remove a manual installation."
+                        .into(),
+                )
+            }
+        }
+        next.validate()?;
+        self.inner.installations.save(&next)?;
+        settings.catalogue = self.inner.platform.catalogue(&next.manual_installations);
+        self.inner.setup.refresh(&settings.catalogue);
+        settings.saved = next;
+        settings.error = None;
+        drop(settings);
+        self.inner.refresh_game_contexts(true);
         Ok(())
     }
     fn spawn(&self, work: impl FnOnce() + Send + 'static) {
@@ -842,7 +381,7 @@ impl GamesRuntime {
     }
     fn recover(&self) -> Result<(), String> {
         if self.inner.busy.load(Ordering::Acquire) {
-            return Err("Wait for the current game operation to finish.".into());
+            return Err("Wait for retained game cleanup to finish.".into());
         }
         let journal = self
             .inner
@@ -855,34 +394,88 @@ impl GamesRuntime {
             self.inner.phase("idle", None);
             return Ok(());
         };
-        let journal = validate_journal(journal)?;
+        let journal = cleanup::validate_journal(journal)?;
+        let lease = cleanup::lease(&self.inner.journal_path)?;
+        self.inner.verify_journal()?;
         self.inner.busy.store(true, Ordering::Release);
         self.inner.cancel.store(false, Ordering::Release);
         self.inner.phase("restoring", None);
         let inner = self.inner.clone();
         self.spawn(move || {
+            let _lease = lease;
             let result = inner.restore(journal);
             inner.finish(result, None);
         });
+        Ok(())
+    }
+    fn abandon(&self, request: &Value) -> Result<(), String> {
+        if request["preserveCurrentSetup"] != true {
+            return Err(
+                "Explicitly confirm preserving current setup without restoring the retained owner."
+                    .into(),
+            );
+        }
+        if self.inner.busy.load(Ordering::Acquire) {
+            return Err(
+                "Wait for retained cleanup to finish before acknowledging its journal.".into(),
+            );
+        }
+        let lease = cleanup::lease(&self.inner.journal_path)?;
+        let journal = self
+            .inner
+            .settings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .journal
+            .clone()
+            .ok_or("No retained game journal needs acknowledgement.")?;
+        // An invalid journal has no trusted owner. Archive only this exact file;
+        // separate output/protected ownership records remain explicit recovery.
+        if journal["invalid"] != true {
+            self.inner.verify_journal()?;
+            if journal["companions"]["taken"] == true {
+                self.inner.call(
+                    "_game_companion_abandon",
+                    json!({"companions":journal["companions"]}),
+                )?;
+            }
+            self.inner.verify_journal()?;
+        } else {
+            let expected=journal["rawFingerprint"].as_str().ok_or("The rejected cleanup file has no bounded native snapshot; preserve it for inspection.")?;
+            if cleanup::fingerprint(&self.inner.journal_path)? != expected {
+                return Err(
+                    "The rejected cleanup file changed after inspection; it was preserved.".into(),
+                );
+            }
+        }
+        let archive = self
+            .inner
+            .journal_path
+            .with_file_name(format!("games.abandoned-{}.json", uuid::Uuid::new_v4()));
+        fs::rename(&self.inner.journal_path, &archive).map_err(|e| e.to_string())?;
+        let mut settings = self
+            .inner
+            .settings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        settings.journal = None;
+        settings.error = settings.metadata_error.clone();
+        drop(settings);
+        drop(lease);
+        *self.inner.state.lock().unwrap_or_else(|p| p.into_inner()) =
+            json!({"phase":"idle","error":null,"recoveryArchive":archive.to_string_lossy()});
         Ok(())
     }
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
         self.inner.cancel.store(true, Ordering::Release);
-        if let Some(observer) = self.activation_observer.lock().unwrap_or_else(|p| p.into_inner()).take() { let _ = observer.join(); }
-        if let Some(observer) = self
-            .observer
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
-        {
-            let _ = observer.join();
+        for worker in [&self.activation_observer, &self.observer, &self.worker] {
+            if let Some(worker) = worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                let _ = worker.join();
+            }
         }
         self.inner.setup.shutdown();
-        if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            let _ = worker.join();
-        }
     }
 }
 impl Drop for GamesRuntime {
@@ -891,676 +484,15 @@ impl Drop for GamesRuntime {
     }
 }
 
-fn validate_journal(value: Value) -> Result<Value, String> {
-    if !matches!(value["schemaVersion"].as_u64(), Some(1 | 2 | 3)) {
-        return Err("Unsupported recovery journal.".into());
-    }
-    crate::game_mapping::journal(&value)?;
-    crate::game_mapping::companions::journal(&value)?;
-    game_id(&value["gameId"])?;
-    identifier(&value["profileId"], 64)?;
-    let rows = value["devices"]
-        .as_array()
-        .filter(|d| d.len() <= 32)
-        .ok_or("Invalid recovery devices.")?;
-    let mut seen = BTreeSet::new();
-    for row in rows {
-        let (gateway, module) = target(row)?;
-        if row["gatewayId"] != gateway
-            || row["moduleId"] != module
-            || !seen.insert((gateway, module))
-            || row["boot"].as_u64().is_none_or(|b| b == 0)
-            || !row["baselineEnabled"].is_boolean()
-            || !row["desiredEnabled"].is_boolean()
-            || !row["configAttempted"].is_boolean()
-            || !row["controllerAttempted"].is_boolean()
-            || !row["publicationAttempted"].is_boolean()
-        {
-            return Err("Invalid recovery device state.".into());
-        }
-        validate_config(&row["baselineConfig"])?;
-        validate_config(&row["desiredConfig"])?;
-    }
-    for key in ["baselineIntegration", "desiredIntegration"] {
-        if !value[key].is_null() {
-            game_integration(&value[key])?;
-        }
-    }
-    if !value["integrationTaken"].is_boolean()
-        || !value["integrationChanged"].is_boolean()
-        || !value["baselineIntegrationRunning"].is_boolean()
-        || !value["baselineDcsRunning"].is_boolean()
-    {
-        return Err("Invalid integration recovery state.".into());
-    }
-    Ok(value)
-}
 impl Inner {
-    fn phase(&self, phase: &str, error: Option<String>) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state["phase"] = json!(phase);
-        state["error"] = json!(error);
-    }
-    fn step(&self, message: &str) {
-        let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if !s["steps"].is_array() {
-            s["steps"] = json!([]);
+    fn guard_installation_metadata(&self) -> Result<(), String> {
+        let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        match &settings.metadata_error {
+            Some(error) => Err(format!(
+                "Repair game installation metadata before selecting or launching a game: {error}"
+            )),
+            None => Ok(()),
         }
-        let steps = s["steps"].as_array_mut().unwrap();
-        if steps.len() < 32 {
-            steps.push(json!(message));
-        }
-    }
-    fn call(&self, command: &str, extra: Value) -> Result<Value, String> {
-        let mut request = extra;
-        request["command"] = json!(command);
-        request["clientId"] = json!(CLIENT);
-        let reply = (self.panel)(request);
-        if reply["ok"] != true {
-            return Err(reply["error"]
-                .as_str()
-                .unwrap_or("The game setup request failed.")
-                .into());
-        }
-        Ok(reply["state"].clone())
-    }
-    fn device_once(&self, row: &Value) -> Result<(Value, Value), String> {
-        let state = self.call(
-            "config_read",
-            json!({"gatewayId":row["gatewayId"],"moduleId":row["moduleId"]}),
-        )?;
-        let module = state["modules"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|m| m["id"] == row["moduleId"])
-            .ok_or("Reconnect the game profile peripheral.")?;
-        if state["connected"] != true
-            || state["reconnecting"] == true
-            || state["layoutPending"] == true
-            || module["online"] != true
-            || module["boot"].as_u64().is_none_or(|b| b == 0)
-            || !module["enabled"].is_boolean()
-        {
-            return Err(
-                "Reconnect the game profile peripheral and wait for its layout to settle.".into(),
-            );
-        }
-        let config = &state["moduleConfigs"][row["moduleId"]
-            .as_str()
-            .ok_or("Invalid peripheral identity.")?];
-        crate::runtime::validate(config)?;
-        if config["view"] != "active"
-            || config["pendingApply"] != false
-            || config["owner"]
-                .as_u64()
-                .is_some_and(|o| o != 0 && o != crate::runtime::owner(CLIENT) as u64)
-        {
-            return Err(
-                "End the peripheral's setup session before activating a game profile.".into(),
-            );
-        }
-        Ok((module.clone(), config.clone()))
-    }
-    fn wait_duration() -> Duration {
-        Duration::from_millis(if cfg!(test) { 100 } else { 30_000 })
-    }
-    fn wait_cancelled(&self) -> Result<(), String> {
-        if self.state.lock().unwrap_or_else(|p| p.into_inner())["phase"] != "restoring" {
-            self.cancelled()?;
-        }
-        Ok(())
-    }
-    fn device(&self, row: &Value) -> Result<(Value, Value), String> {
-        let until = Instant::now() + Self::wait_duration();
-        loop {
-            self.wait_cancelled()?;
-            match self.device_once(row) {
-                Ok(device) => return Ok(device),
-                Err(e) if Instant::now() >= until => return Err(e),
-                Err(_) => thread::sleep(Duration::from_millis(if cfg!(test) { 2 } else { 100 })),
-            }
-        }
-    }
-    fn checkpoint(&self, journal: &Value) -> Result<(), String> {
-        persist(&self.journal_path, journal)?;
-        self.settings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .journal = Some(journal.clone());
-        Ok(())
-    }
-    fn cancelled(&self) -> Result<(), String> {
-        if self.cancel.load(Ordering::Acquire) {
-            Err("Game activation was cancelled.".into())
-        } else {
-            Ok(())
-        }
-    }
-    fn snapshot(&self, profile: &Value, accepted: bool) -> Result<Value, String> {
-        crate::game_mapping::overlap(profile)?;
-        let companions = if profile["companions"].is_null() {
-            Value::Null
-        } else {
-            let snapshot = self.call(
-                "_game_companion_snapshot",
-                json!({"capture":profile["companions"]}),
-            )?;
-            let parsed = crate::game_mapping::companions::Snapshot::parse(&snapshot)?;
-            if serde_json::to_value(parsed.desired).map_err(|e| e.to_string())?
-                != profile["companions"]
-                || parsed.taken
-                || parsed.restored
-            {
-                return Err(
-                    "Companion preflight returned a different capture or an active recovery phase."
-                        .into(),
-                );
-            }
-            snapshot
-        };
-        let mapping = if profile["mapping"].is_null() {
-            Value::Null
-        } else {
-            self.call(
-                "_game_mapping_snapshot",
-                json!({"capture":profile["mapping"]}),
-            )?
-        };
-        let integration = self.call("integration_get_state", json!({}))?["integration"].clone();
-        let dcs = self.call("dcs_status", json!({}))?["dcsBios"].clone();
-        if !integration.is_object() || !dcs.is_object() {
-            return Err("Refresh the integration state before activating a game.".into());
-        }
-        if integration["running"] == true && dcs["running"] == true {
-            return Err("Stop competing integrations before activating a game.".into());
-        }
-        let mut rows = profile["devices"].as_array().unwrap().clone();
-        if !profile["integration"].is_null() {
-            for assignment in game_integration(&profile["integration"])?.assignments {
-                if !rows.iter().any(|r| {
-                    r["gatewayId"] == assignment.gateway_id && r["moduleId"] == assignment.module_id
-                }) {
-                    rows.push(json!({"gatewayId":assignment.gateway_id,"moduleId":assignment.module_id,"controller":"keep"}));
-                }
-            }
-        }
-        if rows.len() > 32 {
-            return Err(
-                "The combined profile and integration need more than 32 peripherals.".into(),
-            );
-        }
-        let mut devices = Vec::new();
-        let mut changed = false;
-        for row in rows {
-            self.cancelled()?;
-            let (module, config) = self.device(&row)?;
-            if module["enabled"] == true && module["profileMatch"] == false {
-                return Err("An enabled peripheral's HID profile already differs from its configuration. Reconcile it before activating a game profile.".into());
-            }
-            let desired_config = row.get("config").unwrap_or(&config["config"]);
-            let desired_enabled = match row["controller"].as_str() {
-                Some("enabled") => true,
-                Some("disabled") => false,
-                _ => module["enabled"].as_bool().unwrap(),
-            };
-            changed |= desired_config != &config["config"] || module["enabled"] != desired_enabled;
-            devices.push(json!({"gatewayId":row["gatewayId"],"moduleId":row["moduleId"],"boot":module["boot"],
-                "baselineConfig":config["config"],"desiredConfig":desired_config,"baselineEnabled":module["enabled"],"desiredEnabled":desired_enabled,
-                "configAttempted":false,"controllerAttempted":false,"publicationAttempted":false}));
-        }
-        if !profile["integration"].is_null() {
-            let validation = self.call("integration_preflight", json!({"integrationConfig":game_integration(&profile["integration"])?.value(),"gameDevices":profile["devices"],"gameCompanions":profile["companions"]}))?["integration"]["validation"].clone();
-            if validation["valid"] != true {
-                return Err(validation["diagnostics"][0]["message"].as_str().unwrap_or("Game integration preflight failed. Review its catalogue, bindings and peripheral capabilities.").into());
-            }
-        }
-        if changed && !accepted {
-            self.state.lock().unwrap_or_else(|p| p.into_inner())["bindingWarning"] =
-                json!(BINDING_WARNING);
-            return Err(BINDING_WARNING.into());
-        }
-        let mut snapshot = json!({"schemaVersion":profile["schemaVersion"],"mapping":mapping,"gameId":profile["gameId"],"profileId":profile["id"],"devices":devices,
-            "baselineIntegration":integration["config"],"baselineIntegrationRunning":integration["running"]==true,
-            "baselineDcs":dcs["config"],"baselineDcsRunning":dcs["running"]==true,"desiredIntegration":profile["integration"],
-            "integrationTaken":false,"integrationChanged":false});
-        if profile["schemaVersion"] == 3 {
-            snapshot["companions"] = companions;
-        }
-        Ok(snapshot)
-    }
-    fn write_config(&self, row: &Value, desired: &Value) -> Result<(), String> {
-        let route = json!({"gatewayId":row["gatewayId"],"moduleId":row["moduleId"]});
-        self.call("claim", route.clone())?;
-        let result = (|| {
-            // Claim must still address the same boot; the adapter also guards
-            // the CAN route throughout its one-shot apply and readback.
-            let (module, current) = self.device(row)?;
-            if module["boot"] != row["boot"] {
-                return Err("The peripheral restarted; recovery needs inspection.".into());
-            }
-            if current["config"] != row["baselineConfig"]
-                && current["config"] != row["desiredConfig"]
-            {
-                return Err(
-                    "Peripheral settings changed before the setup claim. Recovery preserved them."
-                        .into(),
-                );
-            }
-            let mut request = route.clone();
-            request["config"] = desired.clone();
-            self.call("config_apply", request).map(|_| ())
-        })();
-        let released = self.call("release", route).map(|_| ());
-        result.and(released)
-    }
-    fn readback(&self, row: &Value, config: &Value, enabled: &Value) -> Result<(), String> {
-        let until = Instant::now() + Self::wait_duration();
-        loop {
-            self.wait_cancelled()?;
-            let result = self.device_once(row).and_then(|(module, current)| {
-                if module["boot"] != row["boot"] {
-                    return Err("The peripheral restarted during the game session. Recovery cannot overwrite its new setup.".into());
-                }
-                if current["config"] != *config || module["enabled"] != *enabled {
-                    return Err("Peripheral readback does not confirm the requested game setup. No write was repeated.".into());
-                }
-                Ok(())
-            });
-            match result {
-                Ok(()) => return Ok(()),
-                Err(e) if Instant::now() >= until => return Err(e),
-                Err(_) => thread::sleep(Duration::from_millis(if cfg!(test) { 2 } else { 100 })),
-            }
-        }
-    }
-    fn publish(
-        &self,
-        journal: &mut Value,
-        index: usize,
-        config: &Value,
-        enabled: &Value,
-    ) -> Result<(), String> {
-        if *enabled != true {
-            return Ok(());
-        }
-        let row = journal["devices"][index].clone();
-        let (module, current) = self.device(&row)?;
-        if module["boot"] != row["boot"]
-            || current["config"] != *config
-            || module["enabled"] != *enabled
-        {
-            return Err("The peripheral changed before its HID profile could be published.".into());
-        }
-        if module["profileMatch"] != false {
-            return Ok(());
-        }
-        journal["devices"][index]["publicationAttempted"] = json!(true);
-        self.checkpoint(journal)?;
-        let result = self.call(
-            "update-profile",
-            json!({"gatewayId":row["gatewayId"],"moduleId":row["moduleId"],"boot":row["boot"]}),
-        );
-        self.readback(&row, config, enabled)?;
-        let (module, _) = self.device(&row)?;
-        if module["profileMatch"] != true {
-            return result.map(|_| ()).and(Err(
-                "HID profile readback did not confirm publication. No update was repeated.".into(),
-            ));
-        }
-        Ok(())
-    }
-    fn apply(&self, journal: &mut Value) -> Result<(), String> {
-        self.phase("applying", None);
-        if !journal["mapping"].is_null() {
-            journal["mapping"]["taken"] = json!(true);
-            self.checkpoint(journal)?;
-            self.call("_game_mapping_take", json!({"mapping":journal["mapping"]}))?;
-        }
-        journal["integrationTaken"] = json!(true);
-        self.checkpoint(journal)?;
-        self.call("integration_stop", json!({}))?;
-        self.call("dcs_stop", json!({}))?;
-        self.step("Previous integration stopped.");
-        if !journal["companions"].is_null() {
-            self.cancelled()?;
-            journal["companions"]["taken"] = json!(true);
-            self.checkpoint(journal)?;
-            self.call(
-                "_game_companion_take",
-                json!({"companions":journal["companions"]}),
-            )?;
-            self.step("Captured companion assignments applied without arming controller input.");
-        }
-        let count = journal["devices"].as_array().unwrap().len();
-        for index in 0..count {
-            self.cancelled()?;
-            let row = journal["devices"][index].clone();
-            self.readback(&row, &row["baselineConfig"], &row["baselineEnabled"])?;
-            if row["desiredConfig"] != row["baselineConfig"] {
-                journal["devices"][index]["configAttempted"] = json!(true);
-                self.checkpoint(journal)?;
-                let result = self.write_config(&row, &row["desiredConfig"]);
-                // A lost acknowledgement is reconciled only by reads.
-                let verified = self.readback(&row, &row["desiredConfig"], &row["baselineEnabled"]);
-                if verified.is_err() {
-                    return result.and(verified);
-                }
-            }
-            if row["desiredEnabled"] != row["baselineEnabled"] {
-                journal["devices"][index]["controllerAttempted"] = json!(true);
-                self.checkpoint(journal)?;
-                let command = if row["desiredEnabled"] == true {
-                    "enable"
-                } else {
-                    "disable"
-                };
-                let result = self.call(
-                    command,
-                    json!({"gatewayId":row["gatewayId"],"moduleId":row["moduleId"],"boot":row["boot"]}),
-                );
-                let verified = self.readback(&row, &row["desiredConfig"], &row["desiredEnabled"]);
-                if verified.is_err() {
-                    return result.map(|_| ()).and(verified);
-                }
-            }
-            self.publish(
-                journal,
-                index,
-                &row["desiredConfig"],
-                &row["desiredEnabled"],
-            )?;
-            self.step("Peripheral setup confirmed.");
-        }
-        Ok(())
-    }
-    fn start_integration(
-        &self,
-        journal: &mut Value,
-        process: Option<&crate::game_discovery::ProcessIdentity>,
-    ) -> Result<(), String> {
-        if journal["desiredIntegration"].is_null() {
-            return Ok(());
-        }
-        let mut config = journal["desiredIntegration"].clone();
-        if config["document"]["provider"] == "dcs-bios" {
-            let process = process
-                .ok_or("Start the selected DCS installation before activating its integration.")?;
-            if !self.platform.alive(process)? {
-                return Err("The verified DCS process exited before provider attachment.".into());
-            }
-        }
-        if config["document"]["provider"] == crate::xplane::PROVIDER {
-            let process = process.ok_or(
-                "Start the selected X-Plane installation before activating live telemetry.",
-            )?;
-            config["connection"]["processIdentity"] = process.value();
-        }
-        if config["document"]["provider"] == "assetto-corsa-rally"
-            && config["connection"]["source"] == "shared-memory"
-        {
-            let process = process.ok_or("Launch Rally before starting live telemetry.")?;
-            config["connection"]["processId"] = json!(process.pid);
-        }
-        journal["desiredIntegration"] = config.clone();
-        journal["integrationChanged"] = json!(true);
-        self.checkpoint(journal)?;
-        self.call("integration_save", json!({"integrationConfig":config}))?;
-        self.call("integration_start", json!({}))?;
-        self.step(
-            "Game integration started; telemetry updates hardware through its saved bindings.",
-        );
-        Ok(())
-    }
-    fn run(self: Arc<Self>, profile: Value, installation: Value, launch: bool, accepted: bool) {
-        let mut journal = None;
-        let result = (|| {
-            self.platform.validate(
-                profile["gameId"].as_str().unwrap(),
-                installation["executable"]
-                    .as_str()
-                    .ok_or("No executable was found.")?,
-            )?;
-            self.cancelled()?;
-            self.setup.preflight(&profile, &installation)?;
-            let snapshot = self.snapshot(&profile, accepted)?;
-            self.checkpoint(&snapshot)?;
-            journal = Some(snapshot);
-            let j = journal.as_mut().unwrap();
-            self.apply(j)?;
-            if !j["mapping"].is_null() {
-                self.cancelled()?;
-                j["mapping"]["armed"] = json!(true);
-                self.checkpoint(j)?;
-                self.call("_game_mapping_arm", json!({"mapping":j["mapping"]}))?;
-                self.step("Captured mapping armed with fresh input baselines.");
-            }
-            let delayed = !j["desiredIntegration"].is_null();
-            if !delayed {
-                self.start_integration(j, None)?;
-            }
-            self.cancelled()?;
-            let process = if launch {
-                self.phase("launching", None);
-                let existing = self.platform.find(&installation)?;
-                if existing.is_none() {
-                    self.phase("waiting", None);
-                }
-                Some(match existing {
-                    Some(p) => p,
-                    None => self.platform.launch(&installation)?,
-                })
-            } else if installation["processMonitoringSupported"]
-                .as_bool()
-                .unwrap_or(installation["launchSupported"] == true)
-            {
-                self.platform.find(&installation)?
-            } else {
-                None
-            };
-            self.cancelled()?;
-            if delayed {
-                self.start_integration(j, process.as_ref())?;
-            }
-            self.phase("running", None);
-            {
-                let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                s["pid"] = json!(process.as_ref().map(|p| p.pid));
-                s["process"] = process.as_ref().map(|p| p.value()).unwrap_or(Value::Null);
-            }
-            self.step(if launch {
-                "Game process found and profile active."
-            } else {
-                "Game profile active."
-            });
-            while !self.cancel.load(Ordering::Acquire) {
-                if let Some(process) = &process {
-                    if !self.platform.alive(process)? {
-                        break;
-                    }
-                }
-                thread::sleep(Duration::from_millis(if cfg!(test) { 5 } else { 250 }));
-            }
-            Ok(())
-        })();
-        let activation_error = result.err();
-        let recovery = journal
-            .map(|j| self.restore_with_context(j, false))
-            .unwrap_or(Ok(()));
-        self.finish(recovery, activation_error);
-    }
-    fn restore(&self, journal: Value) -> Result<(), String> {
-        self.restore_with_context(journal, true)
-    }
-    fn restore_with_context(&self, mut journal: Value, recovery: bool) -> Result<(), String> {
-        self.phase("restoring", None);
-        self.step("Restoring the previous peripheral and integration setup.");
-        if journal["mapping"]["taken"] == true {
-            self.call("_game_mapping_stop", json!({"mapping":journal["mapping"]}))?;
-            journal["mapping"]["stopped"] = json!(true);
-            self.checkpoint(&journal)?;
-        }
-        if journal["integrationTaken"] == true {
-            let current = self.call("integration_get_state", json!({}))?["integration"].clone();
-            let expected = if journal["integrationChanged"] == true {
-                &journal["desiredIntegration"]
-            } else {
-                &journal["baselineIntegration"]
-            };
-            // A save can fail before replacement. Both expected and baseline
-            // are acknowledged safe states; a third setup belongs to someone else.
-            if current["config"] != *expected && current["config"] != journal["baselineIntegration"]
-            {
-                return Err("Integration settings changed outside the game session. Recovery preserved them.".into());
-            }
-            let dcs = self.call("dcs_status", json!({}))?["dcsBios"].clone();
-            if dcs["config"] != journal["baselineDcs"] {
-                return Err(
-                    "DCS-BIOS settings changed outside the game session. Recovery preserved them."
-                        .into(),
-                );
-            }
-            self.call("integration_stop", json!({}))?;
-            self.call("dcs_stop", json!({}))?;
-        }
-        if journal["companions"]["taken"] == true && journal["companions"]["restored"] != true {
-            self.call(
-                "_game_companion_restore",
-                json!({"companions":journal["companions"],"recovery":recovery}),
-            )?;
-            journal["companions"]["restored"] = json!(true);
-            self.checkpoint(&journal)?;
-            self.step("Owned companion assignments restored; controller input remains disarmed.");
-        }
-        for index in (0..journal["devices"].as_array().unwrap().len()).rev() {
-            let row = journal["devices"][index].clone();
-            if row["configAttempted"] != true
-                && row["controllerAttempted"] != true
-                && row["publicationAttempted"] != true
-            {
-                continue;
-            }
-            let (module, current) = self.device(&row)?;
-            if module["boot"] != row["boot"] {
-                if current["config"] == row["baselineConfig"]
-                    && module["enabled"] == row["baselineEnabled"]
-                    && (module["enabled"] != true || module["profileMatch"] == true)
-                {
-                    journal["devices"][index]["configAttempted"] = json!(false);
-                    journal["devices"][index]["controllerAttempted"] = json!(false);
-                    journal["devices"][index]["publicationAttempted"] = json!(false);
-                    self.checkpoint(&journal)?;
-                    continue;
-                }
-                return Err("A game peripheral restarted. Recovery preserved the new boot's setup for inspection.".into());
-            }
-            if current["config"] != row["baselineConfig"]
-                && current["config"] != row["desiredConfig"]
-            {
-                return Err("Peripheral configuration changed outside the game session. Recovery preserved it.".into());
-            }
-            if module["enabled"] != row["baselineEnabled"]
-                && module["enabled"] != row["desiredEnabled"]
-            {
-                return Err("Peripheral controller state changed outside the game session.".into());
-            }
-            if row["configAttempted"] == true && current["config"] != row["baselineConfig"] {
-                self.checkpoint(&journal)?;
-                let result = self.write_config(&row, &row["baselineConfig"]);
-                let verified = self.readback(&row, &row["baselineConfig"], &module["enabled"]);
-                if verified.is_err() {
-                    return result.and(verified);
-                }
-            }
-            if row["controllerAttempted"] == true && module["enabled"] != row["baselineEnabled"] {
-                self.checkpoint(&journal)?;
-                let command = if row["baselineEnabled"] == true {
-                    "enable"
-                } else {
-                    "disable"
-                };
-                let result = self.call(
-                    command,
-                    json!({"gatewayId":row["gatewayId"],"moduleId":row["moduleId"],"boot":row["boot"]}),
-                );
-                let verified = self.readback(&row, &row["baselineConfig"], &row["baselineEnabled"]);
-                if verified.is_err() {
-                    return result.map(|_| ()).and(verified);
-                }
-            }
-            self.publish(
-                &mut journal,
-                index,
-                &row["baselineConfig"],
-                &row["baselineEnabled"],
-            )?;
-            journal["devices"][index]["configAttempted"] = json!(false);
-            journal["devices"][index]["controllerAttempted"] = json!(false);
-            journal["devices"][index]["publicationAttempted"] = json!(false);
-            self.checkpoint(&journal)?;
-        }
-        if journal["integrationTaken"] == true {
-            if journal["integrationChanged"] == true {
-                if journal["baselineIntegration"].is_null() {
-                    self.call("integration_clear", json!({}))?;
-                } else {
-                    self.call(
-                        "integration_save",
-                        json!({"integrationConfig":journal["baselineIntegration"]}),
-                    )?;
-                }
-            }
-            if journal["baselineIntegrationRunning"] == true {
-                self.call("integration_start", json!({}))?;
-            }
-            if journal["baselineDcsRunning"] == true {
-                self.call("dcs_start", json!({}))?;
-            }
-            journal["integrationTaken"] = json!(false);
-            journal["integrationChanged"] = json!(false);
-            self.checkpoint(&journal)?;
-        }
-        if journal["mapping"]["taken"] == true && journal["mapping"]["resumed"] != true {
-            self.checkpoint(&journal)?;
-            self.call(
-                "_game_mapping_resume",
-                json!({"mapping":journal["mapping"],"recovery":recovery}),
-            )?;
-            journal["mapping"]["resumed"] = json!(true);
-            self.checkpoint(&journal)?;
-            if recovery {
-                self.step("Mapping stayed stopped after recovery; start it explicitly when ready.");
-            }
-        }
-        fs::remove_file(&self.journal_path).map_err(|e| e.to_string())?;
-        self.settings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .journal = None;
-        Ok(())
-    }
-    fn finish(&self, result: Result<(), String>, activation_error: Option<String>) {
-        match result {
-            Ok(()) => {
-                self.step("Previous setup restored.");
-                self.phase(
-                    if activation_error.is_some() {
-                        "failed"
-                    } else {
-                        "idle"
-                    },
-                    activation_error,
-                );
-            }
-            Err(e) => self.phase(
-                "recovery-needed",
-                Some(match activation_error {
-                    Some(original) => format!("{original} Recovery needs attention: {e}"),
-                    None => e,
-                }),
-            ),
-        }
-        self.busy.store(false, Ordering::Release);
     }
 }
 

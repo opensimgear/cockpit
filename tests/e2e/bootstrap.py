@@ -81,7 +81,7 @@ class Dependencies:
         untracked = []
         if source:
             fingerprint['source'] = str(source)
-            # firmware-common must match the owning firmware's declared pin.
+            # Explicit firmware-common refs select a clean commit, never local edits.
             ref = revision or git(source, 'rev-parse', 'HEAD').decode().strip()
             fingerprint['sourceCommit'] = git(source, 'rev-parse', ref).decode().strip()
             if revision is None:
@@ -148,4 +148,13 @@ class Dependencies:
             revisions.add(match.group(1))
         if len(revisions) != 1:
             raise ValueError('Firmware repositories require different firmware-common commits')
-        return self.acquire('firmware-common', revisions.pop())
+        declared = revisions.pop()
+        selected = self.manifest.get('firmware-common', {}).get('ref', '')
+        if not re.fullmatch(r'[0-9a-f]{40}', selected):
+            raise ValueError('The initiating repository must pin a full firmware-common commit')
+        # The initiating acceptance suite can qualify a newer shared contract
+        # against unchanged application sources. Preserve both facts in evidence.
+        checkout = self.acquire('firmware-common', selected)
+        self.resolved['firmware-common']['firmwareDeclaredRevision'] = declared
+        atomic_json(self.directory / 'resolved-dependencies.json', self.resolved)
+        return checkout

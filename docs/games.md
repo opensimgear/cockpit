@@ -100,8 +100,8 @@ original token; a newly available same-game process cannot inherit that worker.
 Only the affected integration stops; ordinary mapping routes are not stopped by
 this context broker.
 
-P3 provides this native admission contract. P4 supplies profile activation and
-compiled execution, so integrations remain dormant until that owner exists.
+The profile coordinator supplies native admission and compiled execution;
+integrations remain dormant until a matching applied owner exists.
 The browser's context-session label is display metadata and cannot authorize
 source attachment, telemetry or commands. Editing or saving settings never starts
 an integration, and settings saves revoke an affected old context before returning.
@@ -144,3 +144,17 @@ failure, offline recovery, stale identity and interrupted sessions. The native i
 coverage script also gates the new production modules above 70% line coverage.
 These checks do not qualify installed Windows games, USB enumeration or assembled
 hardware. Live game and physical hardware qualification remain separate work.
+
+## Local storage and retired configuration
+
+Manual installation overrides use a fresh bounded `game-installations-v1.json`
+store. Provider setup preferences and installation recovery retain separate
+`games.integration-setup.json` and `games.recovery.json` records. A corrupt
+installation store remains intact and blocks game identity/launch instead of
+silently falling back to a discovered executable. Hardware-only profile Apply
+remains available when no retained ownership prevents it.
+
+Old `games.json` profiles, defaults and captured integrations/mappings are not
+read or migrated. An existing recovery journal is inspected only to release its
+exact retained ownership. `OSG_GAMES_CONFIG` selects the anchor for the separate
+setup/recovery records; it does not enable an old configuration reader.

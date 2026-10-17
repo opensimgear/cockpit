@@ -163,9 +163,15 @@ fn actual_games_runtime_detects_external_start_and_exit_without_ui_or_provider_s
         std::sync::Arc::new(|_| {
             panic!("Process observation must not call provider or device output")
         }),
-        directory.path().join("games.json"),
-        platform.clone(),
-    );
+        {
+            let fixture_metadata_path = directory.path().join("games.json");
+            crate::games::Paths {
+                installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                recovery: fixture_metadata_path.with_extension("recovery.json"),
+            }
+        },
+        platform.clone());
     assert_eq!(
         runtime.profile_activation_identity("dcs").unwrap(),
         identity(platform.as_ref(), &game()).unwrap()

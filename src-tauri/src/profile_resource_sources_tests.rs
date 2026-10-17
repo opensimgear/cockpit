@@ -21,9 +21,15 @@ fn sources() -> (Sources, tempfile::TempDir) {
     ));
     let games = Arc::new(crate::games::GamesRuntime::new(
         panel.clone(),
-        temporary.path().join("games.json"),
-        Arc::new(crate::game_discovery::NativePlatform),
-    ));
+        {
+            let fixture_metadata_path = temporary.path().join("games.json");
+            crate::games::Paths {
+                installations: fixture_metadata_path.with_extension("installations-v1.json"),
+                provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+                recovery: fixture_metadata_path.with_extension("recovery.json"),
+            }
+        },
+        Arc::new(crate::game_discovery::NativePlatform)));
     (
         Sources {
             session: "provider-session".into(),

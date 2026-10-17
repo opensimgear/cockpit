@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""Independent private Gateway -> native integration -> real WSS feedback acceptance.
-
-Only source-only integrations and recording mappings are started. Simulated DCS
-UDP exports exercise the supported decoder; they are not a real game/mobile or
-virtual-controller qualification. No device commands, virtual reports or layouts.
-"""
+"""Applied unified profile -> real WSS typed feedback. No game context or virtual output is invented."""
 import argparse
 import copy
 import importlib.util
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import socket
 import struct
@@ -18,8 +14,8 @@ import tempfile
 import threading
 import time
 
-ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('companion_mapping_acceptance', ROOT / 'scripts/companion-mapping-acceptance.py')
+ROOT = Path(os.environ.get("OSG_ACCEPTANCE_ROOT",Path(__file__).resolve().parents[1]))
+spec = importlib.util.spec_from_file_location('companion_mapping_acceptance', Path(__file__).with_name('companion-mapping-acceptance.py'))
 c4 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c4)
 FEEDBACK_BYTES = 128 * 1024
@@ -153,22 +149,27 @@ class FeedbackPeer(c4.Peer):
                     continue
                 try:
                     self.heartbeat += 1
-                    self.consume(self.socket.request(self.message('heartbeat', sequence=str(self.heartbeat))))
+                    result=self.socket.request(self.message('heartbeat',sequence=str(self.heartbeat)))
+                    if not result['ok'] and result.get('error')=='Session is obsolete; explicitly reconnect.':
+                        self._open_locked(self.instance,self.publication)
+                    else:self.consume(result)
                 except Exception as error:
                     self.failure = error
                     return
 
-    def open(self, instance, publication):
+    def _open_locked(self,instance,publication):
+        result=self.socket.request(dict(type='open',instanceId=instance,publicationHash=publication['publicationHash']))
+        assert result['ok'],result
+        self.opened=result;self.publication=publication;self.feedback=FeedbackState(result,publication)
+        self.sequence=self.heartbeat=0
+        controls=json.loads(publication['canonicalDocument'])['ui']['controls']
+        values={control['id']:False if control['kind']=='button' else control.get('fallback',-1) for control in controls}
+        self.consume(self.socket.request(self.message('baseline',sequence='0',values=values)))
+
+    def open(self,instance,publication):
         with self.lock:
-            result = self.socket.request(dict(type='open', instanceId=instance))
-            assert result['ok'], result
-            self.opened = result
-            self.publication = publication
-            self.feedback = FeedbackState(result, publication)
-            self.sequence = self.heartbeat = 0
-            controls = json.loads(publication['canonicalDocument'])['ui']['controls']
-            values = {control['id']: False if control['kind'] == 'button' else control.get('fallback', -1) for control in controls}
-            self.consume(self.socket.request(self.message('baseline', sequence='0', values=values)))
+            self.instance,self.publication=instance,publication
+            self._open_locked(instance,publication)
 
     def input(self, changes):
         with self.lock:
@@ -186,26 +187,6 @@ class FeedbackPeer(c4.Peer):
         with self.lock:
             assert self.failure is None, self.failure
             return self.feedback.snapshot() if self.feedback else {}
-
-
-def integration(service, command, **fields):
-    reply = service.request(command, **fields)
-    assert reply['ok'], reply
-    return reply['state']['integration']
-
-
-def feedback(service, action='inspect', instance=None, publication=None, **fields):
-    payload = dict(action=action, **fields)
-    if instance is not None:
-        payload['instanceId'] = instance
-    if publication is not None:
-        payload['publicationHash'] = publication['publicationHash']
-    reply = c4.operator(service, 'companion_feedback_routes', **payload)
-    return reply['feedbackRoutes']
-
-
-def binding(output, source, **transform):
-    return dict(channelId=f'flight-channel-{output}', outputId=f'flight-output-{output}', source=source, **transform)
 
 
 def bounded_text_publication(original):
@@ -234,245 +215,108 @@ def bounded_text_publication(original):
     return dict(canonicalDocument=canonical, publicationHash='sha256:' + hashlib.sha256(canonical.encode()).hexdigest(), assets=[])
 
 
-def synthetic_config():
-    return dict(document=dict(schemaVersion=2, id='feedback-synthetic', name='Feedback acceptance synthetic source', provider='assetto-corsa-rally', context={}, roles=[], inputs=[], outputs=[], feedbackOutputs=[dict(id='rpm', channel='rpm', output=0)]), connection=dict(source='synthetic', freshnessMs=500), assignments=[])
-
-
-def synthetic_frame(packet, rpm):
-    physics = bytearray((ROOT / 'tests/fixtures/acr/live.physics.bin').read_bytes())
-    struct.pack_into('<I', physics, 0, packet)
-    struct.pack_into('<i', physics, 20, rpm)
-    return dict(sourceId='synthetic', sourceEpoch='1', physics=list(physics), graphics=list((ROOT / 'tests/fixtures/acr/live.graphics.bin').read_bytes()), staticPage=list((ROOT / 'tests/fixtures/acr/live.static.bin').read_bytes()))
-
-
-def source_invariant(service, instances):
-    host = c4.operator(service, 'companion_status')['host']
-    owners = {row['instanceId']: {key: row[key] for key in ['companionId', 'publicationHash', 'connected', 'armed', 'generation', 'sessionId', 'values']} for row in host['instances'] if row['instanceId'] in instances}
-    sources = service.mapping('mapping_companion_sources')['companionSources']
-    counters = {row['id']: (row['generation'], row['sequence']) for row in sources if row['id'] in instances}
-    cursors = {instance: c4.wait_for(lambda i=instance: c4.route(service, i)['session'].get('recordingCursor'), 'Recording inspector remained busy') for instance in instances}
-    return dict(owners=owners, counters=counters, recordingCursors=cursors)
-
-
-def wait_sample(peer, output, predicate):
-    channel = f'flight-channel-{output}'
-    try:
-        return c4.wait_for(lambda: (lambda value: value if value and predicate(value) else None)(peer.snapshot().get(channel)), f'{peer.name} output {output} did not reach expected typed feedback')
-    except AssertionError as error:
-        raise AssertionError(f'{error}; current sample: {peer.snapshot().get(channel)!r}') from error
-
-
-def dcs_config(port, command_port):
-    return dict(document=dict(schemaVersion=2, id='feedback-dcs', name='Injected DCS decoder acceptance', provider='dcs-bios', context=dict(aircraftModule='A-10C'), roles=[], inputs=[], outputs=[], feedbackOutputs=[dict(id='caution', channel='MASTER_CAUTION', output=0), dict(id='frequency', channel='UHF_FREQUENCY', output=0), dict(id='volume', channel='UHF_VOL', output=0)]), connection=dict(cataloguePath=str((ROOT / 'simulation/dcs-bios/catalogue').resolve()), commandHost='127.0.0.1', commandPort=command_port, listenAddress='127.0.0.1', listenPort=port, multicastGroup='', multicastInterface='127.0.0.1', freshnessMs=500), assignments=[])
-
-
 def dcs_packet(counter_value, volume=32768, frequency='251.000', caution=True):
     assert 0 <= volume <= 65535 and len(frequency.encode('ascii')) == 7
     blocks = [(64, b'A-10C' + b' ' * 19), (4672, struct.pack('<H', 4 if caution else 0)), (4704, frequency.encode('ascii') + b'\0'), (4720, struct.pack('<H', volume)), (65534, struct.pack('<H', counter_value % 256))]
     return b'\x55' * 4 + b''.join(struct.pack('<HH', address, len(data)) + data for address, data in blocks)
 
 
-class DcsFeed:
-    def __init__(self, port):
-        self.stop = threading.Event()
-        self.port = port
-        self.thread = threading.Thread(target=self.run, daemon=True)
-        self.thread.start()
-
-    def run(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-            counter_value = 1
-            while not self.stop.wait(0.05):
-                sender.sendto(dcs_packet(counter_value), ('127.0.0.1', self.port))
-                counter_value += 1
-
-    def close(self):
-        self.stop.set()
-        self.thread.join(timeout=2)
-        assert not self.thread.is_alive(), 'Bounded DCS fixture did not stop'
+def unused_port():
+    with socket.socket() as probe:probe.bind(('127.0.0.1',0));return probe.getsockname()[1]
 
 
-def unused_port(kind=socket.SOCK_STREAM):
-    with socket.socket(socket.AF_INET, kind) as probe:
-        probe.bind(('127.0.0.1', 0))
-        return probe.getsockname()[1]
+def feedback_profile(service,configurations,large=False):
+    document,assignments,models=c4.companion_profile(service,configurations,read_inputs=not large)
+    document['name']='Unified profile feedback'
+    for index,(instance,publication) in enumerate(configurations):
+        model=models[instance];resource=model['resource'];assignment=model['assignment']
+        values={};constants={}
+        for number,observed in enumerate(port for port in model['ports'] if port['descriptor']['direction']=='input'):
+            descriptor=observed['descriptor'];contract=descriptor['contract'];schema=contract['schema'];kind=schema['type'];logical=f'feedback{number}'
+            c4.add_port(document,assignment,resource,logical,observed)
+            if kind=='boolean' and not large:
+                source=dict(nodeId=resource['id'],portId='button')
+            else:
+                value=False if kind=='boolean' else ('L'*256 if large else 'Profile local') if kind=='text' else 42
+                key=json.dumps([contract,value],sort_keys=True)
+                if key not in constants:
+                    node=f'constant{index}-{len(constants)}';constants[key]=node
+                    document['processingNodes'].append(dict(id=node,name=node,operation=dict(kind='constant',value=value),inputs=[],outputs=[c4.mapping.port('value',contract,'output')]))
+                source=dict(nodeId=constants[key],portId='value')
+            document['bindings'].append(dict(id=f'feedback{index}-{number}',**{'from':source,'to':dict(nodeId=resource['id'],portId=logical)}))
+    return document,assignments,models
 
 
-def assert_capture(service, publication, instances):
-    captured = c4.operator(service, 'companion_game_capture', instanceIds=instances)['capture']
-    assert captured['schemaVersion'] == 1
-    rows = {row['instanceId']: row for row in captured['assignments']}
-    assert set(rows) == set(instances)
-    for instance, row in rows.items():
-        assert set(row) == {'instanceId', 'companionId', 'publicationHash', 'capabilityFingerprint'}
-        assert row['companionId'] == instance and row['publicationHash'] == publication['publicationHash'] and row['capabilityFingerprint'] == publication['capabilityFingerprint']
-    return captured
+def wait_channel(peer,channel,predicate):
+    return c4.wait_for(lambda:(lambda sample:sample if sample and predicate(sample) else None)(peer.snapshot().get(channel)),f'{peer.name}/{channel} did not reach expected profile feedback')
+
+
+def wait_sample(peer,output,predicate):return wait_channel(peer,f'flight-channel-{output}',predicate)
+
+
+def local_fresh(value):return lambda sample:sample.get('value')==value and sample['status']=='fresh' and sample['provenance']=='local' and sample['sourceKind']=='host'
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--service', type=Path, required=True)
-    parser.add_argument('--output', type=Path)
-    args = parser.parse_args()
-    publication = json.loads((ROOT / 'crates/companion-service/tests/fixtures/c1-flight-publication.json').read_text())
-    evidence = dict(qualification=False, physicalGameQualification=False, mobileQualification=False, virtualReportsSent=False, driverLayoutsChanged=False, peers='two simulated peers over real loopback pinned-CA WSS', confirmedTelemetryEvidence='injected DCS-BIOS UDP fixture through production decoder; no live game claim', checks=[])
-    with tempfile.TemporaryDirectory(prefix='osg-companion-feedback-acceptance-') as temporary:
-        service = c4.mapping.Service(args.service.resolve(), Path(temporary))
-        peers, feed = [], None
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--service',type=Path,required=True);parser.add_argument('--output',type=Path);args=parser.parse_args()
+    publication=json.loads((ROOT/'crates/companion-service/tests/fixtures/c1-flight-publication.json').read_text())
+    evidence=dict(qualification=False,physicalGameQualification=False,mobileQualification=False,virtualReportsSent=False,driverLayoutsChanged=False,peers='two simulated peers over real loopback pinned-CA WSS',feedbackEvidence='actual native reducer local/host state; no simulator confirmation claim',checks=[])
+    with tempfile.TemporaryDirectory(prefix='osg-profile-feedback-') as temporary:
+        service=c4.mapping.Service(args.service.resolve(),Path(temporary).resolve());peers=[]
         try:
-            status = service.mapping('mapping_status')
-            assert not status['running'] and not status['virtualDevices']['enabled'] and not status['virtualDevices']['qualified']
-            c4.operator(service, 'companion_enable', address='127.0.0.1', advertisedHost='127.0.0.1', port=unused_port(), discovery=False)
-            c4.publish(service, publication)
-            instances = ['feedback-left', 'feedback-right']
+            c4.operator(service,'companion_enable',address='127.0.0.1',advertisedHost='127.0.0.1',port=unused_port(),discovery=False)
+            c4.publish(service,publication);instances=['feedback-left','feedback-right']
             for instance in instances:
-                peer = FeedbackPeer(service, instance)
-                peer.publication = publication
-                peers.append(peer)
-                c4.operator(service, 'companion_assign', companionId=instance, instanceId=instance, publicationHash=publication['publicationHash'])
-            capture = assert_capture(service, publication, instances)
-            assert all(not row['armed'] for row in c4.operator(service, 'companion_status')['host']['instances']) and not service.mapping('mapping_status')['running']
-            evidence['checks'].append('read-only game capture returns immutable IDs/hashes without opening or arming input')
-            integration(service, 'integration_save', integrationConfig=synthetic_config())
-            assert not integration(service, 'integration_get_state')['running']
-            requested = [binding(0, dict(kind='requested', controlId='flight-input-0')), binding(3, dict(kind='host-accepted', controlId='flight-input-0')), binding(2, dict(kind='integration', bindingId='rpm'), scale=0.001), binding(4, dict(kind='host-submitted', controlId='flight-input-2'), scale=50, offset=50)]
-            for peer, instance in zip(peers, instances):
-                feedback(service, 'save', instance, publication, bindings=requested)
-                c4.route(service, instance, 'save', publicationHash=publication['publicationHash'], bindings=[])
-                peer.open(instance, publication)
-                c4.route(service, instance, 'start', mode='recording')
-            peers[0].input([dict(controlId='flight-input-0', value=True)])
-            wait_sample(peers[0], 0, lambda s: s.get('value') is True and s['provenance'] == 'requested' and s['status'] == 'fresh')
-            wait_sample(peers[0], 3, lambda s: s.get('value') is True and s['provenance'] == 'host-accepted')
-            wait_sample(peers[1], 0, lambda s: s.get('value') is False)
-            wait_sample(peers[0], 4, lambda s: s['status'] == 'unknown' and 'value' not in s)
-            evidence['checks'].append('same-UI instances keep independent requested/accepted values; recording is never claimed submitted')
-            integration(service, 'integration_start')
-            before = source_invariant(service, instances)
-            for packet in [20, 21]:
-                integration(service, 'integration_simulate', telemetryFrame=synthetic_frame(packet, 6300))
+                peer=FeedbackPeer(service,instance);peers.append(peer)
+                c4.operator(service,'companion_assign',companionId=instance,instanceId=instance,publicationHash=publication['publicationHash']);peer.open(instance,publication)
+            document,assignments,models=feedback_profile(service,[(instance,publication) for instance in instances])
+            saved=c4.mapping.save(service,document,assignments);owner=c4.mapping.apply(service,saved)
             for peer in peers:
-                wait_sample(peer, 2, lambda s: math.isclose(s.get('value', -1), 6.3) and s['provenance'] == 'local' and s['status'] == 'fresh')
-            assert source_invariant(service, instances) == before
-            spoof=peers[0].snapshot()['flight-channel-2'].copy()
-            spoof['provenance']='game-confirmed'
-            spoof['sourceKind']='simulator'
-            assert not service.request('companion_feedback',companion=dict(instanceId=instances[0],values=[spoof]))['ok']
-            with peers[0].lock:
-                assert not peers[0].socket.request(peers[0].message('feedback',values=[spoof]))['ok']
-                stale=peers[0].message('feedback-resync',sequence='1')
-                stale['sessionId']=peers[1].opened['sessionId']
-                assert not peers[0].socket.request(stale)['ok']
-            invalid=[dict(requested[0],outputId='flight-output-3')]
-            assert not service.request('companion_feedback_routes',companion=dict(action='save',instanceId=instances[0],publicationHash=publication['publicationHash'],bindings=invalid))['ok']
-            assert source_invariant(service,instances)==before
-            wait_sample(peers[0],2,lambda sample: sample['provenance']=='local')
-            evidence['checks'].append('operator/WSS truth spoofing, cross-session resync and wrong output binding are rejected without cross-client effects')
-            evidence['checks'].append('native source-only synthetic numeric feedback stays Local and emits no control input')
-            feedback(service, 'reset', instances[0], publication)
-            wait_sample(peers[0], 0, lambda s: s['status'] == 'unknown' and 'value' not in s)
-            wait_sample(peers[1], 0, lambda s: s.get('value') is False and s['status'] == 'fresh')
-            feedback(service, 'resync', instances[0], publication)
-            wait_sample(peers[0], 0, lambda s: s.get('value') is True and s['status'] == 'fresh')
-            peers[0].resync()
-            assert source_invariant(service, instances) == before
-            evidence['checks'].append('operator reset/resync and wire snapshot resync leave source counters/values and recording cursors unchanged')
-            wait_sample(peers[0], 2, lambda s: s['status'] == 'unknown' and 'value' not in s and s['provenance'] == 'local')
-            evidence['checks'].append('expired synthetic telemetry is Unknown/Local with no retained value or false confirmation')
-            integration(service, 'integration_stop')
-            for peer in peers:
-                wait_sample(peer, 2, lambda s: s['status'] == 'unknown' and 'value' not in s)
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as commands:
-                commands.bind(('127.0.0.1', 0))
-                commands.setblocking(False)
-                port = unused_port(socket.SOCK_DGRAM)
-                integration(service, 'integration_save', integrationConfig=dcs_config(port, commands.getsockname()[1]))
-                for peer in peers:
-                    wait_sample(peer, 2, lambda s: s['status'] == 'unknown' and 'value' not in s)
-                configured = [binding(0, dict(kind='requested', controlId='flight-input-0')), binding(3, dict(kind='host-accepted', controlId='flight-input-0')), binding(1, dict(kind='integration', bindingId='frequency')), binding(2, dict(kind='integration', bindingId='volume'), scale=100/65535)]
-                for instance in instances:
-                    feedback(service, 'save', instance, publication, bindings=configured)
-                integration(service, 'integration_start')
-                wait_sample(peers[0], 1, lambda s: s['status'] == 'unknown')
-                before = source_invariant(service, instances)
-                feed = DcsFeed(port)
-                for peer in peers:
-                    wait_sample(peer, 1, lambda s: s.get('value') == '251.000' and s['status'] == 'fresh' and s['provenance'] == 'game-confirmed' and s['sourceKind'] == 'simulator')
-                    wait_sample(peer, 2, lambda s: math.isclose(s.get('value', -1), 32768*100/65535) and s['status'] == 'fresh' and s['unit'] == '%' and s['range'] == dict(min=0, max=100))
-                assert source_invariant(service, instances) == before
-                evidence['checks'].append('production DCS-BIOS UDP decoder routes injected typed numeric/text telemetry with confirmed provenance and exact units/ranges')
-                peers[0].paused.set()
-                time.sleep(0.4)
-                wait_sample(peers[1], 1, lambda s: s['status'] == 'fresh')
-                peers[0].paused.clear()
-                wait_sample(peers[0], 1, lambda s: s['status'] == 'fresh')
-                assert len(peers[0].snapshot()) <= 64
-                evidence['checks'].append('temporarily unread peer coalesces bounded latest state while the other peer remains fresh')
-                peers[0].paused.set()
-                peers[0].end()
-                bounded=bounded_text_publication(publication)
-                c4.publish(service,bounded)
-                c4.operator(service,'companion_assign',companionId=instances[0],instanceId=instances[0],publicationHash=bounded['publicationHash'])
-                peers[0].open(instances[0],bounded)
-                expanded=[dict(channelId=f'max-channel-{i}',outputId=f'max-output-{i}',source=dict(kind='integration',bindingId='frequency')) for i in range(64)]
-                feedback(service,'save',instances[0],bounded,bindings=expanded)
-                peers[0].paused.clear()
-                c4.wait_for(lambda: len(peers[0].snapshot())==64 and all(s.get('value')=='251.000' and s['status']=='fresh' for s in peers[0].snapshot().values()),'64-channel decoder feedback did not reach the peer')
-                wait_sample(peers[1],1,lambda sample: sample['status']=='fresh')
-                assert peers[0].max_feedback_bytes>c4.FRAME_BYTES and peers[0].max_feedback_bytes<=FEEDBACK_BYTES
-                assert not c4.route(service,instances[0])['session']['running']
-                before=source_invariant(service,instances)
-                evidence['checks'].append('64-channel snapshot exceeds 16KiB logically, uses bounded physical WSS chunks, and preserves the other peer')
-                peers[0].paused.set()
-                c4.wait_for(lambda: peers[0].snapshot().get('max-channel-0',{}).get('status')=='stale','Paused reader did not age retained feedback to stale')
-                wait_sample(peers[1], 1, lambda sample: sample['status']=='fresh')
-                peers[0].paused.clear()
-                c4.wait_for(lambda: peers[0].snapshot().get('max-channel-0',{}).get('status')=='fresh','Resumed reader did not receive fresh feedback')
-                evidence['checks'].append('retained receiver values become Stale at 1000ms without changing source provenance, while the independent peer remains Fresh')
-                feed.close()
-                feed = None
-                c4.wait_for(lambda: peers[0].snapshot().get('max-channel-0',{}).get('status')=='unknown','Expired decoder feedback did not become unknown')
-                wait_sample(peers[1], 1, lambda sample: sample['status']=='unknown' and 'value' not in sample)
-                assert source_invariant(service, instances) == before
-                evidence['checks'].append('expired decoder telemetry becomes Unknown without fabricated fresh confirmation or controller input')
-                integration(service, 'integration_stop')
-                c4.wait_for(lambda: peers[0].snapshot().get('max-channel-0',{}).get('status')=='unknown','Large stopped decoder feedback did not become unknown')
-                wait_sample(peers[1], 1, lambda sample: sample['status']=='unknown' and 'value' not in sample)
-                try:
-                    unexpected = commands.recv(4096)
-                except BlockingIOError:
-                    unexpected = b''
-                assert not unexpected, 'Source-only acceptance unexpectedly sent a simulator command'
-            peers[0].end()
-            c4.wait_for(lambda: c4.route(service, instances[0])['session']['cleanupComplete'], 'Disconnected mapping did not clean up')
-            assert c4.route(service, instances[1])['session']['running']
-            wait_sample(peers[1], 0, lambda s: s.get('value') is False and s['status'] == 'fresh')
-            peers[0].open(instances[0], peers[0].publication)
-            assert not c4.route(service, instances[0])['session']['running'], 'Feedback reconnect must not restart mapping'
-            c4.operator(service, 'companion_revoke', companionId=instances[0])
-            c4.wait_for(lambda: len(c4.operator(service, 'companion_status')['host']['instances']) == 1, 'Revocation did not remove only its assignment')
-            assert c4.route(service, instances[1])['session']['running']
-            wait_sample(peers[1], 0, lambda s: s['status'] == 'fresh' and s.get('value') is False)
-            assert_capture(service, publication, instances[1:])
-            assert capture['assignments'][0]['publicationHash'] == publication['publicationHash']
-            evidence['checks'].append('source close, reconnect and revocation affect only their instance; captured immutable refs remain unchanged')
-            for peer in peers:
-                assert {'snapshot', 'delta'} <= peer.modes
-            evidence['feedbackTransport'] = dict(physicalFrameLimitBytes=c4.FRAME_BYTES, logicalFeedbackLimitBytes=FEEDBACK_BYTES, maxObservedLogicalBytes=max(peer.max_feedback_bytes for peer in peers), observedModes=sorted(set().union(*(peer.modes for peer in peers))))
-            final = service.mapping('mapping_status')
-            assert not final['virtualDevices']['enabled'] and not final['virtualDevices']['qualified']
-            evidence['checks'].append('listener/feedback use no optional live output enablement, virtual reports or provisioning')
+                peer.input([dict(controlId='flight-input-0',value=True)])
+                wait_sample(peer,0,local_fresh(True));wait_sample(peer,1,local_fresh('Profile local'));wait_sample(peer,2,local_fresh(42))
+                assert peer.snapshot()['flight-channel-2']['unit']=='%' and peer.snapshot()['flight-channel-2']['range']==dict(min=0,max=100)
+            evidence['checks'].append('actual applied profile routes exact native input and typed local text/numeric feedback with original widget units/ranges over real WSS')
+            before=peers[1].snapshot()
+            with peers[1].lock:
+                forged=peers[0].message('input',sequence='999',changes=[dict(controlId='flight-input-0',value=False)])
+                assert not peers[1].socket.request(forged)['ok']
+            assert local_fresh(True)(peers[1].snapshot()['flight-channel-0'])
+            assert not service.request('companion_feedback',companion=dict(instanceId=instances[0],values=[dict(value=True)]))['ok']
+            c4.mapping.retired_boundaries(service)
+            assert c4.mapping.inspect(service,owner)['owner']==owner
+            evidence['checks'].append('cross-peer input identity and browser feedback spoof rejected without replacing applied native owner')
+            peers[0].paused.set()
+            c4.wait_for(lambda:peers[0].snapshot().get('flight-channel-0',{}).get('status')=='stale','Paused receiver failed to age retained values')
+            wait_sample(peers[1],0,local_fresh(True));peers[0].paused.clear()
+            service.profiles('profile_stop');assert not service.request('profile_runtime_inspect',owner=owner)['ok']
+            owner=c4.mapping.apply(service,saved)
+            for peer in peers:peer.input([dict(controlId='flight-input-0',value=True)]);wait_sample(peer,0,local_fresh(True))
+            evidence['checks'].append('one expired/unread peer ages its retained samples while independent peer remains fresh; fresh explicit Apply reacquires its baseline')
+            service.profiles('profile_stop')
+            assert not service.request('profile_runtime_inspect',owner=owner)['ok']
+            bounded=bounded_text_publication(publication);c4.publish(service,bounded)
+            c4.operator(service,'companion_assign',companionId=instances[0],instanceId=instances[0],publicationHash=bounded['publicationHash'])
+            peers[0].end();peers[0].open(instances[0],bounded)
+            large,local,_=feedback_profile(service,[(instances[0],bounded),(instances[1],publication)],large=True)
+            large=c4.mapping.save(service,large,local);large_owner=c4.mapping.apply(service,large)
+            c4.wait_for(lambda:len(peers[0].snapshot())==64 and all(local_fresh('L'*256)(sample) for sample in peers[0].snapshot().values()),'64-channel applied feedback did not arrive')
+            assert c4.FRAME_BYTES<peers[0].max_feedback_bytes<=FEEDBACK_BYTES
+            wait_sample(peers[1],2,local_fresh(42))
+            evidence['checks'].append('64 real profile feedback ports exceed16KiB logically and use bounded chunked WSS without affecting the second peer')
+            service.profiles('profile_stop')
+            assert not service.request('profile_runtime_inspect',owner=large_owner)['ok']
+            # Stop restores assignment ownership; peers explicitly reopen only to the original panel baseline, never an output run.
+            c4.wait_for(lambda:not any(sample['status']=='fresh' for sample in peers[0].snapshot().values()),'Stopped feedback retained fresh applied state')
+            for peer in peers:peer.close()
+            peers.clear();c4.operator(service,'companion_revoke',companionId=instances[0])
+            assert {row['instanceId'] for row in c4.operator(service,'companion_status')['host']['instances']}=={instances[1]}
+            evidence['checks'].append('Stop fences old native inspection/feedback owner; revocation preserves other paired instance')
+            c4.operator(service,'companion_disable')
         finally:
-            if feed:
-                feed.close()
-            for peer in peers:
-                peer.close()
+            for peer in peers:peer.close()
             service.close()
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
-    print(json.dumps(evidence, indent=2))
+    if args.output:args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(evidence,indent=2)+'\n',encoding='utf-8')
+    print(json.dumps(evidence,indent=2))
 
 
-if __name__ == '__main__':
-    main()
+if __name__=='__main__':main()

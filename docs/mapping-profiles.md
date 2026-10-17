@@ -1,6 +1,6 @@
 # Portable mapping profiles and preview runtime
 
-The M2 implementation is a portable Rust library in [crates/mapping](../crates/mapping). It validates and stores mapping documents, resolves explicit local assignments, runs deterministic input/timer rules, and records complete output reports. It has no controller, vJoy, uinput, IOHID, Tauri or visibility dependency. The desktop direct-mapping controls and real output adapters are subsequent milestones; this preview cannot send input to a game.
+The M2 implementation is a portable Rust library in [crates/mapping](../crates/mapping). It validates and stores mapping documents, resolves explicit local assignments, runs deterministic input/timer rules, and records complete output reports. It has no controller, vJoy, uinput, IOHID, Tauri or visibility dependency. The desktop authors unified schema-2 graphs in [Profiles](profiles-guide.md). This schema-1 library/CLI preview cannot send input to a game and is not a desktop compatibility reader.
 
 Run the authored synthetic trace from the repository root:
 
@@ -22,7 +22,7 @@ A portable document contains a canonical lowercase UUID, name, logical source ro
 - Momentary button nodes suppress an initially held button until it is released and pressed again. Level nodes synchronize maintained buttons and valid axis/hat values from the baseline.
 - Button writers combine with OR. A release from one producer cannot release a button held by another. Axes and hats have one writer unless an explicit priority lists every writer exactly once. The first available writer wins, including an explicit neutral hat.
 - Visibility intent uses a physical role and an optional logical application ID. It cannot contain an executable path. Hidden intent requires the separate optional hiding requirement. Saving/importing intent does not perform it.
-- Unknown fields, unsupported versions/operations, duplicate object fields and malformed values are rejected. Advanced transformations, modes, macros and scripts are later milestones.
+- Unknown fields, unsupported versions/operations, duplicate object fields and malformed values are rejected. The engine also has separately documented transformations and [bounded scripts](mapping-scripts.md); the basic example uses direct nodes only.
 
 Local assignments map every logical role/control to an explicit source ID and native control ID. Source kinds must match; conflicting type declarations and known virtual-source markers are rejected. A single native source is limited to 256 controls across all roles. The engine does not guess by display name. Hardware adapters must verify the selected identity, actual capabilities and source provenance before activation.
 
@@ -42,10 +42,15 @@ Output reports contain the full target state. The engine preserves ordered trans
 
 Traces are limited to 4 MiB and 4096 steps. Replay refuses more than 65,536 output records. Real output acquisition, feeder leases and physical-source streaming are handled at the platform integration milestone.
 
-## Desktop document transfer
+## Desktop boundary
 
-The native GatewayManager accepts bounded upload operations without enlarging the existing 65,536-byte request limit. A client begins with mapping_import_begin and the exact UTF-8 byte size (1–65,536). The returned uploadId accepts mapping_import_chunk requests containing an ordered byte offset and at most 8192 integer bytes. At most four uploads exist, one per client, expiring 30 seconds after creation. Wrong owners, duplicate/out-of-order offsets, invalid bytes, incomplete commits and oversize chunks are rejected before mutation.
+The old `mapping_*` desktop authoring, upload, preview and activation commands are
+retired. Native Manager rejects them before profile selection, learning or output
+effects. Library/CLI schema-1 documents are not imported or migrated into the
+fresh unified profile library. Use schema-2 `profile_*` import/export and explicit
+local resource assignment through the [current contracts](unified-profiles.md).
 
-mapping_validate_commit validates and returns a document object without saving. mapping_import_commit validates and atomically saves it under the local mappings directory. Neither starts a run, assigns hardware, enables a backend or provisions a slot. mapping_import_abort releases an upload; mapping_profiles pages up to 32 IDs; mapping_export returns the portable document as an object. Export/import responses exclude unrelated gateway inventory so a maximum-size document plus metadata fits 66,560 bytes. Existing HTTP request limits remain unchanged.
-
-The native JSON-lines bridge now bounds each input frame while reading, before parsing; oversized input is discarded through the next newline without retaining an unbounded buffer. The existing 80-byte correlation ID and 66,560-byte envelope limit remain unchanged.
+Existing mapping output/provision journals are ownership evidence only. Explicit
+retained cleanup compares the exact current native record and preserves external
+changes. It never starts an old mapping, resumes scripts or reapplies hiding.
+Live capabilities continue to require their existing platform qualification.
