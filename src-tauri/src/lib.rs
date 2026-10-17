@@ -26,6 +26,7 @@ mod module_usb_fleet;
 mod module_configuration_routes;
 mod profile_resources;
 mod profile_compilation;
+mod profile_session;
 mod profile_resource_sources;
 mod profile_resource_ports;
 mod output_leases;

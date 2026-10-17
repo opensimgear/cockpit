@@ -17,8 +17,8 @@ pub enum SessionState {
     Faulted,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotSummary {
     pub profile_id: String,
     pub revision: u64,
