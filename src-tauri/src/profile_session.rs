@@ -14,6 +14,8 @@ use journal::{Manifest, Store, Transition};
 #[path = "profile_session_stage.rs"]
 mod staging;
 pub(crate) use staging::{apply_staged, apply_staged_admitted, Stage};
+#[path = "profile_session_inspection.rs"]
+pub(crate) mod inspection;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Candidate {
@@ -152,6 +154,9 @@ pub(crate) trait Host: Send {
     ) -> Result<(), String>;
     fn restore(&mut self, run: &OwnedRun, recovery: bool) -> Result<(), String>;
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String>;
+    fn inspect(&self, _: &OwnedRun, _: &inspection::Request) -> Result<inspection::Page, String> {
+        Err("This native profile adapter has no applied-port inspector.".into())
+    }
     fn discard_preparation(&mut self, owner: &RunOwner);
 }
 

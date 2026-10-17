@@ -145,6 +145,17 @@ fn output(engine: &Phase) -> SignalSample {
 fn scalar_output(engine: &Phase) -> f64 {
     number(&output(engine)).unwrap()
 }
+
+#[test]
+fn inspected_samples_keep_unobserved_and_zero_time_distinct_without_mutating_execution() {
+    let mut engine=Phase::new(unary(Operation::Not {},boolean_contract(),boolean_contract()),Counter(1),uuid::Uuid::new_v4().to_string()).unwrap();
+    assert_eq!(engine.inspected_sample(&endpoint("source","value")),Some((&SignalSample::Unknown,None)));
+    assert!(engine.inspected_sample(&endpoint("missing","port")).is_none());
+    feed(&mut engine,1,0,SignalSample::scalar(PortValue::Boolean(true)));
+    let before=(engine.clock,engine.effects.len(),engine.reports.len(),engine.sequence);
+    for _ in 0..20 {assert_eq!(engine.inspected_sample(&endpoint("source","value")),Some((&SignalSample::scalar(PortValue::Boolean(true)),Some(Counter(0)))));}
+    assert_eq!((engine.clock,engine.effects.len(),engine.reports.len(),engine.sequence),before);
+}
 fn invocation(parameters: Vec<ActionParameter>, semantics: ActionSemantics) -> PortContract {
     PortContract::Invocation {
         parameters,

@@ -145,6 +145,26 @@ that latch; starting again requires a separate explicit Apply. **Recover outputs
 uses native recovery and reports its actual result. Failed effect requests are
 never retried automatically. Leaving the editor does not stop an applied run.
 
+## Applied port samples
+
+The applied inspector reads cached native reducer samples for the exact current
+run owner and profile revision. It does not acquire inputs, advance timers or
+submit effects. Each page carries its own native capture time; large results
+are paged by the actual returned count. Selecting a canvas block can filter the
+applied ports when the editor and run have the same profile identity. If the
+draft differs, the inspector labels its samples as belonging to the applied
+revision and excludes draft changes.
+
+Scalar values retain their raw units/ranges. Unknown, stale and unavailable
+remain distinct from known false/zero. Actions retain the complete ordered
+argument tuple. Input/sink samples reflect graph requests and do not confirm
+hardware or simulator acceptance. Event samples are the last observed value;
+polling is not an event history or input-learning mechanism. Stop or a changed
+native owner clears the selected capture, and old replies cannot revive it.
+
+Input learning remains a separate native capture-only workflow. The applied
+inspector does not start it or manufacture candidate inputs from polled values.
+
 ## Validation
 
 The pure editor, canvas geometry, catalogue paging and actual Svelte SSR

@@ -422,6 +422,14 @@ impl NativeProfileHost {
     }
 }
 impl Host for NativeProfileHost {
+    fn inspect(&self, run: &OwnedRun, request: &crate::profile_session::inspection::Request) -> Result<crate::profile_session::inspection::Page, String> {
+        self.fence(&run.owner)?;
+        let state = self.prepared.get(&key(&run.owner)).filter(|state| state.owner == run.owner)
+            .ok_or("The applied native profile is no longer available.")?;
+        let reducer = state.reducer.as_ref().filter(|reducer| reducer.active())
+            .ok_or("The applied native reducer is stopped.")?;
+        crate::profile_session::inspection::capture(&state.document, reducer, run, request)
+    }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;

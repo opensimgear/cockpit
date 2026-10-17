@@ -255,6 +255,14 @@ impl Phase {
     pub fn sample(&self, endpoint: &Endpoint) -> Option<&SignalSample> {
         self.values.get(endpoint).map(|state| &state.sample)
     }
+    /// Cached graph observation only: no clock advance, input polling or drain.
+    pub fn inspected_sample(&self, endpoint: &Endpoint) -> Option<(&SignalSample, Option<Counter>)> {
+        self.values.get(endpoint).map(|state| {
+            let observed = (state.epoch > 1 || state.observed > 0
+                || !matches!(state.sample, SignalSample::Unknown)).then_some(Counter(state.observed));
+            (&state.sample, observed)
+        })
+    }
     pub fn drain(&mut self) -> Vec<Effect> {
         self.effects.drain(..).collect()
     }

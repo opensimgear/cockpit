@@ -671,6 +671,15 @@ impl GatewayManager {
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
+        if command == "profile_runtime_inspect" {
+            request.as_object_mut().unwrap().remove("clientId");
+            let result = crate::profile_session::inspection::Request::parse(&request)
+                .and_then(|request| self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).inspect(&request));
+            return match result {
+                Ok(page) => json!({"ok":true,"state":{"profileInspection":page}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
+            };
+        }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
             if matches!(command.as_str(), "profile_apply" | "profile_stop" | "profile_pause" | "profile_recover") {
@@ -1280,6 +1289,35 @@ mod tests {
         assert_eq!(request(&manager,"mapping_status",None,json!({}))["ok"],true);
         assert_eq!(request(&manager,"module_usb_list",None,json!({}))["ok"],true);
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
+    }
+
+    #[test]
+    fn applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft() {
+        use osg_profiles::{Port,Resource,ResourceKind,ProcessingNode,Direction,PortContract,PortValue,Binding,Endpoint};
+        let (manager,_) = setup();
+        let mut document=osg_profiles::default_document();
+        let contract=PortContract::State {schema:osg_profiles::resources_ports::ScalarSchema::Boolean{},freshness_ms:1000,fallback:None};
+        document.resources.push(Resource{id:"display".into(),name:"Optional display".into(),kind:ResourceKind::Companion,required:false,ports:vec![Port{id:"indicator".into(),name:"Indicator".into(),direction:Direction::Input,contract:contract.clone()}]});
+        document.processing_nodes.push(ProcessingNode{id:"constant".into(),name:"Constant".into(),operation:osg_mapping::program::Operation::Constant{value:PortValue::Boolean(true)},inputs:vec![],outputs:vec![Port{id:"value".into(),name:"Value".into(),direction:Direction::Output,contract}]});
+        document.bindings.push(Binding{id:"to-display".into(),from:Endpoint{node_id:"constant".into(),port_id:"value".into()},to:Endpoint{node_id:"display".into(),port_id:"indicator".into()}});
+        let saved=request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":[]}));
+        assert_eq!(saved["ok"],true,"{saved}");
+        let applied=request(&manager,"profile_apply",None,json!({"id":document.id,"expectedRevision":2}));
+        assert_eq!(applied["ok"],true,"{applied}");
+        let owner=applied["state"]["profiles"]["profileSession"]["owner"].clone();
+        let page=request(&manager,"profile_runtime_inspect",None,json!({"owner":owner}));assert_eq!(page["ok"],true,"{page}");
+        let page=&page["state"]["profileInspection"];assert_eq!(page["total"],2);assert_eq!(page["owner"],owner);assert_eq!(page["appliedSnapshot"]["revision"],2);
+        assert_eq!(page["ports"][0]["sample"],json!({"status":"known","value":{"kind":"scalar","value":true}}));
+        assert_eq!(page["ports"][0]["observedUs"],"0");
+        let mut edited=saved["state"]["profiles"]["document"].clone();edited["processingNodes"][0]["operation"]["value"]=json!(false);
+        assert_eq!(request(&manager,"profile_editor_save",None,json!({"document":edited,"expectedRevision":2,"assignments":[]}))["ok"],true);
+        let old=request(&manager,"profile_runtime_inspect",None,json!({"owner":owner,"nodeId":"display","limit":1}));assert_eq!(old["ok"],true,"{old}");
+        assert_eq!(old["state"]["profileInspection"]["appliedSnapshot"]["revision"],2);
+        assert_eq!(old["state"]["profileInspection"]["ports"][0]["sample"]["value"]["value"],true);
+        for fields in [json!({"owner":owner,"limit":65}),json!({"owner":owner,"nodeId":"missing"}),json!({"owner":owner,"drive":true})] {assert_eq!(request(&manager,"profile_runtime_inspect",None,fields)["ok"],false);}
+        let mut wrong=owner.clone();wrong["generation"]=json!(999);assert_eq!(request(&manager,"profile_runtime_inspect",None,json!({"owner":wrong}))["ok"],false);
+        assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
+        assert_eq!(request(&manager,"profile_runtime_inspect",None,json!({"owner":owner}))["ok"],false);
     }
 
     #[test]

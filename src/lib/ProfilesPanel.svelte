@@ -3,6 +3,7 @@
   import Icon from './Icon.svelte';
   import ProfileRoutingEditor from './ProfileRoutingEditor.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
+  import ProfileLiveInspector from './ProfileLiveInspector.svelte';
   import { gatewayRequest } from './gateway';
   import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument, type ProfileLocalAssignment } from './profiles';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
@@ -11,6 +12,8 @@
   import {ProfileCompilerClient}from'./profile-compilation';
   import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
+  import {ProfileInspectorClient}from'./profile-inspection';
+  import {ProfileInspectionController}from'./profile-inspection-controller';
   import type {DeepReadonly} from './profiles';
   import type { GameId } from './games';
   let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, openGameSettings, active=true }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean } = $props();
@@ -29,12 +32,15 @@
     return status;
   }));
   let runtimeState=$state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
+  const inspection=new ProfileInspectionController(new ProfileInspectorClient(async request=>{const result=(await gatewayRequest(request)).profileInspection;if(!result)throw new Error('Native applied port inspection is unavailable. Reconnect the service.');return result;}));
+  let routingSelection=$state('');
   const navigationGuard = new ProfileNavigationGuard(store);
   let workspace = $state.raw(store.state);
   const history=new ProfileEditorUndo(store);
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
   let inventoryOpen = $state(false), inventorySelection = $state<string[]>([]), creatingSelection = $state(false);
   const editor = $derived(workspace.editor);
+  const editorIdentity=$derived(editor?.document.id??'');
   const dirty = $derived(editor ? profileEditorDirty(editor) : false);
   const error = $derived(editor ? profileDocumentError(editor.document) : '');
   const rows = $derived([...workspace.profiles].sort((a,b)=>a.isDefault?-1:b.isDefault?1:a.name.localeCompare(b.name)));
@@ -47,7 +53,8 @@
   const runtimeTarget=$derived(editor?{id:editor.document.id,revision:editor.document.revision,baseRevision:editor.baseRevision,dirty,readOnly:workspace.readOnly||workspace.busy||!!error}:null);
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next);if(workspace.view==='list')void store.refresh();if(!workspace.inventoryLoaded)void store.refreshInventory();return stop; });
-  onDestroy(() => { runtimeReplyEpoch++;runtime.dispose();if(!supplied)store.dispose(); });
+  onDestroy(() => { runtimeReplyEpoch++;runtime.dispose();inspection.dispose();if(!supplied)store.dispose(); });
+  $effect(()=>{void editorIdentity;routingSelection='';});
   function report(operation:()=>void) { notice='';try{operation();workspace=store.state;}catch(error){notice=error instanceof Error?error.message:String(error);} }
   async function add() { notice='';if(!workspace.inventoryLoaded){await store.refreshInventory();workspace=store.state;}if(workspace.inventory.length>64){creatingSelection=true;inventorySelection=[];return;}report(()=>store.beginBlank()); }
   function beginSelected() { report(()=>store.beginBlank(workspace.inventory.filter(resource=>inventorySelection.includes(resource.id))));if(!notice){creatingSelection=false;inventorySelection=[];} }
@@ -77,6 +84,7 @@
 <section class="profiles-workspace" aria-label="Profiles">
   <div class="profile-session" aria-label="Runtime profile status"><span><strong>Runtime selection</strong> {runtimeName}</span><span>{runtimeState.status?.state??workspace.session?.state??'Loading status'}</span><span><strong>Applied revision</strong> {appliedSnapshot?`${appliedName} · ${appliedSnapshot.revision}`:'None'}</span><p>Opening and saving an editor leaves runtime selection and applied revision unchanged.</p></div>
   <ProfileRuntimeControls controller={runtime} editor={runtimeTarget} profiles={workspace.profiles} gameIds={editor?.document.eligibility.gameIds??[]} {active} onState={next=>runtimeState=next}/>
+  <ProfileLiveInspector controller={inspection} owner={runtimeState.stale?null:runtimeState.status?.owner??null} {active} selectedId={routingSelection} editorProfileId={editor?.document.id} editorRevision={editor?.document.revision} editorDirty={dirty} profileName={appliedName}/>
   {#if workspace.diagnostics.length}<div class="profile-diagnostics" role="status">{#each workspace.diagnostics as diagnostic,index (index)}<p>{diagnostic}</p>{/each}</div>{/if}
   {#if workspace.readOnly}<p class="workspace-error" role="status">This library is read-only. Resolve its diagnostics before making changes.</p>{/if}
   {#if notice||workspace.error}<p class="workspace-error" role="alert">{notice||workspace.error}</p>{/if}
@@ -92,7 +100,7 @@
     <div class="editor-basics panel"><label>Profile name<input class="text-input" value={editor.document.name} readonly={editor.document.id===DEFAULT_PROFILE_ID} disabled={workspace.readOnly} oninput={event=>name(event.currentTarget.value)} maxlength="80"/></label>{#if editor.baseRevision===null}<fieldset class="draft-source"><legend>Start from</legend><button class="secondary-button" disabled={workspace.busy||workspace.readOnly||!workspace.inventoryLoaded} onclick={()=>source('blank')}>Blank · seed all resources</button><label>Copy saved profile<select aria-label="Copy source profile" bind:value={copyId} disabled={workspace.busy}>{#each rows as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label><button class="secondary-button" disabled={workspace.busy||workspace.readOnly||!copyId} onclick={()=>source(copyId)}>Use copy</button><p>Copies retain the graph and layout with a new identity. Select devices for the copy; machine assignments are excluded.</p></fieldset>{/if}{#if error}<p class="workspace-error">{error}</p>{/if}</div>
     <div class="inventory-heading"><p>Resources remain on the canvas when they disconnect. New discoveries are added only when selected.</p><button class="secondary-button" disabled={workspace.readOnly||workspace.busy} onclick={()=>inventoryOpen=!inventoryOpen}><Icon name="plus" size={13}/> Add from inventory</button></div>
     {#if inventoryOpen}<section class="inventory-picker panel" aria-label="Add resource blocks"><div><h2>Available inventory resources</h2><button class="text-button" disabled={workspace.inventoryBusy} onclick={()=>store.refreshInventory()}>Refresh inventory</button></div>{#if workspace.inventoryError}<p class="workspace-error">{workspace.inventoryError}</p>{/if}<p class="inventory-help">{editor.document.resources.length} of 64 resource blocks used. Port catalogues remain paged; adding a block creates no routes.</p><div class="inventory-choices">{#each available as resource (resource.id)}<label><input type="checkbox" checked={inventorySelection.includes(resource.id)} onchange={event=>toggleResource(resource.id,event.currentTarget.checked)}/><span><strong>{resource.name}</strong><small>{profileCategory(resource)} · {resource.availability} · {resource.portCount} advertised ports</small></span></label>{:else}<p>All current inventory resources already have assigned blocks.</p>{/each}</div><button class="secondary-button" disabled={!inventorySelection.length||workspace.readOnly||workspace.busy} onclick={addSelected}>Add {inventorySelection.length} selected resources</button></section>{/if}
-    {#key editor.document.id}<ProfileRoutingEditor document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}
+    {#key editor.document.id}<ProfileRoutingEditor document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}
   {/if}
   {#if leaveDialog}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="leave-profile-title" onclose={keepEditing} {@attach showConfirmation}><h2 id="leave-profile-title">Keep your unsaved changes?</h2><p>Save this profile before leaving, or discard this draft. Runtime selection stays unchanged.</p>{#if workspace.error}<p class="workspace-error" role="alert">{workspace.error}</p>{/if}<div><button class="secondary-button" onclick={keepEditing}>Keep editing</button><button class="secondary-button" disabled={workspace.busy} onclick={cancel}>Discard and continue</button><button class="primary-button" disabled={!!error||workspace.readOnly||workspace.busy} onclick={()=>save(true)}>Save and continue</button></div></dialog>{/if}
   {#if replaceSource}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="replace-profile-title" onclose={()=>replaceSource=null} {@attach showConfirmation}><h2 id="replace-profile-title">Replace this new draft?</h2><p>Your unsaved edits will be discarded before starting from {replaceSource==='blank'?'the current inventory':'the selected copy'}.</p><div><button class="secondary-button" onclick={()=>replaceSource=null}>Keep this draft</button><button class="primary-button" onclick={()=>replace(replaceSource!)}>Replace draft</button></div></dialog>{/if}
