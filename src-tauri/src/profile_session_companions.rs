@@ -567,12 +567,31 @@ impl CompanionSources {
         validate: impl Fn(&ResourceToken) -> Result<(), String>,
         now_us: u64,
     ) -> Result<Option<Vec<Frame>>, String> {
+        if !self.acquired || self.stopped {
+            return Err("The companion reader is not acquired.".into());
+        }
+        // Private ownership and immutable bindings are always fatal. Only an
+        // already-bound cached token becoming obsolete can delay acquisition.
+        for instance in &self.instances {
+            instance.validate_owner_bindings(hub)?;
+        }
+        let mut pending = false;
+        for instance in &self.instances {
+            if let Err(error) = instance.validate_current_tokens(&validate) {
+                if self.run.is_some() {
+                    return Err(error);
+                }
+                pending = true;
+            }
+        }
+        if pending {
+            return Ok(None);
+        }
         if !self.baseline_ready(hub)? {
             return Ok(None);
         }
         let mut baselines = vec![];
         for instance in &mut self.instances {
-            instance.validate_inputs(hub, &validate)?;
             baselines.push(instance.feed.as_mut().unwrap().baseline()?);
         }
         if self.run.is_none() {
@@ -883,11 +902,54 @@ impl Instance {
         hub: &Hub,
         validate: &impl Fn(&ResourceToken) -> Result<(), String>,
     ) -> Result<(), String> {
+        self.validate_owner_bindings(hub)?;
+        self.validate_current_tokens(validate)
+    }
+    fn validate_owner_bindings(&self, hub: &Hub) -> Result<(), String> {
         hub.validate_profile_assignment(
             self.receipt
                 .as_ref()
                 .ok_or("The companion assignment is not acquired.")?,
         )?;
+        for input in &self.inputs {
+            token(
+                input.token.as_ref(),
+                &input.resource,
+                &input.descriptor,
+                self.proof.instance_id(),
+                Access::Read,
+            )?;
+        }
+        for output in &self.outputs {
+            if let Some(delivery) = output.token.as_ref() {
+                token(
+                    Some(delivery),
+                    &output.resource,
+                    &output.descriptor,
+                    self.proof.instance_id(),
+                    Access::Write,
+                )?;
+            }
+        }
+        if self
+            .inputs
+            .iter()
+            .map(|input| input.token.as_ref())
+            .chain(self.outputs.iter().map(|output| output.token.as_ref()))
+            .flatten()
+            .any(|token| Some(&token.provider_session) != self.provider_session.as_ref())
+        {
+            return Err(
+                "The companion transport provider changed; prepare a fresh native assignment."
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+    fn validate_current_tokens(
+        &self,
+        validate: &impl Fn(&ResourceToken) -> Result<(), String>,
+    ) -> Result<(), String> {
         for input in &self.inputs {
             validate(
                 input

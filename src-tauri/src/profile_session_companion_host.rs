@@ -165,6 +165,29 @@ fn admitted(snapshot: &CompileSnapshot, catalogue: &CompanionCatalogue) -> bool 
             })
     })
 }
+fn admitted_current(
+    snapshot: &CompileSnapshot,
+    catalogue: &CompanionCatalogue,
+    native: &[osg_mapping_host::companions::ResourceDescriptor],
+) -> bool {
+    let Some(actual) = native.iter().find(|source| {
+        source.definition.source_id == catalogue.instance_id
+            && source.definition.publication_hash == catalogue.publication_hash
+            && source.online
+            && source.baseline_ready
+            && source.generation > 0
+    }) else {
+        return false;
+    };
+    admitted(snapshot, catalogue)
+        && snapshot.resources.iter().any(|resource| {
+            resource.summary.id == catalogue.inventory_resource_id
+                && resource.summary.connections.iter().any(|connection| {
+                    connection.route.id == format!("companion:{}", catalogue.instance_id)
+                        && connection.route.provider_generation == actual.generation.to_string()
+                })
+        })
+}
 
 impl NativeProfileHost {
     pub(super) fn companion_baseline(
@@ -176,27 +199,27 @@ impl NativeProfileHost {
             return Ok((self.resources.bind_delivery_reads(prepared)?, vec![]));
         }
         let hub = self.companions.profile_metadata()?;
+        let provider = self.companions.profile_provider();
         let resources = self.resources.clone();
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
         loop {
             self.check_transition(owner)?;
-            // Acquiring the assignment revokes the prior browser session. Its
-            // replacement baseline advances the native provider generation,
-            // independently of the periodic inventory worker. Capture that
-            // actual observation before binding; cached old tokens must never
-            // authorize the newly connected writer.
-            if self.run(owner)?.companions.baseline_ready(&hub)? {
-                resources.refresh_native()?;
-                self.check_transition(owner)?;
+            if let Some(output) = self.run(owner)?.output.as_mut() {
+                output.keep_alive()?;
             }
+            // The independent inventory worker publishes the replacement
+            // browser's actual generation. Wait for that cached observation:
+            // synchronous discovery here can starve the acquired output lease.
+            // A prior generation still cannot authorize the replacement writer.
             let snapshot = resources.snapshot_for_compile(self.run(owner)?.assignments.clone())?;
+            let native = provider.resource_inventory();
             let now = self.controllers.stream_page("", 0).captured_us;
             let state = self.run(owner)?;
             if state.companions.baseline_ready(&hub)?
                 && state
                     .companion_catalogues
                     .iter()
-                    .all(|c| admitted(&snapshot, c))
+                    .all(|c| admitted_current(&snapshot, c, &native))
             {
                 if let Ok(delivery) = resources.bind_delivery_reads(prepared) {
                     state.companions.bind_delivery_plan(&delivery)?;
@@ -204,16 +227,18 @@ impl NativeProfileHost {
                         &hub,
                         |token| Self::validate_token(&resources, token),
                         now,
-                    )? {
-                        return Ok((delivery, frames));
+                    ).map_err(|error| format!("The acquired companion baseline rejected its native bindings: {error}"))? {
+                        self.check_transition(owner)?;
+                        let native = provider.resource_inventory();
+                        if self.run(owner)?.companion_catalogues.iter()
+                            .all(|catalogue| admitted_current(&snapshot, catalogue, &native)) {
+                            return Ok((delivery, frames));
+                        }
                     }
                 }
             }
             if Instant::now() >= deadline {
                 return Err("The assigned companion did not supply its actual publication, capabilities and fresh neutral baseline before activation.".into());
-            }
-            if let Some(output) = state.output.as_mut() {
-                output.keep_alive()?;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }

@@ -377,6 +377,99 @@ fn actual_baseline_and_delivery_tokens_are_required_before_arming_feedback() {
     );
 }
 #[test]
+fn stale_bound_tokens_delay_only_unarmed_baselines_without_mutating_sources() {
+    let fixture = Fixture::new();
+    let mut adapter = fixture.prepared();
+    fixture.acquire(&mut adapter, &[]);
+    fixture.connect();
+    adapter.bind_delivery_plan(&fixture.delivery()).unwrap();
+    let before = (
+        adapter.instances[0].ready,
+        adapter.instances[0].generation,
+        adapter.instances[0].sequence,
+        adapter.instances[0].at,
+    );
+    assert!(adapter
+        .baseline(&fixture.hub, |_| Err("Cached route changed".into()), 100)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        (
+            adapter.instances[0].ready,
+            adapter.instances[0].generation,
+            adapter.instances[0].sequence,
+            adapter.instances[0].at
+        ),
+        before
+    );
+
+    let original = adapter.instances[0].inputs[0].token.clone().unwrap();
+    adapter.instances[0].inputs[0].token = None;
+    assert!(adapter
+        .baseline(&fixture.hub, |_| Err("Cached route changed".into()), 100)
+        .is_err());
+    for field in ["route", "contract", "provider"] {
+        let mut changed = original.clone();
+        match field {
+            "route" => changed.route_id = "companion:foreign".into(),
+            "contract" => changed.contract_hash = "wrong".into(),
+            _ => changed.provider_session = "foreign-provider".into(),
+        }
+        adapter.instances[0].inputs[0].token = Some(changed);
+        assert!(
+            adapter
+                .baseline(&fixture.hub, |_| Err("Cached route changed".into()), 100)
+                .is_err(),
+            "{field}"
+        );
+    }
+    fixture.connect();
+    let current = fixture.delivery();
+    adapter.bind_delivery_plan(&current).unwrap();
+    let frames = adapter
+        .baseline(&fixture.hub, |_| Ok(()), 200)
+        .unwrap()
+        .unwrap();
+    let mut phase = Phase::new(
+        current.program.clone(),
+        Counter(1),
+        uuid::Uuid::new_v4().to_string(),
+    )
+    .unwrap();
+    for frame in frames {
+        phase.accept(frame).unwrap();
+    }
+    adapter.arm(phase.run_token()).unwrap();
+    assert!(adapter
+        .baseline(&fixture.hub, |_| Err("Cached route changed".into()), 300)
+        .is_err());
+    assert_eq!(
+        adapter
+            .poll(&fixture.hub, |_| Err("Cached route changed".into()), 300)
+            .frames[0]
+            .reason,
+        Reason::Disconnect
+    );
+    adapter.stop(&fixture.hub).unwrap();
+}
+
+#[test]
+fn stale_tokens_do_not_hide_replaced_private_assignment_ownership() {
+    let fixture = Fixture::new();
+    let mut old = fixture.prepared();
+    let receipts = fixture.acquire(&mut old, &[]);
+    fixture.connect();
+    old.bind_delivery_plan(&fixture.delivery()).unwrap();
+    let mut replacement = fixture.prepared();
+    fixture.acquire(&mut replacement, &receipts);
+    fixture.connect();
+    assert!(old
+        .baseline(&fixture.hub, |_| Err("Cached route changed".into()), 100)
+        .is_err());
+    replacement.stop(&fixture.hub).unwrap();
+}
+
+#[test]
 fn passive_generation_crossing_does_not_convert_and_live_reconnect_still_revokes() {
     let fixture = Fixture::new();
     let mut adapter = fixture.prepared();

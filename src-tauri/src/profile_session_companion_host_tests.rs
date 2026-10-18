@@ -266,6 +266,7 @@ pub(crate) struct NativeFixture {
     epoch: Arc<AtomicU64>,
     quit: Arc<std::sync::atomic::AtomicBool>,
     peer: Option<std::thread::JoinHandle<()>>,
+    inventory: Option<std::thread::JoinHandle<()>>,
     reply: Arc<std::sync::Mutex<serde_json::Value>>,
     inventory_boundary: InventoryBoundary,
 }
@@ -392,7 +393,6 @@ impl NativeFixture {
         });
         let resources = Arc::new(crate::profile_resources::Runtime::new(None, collect, false));
         let peer_hub = hub.clone();
-        let peer_resources = resources.clone();
         let controls = original.controls.clone();
         let quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop = quit.clone();
@@ -401,7 +401,6 @@ impl NativeFixture {
         let peer = std::thread::spawn(move || {
             let mut opened: Option<serde_json::Value> = None;
             let mut sequence = 0u64;
-            let mut last_inventory: Option<Instant> = None;
             while !stop.load(Ordering::Acquire) {
                 if opened.is_none() {
                     peer_hub.handle_wire(
@@ -432,13 +431,26 @@ impl NativeFixture {
                         *captured_reply.lock().unwrap() = received;
                     }
                 }
-                if last_inventory.is_none_or(|last| last.elapsed() >= inventory_interval) {
-                    peer_resources.refresh_native().unwrap();
-                    last_inventory = Some(Instant::now());
-                }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         });
+        // Production inventory collection is independent of wire processing
+        // and the Host's bounded activation wait.
+        let inventory_resources = resources.clone();
+        let inventory_stop = quit.clone();
+        let inventory = std::thread::Builder::new()
+            .name("fixture-companion-inventory".into())
+            .spawn(move || {
+                let mut last_inventory: Option<Instant> = None;
+                while !inventory_stop.load(Ordering::Acquire) {
+                    if last_inventory.is_none_or(|last| last.elapsed() >= inventory_interval) {
+                        inventory_resources.refresh_native().unwrap();
+                        last_inventory = Some(Instant::now());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            })
+            .unwrap();
         let deadline = Instant::now() + std::time::Duration::from_secs(2);
         while resources
             .request(&json!({"command":"profile_resources_list"}))
@@ -481,6 +493,7 @@ impl NativeFixture {
             epoch: Arc::new(AtomicU64::new(1)),
             quit,
             peer: Some(peer),
+            inventory: Some(inventory),
             reply,
             inventory_boundary,
         }
@@ -616,12 +629,58 @@ impl NativeFixture {
         );
         candidate
     }
+    fn feedback_only_candidate(&self) -> Candidate {
+        let mut candidate = self.candidate(false);
+        candidate.document.resources[0]
+            .ports
+            .retain(|port| port.id == "indicator");
+        candidate.assignments[0]
+            .ports
+            .retain(|port| port.profile_port_id == "indicator");
+        let contract = candidate.document.resources[0].ports[0].contract.clone();
+        candidate
+            .document
+            .processing_nodes
+            .push(osg_profiles::ProcessingNode {
+                id: "constant".into(),
+                name: "Feedback only".into(),
+                operation: osg_profiles::Operation::Constant {
+                    value: osg_profiles::PortValue::Boolean(true),
+                },
+                inputs: vec![],
+                outputs: vec![osg_profiles::Port {
+                    id: "value".into(),
+                    name: "Value".into(),
+                    direction: osg_profiles::Direction::Output,
+                    contract,
+                }],
+            });
+        candidate.document.bindings[0].from = osg_profiles::Endpoint {
+            node_id: "constant".into(),
+            port_id: "value".into(),
+        };
+        candidate.stage = Some(
+            NativeProfileHost::stage(
+                &self.resources,
+                &self.games,
+                &self.companions,
+                self.controllers.clone(),
+                false,
+                &candidate,
+            )
+            .unwrap(),
+        );
+        candidate
+    }
 }
 impl Drop for NativeFixture {
     fn drop(&mut self) {
         self.quit.store(true, Ordering::Release);
         if let Some(peer) = self.peer.take() {
             peer.join().unwrap();
+        }
+        if let Some(inventory) = self.inventory.take() {
+            inventory.join().unwrap();
         }
         self.resources.shutdown();
         self.games.shutdown();
@@ -631,17 +690,36 @@ impl Drop for NativeFixture {
 }
 
 #[test]
-fn assignment_takeover_captures_actual_generation_before_periodic_inventory_refresh() {
-    // The initial neutral browser is cached. No peer-side inventory refresh can
-    // occur during the three-second takeover window, so the host must capture
-    // the replacement writer instead of binding the retained old generation.
-    let mut fixture = NativeFixture::with_inventory_interval(std::time::Duration::from_secs(60));
+fn assignment_takeover_waits_for_the_background_inventorys_actual_generation() {
+    // Cached old tokens cannot authorize the replacement writer. The actual
+    // inventory arrives independently, even when publishing it takes longer
+    // than a virtual output lease; the Host must keep waiting without discovery.
+    let mut fixture = NativeFixture::with_inventory_interval(std::time::Duration::from_millis(600));
     fixture.desired = fixture.original.clone();
     let provider = fixture.companions.profile_provider();
     let before = provider.resource_inventory()[0].generation;
     assert!(before > 0);
+    let published = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let captured = published.clone();
+    *fixture.inventory_boundary.lock().unwrap() = Some((
+        before + 1,
+        Box::new(move || {
+            assert_eq!(
+                std::thread::current().name(),
+                Some("fixture-companion-inventory")
+            );
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            captured.store(true, Ordering::Release);
+        }),
+    ));
     let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
+    let started = Instant::now();
     coordinator.apply(fixture.candidate(false)).unwrap();
+    assert!(
+        published.load(Ordering::Acquire),
+        "Actual background publication must precede arming"
+    );
+    assert!(started.elapsed() >= std::time::Duration::from_millis(600));
     assert_eq!(
         coordinator.status().state,
         crate::profile_session::State::Running
@@ -671,8 +749,51 @@ fn assignment_takeover_captures_actual_generation_before_periodic_inventory_refr
 }
 
 #[test]
+fn feedback_only_takeover_waits_for_the_actual_background_generation() {
+    let mut fixture = NativeFixture::with_inventory_interval(std::time::Duration::from_millis(600));
+    fixture.desired = fixture.original.clone();
+    let provider = fixture.companions.profile_provider();
+    let before = provider.resource_inventory()[0].generation;
+    let published = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let captured = published.clone();
+    *fixture.inventory_boundary.lock().unwrap() = Some((
+        before + 1,
+        Box::new(move || {
+            assert_eq!(
+                std::thread::current().name(),
+                Some("fixture-companion-inventory")
+            );
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            captured.store(true, Ordering::Release);
+        }),
+    ));
+    let candidate = fixture.feedback_only_candidate();
+    assert!(candidate.document.resources[0]
+        .ports
+        .iter()
+        .all(|port| port.direction == osg_profiles::Direction::Input));
+    let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
+    coordinator.apply(candidate).unwrap();
+    assert!(published.load(Ordering::Acquire));
+    let listed = fixture
+        .resources
+        .request(&json!({"command":"profile_resources_list"}))
+        .unwrap();
+    assert_eq!(
+        listed["resources"][0]["connections"][0]["route"]["providerGeneration"],
+        provider.resource_inventory()[0].generation.to_string()
+    );
+    assert_eq!(
+        coordinator.status().state,
+        crate::profile_session::State::Running
+    );
+    coordinator.poll().unwrap();
+    coordinator.stop().unwrap();
+}
+
+#[test]
 fn actual_peer_reconnect_between_inventory_capture_and_baseline_never_arms_the_old_generation() {
-    let mut fixture = NativeFixture::with_inventory_interval(std::time::Duration::from_secs(60));
+    let mut fixture = NativeFixture::with_inventory_interval(std::time::Duration::from_millis(600));
     fixture.desired = fixture.original.clone();
     let candidate = fixture.candidate(false);
     let provider = fixture.companions.profile_provider();
@@ -684,6 +805,10 @@ fn actual_peer_reconnect_between_inventory_capture_and_baseline_never_arms_the_o
     *fixture.inventory_boundary.lock().unwrap() = Some((
         initial + 1,
         Box::new(move || {
+            assert_eq!(
+                std::thread::current().name(),
+                Some("fixture-companion-inventory")
+            );
             let old = current.resource_inventory()[0].generation;
             hub.disconnect_connection("peer", hub.now_ms());
             let deadline = Instant::now() + std::time::Duration::from_secs(2);
