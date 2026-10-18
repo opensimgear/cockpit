@@ -76,6 +76,7 @@ function fixtures() {
         integrationSetup: { state: 'missing-installation', live: 'unavailable', message: 'Fixture installation unavailable.', connection: {} } },
     ], cleanup: { phase: 'idle' } },
     failControllers: false, failForget: null, keepForgotten: false,
+    controllerDelayMs: 0, completedControllerPages: 0,
   };
 }
 
@@ -106,6 +107,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     ] } });
     if (request.command === 'profile_retired_recovery_status') return result({ retiredRecovery: { required: false, outputs: [], provisioning: [], job: null, diagnostics: [], outputQualified: false, provisioningQualified: false } });
     if (request.command === 'controller_list') {
+      if (fixture.controllerDelayMs) await new Promise(resolve => setTimeout(resolve, fixture.controllerDelayMs));
+      fixture.completedControllerPages++;
       if (fixture.failControllers) return { ok: false, error: 'Fixture controller provider unavailable.' };
       return result({ controllers: { session: 'fixture-controllers', backendStatus: 'ready', offset, total: fixture.controllers.length,
         limit: 2, sources: fixture.controllers.slice(offset, offset + 2) } });
@@ -155,7 +158,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const filter = page.getByRole('combobox', { name: 'Filter components', exact: true });
     const connections = page.getByRole('combobox', { name: 'Filter connections', exact: true });
     const list = page.getByRole('button', { name: 'List', exact: true }), topology = page.getByRole('button', { name: 'Topology', exact: true });
-    const refresh = page.getByRole('button', { name: 'Refresh devices', exact: true });
+    await expect(page.getByRole('button', { name: 'Refresh devices', exact: true })).toHaveCount(0);
+    async function waitForInventoryRefresh() {
+      const previous = fixture.completedControllerPages;
+      await expect.poll(() => fixture.completedControllerPages, { timeout: 8_000 }).toBeGreaterThan(previous);
+    }
     await expect(devices.getByText('Dual transport panel', { exact: true })).toBeVisible();
     const expectedNames = ['Hidden pedals', 'Remembered wheel', 'Remembered throttle', 'Dual transport panel', 'Unproven second panel',
       'CAN output module', 'Standalone output module', 'External busy virtual joystick', 'Missing remembered virtual joystick',
@@ -198,6 +205,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.locator('.type-counts')).toContainText('Physical · Third-party: 3');
     await expect(devices.locator('.type-counts')).toContainText('Physical · OSG: 4');
     await expect(devices.locator('.type-counts')).toContainText('Gateway · OSG: 2');
+    fixture.controllerDelayMs = 300;
+    const previousControllerPages = fixture.completedControllerPages;
+    await expect.poll(() => fixture.completedControllerPages, { timeout: 8_000 }).toBeGreaterThan(previousControllerPages + 1);
+    await expect(filter).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Refresh devices', exact: true })).toHaveCount(0);
+    await expect(page.getByText('Refreshing…', { exact: true })).toHaveCount(0);
+    fixture.controllerDelayMs = 0;
     await connections.selectOption('can');
     await expect(devices.locator('.system-list [data-component-id]')).toHaveCount(3);
     await topology.click(); await expect(connections).toHaveValue('can');
@@ -206,11 +220,17 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await list.click(); await expect(connections).toHaveValue('can'); await connections.selectOption('all');
     await devices.locator('[data-component-id="virtual:vjoy:3"]').click();
     const details = page.getByRole('region', { name: 'Component details', exact: true });
+    const backToDevices = devices.getByRole('button', { name: 'Back to Devices', exact: true });
+    await expect(details).toBeVisible();
+    await expect(devices.locator('.system-list')).not.toBeVisible();
+    await expect(list).not.toBeVisible();
     await expect(details).toContainText('External busy virtual joystick');
     await expect(details).toContainText('Creation provenance unknown');
     await expect(details).toContainText('PID 9999');
     await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await backToDevices.click();
+    await expect(devices.locator('.system-list')).toBeVisible();
     await topology.click();
     const graph = page.getByRole('region', { name: 'System topology', exact: true });
     await expect(graph).toBeVisible();
@@ -219,8 +239,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-pressed', 'true');
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-label', /busy.*Creation provenance unknown/);
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('title', /busy.*Creation provenance unknown/);
-    await expect(details).toContainText('External busy virtual joystick');
-    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await expect(details).not.toBeVisible();
     await expect(graph.getByRole('button', { name: 'Zoom in', exact: true })).toBeEnabled();
     await graph.getByRole('button', { name: 'Zoom in', exact: true }).click();
     await graph.getByRole('button', { name: 'Fit all components', exact: true }).click();
@@ -237,17 +256,17 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await devices.locator('[data-component-id="controller:pedals"]').click();
     await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await backToDevices.click();
     await topology.click(); await expect(filter).toHaveValue('hidden');
     await expect(graph.locator('[data-component-id="controller:pedals"]')).toHaveAttribute('aria-pressed', 'true');
-    await details.getByRole('button', { name: 'Close details', exact: true }).click();
     await list.click(); await filter.selectOption('all');
     // Provider failure keeps prior records explicitly uncertain, independently
     // of successful integration/USB/native inspection.
-    fixture.failControllers = true; await refresh.click();
+    fixture.failControllers = true; await waitForInventoryRefresh();
     await expect(devices).toContainText('Fixture controller provider unavailable');
     await expect(devices.getByText('Remembered wheel', { exact: true })).toBeVisible();
     await expect(devices.getByText('Standalone output module', { exact: true })).toBeVisible();
-    fixture.failControllers = false; await refresh.click();
+    fixture.failControllers = false; await waitForInventoryRefresh();
     await expect(devices).not.toContainText('Fixture controller provider unavailable');
     await expect(devices.getByText('Hidden pedals PnP record', { exact: true })).toHaveCount(0);
     assert.deepEqual(await devices.locator('.system-list [data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).sort()), listIds,
@@ -260,21 +279,21 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     fixture.companions.host.instances[0].connected = false;
     fixture.companions.host.pending = [{ requestId: 'pairing-fixture', name: 'Unverified tablet', transport: 'network', approved: false }];
     fixture.companions.usb.devices[0].connected = true;
-    await refresh.click();
+    await waitForInventoryRefresh();
     await devices.locator('[data-component-id="companion:browser-fixture"]').click();
     await expect(details).toContainText('Offline');
     await expect(details).toContainText('NETWORK · Your computer · 192.0.2.10 · Last-known connection');
-    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await backToDevices.click();
     await devices.locator('[data-component-id="companion:esp32-fixture"]').click();
     await expect(details).toContainText('USB · Your computer · COM-fixture-companion · Current connection');
     await expect(details).not.toContainText('NETWORK ·');
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
-    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await backToDevices.click();
     await devices.locator('[data-component-id="companion-pending:pairing-fixture"]').click();
     await expect(details).toContainText('Pairing request · Unverified installation');
     await expect(details).toContainText('Waiting for pairing approval');
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
-    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await backToDevices.click();
     assert.equal(requests.filter(request => request.command === 'companion_approve').length, 0);
     await topology.click();
     await expect(graph.locator('[data-component-id="companion:browser-fixture"]')).toContainText('Offline');
@@ -294,9 +313,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await details.locator('.gateway-device-link').filter({ hasText: 'Dual transport panel' }).click();
     await expect(page.getByRole('heading', { name: 'Dual transport panel', exact: true, level: 1 })).toBeVisible();
     await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+    await expect(details).toBeVisible();
+    await backToDevices.click();
     await expect(search).toHaveValue('OpenSimGear CAN gateway');
     await expect(devices.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveAttribute('aria-pressed', 'true');
-    await search.fill(''); await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await search.fill('');
     // The shared dialog explains metadata-only virtual cleanup. Unchanged
     // remembered snapshots remain suppressed after reload; reconnect may return.
     await devices.locator('[data-component-id="virtual:vjoy:4"]').click();
@@ -306,7 +327,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(dialog).toContainText('retained-virtual-binding');
     await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
     await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
-    await refresh.click(); await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
+    await waitForInventoryRefresh(); await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
     // Both renderer modes use the same bulk eligibility and revalidate after
     // confirmation. A returning wheel cannot be removed; one failed throttle
     // mutation is reported without replay, and the other records stay visible.
@@ -332,7 +353,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
     fixture.controllers.find(source => source.id === 'remembered-throttle').online = true;
     fixture.native.virtualDevices.find(device => device.id === 'vjoy:4').available = true;
-    await refresh.click();
+    await waitForInventoryRefresh();
     await expect(graph.locator('[data-component-id="controller:remembered-throttle"]')).toBeVisible();
     await expect(graph.locator('[data-component-id="virtual:vjoy:4"]')).toBeVisible();
     // Forgetting an unreachable gateway clears only its stale local routes.
@@ -347,7 +368,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
     await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
     await expect(graph.locator('[data-component-id="resource:verified-dual"]')).toBeVisible();
-    await refresh.click();
+    await waitForInventoryRefresh();
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
     await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
     const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_approve|companion_revoke|claim|register|apply|save|configure)$/;

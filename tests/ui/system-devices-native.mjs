@@ -32,7 +32,7 @@ test('running native Cockpit exposes every observed provider record in both inve
     await page.goto(endpoint);
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
-    await expect(devices.getByRole('button', { name: 'Refresh devices', exact: true })).toBeEnabled({ timeout: 90_000 });
+    await expect(devices.getByRole('button', { name: 'Refresh devices', exact: true })).toHaveCount(0);
     await expect.poll(() => devices.locator('.system-list [data-component-id]').count(), { timeout: 90_000 }).toBeGreaterThan(0);
     const controllers = [];
     let offset = 0, total = 0;
@@ -44,8 +44,6 @@ test('running native Cockpit exposes every observed provider record in both inve
     const supplemental = (await native({ command: 'system_inventory', offset: 0, limit: 32 })).systemInventory;
     const games = (await native({ command: 'game_get_state' })).games;
     const companions = (await native({ command: 'companion_status' })).companions;
-    await devices.getByRole('button', { name: 'Refresh devices', exact: true }).click();
-    await expect(devices.getByRole('button', { name: 'Refresh devices', exact: true })).toBeEnabled({ timeout: 90_000 });
     const memory = await page.evaluate(() => JSON.parse(localStorage.getItem('osg-system-inventory-v1')));
     const components = memory.components.filter(component => component.type !== 'host');
     const targets = components.flatMap(component => component.targets);
@@ -65,6 +63,17 @@ test('running native Cockpit exposes every observed provider record in both inve
     await page.screenshot({ path: resolve(artifacts, 'native-system-topology.png'), fullPage: true });
     await devices.getByRole('button', { name: 'List', exact: true }).click();
     await page.screenshot({ path: resolve(artifacts, 'native-system-list.png'), fullPage: true });
+    const inspected = components.find(component => component.type === 'virtual' || component.type === 'integration') ?? components[0];
+    assert.ok(inspected, 'A known native component is available for passive detail inspection.');
+    await devices.locator(`[data-component-id="${inspected.id}"]`).click();
+    const details = devices.getByRole('region', { name: 'Component details', exact: true });
+    await expect(details).toBeVisible();
+    await expect(devices.locator('.system-list')).not.toBeVisible();
+    await expect(devices.getByRole('button', { name: 'Topology', exact: true })).not.toBeVisible();
+    await page.screenshot({ path: resolve(artifacts, 'native-system-details.png'), fullPage: true });
+    await devices.getByRole('button', { name: 'Back to Devices', exact: true }).click();
+    await expect(devices.locator('.system-list')).toBeVisible();
+    await expect(devices.locator(`[data-component-id="${inspected.id}"]`)).toHaveAttribute('aria-pressed', 'true');
     assert.deepEqual(pageErrors, []);
     const mutations = requests.filter(request => /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|controller_visibility_save|controller_visibility_enable|controller_forget|companion_usb_arm|companion_assign|companion_revoke|claim|register|apply|save|configure|forget)$/.test(request.command));
     assert.deepEqual(mutations, [], 'Passive inventory inspection must not alter configuration or acquire runtime ownership.');

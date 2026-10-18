@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, tick, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
   import Notification from './Notification.svelte';
   import SystemTopology from './SystemTopology.svelte';
@@ -18,36 +18,58 @@
   } = $props();
   let snapshot = $state.raw<SystemSnapshot>({ components: [], diagnostics: [], observedAt: 0 });
   let mode = $state('list'), search = $state(''), filter = $state('all'), transport = $state('all'), selectedId = $state('');
+  let detailsOpen = $state(false);
+  let inventoryElement: HTMLDivElement | undefined;
   let busy = $state(false), error = $state(''), confirmation = $state<SystemComponent[]>([]);
+  let refreshTask: Promise<SystemSnapshot> | undefined;
   let controller: SystemInventoryController;
   let reviewEpoch = 0;
   const visible = $derived(filterSystem(snapshot.components, search, filter, transport));
   const components = $derived(snapshot.components.filter(c => c.type !== 'host'));
   const selected = $derived(snapshot.components.find(c => c.id === selectedId));
+  const showingDetails = $derived(detailsOpen && !!selected && active);
   const eligible = $derived(visible.filter(c => c.forget.allowed));
   const icon = (c: SystemComponent) => c.type === 'gateway' ? 'network' : c.type === 'integration' ? 'play' : c.type === 'virtual' ? 'monitor' : 'devices';
   const date = (timestamp: number) => timestamp ? new Date(timestamp).toLocaleString() : 'Never observed connected';
-  function select(id: string) { selectedId = id; }
-  async function refresh() {
-    if (!controller || busy) return;
-    busy = true;
-    try { await controller.refresh(); error = ''; }
+  function select(id: string) { selectedId = id; detailsOpen = true; }
+  async function backToDevices() {
+    detailsOpen = false;
+    await tick();
+    const target = mode === 'topology' ? '.topology-viewport' : `[data-component-id="${CSS.escape(selectedId)}"]`;
+    inventoryElement?.querySelector<HTMLElement>(target)?.focus();
+  }
+  function focusDetails(node: HTMLButtonElement) { node.focus(); }
+  async function refresh(quiet = false) {
+    if (!controller || busy || (quiet && refreshTask)) return;
+    if (!quiet) busy = true;
+    const task = refreshTask ?? controller.refresh();
+    refreshTask = task;
+    try { await task; if (!quiet) error = ''; }
     catch (e) { error = String(e); }
-    finally { busy = false; }
+    finally {
+      if (refreshTask === task) refreshTask = undefined;
+      if (!quiet) busy = false;
+    }
   }
   function setMode(value: string) { mode = value; try { localStorage.setItem('osg-devices-mode', value); } catch { /* mode remains usable */ } }
   async function reviewForget(items: SystemComponent[]) {
     if (busy) return;
     const epoch = ++reviewEpoch;
     busy = true; confirmation = items;
-    try { const reviewed = await controller.reviewForget(items.map(c => c.id)); if (epoch === reviewEpoch) confirmation = reviewed; }
+    try {
+      await refreshTask?.catch(() => undefined);
+      if (epoch !== reviewEpoch) return;
+      const reviewed = await controller.reviewForget(items.map(c => c.id));
+      if (epoch === reviewEpoch) confirmation = reviewed;
+    }
     finally { busy = false; }
   }
   async function forget() {
     if (busy) return;
     busy = true; const failures: string[] = [];
+    await refreshTask?.catch(() => undefined);
     for (const c of confirmation) {
-      try { await controller.forget(c.id); if (selectedId === c.id) selectedId = ''; }
+      try { await controller.forget(c.id); if (selectedId === c.id) { selectedId = ''; detailsOpen = false; } }
       catch (e) { failures.push(`${c.name}: ${String(e)}`); }
     }
     confirmation = []; error = failures.join('\n'); busy = false;
@@ -62,13 +84,15 @@
     controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage, onChange: next => { snapshot = next; oninventory(next); } });
     snapshot = controller.snapshot;
     void refresh();
-    const timer = setInterval(() => { if (active && !document.hidden) void refresh(); }, 3000);
+    const timer = setInterval(() => { if (active && !document.hidden) void refresh(true); }, 3000);
     return () => { reviewEpoch++; clearInterval(timer); controller.dispose(); };
   });
 </script>
 
 <section aria-label="System devices">
-<div class="page-heading"><div><div class="eyebrow">YOUR CONNECTED SYSTEM</div><h1>Devices</h1><p>Every known component, its current state, and how it connects.</p></div><button class="secondary-button" onclick={refresh} disabled={busy}><Icon name="refresh" size={16} />{busy ? 'Refreshing…' : 'Refresh devices'}</button></div>
+{#if error}<Notification message={error} kind="error" />{/if}
+<div class="system-inventory" bind:this={inventoryElement} hidden={showingDetails}>
+<div class="page-heading"><div><div class="eyebrow">YOUR CONNECTED SYSTEM</div><h1>Devices</h1><p>Every known component, its current state, and how it connects.</p></div></div>
 <div class="system-toolbar">
   <div class="mode-switch" role="group" aria-label="Devices presentation"><button class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}>List</button><button class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}>Topology</button></div>
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
@@ -78,7 +102,6 @@
   <button class="text-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}>Forget eligible ({eligible.length})</button>
 </div>
 <div class="type-counts" aria-label="Component counts">{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
-{#if error}<Notification message={error} kind="error" />{/if}
 {#if snapshot.diagnostics.length}<details class="provider-diagnostics"><summary>Inventory diagnostics ({snapshot.diagnostics.length})</summary>{#each snapshot.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}
 {#if mode === 'topology'}
   <SystemTopology components={visible} context={snapshot.components} {selectedId} onselect={select} />
@@ -93,9 +116,11 @@
     {:else}<div class="empty-state"><strong>{components.length ? 'No matching components' : busy ? 'Loading known components…' : 'No known components'}</strong><p>Connected, offline and unavailable components appear here when their providers report them.</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; transport = 'all'; }}>Clear filters</button></div>{/each}
   </div>
 {/if}
-{#if selected && active}
+</div>
+{#if selected && showingDetails}
+  <div class="details-toolbar"><button class="text-button" use:focusDetails onclick={backToDevices}><Icon name="back" size={16} />Back to Devices</button></div>
   <section class="panel component-details" aria-label="Component details">
-    <div class="panel-heading"><div><h2>{selected.name}</h2><p>{systemTypeLabels[selected.type]} · {selected.role}</p></div><button class="text-button" onclick={() => { selectedId = ''; }}>Close details</button></div>
+    <div class="panel-heading"><div><h1>{selected.name}</h1><p>{systemTypeLabels[selected.type]} · {selected.role}</p></div></div>
     <p>{systemStateLabel(selected)}</p>
     <p>Capture: {selected.capture}{selected.owner ? ` · Owner: ${selected.owner}` : ''}</p>
     {#if selected.type === 'osg'}<p>Input owner: {selected.inputOwner ?? 'None confirmed'} · Configuration writer: {selected.configurationOwner ?? 'None observed'} · Active configuration route: {selected.configurationRoute ?? 'None observed'}</p>{/if}
@@ -127,6 +152,8 @@
 </section>
 
 <style>
+  .system-inventory[hidden] {display:none}
+  .details-toolbar {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
   .system-toolbar,.component-actions { display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px; }
   .system-toolbar > span {font-size:12px;opacity:.75}.mode-switch {display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
   .type-counts {display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--soft);margin-bottom:18px}
@@ -143,6 +170,6 @@
   .system-card.offline {background:var(--subtle);border-color:var(--faint-line)}.system-card.offline .component-copy strong {color:var(--soft)}.system-card.offline .component-icon {background:var(--surface);color:var(--muted)}
   .system-card.offline:hover {background:var(--surface);border-color:var(--muted)}
   .system-card.chosen {border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}.system-card:focus-visible {outline-offset:3px}
-  .component-details {padding:24px;margin-top:24px;overflow-wrap:anywhere}.provider-diagnostics {margin:16px 0}.provider-diagnostics p {font-size:12px}dialog {max-width:650px;max-height:80vh;overflow:auto;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:14px;padding:28px}dialog::backdrop {background:#0009}
+  .component-details {padding:24px;overflow-wrap:anywhere}.provider-diagnostics {margin:16px 0}.provider-diagnostics p {font-size:12px}dialog {max-width:650px;max-height:80vh;overflow:auto;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:14px;padding:28px}dialog::backdrop {background:#0009}
   @media(max-width:700px){.system-list {gap:12px}.system-card {padding:16px;min-height:172px}}
 </style>

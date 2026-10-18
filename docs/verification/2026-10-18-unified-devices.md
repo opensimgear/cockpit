@@ -49,7 +49,7 @@ integration and paired companion is represented, and compares all rendered IDs
 between List and Topology. It checks that the recorded HTTP requests contain no
 configuration, visibility, cleanup or runtime acquisition mutations.
 
-The Windows observation at **2026-10-18 17:29 Europe/Berlin** contained:
+The Windows observation at **2026-10-18 17:48 Europe/Berlin** contained:
 
 | Native observation | Count and interpretation |
 | --- | --- |
@@ -81,11 +81,16 @@ multiple tiles per row, muted offline names with full text/control opacity,
 connected-hidden emphasis, and stable base styles on retained live-update nodes.
 The dev server was restarted to refresh the existing desktop after the layout
 change. The actual-native List screenshot records the same 27 components as tiles.
+Selecting a tile or topology node replaces the inventory with dedicated details;
+Back restores the prior filters, mode and selection. Timer-driven acceptance
+checks provider failure/recovery and lifecycle changes with no Refresh button.
+The actual native run also records `native-system-details.png` and verifies the
+inventory is hidden until Back is selected.
 
 The final fixture evidence JSON has SHA-256
-`08d1e9ba419119e994ee207f92903224cca24937f90716cfddb3fb078c1a4e14`;
+`89b5837e6df9ec95f47ed050cc78fc76bb86508b39a57398a548a996ffb8115e`;
 the final native evidence JSON has SHA-256
-`25bb612cd93f2f1adcfc05e36ef7d86ac0bea2f819db83e7a27066a9a6d2a792`.
+`20357a485e47e72efda64a88dab21c3f7f030d3fbf42f35b82b191d67e800ad9`.
 
 ## Final automated checks
 
@@ -93,7 +98,7 @@ The final inventory/frontend suite passes **67 tests**, including compiled USB
 and topology component behavior. The full native library run passes **825 tests**
 with zero failures and six existing ignored qualification tests in 48.89 seconds;
 its log is `.research/feature78-final/native-tests.log`. The final running-browser
-fixture passes in 6.27 seconds and actual-native browser acceptance in 8.51 seconds.
+fixture passes in 23.77 seconds and actual-native browser acceptance in 1.83 seconds.
 
 Eleven focused native inventory tests cover visibility/PnP, exact publication
 associations, bounded paging and configured virtual targets. A successful Missing
@@ -137,3 +142,9 @@ understands the existing Windows debug-only exact opt-in, aircraft fixtures use 
 regular temporary parent on macOS, and the UDP baseline fixture supplies bounded
 advancing live data until admission completes. No production deadline or native
 qualification setting was relaxed.
+
+Further CI fixture corrections keep supplied companion-wire tests out of OS
+TLS/Keychain initialization, drive simulated feeder time from actual host renewal
+messages before admitting fresh UDP telemetry, and bound each native coverage
+filter with retained partial output. Ownership assertions and coverage thresholds
+remain unchanged.

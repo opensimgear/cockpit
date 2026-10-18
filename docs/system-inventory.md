@@ -8,6 +8,9 @@ presentation does not change connections or runtime configuration.
 List presents a responsive grid of component tiles. Confirmed offline tiles use
 muted surfaces, names and icons while retaining readable status and actions.
 Hidden-but-present, unavailable and unknown states remain distinct from offline.
+Inventory updates run automatically in the background; there is no manual refresh
+button. Selecting a tile or topology node opens its details in place of the
+inventory. Back to Devices restores the previous view, filters and selection.
 
 ## Inspecting the system
 
