@@ -62,6 +62,27 @@ test('hidden controller discovery survives capture outage and recovery without r
  h.failures.delete('controller_list');await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('visibility:pnp-pedals'),undefined);
 });
 
+test('nearest native parent bus proves USB or Bluetooth without guessing from HID names, including remembered edges', async () => {
+ const h=harness({controllers:[source('usb'),source('bluetooth'),source('offline',{online:false})],native:{virtualDevices:[],diagnostics:[],hiddenDevices:[
+  {id:'usb',name:'USB wheel',instanceId:'HID\\USB',controllerIds:['usb'],present:true,hidden:false,ancestors:['USB\\VID_1234','USB\\ROOT_HUB'],diagnostics:[]},
+  {id:'bt',name:'Bluetooth joystick',instanceId:'HID\\BT',controllerIds:['bluetooth'],present:true,hidden:false,ancestors:['BTHLEDEVICE\\peer','USB\\RADIO'],diagnostics:[]},
+  {id:'old',name:'Offline pedals',instanceId:'HID\\OLD',controllerIds:['offline'],present:false,hidden:false,ancestors:['USB\\VID_1234'],diagnostics:[]},
+ ]}});await h.controller.refresh();
+ assert.equal(h.component('controller:usb').connections[0].transport,'usb');assert.equal(h.component('controller:bluetooth').connections[0].transport,'bluetooth');
+ assert.equal(h.component('controller:offline').connections[0].current,false);assert.equal(h.component('controller:offline').presence,'offline');
+});
+
+test('verified multiple HID collections are capabilities of one physical node across capture outage', async () => {
+ const h=harness({controllers:[source('col-a'),source('col-b')],native:{virtualDevices:[],diagnostics:[],hiddenDevices:[{id:'same-pnp',name:'Same device',instanceId:'HID\\COMPOSITE',controllerIds:['col-a','col-b'],present:true,hidden:false,diagnostics:[]}]}});
+ await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('controller:col-a').targets.filter(t=>t.kind==='controller').length,2);
+ h.failures.set('controller_list',Error('Capture failed'));await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);
+});
+
+test('dual transport input ownership and configuration writer are independent observed facts', async () => {
+ const h=harness({gateways:[gateway({state:{...gateway().state,modules:[module('panel',{directUsb:true})]}})],usb:[usb('serial',{...usb(),snapshot:{...usb().snapshot,claimedBy:'USB setup writer'}})],resources:[resource('proven',[connection('standalone-usb','serial'),connection('gateway:gateway-one','panel')])]});
+ await h.controller.refresh();const component=h.component('resource:proven');assert.equal(component.inputOwner,'Device USB');assert.equal(component.configurationOwner,'USB setup writer');assert.equal(component.configurationRoute,'USB · COM7');assert.equal(component.connections.length,2);
+});
+
 test('newly verified USB CAN grouping supersedes remembered sightings and preserves their history', async () => {
  const h=harness({gateways:[gateway()],usb:[usb()]});await h.controller.refresh();assert.ok(h.component('usb:serial'));assert.ok(h.component('module:gateway-one/panel'));
  h.state.resources=[resource('proven',[connection('standalone-usb','serial'),connection('gateway:gateway-one','panel')])];
@@ -77,8 +98,29 @@ test('forget review explains exact retained local bindings and degrades honestly
  h.failures.set('profile_list',Error('Metadata unavailable'));const partial=await h.controller.reviewForget(['controller:offline']);assert.match(partial[0].diagnostics.join(' '),/retained/);
 });
 
+test('companion transport is evidence-backed, pending requests remain visible, and USB presence prevents revocation', async () => {
+ const h=harness({companions:{host:{clients:[{companionId:'serial',name:'USB-only panel',kind:'esp32',connected:false}],instances:[],pending:[{requestId:'request-1',companionId:'unverified',name:'Pending tablet',approved:false}]},usb:{connected:true,port:'COM8',device:{companionId:'serial'}}}});
+ await h.controller.refresh();const serial=h.component('companion:serial');assert.deepEqual(plain(serial.connections.map(c=>c.transport)),['usb']);assert.equal(serial.forget.allowed,false);assert.equal(serial.presence,'connected');
+ assert.equal(h.component('companion-pending:request-1').presence,'unknown');assert.equal(h.component('companion-pending:request-1').connections.length,0);
+ assert.equal(h.requests.some(r=>/approve|revoke|pair/.test(r.command)),false);
+});
+
+test('offline companions keep observed attachments while configured integration endpoints stay explicitly unconfirmed', async () => {
+ const h=harness({companions:{host:{clients:[{companionId:'tablet',name:'Tablet',connected:true,transports:['network'],peer:'192.0.2.2'}],instances:[]}},games:{catalogue:[game('dcs',{integrationSetup:{state:'ready',live:'waiting',message:'Waiting',connection:{host:'127.0.0.1',port:7778}}})]}});
+ await h.controller.refresh();assert.equal(h.component('integration:dcs').connections[0].observed,false);
+ h.state.companions.host.clients[0].connected=false;h.state.games.catalogue[0].integrationSetup.live='receiving';await h.controller.refresh();
+ assert.equal(h.component('companion:tablet').connections[0].current,false);assert.equal(h.component('companion:tablet').connections[0].endpoint,'192.0.2.2');assert.equal(h.component('integration:dcs').connections[0].observed,true);
+ h.state.games.catalogue[0].integrationSetup.live='waiting';await h.controller.refresh();assert.equal(h.component('integration:dcs').connections[0].observed,true);assert.equal(h.component('integration:dcs').connections[0].current,false);
+});
+
+test('gateway cleanup review includes child binding references without deleting or rewriting them', async () => {
+ const g=gateway({present:false,state:{...gateway().state,connected:false,modules:[module('panel',{online:false})]}}),h=harness({gateways:[g]});await h.controller.refresh();
+ h.custom.set('profile_list',()=>({profiles:{profiles:[{id:'saved',name:'Flight'}]}}));h.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{resourceId:'can-switches',sourceId:'panel',ports:[]}]}}));
+ const review=await h.controller.reviewForget(['gateway:gateway-one']);assert.equal(review[0].references[0].name,'Flight / can-switches');assert.ok(h.component('module:gateway-one/panel'));
+});
+
 test('current inventory includes every category, current transport, diagnostics and unsupported integration without any profile requirement', async () => {
-  const h = harness({ controllers: [source()], usb: [usb()], gateways: [gateway()], games: { catalogue: [game(), game('x-plane-12', { installed: false, provider: 'x-plane', integrationSetup: undefined })], error: 'Catalogue warning' }, companions: { host: { clients: [{ companionId: 'tablet', name: 'Tablet', kind: 'mobile', connected: true }, { companionId: 'offline', name: 'Desktop', connected: false }, { name: 'Malformed without identity' }], instances: [{ instanceId: 'panel-1', name: 'Radio', companionId: 'tablet', connected: true, armed: true, sessionId: 'session-1' }, { instanceId: 'saved', name: 'Saved panel', companionId: 'offline', connected: false, armed: false, sessionId: null }, {}] }, usb: { devices: [{ connected: true, port: 'COM10', device: { companionId: 'tablet', name: 'Same tablet', boardProfile: 'ESP32' } }, { connected: false, port: 'COM11', stage: 'Disconnected', device: { name: 'Unpaired USB companion' } }, { connected: false }] }, listener: { lastError: 'Listener warning' } }, native: { virtualDevices: [{ id: 'vjoy-1', name: 'vJoy 1', available: true, status: 'Available', createdByCockpit: true, ownerPid: 123, diagnostics: ['Virtual diagnostic'] }, { id: 'vjoy-2', name: 'vJoy 2', available: false, status: 'Missing', createdByCockpit: null, diagnostics: [] }, { id: 'vjoy-3', name: 'vJoy 3', available: null, status: 'Unknown', createdByCockpit: false, owner: 'External app', diagnostics: [] }], hiddenDevices: [{ id: 'hidden', name: 'Hidden external device', instanceId: 'HID\\external', present: null, hidden: true, configured: true, inverse: true, diagnostics: ['External rule'] }], diagnostics: ['Native inspection warning'] } });
+  const h = harness({ controllers: [source()], usb: [usb()], gateways: [gateway()], games: { catalogue: [game(), game('x-plane-12', { installed: false, provider: 'x-plane', integrationSetup: undefined })], error: 'Catalogue warning' }, companions: { host: { clients: [{ companionId: 'tablet', name: 'Tablet', kind: 'mobile', connected: true, transports: ['network'] }, { companionId: 'offline', name: 'Desktop', connected: false }, { name: 'Malformed without identity' }], instances: [{ instanceId: 'panel-1', name: 'Radio', companionId: 'tablet', connected: true, armed: true, sessionId: 'session-1' }, { instanceId: 'saved', name: 'Saved panel', companionId: 'offline', connected: false, armed: false, sessionId: null }, {}] }, usb: { devices: [{ connected: true, port: 'COM10', device: { companionId: 'tablet', name: 'Same tablet', boardProfile: 'ESP32' } }, { connected: false, port: 'COM11', stage: 'Disconnected', device: { name: 'Unpaired USB companion' } }, { connected: false }] }, listener: { lastError: 'Listener warning' } }, native: { virtualDevices: [{ id: 'vjoy-1', name: 'vJoy 1', available: true, status: 'Available', createdByCockpit: true, ownerPid: 123, diagnostics: ['Virtual diagnostic'] }, { id: 'vjoy-2', name: 'vJoy 2', available: false, status: 'Missing', createdByCockpit: null, diagnostics: [] }, { id: 'vjoy-3', name: 'vJoy 3', available: null, status: 'Unknown', createdByCockpit: false, owner: 'External app', diagnostics: [] }], hiddenDevices: [{ id: 'hidden', name: 'Hidden external device', instanceId: 'HID\\external', present: null, hidden: true, configured: true, inverse: true, diagnostics: ['External rule'] }], diagnostics: ['Native inspection warning'] } });
   const snapshot = await h.controller.refresh();
   assert.deepEqual([...new Set(snapshot.components.map(component => component.type))].sort(), ['companion', 'controller', 'gateway', 'host', 'integration', 'osg', 'virtual']);
   assert.equal(h.component('controller:wheel').capture, 'ready');

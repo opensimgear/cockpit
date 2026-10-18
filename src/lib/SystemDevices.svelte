@@ -71,7 +71,7 @@
   <div class="mode-switch" role="group" aria-label="Devices presentation"><button class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}>List</button><button class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}>Topology</button></div>
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
-  <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="software">Software</option><option value="unknown">Unknown connection</option></select>
+  <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="bluetooth">Bluetooth</option><option value="software">Software</option><option value="unknown">Unknown connection</option></select>
   <span aria-live="polite">{visible.length} / {components.length} components</span>
   <button class="text-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}>Forget eligible ({eligible.length})</button>
 </div>
@@ -95,9 +95,11 @@
     <div class="panel-heading"><div><h2>{selected.name}</h2><p>{systemTypeLabels[selected.type]} · {selected.role}</p></div><button class="text-button" onclick={() => { selectedId = ''; }}>Close details</button></div>
     <p>{systemStateLabel(selected)}</p>
     <p>Capture: {selected.capture}{selected.owner ? ` · Owner: ${selected.owner}` : ''}</p>
+    {#if selected.type === 'osg'}<p>Input owner: {selected.inputOwner ?? 'None confirmed'} · Configuration writer: {selected.configurationOwner ?? 'None observed'} · Active configuration route: {selected.configurationRoute ?? 'None observed'}</p>{/if}
     <p class="field-help">First seen: {date(selected.firstSeen)} · Last seen connected: {date(selected.lastSeen)}{selected.stale ? ' · Refresh needed' : ''}</p>
+    <p class="field-help">Observed by {selected.provider} · {date(selected.observedAt)}{selected.stale ? ' · Observation stale' : ''}</p>
     {#each selected.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}
-    <ul>{#each selected.connections as edge}<li>{edge.transport.toUpperCase()} · {snapshot.components.find(c => c.id === edge.from)?.name ?? edge.from}{edge.endpoint ? ` · ${edge.endpoint}` : ''} · {edge.current ? 'Current connection' : 'Last-known connection'}</li>{:else}<li>Connection unknown</li>{/each}</ul>
+    <ul>{#each selected.connections as edge}<li>{edge.transport.toUpperCase()} · {snapshot.components.find(c => c.id === edge.from)?.name ?? edge.from}{edge.endpoint ? ` · ${edge.endpoint}` : ''} · {edge.current ? 'Current connection' : edge.observed === false ? 'Configured connection (unconfirmed)' : 'Last-known connection'}</li>{:else}<li>Connection unknown</li>{/each}</ul>
     <div class="component-actions">
       {#each selected.targets.filter(t => t.kind === 'module') as t}<button class="primary-button" onclick={() => openModule(t.gatewayId!, t.id)}>Configure device</button>{/each}
       {#if selected.type === 'companion'}<button class="secondary-button" onclick={openCompanions}>Manage companion</button>{/if}

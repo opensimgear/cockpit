@@ -30,7 +30,7 @@ function compare(a: SystemComponent, b: SystemComponent): number {
 
 export function topologyConnectionLabel(connection: SystemConnection): string {
   const kind = connection.transport === 'software' ? 'Software' : connection.transport === 'unknown' ? 'Unknown transport' : connection.transport.toUpperCase();
-  return connection.current ? kind : `${kind} · Last known`;
+  return connection.current ? kind : connection.observed === false ? `${kind} · Configured (unconfirmed)` : `${kind} · Last known`;
 }
 
 /** The graph uses observed edges only. Filters retain the host and upstream context. */

@@ -1,12 +1,13 @@
 /** Shared, read-only system inventory. Provider identities and routes remain authoritative. */
 export type SystemType = 'host' | 'controller' | 'osg' | 'gateway' | 'virtual' | 'integration' | 'companion';
 export type SystemPresence = 'connected' | 'offline' | 'unknown' | 'unavailable';
-export type SystemConnection = { id: string; from: string; to: string; transport: 'usb' | 'can' | 'network' | 'software' | 'unknown'; current: boolean; endpoint?: string };
+export type SystemConnection = { id: string; from: string; to: string; transport: 'usb' | 'can' | 'network' | 'bluetooth' | 'software' | 'unknown'; current: boolean; observed?: boolean; endpoint?: string };
 export type SystemReference = { kind: string; id: string; name: string };
 export type SystemTarget = { kind: 'module' | 'gateway' | 'controller' | 'usb' | 'integration' | 'companion' | 'virtual' | 'visibility'; id: string; gatewayId?: string };
 export type SystemComponent = {
   id: string; name: string; type: SystemType; role: string; presence: SystemPresence;
   hidden: boolean | null; enabled: boolean | null; owner: string | null;
+  inputOwner?: string | null; configurationOwner?: string | null; configurationRoute?: string | null;
   capture: 'ready' | 'waiting' | 'unavailable' | 'unknown'; status: string;
   diagnostics: string[]; connections: SystemConnection[]; targets: SystemTarget[];
   evidence: string[]; references: SystemReference[]; firstSeen: number; lastSeen: number;
@@ -123,7 +124,7 @@ export class SystemInventoryRegistry {
     for (const observation of pruned.components) {
       if (hasTombstone(candidate, observation.id)) continue;
       const old = previous.get(observation.id);
-      next.push({ ...observation, firstSeen: old?.firstSeen ?? now, lastSeen: observation.presence === 'connected' ? now : old?.lastSeen ?? 0 });
+      next.push({ ...observation, evidence: [...new Set([...(old?.evidence.filter(e => e.startsWith('binding-source:')) ?? []), ...observation.evidence])], firstSeen: old?.firstSeen ?? now, lastSeen: observation.presence === 'connected' ? now : old?.lastSeen ?? 0 });
     }
     for (const c of previous.values()) if (!seen.has(c.id) && !hasTombstone(candidate, c.id)) {
       const complete = completeProviders.includes(c.provider);

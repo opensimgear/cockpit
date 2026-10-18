@@ -12,7 +12,7 @@ export type NativeSystemInventory = {
   offset?: number; total?: number; nextOffset?: number | null;
   controllerAssociations?: { controllerId: string; gatewayId?: string; moduleId?: string; usbKey?: string; evidence: string[] }[];
   virtualDevices: { id: string; name: string; available: boolean | null; status: string; createdByCockpit: boolean | null; owner?: string | null; ownerPid?: number | null; diagnostics: string[] }[];
-  hiddenDevices: { id: string; name: string; instanceId: string; present: boolean | null; hidden: boolean | null; configured?: boolean; inverse?: boolean; scope?: string; controllerId?: string | null; controllerIds?: string[]; interfacePaths?: string[]; ancestors?: string[]; diagnostics: string[] }[];
+  hiddenDevices: { id: string; name: string; instanceId: string; present: boolean | null; hidden: boolean | null; configured?: boolean | null; inverse?: boolean | null; scope?: string; controllerId?: string | null; controllerIds?: string[]; interfacePaths?: string[]; ancestors?: string[]; diagnostics: string[] }[];
   diagnostics: string[];
 };
 type Send = (request: GatewayRequest) => Promise<GatewayState>;
@@ -26,7 +26,7 @@ const localEffect = 'Forget this local remembered record. User configuration and
 function observation(id: string, name: string, type: SystemObservation['type'], provider: string, now: number, extra: Partial<SystemObservation> = {}): SystemObservation {
   return { id, name, type, role: '', provider, observedAt: now, stale: false, presence: 'unknown', hidden: null, enabled: null, owner: null, capture: 'unknown', status: '', diagnostics: [], connections: [], targets: [], evidence: [], references: [], forget: { allowed: false, reason: 'Current presence or removal capability is unknown.', effect: localEffect }, ...extra };
 }
-function link(id: string, from: string, transport: 'usb' | 'can' | 'network' | 'software' | 'unknown', current: boolean, endpoint?: string) {
+function link(id: string, from: string, transport: 'usb' | 'can' | 'network' | 'bluetooth' | 'software' | 'unknown', current: boolean, endpoint?: string) {
   return { id: `${transport}:${from}:${id}:${endpoint ?? ''}`, from, to: id, transport, current, ...(endpoint ? { endpoint } : {}) };
 }
 export function gatewayObservations(entries: readonly GatewayEntry[], now: number): SystemObservation[] {
@@ -45,6 +45,9 @@ export function gatewayObservations(entries: readonly GatewayEntry[], now: numbe
       return observation(id, module.settings?.label || module.name, 'osg', 'gateways', now, {
         role: module.outputOnly ? 'Output device' : module.kind, presence: online ? 'connected' : connected || !entry.present ? 'offline' : 'unknown', enabled: module.enabled ?? module.registered,
         owner: owned ? 'Setup session' : module.directUsb ? 'Direct USB input owner' : null,
+        inputOwner: online && !module.outputOnly ? module.directUsb ? 'Device USB' : module.active ? `Gateway ${entry.id}` : null : null,
+        configurationOwner: owned ? 'Setup session' : null,
+        configurationRoute: owned ? `${entry.port.backend === 'stm32' ? 'CAN' : 'Gateway'} · ${entry.id}/${module.id}` : null,
         capture: module.outputOnly ? 'unavailable' : online && module.active ? 'ready' : 'waiting',
         status: module.directUsb ? 'Direct USB owns input (local attachment unconfirmed)' : module.published === true && !online ? 'Neutral controller retained' : '',
         connections: [link(id, gateway.id, entry.port.backend === 'stm32' ? 'can' : 'software', online)],
@@ -57,9 +60,13 @@ export function gatewayObservations(entries: readonly GatewayEntry[], now: numbe
 /** Reuse verified native correlation; never guess identity from display strings or VID/PID. */
 export function correlateSystem(observations: SystemObservation[], resources: readonly ResourceSummary[]): SystemObservation[] {
   const native = new Map<string, string>();
-  for (const r of resources) if (r.resourceType === 'osg-module') for (const c of r.connections) {
+  const bindings = new Map<string, string[]>();
+  for (const r of resources) for (const c of r.connections) {
     const id = c.scope === 'standalone-usb' ? `usb:${c.key}` : c.scope === 'host-controllers' ? `controller:${c.key}` : c.scope.startsWith('gateway:') ? `module:${c.scope.slice(8)}/${c.key}` : '';
-    if (id) native.set(id, r.id);
+    if (id) {
+      bindings.set(id, [...(bindings.get(id) ?? []), `binding-source:${r.id}`]);
+      if (r.resourceType === 'osg-module') native.set(id, r.id);
+    }
   }
   const groups = new Map<string, SystemObservation[]>();
   for (const o of observations) { const id = native.has(o.id) ? `resource:${native.get(o.id)}` : o.id; groups.set(id, [...(groups.get(id) ?? []), o]); }
@@ -69,9 +76,12 @@ export function correlateSystem(observations: SystemObservation[], resources: re
     return { ...preferred, id, presence: connected ? 'connected' as const : preferred.presence,
       hidden: group.some(c => c.hidden === true) ? true : group.some(c => c.hidden === false) ? false : null,
       owner: group.find(c => c.owner)?.owner ?? null,
+      inputOwner: group.find(c => c.inputOwner === 'Device USB')?.inputOwner ?? group.find(c => c.inputOwner)?.inputOwner ?? null,
+      configurationOwner: group.find(c => c.configurationOwner)?.configurationOwner ?? null,
+      configurationRoute: group.find(c => c.configurationOwner)?.configurationRoute ?? null,
       capture: group.some(c => c.capture === 'ready') ? 'ready' as const : preferred.capture,
       connections: group.flatMap(c => c.connections.map(x => ({ ...x, to: id }))),
-      targets: group.flatMap(c => c.targets), evidence: [...new Set(group.flatMap(c => c.evidence))], diagnostics: [...new Set(group.flatMap(c => c.diagnostics))],
+      targets: group.flatMap(c => c.targets), evidence: [...new Set(group.flatMap(c => [...c.evidence, ...(bindings.get(c.id) ?? [])]))], diagnostics: [...new Set(group.flatMap(c => c.diagnostics))],
       forget: connected || group.some(c => c.owner) ? { ...preferred.forget, allowed: false, reason: 'This component is connected or owned.' } : preferred.forget,
     };
   });
@@ -129,10 +139,11 @@ export class SystemInventoryController {
       if (!sources.length && identities.length) {
         h.id = identities[0]; h.name = this.snapshot.components.find(c => c.id === h.id)?.name ?? h.name;
         h.targets.push(...identities.map(id => target('controller', id.slice(11))));
-        h.connections = [link(h.id, 'host', 'unknown', h.presence === 'connected')];
+        h.connections = h.connections.map(c => link(h.id, c.from, c.transport, c.current, c.endpoint));
       }
       for (const source of sources) {
       source.hidden = h.hidden; source.diagnostics.push(...h.diagnostics); source.evidence.push(...h.evidence);
+      if (h.connections.length) source.connections = h.connections.map(c => link(source.id, c.from, c.transport, c.current, c.endpoint));
       if (h.presence !== 'unknown') source.presence = h.presence;
       if (h.hidden || h.presence === 'connected') source.forget.allowed = false;
       consumed.add(h.id);
@@ -197,7 +208,9 @@ export class SystemInventoryController {
     return { provider: 'usb', observations: modules.map(s => {
       const id = `usb:${s.key}`, snapshot = s.snapshot;
       return observation(id, snapshot.identity?.profile ?? s.port.friendlyName ?? 'OSG USB endpoint', 'osg', 'usb', now, { role: snapshot.identity?.board ?? 'USB module', presence: s.present ? snapshot.connected ? 'connected' : 'unavailable' : 'offline',
-        owner: snapshot.claimedBy, targets: [target('usb', s.key)], connections: [link(id, 'host', 'usb', s.present, s.port.path)],
+        owner: snapshot.claimedBy, inputOwner: snapshot.connected && snapshot.identity && (snapshot.identity.buttonCount > 0 || snapshot.identity.axisCount > 0 || snapshot.identity.hatCount > 0) ? 'Device USB' : null,
+        configurationOwner: snapshot.claimedBy, configurationRoute: snapshot.claimedBy ? `USB · ${s.port.path}` : null,
+        targets: [target('usb', s.key)], connections: [link(id, 'host', 'usb', s.present, s.port.path)],
         evidence: [s.key, ...(snapshot.identity ? [`verified:${snapshot.identity.moduleId}:${snapshot.identity.serial}`] : [])], diagnostics: [...s.diagnostics, ...(snapshot.error ? [snapshot.error] : [])],
         forget: { allowed: !s.present && !snapshot.claimedBy, reason: 'Disconnect the module and release its active claim first.', effect: localEffect } });
     }) };
@@ -209,10 +222,19 @@ export class SystemInventoryController {
     for (const c of rows(state.host.clients)) {
       const key = string(c.companionId); if (!key) continue; const id = `companion:${key}`;
       const online = c.connected === true || c.online === true || !!c.sessionId;
+      const transports = [...new Set([...(Array.isArray(c.transports) ? c.transports.filter((t): t is string => t === 'network' || t === 'usb') : []), ...rows(state.host.instances).filter(instance => instance.companionId === key && instance.connected === true && ['network', 'usb'].includes(string(instance.transport))).map(instance => string(instance.transport)), ...(c.peer || c.address ? ['network'] : [])])];
       observations.push(observation(id, string(c.name, key), 'companion', 'companions', now, { role: string(c.kind, 'Installation'), presence: online ? 'connected' : 'offline',
         status: 'Paired installation', targets: [target('companion', key)], evidence: [`companion:${key}`],
-        connections: online ? [link(id, 'host', 'network', true, string(c.peer, string(c.address)) || undefined)] : [],
+        connections: online ? (transports.length ? transports : ['unknown']).map(transport => link(id, 'host', transport as 'usb' | 'network' | 'unknown', true, transport === 'network' ? string(c.peer, string(c.address)) || undefined : undefined)) : (this.snapshot.components.find(previous => previous.id === id)?.connections ?? []).map(connection => ({ ...connection, current: false })),
         forget: { allowed: !online, reason: 'Disconnect the companion before revoking it.', effect: 'Revoke this companion installation and its assignments. Re-pairing will be required. Saved panel definitions and user bindings remain intact.' } }));
+    }
+    for (const pending of rows(state.host.pending)) {
+      const key = string(pending.requestId); if (!key) continue; const id = `companion-pending:${key}`;
+      observations.push(observation(id, string(pending.name, 'Pairing request'), 'companion', 'companions', now, {
+        role: 'Pairing request · Unverified installation', presence: 'unknown', status: pending.approved === true ? 'Approved · Waiting for connection' : 'Waiting for pairing approval',
+        evidence: [`pairing-request:${key}`], connections: pending.transport === 'usb' || pending.transport === 'network' ? [link(id, 'host', pending.transport, false)] : [],
+        forget: { allowed: false, reason: 'Review or cancel this pairing request in Companions.', effect: '' },
+      }));
     }
     for (const instance of rows(state.host.instances)) {
       const key = string(instance.instanceId); if (!key) continue; const id = `companion-instance:${key}`, client = string(instance.companionId);
@@ -227,7 +249,11 @@ export class SystemInventoryController {
       if (!usb.port) continue;
       const id = existing?.id ?? `companion-usb:${usb.port}`;
       const edge = link(id, 'host', 'usb', usb.connected, usb.port);
-      if (existing) { existing.connections.push(edge); if (usb.connected) existing.presence = 'connected'; }
+      if (existing) {
+        if (usb.connected) existing.connections = existing.connections.filter(c => c.transport !== 'unknown');
+        existing.connections = existing.connections.filter(c => c.transport !== 'usb'); existing.connections.push(edge);
+        if (usb.connected) { existing.presence = 'connected'; existing.forget.allowed = false; existing.forget.reason = 'Disconnect this USB companion before revoking its installation.'; }
+      }
       else observations.push(observation(id, usb.device?.name ?? 'USB companion', 'companion', 'companions', now, { role: usb.device?.boardProfile ?? 'ESP32', presence: usb.connected ? 'connected' : 'offline', connections: [edge], targets: key ? [target('companion', key)] : [], evidence: [usb.port], status: usb.stage ?? '' }));
     }
     return { provider: 'companions', observations, diagnostics: state.listener?.lastError ? [state.listener.lastError] : [] };
@@ -241,7 +267,7 @@ export class SystemInventoryController {
       const endpoints = Object.entries(setup?.connection ?? {}).filter(([key, value]) => /host|address|port|endpoint|source/i.test(key) && ['string', 'number'].includes(typeof value)).map(([key, value]) => `${key}: ${value}`).join(', ');
       return observation(id, `${game.name} · ${game.provider}`, 'integration', 'integrations', now, { role: game.provider, presence: receiving ? 'connected' : !game.installed || setup?.state === 'unsupported-platform' ? 'unavailable' : 'unknown',
         status: gameIntegrationLabel(game), diagnostics: [setup?.message, setup?.liveMessage].filter((x): x is string => !!x), evidence: [`integration:${game.id}`], targets: [target('integration', game.id)],
-        connections: [link(id, 'host', 'software', receiving, endpoints || undefined)],
+        connections: [{ ...link(id, 'host', 'software', receiving, endpoints || undefined), observed: receiving || this.snapshot.components.find(previous => previous.id === id)?.connections.some(connection => connection.observed !== false && connection.endpoint === (endpoints || undefined)) || false }],
         forget: { allowed: false, reason: 'This integration is in the supported catalogue. Manage installation and settings in game details.', effect: '' } });
     }), diagnostics: state.error ? [state.error] : [] };
   }
@@ -263,9 +289,14 @@ export class SystemInventoryController {
       }),
       ...hiddenDevices.map(h => {
         const id = `visibility:${h.id}`;
+        // Nearest bus evidence distinguishes direct USB from Bluetooth carried
+        // through a USB radio. Parent chains are observations, never name guesses.
+        const bus = [h.instanceId, ...(h.ancestors ?? [])].find(path => /^(USB|BTH|BTHLE|BTHENUM|BTHLEDEVICE)\\/i.test(path));
+        const transport = bus && /^USB\\/i.test(bus) ? 'usb' as const : bus ? 'bluetooth' as const : 'unknown' as const;
         return observation(id, h.name, 'controller', 'native', now, { role: 'Physical device', presence: h.present === true ? 'connected' : h.present === false ? 'offline' : 'unknown', hidden: h.hidden,
           status: h.configured ? 'Configured visibility rule' : '', diagnostics: [...h.diagnostics, ...(h.inverse ? ['HidHide inverse application policy is active.'] : [])],
           evidence: [h.instanceId, ...(h.controllerIds ?? (h.controllerId ? [h.controllerId] : [])).map(x => `controller:${x}`)], targets: [target('visibility', h.instanceId)],
+          connections: [link(id, 'host', transport, h.present === true, h.interfacePaths?.[0] ?? h.instanceId)],
           forget: { allowed: false, reason: 'Manage visibility rules explicitly. Inventory cleanup cannot remove HidHide configuration.', effect: '' } });
       }),
     ] };
@@ -281,7 +312,8 @@ export class SystemInventoryController {
         const assignments = (await this.send({ command: 'profile_assignments_get', id: profile.id })).profiles?.assignments;
         if (!assignments) throw Error(`Stored references for ${profile.name} unavailable.`);
         for (const c of result) {
-          const sourceIds = new Set([c.id, c.id.replace(/^resource:/, ''), ...c.targets.map(t => t.id)]);
+          const impacted = this.snapshot.components.filter(related => related.id === c.id || (c.type === 'gateway' && related.connections.some(connection => connection.from === c.id)) || (c.type === 'companion' && related.connections.some(connection => connection.from === c.id)));
+          const sourceIds = new Set(impacted.flatMap(component => [component.id, component.id.replace(/^resource:/, ''), ...component.targets.map(t => t.id), ...component.evidence.filter(e => e.startsWith('binding-source:')).map(e => e.slice(15))]));
           for (const a of assignments) if (sourceIds.has(a.sourceId)) c.references.push({ kind: 'binding', id: `${profile.id}/${a.resourceId}`, name: `${profile.name} / ${a.resourceId}` });
         }
       }
