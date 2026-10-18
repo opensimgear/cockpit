@@ -124,6 +124,13 @@ impl Network {
             "multicastGroup":self.multicast_group.map(|g|g.to_string()).unwrap_or_default(),
             "multicastInterface":self.multicast_interface.to_string(),"freshnessMs":self.freshness_ms})
     }
+    fn accepts_export_source(&self, source: std::net::IpAddr) -> bool {
+        source == std::net::IpAddr::V4(self.command_host)
+            || (self.command_host.is_loopback()
+                && self.multicast_group.is_some()
+                && !self.multicast_interface.is_unspecified()
+                && source == std::net::IpAddr::V4(self.multicast_interface))
+    }
 }
 pub(crate) fn read_json(path: &Path, max: u64) -> Result<Value, String> {
     let file = fs::File::open(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
@@ -980,6 +987,7 @@ pub struct Transport {
     receiver: UdpSocket,
     sender: UdpSocket,
     command: SocketAddrV4,
+    export_source: Network,
 }
 impl Transport {
     pub fn open(config: &Config) -> Result<Self, String> {
@@ -1017,6 +1025,7 @@ impl Transport {
             receiver: receiver.into(),
             sender,
             command: SocketAddrV4::new(config.command_host, config.command_port),
+            export_source: config.clone(),
         })
     }
     pub fn local_addr(&self) -> Result<SocketAddr, String> {
@@ -1026,7 +1035,7 @@ impl Transport {
         let mut data = vec![0u8; 65536];
         match self.receiver.recv_from(&mut data) {
             Ok((count, source))
-                if source.ip() == std::net::IpAddr::V4(*self.command.ip()) && count > 0 =>
+                if self.export_source.accepts_export_source(source.ip()) && count > 0 =>
             {
                 data.truncate(count);
                 Ok(Some(data))
@@ -1801,5 +1810,147 @@ mod tests {
         let remote = Transport::open(&remote).unwrap();
         peer.send_to(&update, remote.local_addr().unwrap()).unwrap();
         assert!(remote.receive().unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn explicit_multicast_interface_receives_exports_without_redirecting_commands() {
+        let command_peer = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).unwrap();
+        command_peer
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let export_peer = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut network = Config::parse(&configuration()).unwrap().network();
+        network.command_host = Ipv4Addr::new(127, 0, 0, 2);
+        network.command_port = command_peer.local_addr().unwrap().port();
+        network.listen_address = Ipv4Addr::LOCALHOST;
+        network.listen_port = 0;
+        network.multicast_group = Some(Ipv4Addr::new(239, 255, 50, 10));
+        network.multicast_interface = Ipv4Addr::LOCALHOST;
+        let transport = Transport::open_network(&network).unwrap();
+        for counter in [1, 2] {
+            let update = frame(Some("A-10C"), Some(true), counter);
+            export_peer
+                .send_to(&update, transport.local_addr().unwrap())
+                .unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            let received = loop {
+                if let Some(bytes) = transport.receive().unwrap() {
+                    break bytes;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "The explicitly selected multicast-interface sender was discarded."
+                );
+                std::thread::yield_now();
+            };
+            assert_eq!(received, update);
+        }
+        transport.send_control("TEST_CONTROL", "42").unwrap();
+        let mut bytes = [0; 128];
+        let count = command_peer.recv(&mut bytes).unwrap();
+        assert_eq!(&bytes[..count], b"TEST_CONTROL 42\n");
+        let foreign = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 3), 0)).unwrap();
+        foreign
+            .send_to(
+                &frame(Some("A-10C"), Some(true), 3),
+                transport.local_addr().unwrap(),
+            )
+            .unwrap();
+        assert!(transport.receive().unwrap().is_none());
+        export_peer
+            .send_to(&[], transport.local_addr().unwrap())
+            .unwrap();
+        assert!(transport.receive().unwrap().is_none());
+    }
+
+    #[test]
+    fn export_source_policy_requires_an_exact_explicit_multicast_interface() {
+        let base = Config::parse(&configuration()).unwrap().network();
+        for (label, command, interface, multicast, source, accepted) in [
+            (
+                "existing loopback",
+                "127.0.0.1",
+                "0.0.0.0",
+                true,
+                "127.0.0.1",
+                true,
+            ),
+            (
+                "unspecified interface",
+                "127.0.0.1",
+                "0.0.0.0",
+                true,
+                "10.1.2.3",
+                false,
+            ),
+            (
+                "explicit local interface",
+                "127.0.0.1",
+                "10.1.2.3",
+                true,
+                "10.1.2.3",
+                true,
+            ),
+            (
+                "different interface",
+                "127.0.0.1",
+                "10.1.2.3",
+                true,
+                "10.1.2.4",
+                false,
+            ),
+            (
+                "multicast disabled",
+                "127.0.0.1",
+                "10.1.2.3",
+                false,
+                "10.1.2.3",
+                false,
+            ),
+            (
+                "existing unicast",
+                "127.0.0.1",
+                "10.1.2.3",
+                false,
+                "127.0.0.1",
+                true,
+            ),
+            (
+                "remote command exact",
+                "10.1.2.3",
+                "10.1.2.4",
+                true,
+                "10.1.2.3",
+                true,
+            ),
+            (
+                "remote command unrelated interface",
+                "10.1.2.3",
+                "10.1.2.4",
+                true,
+                "10.1.2.4",
+                false,
+            ),
+            (
+                "foreign loopback",
+                "127.0.0.1",
+                "10.1.2.3",
+                true,
+                "127.0.0.2",
+                false,
+            ),
+            ("IPv6 loopback", "127.0.0.1", "10.1.2.3", true, "::1", false),
+        ] {
+            let mut network = base.clone();
+            network.command_host = command.parse().unwrap();
+            network.multicast_interface = interface.parse().unwrap();
+            network.multicast_group = multicast.then_some(Ipv4Addr::new(239, 255, 50, 10));
+            assert_eq!(
+                network.accepts_export_source(source.parse().unwrap()),
+                accepted,
+                "{label}"
+            );
+        }
     }
 }

@@ -855,7 +855,10 @@ impl Host for NativeProfileHost {
                     // Recheck the real reader before exposing any writable route.
                     let baseline = state.game.baseline(&games, controllers.stream_page("", 0).captured_us);
                     if baseline.context_lost || state.game.requires_baseline() && !baseline.fresh {
-                        return Err("The game baseline expired before command admission.".into());
+                        return Err(format!(
+                            "The game baseline expired before command admission. {}",
+                            baseline.diagnostics.join(" ")
+                        ));
                     }
                     state.game.admit(&games)?;
                     if let Some(batch) = state.game.delivery_batch() {

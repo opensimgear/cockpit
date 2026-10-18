@@ -360,6 +360,14 @@ impl GameSources {
         }
     }
     pub(crate) fn poll(&mut self, games: &GamesRuntime, now_us: u64) -> GamePoll {
+        self.poll_with_policy(games, now_us, false)
+    }
+    fn poll_with_policy(
+        &mut self,
+        games: &GamesRuntime,
+        now_us: u64,
+        baseline: bool,
+    ) -> GamePoll {
         if self.lost {
             return GamePoll {
                 context_lost: true,
@@ -369,7 +377,7 @@ impl GameSources {
         if let Err(error) = self.validate(games) {
             return self.lose(now_us, error);
         }
-        let snapshot = self.read(now_us);
+        let snapshot = self.read(now_us, baseline);
         match snapshot {
             Ok(Some(snapshot)) => self.frames(snapshot, now_us),
             Ok(None) => GamePoll::default(),
@@ -385,7 +393,22 @@ impl GameSources {
         for source in self.sources.values_mut() {
             source.available = false;
         }
-        self.poll(games, now_us)
+        let started = Instant::now();
+        loop {
+            let sample = self.poll_with_policy(
+                games,
+                now_us.saturating_add(started.elapsed().as_micros() as u64),
+                true,
+            );
+            if sample.fresh
+                || sample.context_lost
+                || !self.requires_baseline()
+                || started.elapsed() >= std::time::Duration::from_secs(3)
+            {
+                return sample;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
     pub(crate) fn requires_baseline(&self) -> bool {
         self.reader.is_some()
@@ -393,23 +416,39 @@ impl GameSources {
     pub(crate) fn fail(&mut self, now_us: u64, error: String) -> GamePoll {
         self.lose(now_us, error)
     }
-    fn read(&mut self, now_us: u64) -> Result<Option<ExportSnapshot>, String> {
+    fn read(&mut self, now_us: u64, baseline: bool) -> Result<Option<ExportSnapshot>, String> {
         match self.reader.as_mut() {
             Some(Reader::Dcs {
-                transport: Some(transport),
+                network,
+                transport,
                 decoder,
                 ..
             }) => {
+                let Some(receiver) = transport.as_ref() else {
+                    return Ok(None);
+                };
                 let mut drained = false;
                 for _ in 0..64 {
-                    let Some(bytes) = transport.receive()? else {
+                    let Some(bytes) = receiver.receive()? else {
                         drained = true;
                         break;
                     };
                     decoder.feed(&bytes, now_us / 1000);
                 }
-                if !drained && transport.receive()?.is_some() {
+                if !drained && receiver.receive()?.is_some() {
                     decoder.reset_stream(now_us / 1000);
+                    if baseline {
+                        // Activation can spend longer than the receive bound in
+                        // other phases. Drop queued pre-activation datagrams and
+                        // require new aircraft identity and advancing counters.
+                        // Live polling still disarms on the same overflow.
+                        drop(transport.take());
+                        *transport = Some(crate::dcs_bios::Transport::open_network(network)?);
+                        self.witness = None;
+                        self.witnessed_progress = false;
+                        self.fresh = false;
+                        return Ok(None);
+                    }
                     return Err("The native simulator receive queue exceeded its bound; the branch was disarmed instead of replaying a backlog.".into());
                 }
                 decoder.tick(now_us / 1000);

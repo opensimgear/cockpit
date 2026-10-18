@@ -274,7 +274,7 @@ fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frame
     let receive_counter = |source: &mut GameSources, counter: u16, now_us| {
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
-            let snapshot = source.read(now_us).unwrap().unwrap();
+            let snapshot = source.read(now_us, false).unwrap().unwrap();
             if snapshot.counter == Some(counter) {
                 return snapshot;
             }
@@ -546,10 +546,10 @@ fn rally_fixture_uses_exact_native_channels_and_preserves_unknown_optional_value
     };
     *reader = Some(Box::new(queue));
     for now in [0, 10_000] {
-        let snapshot = source.read(now).unwrap().unwrap();
+        let snapshot = source.read(now, false).unwrap().unwrap();
         assert!(!source.frames(snapshot, now).fresh);
     }
-    let snapshot = source.read(20_000).unwrap().unwrap();
+    let snapshot = source.read(20_000, false).unwrap().unwrap();
     let baseline = source.frames(snapshot, 20_000);
     assert!(baseline.fresh);
     let changes = &baseline.frames[0].changes;
@@ -585,7 +585,7 @@ fn rally_fixture_uses_exact_native_channels_and_preserves_unknown_optional_value
             .writable
     );
     source.stop();
-    assert!(source.read(30_000).unwrap().is_none());
+    assert!(source.read(30_000, false).unwrap().is_none());
 }
 
 #[test]
@@ -762,7 +762,7 @@ fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_ud
             .send_to(&bytes(counter, true), ("127.0.0.1", listen))
             .unwrap();
     }
-    let error = source.read(30_000).unwrap_err();
+    let error = source.read(30_000, false).unwrap_err();
     assert!(error.contains("receive queue"));
     let lost = source.fail(30_000, error);
     assert!(lost.context_lost);
@@ -868,5 +868,45 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
             reader.reader.is_none(),
             "Loss cannot refresh captured addresses or reopen a reader"
         );
+    }
+}
+
+#[test]
+fn activation_backlog_requires_new_identity_and_counter_progress_without_replaying_old_values() {
+    let fixture = Dcs::new();
+    let mut source = fixture.sources();
+    let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let listen = reserve.local_addr().unwrap().port();
+    drop(reserve);
+    let Some(Reader::Dcs { network, transport, .. }) = &mut source.reader else { panic!() };
+    network.listen_port = listen;
+    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
+    feed(&mut source, 1, true, 0);
+    assert!(feed(&mut source, 2, true, 10_000).fresh);
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    for counter in 3..83 {
+        sender.send_to(&bytes(counter, true), ("127.0.0.1", listen)).unwrap();
+    }
+    assert!(source.read(30_000, true).unwrap().is_none());
+    assert!(!source.fresh);
+    assert!(source.witness.is_none());
+    let empty = source.read(31_000, true).unwrap().unwrap();
+    assert!(!empty.fresh);
+    assert!(empty.aircraft.is_none());
+    assert!(empty.values.is_empty());
+    for (counter, now) in [(100, 40_000), (101, 50_000)] {
+        sender.send_to(&bytes(counter, false), ("127.0.0.1", listen)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let snapshot = loop {
+            let snapshot = source.read(now, true).unwrap().unwrap();
+            if snapshot.counter == Some(counter as u16) { break snapshot; }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        let sample = source.frames(snapshot, now);
+        assert_eq!(sample.fresh, counter == 101);
+        if sample.fresh {
+            assert_eq!(sample.frames[0].changes[0].sample, SignalSample::scalar(PortValue::Number(0.0)));
+        }
     }
 }
