@@ -44,6 +44,8 @@ Worker EOF, parent loss, lease expiry, Stop and foreground loss attempt owned cl
 
 Default scope is the selected application. Desktop-wide scope is a separate explicit choice. Application eligibility binds executable path, PID and `GetProcessTimes` creation identity; PID reuse does not inherit a scope. Every batch and watchdog pass checks foreground identity, interactive `Default` desktop availability and target integrity. Unknown identity, focus loss, a locked desktop or a higher-integrity foreground target pauses/refuses output. Returning to the application requires a fresh neutral baseline and never resumes a partial action. Normal Cockpit startup remains unelevated.
 
+Desktop branches evaluate the original native frame batches in an isolated typed phase. Focus loss discards their timers, latches and edge state while the canonical controller/game phase continues. On return, cached or delayed pre-return samples cannot arm stateful processing; fresh effective input neutral is required. Connection liveness refreshes availability without changing sample capture provenance. An unchanged native neutral followed by a press in the same batch retains its ordering.
+
 `SendInput` has no target window. A focus switch between eligibility checking and API submission remains an OS race and must be measured during qualification.
 
 ## Evidence boundary and current results

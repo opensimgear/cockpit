@@ -145,6 +145,8 @@ pub struct Phase {
     reports: VecDeque<Report>,
     last: BTreeMap<String, SignalSample>,
     last_controllers: BTreeMap<String, TargetState>,
+    desktop_neutrals: Option<BTreeMap<String, Vec<Observation>>>,
+    desktop_rule_boundary: Option<Counter>,
 }
 fn same_status(a: &SignalSample, b: &SignalSample) -> bool {
     std::mem::discriminant(a) == std::mem::discriminant(b)
@@ -270,6 +272,8 @@ impl Phase {
             reports: VecDeque::new(),
             last: BTreeMap::new(),
             last_controllers: BTreeMap::new(),
+            desktop_neutrals: None,
+            desktop_rule_boundary: None,
         };
         let events = phase.evaluate(BTreeSet::new(), BTreeSet::new(), true)?;
         phase.publish(events, ReportReason::Start, true);
@@ -289,6 +293,122 @@ impl Phase {
     }
     pub fn at_us(&self) -> Counter {
         Counter(self.clock)
+    }
+    /// Isolate desktop rule state from controller/game branches. Only native
+    /// source snapshots cross this boundary; timers, latches, script state and
+    /// previously produced effects never do.
+    pub fn fork_desktop(&self) -> Result<Self, String> {
+        if !self.active {
+            return Err("A stopped mapping cannot seed desktop output.".into());
+        }
+        let mut program = self.compiled.program.clone();
+        program
+            .sinks
+            .retain(|sink| matches!(sink.kind, SinkKind::Desktop { .. }));
+        program.controllers.clear();
+        let mut needed = program
+            .sinks
+            .iter()
+            .map(|sink| sink.from.node_id.clone())
+            .collect::<BTreeSet<_>>();
+        loop {
+            let previous = needed.len();
+            for node in &program.nodes {
+                if needed.contains(&node.id) {
+                    needed.extend(node.inputs.iter().map(|input| input.from.node_id.clone()));
+                }
+            }
+            if needed.len() == previous {
+                break;
+            }
+        }
+        program.nodes.retain(|node| needed.contains(&node.id));
+        if program
+            .nodes
+            .iter()
+            .any(|node| matches!(node.operation, Operation::Script { .. }))
+        {
+            return Err(
+                "Desktop script branches remain behind their native qualification gate.".into(),
+            );
+        }
+        let mut desktop = Self::initialize(
+            program,
+            self.run.generation,
+            self.run.session.clone(),
+            self.clock,
+        )?;
+        desktop.sources = self.sources.clone();
+        for port in &desktop.compiled.program.sources {
+            desktop
+                .values
+                .insert(port.endpoint.clone(), self.values[&port.endpoint].clone());
+        }
+        desktop.desktop_neutrals = Some(BTreeMap::new());
+        desktop.refresh_all(ReportReason::Baseline)?;
+        desktop.effects.clear();
+        desktop.reports.clear();
+        Ok(desktop)
+    }
+    /// Cached snapshots may display neutral, but cannot arm a stateful rule
+    /// after scope return. Its effective input must observe neutral again.
+    pub fn require_desktop_neutral_after(&mut self, boundary: Counter) -> Result<(), String> {
+        if self.desktop_neutrals.is_none() || boundary != self.at_us() {
+            return Err("A desktop neutral boundary requires its current isolated phase.".into());
+        }
+        self.desktop_rule_boundary = Some(boundary);
+        self.timers.clear();
+        for state in self.states.values_mut() {
+            state.rule = crate::rules::State::default();
+            state.boolean = false;
+            state.previous = None;
+        }
+        Ok(())
+    }
+    /// Mirror connection evidence without replacing native samples or their
+    /// capture provenance. Independent port freshness stays independent.
+    pub fn mirror_source_liveness(&mut self, canonical: &Self) -> Result<(), String> {
+        if self.run != canonical.run {
+            return Err("Desktop source liveness belongs to another run.".into());
+        }
+        let mut observations = BTreeMap::<(String, u64, u64), Vec<String>>::new();
+        for port in &self.compiled.program.sources {
+            let source = &self.sources[&port.endpoint.node_id];
+            let other_source = canonical
+                .sources
+                .get(&port.endpoint.node_id)
+                .ok_or("Desktop source liveness does not match the captured program.")?;
+            let current = &self.values[&port.endpoint];
+            let other = canonical
+                .values
+                .get(&port.endpoint)
+                .ok_or("Desktop source liveness does not match the captured program.")?;
+            if source.available
+                && other_source.available
+                && source.generation == other_source.generation
+                && current.epoch == other.epoch
+                && current.captured == other.captured
+                && current.captured_sequence == other.captured_sequence
+                && current.sample == other.sample
+                && other.observed >= self.clock
+                && other.observed > current.observed
+                && matches!(port.contract, PortContract::State { .. })
+                && matches!(current.sample, SignalSample::Known(_))
+            {
+                observations
+                    .entry((
+                        port.endpoint.node_id.clone(),
+                        source.generation,
+                        other.observed,
+                    ))
+                    .or_default()
+                    .push(port.endpoint.port_id.clone());
+            }
+        }
+        for ((source, generation, observed), ports) in observations {
+            self.observe_port_liveness(&source, Counter(generation), Counter(observed), &ports)?;
+        }
+        Ok(())
     }
     pub fn sample(&self, endpoint: &Endpoint) -> Option<&SignalSample> {
         self.values.get(endpoint).map(|state| &state.sample)
@@ -964,6 +1084,21 @@ impl Phase {
             .next()
             .cloned()
             .unwrap_or(SignalSample::Unknown);
+        if let Some(boundary) = self.desktop_rule_boundary.filter(|_| matches!(node.operation,
+            Operation::Builtin { .. } | Operation::Hysteresis { .. }
+                | Operation::EventEdge { .. } | Operation::SetOnChange { .. }))
+        {
+            let observations = self.source_observations(&self.token(&node.id)?);
+            if observations.is_empty()
+                || observations.iter().any(|observation| observation.at_us <= boundary)
+            {
+                let state = self.states.get_mut(&node.id).unwrap();
+                state.rule = crate::rules::State::default();
+                state.boolean = false;
+                state.previous = None;
+                return Ok(vec![(output.id.clone(), SignalSample::Unknown, false)]);
+            }
+        }
         let missing = missing(inputs);
         let mut fire = false;
         let sample = match &node.operation {
@@ -1789,15 +1924,26 @@ impl Phase {
             .into_iter()
             .filter_map(|sink| {
                 let sample = self.values[&sink.from].sample.clone();
+                // A real unchanged release can precede a press in this same
+                // native batch. Preserve that neutral witness only in the
+                // desktop projection, and never manufacture one from liveness.
+                let observed_neutral = self.desktop_neutrals.as_ref().is_some_and(|previous| {
+                    matches!(sink.kind, SinkKind::Desktop { .. })
+                        && (boolean(&sample) == Some(false) || number(&sample) == Some(0.0))
+                        && self.endpoint_token(&sink.from).ok().is_some_and(|token| {
+                            let observations = self.source_observations(&token);
+                            !observations.is_empty() && previous.get(&sink.id) != Some(&observations)
+                        })
+                });
                 let occurrence = matches!(
                     sink.contract,
                     PortContract::Event { .. } | PortContract::Action { .. }
                 );
                 let fire = events.contains(&sink.from);
-                if occurrence && matches!(sample, SignalSample::Known(_)) && !fire {
+                if occurrence && matches!(sample, SignalSample::Known(_)) && !fire && !observed_neutral {
                     return None;
                 }
-                if !force && !fire && self.last.get(&sink.id) == Some(&sample) {
+                if !force && !fire && !observed_neutral && self.last.get(&sink.id) == Some(&sample) {
                     return None;
                 }
                 Some((sink, sample))
@@ -1839,6 +1985,9 @@ impl Phase {
                     }).collect() })
             }else{None};
             let observations=producer.as_ref().map_or_else(Vec::new,|producer|self.source_observations(producer));
+            if let Some(previous) = &mut self.desktop_neutrals {
+                previous.insert(sink.id.clone(), observations.clone());
+            }
             self.sequence = self.sequence.saturating_add(1);
             self.last.insert(sink.id.clone(), sample.clone());
             self.effects.push_back(Effect {

@@ -49,7 +49,7 @@ test('real native companion input reaches a typed desktop-only ProfileSession',{
   const child=spawn(python,args,{cwd:root,windowsHide:true,timeout:150_000,env:{...process.env,OSG_NATIVE_BRIDGE_TOKEN:token},stdio:['ignore','pipe','pipe']});
   let output='';child.stdout.on('data',chunk=>{output+=chunk.toString();});child.stderr.on('data',chunk=>{output+=chunk.toString();});
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});await writeFile(resolve(artifacts,'run.log'),output);assert.equal(code,0,output);
-  const evidence=JSON.parse(await readFile(resolve(artifacts,'evidence.json'),'utf8'));assert.equal(evidence.actualNativeCockpit,true);assert.equal(evidence.virtualControllers,0);assert.equal(evidence.injected,inject);if(inject){assert.ok(evidence.checks.length>=7);assert.ok(evidence.focusReturn);assert.deepEqual(evidence.cleanupErrors,[]);}
+  const evidence=JSON.parse(await readFile(resolve(artifacts,'evidence.json'),'utf8'));assert.equal(evidence.actualNativeCockpit,true);assert.equal(evidence.virtualControllers,0);assert.equal(evidence.injected,inject);if(inject){assert.ok(evidence.checks.length>=8);assert.ok(evidence.focusReturn);assert.ok(evidence.macroFocusReturn?.originalGlobalMacroLaterPressObserved);assert.deepEqual(evidence.cleanupErrors,[]);}
  }finally{
   await writeFile(resolve(artifacts,'commands.json'),JSON.stringify(commands,null,2)+'\n');
   const closed=await Promise.allSettled(receivers.map(closeReceiver));

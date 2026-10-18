@@ -2,7 +2,7 @@
 //! send live effects; only the native typed reducer feeds this adapter.
 use crate::{profile_desktop_settings as settings, profile_session::RunOwner};
 use osg_desktop_output::{ProcessIdentity, Scope};
-use osg_mapping::{engine::{typed::{Effect,Phase},Counter,RunToken},program::Program};
+use osg_mapping::{engine::{typed::{Frame,Phase},Counter,RunToken},program::Program};
 use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 
@@ -68,7 +68,7 @@ impl Desktop {
         let resolved=if self.0.scope().is_none(){Some(scope(game)?)}else{None};
         self.0.start(reducer,resolved)
     }
-    pub(crate) fn poll(&mut self,effects:&[Effect],reducer:&Phase)->Result<Vec<String>,String>{self.0.poll(effects,reducer)}
+    pub(crate) fn poll(&mut self,frames:&[Frame],reducer:&Phase)->Result<Vec<String>,String>{self.0.poll(frames,reducer)}
     pub(crate) fn keep_alive(&mut self)->Result<(),String>{self.0.keep_alive()}
     pub(crate) fn stop(&mut self)->Result<(),String>{self.0.stop()}
     pub(crate) fn status(&self)->Value{self.0.status()}

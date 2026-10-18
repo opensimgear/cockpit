@@ -1060,7 +1060,8 @@ impl Host for NativeProfileHost {
             .reducer
             .as_mut()
             .ok_or("The profile reducer is stopped.")?;
-        degraded.extend(reducer.accept_batch(frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames))?);
+        let frames = frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames).collect::<Vec<_>>();
+        degraded.extend(reducer.accept_batch(frames.iter().cloned())?);
         let elapsed = u64::try_from(state.started.elapsed().as_micros())
             .map_err(|_| "Profile runtime clock exhausted.")?;
         let tick = Counter(
@@ -1091,7 +1092,7 @@ impl Host for NativeProfileHost {
         }
         degraded.extend(action::dispatch(state,&effects));
         if let Some(desktop) = state.desktop.as_mut() {
-            degraded.extend(desktop.poll(&effects, state.reducer.as_ref().unwrap())?);
+            degraded.extend(desktop.poll(&frames, state.reducer.as_ref().unwrap())?);
         }
         degraded.extend(Self::dispatch_game(&resources, &games, state, &panels_io, effects)?);
         if let Some(output) = state.output.as_mut() {

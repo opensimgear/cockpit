@@ -147,6 +147,118 @@ fn scalar_output(engine: &Phase) -> f64 {
 }
 
 #[test]
+fn desktop_projection_resets_rule_state_prunes_unrelated_scripts_and_keeps_native_frame_shape() {
+    let mut program = unary(
+        Operation::Builtin {
+            rule: crate::rules::Rule::Toggle,
+            inputs: vec!["input".into()],
+        },
+        boolean_contract(),
+        boolean_contract(),
+    );
+    program
+        .sources
+        .push(source("source", "other", boolean_contract()));
+    program.nodes.push(Node {
+        id: "unrelated-script".into(),
+        inputs: vec![input("input", "source", "other", boolean_contract())],
+        outputs: vec![descriptor("output", Direction::Output, boolean_contract())],
+        operation: Operation::Script {
+            source: "fn on_start(ctx) { transaction(#{output: scalar(true)}, [], #{}) }".into(),
+            parameters: BTreeMap::new(),
+        },
+    });
+    let action = crate::desktop::Action::KeyHold {
+        key: crate::desktop::Key(4),
+    };
+    program.sinks.push(Sink {
+        id: "desktop".into(),
+        endpoint: endpoint("keyboard", "action"),
+        from: endpoint("processor", "output"),
+        contract: action.contract(),
+        kind: SinkKind::Desktop { action },
+    });
+    let mut canonical = phase(program);
+    canonical
+        .accept(frame(
+            "source",
+            1,
+            1,
+            10,
+            Reason::Baseline,
+            vec![("value", pressed(false)), ("other", pressed(false))],
+        ))
+        .unwrap();
+    canonical
+        .accept(frame(
+            "source",
+            1,
+            2,
+            20,
+            Reason::Change,
+            vec![("value", pressed(true))],
+        ))
+        .unwrap();
+    assert_eq!(output(&canonical), pressed(true));
+    let mut desktop = canonical.fork_desktop().unwrap();
+    assert_eq!(desktop.run_token(), canonical.run_token());
+    assert_eq!(desktop.at_us(), canonical.at_us());
+    assert_eq!(desktop.program().sources, canonical.program().sources);
+    assert_eq!(desktop.program().nodes.len(), 1);
+    assert_eq!(desktop.program().nodes[0].id, "processor");
+    assert_eq!(desktop.program().sinks.len(), 1);
+    assert_eq!(output(&desktop), pressed(false));
+    assert!(desktop.drain().is_empty());
+    let original_baseline = frame(
+        "source",
+        1,
+        3,
+        30,
+        Reason::Baseline,
+        vec![("value", pressed(false)), ("other", pressed(true))],
+    );
+    canonical.accept(original_baseline.clone()).unwrap();
+    desktop.accept_batch([original_baseline]).unwrap();
+    assert_eq!(
+        desktop.sample(&endpoint("source", "other")),
+        Some(&pressed(true))
+    );
+    let producer = desktop
+        .endpoint_token(&endpoint("processor", "output"))
+        .unwrap();
+    let observations = desktop.source_observations(&producer);
+    assert_eq!(observations[0].at_us, Counter(30));
+    assert_eq!(observations[0].sequence, Counter(3));
+}
+#[test]
+fn desktop_return_cannot_seed_hysteresis_from_cached_or_delayed_prefocus_axis_values() {
+    let mut program = unary(
+        Operation::Hysteresis { press: 0.75, release: 0.25, comparison: Comparison::GreaterEqual },
+        number_contract(0.0, 1.0, None), boolean_contract(),
+    );
+    let action = crate::desktop::Action::KeyHold { key: crate::desktop::Key(4) };
+    program.sinks.push(Sink {
+        id: "desktop".into(), endpoint: endpoint("keyboard", "action"), from: endpoint("processor", "output"),
+        contract: action.contract(), kind: SinkKind::Desktop { action },
+    });
+    let mut canonical = phase(program);
+    feed(&mut canonical, 1, 1, sample(1.0));
+    canonical.advance(Counter(200)).unwrap();
+    assert_eq!(output(&canonical), pressed(true));
+    let mut desktop = canonical.fork_desktop().unwrap();
+    desktop.require_desktop_neutral_after(Counter(200)).unwrap();
+    feed(&mut canonical, 2, 150, sample(1.0));
+    feed(&mut desktop, 2, 150, sample(1.0));
+    assert_eq!(output(&desktop), SignalSample::Unknown);
+    feed(&mut canonical, 3, 201, sample(0.5));
+    feed(&mut desktop, 3, 201, sample(0.5));
+    assert_eq!(output(&canonical), pressed(true));
+    assert_eq!(output(&desktop), pressed(false), "Fresh midrange input must use cold hysteresis state");
+    feed(&mut desktop, 4, 202, sample(1.0));
+    assert_eq!(output(&desktop), pressed(true), "A fresh threshold crossing still activates normally");
+}
+
+#[test]
 fn live_constructor_validates_its_clock_before_evaluating_startup() {
     let program = unary(Operation::Not {}, boolean_contract(), boolean_contract());
     let session = uuid::Uuid::new_v4().to_string();

@@ -4,7 +4,7 @@ use osg_desktop_output::{Coordinator, Scope};
 use osg_mapping::{
     desktop::Scheduler,
     engine::{
-        typed::{Effect, Observation, Phase, Token},
+        typed::{Effect, Frame, Observation, Phase, Token},
         Counter, RunToken,
     },
     program::{Program, SinkKind},
@@ -47,6 +47,7 @@ pub struct Desktop {
     focus_boundary: Option<Counter>,
     waiting_neutral: BTreeSet<String>,
     rearm_evidence: BTreeMap<String, (Token, Vec<Observation>)>,
+    shadow: Option<Phase>,
 }
 impl Desktop {
     pub fn acquire(
@@ -82,6 +83,7 @@ impl Desktop {
             focus_boundary: None,
             waiting_neutral: BTreeSet::new(),
             rearm_evidence: BTreeMap::new(),
+            shadow: None,
         })
     }
     pub fn scope(&self) -> Option<&Scope> {
@@ -176,32 +178,34 @@ impl Desktop {
         self.start_focused(reducer, focused)
     }
     fn start_focused(&mut self, reducer: &Phase, focused: bool) -> Result<(), String> {
+        let shadow = reducer.fork_desktop()?;
         self.output
             .activate(self.run.clone(), self.scope.clone().unwrap())?;
         self.registered = true;
         self.started = true;
         self.focused = focused;
-        self.baseline(reducer)?;
+        self.baseline(&shadow)?;
+        self.shadow = Some(shadow);
         self.flush(reducer.at_us().0)?;
         Ok(())
     }
-    pub fn poll(&mut self, effects: &[Effect], reducer: &Phase) -> Result<Vec<String>, String> {
+    pub fn poll(&mut self, frames: &[Frame], reducer: &Phase) -> Result<Vec<String>, String> {
         let eligibility = self.scope.as_ref().map_or(Ok(false), eligible);
-        self.poll_checked(effects, reducer, eligibility)
+        self.poll_checked(frames, reducer, eligibility)
     }
     fn poll_checked(
         &mut self,
-        effects: &[Effect],
+        frames: &[Frame],
         reducer: &Phase,
         eligibility: Result<bool, String>,
     ) -> Result<Vec<String>, String> {
         match eligibility {
             Ok(focused) => {
                 self.scope_error = None;
-                self.poll_focused(effects, reducer, focused)
+                self.poll_focused(frames, reducer, focused)
             }
             Err(error) => {
-                let mut diagnostics = self.poll_focused(effects, reducer, false)?;
+                let mut diagnostics = self.poll_focused(frames, reducer, false)?;
                 self.scope_error = Some(error.clone());
                 diagnostics.push(format!("Keyboard and mouse output paused: {error}"));
                 Ok(diagnostics)
@@ -210,7 +214,7 @@ impl Desktop {
     }
     fn poll_focused(
         &mut self,
-        effects: &[Effect],
+        frames: &[Frame],
         reducer: &Phase,
         focused: bool,
     ) -> Result<Vec<String>, String> {
@@ -226,6 +230,7 @@ impl Desktop {
                 self.output.pause(self.run.clone())?;
                 self.armed.clear();
             }
+            self.shadow = None;
             self.focused = false;
             return Ok(vec!["Keyboard and mouse output is waiting for its application scope; returning requires neutral controls.".into()]);
         }
@@ -242,10 +247,27 @@ impl Desktop {
                 .map(|sink| sink.id.clone())
                 .collect();
             self.rearm_evidence.clear();
+            let mut shadow = reducer.fork_desktop()?;
+            shadow.require_desktop_neutral_after(reducer.at_us())?;
+            self.shadow = Some(shadow);
             self.flush(reducer.at_us().0)?;
             // Effects captured before the new scope baseline are never replayed.
             return Ok(vec![]);
         }
+        let mut shadow = self.shadow.take().ok_or("The isolated desktop reducer is stopped.")?;
+        let result = (|| {
+            shadow.mirror_source_liveness(reducer)?;
+            let mut diagnostics = shadow.accept_batch(frames.iter().cloned())?;
+            shadow.mirror_source_liveness(reducer)?;
+            shadow.advance(reducer.at_us())?;
+            let effects = shadow.drain();
+            diagnostics.extend(self.deliver(&effects, &shadow)?);
+            Ok(diagnostics)
+        })();
+        self.shadow = Some(shadow);
+        result
+    }
+    fn deliver(&mut self, effects: &[Effect], reducer: &Phase) -> Result<Vec<String>, String> {
         // Revocation must precede clock advances even when a fallback or a
         // neutral output suppressed an otherwise unchanged desktop effect.
         let tokens = reducer
@@ -354,6 +376,7 @@ impl Desktop {
         self.scheduler.stop();
         self.scheduler.drain();
         self.armed.clear();
+        self.shadow = None;
         self.started = false;
         let result = self.output.stop_all();
         self.last_error = result.as_ref().err().cloned();

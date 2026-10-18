@@ -20,6 +20,10 @@ spec = importlib.util.spec_from_file_location("companion_native", ROOT / "script
 companion = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(companion)
 mapping = companion.mapping
+MACRO_CONTROL = "flight-input-6"
+MACRO_KEY = {"kind": "key", "key": 5}  # ordinary KeyB, no modifiers
+MACRO_STEPS = [dict(afterUs=0, pressed=True), dict(afterUs=1_500_000, pressed=False),
+    dict(afterUs=6_000_000, pressed=True), dict(afterUs=7_000_000, pressed=False)]
 
 
 class NativeCockpit:
@@ -133,6 +137,139 @@ def focus_return(service, peer, first, second, evidence):
     evidence["checks"].append("Actual application focus loss clears native held ownership and the second receive-only process observes cleanup; focus return and repeated true stay disarmed until fresh false then true")
 
 
+def macro_focus_return(service, peer, owner, first, second, evidence):
+    """Cancel an upstream Macro without letting its old timer resume desktop output.
+
+    All deadlines use the applied native Phase clock. Repeated real WSS state
+    reports keep the source fresh while the independent native macro advances.
+    """
+    first_start, second_start = len(injected_events(first)), len(injected_events(second))
+
+    def edges(path, start):
+        return [event for event in injected_events(path)[start:] if event["message"] in (256, 257)
+            and event["scanCode"] == 48 and event["extended"] == 0]
+
+    def inspection():
+        page = mapping.inspect(service, owner, "focus-macro")
+        ports = {port["endpoint"]["portId"]: port for port in page["ports"]}
+        return dict(capturedUs=page["capturedUs"], input=ports["in"], output=ports["out"])
+
+    def known_false(port):
+        return port["sample"] == dict(status="known", value=dict(kind="scalar", value=False))
+
+    def known_true(port):
+        return port["sample"] == dict(status="known", value=dict(kind="scalar", value=True))
+
+    def hold_outcomes(status):
+        return [outcome for outcome in status["runtime"].get("outcomes", [])
+            if outcome["delivery"]["intent"] == dict(kind="held", controls=[MACRO_KEY])
+            and outcome["acknowledgement"]["attempted"] > 0]
+
+    def send(value):
+        peer.input([dict(controlId=MACRO_CONTROL, value=value)])
+
+    def no_native_hold(status, state):
+        runtime, backend = status["runtime"], status["runtime"]["backend"]
+        return (runtime["state"] == state and backend["held"] == [] and backend["possibleHeld"] == []
+            and backend["cleanupComplete"] and not backend["uncertain"])
+
+    def cancelled_edges():
+        first_edges, second_edges = edges(first, first_start), edges(second, second_start)
+        assert [event["message"] for event in first_edges] == [256], "An old macro timer resumed a native KeyB edge in the scoped receiver"
+        assert [event["message"] for event in second_edges] == [257], "An old macro timer pressed KeyB outside application scope"
+
+    def advance_to(target_us, source_value, check, seconds=20):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            send(source_value)
+            sample, status = inspection(), desktop_status(service)
+            check(sample, status)
+            if int(sample["capturedUs"]) >= target_us:
+                return sample, status
+            time.sleep(.15)
+        raise AssertionError("The applied native macro clock did not reach its bounded test deadline")
+
+    send(False)
+    mapping.wait_for(lambda: "route-macro" not in desktop_status(service)["runtime"]["waitingNeutral"], "Fresh macro neutral did not arm its desktop route")
+    send(True)
+    def initial_hold():
+        status = desktop_status(service)
+        outcomes = hold_outcomes(status)
+        return (status, outcomes[-1]) if outcomes and status["runtime"]["backend"]["held"] == [MACRO_KEY] else None
+    held, first_outcome = mapping.wait_for(initial_hold, "Real WSS macro trigger did not hold KeyB")
+    ack = first_outcome["acknowledgement"]
+    assert ack["ok"] and ack["attempted"] == ack["confirmed"] == 1 and not ack["uncertain"] and not ack["skipped"], ack
+    mapping.wait_for(lambda: [event["message"] for event in edges(first, first_start)] == [256], "Scoped receiver did not observe the first macro KeyB press")
+    start_us = int(first_outcome["delivery"]["atUs"])
+    second.with_suffix(".focus").write_text("focus")
+    paused = mapping.wait_for(lambda: (status if no_native_hold(status, "paused") else None)
+        if (status := desktop_status(service)) else None, "Macro focus loss did not pause and release native ownership")
+    mapping.wait_for(lambda: [event["message"] for event in edges(second, second_start)] == [257], "Foreground receiver did not observe macro focus-loss KeyB release")
+    cancelled_edges()
+
+    def check_paused(_sample, status):
+        assert no_native_hold(status, "paused"), "Native macro output became active outside scope"
+        cancelled_edges()
+    intermediate, _ = advance_to(start_us + MACRO_STEPS[1]["afterUs"] + 250_000, True, check_paused)
+    assert known_false(intermediate["output"]), "The original native macro did not reach its intermediate release while out of scope"
+    assert int(intermediate["capturedUs"]) < start_us + MACRO_STEPS[2]["afterUs"] - 1_000_000, "Focus-return setup exceeded the macro's generous pending-step window"
+    first.with_suffix(".focus").write_text("focus")
+    returned = mapping.wait_for(lambda: (status if status["runtime"]["state"] == "active" and "route-macro" in status["runtime"]["waitingNeutral"] else None)
+        if (status := desktop_status(service)) else None, "Macro focus return did not require fresh source neutral")
+    send(False)
+    def fresh_neutral():
+        status, sample = desktop_status(service), inspection()
+        return (sample, status) if known_false(sample["input"]) and "route-macro" not in status["runtime"]["waitingNeutral"] and no_native_hold(status, "active") else None
+    neutral, neutral_status = mapping.wait_for(fresh_neutral, "Fresh macro root neutral did not rearm without resuming its pending timer")
+    cancelled_edges()
+    time.sleep(.05)
+    send(False)
+    def unchanged_neutral():
+        status, sample = desktop_status(service), inspection()
+        return (sample, status) if known_false(sample["input"]) and int(sample["input"]["observedUs"] or 0) > int(neutral["input"]["observedUs"] or 0) else None
+    repeated, repeated_status = mapping.wait_for(unchanged_neutral, "A newer unchanged native false report was not observed")
+    assert int(repeated["capturedUs"]) < start_us + MACRO_STEPS[2]["afterUs"] - 500_000, "Neutral reports arrived too late to test the old pending press"
+    saw_original_later_press = False
+    def check_cancelled(sample, status):
+        nonlocal saw_original_later_press
+        assert no_native_hold(status, "active") and "route-macro" not in status["runtime"]["waitingNeutral"], "Fresh neutral allowed an old macro timer to regain native ownership"
+        cancelled_edges()
+        saw_original_later_press |= known_true(sample["output"])
+    past_old_deadline, cancelled_status = advance_to(start_us + MACRO_STEPS[-1]["afterUs"] + 500_000, False, check_cancelled)
+    assert saw_original_later_press, "The independent applied macro never reached its old later press; cancellation was not exercised"
+    assert known_false(past_old_deadline["output"])
+
+    # A fresh rising source edge must still create a complete new macro after
+    # cancellation. Keep true fresh without creating another rising edge.
+    rearmed_start = len(injected_events(first))
+    original_holds = len(hold_outcomes(cancelled_status))
+    send(True)
+    def new_hold():
+        status = desktop_status(service)
+        outcomes = hold_outcomes(status)
+        return (status, outcomes[-1]) if len(outcomes) == original_holds + 1 and status["runtime"]["backend"]["held"] == [MACRO_KEY] else None
+    rearmed, new_outcome = mapping.wait_for(new_hold, "Fresh neutral then true did not start a new native desktop macro")
+    new_start_us = int(new_outcome["delivery"]["atUs"])
+    def check_new_macro(_sample, status):
+        assert status["runtime"]["state"] == "active", "Fresh macro lost verified application focus"
+        assert not native_press(injected_events(second)[second_start:]), "Fresh macro pressed outside application scope"
+        messages = [event["message"] for event in edges(first, rearmed_start)]
+        assert messages == [256, 257, 256, 257][:len(messages)], "Fresh macro produced duplicate or reordered KeyB edges"
+    completed, completed_status = advance_to(new_start_us + MACRO_STEPS[-1]["afterUs"] + 500_000, True, check_new_macro)
+    send(False)
+    mapping.wait_for(lambda: [event["message"] for event in edges(first, rearmed_start)] == [256, 257, 256, 257], "Fresh desktop macro did not complete its two KeyB press/release pairs")
+    assert no_native_hold(desktop_status(service), "active")
+    evidence["macroFocusReturn"] = dict(controlId=MACRO_CONTROL, key=MACRO_KEY, steps=MACRO_STEPS,
+        initialNativeOutcome=first_outcome, paused=compact_desktop(paused), intermediate=intermediate,
+        returned=compact_desktop(returned), freshNeutral=neutral, freshNeutralStatus=compact_desktop(neutral_status),
+        unchangedNeutral=repeated, unchangedNeutralStatus=compact_desktop(repeated_status),
+        oldDeadlinePassed=past_old_deadline, originalGlobalMacroLaterPressObserved=saw_original_later_press,
+        cancelledStatus=compact_desktop(cancelled_status), newNativeOutcome=new_outcome,
+        newMacroComplete=completed, newMacroStatus=compact_desktop(completed_status),
+        firstObservations=injected_events(first)[first_start:], secondObservations=injected_events(second)[second_start:])
+    evidence["checks"].append("Application focus loss cancels an upstream native Macro: its old later press never reaches desktop after fresh neutral and another unchanged false; a fresh press starts a new complete KeyB macro")
+
+
 def encoder_burst(peer, count):
     """One socket write retains every ordered WSS input frame and its ACK."""
     with peer.lock:
@@ -151,7 +288,7 @@ def encoder_burst(peer, count):
 def make_profile(service, instance, publication):
     detail = mapping.wait_for(lambda: companion.selected_resource(service, instance), "No exact current companion ports in native inventory")
     observed = {logical: next(port for port in detail["ports"] if port["descriptor"]["id"] == native)
-        for logical, native in [("button", "flight-input-0"), ("shared", "flight-input-1"), ("encoder", "flight-input-5"), ("axis", "flight-input-2")]}
+        for logical, native in [("button", "flight-input-0"), ("shared", "flight-input-1"), ("encoder", "flight-input-5"), ("axis", "flight-input-2"), ("macro", MACRO_CONTROL)]}
     assert all(port["current"] and port["descriptor"]["direction"] == "output" for port in observed.values())
     contract = observed["button"]["descriptor"]["contract"]
     assert contract["delivery"] == "state" and contract["schema"] == {"type": "boolean"}
@@ -164,7 +301,8 @@ def make_profile(service, instance, publication):
         dict(portId="mouse", action=dict(kind="mouse-hold", button="left")),
         dict(portId="shared", action=dict(kind="chord", keys=[224, 10])),
         dict(portId="tap", action=dict(kind="key-tap", key=40, downMs=30, upMs=30)),
-        dict(portId="pointer", action=dict(kind="pointer", axis="x", speed=100, curve=1))]
+        dict(portId="pointer", action=dict(kind="pointer", axis="x", speed=100, curve=1)),
+        dict(portId="macro", action=dict(kind="key-hold", key=5))]
     event = dict(delivery="event", schema=dict(type="boolean"))
     normalized = dict(delivery="state", schema=dict(type="number", min=-1, max=1, unit=None), freshnessMs=1000, fallback=0)
     document["desktopOutputs"] = [dict(id="desktop", name="Scoped receiver keyboard and mouse", required=True,
@@ -174,11 +312,15 @@ def make_profile(service, instance, publication):
     document["processingNodes"] = [dict(id="encoder-edge", name="Visible encoder press edge", operation=dict(kind="event-edge", edge="rising"),
         inputs=[mapping.port("in", observed["encoder"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", event, "output")]),
         dict(id="pointer-normalize", name="Visible raw axis normalization", operation=dict(kind="scale", factor=1 / 32768, offset=0),
-        inputs=[mapping.port("in", observed["axis"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", normalized, "output")])]
+        inputs=[mapping.port("in", observed["axis"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", normalized, "output")]),
+        dict(id="focus-macro", name="Visible macro cancelled at desktop focus boundary",
+            operation=dict(kind="builtin", inputs=["in"], rule=dict(kind="macro", steps=MACRO_STEPS)),
+            inputs=[mapping.port("in", observed["macro"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", state, "output")])]
     for identity, source_node, source_port, target_node, target_port in [
         ("shared", "panel", "shared", "desktop", "shared"), ("encoder-input", "panel", "encoder", "encoder-edge", "in"),
         ("encoder-tap", "encoder-edge", "out", "desktop", "tap"), ("pointer-input", "panel", "axis", "pointer-normalize", "in"),
-        ("pointer-output", "pointer-normalize", "out", "desktop", "pointer")]:
+        ("pointer-output", "pointer-normalize", "out", "desktop", "pointer"),
+        ("macro-input", "panel", "macro", "focus-macro", "in"), ("route-macro", "focus-macro", "out", "desktop", "macro")]:
         document["bindings"].append(dict(id=identity, **{"from": dict(nodeId=source_node, portId=source_port), "to": dict(nodeId=target_node, portId=target_port)}))
     document["companionAssignments"] = [dict(resourceId="panel", publicationHash=publication["publicationHash"])]
     assignments = [dict(resourceId="panel", sourceId=detail["resource"]["id"], ports=[dict(profilePortId=logical,
@@ -288,8 +430,12 @@ def main():
 
             focus_return(service, peer, args.receiver, args.focus_receiver, evidence)
             peer.input([dict(controlId="flight-input-0", value=False), dict(controlId="flight-input-1", value=False),
-                dict(controlId="flight-input-5", value=False), dict(controlId="flight-input-2", value=0)])
+                dict(controlId="flight-input-5", value=False), dict(controlId=MACRO_CONTROL, value=False), dict(controlId="flight-input-2", value=0)])
             mapping.wait_for(lambda: not desktop_status(service)["runtime"]["waitingNeutral"], "Fresh neutral controls did not rearm every route after the focus check")
+            macro_focus_return(service, peer, owner, args.receiver, args.focus_receiver, evidence)
+            peer.input([dict(controlId="flight-input-0", value=False), dict(controlId="flight-input-1", value=False),
+                dict(controlId="flight-input-5", value=False), dict(controlId=MACRO_CONTROL, value=False), dict(controlId="flight-input-2", value=0)])
+            mapping.wait_for(lambda: not desktop_status(service)["runtime"]["waitingNeutral"], "Fresh neutral controls did not rearm every route after the macro focus check")
 
             loss_count = len(injected_events(args.receiver))
             evidence["inputsSent"].append(dict(controlId="flight-input-0", value=True, monotonicNs=str(time.perf_counter_ns())))
