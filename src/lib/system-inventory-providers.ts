@@ -138,7 +138,9 @@ export class SystemInventoryController {
       const identities = h.evidence.filter(e => e.startsWith('controller:')).sort();
       const sources = observations.filter(c => c !== h && c.targets.some(t => t.kind === 'controller' && identities.includes(`controller:${t.id}`)));
       if (!sources.length && identities.length) {
-        h.id = identities[0]; h.name = this.snapshot.components.find(c => c.id === h.id)?.name ?? h.name;
+        const previous = this.snapshot.components.find(c => identities.includes(c.id) || c.targets.some(t => t.kind === 'controller' && identities.includes(`controller:${t.id}`)));
+        h.id = previous?.id ?? identities[0]; h.name = previous?.name ?? h.name;
+        if (previous) { h.type = previous.type; h.role = previous.role; }
         h.targets.push(...identities.map(id => target('controller', id.slice(11))));
         h.connections = h.connections.map(c => link(h.id, c.from, c.transport, c.current, c.endpoint));
       }

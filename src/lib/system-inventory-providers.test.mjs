@@ -62,6 +62,12 @@ test('hidden controller discovery survives capture outage and recovery without r
  h.failures.delete('controller_list');await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('visibility:pnp-pedals'),undefined);
 });
 
+test('native hidden fallback retains the known OSG physical identity/type when capture fails', async () => {
+ const h=harness({controllers:[source('osg-panel',{osgHid:true})],native:{virtualDevices:[],hiddenDevices:[{id:'pnp-osg',name:'OS PnP label',instanceId:'HID\\OSG',controllerIds:['osg-panel'],present:true,hidden:true,diagnostics:[]}],diagnostics:[]}});
+ await h.controller.refresh();h.failures.set('controller_list',Error('Capture unavailable'));await h.controller.refresh();
+ assert.equal(h.component('controller:osg-panel').type,'osg');assert.equal(h.component('controller:osg-panel').name,'Controller osg-panel');assert.equal(h.component('controller:osg-panel').presence,'connected');
+});
+
 test('nearest native parent bus proves USB or Bluetooth without guessing from HID names, including remembered edges', async () => {
  const h=harness({controllers:[source('usb'),source('bluetooth'),source('offline',{online:false})],native:{virtualDevices:[],diagnostics:[],hiddenDevices:[
   {id:'usb',name:'USB wheel',instanceId:'HID\\USB',controllerIds:['usb'],present:true,hidden:false,ancestors:['USB\\VID_1234','USB\\ROOT_HUB'],diagnostics:[]},
