@@ -6,6 +6,7 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 pub mod registry;
+pub mod inventory;
 pub mod stream;
 pub mod visibility;
 #[cfg(windows)]

@@ -18,6 +18,7 @@ mod game_telemetry;
 mod games;
 pub mod gateways;
 mod hid_names;
+mod system_inventory;
 mod local_gateway;
 mod optional_dependencies;
 mod module_console;

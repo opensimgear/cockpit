@@ -174,6 +174,7 @@ pub struct GatewayManager {
     provider: Arc<dyn Provider>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
+    system_inventory: crate::system_inventory::Runtime,
     configuration_gate: Arc<Mutex<()>>,
     profile_panels: Arc<ProfilePanelIo>,
     closed: Arc<AtomicBool>,
@@ -316,6 +317,7 @@ impl GatewayManager {
             provider,
             sessions,
             inventory: Mutex::new(Vec::new()),
+            system_inventory: crate::system_inventory::Runtime::new(native),
             configuration_gate,
             profile_panels,
             closed,
@@ -488,6 +490,15 @@ impl GatewayManager {
     }
     pub fn request(&self, request: Value) -> Value {
         let command = request["command"].as_str().unwrap_or("");
+        // System observation is independent of profile ownership, recovery,
+        // learning and game admission. It only opens read-only native handles.
+        if command == "system_inventory" {
+            if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.",None); }
+            return match self.system_inventory.request(&request, &self.controllers) {
+                Ok(inventory) => json!({"ok":true,"state":{"systemInventory":inventory}}),
+                Err(error) => json!({"ok":false,"error":error}),
+            };
+        }
         if command.starts_with("mapping_") || command.starts_with("dcs_") || command.starts_with("integration_") || command.starts_with("game_profile_") || matches!(command, "companion_feedback_routes" | "companion_game_capture" | "game_activate" | "game_launch" | "game_deactivate" | "controller_visibility_apply" | "controller_visibility_launch") {
             return self.error("Independent configuration and starts are retired. Use the unified applied profile graph; provider settings belong in game details. Retained ownership has explicit cleanup controls.", None);
         }
@@ -1481,6 +1492,25 @@ mod tests {
         }
         assert!(provider.adapters.lock().unwrap().is_empty());
         assert!(manager.sessions.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn system_inventory_is_read_only_and_does_not_enter_profile_or_game_admission() {
+        let (manager, provider) = setup();
+        let admission = manager.profile_admission.write().unwrap();
+        let game_admission = manager.game_admission.write().unwrap();
+        let epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+        let response = request(&manager, "system_inventory", None, json!({}));
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["state"]["systemInventory"]["virtualDevices"], json!([]));
+        assert_eq!(response["state"]["systemInventory"]["hiddenDevices"], json!([]));
+        assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        assert_eq!(request(&manager, "system_inventory", None, json!({"write":true}))["ok"], false);
+        assert_eq!(manager.request(json!({"command":"system_inventory"}))["ok"], false);
+        drop(game_admission);
+        drop(admission);
+        manager.shutdown();
+        assert_eq!(request(&manager, "system_inventory", None, json!({}))["ok"], false);
     }
     #[test]
     fn controller_status_is_independent_of_gateway_inventory_and_rejects_invalid_edits() {
