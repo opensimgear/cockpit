@@ -68,12 +68,23 @@ async function mountedApp(send){
  render(App).body;return{handlers,document,timers,mount(){return mounts.map(fn=>fn());}};
 }
 const savedRows=()=>[{id:modules.get('./profiles').DEFAULT_PROFILE_ID,name:'Default',revision:1,isDefault:true,semanticHash:hash},...profiles];
-test('actual mounted App replaces standalone simulator polling with bounded passive native status and stops polling inactive or hidden views without output controls',async()=>{
+test('actual mounted App keeps passive header status fresh across views and stops hidden polling without output controls',async()=>{
  const calls=[];let hold;const app=await mountedApp(async request=>{calls.push(plain(request));if(request.command==='profile_status'){if(hold)await hold;return{profiles:{profileSession:running()}};}if(request.command==='profile_list')return{profiles:{profiles:savedRows()}};if(request.command==='game_get_state')return{games:games()};throw new Error(`Unexpected App request ${request.command}`);});
  assert.deepEqual(calls,[]);const cleanup=app.mount();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_list','profile_status']);assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);assert.equal(app.handlers.state.profileSummaries.length,3);
  calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status']);
- calls.length=0;app.document.hidden=true;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls,[]);app.document.hidden=false;app.handlers.navigate('profiles');for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls,[]);
+ calls.length=0;app.document.hidden=true;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls,[]);app.document.hidden=false;app.handlers.navigate('profiles');for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status']);
+ for(const page of ['devices','topology','preferences']){app.handlers.navigate(page);await settle();calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status'],page);}
  app.handlers.navigate('overview');let release;hold=new Promise(yes=>release=yes);const pending=app.handlers.refreshProfileStatus();await settle();const before=app.handlers.state.profileState;cleanup.forEach(fn=>fn?.());release();await pending;assert.equal(app.handlers.state.profileState,before);assert.equal(app.timers.size,0);assert.ok(calls.every(c=>['profile_status','profile_list','game_get_state'].includes(c.command)));
+});
+
+test('header badges use native applied ownership and detected processes, never the editor selection or stale ownership',async()=>{
+ const Header=await component('./HeaderStatus.svelte');
+ const header=(profileState,extra={})=>render(Header,{props:{games:games(),gamesStale:false,profileState,profiles,...extra}}).body;
+ const active=header(view(running()));assert.ok(active.includes('Active game'));assert.ok(active.includes('DCS World'));assert.ok(active.includes('Active profile · Running'));assert.ok(active.includes('Applied saved rig'));assert.ok(!active.includes('Unapplied editor selection'));assert.ok(active.includes('applied revision 3'));
+ const idle=header(view(stopped()),{games:{catalogue:[],detectedGames:[]}});assert.ok(idle.includes('Active profile · Stopped'));assert.ok(!idle.includes('Applied saved rig'));assert.ok(!idle.includes('DCS World'));assert.ok(idle.includes('None'));
+ const stale=header({...view(running()),stale:true},{gamesStale:true});assert.ok(stale.includes('Unavailable'));assert.ok(!stale.includes('Applied saved rig'));assert.ok(!stale.includes('DCS World'));
+ const degraded=header(view({...running(),state:'degraded'}));assert.ok(degraded.includes('Active profile · Degraded'));assert.ok(degraded.includes('Applied saved rig'));
+ const missing=header(view(stopped()),{games:{catalogue:[],detectionErrors:['Process scan unavailable']}});assert.ok(missing.includes('Unavailable'));
 });
 
 async function companionCompactor(send){

@@ -59,8 +59,7 @@ nav button.current, .sidebar-link.current { color: var(--accent); background: va
 .breadcrumb button { background: transparent; color: inherit; padding: 0; }
 .breadcrumb button:hover { color: var(--text); }
 .breadcrumb strong { color: var(--soft); font-weight: 500; }
-.topbar-actions { display: flex; align-items: center; gap: 15px; }
-.connection-pill { font-size: 9px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
+.topbar-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .icon-button { background: transparent; padding: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); border-radius: 4px; }
 .icon-button:hover { background: var(--surface-raised); color: var(--text); }
 main { padding: 32px 34px 32px; max-width: 1680px; margin: 0 auto; width: 100%; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }

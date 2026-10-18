@@ -7,6 +7,7 @@
   import HostControllers from './lib/HostControllers.svelte';
   import ProfileRetiredRecovery from './lib/ProfileRetiredRecovery.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
+  import HeaderStatus from './lib/HeaderStatus.svelte';
   import CompanionDesigner from './lib/CompanionDesigner.svelte';
   import CompanionListenerSettings from './lib/CompanionListenerSettings.svelte';
   import Icon from './lib/Icon.svelte';
@@ -62,6 +63,7 @@
   let light = $state(stored<boolean>('osg-light', false));
   let view = $state<View>('overview');
   let games = $state<GamesState>();
+  let gamesStale = $state(true);
   let selectedGameId = $state<GameId | ''>('');
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
   let profilesPanel = $state.raw<{requestNavigation:(continueNavigation:()=>void)=>void}>();
@@ -80,6 +82,7 @@
     commitNavigation(section);
   }
   function commitNavigation(section: View) {
+    if (view === 'profiles' && section !== 'profiles') void refreshProfileNames();
     settingsVisit = null;
     if (gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     selectedGameId = '';
@@ -226,22 +229,24 @@
     finally { if (epoch === profileNamesEpoch) profileNamesPending = false; }
   }
   async function refreshProfileStatus() {
-    if (disposed || document.hidden || !['overview', 'games', 'device'].includes(view)) return;
+    if (disposed || document.hidden) return;
     if (await profileRuntime.refresh()) {
-      const id = profileRuntime.state.status?.appliedSnapshot?.profileId;
-      if (id && !profileSummaries.some(profile => profile.id === id)) void refreshProfileNames();
+      const applied = profileRuntime.state.status?.appliedSnapshot;
+      if (applied && !profileSummaries.some(profile => profile.id === applied.profileId && profile.revision >= applied.revision)) void refreshProfileNames();
     }
   }
   async function sendGames(request: GameRequest, quiet = request.command === 'game_get_state'): Promise<GamesState | false> {
-    if (gamesBusy || quiet && (gamesPolling || document.hidden || !['overview', 'games', 'integrations'].includes(view))) return false;
+    if (gamesBusy || quiet && (gamesPolling || document.hidden)) return false;
     if (quiet) gamesPolling = true; else gamesBusy = true;
     try {
       const result = await gatewayRequest(request);
       if (!disposed) {
-        if (result.games) games = result.games;
+        if (result.games) { games = result.games; gamesStale = false; }
+        else if (request.command === 'game_get_state') gamesStale = true;
       }
       return result.games ?? false;
     } catch (error) {
+      if (!disposed) gamesStale = true;
       if (!disposed && error instanceof GatewayError && error.state?.games) games = error.state.games;
       if (!quiet) notify(error instanceof Error ? error.message : 'Game request failed.');
       return false;
@@ -407,7 +412,7 @@
     </aside>
 
     <div class="main-shell">
-      <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><span class="connection-pill">{connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</span><button class="icon-button" aria-label={light ? 'Use dark theme' : 'Use light theme'} onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={18} /></button><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
+      <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
         {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} active={view==='profiles'} /></div>{/if}
         {#if view === 'overview'}
