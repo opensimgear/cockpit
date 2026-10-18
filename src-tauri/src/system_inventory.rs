@@ -2,6 +2,9 @@
 use osg_virtual_controller::vjoy::{Slot, Status};
 use serde_json::{json, Value};
 use std::{sync::Mutex, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+#[path = "system_inventory_associations.rs"]
+mod associations;
+pub(crate) use associations::collect as controller_associations;
 
 pub(crate) struct Runtime {
     native: bool,
@@ -9,7 +12,7 @@ pub(crate) struct Runtime {
 }
 impl Runtime {
     pub(crate) fn new(native: bool) -> Self { Self { native, snapshot: Mutex::new(None) } }
-    pub(crate) fn request(&self, request: &Value, controllers: &osg_controller_input::ControllerService) -> Result<Value, String> {
+    pub(crate) fn request(&self, request: &Value, controllers: &osg_controller_input::ControllerService, associations:impl FnOnce(&osg_controller_input::registry::ResourceInventory)->Vec<Value>) -> Result<Value, String> {
         if !request.is_object() || request.to_string().len() > 65_536
             || request.as_object().unwrap().keys().any(|key| !matches!(key.as_str(), "command" | "clientId" | "offset" | "limit" | "observedAt")) {
             return Err("System inventory accepts only its command, page and Cockpit client identity.".into());
@@ -29,24 +32,33 @@ impl Runtime {
             if observed.elapsed() < Duration::from_secs(2) { return page(value,offset,limit); }
         }
         let observed = Instant::now();
-        let value = if self.native {
-            let visibility = osg_controller_input::inventory::current(controllers.resource_inventory());
-            compose(visibility, osg_virtual_controller::inspection::current(), configured())
+        let mut value = if self.native {
+            let sources=controllers.resource_inventory();
+            let associations=associations(&sources);
+            let visibility = osg_controller_input::inventory::current(sources);
+            let mut value=compose(visibility, osg_virtual_controller::inspection::current(), configured());
+            value["controllerAssociations"]=json!(associations);
+            value
         } else {
             compose(Default::default(), Ok(vec![]), Ok((vec![],vec![])))
         };
+        if value["controllerAssociations"].is_null() {value["controllerAssociations"]=json!([]);}
         *snapshot = Some((observed, value.clone()));
         page(&value,offset,limit)
     }
 }
 fn page(value:&Value,offset:usize,limit:usize)->Result<Value,String> {
     let devices=value["hiddenDevices"].as_array().ok_or("Invalid native system inventory snapshot.")?;
-    let mut selected=devices.iter().skip(offset).take(limit).cloned().collect::<Vec<_>>();
+    let associations=value["controllerAssociations"].as_array().cloned().unwrap_or_default();
+    let items=devices.iter().map(|value|(false,value.clone())).chain(associations.iter().map(|value|(true,value.clone()))).collect::<Vec<_>>();
+    let mut selected=items.iter().skip(offset).take(limit).cloned().collect::<Vec<_>>();
     loop {
         let next=offset+selected.len();
+        let hidden=selected.iter().filter(|(association,_)|!*association).map(|(_,value)|value).collect::<Vec<_>>();
+        let related=selected.iter().filter(|(association,_)|*association).map(|(_,value)|value).collect::<Vec<_>>();
         let response=json!({"observedAt":value["observedAt"],"virtualDevices":value["virtualDevices"],
-            "diagnostics":value["diagnostics"],"hiddenDevices":selected,"offset":offset,"total":devices.len(),
-            "nextOffset":if next<devices.len(){Some(next)}else{None}});
+            "diagnostics":value["diagnostics"],"hiddenDevices":hidden,"controllerAssociations":related,"offset":offset,"total":items.len(),
+            "hiddenTotal":devices.len(),"associationTotal":associations.len(),"nextOffset":if next<items.len(){Some(next)}else{None}});
         if serde_json::to_vec(&response).map_err(|e|e.to_string())?.len()<=60_000 {return Ok(response);}
         if selected.len()<=1 {return Err("System inventory metadata exceeds the native reply budget.".into());}
         selected.pop();
@@ -144,5 +156,21 @@ mod tests {
             offset=next as usize;
         }
         assert_eq!(count,100);
+    }
+    #[test]
+    fn association_only_pages_advance_the_combined_cursor_and_tokens_cannot_mix_snapshots() {
+        let value=json!({"observedAt":1,"virtualDevices":[],"hiddenDevices":[{"id":"hidden"}],"controllerAssociations":[{"controllerId":"one"},{"controllerId":"two"}],"diagnostics":[]});
+        let response=page(&value,1,1).unwrap();
+        assert_eq!(response["hiddenDevices"],json!([]));
+        assert_eq!(response["controllerAssociations"][0]["controllerId"],"one");
+        assert_eq!(response["total"],3);
+        assert_eq!(response["nextOffset"],2);
+        let runtime=Runtime::new(false);
+        *runtime.snapshot.lock().unwrap()=Some((Instant::now()-Duration::from_secs(5),value));
+        let controllers=osg_controller_input::ControllerService::new(None,false);
+        let request=json!({"command":"system_inventory","clientId":"native-inventory-test-client","observedAt":1,"offset":1,"limit":1});
+        assert_eq!(runtime.request(&request,&controllers,|_|panic!("Pinned pages cannot observe a new snapshot")).unwrap()["controllerAssociations"][0]["controllerId"],"one");
+        let mut wrong=request;wrong["observedAt"]=json!(2);
+        assert!(runtime.request(&wrong,&controllers,|_|vec![]).unwrap_err().contains("expired"));
     }
 }

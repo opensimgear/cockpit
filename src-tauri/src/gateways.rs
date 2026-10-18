@@ -494,7 +494,10 @@ impl GatewayManager {
         // learning and game admission. It only opens read-only native handles.
         if command == "system_inventory" {
             if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.",None); }
-            return match self.system_inventory.request(&request, &self.controllers) {
+            return match self.system_inventory.request(&request, &self.controllers, |sources| {
+                crate::system_inventory::controller_associations(sources,&self.cached_gateways(),
+                    &self.inventory.lock().unwrap_or_else(|p|p.into_inner()),&self.module_usb.snapshots())
+            }) {
                 Ok(inventory) => json!({"ok":true,"state":{"systemInventory":inventory}}),
                 Err(error) => json!({"ok":false,"error":error}),
             };
