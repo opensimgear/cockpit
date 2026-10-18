@@ -1,0 +1,292 @@
+// Running Cockpit frontend acceptance with deterministic provider replies.
+// IPC fixtures cannot qualify native hardware, drivers, game delivery or pairing.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
+const require = createRequire(import.meta.url);
+const module = process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright';
+const { chromium } = require(module), { expect } = require(module + '/test');
+const endpoint = process.env.OSG_DEVICES_UI_URL ?? 'http://127.0.0.1:1420';
+const artifacts = resolve(process.env.OSG_DEVICES_UI_ARTIFACTS ?? '.research/system-devices-browser');
+const clone = value => JSON.parse(JSON.stringify(value));
+const serial = '00112233445566778899aabb', otherSerial = '00112233445566778899aacc';
+const firstGateway = `stm32:${serial}`, secondGateway = `stm32:${otherSerial}`;
+const usbKey = `${serial}:COM-fixture-usb`;
+const defaultId = '00000000-0000-4000-8000-000000000001';
+const hash = `sha256:${'1'.repeat(64)}`;
+
+function controller(id, name, online = true, extra = {}) {
+  return { id, name, online, role: 'controller', origin: 'host-controller', backend: 'windows-raw-input', vendorId: 1, productId: 2,
+    osgHid: false, generation: '1', sequence: '1', controlCount: online ? 4 : 0, baselineReady: online, identityConfidence: 'serial', ...extra };
+}
+function gatewayModule(id, name, extra = {}) {
+  return { id, name, kind: 'panel', online: true, active: true, registered: true, enabled: true, published: true,
+    descriptorIndex: 0, buttonCount: 1, axisCount: 0, hatCount: 0, buttons: [], axes: [], hats: [], profileMatch: true,
+    canConfigure: false, boot: 1, configurationGeneration: 1, serialNumber: id, settings: { label: name, inverted: false, debounce: 5 }, ...extra };
+}
+function resource(id, connections) {
+  return { id, name: id, resourceType: 'osg-module', availability: 'online', generation: '1', capabilityRevision: hash,
+    portCount: 0, cachedPortCount: 0, connections: connections.map(([scope, key, transport]) => ({ scope, key, route: {
+      id: `${scope}/${key}`, transport, providerGeneration: '1', attributes: {}, baselineReady: true, writable: false, priority: 0,
+    } })), attributes: {}, diagnostics: [] };
+}
+function usb(key, name, extra = {}) {
+  return { key, present: true, automatic: false, admissible: true, diagnostics: [], port: { path: key.split(':').at(-1), friendlyName: name },
+    snapshot: { connected: true, port: key.split(':').at(-1), identity: { model: 'fixture-module', board: 'fixture-board', profile: name,
+      moduleId: key.startsWith(serial) ? 'dual' : 'standalone-output', serial: key.split(':')[0], protocol: 3, buttonCount: 0, axisCount: 0, hatCount: 0 },
+    route: null, claimedBy: null, observedAtMs: 1, error: null }, ...extra };
+}
+function fixtures() {
+  const ports = [serial, otherSerial].map((value, index) => ({ path: `COM-fixture-gateway-${index + 1}`, manufacturer: 'OpenSimGear',
+    friendlyName: 'OpenSimGear CAN gateway', serialNumber: value, backend: 'stm32' }));
+  const states = new Map(ports.map((port, index) => [index ? secondGateway : firstGateway, {
+    gatewayId: index ? secondGateway : firstGateway, gatewaySerial: port.serialNumber, backend: 'stm32', port: port.path,
+    connected: true, running: true, needsReconnect: false, protocolVersion: 3, lifecycle: 'automatic', canProtocol: 3,
+    claimedModules: [], modules: index ? [gatewayModule('dual', 'Unproven second panel')] : [
+      gatewayModule('dual', 'Dual transport panel', { directUsb: true }),
+      gatewayModule('can-output', 'CAN output module', { outputOnly: true, buttonCount: 0, enabled: false, published: false }),
+    ],
+  }]));
+  return {
+    ports, states,
+    controllers: [controller('pedals', 'Hidden pedals'), controller('remembered-wheel', 'Remembered wheel', false),
+      controller('gateway-hid', 'Gateway HID collection', true, { osgHid: true }),
+      controller('remembered-throttle', 'Remembered throttle', false)],
+    modules: [usb(usbKey, 'Dual USB sighting'), usb('ffeeddccbbaa:COM-fixture-output', 'Standalone output module')],
+    resources: [resource('verified-dual', [[`gateway:${firstGateway}`, 'dual', 'can'], ['standalone-usb', usbKey, 'usb'], ['host-controllers', 'gateway-hid', 'hid']]),
+      resource('unproven-second', [[`gateway:${secondGateway}`, 'dual', 'can']])],
+    native: { observedAt: Date.now(), virtualDevices: [
+      { id: 'vjoy:3', name: 'External busy virtual joystick', available: true, status: 'busy', createdByCockpit: null, ownerPid: 9999, diagnostics: [] },
+      { id: 'vjoy:4', name: 'Missing remembered virtual joystick', available: false, status: 'missing', createdByCockpit: true, diagnostics: ['Driver cannot currently expose this target.'] },
+    ], hiddenDevices: [{ id: 'pedals-pnp', name: 'Hidden pedals PnP record', instanceId: 'HID\\FIXTURE_PEDALS', present: true, hidden: true,
+      configured: true, scope: 'capture-exception', controllerIds: ['pedals'], diagnostics: ['Observed in the capture process; other process exceptions may differ.'] }], diagnostics: [] },
+    companions: { listener: { enabled: true, endpoint: 'wss://127.0.0.1:9980' }, host: { clients: [
+      { companionId: 'browser-fixture', name: 'Browser companion', kind: 'browser', connected: true, peer: '192.0.2.10' },
+      { companionId: 'esp32-fixture', name: 'Known ESP32 companion', kind: 'esp32', connected: false },
+    ], instances: [{ instanceId: 'assigned-fixture', companionId: 'browser-fixture', name: 'Assigned panel instance', armed: true, sessionId: 'fixture-session', publicationHash: hash }], publications: [{ publicationHash: hash }] },
+    usb: { devices: [{ connected: false, port: 'COM-fixture-companion', stage: 'disconnected', device: { companionId: 'esp32-fixture', name: 'Known ESP32 companion', boardProfile: 'fixture-board' } }] } },
+    games: { catalogue: [
+      { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: true, launchSupported: false,
+        integrationSetup: { state: 'ready', live: 'receiving', message: 'Fixture service receiving.', connection: { commandHost: '127.0.0.1', commandPort: 7778 } } },
+      { id: 'x-plane-12', name: 'X-Plane 12', provider: 'x-plane', installed: false, launchSupported: false,
+        integrationSetup: { state: 'missing-installation', live: 'unavailable', message: 'Fixture installation unavailable.', connection: {} } },
+    ], cleanup: { phase: 'idle' } },
+    failControllers: false, failForget: null, keepForgotten: false,
+  };
+}
+
+test('running Devices shares complete inventory, topology, filtering, lifecycle and durable guarded cleanup', { timeout: 120_000 }, async () => {
+  await mkdir(artifacts, { recursive: true });
+  const fixture = fixtures(), requests = [], unexpected = [], pageErrors = [];
+  const browser = await chromium.launch({ headless: true, ...(process.env.OSG_BROWSER_CHANNEL ? { channel: process.env.OSG_BROWSER_CHANNEL } : {}) });
+  const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } }), page = await context.newPage();
+  page.on('pageerror', error => pageErrors.push(error.message));
+  const session = { state: 'stopped', paused: false, appliedSnapshot: null, owner: null, degradation: [], fault: null };
+  const listing = { profiles: [{ id: defaultId, name: 'Default', revision: 1, isDefault: true, semanticHash: hash }],
+    profileSession: session, session: { selectedProfileId: defaultId, state: 'idle', appliedSnapshot: null, fault: null },
+    automatic: { schemaVersion: 1, mode: 'manual', manualProfileId: defaultId, rules: [], status: 'manual', message: 'Fixture idle.', conflicts: [], lastAttempt: null, target: null, readOnly: false }, readOnly: false, diagnostics: [] };
+  const base = () => ({ connected: false, running: false, needsReconnect: false, modules: [], ports: fixture.ports,
+    games: fixture.games, companions: fixture.companions, profiles: listing });
+  const result = fields => ({ ok: true, state: { ...base(), ...clone(fields) } });
+  await page.route('**/api/gateway/**', async route => { unexpected.push('HTTP fallback bypassed fixture IPC'); await route.abort(); });
+  await page.exposeFunction('__osgNativeInvoke', async (command, args) => {
+    if (command === 'optional_dependencies') return { supported: false, dependencies: [] };
+    if (command !== 'gateway_request') throw Error(`Unexpected invocation: ${command}`);
+    const request = clone(args.request); requests.push(request);
+    const offset = request.offset ?? 0;
+    if (['profile_list', 'profile_status', 'profile_automatic_status'].includes(request.command)) return result({ profiles: listing });
+    if (request.command === 'profile_assignments_get') return result({ profiles: { ...listing, assignments: [
+      { resourceId: 'retained-throttle-binding', sourceId: 'remembered-throttle', ports: [] },
+      { resourceId: 'retained-wheel-binding', sourceId: 'remembered-wheel', ports: [] },
+      { resourceId: 'retained-virtual-binding', sourceId: 'vjoy:4', ports: [] },
+    ] } });
+    if (request.command === 'profile_retired_recovery_status') return result({ retiredRecovery: { required: false, outputs: [], provisioning: [], job: null, diagnostics: [], outputQualified: false, provisioningQualified: false } });
+    if (request.command === 'controller_list') {
+      if (fixture.failControllers) return { ok: false, error: 'Fixture controller provider unavailable.' };
+      return result({ controllers: { session: 'fixture-controllers', backendStatus: 'fixture only', offset, total: fixture.controllers.length,
+        limit: 2, sources: fixture.controllers.slice(offset, offset + 2) } });
+    }
+    if (request.command === 'controller_forget') {
+      if (fixture.failForget === request.sourceId) return { ok: false, error: 'Fixture removal failed once; inspect before retrying.' };
+      const source = fixture.controllers.find(source => source.id === request.sourceId);
+      if (source?.online) return { ok: false, error: 'Controller reconnected before cleanup.' };
+      if (!fixture.keepForgotten) fixture.controllers = fixture.controllers.filter(source => source.id !== request.sourceId);
+      return result({ controllers: { session: 'fixture-controllers', offset: 0, total: fixture.controllers.length, limit: 32, sources: fixture.controllers } });
+    }
+    if (request.command === 'controller_inspect') return result({ controllers: { source: fixture.controllers.find(source => source.id === request.sourceId),
+      offset: 0, total: 0, limit: 32, controls: [], identity: { path: `fixture:${request.sourceId}`, collection: '1', serial: 'fixture', fingerprint: hash }, diagnostics: [] } });
+    if (request.command === 'controller_visibility_status') return result({ controllers: { offset: 0, total: 0, limit: 32, visibility: {
+      platform: 'windows', qualified: false, enabled: false, selected: [], selectedCount: 0, global: { inspected: false }, recovery: { required: false },
+      intent: { mode: 'visible' }, modes: [{ mode: 'visible', label: 'Visible', supported: true, qualified: true, reason: 'Fixture inspection only.' }],
+      reason: 'Fixture visibility observation only.', job: null, processes: [], nextProcess: null,
+    } } });
+    if (request.command === 'module_usb_list') return result({ moduleUsb: { offset, total: fixture.modules.length, modules: fixture.modules.slice(offset, offset + 1) } });
+    if (request.command === 'profile_resources_list') return result({ profileResources: { session: 'fixture-evidence', revision: '1', offset,
+      total: fixture.resources.length, resources: fixture.resources.slice(offset, offset + 1), inventoryDiagnostics: [], readOnly: false } });
+    if (request.command === 'system_inventory') return result({ systemInventory: { ...fixture.native, offset, total: fixture.native.hiddenDevices.length,
+      hiddenDevices: fixture.native.hiddenDevices.slice(offset, offset + 32), nextOffset: offset + 32 < fixture.native.hiddenDevices.length ? offset + 32 : null } });
+    if (request.command === 'companion_status') return result({ companions: fixture.companions });
+    if (request.command === 'game_get_state') return result({ games: fixture.games });
+    if (request.command === 'ports') return result({ ports: fixture.ports });
+    if (['connect', 'status', 'disconnect', 'config_read', 'events_state', 'action_describe', 'action_state'].includes(request.command) && fixture.states.has(request.gatewayId)) {
+      const state = fixture.states.get(request.gatewayId);
+      if (request.command === 'disconnect') state.connected = false;
+      if (request.command === 'connect') state.connected = true;
+      return result(state);
+    }
+    unexpected.push(request.command);
+    return { ok: false, error: `Unexpected fixture operation: ${request.command}` };
+  });
+  await page.addInitScript(() => { window.isTauri = true; window.__TAURI_INTERNALS__ = { invoke: (command, args) => window.__osgNativeInvoke(command, args) }; });
+  try {
+    await page.goto(endpoint);
+    const nav = page.getByRole('navigation', { name: 'Main navigation' });
+    await nav.getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
+    await expect(nav.getByRole('button', { name: 'Gateways', exact: true })).toHaveCount(0);
+    await expect(nav.getByRole('button', { name: 'Topology', exact: true })).toHaveCount(0);
+    const devices = page.getByRole('region', { name: 'System devices', exact: true });
+    const search = page.getByRole('textbox', { name: 'Search components', exact: true });
+    const filter = page.getByRole('combobox', { name: 'Filter components', exact: true });
+    const list = page.getByRole('button', { name: 'List', exact: true }), topology = page.getByRole('button', { name: 'Topology', exact: true });
+    const refresh = page.getByRole('button', { name: 'Refresh devices', exact: true });
+    await expect(devices.getByText('Dual transport panel', { exact: true })).toBeVisible();
+    const expectedNames = ['Hidden pedals', 'Remembered wheel', 'Remembered throttle', 'Dual transport panel', 'Unproven second panel',
+      'CAN output module', 'Standalone output module', 'External busy virtual joystick', 'Missing remembered virtual joystick',
+      'DCS World · dcs-bios', 'X-Plane 12 · x-plane', 'Browser companion', 'Known ESP32 companion', 'Assigned panel instance'];
+    for (const name of expectedNames) await expect(devices.getByText(name, { exact: true }).first()).toBeVisible();
+    await expect(devices.getByText('Gateway HID collection', { exact: true })).toHaveCount(0);
+    await expect(devices.getByText('Dual USB sighting', { exact: true })).toHaveCount(0);
+    await expect.poll(() => requests.filter(request => request.command === 'controller_list' && request.offset === 2).length).toBeGreaterThan(0);
+    assert.ok(requests.some(request => request.command === 'module_usb_list' && request.offset === 1));
+    assert.ok(requests.some(request => request.command === 'profile_resources_list' && request.offset === 1));
+    const listIds = (await devices.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId))).sort();
+    assert.ok(listIds.length >= 16, 'All required component categories and remembered records must appear.');
+    assert.equal(new Set(listIds).size, listIds.length, 'HID collections and verified USB/CAN sightings share one component.');
+    await devices.locator('[data-component-id="virtual:vjoy:3"]').click();
+    const details = page.getByRole('region', { name: 'Component details', exact: true });
+    await expect(details).toContainText('External busy virtual joystick');
+    await expect(details).toContainText('Creation provenance unknown');
+    await expect(details).toContainText('PID 9999');
+    await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await topology.click();
+    const graph = page.getByRole('region', { name: 'System topology', exact: true });
+    await expect(graph).toBeVisible();
+    const graphIds = await graph.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).filter(id => id !== 'host').sort());
+    assert.deepEqual(graphIds, listIds);
+    await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(details).toContainText('External busy virtual joystick');
+    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await expect(graph.getByRole('button', { name: 'Zoom in', exact: true })).toBeEnabled();
+    await graph.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    await graph.getByRole('button', { name: 'Fit all components', exact: true }).click();
+    await graph.getByRole('region', { name: /^Connection graph/ }).focus();
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('Home');
+    await search.fill('Dual transport panel');
+    await expect(graph.locator('[data-component-id="resource:verified-dual"]')).toBeVisible();
+    await expect(graph.locator('[data-component-id="gateway:stm32:00112233445566778899aabb"]')).toBeVisible();
+    await list.click(); await expect(search).toHaveValue('Dual transport panel');
+    await expect(devices.locator('[data-component-id]')).toHaveCount(1);
+    await search.fill(''); await filter.selectOption('hidden');
+    await expect(devices.locator('[data-component-id]')).toHaveCount(1);
+    await expect(devices).toContainText('Connected · Hidden');
+    await devices.locator('[data-component-id="controller:pedals"]').click();
+    await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await topology.click(); await expect(filter).toHaveValue('hidden');
+    await expect(graph.locator('[data-component-id="controller:pedals"]')).toHaveAttribute('aria-pressed', 'true');
+    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await list.click(); await filter.selectOption('all');
+    // Provider failure keeps prior records explicitly uncertain, independently
+    // of successful integration/USB/native inspection.
+    fixture.failControllers = true; await refresh.click();
+    await expect(devices).toContainText('Fixture controller provider unavailable');
+    await expect(devices.getByText('Remembered wheel', { exact: true })).toBeVisible();
+    await expect(devices.getByText('Standalone output module', { exact: true })).toBeVisible();
+    fixture.failControllers = false; await refresh.click();
+    await expect(devices).not.toContainText('Fixture controller provider unavailable');
+    // Gateway management and existing module configuration remain reachable
+    // through the shared details; returning retains selection and search.
+    await search.fill('OpenSimGear CAN gateway');
+    await devices.locator(`[data-component-id="gateway:${firstGateway}"]`).click();
+    await expect(details.getByRole('region', { name: 'Gateways', exact: true })).toBeVisible();
+    await expect(details).toContainText('CAN output module');
+    await details.getByRole('button', { name: /^Disconnect gateway/ }).click();
+    await expect.poll(() => requests.filter(request => request.command === 'disconnect' && request.gatewayId === firstGateway).length).toBe(1);
+    await expect(details.getByRole('button', { name: /^Connect gateway/ })).toBeVisible();
+    await details.getByRole('button', { name: /^Connect gateway/ }).click();
+    await expect(details.getByRole('button', { name: /^Disconnect gateway/ })).toBeVisible();
+    await details.locator('.gateway-device-link').filter({ hasText: 'Dual transport panel' }).click();
+    await expect(page.getByRole('heading', { name: 'Dual transport panel', exact: true, level: 1 })).toBeVisible();
+    await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+    await expect(search).toHaveValue('OpenSimGear CAN gateway');
+    await expect(devices.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveAttribute('aria-pressed', 'true');
+    await search.fill(''); await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    // The shared dialog explains metadata-only virtual cleanup. Unchanged
+    // remembered snapshots remain suppressed after reload; reconnect may return.
+    await devices.locator('[data-component-id="virtual:vjoy:4"]').click();
+    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: /^Forget / });
+    await expect(dialog).toContainText('OS device, vJoy layout, driver and bindings are retained');
+    await expect(dialog).toContainText('retained-virtual-binding');
+    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
+    await refresh.click(); await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
+    // Both renderer modes use the same bulk eligibility and revalidate after
+    // confirmation. A returning wheel cannot be removed; one failed throttle
+    // mutation is reported without replay, and the other records stay visible.
+    await filter.selectOption('offline'); await search.fill('Remembered'); await topology.click();
+    await page.getByRole('button', { name: 'Forget eligible (2)', exact: true }).click();
+    await expect(dialog).toContainText('Remembered wheel'); await expect(dialog).toContainText('Remembered throttle');
+    await expect(dialog).toContainText('retained-throttle-binding');
+    fixture.controllers.find(source => source.id === 'remembered-wheel').online = true;
+    fixture.failForget = 'remembered-throttle';
+    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await expect(page.getByText(/Remembered throttle: Error: Fixture removal failed once/)).toBeVisible();
+    assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-wheel').length, 0);
+    assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-throttle').length, 1);
+    fixture.failForget = null; fixture.keepForgotten = true;
+    await page.getByRole('button', { name: 'Forget eligible (1)', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await expect(graph.locator('[data-component-id="controller:remembered-throttle"]')).toHaveCount(0);
+    await filter.selectOption('all'); await search.fill(''); await list.click();
+    // Mode survives remount and page reload; no inspection acquired ownership.
+    await topology.click(); await page.reload(); await nav.getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
+    await expect(graph).toBeVisible(); await expect(search).toHaveValue('');
+    await expect(graph.locator('[data-component-id="controller:remembered-throttle"]')).toHaveCount(0);
+    await expect(graph.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
+    fixture.controllers.find(source => source.id === 'remembered-throttle').online = true;
+    fixture.native.virtualDevices.find(device => device.id === 'vjoy:4').available = true;
+    await refresh.click();
+    await expect(graph.locator('[data-component-id="controller:remembered-throttle"]')).toBeVisible();
+    await expect(graph.locator('[data-component-id="virtual:vjoy:4"]')).toBeVisible();
+    // Forgetting an unreachable gateway clears only its stale local routes.
+    // Independently verified USB attachment remains; remote flash is untouched.
+    fixture.ports = fixture.ports.filter(port => port.serialNumber !== serial);
+    fixture.states.get(firstGateway).connected = false;
+    await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toContainText('Offline', { timeout: 10_000 });
+    await graph.locator(`[data-component-id="gateway:${firstGateway}"]`).click();
+    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
+    await expect(dialog).toContainText('unavailable gateway cannot confirm');
+    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
+    await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
+    await expect(graph.locator('[data-component-id="resource:verified-dual"]')).toBeVisible();
+    await refresh.click();
+    await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
+    await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
+    const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_revoke|claim|register|apply|save|configure)$/;
+    assert.deepEqual(requests.filter(request => prohibited.test(request.command)), []);
+    assert.deepEqual(unexpected, []); assert.deepEqual(pageErrors, []);
+    await page.screenshot({ path: resolve(artifacts, 'complete-system-topology.png'), fullPage: true });
+    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ scope: 'Running dev Cockpit frontend with fixture IPC only', endpoint,
+      expectedNames, listIds, graphIds, commands: requests.map(request => request.command), unexpected, pageErrors }, null, 2) + '\n');
+  } catch (error) {
+    await page.screenshot({ path: resolve(artifacts, 'failure.png'), fullPage: true });
+    await writeFile(resolve(artifacts, 'failure.json'), JSON.stringify({ message: String(error), requests, unexpected, pageErrors }, null, 2) + '\n');
+    throw error;
+  } finally { await browser.close(); }
+});
