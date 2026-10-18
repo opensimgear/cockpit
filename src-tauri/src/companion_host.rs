@@ -46,6 +46,8 @@ pub struct Runtime {
     metadata_init: Mutex<()>,
     services: OnceLock<Result<Services, String>>,
     upload: Mutex<Option<Upload>>,
+    #[cfg(test)]
+    profile_wire_fixture: bool,
 }
 impl Runtime {
     pub fn new(path: Option<PathBuf>, provider: Arc<CompanionProvider>) -> Self {
@@ -60,6 +62,8 @@ impl Runtime {
             metadata_init: Mutex::new(()),
             services: OnceLock::new(),
             upload: Mutex::new(None),
+            #[cfg(test)]
+            profile_wire_fixture: false,
         }
     }
     pub fn start_detection(self: &Arc<Self>) {
@@ -182,6 +186,13 @@ impl Runtime {
     }
     /// Call only from the journaled acquisition phase.
     pub(crate) fn profile_acquire_transports(&self) -> Result<Hub, String> {
+        // Supplied-Hub fixtures already drive the real wire protocol and native
+        // provider. They must not additionally enter an OS credential service
+        // to create an unrelated TLS listener identity.
+        #[cfg(test)]
+        if self.profile_wire_fixture {
+            return self.profile_metadata();
+        }
         Ok(self.services()?.hub.clone())
     }
     pub(crate) fn profile_provider(&self) -> Arc<CompanionProvider> {
@@ -589,8 +600,9 @@ impl Runtime {
 impl Runtime {
     #[cfg(test)]
     pub(crate) fn with_profile_metadata(hub:Hub, provider:Arc<CompanionProvider>, directory:PathBuf)->Self {
-        let runtime=Self::new(None,provider);
+        let mut runtime=Self::new(None,provider);
         assert!(runtime.metadata.set(Metadata {hub,directory}).is_ok());
+        runtime.profile_wire_fixture = true;
         runtime
     }
 }
@@ -603,6 +615,31 @@ mod tests {
     }
     fn call(runtime: &Runtime, command: &str, payload: Value) -> Result<Value, String> {
         runtime.request(&json!({"command":command,"clientId":"operator-one","companion":payload}))
+    }
+    #[test]
+    fn supplied_wire_fixture_acquisition_preserves_its_hub_without_native_services() {
+        let directory = crate::test_directory();
+        let transport_directory = directory.path().join("uninitialized-transports");
+        let provider = Arc::new(CompanionProvider::new(Arc::new(|| 1)));
+        let hub = Hub::new("already-connected-wire-fixture".into(), provider.clone());
+        let runtime = Runtime::with_profile_metadata(
+            hub.clone(), provider.clone(), transport_directory.clone(),
+        );
+        for _ in 0..2 {
+            let acquired = runtime.profile_acquire_transports().unwrap();
+            assert_eq!(acquired.host_id(), hub.host_id());
+            assert!(Arc::ptr_eq(&runtime.profile_provider(), &provider));
+            assert!(runtime.services.get().is_none());
+            assert!(!transport_directory.exists());
+        }
+        runtime.shutdown();
+        assert!(runtime.profile_acquire_transports().is_err());
+        assert!(runtime.services.get().is_none());
+
+        // The ordinary constructor still requires the real services admission.
+        let ordinary = self::runtime();
+        assert!(ordinary.services.set(Err("native transport admission required".into())).is_ok());
+        assert_eq!(ordinary.profile_acquire_transports().err().unwrap(), "native transport admission required");
     }
     #[test]
     fn missing_profile_metadata_does_not_create_state_or_cache_a_failed_setup() {
