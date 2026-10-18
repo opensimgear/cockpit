@@ -312,6 +312,12 @@ jobs:
         run: |
           cargo build --locked --manifest-path crates/virtual-controller/Cargo.toml --bin osg-macos-hid-helper
           crates/virtual-controller/target/debug/osg-macos-hid-helper --inspect
+      - name: Isolated macOS native-test Keychain
+        # A credential created by this binary otherwise prompts when the separate
+        # instrumented coverage binary accesses it on a headless macOS runner.
+        # Provision only a random item in a disposable, isolated test Keychain.
+        if: runner.os == 'macOS'
+        run: python scripts/macos-native-test-keychain.py setup
       - name: Windows and macOS desktop compilation and regression tests
         if: runner.os != 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
@@ -348,6 +354,9 @@ jobs:
         run: |
           cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
           python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service --expect-unavailable --output .research/mapping-m3/native-acceptance.json
+      - name: Remove isolated macOS native-test Keychain
+        if: always() && runner.os == 'macOS'
+        run: python scripts/macos-native-test-keychain.py cleanup
       - name: Upload controller coverage
         if: always()
         uses: actions/upload-artifact@v4
