@@ -4,7 +4,8 @@
   import { notify as showNotification } from './lib/notifications';
   import Notification from './lib/Notification.svelte';
   import { onMount } from 'svelte';
-  import HostControllers from './lib/HostControllers.svelte';
+  import SystemDevices from './lib/SystemDevices.svelte';
+  import type { SystemSnapshot } from './lib/system-inventory';
   import ProfileRetiredRecovery from './lib/ProfileRetiredRecovery.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import HeaderStatus from './lib/HeaderStatus.svelte';
@@ -37,13 +38,11 @@
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
     { id: 'overview', label: 'Overview', icon: 'activity' },
-    { id: 'gateways', label: 'Gateways', icon: 'network' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'profiles', label: 'Profiles', icon: 'network' },
     { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
     { id: 'integrations', label: 'Integrations', icon: 'play' },
-    { id: 'topology', label: 'Topology', icon: 'network' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
   ];
   function showDialog(node: HTMLDialogElement) {
@@ -71,6 +70,7 @@
   const section = $derived(view === 'device' ? 'devices' : view);
   const sectionLabel = $derived(navigation.find(item => item.id === section)?.label ?? 'Settings');
   function navigate(section: View) {
+    if (section === 'topology' || section === 'gateways') section = 'devices';
     if (settingsVisit?.origin.view === 'profiles') {
       returnToSettingsOrigin();
       if (section === 'profiles') return;
@@ -123,6 +123,7 @@
     : profileState.status.owner || ['transitioning', 'recovery-needed', 'awaiting-game', 'running', 'degraded'].includes(profileState.status.state)
       ? 'The native profile session owns this runtime state. Stop or recover it in Profiles before making independent changes.' : '');
   let inventoryError = $state('');
+  let systemSnapshot = $state.raw<SystemSnapshot>();
   let drafts = $state<Record<string, Settings>>({});
   let runtimeDrafts = $state<Record<string, RuntimeConfig>>({});
   let selectedId = $state('');
@@ -256,7 +257,12 @@
     try { await workspace?.retry(gatewayId); }
     catch (error) { notify(error instanceof Error ? error.message : 'Gateway connection failed.'); }
   }
+  async function disconnectGateway(gatewayId: string) {
+    try { await workspace?.disconnect(gatewayId); }
+    catch (error) { notify(error instanceof Error ? error.message : 'Gateway disconnect failed.'); }
+  }
   function gatewayStatus(entry: GatewayEntry): string {
+    if (entry.autoConnectPaused) return 'Connection paused';
     if (entry.state?.reconnecting) return 'Reconnecting USB…';
     if (entry.busy) return 'Working…';
     if (!entry.state?.connected) return entry.present ? entry.error ? 'Unavailable' : 'Connecting' : 'Offline';
@@ -401,7 +407,7 @@
       <button class="nav-label cockpit-home" onclick={() => navigate('overview')}>COCKPIT</button>
       <nav aria-label="Main navigation">
         {#each navigation as item (item.id)}
-          <button title={item.label} class:current={view === item.id || (item.id === 'devices' && view === 'device')} onclick={() => navigate(item.id)}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{devices.length}</span>{/if}</button>
+          <button title={item.label} class:current={view === item.id || (item.id === 'devices' && view === 'device')} onclick={() => navigate(item.id)}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{systemSnapshot?.components.filter(c => c.type !== 'host').length ?? devices.length}</span>{/if}</button>
         {/each}
       </nav>
       <div class="sidebar-bottom">
@@ -414,6 +420,9 @@
     <div class="main-shell">
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
+        {#if view === 'devices' || view === 'device' || systemSnapshot}
+          <div hidden={view !== 'devices'}><SystemDevices active={view === 'devices'} {entries} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={() => navigate('companions')} openIntegration={openGameSettings} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
+        {/if}
         {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} active={view==='profiles'} /></div>{/if}
         {#if view === 'overview'}
           <ProfileRetiredRecovery active={view === 'overview'} /><OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openIntegrations={() => navigate('integrations')} openDevices={() => navigate('devices')} />
@@ -434,104 +443,8 @@
         {:else if view === 'integrations'}
           <div class="page-heading"><div><div class="eyebrow">GAME RESOURCES</div><h1>Integrations</h1><p>Provider resources and links to their game settings.</p></div></div>
           <section class="panel dcs-profile-panel"><IntegrationsPanel setups={games?.catalogue} {openGameSettings} /></section>
-        {:else if view === 'gateways'}
-          <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Gateways</h1><p>All your gateways stay connected and run independently.</p></div><span class="quiet-tag">{connectedGateways.length} connected</span></div>
-          {#if inventoryError}<Notification message={String(inventoryError)} kind="error" /><button class="text-button" onclick={rescan}>Retry discovery</button>{/if}
-          <section class="gateway-list" aria-label="Gateways">
-            {#each entries as entry (entry.id)}
-              {@const state = entry.state}
-              {@const canGateway = supportsDeviceContracts(state)}
-              {@const gatewayDevices = devices.filter(device => device.gatewayId === entry.id)}
-              {@const setupActive = !!state?.claimedModules?.length}
-              {@const automatic = automaticControllers(state)}
-              <section class="gateway-control" class:gateway-offline={!state?.connected} aria-label={`${nameForGateway(entry.port.backend)} ${entry.port.serialNumber}`}>
-                <div class="gateway-card-header">
-                  <span class="gateway-icon"><Icon name="network" size={23} /></span>
-                  <div class="gateway-copy">
-                    <strong>{nameForGateway(entry.port.backend)} <span class="quiet-tag"><span class="status-dot" class:offline={!state?.connected}></span>{gatewayStatus(entry)}</span></strong>
-                    <p>{entry.port.serialNumber} · {state?.port ?? entry.port.path}</p>
-                    {#if state?.connected}<p class="automation-status">{automatic ? 'Connected devices enable automatically. Disabled devices stay remembered.' : canGateway ? 'This older gateway uses manual controller registration.' : 'Connected devices report their inputs independently.'}</p>
-                    {:else}<p class="automation-status">{entry.present ? 'Opening this gateway’s connection.' : 'Waiting for this gateway to return. Remembered devices are retained.'}</p>{/if}
-                    {#if entry.error}<Notification message={String(entry.error)} kind="error" />{/if}
-                    {#if state?.hidNaming?.error}<Notification message={'Controller names could not be updated: ' + String(state.hidNaming.error)} kind="error" />{/if}
-                  </div>
-                  {#if !state?.connected || entry.error}<button class="secondary-button" aria-label={`Retry gateway ${entry.port.serialNumber}`} disabled={entry.busy || state?.reconnecting} onclick={() => retryGateway(entry.id)}>Retry gateway</button>{/if}
-                </div>
-                {#if automatic && state?.layoutError}<Notification message={'The gateway could not update its USB controllers (' + String(state.layoutError) + '). Review the device state before retrying a change.'} kind="error" />{/if}
-                {#if automatic && state?.admissionFailure}<Notification message={'Device ' + String(state.admissionFailure.identity) + ' could not be enabled (' + String(state.admissionFailure.error) + '). Limits: ' + String(state.maxModules) + ' discovered, ' + String(state.maxRemembered ?? state.maxModules) + ' remembered and ' + String(state.maxControllers ?? state.maxModules) + ' enabled devices. Remove an offline remembered device to free inventory capacity.'} kind="error" />{/if}
-                {#if state?.debug}<DebugDevices {state} busy={entry.busy} request={request => sendGateway(entry.id, request)} />{/if}
-                <div class="gateway-modules">
-                  <div class="gateway-modules-heading"><h3>Devices <span>{gatewayDevices.length}</span></h3>{#if canGateway && state}<span class="quiet-tag">{automatic ? `${state.modules.filter(module => module.enabled).length} enabled · ${state.modules.length} / ${state.maxRemembered ?? state.maxModules} remembered` : `${state.modules.filter(module => module.registered).length} / ${state.maxModules ?? 10} registrations`}</span>{/if}</div>
-                  <ul class="gateway-device-list">
-                    {#each gatewayDevices as device (device.key)}
-                      {@const module = state?.modules.find(item => item.id === device.id)}
-                      <li class:ghost={device.ghost} class:device-disabled={device.disabled}>
-                        <button class="gateway-device-link" onclick={() => selectDevice(device.key)}><span class="status-dot" class:offline={!device.online}></span><span><strong>{device.settings.label}</strong><small>{device.inputs} · {module?.directUsb ? 'Direct USB' : device.online ? 'Online' : 'Offline'}{#if automatic} · {controllerStatus(module)}{:else if canGateway} · {module?.registered ? module.pendingProfileMatch === false ? 'Profile changed' : module.activeSlot === module.pendingSlot ? 'Registered' : 'Pending apply' : (module?.activeSlot ?? -1) >= 0 ? 'Removal pending' : 'Discovered'}{/if}</small></span><Icon name="chevron" size={13} /></button>
-                        {#if automatic}
-                          {#if !module?.outputOnly}{#if module?.enabled}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'disable')} onclick={() => confirmController(device, 'disable')}>Disable</button>
-                          {:else}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'enable')} onclick={() => changeController(device, 'enable')}>Enable</button>{/if}{/if}
-                          {#if module?.enabled && module.profileMatch === false && device.online}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'update-profile')} onclick={() => confirmController(device, 'update-profile')}>Update profile</button>{/if}
-                          {#if !device.online}<button class="icon-button delete-device" aria-label={`Remove offline ${device.settings.label} from ${entry.port.serialNumber}`} title={`Remove offline ${device.settings.label}`} disabled={entry.busy || !canChangeController(state, module, 'forget')} onclick={() => confirmController(device, 'forget')}><Icon name="trash" size={15} /></button>{/if}
-                        {:else}
-                          {#if canGateway && (!module?.registered || module.pendingProfileMatch === false)}<button class="secondary-button" disabled={entry.busy || setupActive || !device.online || !!module?.directUsb || (!module?.registered && (state?.modules.filter(item => item.registered).length ?? 0) >= (state?.maxModules ?? 10))} onclick={() => registerDevice(device.key)}>{module?.registered ? 'Update profile' : 'Add controller'}</button>{/if}
-                          {#if canGateway && module?.registered}<button class="icon-button delete-device" aria-label={`Remove ${device.settings.label} registration from ${entry.port.serialNumber}`} title={`Remove ${device.settings.label} registration`} disabled={entry.busy || setupActive || !state?.connected} onclick={() => confirmRemove(device)}><Icon name="trash" size={15} /></button>{/if}
-                        {/if}
-                      </li>
-                    {:else}
-                      <li class="gateway-devices-empty">{state?.connected ? 'Connect a powered device. It will appear here automatically.' : 'Device inventory will appear when this gateway connects.'}</li>
-                    {/each}
-                  </ul>
-                </div>
-                {#if automatic && state?.layoutPending}<div class="reconnect-notice" role="status"><Icon name="usb" size={19} /><div><strong>Updating USB controllers…</strong><p>The gateway saves this change and reconnects automatically.</p></div></div>
-                {:else if state?.needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>Controller layout changes pending</strong><p>This older gateway requires layout Apply to reconnect its USB controllers.</p></div><button class="secondary-button" aria-label={`Apply layout on ${entry.port.serialNumber}`} disabled={entry.busy || setupActive || !state.connected} onclick={() => reconnectGateway(entry.id)}><Icon name="usb" size={15} />{canGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}
-              </section>
-            {:else}
-              <p class="gateway-discovery" role="status">Connect an OpenSimGear gateway to start. Every compatible gateway will appear here automatically.</p>
-            {/each}
-          </section>
         {:else if view === 'devices'}
-          <div class="page-heading"><div><div class="eyebrow">YOUR CONTROLLERS</div><h1>Devices</h1><p>Select a device to configure it and test its inputs.</p></div><button class="secondary-button scan-button" onclick={rescan}><Icon name="refresh" size={16} />Rescan devices</button></div>
-                <div class="inventory-toolbar"><label class="search-field"><Icon name="search" size={16} /><input aria-label="Search devices" placeholder="Find a device…" bind:value={search} /></label><select aria-label="Filter devices" bind:value={filter}><option value="all">All devices</option><option value="online">Connected</option></select></div>
-                <div class="device-grid">
-                  {#each filtered as device (device.key)}
-                    <button class="device-card" class:offline={!device.online} onclick={() => selectDevice(device.key)}>
-                      <div class="card-top"><span class="connection-badge"><span class="status-dot" class:offline={!device.online}></span>{device.disablePending ? 'Disable pending' : device.disabled ? 'Disabled' : device.ghost ? 'Offline · retained' : device.online ? 'Connected' : 'Offline'}</span><Icon name="arrow" size={15} /></div>
-                      <div class="card-illustration"><DeviceIllustration kind={device.kind} compact /></div>
-                      <div class="card-copy"><h3>{device.settings.label}</h3><p>{device.inputs}</p><div class="card-route"><Icon name={device.online ? 'network' : 'usb'} size={12} />{device.route}{#if !settingsEqual(drafts[device.key], device.settings)}<span class="draft-dot" title="Unsaved changes"></span>{/if}</div></div>
-                    </button>
-                  {:else}<div class="empty-state"><Icon name="search" size={26} /><strong>{devices.length ? 'No matching devices' : 'No devices yet'}</strong><p>{devices.length ? 'Try another name or show all devices.' : 'Plug in your gateway to discover devices automatically.'}</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; }}>Clear filters</button></div>{/each}
-                </div>
-          <HostControllers />
-        {:else if view === 'topology'}
-          <div class="page-heading"><div><div class="eyebrow">YOUR HARDWARE, WORKING TOGETHER</div><h1>Topology</h1><p>All gateways connect to your computer, each with its own device chain.</p></div></div>
-          <section class="panel rig-map" aria-label="Computer and gateways">
-            <div class="map-host"><Icon name="monitor" size={28} /><strong>Your computer</strong><small>HID host · {connectedGateways.length} {connectedGateways.length === 1 ? 'gateway' : 'gateways'} connected</small></div>
-            <HostControllers topology />
-            {#if entries.length}
-              <ul class="gateway-branches" aria-label="Gateways connected to this computer">
-                {#each entries as entry (entry.id)}
-                  {@const gatewayDevices = devices.filter(device => device.gatewayId === entry.id)}
-                  <li class="gateway-branch" class:branch-offline={!entry.state?.connected}>
-                    <section class="gateway-chain" aria-labelledby={`topology-${entry.id} topology-serial-${entry.id}`}>
-                      <div class="map-gateway">
-                        <span class="gateway-icon"><Icon name="network" size={23} /></span>
-                        <div class="map-gateway-label"><h2 id={`topology-${entry.id}`}>{nameForGateway(entry.port.backend)}</h2><small id={`topology-serial-${entry.id}`}>{entry.port.serialNumber}</small></div>
-                        <span class="connection-badge"><span class="status-dot" class:offline={!entry.state?.connected}></span>{entry.state?.connected ? 'Connected' : 'Offline'}</span>
-                      </div>
-                      {#if gatewayDevices.length}
-                        <div class="can-spine"><span>{entry.port.backend === 'stm32' ? 'CAN FD chain' : 'Controller chain'}</span></div>
-                        <ul class="map-nodes" aria-label={`Devices on ${entry.port.serialNumber}`}>
-                          {#each gatewayDevices as device (device.key)}
-                            <li><button class:active={selectedId === device.key} class:offline={!device.online} aria-label={`${device.settings.label} · ${device.online ? 'Connected' : 'Offline'} · gateway ${entry.port.serialNumber}`} onclick={() => selectDevice(device.key)}><div class="node-art"><DeviceIllustration kind={device.kind} compact /></div><strong>{device.settings.label}</strong><small>{device.id}</small><span class="connection-badge"><span class="status-dot" class:offline={!device.online}></span>{device.online ? 'Connected' : 'Offline'}</span></button></li>
-                          {/each}
-                        </ul>
-                      {:else}<p class="map-empty">{entry.state?.connected ? 'No devices connected yet.' : 'Device inventory will return when this gateway connects.'}</p>{/if}
-                    </section>
-                  </li>
-                {/each}
-              </ul>
-            {:else}<p class="map-empty">Connect a gateway to see its device chain.</p>{/if}
-          </section>
+          <!-- Shared inventory stays mounted during configuration. -->
         {:else if view === 'device' && selected}
           <button class="text-button device-back" onclick={() => { view = 'devices'; }}><Icon name="arrow" size={14} />Back to devices</button>
           <div class="page-heading"><div><div class="eyebrow">DEVICE WORKSPACE</div><h1>{selected.settings.label}</h1><p>Configuration, live controller inputs and manual device actions.</p></div></div>
@@ -611,4 +524,61 @@
     <p class="field-help">Live device inputs are read-only. Offline, disabled and changed-profile controllers remain neutral.</p>
     {#if physicalGateway}<div class="device-details">{#each hidModule?.hats ?? [] as hat, i (i)}<p>Hat {i + 1}: {hat === 8 ? 'Neutral' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][hat]}</p>{/each}</div>{/if}
   </div>
+{/snippet}
+
+{#snippet gatewayDetails(gatewayId: string)}
+          <section class="gateway-list" aria-label="Gateways">
+            {#each entries.filter(entry => entry.id === gatewayId) as entry (entry.id)}
+              {@const state = entry.state}
+              {@const canGateway = supportsDeviceContracts(state)}
+              {@const gatewayDevices = devices.filter(device => device.gatewayId === entry.id)}
+              {@const setupActive = !!state?.claimedModules?.length}
+              {@const automatic = automaticControllers(state)}
+              <section class="gateway-control" class:gateway-offline={!state?.connected} aria-label={`${nameForGateway(entry.port.backend)} ${entry.port.serialNumber}`}>
+                <div class="gateway-card-header">
+                  <span class="gateway-icon"><Icon name="network" size={23} /></span>
+                  <div class="gateway-copy">
+                    <strong>{nameForGateway(entry.port.backend)} <span class="quiet-tag"><span class="status-dot" class:offline={!state?.connected}></span>{gatewayStatus(entry)}</span></strong>
+                    <p>{entry.port.serialNumber} · {state?.port ?? entry.port.path}</p>
+                    {#if state?.connected}<p class="automation-status">{automatic ? 'Connected devices enable automatically. Disabled devices stay remembered.' : canGateway ? 'This older gateway uses manual controller registration.' : 'Connected devices report their inputs independently.'}</p>
+                    {:else}<p class="automation-status">{entry.autoConnectPaused ? 'Connection paused. Choose Connect gateway to resume.' : entry.present ? 'Opening this gateway’s connection.' : 'Waiting for this gateway to return. Remembered devices are retained.'}</p>{/if}
+                    {#if entry.error}<Notification message={String(entry.error)} kind="error" />{/if}
+                    {#if state?.hidNaming?.error}<Notification message={'Controller names could not be updated: ' + String(state.hidNaming.error)} kind="error" />{/if}
+                  </div>
+                  {#if state?.connected}<button class="secondary-button" aria-label={`Disconnect gateway ${entry.port.serialNumber}`} disabled={entry.busy || state?.reconnecting || setupActive} onclick={() => disconnectGateway(entry.id)}>Disconnect gateway</button>
+                  {:else}<button class="secondary-button" aria-label={`${entry.autoConnectPaused ? 'Connect' : 'Retry'} gateway ${entry.port.serialNumber}`} disabled={entry.busy || state?.reconnecting} onclick={() => retryGateway(entry.id)}>{entry.autoConnectPaused ? 'Connect gateway' : 'Retry gateway'}</button>{/if}
+                </div>
+                {#if automatic && state?.layoutError}<Notification message={'The gateway could not update its USB controllers (' + String(state.layoutError) + '). Review the device state before retrying a change.'} kind="error" />{/if}
+                {#if automatic && state?.admissionFailure}<Notification message={'Device ' + String(state.admissionFailure.identity) + ' could not be enabled (' + String(state.admissionFailure.error) + '). Limits: ' + String(state.maxModules) + ' discovered, ' + String(state.maxRemembered ?? state.maxModules) + ' remembered and ' + String(state.maxControllers ?? state.maxModules) + ' enabled devices. Remove an offline remembered device to free inventory capacity.'} kind="error" />{/if}
+                {#if state?.debug}<DebugDevices {state} busy={entry.busy} request={request => sendGateway(entry.id, request)} />{/if}
+                <div class="gateway-modules">
+                  <div class="gateway-modules-heading"><h3>Devices <span>{gatewayDevices.length}</span></h3>{#if canGateway && state}<span class="quiet-tag">{automatic ? `${state.modules.filter(module => module.enabled).length} enabled · ${state.modules.length} / ${state.maxRemembered ?? state.maxModules} remembered` : `${state.modules.filter(module => module.registered).length} / ${state.maxModules ?? 10} registrations`}</span>{/if}</div>
+                  <ul class="gateway-device-list">
+                    {#each gatewayDevices as device (device.key)}
+                      {@const module = state?.modules.find(item => item.id === device.id)}
+                      <li class:ghost={device.ghost} class:device-disabled={device.disabled}>
+                        <button class="gateway-device-link" onclick={() => selectDevice(device.key)}><span class="status-dot" class:offline={!device.online}></span><span><strong>{device.settings.label}</strong><small>{device.inputs} · {module?.directUsb ? 'Direct USB' : device.online ? 'Online' : 'Offline'}{#if automatic} · {controllerStatus(module)}{:else if canGateway} · {module?.registered ? module.pendingProfileMatch === false ? 'Profile changed' : module.activeSlot === module.pendingSlot ? 'Registered' : 'Pending apply' : (module?.activeSlot ?? -1) >= 0 ? 'Removal pending' : 'Discovered'}{/if}</small></span><Icon name="chevron" size={13} /></button>
+                        {#if automatic}
+                          {#if !module?.outputOnly}{#if module?.enabled}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'disable')} onclick={() => confirmController(device, 'disable')}>Disable</button>
+                          {:else}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'enable')} onclick={() => changeController(device, 'enable')}>Enable</button>{/if}{/if}
+                          {#if module?.enabled && module.profileMatch === false && device.online}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'update-profile')} onclick={() => confirmController(device, 'update-profile')}>Update profile</button>{/if}
+                          {#if !device.online}<button class="icon-button delete-device" aria-label={`Remove offline ${device.settings.label} from ${entry.port.serialNumber}`} title={`Remove offline ${device.settings.label}`} disabled={entry.busy || !canChangeController(state, module, 'forget')} onclick={() => confirmController(device, 'forget')}><Icon name="trash" size={15} /></button>{/if}
+                        {:else}
+                          {#if canGateway && (!module?.registered || module.pendingProfileMatch === false)}<button class="secondary-button" disabled={entry.busy || setupActive || !device.online || !!module?.directUsb || (!module?.registered && (state?.modules.filter(item => item.registered).length ?? 0) >= (state?.maxModules ?? 10))} onclick={() => registerDevice(device.key)}>{module?.registered ? 'Update profile' : 'Add controller'}</button>{/if}
+                          {#if canGateway && module?.registered}<button class="icon-button delete-device" aria-label={`Remove ${device.settings.label} registration from ${entry.port.serialNumber}`} title={`Remove ${device.settings.label} registration`} disabled={entry.busy || setupActive || !state?.connected} onclick={() => confirmRemove(device)}><Icon name="trash" size={15} /></button>{/if}
+                        {/if}
+                      </li>
+                    {:else}
+                      <li class="gateway-devices-empty">{state?.connected ? 'Connect a powered device. It will appear here automatically.' : 'Device inventory will appear when this gateway connects.'}</li>
+                    {/each}
+                  </ul>
+                </div>
+                {#if automatic && state?.layoutPending}<div class="reconnect-notice" role="status"><Icon name="usb" size={19} /><div><strong>Updating USB controllers…</strong><p>The gateway saves this change and reconnects automatically.</p></div></div>
+                {:else if state?.needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>Controller layout changes pending</strong><p>This older gateway requires layout Apply to reconnect its USB controllers.</p></div><button class="secondary-button" aria-label={`Apply layout on ${entry.port.serialNumber}`} disabled={entry.busy || setupActive || !state.connected} onclick={() => reconnectGateway(entry.id)}><Icon name="usb" size={15} />{canGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}
+              </section>
+            {:else}
+              <p class="gateway-discovery" role="status">Connect an OpenSimGear gateway to start. Every compatible gateway will appear here automatically.</p>
+            {/each}
+          </section>
+
 {/snippet}

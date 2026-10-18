@@ -46,6 +46,7 @@ function fixture() {
     const next = plain(f.states.get(request.gatewayId));
     assert.ok(next, `Unknown scope ${request.gatewayId}`);
     if (request.command === 'connect') { next.connected = true; next.port = request.port; }
+    if (request.command === 'disconnect') { next.connected = false; next.running = false; }
     if (request.command === 'claim') next.claimedModules = [request.moduleId];
     if (request.command === 'release') next.claimedModules = [];
     if (request.command === 'start') next.running = true;
@@ -57,6 +58,15 @@ function fixture() {
   f.entry = id => f.workspace.entries.find(entry => entry.id === id);
   return f;
 }
+
+test('explicit disconnect suspends automatic reconnect for only that gateway until explicit connect', async () => {
+  const f=fixture(); await f.workspace.refresh();
+  await f.workspace.disconnect(first);
+  assert.equal(f.entry(first).autoConnectPaused,true); assert.equal(f.entry(first).state.connected,false);
+  f.calls.length=0; await f.workspace.refresh();
+  assert.equal(f.calls.some(c=>c.gatewayId===first),false); assert.ok(f.calls.some(c=>c.gatewayId===second));
+  await f.workspace.retry(first); assert.equal(f.entry(first).autoConnectPaused,false); assert.equal(f.entry(first).state.connected,true);
+});
 
 test('background test readbacks remain gateway-ordered without blocking the setup UI with busy state', async () => {
   const f = fixture(); await f.workspace.refresh();

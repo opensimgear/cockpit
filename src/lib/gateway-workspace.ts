@@ -10,6 +10,7 @@ export type GatewayEntry = {
   error: string;
   busy: boolean;
   present: boolean;
+  autoConnectPaused?: boolean;
 };
 type Entry = GatewayEntry & {
   operation: Promise<void> | null;
@@ -51,6 +52,7 @@ export class GatewayWorkspace {
     return [...this.gateways.values()].sort((a, b) => a.id.localeCompare(b.id)).map(entry => ({
       id: entry.id, port: { ...entry.port }, state: entry.state ? { ...entry.state } : null,
       error: entry.error, busy: entry.busy, present: entry.present,
+      autoConnectPaused: entry.autoConnectPaused,
     }));
   }
 
@@ -154,6 +156,7 @@ export class GatewayWorkspace {
   }
 
   private async poll(entry: Entry): Promise<void> {
+    if (entry.autoConnectPaused) return;
     if (!entry.state?.connected) {
       if (!entry.present || this.now() < entry.retryAt) return;
       entry.busy = true; this.changed();
@@ -187,8 +190,18 @@ export class GatewayWorkspace {
   async retry(gatewayId: string): Promise<void> {
     const entry = this.gateways.get(gatewayId);
     if (!entry) return;
+    entry.autoConnectPaused = false;
     entry.retryAt = 0; entry.failures = 0; entry.autoStartFailed = false;
     await this.schedule(entry, () => this.poll(entry), true);
+  }
+
+  async disconnect(gatewayId: string): Promise<void> {
+    const entry = this.gateways.get(gatewayId);
+    if (!entry) throw new GatewayError('This gateway is no longer available.');
+    await this.schedule(entry, async () => {
+      await this.send(entry, { command: 'disconnect' });
+      entry.autoConnectPaused = true;
+    }, true);
   }
 
   dispose() { this.disposed = true; }

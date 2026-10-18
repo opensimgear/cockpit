@@ -6,7 +6,7 @@
   import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { controllerRoles, controlLabel, inputLabel, type ControllerResult, type HostController } from './controllers';
-  let { topology = false }: { topology?: boolean } = $props();
+  let { topology = false, initialSourceId = '', detailsOnly = false }: { topology?: boolean; initialSourceId?: string; detailsOnly?: boolean } = $props();
   let inventory = $state<ControllerResult>({ sources: [], offset: 0, total: 0, limit: 32 });
   let detail = $state<ControllerResult | null>(null);
   let selected = $state('');
@@ -58,6 +58,7 @@
     void refresh();
   }
   onMount(() => {
+    selected = initialSourceId;
     void refresh();
     const timer = setInterval(() => { void refresh(); }, 250);
     return () => { disposed = true; clearInterval(timer); };
@@ -65,6 +66,7 @@
 </script>
 
 <section class="host-controllers" aria-label="Host controllers">
+  {#if !detailsOnly}
   <div class="panel-heading"><div><h2>{topology ? 'USB controllers connected to this computer' : 'Host controllers'}</h2><p>Physical controller input · {inventory.backendStatus ?? 'Connecting'}</p></div><span class="quiet-tag">Experimental</span></div>
   {#if !topology}<OptionalDependencies />{/if}
   {#if inventory.diagnostic}<Notification message={String(inventory.diagnostic)} kind="error" />{/if}
@@ -81,6 +83,7 @@
     {:else}<p>{inventory.backendStatus === 'ready' ? 'Connect a joystick, gamepad, wheel or other HID controller.' : 'Capture requires a supported native platform service.'}</p>{/each}
   </div>
   {#if inventory.total > inventory.limit}<div class="paging"><button class="secondary-button" disabled={page === 0} onclick={() => { page = Math.max(0, page - 32); void refresh(); }}>Previous controllers</button><span>{page + 1}–{Math.min(page + 32, inventory.total)} / {inventory.total}</span><button class="secondary-button" disabled={page + 32 >= inventory.total} onclick={() => { page += 32; void refresh(); }}>Next controllers</button></div>{/if}
+  {/if}
   {#if detail?.source}
     {@const source = detail.source}
     <section class="panel host-detail" aria-label="Selected host controller">
@@ -108,7 +111,7 @@
       </div>
       {#if detail.total > detail.limit}<div class="paging"><button class="secondary-button" disabled={controlPage === 0} onclick={() => { controlPage = Math.max(0, controlPage - 32); void refresh(); }}>Previous controls</button><span>{controlPage + 1}–{Math.min(controlPage + 32, detail.total)} / {detail.total}</span><button class="secondary-button" disabled={controlPage + 32 >= detail.total} onclick={() => { controlPage += 32; void refresh(); }}>Next controls</button></div>{/if}
       <details><summary>Identity and capabilities</summary><dl><dt>Local source ID</dt><dd>{source.id}</dd><dt>Identity evidence</dt><dd>{source.identityConfidence === 'serial' ? 'Serial and collection; duplicate matches require reassignment' : 'Local path; a port change requires reassignment'}</dd><dt>Observed path</dt><dd>{detail.identity?.path}</dd><dt>Collection</dt><dd>{detail.identity?.collection}</dd><dt>Capability fingerprint</dt><dd>{detail.identity?.fingerprint}</dd></dl></details>
-      {#if !source.online}<button class="secondary-button" disabled={busy} onclick={() => mutate({ command: 'controller_forget', sourceId: source.id })}>Forget offline controller</button>{/if}
+      {#if !source.online && !detailsOnly}<button class="secondary-button" disabled={busy} onclick={() => mutate({ command: 'controller_forget', sourceId: source.id })}>Forget offline controller</button>{/if}
     </section>
   {/if}
 </section>
