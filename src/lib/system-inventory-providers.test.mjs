@@ -32,7 +32,7 @@ function harness(options = {}) {
     if (['controller_forget', 'forget', 'companion_revoke'].includes(input.command)) return {};
     throw Error('Unexpected provider mutation: ' + input.command);
   };
-  const controller = new SystemInventoryController({ request, gateways: () => state.gateways, storage: options.storage, onChange: snapshot => changes.push(snapshot) });
+  const controller = new SystemInventoryController({ request, gateways: () => state.gateways, gatewayError: () => state.gatewayError ?? '', storage: options.storage, onChange: snapshot => changes.push(snapshot) });
   return { controller, state, requests, failures, custom, changes, component: id => controller.snapshot.components.find(component => component.id === id) };
 }
 
@@ -207,6 +207,11 @@ test('gateway cleanup review includes child binding references without deleting 
 test('malformed duplicate provider identities cannot prevent unrelated native inventory from publishing', async () => {
  const h=harness({controllers:[source('same'),source('same')],native:{virtualDevices:[{id:'vjoy:1',name:'Virtual',available:true,status:'free',createdByCockpit:null,diagnostics:[]}],hiddenDevices:[],diagnostics:[]}});
  await h.controller.refresh();assert.ok(h.component('virtual:vjoy:1'));assert.equal(h.component('controller:same'),undefined);assert.match(h.controller.snapshot.diagnostics.join(' '),/duplicate identities/);
+});
+
+test('failed gateway discovery cannot turn remembered gateways and modules into confirmed offline records', async () => {
+ const h=harness({gateways:[gateway()]});await h.controller.refresh();h.state.gateways=[];h.state.gatewayError='Serial discovery unavailable';await h.controller.refresh();
+ assert.equal(h.component('gateway:gateway-one').presence,'unknown');assert.equal(h.component('module:gateway-one/panel').forget.allowed,false);assert.match(h.controller.snapshot.diagnostics.join(' '),/Serial discovery unavailable/);
 });
 
 test('current inventory includes every category, current transport, diagnostics and unsupported integration without any profile requirement', async () => {

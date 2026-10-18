@@ -92,6 +92,7 @@ export class SystemInventoryController {
   readonly registry: SystemInventoryRegistry;
   private send: Send;
   private gateways: () => readonly GatewayEntry[];
+  private gatewayError: () => string;
   private pending: Promise<SystemSnapshot> | null = null;
   private epoch = 0;
   private disposed = false;
@@ -99,8 +100,9 @@ export class SystemInventoryController {
   private resources: ResourceSummary[] = [];
   private associations: NonNullable<NativeSystemInventory['controllerAssociations']> = [];
   private onChange: (snapshot: SystemSnapshot) => void;
-  constructor(options: { request: Send; gateways: () => readonly GatewayEntry[]; storage?: InventoryStorage; onChange?: (snapshot: SystemSnapshot) => void }) {
+  constructor(options: { request: Send; gateways: () => readonly GatewayEntry[]; gatewayError?: () => string; storage?: InventoryStorage; onChange?: (snapshot: SystemSnapshot) => void }) {
     this.send = options.request; this.gateways = options.gateways; this.registry = new SystemInventoryRegistry(options.storage); this.onChange = options.onChange ?? (() => {});
+    this.gatewayError = options.gatewayError ?? (() => '');
   }
   get snapshot() { return this.registry.snapshot; }
   refresh(): Promise<SystemSnapshot> {
@@ -111,7 +113,8 @@ export class SystemInventoryController {
     this.pending = pending; return pending;
   }
   private async collect(epoch: number): Promise<SystemSnapshot> {
-    const now = Date.now(), diagnostics: string[] = [], complete: string[] = ['host', 'gateways'];
+    const discoveryError = this.gatewayError();
+    const now = Date.now(), diagnostics: string[] = discoveryError ? [`Gateway discovery: ${discoveryError}`] : [], complete: string[] = discoveryError ? ['host'] : ['host', 'gateways'];
     const providers = [this.controllers(now), this.usb(now), this.companions(now), this.integrations(now), this.native(now)];
     const results = await Promise.allSettled(providers);
     if (this.disposed || epoch !== this.epoch) return this.snapshot;

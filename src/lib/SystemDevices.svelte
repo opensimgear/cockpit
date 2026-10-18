@@ -10,8 +10,9 @@
   import type { GameId } from './games';
   import { SystemInventoryController, integrationGameId } from './system-inventory-providers';
   import { filterSystem, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
-  let { active, entries, openModule, openCompanions, openIntegration, gatewayDetails, oninventory }: {
+  let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
+    gatewayError?: string;
     openCompanions: () => void; openIntegration: (gameId: GameId) => void;
     gatewayDetails: Snippet<[string]>; oninventory: (snapshot: SystemSnapshot) => void;
   } = $props();
@@ -58,7 +59,7 @@
     let storage: InventoryStorage;
     try { storage = localStorage; mode = storage.getItem('osg-devices-mode') === 'topology' ? 'topology' : 'list'; }
     catch { storage = { getItem: () => { throw Error('Local inventory storage unavailable.'); }, setItem: () => { throw Error('Local inventory storage unavailable.'); } }; }
-    controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, storage, onChange: next => { snapshot = next; oninventory(next); } });
+    controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage, onChange: next => { snapshot = next; oninventory(next); } });
     snapshot = controller.snapshot;
     void refresh();
     const timer = setInterval(() => { if (active && !document.hidden) void refresh(); }, 3000);
