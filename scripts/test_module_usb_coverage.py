@@ -5,6 +5,7 @@ import io
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -89,6 +90,27 @@ class InvocationEvidenceTests(unittest.TestCase):
         self.assertEqual(failure.exception.returncode, 7)
         self.assertIn("actual native failure details", errors.getvalue())
         self.assertIn("actual native failure details", (output / "tests.log").read_text())
+
+    def test_hung_filter_is_killed_and_retains_partial_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            profiles = output / "profiles"
+            profiles.mkdir()
+            script = output / "hung.py"
+            script.write_text(
+                "import time\nprint('test blocked_launch ...', flush=True)\ntime.sleep(60)\n",
+                encoding="utf-8")
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                with self.assertRaisesRegex(RuntimeError, "hung.py.*timed out"):
+                    coverage.run_test_filters(sys.executable, [str(script)], output,
+                                              dict(os.environ), profiles, output,
+                                              timeout_seconds=1)
+            log = (output / "tests.log").read_text()
+            self.assertIn(str(script), log)
+            self.assertIn("test blocked_launch ...", log)
+            self.assertIn("timed out after 1s", log)
+            self.assertIn("test blocked_launch ...", errors.getvalue())
 
 
 if __name__ == "__main__":

@@ -248,7 +248,11 @@ fn a_newer_setup_observation_preserves_its_preparation_when_an_old_refresh_compl
                 if observer.is_none() && game["integrationSetup"]["state"] == "setup-required" {
                     *observer = Some(current);
                     drop(observer);
-                    self.captured.send(()).map_err(|error| error.to_string())?;
+                    // A failed assertion can leave this notification unread.
+                    // Never block observer shutdown on a full fixture channel.
+                    self.captured
+                        .try_send(())
+                        .map_err(|error| error.to_string())?;
                     self.release_old
                         .lock()
                         .unwrap()
@@ -260,7 +264,9 @@ fn a_newer_setup_observation_preserves_its_preparation_when_an_old_refresh_compl
                     // setup-required snapshot attempted publication. Hold this
                     // newer scan before publication so the assertion observes
                     // exactly that late completion, independent of scheduling.
-                    self.published.send(()).map_err(|error| error.to_string())?;
+                    self.published
+                        .try_send(())
+                        .map_err(|error| error.to_string())?;
                     self.release_next
                         .lock()
                         .unwrap()

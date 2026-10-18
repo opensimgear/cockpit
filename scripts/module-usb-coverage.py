@@ -65,7 +65,7 @@ def run(args, root, env=None):
     return result.stdout
 
 
-def run_test_filters(binary, filters, root, env, profiles, output):
+def run_test_filters(binary, filters, root, env, profiles, output, timeout_seconds=300):
     evidence = []
     invocations = []
     logs = []
@@ -76,9 +76,23 @@ def run_test_filters(binary, filters, root, env, profiles, output):
         directory = profiles / f"test-{index:03d}"
         directory.mkdir()
         test_env = dict(env, LLVM_PROFILE_FILE=str(directory / "test-%m-%p.profraw"))
-        tests = subprocess.run([binary, test_filter, "--test-threads=1"],
-                               cwd=root, env=test_env, text=True, encoding="utf-8",
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        logs.append(f"\n=== {test_filter} ===\n")
+        (output / "tests.log").write_text("\n".join(logs), encoding="utf-8")
+        print(f"Running native coverage filter: {test_filter}", flush=True)
+        try:
+            tests = subprocess.run([binary, test_filter, "--test-threads=1"],
+                                   cwd=root, env=test_env, text=True, encoding="utf-8",
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            partial = error.stdout or ""
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", errors="replace")
+            message = f"Native coverage filter {test_filter!r} timed out after {timeout_seconds:g}s."
+            logs.extend([partial, message])
+            (output / "tests.log").write_text("\n".join(logs), encoding="utf-8")
+            print(partial, file=sys.stderr, end="")
+            raise RuntimeError(message) from error
         logs.append(tests.stdout)
         (output / "tests.log").write_text("\n".join(logs), encoding="utf-8")
         if tests.returncode:
@@ -153,6 +167,7 @@ def main():
                CARGO_TARGET_DIR=os.environ.get("CARGO_TARGET_DIR", str(output / "target")),
                RUSTFLAGS="-C instrument-coverage",
                LLVM_PROFILE_FILE=str(profiles / "build-%m-%p.profraw"))
+    print("Building instrumented native coverage tests", flush=True)
     artifacts = run(["cargo", "test", "--locked", "--lib", "--no-run", "--message-format=json",
                      "--manifest-path", root / "src-tauri/Cargo.toml"], root, env)
     binaries = []
