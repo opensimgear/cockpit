@@ -23,6 +23,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm transport:test
+      - name: Unified Devices inventory and actual USB component handlers
+        run: pnpm system-inventory:test
+      - name: Inventory, provider and topology coverage at least 71 percent per module
+        run: pnpm system-inventory:coverage
       - run: pnpm browser:test
       - run: pnpm browser-feedback:coverage
       - run: pnpm controllers:coverage
