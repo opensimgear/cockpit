@@ -4,7 +4,11 @@
   import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import type { HostController } from './controllers';
-  import type { VisibilityIntent, VisibilityStatus } from './visibility';
+  import type { HidHideSelfAccess, VisibilityIntent, VisibilityStatus } from './visibility';
+  const startupAccessLabels: Record<HidHideSelfAccess['status'], string> = {
+    configured: 'Configured automatically', unchanged: 'Already configured', absent: 'Not installed',
+    unsupported: 'Unsupported installation', blocked: 'Blocked', error: 'Setup error', 'not-requested': 'Not requested',
+  };
   let { source }: { source: HostController } = $props();
   let status = $state<VisibilityStatus | null>(null);
   let mode = $state<VisibilityIntent['mode']>('visible');
@@ -45,6 +49,16 @@
   <p>These are local visibility preferences and inspection tools. Saving a selection does not hide a device. Author and apply device hiding in Profiles.</p>
   {#if error}<Notification message={String(error)} kind="error" />{/if}
   {#if status}
+    {#if status.selfAccess}
+      <div class="startup-access" class:attention={['unsupported', 'blocked', 'error'].includes(status.selfAccess.status)} role="status" aria-label="Startup HidHide access" data-self-access-status={status.selfAccess.status}>
+        <p><strong>Startup HidHide access: {startupAccessLabels[status.selfAccess.status] ?? 'Not confirmed'}</strong></p>
+        <p>{status.selfAccess.message}</p>
+        {#if status.selfAccess.ready}<p>Access was verified at startup.</p>{/if}
+        {#if status.selfAccess.changed === null}<p>Startup access may have changed; its final state could not be verified.</p>{/if}
+        {#if status.selfAccess.executable}<p class="hint">Capture executable: <code>{status.selfAccess.executable}</code></p>{/if}
+        <p class="hint">Startup result only; later HidHide changes can affect capture. Hidden-device rules are separate from Cockpit access.</p>
+      </div>
+    {/if}
     <p class="notice">{status.reason}</p>
     {#if status.settingsError}<Notification message={'Saved settings need attention: ' + String(status.settingsError)} kind="error" />{/if}
     <label class="check"><input type="checkbox" checked={status.enabled} disabled={busy || status.job?.active} onchange={event => action({ command: 'controller_visibility_enable', enabled: event.currentTarget.checked })} />Enable optional visibility controls on this computer</label>
@@ -83,5 +97,9 @@
   .check { flex-direction: row; align-items: center; }
   select, input:not([type=checkbox]) { padding: 9px; color: inherit; background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
   .hint { font-size: 12px; opacity: .7; }
+  .startup-access { margin: 16px 0; padding: 12px 16px; background: var(--subtle); border: 1px solid var(--line); border-radius: 6px; }
+  .startup-access.attention { border-left: 3px solid var(--muted); }
+  .startup-access p { margin: 6px 0; }
+  .startup-access code { overflow-wrap: anywhere; }
   li { overflow-wrap: anywhere; }
 </style>

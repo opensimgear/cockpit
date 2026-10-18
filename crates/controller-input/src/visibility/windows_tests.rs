@@ -56,6 +56,24 @@ fn native_transport_rejects_writes_and_malformed_requests_before_io() {
     assert!(kernel.call(2049, None).is_err());
     assert!(kernel.call(2048, None).is_err()); // A regular file cannot answer HidHide IOCTLs.
 }
+#[test]
+fn self_access_transport_cannot_write_other_properties_or_bypass_dependency_verification() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("missing.sys");
+    assert_eq!(verify_artifact(&path).unwrap_err().status().status, "absent");
+    std::fs::write(&path, b"unsupported driver").unwrap();
+    assert_eq!(verify_artifact(&path).unwrap_err().status().status, "unsupported");
+    assert_eq!(ArtifactError::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied)).status().status, "error");
+    let mut transport = SelfAccessIo {
+        kernel: Kernel(open(path.to_str().unwrap(), 0).unwrap()),
+        image: r"\Device\Volume1\Cockpit.exe".into(),
+    };
+    for function in [2051, 2053, 2055] {
+        assert!(transport.call(function, Some(&[0, 0])).unwrap_err().contains("own application"));
+    }
+    assert!(transport.call(2049, Some(&[0, 0])).is_err()); // A file cannot impersonate the driver.
+    assert!(transport.call(2048, None).is_err());
+}
 
 #[test]
 fn running_executable_selection_is_bounded_and_read_only() {

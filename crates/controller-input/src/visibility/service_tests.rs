@@ -58,11 +58,41 @@ fn native_development_readiness_keeps_explicit_visibility_settings_inert() {
     assert_eq!(status["visibility"]["enabled"], false);
     assert_eq!(status["visibility"]["selectedCount"], 0);
     assert_eq!(status["visibility"]["global"]["inspected"], false);
+    assert_eq!(status["visibility"]["selfAccess"]["status"], "not-requested");
     assert!(!service.active());
     assert!(temp.path().read_dir().unwrap().next().is_none());
     if super::super::capabilities::DEVELOPMENT_NATIVE_PROFILES {
         assert!(status["visibility"]["reason"].as_str().unwrap().starts_with("Development acceptance mode:"));
     }
+}
+#[test]
+fn startup_self_access_guard_preserves_pending_standalone_game_and_invalid_journals() {
+    use super::super::policy::{tests::{capture, selected}, Plan, Policy};
+    let (registry, _) = inventory();
+    let temp = tempfile::tempdir().unwrap();
+    let mut service = Service::new(Some(temp.path().into()), registry);
+    service.startup_self_access(); // cfg(test) ordinary startup must remain inert.
+    assert_eq!(service.self_access_status().status, "not-requested");
+    assert!(service.self_access_guard().is_ok());
+    let plan = Plan::build(state(), selected(Policy::HideAll), capture()).unwrap();
+    let path = service.path.as_ref().unwrap();
+    let mut store = journal::Store::open(path.clone()).unwrap();
+    let mut record = store.begin(plan.clone()).unwrap();
+    assert!(service.self_access_guard().unwrap_err().contains("pending visibility recovery"));
+    record.clean = true;
+    store.write(&record).unwrap();
+    drop(store);
+    assert!(service.self_access_guard().is_ok());
+    let game = temp.path().join(format!("game-visibility-{}.json", uuid::Uuid::new_v4()));
+    let mut store = journal::Store::open(game.clone()).unwrap();
+    store.begin(plan).unwrap();
+    assert!(service.self_access_guard().unwrap_err().contains("owner"));
+    drop(store);
+    std::fs::write(&game, b"invalid").unwrap();
+    assert!(service.self_access_guard().is_err());
+    std::fs::remove_file(&game).unwrap();
+    std::fs::write(path, b"invalid").unwrap();
+    assert!(service.self_access_guard().is_err());
 }
 #[test]
 fn default_status_and_saved_intent_are_inert_without_optional_dependencies() {

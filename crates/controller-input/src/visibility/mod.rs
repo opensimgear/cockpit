@@ -4,6 +4,7 @@ pub mod runtime;
 pub mod service;
 pub mod session;
 pub mod settings;
+pub mod self_access;
 #[cfg(windows)]
 pub mod windows;
 pub mod wire;

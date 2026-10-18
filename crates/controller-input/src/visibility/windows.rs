@@ -48,36 +48,93 @@ fn open(path: &str, access: u32) -> Result<Handle, String> {
     }
     Ok(Handle(handle))
 }
-fn artifact(path: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(path).map_err(|_| {
-        "Install the supported HidHide release and complete its restart requirements."
+enum ArtifactError {
+    Absent,
+    Unsupported(&'static str),
+    Io(std::io::Error),
+}
+impl ArtifactError {
+    fn status(self) -> super::self_access::Status {
+        match self {
+            Self::Absent => super::self_access::Status::new("absent", "HidHide is not installed; no self-access setup is needed."),
+            Self::Unsupported(message) => super::self_access::Status::new("unsupported", message),
+            Self::Io(error) => super::self_access::Status::new("error", format!("Cannot inspect the installed HidHide driver: {error}")),
+        }
+    }
+}
+fn verify_artifact(path: &Path) -> Result<(), ArtifactError> {
+    let file = std::fs::File::open(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound { ArtifactError::Absent } else { ArtifactError::Io(error) }
     })?;
-    if file.metadata().map_err(|e| e.to_string())?.len() > 4_194_304 {
-        return Err("Unsupported HidHide artifact size.".into());
+    if file.metadata().map_err(ArtifactError::Io)?.len() > 4_194_304 {
+        return Err(ArtifactError::Unsupported("Unsupported HidHide artifact size."));
     }
     let mut data = vec![];
     file.take(4_194_305)
         .read_to_end(&mut data)
-        .map_err(|e| e.to_string())?;
+        .map_err(ArtifactError::Io)?;
     if format!("{:x}", Sha256::digest(data)) != HASH {
-        return Err(
-            "Installed HidHide driver does not match the pinned 1.5.230 release artifact.".into(),
-        );
+        return Err(ArtifactError::Unsupported("Installed HidHide driver does not match the pinned 1.5.230 release artifact."));
     }
     Ok(())
 }
-pub fn installed() -> Result<Driver<Kernel>, String> {
+fn artifact(path: &Path) -> Result<(), String> {
+    verify_artifact(path).map_err(|error| error.status().message)
+}
+fn driver_path() -> Result<std::path::PathBuf, String> {
     let mut path = [0u16; 4096];
     let len = unsafe { GetSystemDirectoryW(path.as_mut_ptr(), path.len() as u32) };
     if len == 0 || len as usize >= path.len() {
         return Err("Windows system directory is unavailable.".into());
     }
-    let path = std::path::PathBuf::from(
+    Ok(std::path::PathBuf::from(
         String::from_utf16(&path[..len as usize]).map_err(|_| "Invalid system directory.")?,
     )
-    .join("drivers/HidHide.sys");
-    artifact(&path)?;
+    .join("drivers/HidHide.sys"))
+}
+pub fn installed() -> Result<Driver<Kernel>, String> {
+    artifact(&driver_path()?)?;
     Ok(Driver(Kernel(open(r"\\.\HidHide", GENERIC_READ)?)))
+}
+
+struct ReadIo<'a>(&'a mut Kernel);
+impl Io for ReadIo<'_> {
+    fn call(&mut self, function: u32, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+        self.0.call(function, input)
+    }
+}
+struct SelfAccessIo {
+    kernel: Kernel,
+    image: String,
+}
+impl Io for SelfAccessIo {
+    fn call(&mut self, function: u32, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+        if input.is_none() { return self.kernel.call(function, None); }
+        if function != 2049 { return Err("Automatic HidHide access may only change its own application entry.".into()); }
+        use super::journal::Backend;
+        let before = Driver(ReadIo(&mut self.kernel)).read()?;
+        super::self_access::validate_write(&before, &self.image, function, input)?;
+        super::wire::exchange(function, input, |function, input, output| self.kernel.raw(function, input, output))
+    }
+}
+/// The sole ungated capability is this process's exact self-access delta. It
+/// cannot accept an executable or policy from IPC, or mutate hidden devices.
+pub(super) fn startup_self_access(guard: impl FnOnce() -> Result<(), String>) -> super::self_access::Status {
+    use super::self_access::Status;
+    let path = match driver_path() { Ok(path) => path, Err(error) => return Status::new("error", error) };
+    if let Err(error) = verify_artifact(&path) { return error.status(); }
+    let image = match std::env::current_exe().map_err(|error| error.to_string()).and_then(|path| {
+        executable(path.to_str().ok_or("The current executable path is not valid text.")?)
+    }) { Ok(image) => image, Err(error) => return Status::new("error", error) };
+    let kernel = match open(r"\\.\HidHide", GENERIC_READ) {
+        Ok(handle) => Kernel(handle),
+        Err(error) => {
+            let mut status = Status::new("error", format!("Cannot open HidHide for Cockpit self-access: {error}. Close its configuration client or restore its current owner before restarting Cockpit."));
+            status.executable = Some(image);
+            return status;
+        }
+    };
+    super::self_access::reconcile(&mut Driver(SelfAccessIo { kernel, image: image.clone() }), image, guard)
 }
 impl Io for Kernel {
     fn call(&mut self, function: u32, input: Option<&[u8]>) -> Result<Vec<u8>, String> {

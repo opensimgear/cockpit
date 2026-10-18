@@ -12,6 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 pub struct Service {
+    self_access: super::self_access::Status,
     game_owner: Mutex<Option<game::Owner>>,
     launch: Mutex<super::launch::Worker>,
     suppression: super::suppression::Control,
@@ -43,6 +44,7 @@ impl Service {
     pub fn new(path: Option<PathBuf>, registry: Arc<Mutex<Registry>>) -> Self {
         let settings = Settings::new(path.as_ref().map(|p| p.join("controller-visibility.json")));
         Self {
+            self_access: Default::default(),
             game_owner: Mutex::new(None),
             launch: Mutex::new(super::launch::Worker::default()),
             suppression: Default::default(),
@@ -61,6 +63,24 @@ impl Service {
     pub fn with_suppression(mut self, control: super::suppression::Control) -> Self {
         self.suppression = control;
         self
+    }
+    pub(crate) fn self_access_status(&self) -> &super::self_access::Status {
+        &self.self_access
+    }
+    /// Called once before native capture starts, never by an inspection request.
+    pub(crate) fn startup_self_access(&mut self) {
+        #[cfg(all(windows, not(test)))]
+        { self.self_access = super::windows::startup_self_access(|| self.self_access_guard()); }
+    }
+    fn self_access_guard(&self) -> Result<(), String> {
+        let pending = self.pending_games()?;
+        if !pending.is_empty() || self.active() {
+            return Err("HidHide self-access is blocked by an active or pending visibility owner; restore its session before restarting Cockpit.".into());
+        }
+        if self.path.as_ref().map(|path| journal::inspect(path)).transpose()?.flatten().is_some_and(|record| !record.clean) {
+            return Err("HidHide self-access is blocked by pending visibility recovery; restore it before restarting Cockpit.".into());
+        }
+        Ok(())
     }
     pub fn active(&self) -> bool {
         self.game_owner
@@ -124,7 +144,7 @@ impl Service {
             match &*snapshot { Ok(Some(state)) => Some(json!({"hidden":state.active && super::policy::contains(&state.hidden,instance),"configured":super::policy::contains(&state.hidden,instance),"inverse":state.inverse,"scope":"last-inspected"})), _ => None }
         });
         json!({"offset":0,"total":0,"limit":32,"visibility":{
-            "platform":format!("{:?}",self.platform).to_lowercase(),"modes":super::capabilities::modes(self.platform),"enabled":settings.value.enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
+            "selfAccess":self.self_access,"platform":format!("{:?}",self.platform).to_lowercase(),"modes":super::capabilities::modes(self.platform),"enabled":settings.value.enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
             "selected":settings.value.devices.iter().filter(|(_,p)|!matches!(p,Intent::Visible)).map(|(id,_)|id).take(16).collect::<Vec<_>>(),
             "settingsError":settings.error,"global":global,"job":if self.platform==super::capabilities::Platform::Windows{json!(self.worker.lock().unwrap_or_else(|p|p.into_inner()).snapshot())}else{self.suppression.snapshot()},"recovery":recovery,"launch":self.launch.lock().unwrap_or_else(|p|p.into_inner()).snapshot(),
             "reason":if super::capabilities::DEVELOPMENT_NATIVE_PROFILES{super::capabilities::DEVELOPMENT_REASON}else if self.qualified{"Apply affects every instance of the selected executable path. Existing applications may need a qualified device-handle refresh."}else{super::capabilities::reason(self.platform)}

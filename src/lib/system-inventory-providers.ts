@@ -152,7 +152,7 @@ export class SystemInventoryController {
       source.hidden = source.hidden === true || h.hidden === true ? true : h.hidden;
       source.diagnostics.push(...h.diagnostics); source.evidence.push(...h.evidence); source.targets.push(...h.targets.filter(t => t.kind === 'visibility'));
       if (h.connections.length) source.connections = h.connections.map(c => link(source.id, c.from, c.transport, c.current, c.endpoint));
-      if (h.presence !== 'unknown') source.presence = h.presence;
+      if (h.presence !== 'unknown') { source.presence = h.presence; source.stale = false; }
       if (h.hidden || h.presence === 'connected') source.forget.allowed = false;
       consumed.add(h.id);
       }
@@ -193,20 +193,25 @@ export class SystemInventoryController {
   }
   private async controllers(now: number): Promise<Capture> {
     const sources: HostController[] = []; let offset = 0, session: string | undefined, total: number | undefined, backend = 'ready', diagnostic = '';
+    const accessDiagnostics = new Set<string>();
     do {
       const page = (await this.send({ command: 'controller_list', offset, limit: 32 })).controllers;
       if (!page?.sources || page.sources.length > 32 || offset + page.sources.length > page.total || page.offset !== offset || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > 4096 || (offset < page.total && !page.sources.length) || (session !== undefined && page.session !== session) || (total !== undefined && total !== page.total)) throw Error('Controller inventory changed or returned an incomplete page.');
       session = page.session; total = page.total; sources.push(...page.sources); offset += page.sources.length;
       if (page.backendStatus && page.backendStatus !== 'ready') backend = page.backendStatus;
       if (page.diagnostic) diagnostic = page.diagnostic;
+      if (page.selfAccess && ['unsupported', 'blocked', 'error'].includes(page.selfAccess.status)) {
+        accessDiagnostics.add(`Startup HidHide access (${page.selfAccess.status}): ${page.selfAccess.message}${page.selfAccess.changed === null ? ' Its final state could not be verified.' : ''}`);
+      }
     } while (offset < total!);
     const healthy = backend === 'ready';
-    return { provider: 'controllers', complete: healthy, diagnostics: diagnostic || !healthy ? [`Controller capture ${backend}${diagnostic ? `: ${diagnostic}` : ''}`] : [], observations: sources.map(s => {
-      const id = `controller:${s.id}`;
-      return observation(id, s.name, s.osgHid ? 'osg' : 'controller', 'controllers', now, { role: s.role, presence: healthy ? s.online ? 'connected' : 'offline' : 'unknown', stale: !healthy, capture: healthy && s.online ? s.baselineReady ? 'ready' : 'waiting' : 'unavailable',
-        status: `${s.controlCount} controls`, evidence: [`controller:${s.id}`, `identity:${s.identityConfidence}`], targets: [target('controller', s.id)],
+    const accessUncertain = accessDiagnostics.size > 0;
+    return { provider: 'controllers', complete: healthy && !accessUncertain, diagnostics: [...(diagnostic || !healthy ? [`Controller capture ${backend}${diagnostic ? `: ${diagnostic}` : ''}`] : []), ...accessDiagnostics], observations: sources.map(s => {
+      const id = `controller:${s.id}`, uncertain = !healthy || (!s.online && accessUncertain);
+      return observation(id, s.name, s.osgHid ? 'osg' : 'controller', 'controllers', now, { role: s.role, presence: uncertain ? 'unknown' : s.online ? 'connected' : 'offline', stale: uncertain, capture: healthy && s.online ? s.baselineReady ? 'ready' : 'waiting' : 'unavailable',
+        status: `${s.controlCount} controls`, diagnostics: [...accessDiagnostics], evidence: [`controller:${s.id}`, `identity:${s.identityConfidence}`], targets: [target('controller', s.id)],
         connections: [link(id, 'host', 'unknown', healthy && s.online)],
-        forget: { allowed: healthy && !s.online, reason: healthy ? 'Disconnect this controller before forgetting it.' : 'Current capture availability cannot confirm this device is offline.', effect: localEffect } });
+        forget: { allowed: !uncertain && !s.online, reason: uncertain ? 'Current capture availability cannot confirm this device is offline.' : 'Disconnect this controller before forgetting it.', effect: localEffect } });
     }) };
   }
   private async usb(now: number): Promise<Capture> {

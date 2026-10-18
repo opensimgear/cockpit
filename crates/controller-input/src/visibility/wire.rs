@@ -45,7 +45,7 @@ pub(crate) fn exchange(
     }
     Ok(output)
 }
-fn list(data: &[u8]) -> Result<Vec<String>, String> {
+pub(super) fn list(data: &[u8]) -> Result<Vec<String>, String> {
     if data.len() < 2 || data.len() > LIMIT || data.len() % 2 != 0 {
         return Err("Invalid HidHide multi-string length.".into());
     }

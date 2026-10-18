@@ -9,6 +9,22 @@ test('actual retained handlers preserve exact source-scoped native preferences, 
  const native=status('windows'),h=harness(native);for(const request of[{command:'controller_visibility_save',intent:{mode:'hide-from-process',executable:'C:\\Games\\Other.exe'}},{command:'controller_visibility_enable',enabled:false},{command:'controller_visibility_inspect'},{command:'controller_visibility_processes',offset:0},{command:'controller_visibility_restore',jobId:'native-job',sessionId:'native-recovery-session'}])await h.handlers.action(request);
  assert.deepEqual(h.requests.map(v=>v.command),['controller_visibility_save','controller_visibility_enable','controller_visibility_inspect','controller_visibility_processes','controller_visibility_restore']);assert.ok(h.requests.every(v=>v.sourceId===physical.id&&!('launch'in v)&&!('sourceIds'in v)));assert.equal(h.requests[0].intent.executable,'C:\\Games\\Other.exe');assert.equal(h.requests[4].sessionId,'native-recovery-session');assert.equal(h.handlers.status,native);
 });
+test('startup HidHide access reports every native outcome without changing hidden rules or issuing a setup request',()=>{
+ const labels={configured:'Configured automatically',unchanged:'Already configured',absent:'Not installed',unsupported:'Unsupported installation',blocked:'Blocked',error:'Setup error','not-requested':'Not requested'};
+ for(const [outcome,label] of Object.entries(labels)){
+  const native=status('windows');native.selfAccess={status:outcome,ready:['configured','unchanged'].includes(outcome),changed:outcome==='configured',executable:'\\Device\\Volume\\Cockpit.exe',message:'Exact startup result: '+outcome};
+  const h=harness(native),container=h.html.match(/<div[^>]*data-self-access-status="[^"]+"[^>]*>/)?.[0];
+  assert.ok(container,outcome);assert.ok(container.includes('aria-label="Startup HidHide access"'));
+  assert.equal(/\battention\b/.test(container),['unsupported','blocked','error'].includes(outcome),outcome);
+  assert.ok(h.html.includes('Startup HidHide access: '+label),outcome);assert.ok(h.html.includes(native.selfAccess.message));
+  assert.ok(h.html.includes(native.selfAccess.executable));assert.equal(h.html.includes('Access was verified at startup.'),native.selfAccess.ready);
+  assert.ok(h.html.includes('later HidHide changes can affect capture'));assert.ok(h.html.includes('has an active global HidHide rule'));
+  assert.deepEqual(h.requests,[],'Rendering startup evidence is passive.');
+ }
+ const native=status('windows');native.selfAccess={status:'error',ready:false,changed:null,message:'Write acknowledgement was lost.'};
+ const ambiguous=harness(native);assert.ok(ambiguous.html.includes('Startup access may have changed; its final state could not be verified.'));assert.ok(!ambiguous.html.includes('Access was verified at startup.'));assert.deepEqual(ambiguous.requests,[]);
+ assert.ok(!harness(status('windows')).html.includes('Startup HidHide access:'),'Older services without this result remain usable.');
+});
 test('an already active isolated child retains only native cleanup and a lost restoration reply is surfaced once without replay',async()=>{
  const native=status('linux');native.qualified=false;native.launch={job:{jobId:'exact-retained-child',active:true,phase:'running',message:'An existing owned child is running.'}};const h=harness(native,{send:async()=>{throw Error('Restoration reply unavailable.');}});assert.ok(h.html.includes('Previous isolated application'));assert.ok(h.html.includes(native.launch.job.message));assert.match(h.html,/<button[^>]*>Stop retained isolated application<\/button>/);assert.ok(!h.html.includes('Application directory'));await h.handlers.action({command:'controller_visibility_restore',jobId:native.launch.job.jobId});assert.deepEqual(h.requests,[{command:'controller_visibility_restore',jobId:'exact-retained-child',sourceId:physical.id}]);assert.match(h.handlers.error,/Restoration reply unavailable/);assert.equal(h.handlers.status.launch.job.active,true);
  const types=await readFile(new URL('./visibility.ts',import.meta.url),'utf8'),gateway=await readFile(new URL('./gateway.ts',import.meta.url),'utf8');assert.ok(!types.includes('controller_visibility_apply'));assert.ok(!types.includes('controller_visibility_launch'));assert.ok(!types.includes('IsolatedLaunch'));assert.ok(!gateway.includes('launch?:'));

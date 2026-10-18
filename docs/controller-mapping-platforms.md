@@ -29,8 +29,15 @@ enable output or hiding after setup. See the [installer catalog and licenses](..
 
 The recorded HidHide package is 1.5.230.0
 with its 1.4.181.0 driver; these version numbers refer to different artifacts.
-Keep any existing device selections and application exceptions. Cockpit's saved
-visibility intent does not edit that policy while qualification is disabled.
+At ordinary Windows capture startup, Cockpit grants its exact running executable
+access through the supported installed driver: normal mode adds that application,
+inverse mode removes it. Hidden-device selections, global flags and unrelated
+application entries remain unchanged. Repeated startup is a no-op once permitted.
+No profile, installer or elevation is required for this access setup. Pending
+visibility recovery blocks a required change; busy or unsupported drivers are
+reported in **Startup HidHide access** in controller details. Inventory refreshes
+and read-only qualification probes never configure access. Cockpit's saved
+device-hiding intent remains gated while qualification is disabled.
 The normal/inverse policy is global; incompatible per-device requests are
 rejected. Executable selection refers to every instance at that path, not one
 PID. The recorded normal-mode test blocked DirectInput enumeration/direct HID

@@ -124,6 +124,59 @@ test('an unavailable or stopped controller backend cannot turn remembered presen
  }
 });
 
+test('startup HidHide attention remains diagnostic without replacing current capture or connected-hidden evidence', async () => {
+ const sources=[source('wheel'),source('pedals',{online:false})];
+ const h=harness({controllers:sources,usb:[usb()],native:{virtualDevices:[],hiddenDevices:[{id:'pedals',name:'Hidden pedals',instanceId:'HID\\PEDALS',controllerIds:['pedals'],present:true,hidden:true,diagnostics:[]}],diagnostics:[]}});
+ const outcomes=['configured','unchanged','absent','not-requested','unsupported','blocked','error'];
+ for(const outcome of outcomes){
+  h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:sources.length,sources,backendStatus:'ready',selfAccess:{status:outcome,ready:['configured','unchanged'].includes(outcome),changed:outcome==='error'?null:outcome==='configured',message:'Startup evidence '+outcome}}}));
+  await h.controller.refresh();
+  const diagnostics=h.controller.snapshot.diagnostics.join(' '),wheel=h.component('controller:wheel'),pedals=h.component('controller:pedals');
+  const attention=['unsupported','blocked','error'].includes(outcome);
+  assert.equal(diagnostics.includes('Startup HidHide access'),attention,outcome);
+  assert.equal(wheel.diagnostics.some(d=>d.startsWith('Startup HidHide access')),attention,outcome);
+  assert.equal(wheel.presence,'connected');assert.equal(wheel.capture,'ready');assert.equal(wheel.stale,false);
+  assert.equal(pedals.presence,'connected');assert.equal(pedals.hidden,true);assert.equal(pedals.forget.allowed,false);
+  assert.equal(h.component('usb:serial').presence,'connected');
+  if(outcome==='error')assert.match(diagnostics,/final state could not be verified/);
+ }
+ assert.ok(h.requests.every(request=>!request.command.startsWith('controller_visibility_')),'Inventory only reads the retained startup result.');
+});
+
+test('startup access diagnostics include later controller pages and are deduplicated', async () => {
+ const sources=Array.from({length:65},(_,index)=>source('page-'+index)),h=harness({controllers:sources});
+ h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:sources.length,sources:sources.slice(request.offset,request.offset+32),backendStatus:'ready',selfAccess:request.offset?{status:'blocked',ready:false,changed:false,message:'Driver control is busy.'}:undefined}}));
+ await h.controller.refresh();
+ assert.equal(h.requests.filter(request=>request.command==='controller_list').length,3);
+ assert.equal(h.controller.snapshot.components.filter(component=>component.type==='controller').length,65);
+ assert.deepEqual(plain(h.controller.snapshot.diagnostics),['Startup HidHide access (blocked): Driver control is busy.']);
+ assert.equal(h.component('controller:page-64').diagnostics.filter(d=>d.startsWith('Startup HidHide access')).length,1);
+});
+
+test('unverified startup access cannot prove an uncaptured controller offline while live capture and PnP remain authoritative', async () => {
+ const initial=[source('live'),source('masked'),source('pnp-present',{online:false}),source('pnp-absent',{online:false})];
+ const h=harness({controllers:initial,usb:[usb()],native:{virtualDevices:[],diagnostics:[],hiddenDevices:[
+  {id:'present',name:'Hidden present device',instanceId:'HID\\PRESENT',controllerIds:['pnp-present'],present:true,hidden:true,diagnostics:[]},
+  {id:'absent',name:'Confirmed absent device',instanceId:'HID\\ABSENT',controllerIds:['pnp-absent'],present:false,hidden:false,diagnostics:[]},
+ ]}});
+ await h.controller.refresh();const lastConnected=h.component('controller:masked').lastSeen;
+ let reported=initial.map(s=>s.id==='masked'?{...s,online:false}:s),outcome='blocked';
+ h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:reported.length,sources:reported,backendStatus:'ready',selfAccess:{status:outcome,ready:false,changed:outcome==='error'?null:false,message:'Startup access was not verified.'}}}));
+ for(outcome of ['blocked','error','unsupported']){
+  await h.controller.refresh();const masked=h.component('controller:masked'),live=h.component('controller:live'),present=h.component('controller:pnp-present'),absent=h.component('controller:pnp-absent');
+  assert.equal(masked.presence,'unknown',outcome);assert.equal(masked.capture,'unavailable');assert.equal(masked.stale,true);assert.equal(masked.forget.allowed,false);assert.equal(masked.lastSeen,lastConnected);
+  assert.equal(live.presence,'connected');assert.equal(live.capture,'ready');assert.equal(live.stale,false);
+  assert.equal(present.presence,'connected');assert.equal(present.hidden,true);assert.equal(present.stale,false);assert.equal(present.forget.allowed,false);
+  assert.equal(absent.presence,'offline');assert.equal(absent.stale,false);
+  assert.equal(h.component('usb:serial').presence,'connected');
+ }
+ await assert.rejects(h.controller.forget('controller:masked'),/cannot confirm.*offline/);
+ assert.equal(h.requests.some(request=>request.command==='controller_forget'),false);
+ reported=reported.filter(s=>s.id!=='masked');await h.controller.refresh();assert.equal(h.component('controller:masked').presence,'unknown','Incomplete capture cannot confirm absence when the record is omitted.');
+ reported=[...reported,source('masked')];await h.controller.refresh();
+ assert.equal(h.component('controller:masked').presence,'connected','Current capture overrides a historical startup warning.');assert.equal(h.component('controller:masked').capture,'ready');assert.equal(h.component('controller:masked').stale,false);
+});
+
 test('dual transport input ownership and configuration writer are independent observed facts', async () => {
  const h=harness({gateways:[gateway({state:{...gateway().state,modules:[module('panel',{directUsb:true})]}})],usb:[usb('serial',{...usb(),snapshot:{...usb().snapshot,claimedBy:'USB setup writer'}})],resources:[resource('proven',[connection('standalone-usb','serial'),connection('gateway:gateway-one','panel')])]});
  await h.controller.refresh();const component=h.component('resource:proven');assert.equal(component.inputOwner,'Device USB');assert.equal(component.configurationOwner,'USB setup writer');assert.equal(component.configurationRoute,'USB · COM7');assert.equal(component.connections.length,2);

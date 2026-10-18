@@ -78,6 +78,13 @@ impl ControllerService {
         let suppression = visibility::suppression::Control::default();
         let enabled = native
             && (cfg!(windows) || (probe && cfg!(any(target_os = "linux", target_os = "macos"))));
+        let mut visibility = visibility::service::Service::new(
+            path.as_ref().and_then(|path| path.parent()).map(|path| path.to_path_buf()),
+            registry.clone(),
+        ).with_suppression(suppression.clone());
+        if native && !probe && !cfg!(test) {
+            visibility.startup_self_access();
+        }
         let worker = if enabled {
             let shared = registry.clone();
             let stopped = stop.clone();
@@ -118,13 +125,6 @@ impl ControllerService {
                     "Native controller capture is not qualified on this platform yet. The read-only qualification probe is available separately; ordinary capture stays disabled.".into();
             }
         }
-        let visibility = visibility::service::Service::new(
-            path.as_ref()
-                .and_then(|p| p.parent())
-                .map(|p| p.to_path_buf()),
-            registry.clone(),
-        )
-        .with_suppression(suppression);
         Self {
             registry,
             stop,
@@ -199,7 +199,7 @@ impl ControllerService {
                 .filter(|v| *v <= 256)
                 .ok_or("Invalid controller page.")? as usize,
         };
-        let result = {
+        let mut result = {
             let mut r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
             match command {
                 "controller_list" => r.list(offset),
@@ -223,6 +223,7 @@ impl ControllerService {
                 _ => return Err("Unknown controller command.".into()),
             }
         };
+        result["selfAccess"] = serde_json::json!(self.visibility.self_access_status());
         if let Err(error) = self.save() {
             self.registry
                 .lock()
@@ -270,10 +271,12 @@ impl ControllerService {
         let _ = self.save();
     }
     pub fn status(&self) -> Value {
-        self.registry
+        let mut result = self.registry
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .list(0)
+            .list(0);
+        result["selfAccess"] = serde_json::json!(self.visibility.self_access_status());
+        result
     }
 }
 impl Drop for ControllerService {

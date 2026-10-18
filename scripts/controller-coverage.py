@@ -57,7 +57,7 @@ def main():
         sources.append(root / 'crates/controller-input/src/linux.rs')
     if sys.platform == 'darwin':
         sources.append(root / 'crates/controller-input/src/macos.rs')
-    sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['capabilities', 'suppression', 'policy', 'journal', 'wire', 'settings', 'session', 'runtime', 'service', 'game', 'handoff'])
+    sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['capabilities', 'suppression', 'policy', 'journal', 'wire', 'settings', 'self_access', 'session', 'runtime', 'service', 'game', 'handoff'])
     sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['launch', 'launch_plan'])
     if sys.platform.startswith('linux'):
         sources.append(root / 'crates/controller-input/src/visibility/launch_linux.rs')

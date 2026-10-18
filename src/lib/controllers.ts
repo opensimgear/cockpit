@@ -1,4 +1,4 @@
-import type { VisibilityCommand, VisibilityStatus } from './visibility';
+import type { HidHideSelfAccess, VisibilityCommand, VisibilityStatus } from './visibility';
 export type ControllerCommand = VisibilityCommand | 'controller_list' | 'controller_inspect' | 'controller_update' | 'controller_forget' | 'controller_reassign';
 export type HostController = {
   id: string; name: string; role: string; origin: 'host-controller'; backend: string;
@@ -13,6 +13,7 @@ export type ControllerControl = {
 };
 export type ControllerResult = {
   visibility?: VisibilityStatus;
+  selfAccess?: HidHideSelfAccess;
   session?: string; backendStatus?: string; diagnostic?: string; sources?: HostController[];
   source?: HostController; identity?: { path: string; collection: string; serial: string | null; fingerprint: string };
   diagnostics?: string[]; controls?: ControllerControl[]; offset: number; total: number; limit: number;

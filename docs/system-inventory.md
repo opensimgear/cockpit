@@ -12,6 +12,14 @@ Inventory updates run automatically in the background; there is no manual refres
 button. Selecting a tile or topology node opens its details in place of the
 inventory. Back to Devices restores the previous view, filters and selection.
 
+On Windows, ordinary native capture startup automatically configures the supported
+installed HidHide driver to allow the current Cockpit executable to see hidden
+devices. This changes only its own application entry and preserves hidden-device
+rules, other applications and global flags. Startup results appear in controller
+visibility details. Inventory rendering and background refresh remain read-only;
+hidden-but-present devices retain their global Hidden status after access succeeds.
+See the [startup access verification](verification/2026-10-18-hidhide-self-access.md).
+
 ## Inspecting the system
 
 Every supported provider contributes its known components: third-party
