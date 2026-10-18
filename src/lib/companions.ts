@@ -3,7 +3,7 @@ import { canonical, type Publication } from '../../packages/companion-designer/s
 export type CompanionCommand = 'companion_usb_update_prepare' | 'companion_browser_certificate' | 'companion_update' | 'companion_pair_cancel' | 'companion_usb_flash' | 'companion_prune' | 'companion_unassign' | 'companion_usb_ports' | 'companion_usb_status' | 'companion_usb_connect' | 'companion_usb_disconnect' | 'companion_usb_scan' | 'companion_usb_provision' | 'companion_usb_reconnect' | 'companion_usb_arm' | 'companion_usb_disarm' | 'companion_usb_forget' | 'companion_status' | 'companion_enable' | 'companion_disable' | 'companion_pair_offer' | 'companion_approve' | 'companion_revoke' | 'companion_assign' | 'companion_disconnect' | 'companion_takeover' | 'companion_publish_begin' | 'companion_publish_chunk' | 'companion_publish_commit' | 'companion_publish_abort';
 export interface CompanionHostState {
   firmwareVersion?: string;
-  firmware?: Record<string,{version:string;profile?:string}>;
+  firmware?: Record<string,{version:string;profile?:string;connectionMode?:string}>;
   browserUrl?: string;
   firmwareProfiles?: {id:string;name:string;available:boolean}[];
   usbPorts?: {port:string;name:string;vid:number;pid:number}[];

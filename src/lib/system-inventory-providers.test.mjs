@@ -491,3 +491,15 @@ test('integration visibility follows immutable applied bindings even while telem
  edges=[];await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'','all').some(c=>c.type==='integration'));
  edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];h.state.runtime={state:'stopped',owner:null,appliedSnapshot:null};await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'','all').some(c=>c.type==='integration'));
 });
+
+test('offline companions expose configured transports on first load and retain them across polls',async()=>{
+ const disk=storage();const h=harness({storage:disk,companions:{firmware:{wifi:{version:'1',connectionMode:'wifi'},direct:{version:'1',connectionMode:'serial'}},host:{clients:[{companionId:'wifi',kind:'esp32'},{companionId:'direct',kind:'esp32'},{companionId:'browser',kind:'browser'},{companionId:'legacy',kind:'esp32'}],instances:[]}}});
+ await h.controller.refresh();
+ for(const [id,transport] of [['wifi','network'],['direct','usb'],['browser','network']]){
+ const c=h.component('companion:'+id);assert.equal(c.presence,'offline');assert.equal(c.connections[0].transport,transport);assert.equal(c.connections[0].current,false);assert.equal(c.connections[0].observed,false);
+ }
+ assert.equal(h.component('companion:legacy').connections.length,0);
+ h.state.companions.firmware={};await h.controller.refresh();assert.equal(h.component('companion:wifi').connections[0].transport,'network');
+ const reloaded=harness({storage:disk,companions:h.state.companions});await reloaded.controller.refresh();assert.equal(reloaded.component('companion:direct').connections[0].transport,'usb');
+ h.state.companions.usb={connected:true,port:'COM7',device:{companionId:'wifi',connectionMode:'serial'}};await h.controller.refresh();assert.ok(h.component('companion:wifi').connections.some(c=>c.transport==='usb'&&c.current));
+});

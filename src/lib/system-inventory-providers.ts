@@ -234,10 +234,15 @@ export class SystemInventoryController {
       const key = string(c.companionId); if (!key) continue; const id = `companion:${key}`;
       const online = c.connected === true || c.online === true || !!c.sessionId;
       const panelNames = [...new Set(rows(state.host.instances).filter(instance => instance.companionId === key).map(instance => string(instance.name)).filter(Boolean))];
+      const usbSetup = (state.usb?.devices ?? (state.usb ? [state.usb] : [])).find(usb => usb.device?.companionId === key);
+      const mode = usbSetup?.device?.connectionMode ?? state.firmware?.[key]?.connectionMode;
+      const configuredTransport = mode === 'serial' ? 'usb' : mode === 'wifi' || c.kind === 'browser' || c.kind === 'desktop' ? 'network' : undefined;
+      const rememberedConnections = (this.snapshot.components.find(previous => previous.id === id)?.connections ?? []).map(connection => ({ ...connection, current: false }));
+      const offlineConnections = configuredTransport ? [{ ...link(id, 'host', configuredTransport, false), observed: false }] : rememberedConnections;
       const transports = [...new Set([...(Array.isArray(c.transports) ? c.transports.filter((t): t is string => t === 'network' || t === 'usb') : []), ...rows(state.host.instances).filter(instance => instance.companionId === key && instance.connected === true && ['network', 'usb'].includes(string(instance.transport))).map(instance => string(instance.transport)), ...(c.peer || c.address ? ['network'] : [])])];
       observations.push(observation(id, string(c.name, key), 'companion', 'companions', now, { role: string(c.kind, 'Installation'), presence: online ? 'connected' : 'offline',
         status: ['Paired installation', ...panelNames.map(name => `Panel: ${name}`)].join(' · '), targets: [target('companion', key)], evidence: [`companion:${key}`],
-        connections: online ? (transports.length ? transports : ['unknown']).map(transport => link(id, 'host', transport as 'usb' | 'network' | 'unknown', true, transport === 'network' ? string(c.peer, string(c.address)) || undefined : undefined)) : (this.snapshot.components.find(previous => previous.id === id)?.connections ?? []).map(connection => ({ ...connection, current: false })),
+        connections: online ? (transports.length ? transports : ['unknown']).map(transport => link(id, 'host', transport as 'usb' | 'network' | 'unknown', true, transport === 'network' ? string(c.peer, string(c.address)) || undefined : undefined)) : offlineConnections,
         forget: { allowed: !online, reason: 'Disconnect the companion before revoking it.', effect: 'Revoke this companion installation and its assignments. Re-pairing will be required. Saved panel definitions and user bindings remain intact.' } }));
     }
     for (const pending of rows(state.host.pending)) {
