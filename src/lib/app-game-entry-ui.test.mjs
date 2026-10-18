@@ -60,7 +60,9 @@ test('actual App Games tiles expose unified launch without injecting hardware ta
   assert.equal('targets' in props,false);assert.equal('readConfig' in props,false);assert.equal(typeof props.request,'function');
   assert.ok(!source.includes('readGameConfig'));
   const invocation=source.split('\n').find(line=>line.includes('<GamesPanel '));assert.ok(invocation);assert.ok(!/\b(?:targets|readConfig)=/.test(invocation));
-  assert.ok(!source.includes("{ id: 'mappings', label: 'Mappings'"));assert.ok(source.includes('<HostControllers'));assert.ok(source.includes('<ProfileRetiredRecovery'));
+  assert.ok(!source.includes("{ id: 'mappings', label: 'Mappings'"));assert.ok(source.includes('<SystemDevices '));assert.ok(source.includes('<ProfileRetiredRecovery'));
+  const devices=await readFile(new URL('./SystemDevices.svelte',import.meta.url),'utf8');
+  assert.match(devices,/<HostControllers\s+initialSourceId=\{t\.id\}\s+detailsOnly/);
 });
 
 test('actual App game details retain provider setup and native rule selection without the retired per-game hardware editor',async()=>{
