@@ -49,7 +49,7 @@ integration and paired companion is represented, and compares all rendered IDs
 between List and Topology. It checks that the recorded HTTP requests contain no
 configuration, visibility, cleanup or runtime acquisition mutations.
 
-The Windows observation at **2026-10-18 16:17 Europe/Berlin** contained:
+The Windows observation at **2026-10-18 16:27 Europe/Berlin** contained:
 
 | Native observation | Count and interpretation |
 | --- | --- |
@@ -65,8 +65,8 @@ Evidence is under `.research/system-devices-native-browser/`, including
 `evidence.json`, `native-system-list.png`, `native-system-topology-initial.png`
 and `native-system-topology.png`.
 The observed service copy was
-`.research/feature78-native/transport/osg-gateway-service.exe`, SHA-256
-`837150b1126ab653687cf9633c60fffbf7db9e5e2663485d8f0e182df24917cf`.
+`.research/feature78-native/transport2/osg-gateway-service.exe`, SHA-256
+`ef1559082801c4baa7576adc2dc5fa8887c307644acb99615e1c3478ce0b5315`.
 This identifies the measured executable, rather than claiming later source edits
 were present in that native binary. The UI uses the current development sources.
 
@@ -77,9 +77,32 @@ types, current versus last-known links and type-aware counts remain distinct.
 The final fixture and native runs passed together with no browser exceptions.
 
 The final fixture evidence JSON has SHA-256
-`0a150756d49fca12b9ae52c2796dedb0ae3cfb649dfd09578fbb9761eafa5c45`;
+`441d06bb5e15a7defb7b28bff530939274cfcb335f1d51926f8ed3d50c974c13`;
 the final native evidence JSON has SHA-256
-`6d90a6454f10c8031ea6c36b827e678860ce9c074d847cff5ebc9fba3f8574ca`.
+`d932877b2c760fe4e3b9629b468a6e0d56ab92f9f80b7e1cb41aae1409323a45`.
+
+## Final automated checks
+
+The final inventory/frontend suite passes **67 tests**, including compiled USB
+and topology component behavior. The full native library run passes **825 tests**
+with zero failures and six existing ignored qualification tests in 48.89 seconds;
+its log is `.research/feature78-final/native-tests.log`. The final running-browser
+fixture passes in 6.40 seconds and actual-native browser acceptance in 9.80 seconds.
+
+Eleven focused native inventory tests cover visibility/PnP, exact publication
+associations, bounded paging and configured virtual targets. A successful Missing
+inspection identifies an unavailable configured target; a failed inspection leaves
+its availability unknown instead of claiming confirmed disappearance.
+
+| Production module | Measured line coverage | Evidence |
+| --- | --- | --- |
+| Native system inventory | 98.88% | `.research/feature78-native-missing-coverage/summary.json` |
+| Native publication associations | 100% | Same summary |
+| Controller visibility inventory | 100% | `.research/feature78-controller-coverage/summary.json` |
+| Companion session/transport hub | 92.48% | `.research/feature78-companion-coverage/summary.json` |
+
+Frontend inventory/projection/topology and the native modules retain their 71%
+coverage gates. These software results do not advance hardware qualification.
 
 ## Reproduction
 
