@@ -254,7 +254,7 @@ pub(super) fn restore(
 mod tests {
     use super::*;
     fn tree() -> tempfile::TempDir {
-        tempfile::tempdir().unwrap()
+        crate::test_directory()
     }
     fn mod_entry(base: &Path, folder: &str, entry: &str) -> PathBuf {
         let root = base.join("Mods/aircraft").join(folder);
