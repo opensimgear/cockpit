@@ -15,11 +15,13 @@
   let installPrompt=$state<any>(null), installHelp=$state(false), owner=$state(false);
   let connection:BrowserTransport|null=null, epoch=0, session:Record<string,any>|null=null, sequence=0, heartbeat=0, resyncSequence=0;
   let connecting=$state(false);
-  let disposed=false, nextAttempt=0, lastTick=performance.now();
-  const visible=()=>document.visibilityState==='visible'&&document.hasFocus();
-  const controller=createPreviewController(flightTemplate,{onchange:(changes)=>{if(active)queue.enqueue(epoch,changes);}});
+  let disposed=false, pageHidden=false, nextAttempt=0, lastTick=performance.now();
+  const visible=()=>!pageHidden&&document.visibilityState==='visible';
+  const focused=()=>visible()&&document.hasFocus();
+  const current=(socket:BrowserTransport,version:number)=>version===epoch&&!disposed&&owner&&visible()&&connection===socket;
+  const controller=createPreviewController(flightTemplate,{onchange:(changes)=>{if(active&&focused())queue.enqueue(epoch,changes);}});
   const queue=createOrderedInputQueue(async(version,changes)=>{
-    if(version!==epoch || !active || !connection || !session || !visible())throw new Error('Input session stopped');
+    if(version!==epoch || !active || !connection || !session || !focused())throw new Error('Input session stopped');
     await connection.request(frame('input',{sequence:String(++sequence),changes}));
   },reason=>stop(reason));
   function frame(type:string,rest:Record<string,unknown>={}) {
@@ -32,7 +34,7 @@
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
   }
   function consume(reply:Record<string,any>,version:number){
-    if(version!==epoch||!session||!panel||!reply.feedback)return;
+    if(version!==epoch||disposed||!visible()||!session||!panel||!reply.feedback)return;
     if(feedbackView.accept(session as FeedbackIdentity,reply.feedback,panel.ui,performance.now(),reply.type==='feedback-resync'))feedback=feedbackView.snapshot();
   }
   function resetFeedback(){feedbackView.reset();feedback={};feedbackNotice='Visual state cleared locally. Controls are unchanged.';}
@@ -43,6 +45,7 @@
     catch(e){if(version===epoch){feedbackNotice=String(e);stop('Feedback resync unavailable');}}
   }
   async function loadAssigned(socket:BrowserTransport, version:number, rows:typeof assignments){
+    if(!current(socket,version))return;
     assignments=rows;
     if(!rows.some(a=>a.instanceId===selected))selected=rows[0]?.instanceId??'';
     const assignment=rows.find(a=>a.instanceId===selected);
@@ -50,28 +53,30 @@
     const opened=await socket.request({type:'open',instanceId:assignment.instanceId,publicationHash:assignment.publicationHash});
     const p=opened.publication;
     const verified=await verifyPublishedPayload({...p,document:JSON.parse(p.canonicalDocument)});
-    if(version!==epoch || !visible())return;
+    if(!current(socket,version))return;
     if(opened.publicationHash!==assignment.publicationHash || verified.publicationHash!==assignment.publicationHash)throw new Error('Panel assignment changed during delivery');
     panel=verified.document;pageId=panel.ui.pages.some(p=>p.id===pageId)?pageId:panel.ui.pages[0].id;
     assets=Object.fromEntries(verified.assets.map(a=>[a.assetId,'data:'+panel!.ui.assets.find(m=>m.id===a.assetId)!.mime+';base64,'+a.base64]));
     controller.setDocument(panel);
     session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};feedbackNotice='';
-    await tick();if(version!==epoch || !visible())return;
+    await tick();if(!current(socket,version))return;
     const values=Object.fromEntries(panel.ui.controls.map(c=>[c.id,fallbackValue(c)]));
     await socket.request(frame('baseline',{sequence:'0',values}));
-    if(version!==epoch || !visible())return;
-    controller.arm();queue.start();active=true;status='Connected · panel active';error='';
+    if(!current(socket,version))return;
+    if(focused()){controller.arm();queue.start();}
+    else{controller.disarm('Controls paused while unfocused');queue.stop();}
+    active=true;status=focused()?'Connected · panel active':'Connected · feedback active · controls paused';error='';
   }
   async function connect(){
-    if(!owner || connecting || connection || !credential || disposed || performance.now()<nextAttempt)return;
+    if(!owner || connecting || connection || !credential || disposed || !visible() || performance.now()<nextAttempt)return;
     connecting=true;const savedCredential=credential;const version=epoch,socket=new BrowserTransport();connection=socket;
     socket.onreply=reply=>consume(reply,version);
     socket.onclose=()=>{if(connection===socket)stop('Offline · reconnecting to Cockpit');};
     try {
-      await socket.connect();if(version!==epoch)return;
+      await socket.connect();if(!current(socket,version))return;
       const auth=await socket.request({type:'auth',token:savedCredential.token});
+      if(!current(socket,version))return;
       if(auth.hostId!==savedCredential.hostId || auth.companionId!==savedCredential.companionId)throw new Error('Saved Cockpit identity differs');
-      if(version!==epoch)return;
       await loadAssigned(socket,version,auth.assignments);
     }catch(e){if(version===epoch){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');nextAttempt=performance.now()+2000;
       if(error.includes('invalid or revoked')){credential=null;clearCredential(localStorage,savedCredential.token);status='Pair this browser again in Cockpit';}
@@ -79,26 +84,28 @@
     finally{connecting=false;if(!credential && secret)void pair();}
   }
   async function pair(){
-    if(!owner || connecting || !secret)return;
+    if(!owner || connecting || !secret || disposed || !visible())return;
     connecting=true;error='';stop('Pairing with Cockpit…');const version=epoch,socket=new BrowserTransport();connection=socket;
     try{
       // Check storage before consuming the one-use offer.
       localStorage.setItem('osg-storage-probe','ok');localStorage.removeItem('osg-storage-probe');
       await socket.connect();
+      if(!current(socket,version))return;
       const companionId=crypto.randomUUID();
       const previous=credential;
       const pending=await socket.request({type:'pair',secret,companionId,name:name.trim(),...(previous?{replaceToken:previous.token}:{})});
+      if(!current(socket,version))return;
       if(previous){
         clearCredential(localStorage,previous.token);credential=null;panel=null;assignments=[];
         warning='The previous pairing was removed from this browser and Cockpit. This browser is being paired again.';
       }
       const paired=await socket.request({type:'pair-status',requestId:pending.requestId,secret});
+      if(!current(socket,version))return;
       if(paired.type!=='paired')throw new Error('Pairing was not approved. Start again in Cockpit.');
-      if(version!==epoch)throw new Error('Pairing interrupted. Open a fresh pairing link in Cockpit.');
       const saved={token:paired.token,companionId:paired.companionId,hostId:paired.hostId};
       saveCredential(localStorage,saved);credential=saved;secret='';history.replaceState(null,'','/');
       if(version===epoch){stop('Pairing saved · connecting…');nextAttempt=0;}
-    }catch(e){secret='';error=String(e instanceof Error?e.message:e);stop('Pairing did not complete');}
+    }catch(e){if(version===epoch&&!disposed){secret='';error=String(e instanceof Error?e.message:e);stop('Pairing did not complete');}}
     finally{connecting=false;void connect();}
   }
   let polling=false;
@@ -106,6 +113,7 @@
     const now=performance.now();
     if(now-lastTick>1000 && active)stop('Panel paused after timing gap');lastTick=now;
     if(polling || connecting || disposed)return;
+    if(!visible()){if(connection||active)stop('Panel paused while hidden');return;}
     if(!connection){void connect();return;}
     const socket=connection,version=epoch;polling=true;
     try{
@@ -126,6 +134,21 @@
     await installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;
   }
   function changedPage(value:string){stop('Panel page changed');pageId=value;nextAttempt=0;}
+  function resumeVisible(){if(!visible()||disposed)return;nextAttempt=0;return connect();}
+  function blurred(){
+    // End every old input job/socket before establishing a neutral background
+    // session. Pairing/authentication without an input session can finish.
+    if(session||active)stop('Controls released · reconnecting visuals');
+    return resumeVisible();
+  }
+  function gainedFocus(){
+    if(!focused()||disposed)return;
+    if(session||active)stop('Refreshing focused control baseline');
+    return resumeVisible();
+  }
+  function visibilityChanged(){if(!visible()){secret='';stop('Panel paused while hidden');}else return resumeVisible();}
+  function pageHiding(){pageHidden=true;secret='';stop('Panel page unloaded');}
+  function pageShowing(){pageHidden=false;return resumeVisible();}
   onMount(()=>{
     try{credential=readCredential(localStorage);}catch(e){error=String(e);}
     secret=new URLSearchParams(location.hash.slice(1)).get('pair')??'';
@@ -141,12 +164,10 @@
       warning='This browser pairing was replaced in another window. Reopen the companion to use the new pairing.';
     };
     window.addEventListener('storage',storageChanged);
-    const inactive=()=>stop('Panel paused while inactive'), focus=()=>{nextAttempt=0;void connect();};
-    const visibility=()=>{if(document.visibilityState==='hidden')inactive();else focus();};
     const full=()=>fullscreen=!!document.fullscreenElement;
     const beforeInstall=(event:Event)=>{event.preventDefault();installPrompt=event;};
-    window.addEventListener('blur',inactive);window.addEventListener('pagehide',inactive);window.addEventListener('focus',focus);
-    document.addEventListener('visibilitychange',visibility);document.addEventListener('fullscreenchange',full);window.addEventListener('beforeinstallprompt',beforeInstall);
+    window.addEventListener('blur',blurred);window.addEventListener('pagehide',pageHiding);window.addEventListener('pageshow',pageShowing);window.addEventListener('focus',gainedFocus);
+    document.addEventListener('visibilitychange',visibilityChanged);document.addEventListener('fullscreenchange',full);window.addEventListener('beforeinstallprompt',beforeInstall);
     const timer=setInterval(()=>{if(owner)void poll();},250);
     let releaseOwner:()=>void=()=>{};
     const initialize=()=>{owner=true;if(secret)void pair();else void connect();};
@@ -156,7 +177,7 @@
       initialize();await new Promise<void>(resolve=>releaseOwner=resolve);
     }).catch(e=>error=String(e));
     else initialize();
-    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed');clearInterval(timer);window.removeEventListener('blur',inactive);window.removeEventListener('pagehide',inactive);window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',visibility);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
+    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed');clearInterval(timer);window.removeEventListener('blur',blurred);window.removeEventListener('pagehide',pageHiding);window.removeEventListener('pageshow',pageShowing);window.removeEventListener('focus',gainedFocus);document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
   });
 </script>
 

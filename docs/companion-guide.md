@@ -107,7 +107,7 @@ The p95 25 ms/p99 50 ms touch-to-successful-virtual-submit numbers are qualifica
 | Fingerprint, certificate or hostname error | Compare the host fingerprint, endpoint and clocks. Do not bypass TLS validation. |
 | Panel saved, companion update failed | The local panel is retained. Inspect the exact assignment/ownership diagnostic and reconcile explicitly. |
 | Captured panel revision missing | Restore that exact retained panel or explicitly reconcile the profile to another compatible revision. |
-| Panel disarms on focus/page changes | This is lifecycle cancellation. The browser establishes a new baseline on return; native mobile requires its explicit Start. |
+| Panel controls disarm on focus/page changes | This is lifecycle cancellation. A visible unfocused browser reconnects neutral for feedback only; focus requires another fresh baseline before controls resume. Hidden pages disconnect. Native mobile requires its explicit Start. |
 | Live output blocked | Read the native preflight reasons. Local preview can work while output remains unqualified. |
 | Feedback unknown/stale or wrong units | Check exact profile ports, captured panel, game-owned catalogue/channel, visible conversion and current applied owner/context. |
 | Pending recovery | Retain the journal and inspect its exact owner/conflict; cleanup does not restart a graph. |

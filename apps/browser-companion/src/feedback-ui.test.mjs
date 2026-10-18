@@ -9,7 +9,7 @@ function load(source,filename,imports,globals={}){const exports={};const{js}=com
 function harness(action='',verified=panel){
  let handlers,clock=100;const performance={now:()=>clock};
  const PanelCanvas=load(canvasSource,'PanelCanvas.svelte',{'./controller.ts':controls,'./presentation.ts':presentation},{performance});
- const injected=appSource.replace('</script>',`credential={token:'a'.repeat(43),hostId:'host',companionId:'browser'};panel=seedPanel;pageId=panel.ui.pages[0].id;session=seedIdentity;active=true;epoch=7;consume(seedReply,7);${action};capture({consume,stop,resetFeedback,loadAssigned,get controls(){return controller.snapshot();},get feedback(){return feedback;}});</script>`);
+ const injected=appSource.replace('</script>',`credential={token:'a'.repeat(43),hostId:'host',companionId:'browser'};panel=seedPanel;pageId=panel.ui.pages[0].id;session=seedIdentity;active=true;epoch=7;consume(seedReply,7);${action};capture({consume,stop,resetFeedback,loadAssigned,bind(socket){connection=socket;owner=true;},get controls(){return controller.snapshot();},get feedback(){return feedback;}});</script>`);
  const App=load(injected,'App.svelte',{'@opensimgear/companion-ui':{PanelCanvas,...controls},'@opensimgear/companion-designer':designer,'../../companion/src/lib/companion-cache':{verifyPublishedPayload:async()=>({document:verified,assets:[],publicationHash:identity.publicationHash})},'../../companion/src/lib/input-queue':{createOrderedInputQueue},'./transport':transport,'./feedback':feedbackApi},{performance,document:{visibilityState:'visible',hasFocus:()=>true},seedPanel:panel,seedIdentity:identity,seedReply:reply,capture:v=>handlers=v,setClock:v=>clock=v});
  return{html:render(App).body,get handlers(){return handlers;}};
 }
@@ -20,7 +20,8 @@ test('the actual browser App consumes accepted feedback into the actual shared r
 test('opening a verified different panel replaces the input controller before sending its fresh baseline',async()=>{
  const replacement=structuredClone(panel);replacement.ui.controls[0].id='custom-axis';for(const widget of replacement.presentation.widgets)widget.controlIds=widget.controlIds.map(id=>id===panel.ui.controls[0].id?'custom-axis':id);
  const h=harness("stop('Changing publication')",replacement),requests=[];
- await h.handlers.loadAssigned({request:async frame=>{requests.push(frame);return frame.type==='open'?{...identity,publication:{canonicalDocument:JSON.stringify(replacement)},publicationHash:identity.publicationHash}:{ok:true};}},8,[{instanceId:'instance',publicationHash:identity.publicationHash,name:'Custom panel'}]);
+ const socket={request:async frame=>{requests.push(frame);return frame.type==='open'?{...identity,publication:{canonicalDocument:JSON.stringify(replacement)},publicationHash:identity.publicationHash}:{ok:true};}};h.handlers.bind(socket);
+ await h.handlers.loadAssigned(socket,8,[{instanceId:'instance',publicationHash:identity.publicationHash,name:'Custom panel'}]);
  assert.equal(requests[0].type,'open');assert.equal(requests[1].type,'baseline');assert.equal(requests[1].values['custom-axis'],controls.fallbackValue(replacement.ui.controls[0]));assert.ok(!Object.hasOwn(h.handlers.controls.values,panel.ui.controls[0].id));assert.ok(Object.hasOwn(h.handlers.controls.values,'custom-axis'));assert.equal(h.handlers.controls.armed,true);
 });
 test('the actual browser clears live presentation on disconnect and lets stale values age through the shared renderer',()=>{

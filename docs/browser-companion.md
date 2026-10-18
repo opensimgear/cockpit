@@ -24,7 +24,19 @@ Installed app access still requires Cockpit to be running and reachable. Listene
 
 A verified assigned panel opens a new session and sends every control's fallback value before becoming active automatically. There is no manual arming button. Inputs use the existing authenticated, ordered host protocol; they are never replayed after reconnect.
 
-Losing focus, hiding/unloading the page, changing page/panel, a connection failure, or a timing stall closes the input connection and clears queued input. Cockpit neutralizes on disconnect and its 1.5-second lease bounds recovery when a browser stops running. Returning to the foreground creates a fresh session/baseline. One same-origin tab owns the companion where Web Locks is supported; the host independently enforces one writer for an assigned instance.
+Losing focus closes the old input connection and clears queued and held input. A
+still-visible page reconnects with a new neutral baseline so telemetry and feedback
+can continue while Cockpit or a game has focus; its controls stay disarmed.
+Focusing the companion establishes another fresh session and neutral baseline
+before enabling controls. Pairing and authentication may finish while the page is
+visible but unfocused; they do not grant control input.
+
+Hiding/unloading the page, changing page/panel, a connection failure, or a timing
+stall still closes the session and clears queued input. Hidden/unloaded pages do
+not reconnect. Cockpit neutralizes on disconnect and its 1.5-second lease bounds
+recovery when a browser stops running. One same-origin tab owns the companion
+where Web Locks is supported; the host independently enforces one writer for an
+assigned instance.
 
 ## Build and verify
 
