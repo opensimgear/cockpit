@@ -2,9 +2,10 @@ import { profileDocumentError, type DeepReadonly, type ProfileDocument, type Pro
 import type { ResourceSummary } from './profile-inventory';
 import type { GameId } from './games';
 import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout, profileCategory } from './profile-editor';
+import type { ProfileDesktopOutput } from './profile-desktop';
 export type CanvasPoint = {x:number;y:number};
 export type CanvasViewport = CanvasPoint & {zoom:number};
-export type CanvasNode = {id:string;name:string;kind:'resource'|'processing'|'virtual';category:string;position:CanvasPoint;resource?:DeepReadonly<ProfileDocument['resources'][number]>;processing?:DeepReadonly<ProfileDocument['processingNodes'][number]>;virtual?:DeepReadonly<ProfileDocument['virtualOutputs'][number]>;assignment?:DeepReadonly<ProfileLocalAssignment>;observation?:DeepReadonly<ResourceSummary>};
+export type CanvasNode = {id:string;name:string;kind:'resource'|'processing'|'virtual'|'desktop';category:string;position:CanvasPoint;desktop?:DeepReadonly<ProfileDesktopOutput>;resource?:DeepReadonly<ProfileDocument['resources'][number]>;processing?:DeepReadonly<ProfileDocument['processingNodes'][number]>;virtual?:DeepReadonly<ProfileDocument['virtualOutputs'][number]>;assignment?:DeepReadonly<ProfileLocalAssignment>;observation?:DeepReadonly<ResourceSummary>};
 /** Authored choices only: inventory or an applied run cannot change these counts. */
 export function canvasControllerEffects(document:DeepReadonly<ProfileDocument>):{enabled:number;disabled:number;configured:number;hidden:number;virtual:number}{
   const devices=document.resources.filter(resource=>resource.kind==='device');
@@ -15,7 +16,7 @@ const clamp=(value:number,min:number,max:number)=>Math.min(max,Math.max(min,valu
 const finite=(value:number)=>Number.isFinite(value);
 export function canvasNodes(document:DeepReadonly<ProfileDocument>,assignments:readonly DeepReadonly<ProfileLocalAssignment>[],inventory:readonly DeepReadonly<ResourceSummary>[]):CanvasNode[]{
   const positions=new Map(document.editor.positions.map(position=>[position.nodeId,position]));
-  const nodes:Omit<CanvasNode,'position'>[]=[...document.resources.map(resource=>{const assignment=assignments.find(value=>value.resourceId===resource.id);const observation=inventory.find(value=>value.id===assignment?.sourceId);return{id:resource.id,name:resource.name,kind:'resource' as const,category:observation?profileCategory(observation):resource.kind==='game'?'Game integration':resource.kind==='companion'?'Companion':'Physical resource',resource,assignment,observation};}),...document.processingNodes.map(processing=>({id:processing.id,name:processing.name,kind:'processing' as const,category:'Processing',processing})),...document.virtualOutputs.map(virtual=>({id:virtual.id,name:virtual.name,kind:'virtual' as const,category:'Virtual controller',virtual}))];
+  const nodes:Omit<CanvasNode,'position'>[]=[...document.resources.map(resource=>{const assignment=assignments.find(value=>value.resourceId===resource.id);const observation=inventory.find(value=>value.id===assignment?.sourceId);return{id:resource.id,name:resource.name,kind:'resource' as const,category:observation?profileCategory(observation):resource.kind==='game'?'Game integration':resource.kind==='companion'?'Companion':'Physical resource',resource,assignment,observation};}),...document.processingNodes.map(processing=>({id:processing.id,name:processing.name,kind:'processing' as const,category:'Processing',processing})),...document.virtualOutputs.map(virtual=>({id:virtual.id,name:virtual.name,kind:'virtual' as const,category:'Virtual controller',virtual})),...(document.desktopOutputs??[]).map(desktop=>({id:desktop.id,name:desktop.name,kind:'desktop' as const,category:'Keyboard and mouse',desktop}))];
   const missing=profileAutoLayout(nodes.filter(node=>!positions.has(node.id)).map(node=>node.id));
   const bottom=document.editor.positions.reduce((max,p)=>Math.max(max,p.y+PROFILE_BLOCK_HEIGHT+48),0);
   return nodes.map(node=>({...node,position:positions.get(node.id)??{x:missing.find(p=>p.nodeId===node.id)!.x,y:missing.find(p=>p.nodeId===node.id)!.y+bottom}}));
@@ -37,7 +38,7 @@ export function canvasFit(nodes:readonly Pick<CanvasNode,'position'>[],width:num
   return{x:clamp((width-(right-left)*zoom)/2-left*zoom,-1e6,1e6),y:clamp((height-(bottom-top)*zoom)/2-top*zoom,-1e6,1e6),zoom};
 }
 export function canvasMove(document:DeepReadonly<ProfileDocument>,nodeId:string,position:CanvasPoint):ProfileDocument{
-  if(![position.x,position.y].every(finite)||![...document.resources,...document.processingNodes,...document.virtualOutputs].some(node=>node.id===nodeId))throw new Error('Move an existing block to finite coordinates.');
+  if(![position.x,position.y].every(finite)||![...document.resources,...document.processingNodes,...document.virtualOutputs,...(document.desktopOutputs??[])].some(node=>node.id===nodeId))throw new Error('Move an existing block to finite coordinates.');
   const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;next.editor.positions=next.editor.positions.filter(p=>p.nodeId!==nodeId);next.editor.positions.push({nodeId,x:clamp(position.x,-1e6,1e6),y:clamp(position.y,-1e6,1e6)});return next;
 }
 export type CanvasGroup = DeepReadonly<ProfileEditorGroup> & {x:number;y:number;width:number;height:number};
@@ -62,7 +63,7 @@ export function canvasTogglePorts(document:DeepReadonly<ProfileDocument>,nodeId:
   next.editor.collapsedPortGroups=(next.editor.collapsedPortGroups??[]).filter(pair=>pair.nodeId!==nodeId||pair.group!==group);
   if(!collapsed)next.editor.collapsedPortGroups.push({nodeId,group});if(!next.editor.collapsedPortGroups.length)delete next.editor.collapsedPortGroups;return checkedLayout(next);
 }
-export function canvasStatus(node:CanvasNode):string{return node.kind==='processing'?'Explicit transformation':node.kind==='virtual'?'Profile output':!node.assignment?'Unassigned':node.observation?.availability==='online'?'Online':node.observation?.availability==='unavailable'?'Unavailable / dormant':'Offline · saved block retained';}
+export function canvasStatus(node:CanvasNode):string{return node.kind==='processing'?'Explicit transformation':node.kind==='virtual'||node.kind==='desktop'?'Profile output':!node.assignment?'Unassigned':node.observation?.availability==='online'?'Online':node.observation?.availability==='unavailable'?'Unavailable / dormant':'Offline · saved block retained';}
 export function canvasTransports(node:CanvasNode):string[]{return[...new Set(node.observation?.connections.map(connection=>connection.route.transport.toUpperCase())??[])];}
 export function canvasSearch(nodes:readonly CanvasNode[],query:string):CanvasNode[]{const value=query.trim().toLowerCase();return nodes.filter(node=>`${node.name} ${node.category} ${canvasStatus(node)} ${canvasTransports(node).join(' ')}`.toLowerCase().includes(value));}
 export function scalarLabel(schema:DeepReadonly<ProfileScalarSchema>):string{

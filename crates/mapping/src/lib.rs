@@ -1,5 +1,6 @@
 //! Portable mapping documents and deterministic routing. No OS input or output handles.
 pub mod documents;
+pub mod desktop;
 pub mod engine;
 #[cfg(test)]
 mod fixtures;

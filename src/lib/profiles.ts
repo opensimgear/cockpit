@@ -1,4 +1,5 @@
 /** Portable unified profile contracts. Native validation remains authoritative. */
+import { desktopActionValid, desktopActionContract, type ProfileDesktopOutput } from './profile-desktop.ts';
 export const PROFILE_SCHEMA_VERSION = 2;
 export const MAX_PROFILE_BYTES = 524_288;
 export const MAX_PROFILES = 32;
@@ -33,6 +34,7 @@ export type ProfileResource = { id: string; name: string; kind: 'device' | 'comp
 export type ProfileEndpoint = { nodeId: string; portId: string };
 export type ProfileBinding = { id: string; from: ProfileEndpoint; to: ProfileEndpoint };
 export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 'any' | 'all' | 'event-to-state' }
+  | {kind:'hat-direction';direction:'up'|'right'|'down'|'left';diagonals:boolean}
   | { kind: 'declare-quantity'; quantity: string; unit: string }
   | { kind: 'constant'; value: Exclude<ProfileValue, null> }
   | { kind: 'scale'; factor: number; offset: number }
@@ -56,7 +58,7 @@ export type ProfileEditorGroup = { id: string; name: string; members: string[] }
 export type ProfilePortGroup = 'outputs' | 'inputs' | 'actions';
 export type ProfileDocument = {
   schemaVersion: 2; id: string; name: string; revision: number; eligibility: { gameIds: string[] };
-  resources: ProfileResource[]; bindings: ProfileBinding[]; processingNodes: ProfileProcessingNode[];
+  resources: ProfileResource[]; bindings: ProfileBinding[]; processingNodes: ProfileProcessingNode[]; desktopOutputs?: ProfileDesktopOutput[];
   virtualOutputs: ProfileVirtualOutput[]; visibility: { resourceId: string; mode: 'visible' | 'hidden-while-active' }[];
   overrides: { resourceId: string; enabled: boolean }[];
   companionAssignments: { resourceId: string; publicationHash: string }[];
@@ -150,6 +152,19 @@ function port(value: unknown): boolean {
 function ports(value: unknown): value is ProfilePort[] {
   return list(value, 128) && value.every(port) && new Set(value.map(item => (item as ProfilePort).id)).size === value.length;
 }
+function desktopOutput(value:unknown):value is ProfileDesktopOutput {
+  if(!exact(value,[...labelKeys,'required','ports','actions'])||!nodeLabel(value)||typeof value.required!=='boolean'||!ports(value.ports)||value.ports.length===0||!list(value.actions,128)||value.actions.length!==value.ports.length)return false;
+  const declared=value.ports;
+  for(const definition of value.actions){
+    if(!exact(definition,['portId','action'])||!profilePortIdValid(definition.portId)||!desktopActionValid(definition.action))return false;
+    const port=declared.find(port=>port.id===definition.portId),expected=desktopActionContract(definition.action);
+    if(!port||port.direction!=='input'||port.contract.delivery!==expected.delivery||!('schema'in port.contract)||!('schema'in expected))return false;
+    const a=port.contract.schema,b=expected.schema;
+    if(a.type!==b.type||b.type==='number'&&(a.type!=='number'||a.min!==b.min||a.max!==b.max||a.unit!==b.unit))return false;
+    if(expected.delivery==='state'&&(port.contract.delivery!=='state'||port.contract.freshnessMs!==expected.freshnessMs||port.contract.fallback!==expected.fallback))return false;
+  }
+  return new Set(value.actions.map(definition=>(definition as {portId:string}).portId)).size===value.actions.length;
+}
 const names = (value: unknown, max = 128): value is string[] => list(value, max) && value.every(profilePortIdValid) && new Set(value).size === value.length;
 const rounding = (value: unknown) => ['none', 'nearest', 'floor', 'ceil', 'truncate'].includes(String(value));
 const comparison = (value: unknown) => ['greater', 'greater-equal', 'less', 'less-equal', 'equal', 'not-equal'].includes(String(value));
@@ -179,6 +194,7 @@ function operation(value: unknown): boolean {
   if (kind === 'compare') return exact(value, ['kind', 'comparison', 'threshold']) && comparison(value.comparison) && coefficient(value.threshold);
   if (kind === 'hysteresis') return exact(value, ['kind', 'comparison', 'press', 'release']) && comparison(value.comparison) && coefficient(value.press) && coefficient(value.release);
   if (kind === 'priority') return exact(value, ['kind', 'order']) && names(value.order, 8);
+  if (kind === 'hat-direction') return exact(value,['kind','direction','diagonals'])&&['up','right','down','left'].includes(String(value.direction))&&typeof value.diagonals==='boolean';
   if (kind === 'event-edge') return exact(value, ['kind', 'edge']) && ['rising', 'falling', 'change'].includes(String(value.edge));
   if (kind === 'select') return exact(value, ['kind', 'whenTrue', 'whenFalse']) && scalarValue(value.whenTrue) && scalarValue(value.whenFalse);
   if (kind === 'format') return exact(value, ['kind', 'decimals', 'prefix', 'suffix', 'rounding', 'overflow']) && whole(value.decimals, 0, 6) && typeof value.prefix === 'string' && typeof value.suffix === 'string' && bytes(value.prefix) <= 64 && bytes(value.suffix) <= 64 && !/[\u0000-\u001f\u007f-\u009f]/.test(value.prefix + value.suffix) && rounding(value.rounding) && ['reject', 'truncate'].includes(String(value.overflow));
@@ -200,13 +216,16 @@ export function profileDocumentError(value: unknown): string {
   let encoded: string;
   try { encoded = JSON.stringify(value); } catch { return 'Profile must be JSON data.'; }
   if (!encoded || new TextEncoder().encode(encoded).length > MAX_PROFILE_BYTES) return 'Use a profile no larger than 512 KiB.';
-  if (!exact(value, ['schemaVersion', 'id', 'name', 'revision', 'eligibility', 'resources', 'bindings', 'processingNodes', 'virtualOutputs', 'visibility', 'overrides', 'companionAssignments', 'editor'])) return 'Use the unified portable profile document without local assignments or legacy fields.';
+  if (!exact(value, ['schemaVersion', 'id', 'name', 'revision', 'eligibility', 'resources', 'bindings', 'processingNodes', 'virtualOutputs', 'visibility', 'overrides', 'companionAssignments', 'editor',...(object(value)&&Object.hasOwn(value,'desktopOutputs')?['desktopOutputs']:[])])) return 'Use the unified portable profile document without local assignments or legacy fields.';
   if (value.schemaVersion !== PROFILE_SCHEMA_VERSION || !uuid(value.id) || !text(value.name) || !whole(value.revision, 1, Number.MAX_SAFE_INTEGER)) return 'Choose a supported profile schema, canonical UUID, name and revision.';
   if (!exact(value.eligibility, ['gameIds']) || !list(value.eligibility.gameIds, 32) || !value.eligibility.gameIds.every(identifier) || new Set(value.eligibility.gameIds).size !== value.eligibility.gameIds.length) return 'Choose unique logical game identifiers.';
   if (!list(value.resources, 64) || !value.resources.every(row => exact(row, [...labelKeys, 'kind', 'required', 'ports']) && nodeLabel(row) && ['device', 'companion', 'game'].includes(String(row.kind)) && typeof row.required === 'boolean' && ports(row.ports))) return 'Use valid logical resources and typed ports.';
   if (!list(value.processingNodes, 256) || !value.processingNodes.every(row => exact(row, [...labelKeys, 'operation', 'inputs', 'outputs']) && nodeLabel(row) && operation(row.operation) && ports(row.inputs) && ports(row.outputs) && ((row.operation as ProfileOperation).kind !== 'script' || row.inputs.length >= 1 && row.inputs.length <= 32 && row.outputs.length >= 1 && row.outputs.length <= 16))) return 'Use supported processing nodes and typed ports.';
   if (!list(value.virtualOutputs, 16) || !value.virtualOutputs.every(row => exact(row, [...labelKeys, 'required', 'ports', 'layout']) && nodeLabel(row) && typeof row.required === 'boolean' && ports(row.ports) && layout(row.layout))) return 'Use valid logical virtual outputs.';
-  const nodes = [...value.resources, ...value.processingNodes, ...value.virtualOutputs] as (ProfileResource | ProfileProcessingNode | ProfileVirtualOutput)[];
+  const desktops=Object.hasOwn(value,'desktopOutputs')?value.desktopOutputs:[];
+  if(!list(desktops,1)||!desktops.every(desktopOutput))return 'Use one desktop endpoint with one exact typed action per input port.';
+  if(value.processingNodes.length+desktops.reduce<number>((sum,row)=>sum+(row as ProfileDesktopOutput).actions.length,0)>256)return 'Desktop actions and processing nodes together support at most 256 definitions.';
+  const nodes = [...value.resources, ...value.processingNodes, ...value.virtualOutputs,...desktops] as (ProfileResource | ProfileProcessingNode | ProfileVirtualOutput | ProfileDesktopOutput)[];
   if (new Set(nodes.map(row => row.id)).size !== nodes.length) return 'Graph node identifiers must be unique.';
   if (nodes.reduce((sum, row) => sum + ('ports' in row ? row.ports.length : row.inputs.length + row.outputs.length), 0) > 1024) return 'Use at most 1024 graph ports.';
   if (!list(value.bindings, 512) || !value.bindings.every(row => exact(row, ['id', 'from', 'to']) && identifier(row.id) && endpoint(row.from) && endpoint(row.to)) || new Set(value.bindings.map(row => (row as ProfileBinding).id)).size !== value.bindings.length) return 'Use unique bindings with logical graph endpoints.';

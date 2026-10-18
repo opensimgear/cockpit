@@ -1,15 +1,16 @@
 import { profileAssignmentsError, profileDocumentError, type DeepReadonly, type ProfileBinding, type ProfileControllerLayout, type ProfileDocument, type ProfileEndpoint, type ProfileLocalAssignment, type ProfilePort, type ProfilePortContract, type ProfileProcessingNode, type ProfileScalarSchema, type ProfileVirtualOutput } from './profiles';
 import { resourcePortError, type ObservedResourcePort, type ResourceSummary } from './profile-inventory';
+import { desktopActionLabel, desktopActionPort, type ProfileDesktopOutput } from './profile-desktop';
 
 export type ProfileGraphDraft = { document: ProfileDocument; assignments: ProfileLocalAssignment[] };
 export type ProfileGraphSelection = { profilePortId: string; observed: DeepReadonly<ObservedResourcePort> };
 const clone = <T>(value: DeepReadonly<T>): T => JSON.parse(JSON.stringify(value));
 const sameEndpoint = (a: DeepReadonly<ProfileEndpoint>, b: DeepReadonly<ProfileEndpoint>) => a.nodeId === b.nodeId && a.portId === b.portId;
-const nodes = (document: DeepReadonly<ProfileDocument>) => [...document.resources, ...document.processingNodes, ...document.virtualOutputs];
+const nodes = (document: DeepReadonly<ProfileDocument>) => [...document.resources, ...document.processingNodes, ...document.virtualOutputs,...(document.desktopOutputs??[])];
 const label = (value: string) => [...value.trim()].slice(0,80).join('') || 'Selected port';
 const hash = (value: string) => /^sha256:[0-9a-f]{64}$/.test(value);
 
-export function graphFreshId(document: DeepReadonly<ProfileDocument>, prefix: 'route'|'transform'|'virtual'|'port'): string {
+export function graphFreshId(document: DeepReadonly<ProfileDocument>, prefix: 'route'|'transform'|'virtual'|'desktop'|'port'): string {
   const used = new Set([...nodes(document).map(node=>node.id), ...document.bindings.map(binding=>binding.id), ...nodes(document).flatMap(node=>'ports' in node ? node.ports.map(port=>port.id) : [...node.inputs,...node.outputs].map(port=>port.id))]);
   for(let n=1;n<=4096;n++)if(!used.has(`${prefix}-${n}`))return `${prefix}-${n}`;
   throw new Error('No unused logical graph identity is available.');
@@ -78,6 +79,24 @@ export function graphDisconnect(value: DeepReadonly<ProfileGraphDraft>, bindingI
   const next=graphDraft(value);if(!next.document.bindings.some(binding=>binding.id===bindingId))throw new Error('Choose an existing route to remove.');
   next.document.bindings=next.document.bindings.filter(binding=>binding.id!==bindingId);return checked(next);
 }
+/** Desktop declarations remain portable. Machine enablement and scope never enter this graph. */
+export function graphSetDesktop(value:DeepReadonly<ProfileGraphDraft>,output:ProfileDesktopOutput):ProfileGraphDraft {
+  const next=graphDraft(value),existing=next.document.desktopOutputs??[];
+  if(nodes(next.document).some(node=>node.id===output.id)&&!existing.some(node=>node.id===output.id))throw new Error('Use a unique desktop endpoint identity.');
+  if(existing.some(node=>node.id!==output.id))throw new Error('A profile supports one logical keyboard and mouse endpoint.');
+  const updated=clone<ProfileDesktopOutput>(output);
+  updated.ports=updated.actions.map(definition=>{
+    const previous=existing.find(node=>node.id===output.id),oldAction=previous?.actions.find(action=>action.portId===definition.portId),oldName=previous?.ports.find(port=>port.id===definition.portId)?.name;
+    const name=!oldAction||oldName===desktopActionLabel(oldAction.action)?desktopActionLabel(definition.action):updated.ports.find(port=>port.id===definition.portId)?.name??desktopActionLabel(definition.action);
+    return desktopActionPort(definition.portId,name,definition.action);
+  });
+  // A changed action contract invalidates connected edges; the user must retarget explicitly.
+  for(const binding of next.document.bindings.filter(binding=>binding.to.nodeId===updated.id)){
+    const previous=existing.find(node=>node.id===updated.id)?.ports.find(port=>port.id===binding.to.portId),replacement=updated.ports.find(port=>port.id===binding.to.portId);
+    if(!replacement||previous&&canonical(previous.contract)!==canonical(replacement.contract))throw new Error('Disconnect routes before removing an action or changing its input delivery.');
+  }
+  next.document.desktopOutputs=[updated];return checked(next);
+}
 function portableContract(contract: DeepReadonly<ProfilePortContract>): ProfilePortContract {
   const next=clone(contract);if(next.delivery==='action'||next.delivery==='invocation')for(const parameter of next.parameters)parameter.name=parameter.id;return next;
 }
@@ -119,13 +138,14 @@ export function graphRemovePort(value: DeepReadonly<ProfileGraphDraft>, resource
 export function graphRemoveNode(value: DeepReadonly<ProfileGraphDraft>, nodeId: string): ProfileGraphDraft {
   const next=graphDraft(value);if(!nodes(next.document).some(node=>node.id===nodeId))throw new Error('Choose an existing block.');
   next.document.resources=next.document.resources.filter(node=>node.id!==nodeId);next.document.processingNodes=next.document.processingNodes.filter(node=>node.id!==nodeId);next.document.virtualOutputs=next.document.virtualOutputs.filter(node=>node.id!==nodeId);
+  if(next.document.desktopOutputs){next.document.desktopOutputs=next.document.desktopOutputs.filter(node=>node.id!==nodeId);if(!next.document.desktopOutputs.length)delete next.document.desktopOutputs;}
   next.document.bindings=next.document.bindings.filter(binding=>binding.from.nodeId!==nodeId&&binding.to.nodeId!==nodeId);next.document.editor.positions=next.document.editor.positions.filter(position=>position.nodeId!==nodeId);
   if(next.document.editor.groups){next.document.editor.groups=next.document.editor.groups.map(group=>({...group,members:group.members.filter(member=>member!==nodeId)})).filter(group=>group.members.length);if(!next.document.editor.groups.length)delete next.document.editor.groups;}
   if(next.document.editor.collapsedPortGroups){next.document.editor.collapsedPortGroups=next.document.editor.collapsedPortGroups.filter(pair=>pair.nodeId!==nodeId);if(!next.document.editor.collapsedPortGroups.length)delete next.document.editor.collapsedPortGroups;}
   next.document.visibility=next.document.visibility.filter(intent=>intent.resourceId!==nodeId);next.document.overrides=next.document.overrides.filter(intent=>intent.resourceId!==nodeId);next.document.companionAssignments=next.document.companionAssignments.filter(intent=>intent.resourceId!==nodeId);next.assignments=next.assignments.filter(assignment=>assignment.resourceId!==nodeId);return checked(next);
 }
 export function graphSetProcessing(value: DeepReadonly<ProfileGraphDraft>, node: ProfileProcessingNode): ProfileGraphDraft {
-  const next=graphDraft(value);if([...next.document.resources,...next.document.virtualOutputs].some(row=>row.id===node.id))throw new Error('Use a unique processing block identity.');
+  const next=graphDraft(value);if([...next.document.resources,...next.document.virtualOutputs,...(next.document.desktopOutputs??[])].some(row=>row.id===node.id))throw new Error('Use a unique processing block identity.');
   if(node.inputs.length>128||node.outputs.length>16||node.inputs.some(port=>port.direction!=='input')||node.outputs.some(port=>port.direction!=='output')||!node.outputs.length||new Set([...node.inputs,...node.outputs].map(port=>port.id)).size!==node.inputs.length+node.outputs.length)throw new Error('Processing blocks need unique directed ports and 1–16 declared outputs.');
   next.document.processingNodes=next.document.processingNodes.filter(row=>row.id!==node.id);next.document.processingNodes.push(clone(node));return checked(next);
 }
@@ -160,7 +180,7 @@ export function graphVirtualPorts(layout: DeepReadonly<ProfileControllerLayout>)
   return [...layout.buttons.map((id,index)=>state(id,`Button ${index+1}`,{type:'boolean'},false)),...layout.axes.map((axis,index)=>state(axis.portId,`Axis ${index+1}`,{type:'integer',min:axis.range==='bipolar'?-32768:0,max:32767,unit:null},axis.fallback)),...layout.hats.map((id,index)=>state(id,`Hat ${index+1}`,{type:'integer',min:-1,max:7,unit:null},-1))];
 }
 export function graphSetVirtual(value: DeepReadonly<ProfileGraphDraft>, output: Omit<ProfileVirtualOutput,'ports'>): ProfileGraphDraft {
-  const next=graphDraft(value);if([...next.document.resources,...next.document.processingNodes].some(node=>node.id===output.id))throw new Error('Use a unique virtual controller identity.');
+  const next=graphDraft(value);if([...next.document.resources,...next.document.processingNodes,...(next.document.desktopOutputs??[])].some(node=>node.id===output.id))throw new Error('Use a unique virtual controller identity.');
   if(!next.document.virtualOutputs.some(node=>node.id===output.id)&&next.document.virtualOutputs.length>=8)throw new Error('The native engine supports at most eight virtual controllers.');
   next.document.virtualOutputs=next.document.virtualOutputs.filter(node=>node.id!==output.id);next.document.virtualOutputs.push({...clone(output),ports:graphVirtualPorts(output.layout)});return checked(next);
 }

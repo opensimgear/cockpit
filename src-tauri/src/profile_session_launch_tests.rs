@@ -101,7 +101,7 @@ fn fixture(path: Option<PathBuf>) -> (Coordinator<Fake>, Arc<Mutex<Probe>>) {
     (Coordinator::new(Fake(p.clone()), path), p)
 }
 fn candidate() -> Candidate {
-    Candidate {
+    Candidate { launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,
@@ -115,11 +115,12 @@ fn context(c: &Coordinator<Fake>, owner: &RunOwner) -> Candidate {
     candidate.stage = Some(Stage::new(&candidate, compile(&candidate)).unwrap());
     candidate
 }
+fn hardware_candidate()->Candidate{let mut value=candidate();value.launch_preparation=true;value}
 
 #[test]
 fn waiting_launch_keeps_one_journaled_owner_neutral_and_never_starts_graph_work() {
     let (mut c, p) = fixture(None);
-    let owner = c.begin_launch(candidate()).unwrap();
+    let owner = c.begin_launch(hardware_candidate()).unwrap();
     assert_eq!(c.status.state, State::AwaitingGame);
     assert!(!c.validates(&owner));
     assert!(c.manifest.active.is_none());
@@ -146,7 +147,7 @@ fn waiting_launch_keeps_one_journaled_owner_neutral_and_never_starts_graph_work(
 #[test]
 fn verified_context_starts_once_without_reacquiring_or_changing_hardware_owner() {
     let (mut c, p) = fixture(None);
-    let owner = c.begin_launch(candidate()).unwrap();
+    let owner = c.begin_launch(hardware_candidate()).unwrap();
     c.bind_launch_epoch(&owner, 42).unwrap();
     let fresh = context(&c, &owner);
     c.finish_launch(&owner, fresh.clone()).unwrap();
@@ -179,7 +180,7 @@ fn verified_context_starts_once_without_reacquiring_or_changing_hardware_owner()
 fn stop_or_pause_cancels_hold_and_late_context_cannot_stop_a_newer_owner() {
     for pause in [false, true] {
         let (mut c, p) = fixture(None);
-        let owner = c.begin_launch(candidate()).unwrap();
+        let owner = c.begin_launch(hardware_candidate()).unwrap();
         c.bind_launch_epoch(&owner, 42).unwrap();
         let late = context(&c, &owner);
         if pause {
@@ -209,7 +210,7 @@ fn stop_or_pause_cancels_hold_and_late_context_cannot_stop_a_newer_owner() {
 #[test]
 fn pending_launch_rejects_replacement_or_modified_candidate_and_epoch_adoption() {
     let (mut c, _) = fixture(None);
-    let owner = c.begin_launch(candidate()).unwrap();
+    let owner = c.begin_launch(hardware_candidate()).unwrap();
     assert!(c.launch_candidate(&owner, Some("dcs"), 42).is_err());
     c.bind_launch_epoch(&owner, 42).unwrap();
     assert!(c.bind_launch_epoch(&owner, 43).is_err());
@@ -225,7 +226,7 @@ fn pending_launch_rejects_replacement_or_modified_candidate_and_epoch_adoption()
 fn lost_health_or_deadline_compensates_without_start_or_replay() {
     for expired in [false, true] {
         let (mut c, p) = fixture(None);
-        let owner = c.begin_launch(candidate()).unwrap();
+        let owner = c.begin_launch(hardware_candidate()).unwrap();
         c.bind_launch_epoch(&owner, 42).unwrap();
         if expired {
             c.launch.as_mut().unwrap().deadline = Instant::now() - Duration::from_secs(1);
@@ -244,7 +245,7 @@ fn lost_health_or_deadline_compensates_without_start_or_replay() {
 fn context_or_uncertain_start_failure_requires_explicit_recovery_and_never_replays() {
     for start in [false, true] {
         let (mut c, p) = fixture(None);
-        let owner = c.begin_launch(candidate()).unwrap();
+        let owner = c.begin_launch(hardware_candidate()).unwrap();
         c.bind_launch_epoch(&owner, 42).unwrap();
         let fresh = context(&c, &owner);
         if start {
@@ -263,7 +264,7 @@ fn context_or_uncertain_start_failure_requires_explicit_recovery_and_never_repla
 #[test]
 fn altered_context_program_is_compensated_before_start() {
     let (mut c, p) = fixture(None);
-    let owner = c.begin_launch(candidate()).unwrap();
+    let owner = c.begin_launch(hardware_candidate()).unwrap();
     c.bind_launch_epoch(&owner, 42).unwrap();
     let mut fresh = c.launch_candidate(&owner, Some("dcs"), 42).unwrap();
     let mut prepared = compile(&fresh);
@@ -278,7 +279,7 @@ fn crash_in_waiting_state_is_restore_only_and_journal_cannot_restart_launch() {
     let directory = crate::test_directory();
     let path = directory.path().join("session.json");
     let (mut c, _) = fixture(Some(path.clone()));
-    let owner = c.begin_launch(candidate()).unwrap();
+    let owner = c.begin_launch(hardware_candidate()).unwrap();
     c.bind_launch_epoch(&owner, 42).unwrap();
     drop(c);
     let (mut recovered, p) = fixture(Some(path));
@@ -292,7 +293,7 @@ fn crash_in_waiting_state_is_restore_only_and_journal_cannot_restart_launch() {
 #[test]
 fn hardware_only_completion_keeps_game_branches_dormant_and_rechecks_exact_hold_health() {
     let (mut c, p) = fixture(None);
-    let owner = c.begin_launch(candidate()).unwrap();
+    let owner = c.begin_launch(hardware_candidate()).unwrap();
     c.bind_launch_epoch(&owner, 42).unwrap();
     assert_eq!(
         c.check_launch_hold(&owner, 42).unwrap().state,
@@ -313,4 +314,10 @@ fn hardware_only_completion_keeps_game_branches_dormant_and_rechecks_exact_hold_
             .count(),
         1
     );
+}
+#[test]
+fn native_launch_marker_cannot_be_forged_by_ordinary_apply_or_carried_into_started_context(){
+    let (mut c,p)=fixture(None);assert!(c.begin_launch(candidate()).is_err());assert!(c.apply(hardware_candidate()).is_err());assert!(p.lock().unwrap().phases.is_empty());
+    let owner=c.begin_launch(hardware_candidate()).unwrap();c.bind_launch_epoch(&owner,42).unwrap();let mut started=context(&c,&owner);assert!(!started.launch_preparation);
+    started.launch_preparation=true;started.stage=Some(Stage::new(&started,compile(&started)).unwrap());assert!(c.finish_launch(&owner,started).is_err());assert!(!p.lock().unwrap().phases.contains(&ApplyPhase::Start));
 }

@@ -128,6 +128,10 @@ pub enum Operation {
         release: f64,
         comparison: Comparison,
     },
+    HatDirection {
+        direction: crate::desktop::HatDirection,
+        diagonals: bool,
+    },
     Gate {},
     Any {},
     All {},
@@ -208,6 +212,9 @@ pub enum ResourceAdapter {
     deny_unknown_fields
 )]
 pub enum SinkKind {
+    Desktop {
+        action: crate::desktop::Action,
+    },
     Virtual {
         controller_id: String,
         control: OutputControl,

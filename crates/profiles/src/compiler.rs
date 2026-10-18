@@ -88,11 +88,13 @@ fn compile_mode(
             .virtual_outputs
             .iter()
             .map(|controller| controller.ports.len())
-            .sum::<usize>();
+            .sum::<usize>()
+        + document.desktop_outputs.iter().map(|output| output.ports.len()).sum::<usize>();
     if document.resources.len() > crate::validation::MAX_RESOURCES
         || document.processing_nodes.len() > crate::validation::MAX_PROCESSING_NODES
         || document.bindings.len() > crate::validation::MAX_BINDINGS
         || document.virtual_outputs.len() > crate::validation::MAX_VIRTUAL_OUTPUTS
+        || document.desktop_outputs.len() > 1
         || ports > crate::validation::MAX_PORTS
     {
         error(&mut report.diagnostics, "graphBudgetExceeded", "The complete graph exceeds its bounded resource, processing, binding, output or port budget; no instructions were truncated.", GraphLocation::default());
@@ -312,6 +314,15 @@ fn compile_mode(
                 route: resolved.route,
                 readiness: resolved.readiness,
             });
+        } else if let Some(desktop) = document.desktop_outputs.iter().find(|output| output.id == binding.to.node_id) {
+            let port = desktop.ports.iter().find(|port| port.id == binding.to.port_id).unwrap();
+            let definition = desktop.actions.iter().find(|action| action.port_id == port.id).unwrap();
+            let readiness = if snapshot.backend.desktop_available && snapshot.backend.desktop_qualified && snapshot.backend.desktop_enabled { PlanReadiness::Ready } else { PlanReadiness::Blocked };
+            runtime_sinks.push(Sink { id: binding.id.clone(), endpoint: runtime_endpoint(&binding.to), from: runtime_endpoint(&binding.from), contract: port.contract.clone(), kind: SinkKind::Desktop { action: definition.action.clone() } });
+            sink_plans.push(SinkPlan { endpoint: binding.to.clone(), adapter: SinkAdapter::DesktopInput, inventory_resource_id: None, observed_port_id: None, contract: port.contract.clone(), token: None, preparation: None, route: None, readiness });
+            if readiness == PlanReadiness::Blocked {
+                report.diagnostics.push(CompileDiagnostic { code: "desktopBackendNotReady".into(), severity: DiagnosticSeverity::Warning, message: "Desktop input requires separate native availability, local enablement and qualification. Recording preview grants no input authority.".into(), location: GraphLocation { node_id: Some(desktop.id.clone()), port_id: Some(port.id.clone()), edge_ids: vec![binding.id.clone()], ..Default::default() } });
+            }
         } else if let Some(controller) = document
             .virtual_outputs
             .iter()
@@ -438,7 +449,18 @@ fn compile_mode(
             }
         })
         .collect();
-    let branches = branches(document, &bindings, &source_plans, &sink_plans);
+    let mut branches = branches(document, &bindings, &source_plans, &sink_plans);
+    for branch in &mut branches {
+        let desktop = sink_plans.iter().any(|sink| sink.endpoint == branch.sink && sink.adapter == SinkAdapter::DesktopInput);
+        let scripts = branch.processing_nodes.iter().filter(|id| document.processing_nodes.iter().any(|node| node.id == **id && matches!(node.operation, program::Operation::Script { .. }))).cloned().collect::<Vec<_>>();
+        if desktop && !scripts.is_empty() {
+            branch.readiness = PlanReadiness::Blocked;
+            if let Some(sink) = sink_plans.iter_mut().find(|sink| sink.endpoint == branch.sink) { sink.readiness = PlanReadiness::Blocked; }
+            report.diagnostics.push(CompileDiagnostic { code: "desktopScriptUnqualified".into(), severity: DiagnosticSeverity::Warning,
+                message: format!("Desktop output transitively depends on an unqualified live script: {}. Use visible built-in processing for this branch.", scripts.join(", ")),
+                location: GraphLocation { node_id: Some(branch.sink.node_id.clone()), port_id: Some(branch.sink.port_id.clone()), edge_ids: branch.edge_ids.clone(), ..Default::default() } });
+        }
+    }
     let controller_summaries = controllers.iter().map(|controller| {
         let readiness = controller_readiness(controller, snapshot, document.virtual_outputs.len());
         if readiness == PlanReadiness::Blocked {
@@ -491,7 +513,12 @@ fn compile_mode(
             location: GraphLocation::default(),
         });
     }
-    report.readiness = if snapshot.read_only
+    let disconnected_desktop = sink_plans.is_empty() && !document.desktop_outputs.is_empty();
+    if disconnected_desktop {
+        report.diagnostics.push(CompileDiagnostic { code: "noExecutableOutput".into(), severity: DiagnosticSeverity::Warning,
+            message: "This editing canvas has no connected executable output. Connect an exact destination input before Apply; blank drafts can still be saved and exported.".into(), location: GraphLocation::default() });
+    }
+    report.readiness = if disconnected_desktop || snapshot.read_only
         || branches
             .iter()
             .any(|branch| branch.required && branch.readiness == PlanReadiness::Blocked)
@@ -549,6 +576,11 @@ fn compile_mode(
     let mut companion_assignments = document.companion_assignments.clone();
     companion_assignments.sort_by(|a, b| a.resource_id.cmp(&b.resource_id));
     report.plan = Some(ExecutionPlan {
+        requirements: ExecutionRequirements {
+            desktop_input: program.sinks.iter().any(|sink| matches!(sink.kind, SinkKind::Desktop { .. })),
+            virtual_devices: !program.controllers.is_empty(),
+            visibility: document.visibility.iter().any(|intent| intent.mode == crate::VisibilityMode::HiddenWhileActive),
+        },
         program,
         topological_order,
         trace,
@@ -705,6 +737,7 @@ fn portable_plan_hash(document: &ProfileDocument, program: &Program) -> Result<S
         .iter()
         .map(|r| (&r.id, r.required))
         .chain(policy.virtual_outputs.iter().map(|v| (&v.id, v.required)))
+        .chain(policy.desktop_outputs.iter().map(|v| (&v.id, v.required)))
         .collect::<BTreeMap<_, _>>();
     hash(&(
         program,
@@ -733,6 +766,7 @@ fn graph_diagnostics(document: &ProfileDocument, diagnostics: &mut Vec<CompileDi
                 .iter()
                 .map(|node| (&node.id, node.ports.iter().collect())),
         )
+        .chain(document.desktop_outputs.iter().map(|node| (&node.id, node.ports.iter().collect())))
         .collect::<BTreeMap<_, _>>();
     let mut targets = BTreeMap::<(String, String), Vec<String>>::new();
     for binding in &document.bindings {
@@ -920,7 +954,8 @@ fn branches(
         }) || document
             .virtual_outputs
             .iter()
-            .any(|controller| controller.id == sink.endpoint.node_id && controller.required);
+            .any(|controller| controller.id == sink.endpoint.node_id && controller.required)
+            || document.desktop_outputs.iter().any(|output| output.id == sink.endpoint.node_id && output.required);
         let states = std::iter::once(sink.readiness)
             .chain(source_ports.values().map(|source| source.readiness))
             .collect::<Vec<_>>();

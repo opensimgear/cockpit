@@ -24,7 +24,7 @@ impl Held {
 }
 impl<H: Host> Coordinator<H> {
     pub(crate) fn begin_launch(&mut self, candidate: Candidate) -> Result<RunOwner, String> {
-        if candidate.game_id.is_some() || !self.host.supports_launch_hold() {
+        if !candidate.launch_preparation || candidate.game_id.is_some() || !self.host.supports_launch_hold() {
             return Err("This native adapter cannot prepare a hardware-only launch hold.".into());
         }
         self.apply_mode(candidate, true)?;
@@ -85,6 +85,7 @@ impl<H: Host> Coordinator<H> {
         }
         let mut candidate = held.candidate.clone();
         candidate.game_id = game_id.map(str::to_owned);
+        candidate.launch_preparation=false;
         candidate.admission_epoch = Some(epoch);
         candidate.stage = None;
         Ok(candidate)
@@ -126,6 +127,7 @@ impl<H: Host> Coordinator<H> {
                 &candidate.assignments,
                 candidate.read_only,
                 &candidate.game_id,
+                candidate.launch_preparation,
                 candidate.admission_epoch,
             ))
             .map_err(|e| e.to_string())?
@@ -134,6 +136,7 @@ impl<H: Host> Coordinator<H> {
                     &expected.assignments,
                     expected.read_only,
                     &expected.game_id,
+                    expected.launch_preparation,
                     expected.admission_epoch,
                 ))
                 .map_err(|e| e.to_string())?

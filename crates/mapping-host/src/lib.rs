@@ -1,5 +1,6 @@
 //! Native mapping coordination. Captured reports never pass through UI polling.
 pub mod router;
+pub mod desktop;
 pub mod service;
 pub mod settings;
 

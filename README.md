@@ -42,6 +42,14 @@ The Pico USB adapter discovers both legacy protocol-1 images and the current pro
 
 STM32 discovery verifies manufacturer/product metadata, a 24-hex UID and bounded CDC protocol-3 automatic-lifecycle snapshots. Explicit report IDs and descriptor positions are validated independently. Capacity and admission failures remain visible. Configuration uses the production Cyphal/CAN contract (`canProtocol=3`) with identity, boot, writer, request and epoch validation. After Apply, readback follows the device's renewed lease with bounded read retries; a device reboot stops reconciliation, and writes are never replayed. CDC-v2 gateways remain readable with their older manual registration/layout Apply controls; those adapters do not claim automatic Enable/Disable/Remove support. Local gateways receive the same handshake checks as USB serial gateways; on macOS/Linux they advertise in the current user's private `/tmp/opensimgear-<user-id>/gateways/` directory. Local streams do not create OS USB/HID controllers.
 
+## Keyboard and mouse mappings (development acceptance)
+
+Unified Profiles can author keyboard and mouse actions with recording previews.
+Windows live output has independent local enablement and remains behind the
+desktop acceptance gate; vJoy and HidHide are not required for desktop-only
+profiles. See the [keyboard and mouse guide](docs/keyboard-mouse.md) and
+[behavior and qualification contract](docs/desktop-output-contract.md).
+
 ## Host controller discovery (experimental)
 
 On Windows, Devices List and Topology modes also show joystick, gamepad and multi-axis HID collections, including published OpenSimGear HID inputs. Background Raw Input capture provides paged live buttons, axes, hats and capability diagnostics independently of gateway setup sessions. Names and roles are local metadata. Serial/collection evidence can follow a controller across ports; ambiguous devices require explicit reassignment. Unplugging clears values, while stationary controls retain their last valid report. vJoy is excluded from physical input discovery.

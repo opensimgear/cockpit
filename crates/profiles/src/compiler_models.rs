@@ -54,6 +54,9 @@ pub struct BackendCapabilities {
     pub qualified: bool,
     pub visibility_available: bool,
     pub visibility_qualified: bool,
+    pub desktop_available: bool,
+    pub desktop_qualified: bool,
+    pub desktop_enabled: bool,
     pub max_targets: usize,
     pub max_buttons: u16,
     pub max_axes: u8,
@@ -68,6 +71,9 @@ impl Default for BackendCapabilities {
             qualified: false,
             visibility_available: false,
             visibility_qualified: false,
+            desktop_available: false,
+            desktop_qualified: false,
+            desktop_enabled: false,
             max_targets: MAX_VIRTUAL_TARGETS,
             max_buttons: 128,
             max_axes: 16,
@@ -130,6 +136,7 @@ pub struct CompilationReport {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionPlan {
+    pub requirements: ExecutionRequirements,
     pub program: osg_mapping::program::Program,
     pub topological_order: Vec<String>,
     pub trace: Vec<InstructionTrace>,
@@ -141,6 +148,13 @@ pub struct ExecutionPlan {
     pub runtime_overrides: Vec<RuntimeOverride>,
     pub companion_assignments: Vec<CompanionAssignment>,
     pub budgets: PlanBudgets,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionRequirements {
+    pub desktop_input: bool,
+    pub virtual_devices: bool,
+    pub visibility: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -171,6 +185,7 @@ pub struct SourcePlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SinkAdapter {
+    DesktopInput,
     VirtualController,
     PhysicalState,
     PhysicalAction,

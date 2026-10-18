@@ -171,7 +171,7 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
     command["command"] = json!("companion_publish");
     hub.command(&command).unwrap();
     assert_ne!(desired.publication_hash, publication.publication_hash);
-    let mut candidate = Candidate {
+    let mut candidate = Candidate { launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,
@@ -510,7 +510,7 @@ impl NativeFixture {
         )
     }
     pub(crate) fn candidate(&self, default: bool) -> Candidate {
-        let mut candidate = Candidate {
+        let mut candidate = Candidate { launch_preparation: false,
             document: osg_profiles::default_document(),
             assignments: vec![],
             read_only: false,

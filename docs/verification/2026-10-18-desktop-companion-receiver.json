@@ -1,0 +1,245 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-18",
+  "feature": "97 keyboard and mouse output",
+  "result": "passed",
+  "test": {
+    "command": "node --test tests/ui/desktop-companion-native.mjs",
+    "tests": 1,
+    "passed": 1,
+    "failed": 0
+  },
+  "path": "Authenticated pinned-CA loopback WSS peer -> running native Cockpit Tauri gateway -> applied typed ProfileSession -> same-executable desktop worker -> receive-only Windows receivers",
+  "environment": {
+    "platform": "Windows",
+    "actualRunningDevCockpit": true,
+    "developmentInjectionOptIn": true,
+    "productionQualified": false,
+    "mockedNativePorts": false,
+    "virtualControllers": 0,
+    "applicationSelection": "Native foreground observation and profile_desktop_capture_application; no application path or PID supplied by the test through IPC",
+    "receivers": {
+      "selected": {
+        "executable": "<workspace>/crates/desktop-output/target/debug/examples/native_receiver.exe",
+        "process": "<selected-receiver>"
+      },
+      "focusTarget": {
+        "executable": "<same-receiver-executable>",
+        "process": "<second-receiver>"
+      },
+      "distinctProcesses": true,
+      "receiveOnly": true
+    }
+  },
+  "checks": [
+    "Actual WSS pairing, publication, neutral baseline and exact native contract/hash pins compile to desktopInput with zero virtual controllers",
+    "Real companion press/release produced receiver-observed key, chord and mouse edges through the applied ProfileSession",
+    "Two actual companion controls share native Left Ctrl; releasing the first route preserves Ctrl until its final owner releases",
+    "Twenty ordered encoder edges in one real WSS socket write produce ten serialized Enter taps with configured 30ms-down/30ms-up dwell; no measured dwell or native polling interval claim",
+    "One actual companion axis update sustains receiver-observed relative motion across explicit host ticks without further axis reports",
+    "Actual application focus loss clears native held ownership and the second receive-only process observes cleanup; focus return and repeated true stay disarmed until fresh false then true",
+    "Companion heartbeat loss and native Stop cancel owned contributions without a virtual target"
+  ],
+  "profile": {
+    "requirements": {
+      "desktopInput": true,
+      "virtualDevices": false,
+      "visibility": false
+    },
+    "virtualTargets": 0
+  },
+  "receiverObservations": {
+    "firstReceiver": {
+      "total": 157,
+      "keyDown": 31,
+      "keyUp": 27,
+      "leftMouseDown": 5,
+      "leftMouseUp": 4,
+      "pointerMove": 90,
+      "character": 0
+    },
+    "secondReceiver": {
+      "total": 5,
+      "keyDown": 0,
+      "keyUp": 4,
+      "leftMouseDown": 0,
+      "leftMouseUp": 1,
+      "pointerMove": 0,
+      "character": 0
+    },
+    "serializedEnterTaps": {
+      "down": 10,
+      "up": 10,
+      "sourceDetents": 10,
+      "sourceFrames": 20,
+      "configuredDownMs": 30,
+      "configuredUpMs": 30
+    },
+    "sharedCtrlAfterFirstOwnerRelease": [
+      {
+        "key": 224,
+        "kind": "key"
+      },
+      {
+        "key": 10,
+        "kind": "key"
+      }
+    ]
+  },
+  "focusReturn": {
+    "selectedIdentity": "<selected-receiver native process creation identity>",
+    "focusTargetIdentity": "<second-receiver native process creation identity>",
+    "paused": {
+      "state": "paused",
+      "backendPhase": "paused",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false,
+      "waitingNeutral": [],
+      "activeRunCount": 1
+    },
+    "returnedWhileHeld": {
+      "state": "active",
+      "backendPhase": "paused",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false,
+      "waitingNeutral": [
+        "encoder-tap",
+        "pointer-output",
+        "route-chord",
+        "route-key",
+        "route-mouse",
+        "shared"
+      ],
+      "activeRunCount": 1
+    },
+    "repeatedTrue": {
+      "state": "active",
+      "backendPhase": "paused",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false,
+      "waitingNeutral": [
+        "route-chord",
+        "route-key",
+        "route-mouse"
+      ],
+      "activeRunCount": 1
+    },
+    "freshNeutral": {
+      "state": "active",
+      "backendPhase": "paused",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false,
+      "waitingNeutral": [],
+      "activeRunCount": 1
+    },
+    "secondReceiverCleanup": {
+      "total": 5,
+      "keyDown": 0,
+      "keyUp": 4,
+      "leftMouseDown": 0,
+      "leftMouseUp": 1,
+      "pointerMove": 0,
+      "character": 0
+    },
+    "secondReceiverNewPresses": 0,
+    "firstReceiverPressesOnFocusReturn": 0,
+    "firstReceiverPressesOnRepeatedTrue": 0,
+    "firstReceiverFreshNeutralThenTrueAndRelease": {
+      "total": 10,
+      "keyDown": 4,
+      "keyUp": 4,
+      "leftMouseDown": 1,
+      "leftMouseUp": 1,
+      "pointerMove": 0,
+      "character": 0
+    },
+    "allRoutesReceivedFreshNeutralBeforeLeaseCheck": true
+  },
+  "leaseLoss": {
+    "state": "active",
+    "backendPhase": "active",
+    "held": [],
+    "possibleHeld": [],
+    "cleanupComplete": true,
+    "uncertain": false,
+    "waitingNeutral": [
+      "encoder-tap",
+      "pointer-output",
+      "route-chord",
+      "route-key",
+      "route-mouse",
+      "shared"
+    ],
+    "activeRunCount": 1
+  },
+  "nativeSubmission": {
+    "meaning": "Worker acknowledgements report SendInput submission counts separately from the application-observed messages above.",
+    "retainedDeliveryOutcomes": 148,
+    "droppedDeliveryOutcomes": 0,
+    "attempted": 159,
+    "confirmed": 159,
+    "incomplete": 0,
+    "uncertain": 0,
+    "errors": []
+  },
+  "finalStatus": {
+    "profileState": "stopped",
+    "profileOwner": null,
+    "desktopEnabled": false,
+    "desktop": {
+      "state": "stopped",
+      "backendPhase": "stopped",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false,
+      "waitingNeutral": [
+        "encoder-tap",
+        "pointer-output",
+        "route-chord",
+        "route-key",
+        "route-mouse",
+        "shared"
+      ],
+      "activeRunCount": 0
+    },
+    "exactDesktopPreferencesRestored": true,
+    "listenerEnabled": false,
+    "activeConnections": 0,
+    "receiverExitCodes": [
+      0,
+      0
+    ],
+    "activeNativeDesktopWorkers": 0,
+    "cleanupErrors": [],
+    "nativeWorkerQueryExecutableNames": [
+      "osg-cockpit.exe",
+      "cockpit.exe"
+    ]
+  },
+  "limitations": [
+    "This is bounded native receiver acceptance, not game or production qualification.",
+    "No higher-integrity target or physical-keyboard overlap qualification is claimed.",
+    "Python monotonic input-send timestamps and receiver-local microseconds are separate uncorrelated clocks; no latency claim."
+  ],
+  "rawEvidence": {
+    "location": ".research/desktop-companion-native (local ignored artifacts)",
+    "files": [
+      "evidence.json",
+      "receiver.json",
+      "focus-receiver.json",
+      "process-cleanup.json",
+      "commands.json",
+      "run.log"
+    ]
+  },
+  "redaction": "Local absolute paths, process IDs, process creation timestamps, session IDs, certificates, pairing material and bridge tokens are excluded; no secrets are included."
+}

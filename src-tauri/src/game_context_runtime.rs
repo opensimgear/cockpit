@@ -10,6 +10,18 @@ pub(crate) struct PreparedGame {
     pub aircraft_module: Option<String>,
 }
 impl GamesRuntime {
+    /// Foreground desktop output needs exact process identity independently of
+    /// optional simulator telemetry setup and catalogue qualification.
+    pub(crate) fn desktop_process(&self, id: &str) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
+        self.inner.guard_installation_metadata()?;
+        let game = self.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).catalogue.iter()
+            .find(|game| game["id"] == id).cloned().ok_or("Choose a known native game installation.")?;
+        let process = self.inner.platform.find(&game)?;
+        match process {
+            Some(process) if self.inner.platform.alive(&process)? => Ok(Some(process)),
+            _ => Ok(None),
+        }
+    }
     pub(crate) fn prepare_profile_game_context(
         &self,
         id: &str,
@@ -388,6 +400,18 @@ mod tests {
         let revision = runtime.inner.setup.provider_setup_revision("x-plane-12");
         runtime.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":revision,"connection":crate::xplane::defaults(12)})).unwrap();
         (runtime, platform, calls)
+    }
+    #[test]
+    fn desktop_process_identity_is_available_without_provider_setup_and_pid_reuse_changes_scope_evidence(){
+        let scratch=Scratch::new();let platform=Arc::new(FakePlatform::new());
+        let runtime=GamesRuntime::new(Arc::new(|request|panic!("Process observation must not set up a provider or submit output: {request}")),Paths::in_directory(&scratch.path),platform.clone());
+        assert!(runtime.prepare_profile_game_context("x-plane-12").unwrap().is_none());
+        let captured=runtime.desktop_process("x-plane-12").unwrap().unwrap();assert_eq!(captured.pid,42);assert_eq!(captured.epoch,10);
+        platform.process.lock().unwrap().as_mut().unwrap().epoch=11;
+        let current=runtime.desktop_process("x-plane-12").unwrap().unwrap();assert_eq!(current.pid,captured.pid);assert_ne!(current,captured);
+        platform.failed.store(true,Ordering::Release);assert!(runtime.desktop_process("x-plane-12").is_err());platform.failed.store(false,Ordering::Release);
+        *platform.process.lock().unwrap()=None;assert!(runtime.desktop_process("x-plane-12").unwrap().is_none());
+        assert!(runtime.desktop_process("unknown").is_err());runtime.shutdown();
     }
     #[test]
     fn native_process_does_not_activate_without_matching_applied_owner() {

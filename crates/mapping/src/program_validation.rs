@@ -220,6 +220,10 @@ pub fn validate_operation(
             }
         }
         Operation::Not {} if same && bool_inputs => Ok(()),
+        Operation::HatDirection { .. }
+            if one && same_delivery
+                && input == Some(&ScalarSchema::Integer { min: -1, max: 7, unit: None })
+                && matches!(output, Some(ScalarSchema::Boolean {})) => Ok(()),
         Operation::EventToState {}
             if one
                 && input == output
@@ -550,6 +554,10 @@ pub(crate) fn rounded(value: f64, rounding: Rounding) -> f64 {
 }
 impl Program {
     pub fn compile(&self) -> Result<CompiledProgram, String> {
+        let desktop_fragment=self.sinks.iter().filter(|sink|matches!(sink.kind,SinkKind::Desktop{..})).collect::<Vec<_>>();
+        if serde_json::to_vec(&desktop_fragment).map_err(|error|error.to_string())?.len()>crate::profile::DOCUMENT_LIMIT {
+            return Err("The desktop backend fragment exceeds its 64 KiB budget.".into());
+        }
         let port_count = self.sources.len()
             + self
                 .nodes
@@ -564,10 +572,10 @@ impl Program {
             + self
                 .sinks
                 .iter()
-                .filter(|s| matches!(s.kind, SinkKind::Resource { .. }))
+                .filter(|s| matches!(s.kind, SinkKind::Resource { .. } | SinkKind::Desktop { .. }))
                 .count();
         if serde_json::to_vec(self).map_err(|e| e.to_string())?.len() > MAX_PROGRAM_BYTES
-            || self.nodes.len() > MAX_NODES
+            || self.nodes.len() + self.sinks.iter().filter(|sink|matches!(sink.kind,SinkKind::Desktop { .. })).count() > MAX_NODES
             || self.controllers.len() > MAX_TARGETS
             || port_count > MAX_PORTS
             || self.nodes.iter().map(|n| n.inputs.len()).sum::<usize>() + self.sinks.len()
@@ -718,6 +726,7 @@ impl Program {
             }
         }
         let mut targets = BTreeSet::new();
+        let mut desktop_endpoints = BTreeSet::new();
         for sink in &self.sinks {
             port_id(&sink.id)?;
             port_id(&sink.endpoint.node_id)?;
@@ -731,6 +740,16 @@ impl Program {
                 || !targets.insert(sink.endpoint.clone())
             {
                 return Err("Sink contract differs or has ambiguous writers; use an explicit arbitration node.".into());
+            }
+            if let SinkKind::Desktop { action } = &sink.kind {
+                action.validate()?;
+                if sink.contract != action.contract() {
+                    return Err("Desktop sink differs from its exact typed action port.".into());
+                }
+                desktop_endpoints.insert(&sink.endpoint.node_id);
+                if desktop_endpoints.len()>1 {
+                    return Err("An execution program supports one logical desktop endpoint.".into());
+                }
             }
             if let SinkKind::Virtual {
                 controller_id,

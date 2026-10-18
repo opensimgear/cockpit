@@ -135,6 +135,7 @@ export function processingNodeError(node:DeepReadonly<ProfileProcessingNode>):st
   const booleanInputs=node.inputs.every(port=>scalar(port.contract)?.type==='boolean'),stateInputs=node.inputs.every(port=>port.contract.delivery==='state');
   const order=(ids:readonly string[])=>ids.length===node.inputs.length&&new Set(ids).size===ids.length&&node.inputs.every(port=>ids.includes(port.id));
   switch(op.kind){
+    case 'hat-direction':return one&&input.delivery==='state'&&a?.type==='integer'&&a.min===-1&&a.max===7&&a.unit===null&&output.delivery==='state'&&b?.type==='boolean'?'':fail;
     case 'constant':return !node.inputs.length&&node.outputs.length===1&&output.delivery==='state'&&!!b&&profileScalarAccepts(b as ProfileScalarSchema,op.value)?'':fail;
     case 'identity':return same?'':fail;
     case 'declare-quantity':return sameDelivery&&numeric(a)&&numeric(b)&&a.unit===null&&a.type===b.type&&a.min===b.min&&a.max===b.max&&b.unit===op.unit?'':'Interpret raw quantity requires one unitless numeric input and the same output type, bounds and delivery with exactly the declared unit.';

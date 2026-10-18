@@ -2,7 +2,7 @@
 import type {AppliedProfileSnapshot,DeepReadonly,ProfileBinding} from './profiles';
 import type {NativeProfileOwner} from './profile-runtime';
 import {captureProfileOwner,profileOwnersEqual} from './profile-inspection';
-export type ProfileTopologyNode={id:string;name:string;kind:'device'|'companion'|'game'|'processing'|'virtual';summary:string};
+export type ProfileTopologyNode={id:string;name:string;kind:'device'|'companion'|'game'|'processing'|'virtual'|'desktop';summary:string};
 type Header={schemaVersion:1;owner:NativeProfileOwner;appliedSnapshot:AppliedProfileSnapshot;programHash:string;capturedUs:string;offset:number;total:number};
 export type ProfileTopologyPage=Header&({section:'nodes';items:ProfileTopologyNode[]}|{section:'edges';items:ProfileBinding[]});
 export type ProfileTopologyRequest={command:'profile_runtime_topology';owner:NativeProfileOwner;section:'nodes'|'edges';offset:number;limit:number};
@@ -19,7 +19,7 @@ function frozen<T>(value:T):DeepReadonly<T>{const copy:T=JSON.parse(JSON.stringi
 function endpoint(value:unknown):boolean{return exact(value,['nodeId','portId'])&&nodeId(value.nodeId)&&bounded(value.portId,80);}
 function item(value:unknown,section:'nodes'|'edges'):boolean{
   if(section==='edges')return exact(value,['id','from','to'])&&nodeId(value.id)&&endpoint(value.from)&&endpoint(value.to);
-  return exact(value,['id','name','kind','summary'])&&nodeId(value.id)&&typeof value.name==='string'&&value.name.trim()===value.name&&[...value.name].length>0&&[...value.name].length<=80&&!/[\u0000-\u001f\u007f-\u009f]/.test(value.name)&&['device','companion','game','processing','virtual'].includes(String(value.kind))&&bounded(value.summary,256);
+  return exact(value,['id','name','kind','summary'])&&nodeId(value.id)&&typeof value.name==='string'&&value.name.trim()===value.name&&[...value.name].length>0&&[...value.name].length<=80&&!/[\u0000-\u001f\u007f-\u009f]/.test(value.name)&&['device','companion','game','processing','virtual','desktop'].includes(String(value.kind))&&bounded(value.summary,256);
 }
 export function profileTopologyMatches(left:Pick<DeepReadonly<ProfileAppliedTopology>,'owner'|'appliedSnapshot'|'programHash'>,right:Pick<DeepReadonly<ProfileAppliedTopology>,'owner'|'appliedSnapshot'|'programHash'>):boolean{return profileOwnersEqual(left.owner,right.owner)&&left.programHash===right.programHash&&left.appliedSnapshot.profileId===right.appliedSnapshot.profileId&&left.appliedSnapshot.revision===right.appliedSnapshot.revision&&left.appliedSnapshot.semanticHash===right.appliedSnapshot.semanticHash;}
 export class ProfileTopologyClient{

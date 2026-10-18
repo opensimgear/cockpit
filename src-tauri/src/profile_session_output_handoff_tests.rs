@@ -302,7 +302,7 @@ fn token(owner: &RunOwner) -> RunToken {
 fn candidate(revision: u64) -> Candidate {
     let mut document = default_document();
     document.revision = revision;
-    Candidate {
+    Candidate { launch_preparation: false,
         document,
         assignments: vec![],
         read_only: false,

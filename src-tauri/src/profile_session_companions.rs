@@ -75,6 +75,7 @@ pub(crate) struct CompanionSources {
 pub(crate) struct CompanionPoll {
     pub frames: Vec<Frame>,
     pub diagnostics: Vec<String>,
+    pub liveness: Vec<(String,Counter)>,
 }
 
 fn selected_port(
@@ -528,6 +529,7 @@ impl CompanionSources {
         let mut result = CompanionPoll {
             frames: vec![],
             diagnostics: vec![error],
+            liveness: vec![],
         };
         for instance in &mut self.instances {
             if instance.ready {
@@ -661,7 +663,15 @@ impl CompanionSources {
                 Ok::<_, String>(converted)
             })();
             match outcome {
-                Ok(frames) => result.frames.extend(frames),
+                Ok(frames) => {
+                    result.frames.extend(frames);
+                    // Feed::poll validates the native writer lease and emits
+                    // loss before this marker. Retained state is latched while
+                    // this exact acquired generation remains ready.
+                    if instance.ready && !instance.inputs.is_empty() {
+                        result.liveness.push((instance.logical.clone(),Counter(instance.generation)));
+                    }
+                },
                 Err(error) => {
                     // A discarded batch may already have converted a Gap and
                     // cleared ready before a later frame failed. Preserve its

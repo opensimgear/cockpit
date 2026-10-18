@@ -1086,7 +1086,7 @@ mod native_host {
             } else {
                 vec![]
             };
-            let mut candidate = Candidate {
+            let mut candidate = Candidate { launch_preparation: false,
                 document,
                 assignments,
                 read_only: false,

@@ -318,6 +318,7 @@ fn plan(runtime: &Runtime) -> ExecutionPlan {
         }
     }
     ExecutionPlan {
+        requirements: Default::default(),
         program: osg_mapping::program::Program {
             sources: vec![],
             nodes: vec![],

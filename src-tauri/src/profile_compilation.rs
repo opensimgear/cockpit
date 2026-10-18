@@ -39,6 +39,7 @@ impl Runtime {
         let fields: &[&str] = match command {
             "profile_compile" => &["document", "assignments"],
             "profile_compilation_inspect" => &["compilationId", "section", "offset", "limit"],
+            "profile_desktop_preview" => &["compilationId", "frames", "advances"],
             _ => return Err("Unknown compiler operation.".into()),
         };
         if request
@@ -71,6 +72,19 @@ impl Runtime {
                 previews.pop_front();
             }
             Ok(response)
+        } else if command=="profile_desktop_preview" {
+            let id=request["compilationId"].as_str().filter(|id|uuid::Uuid::parse_str(id).is_ok_and(|parsed|parsed.to_string()==*id))
+                .ok_or("Choose a current compilation preview.")?;
+            let report=self.previews.lock().unwrap_or_else(|p|p.into_inner()).iter()
+                .find(|(stored,_)|stored==id).map(|(_,report)|report.clone())
+                .ok_or("The compilation preview expired; compile the current draft again.")?;
+            let plan=report.plan.as_ref().ok_or("Fix the graph errors before recording desktop actions.")?;
+            let mut result=crate::profile_desktop_preview::record(&plan.program,request)?;
+            result["compilationId"]=json!(id);
+            result["profileId"]=json!(report.profile_id);
+            result["profileRevision"]=json!(report.profile_revision);
+            result["programHash"]=json!(report.program_hash);
+            Ok(result)
         } else {
             let id = request["compilationId"]
                 .as_str()
@@ -149,7 +163,7 @@ fn summary(id: &str, report: &CompilationReport) -> Value {
     json!({"schemaVersion":report.schema_version,"compilationId":id,"profileId":report.profile_id,"profileRevision":report.profile_revision,
         "programHash":report.program_hash,"documentSemanticHash":report.document_semantic_hash,"captureFingerprint":report.capture_fingerprint,
         "readiness":report.readiness,"diagnostics":report.diagnostics.iter().take(32).collect::<Vec<_>>(),"sectionTotals":sections,
-        "budgets":report.plan.as_ref().map(|plan| &plan.budgets)})
+        "budgets":report.plan.as_ref().map(|plan| &plan.budgets),"requirements":report.plan.as_ref().map(|plan| &plan.requirements)})
 }
 fn number(request: &Value, key: &str, default: usize, maximum: usize) -> Result<usize, String> {
     request.get(key).map_or(Ok(default), |value| {

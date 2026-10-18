@@ -4,7 +4,7 @@
 use osg_controller_input::{registry::Control, stream};
 use osg_mapping::{
     engine::{
-        typed::{Change, Frame},
+        typed::{Change, Frame, Phase},
         Counter, Reason,
     },
     program::SignalSample,
@@ -124,6 +124,52 @@ impl HidInputs {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect()
+    }
+    /// Native connection evidence keeps latched HID state alive without
+    /// manufacturing samples or replaying the snapshot's baseline as an edge.
+    pub(crate) fn refresh_liveness(
+        &self,
+        capture: &osg_controller_input::ControllerService,
+        reducer: &mut Phase,
+        now: Counter,
+    ) -> Result<(), String> {
+        self.refresh_verified_liveness(capture, reducer, now)
+    }
+    fn refresh_verified_liveness(
+        &self,
+        capture: &impl HidCapture,
+        reducer: &mut Phase,
+        now: Counter,
+    ) -> Result<(), String> {
+        if self.sources.is_empty() { return Ok(()); }
+        // ControllerService snapshots admit only online sources with a complete
+        // current baseline, under the same native registry lock as disconnects.
+        let snapshot = capture.snapshot(&self.ids())?;
+        if snapshot.session != self.session || snapshot.captured_us < now.0 {
+            return Err("Native HID liveness belongs to an old capture session or clock.".into());
+        }
+        for source in &self.sources {
+            if !source.ready { continue; }
+            let current = snapshot.sources.iter().find(|current| current.id == source.physical)
+                .ok_or("The native HID liveness snapshot is incomplete.")?;
+            if current.baseline.reason != stream::Reason::Baseline
+                || current.baseline.generation != source.generation
+                || current.controls != source.controls
+                || source.ports.iter().any(|port| port.token.provider_generation != current.baseline.generation.to_string())
+            {
+                return Err("Native HID liveness no longer matches the admitted route generation or controls.".into());
+            }
+            if current.baseline.sequence != source.provider_sequence {
+                // New native reports are pending. Preserve their ordered edges;
+                // the next journal poll will admit their current values.
+                continue;
+            }
+            if source.ports.iter().any(|port| !current.baseline.values.contains_key(&port.observed)) {
+                return Err("Native HID liveness omitted an admitted control.".into());
+            }
+            reducer.observe_liveness(&source.logical, Counter(source.generation), now)?;
+        }
+        Ok(())
     }
     fn baseline(
         &mut self,

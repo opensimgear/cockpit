@@ -28,6 +28,9 @@ pub(crate) struct Candidate {
     pub read_only: bool,
     /// Native selection only; a browser cannot provide process identity.
     pub game_id: Option<String>,
+    /// Native hardware-only launch staging; never accepted from IPC. Application
+    /// scope is resolved only after the actual launched process is identified.
+    pub launch_preparation:bool,
     /// Native cancellation fence captured before staging, never read from IPC.
     pub admission_epoch: Option<u64>,
     /// A native one-use preparation. It is never serialized or accepted over IPC.
@@ -148,6 +151,7 @@ pub(crate) struct Health {
 /// freshness. restore(recovery=true) may neutralize/unhide/restore still-owned
 /// setup, but must never rehide or replay input, commands, scripts or macros.
 pub(crate) trait Host: Send {
+    fn desktop_status(&self) -> Value { Value::Null }
     fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String>;
     fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String>;
@@ -255,6 +259,16 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn status(&self) -> &Status {
         &self.status
     }
+    pub(crate) fn desktop_status(&self) -> Value {
+        let mut status=self.host.desktop_status();
+        let desktop_pending=self.manifest.active.iter().chain(self.manifest.pending.iter().flat_map(|transition|transition.incoming.iter().chain(transition.outgoing.iter())))
+            .any(|run|run.receipts.iter().any(|receipt|receipt.kind=="desktop-output"));
+        if desktop_pending && matches!(self.status.state,State::RecoveryNeeded|State::Faulted) {
+            if !status.is_object(){status=serde_json::json!({});}
+            status["state"]=serde_json::json!("recovery-needed");status["error"]=serde_json::json!(self.status.fault);
+        }
+        status
+    }
     pub(crate) fn validates(&self, owner: &RunOwner) -> bool {
         matches!(self.status.state, State::Running | State::Degraded)
             && self.status.owner.as_ref() == Some(owner)
@@ -289,6 +303,7 @@ impl<H: Host> Coordinator<H> {
         self.apply_mode(candidate, false)
     }
     fn apply_mode(&mut self, candidate: Candidate, hold: bool) -> Result<(), String> {
+        if candidate.launch_preparation!=hold{return Err("Native launch preparation cannot be applied as an ordinary running profile.".into())}
         self.check_apply()?;
         if candidate.read_only {
             return Err("Profile storage is read-only; repair it before activation.".into());

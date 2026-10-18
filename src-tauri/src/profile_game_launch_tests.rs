@@ -86,7 +86,7 @@ fn fixture() -> (
             }
         },
         platform.clone());
-    let mut candidate = Candidate {
+    let mut candidate = Candidate { launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,
@@ -94,6 +94,7 @@ fn fixture() -> (
         admission_epoch: Some(41),
         stage: None,
     };
+    candidate.launch_preparation=true;
     candidate.stage = Some(Stage::new(&candidate, ()).unwrap());
     (runtime, platform, candidate, directory)
 }
@@ -173,14 +174,15 @@ fn actual_native_stage_and_exact_hardware_run_precede_one_short_spawn_and_read_o
 #[test]
 fn unstaged_read_only_game_scoped_ineligible_and_already_running_candidates_do_not_spawn() {
     let (runtime, platform, candidate, _directory) = fixture();
-    for variant in 0..5 {
+    for variant in 0..6 {
         let mut invalid = candidate.clone();
         match variant {
             0 => invalid.stage = None,
             1 => invalid.read_only = true,
             2 => invalid.game_id = Some("dcs".into()),
             3 => invalid.admission_epoch = None,
-            _ => invalid.document.eligibility.game_ids = vec!["x-plane-12".into()],
+            4 => invalid.document.eligibility.game_ids = vec!["x-plane-12".into()],
+            _ => invalid.launch_preparation=false,
         }
         assert!(runtime.prepare_profile_launch("dcs", &invalid).is_err());
     }

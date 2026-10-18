@@ -11,6 +11,11 @@ struct NativeLaunchContext {
     proof: Option<crate::games::PreparedGame>,
     started: crate::games::launch::StartedGame,
 }
+fn launched_desktop_scope(current:Option<&osg_desktop_output::Scope>,required:bool,process:&crate::game_discovery::ProcessIdentity)->Option<osg_desktop_output::Scope>{
+    if required && current!=Some(&osg_desktop_output::Scope::DesktopWide){
+        Some(osg_desktop_output::Scope::Application{identity:crate::profile_session_desktop::identity(process)})
+    }else{current.cloned()}
+}
 
 fn game_resource(document: &osg_profiles::ProfileDocument, id: &str) -> bool {
     document
@@ -227,7 +232,7 @@ impl NativeProfileHost {
         candidate: &Candidate,
         started: crate::games::launch::StartedGame,
     ) -> Result<Arc<crate::profile_session::Stage>, String> {
-        if candidate.read_only || candidate.stage.is_some() || candidate.admission_epoch.is_none() {
+        if candidate.launch_preparation || candidate.read_only || candidate.stage.is_some() || candidate.admission_epoch.is_none() {
             return Err("A launch context requires a fresh writable native candidate.".into());
         }
         games.validate_started_profile_game(&started)?;
@@ -261,6 +266,7 @@ impl NativeProfileHost {
             false
         };
         snapshot.backend.qualified = native && osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED;
+        crate::profile_session_desktop::capabilities(&mut snapshot.backend, native);
         if candidate
             .document
             .visibility
@@ -378,6 +384,7 @@ impl NativeProfileHost {
         if let Some(output) = state.output.as_mut() {
             output.keep_alive()?;
         }
+        if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
         let (_, diagnostics) = state
             .inputs
             .as_mut()
@@ -486,6 +493,7 @@ impl NativeProfileHost {
                     game_id: candidate.game_id.clone(),
                 });
         state.launch_context_installed = true;
+        state.desktop_scope=launched_desktop_scope(state.desktop_scope.as_ref(),payload.prepared.plan.requirements.desktop_input,&payload.started.process);
         state.report = payload.report;
         state.game = payload.game;
         state.game_preparation = payload.proof;

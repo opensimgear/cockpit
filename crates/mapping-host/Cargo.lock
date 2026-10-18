@@ -1186,6 +1186,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "osg-desktop-output"
+version = "0.1.0"
+dependencies = [
+ "osg-mapping",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "osg-logic"
 version = "0.1.0"
 dependencies = [
@@ -1215,6 +1226,7 @@ version = "0.1.0"
 dependencies = [
  "osg-companion-service",
  "osg-controller-input",
+ "osg-desktop-output",
  "osg-logic",
  "osg-mapping",
  "osg-virtual-controller",

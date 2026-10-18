@@ -50,6 +50,19 @@ pub struct Effect {
     pub endpoint: Endpoint,
     pub sample: SignalSample,
     pub reason: ReportReason,
+    /// Captured when a desktop effect is produced, before a later source frame
+    /// can replace its generation or validity epoch in the graph.
+    pub producer: Option<Token>,
+    /// Original native input observations, captured before a later source frame
+    /// or liveness refresh can rebase the graph's processing clock.
+    pub observations: Vec<Observation>,
+}
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct Observation {
+    pub endpoint:Endpoint,
+    pub at_us:Counter,
+    pub sequence:Counter,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -88,6 +101,8 @@ struct PortState {
     sample: SignalSample,
     epoch: u64,
     observed: u64,
+    captured: u64,
+    captured_sequence:u64,
 }
 #[derive(Clone, Default)]
 struct SourceState {
@@ -225,6 +240,7 @@ impl Phase {
                         sample: SignalSample::Unknown,
                         epoch: 1,
                         observed: 0,
+                        captured:0,captured_sequence:0,
                     },
                 )
             })
@@ -290,11 +306,86 @@ impl Phase {
             (&state.sample, observed)
         })
     }
+    /// Actual accepted native samples only. Liveness extends a latched state's
+    /// availability but never turns an old press into fresh rearming evidence.
+    pub fn source_observations(&self,token:&Token)->Vec<Observation>{
+        if token.run!=self.run{return vec![];}
+        let roots=token.dependencies.iter().filter(|dependency|self.sources.contains_key(&dependency.endpoint.node_id)).collect::<Vec<_>>();
+        if roots.iter().any(|dependency| {
+            self.sources.get(&dependency.endpoint.node_id).is_none_or(|source|!source.available||source.generation!=dependency.generation.0)
+                || self.values.get(&dependency.endpoint).is_none_or(|state|state.epoch!=dependency.epoch.0||!matches!(state.sample,SignalSample::Known(_)))
+        }){return vec![];}
+        roots.into_iter().map(|dependency|{
+            let state=&self.values[&dependency.endpoint];
+            Observation{endpoint:dependency.endpoint.clone(),at_us:Counter(state.captured),sequence:Counter(state.captured_sequence)}
+        }).collect()
+    }
     pub fn drain(&mut self) -> Vec<Effect> {
         self.effects.drain(..).collect()
     }
     pub fn drain_reports(&mut self) -> Vec<Report> {
         self.reports.drain(..).collect()
+    }
+    /// A native provider can confirm that a previously admitted latched source
+    /// is still connected in this exact generation, even when a stationary HID
+    /// control produces no reports. This is a liveness observation, never an
+    /// input sample: it cannot rearm a source, fire events or renew scripts.
+    /// Call before advancing the shared clock, using native connection evidence.
+    pub fn observe_liveness(
+        &mut self,
+        source: &str,
+        generation: Counter,
+        now: Counter,
+    ) -> Result<(), String> {
+        self.observe_selected_liveness(source,generation,now,None)
+    }
+    /// Refresh only native latched controls, preserving independent freshness
+    /// for sampled panel axes, telemetry and event ports on the same source.
+    pub fn observe_port_liveness(&mut self,source:&str,generation:Counter,now:Counter,ports:&[String])->Result<(),String>{
+        self.observe_selected_liveness(source,generation,now,Some(ports))
+    }
+    fn observe_selected_liveness(&mut self,source:&str,generation:Counter,now:Counter,ports:Option<&[String]>)->Result<(),String>{
+        if !self.active || now.0 < self.clock || now.0 > u64::MAX - 600_000_000 {
+            return Err("Invalid native source liveness clock or inactive run.".into());
+        }
+        let state = self.sources.get(source).ok_or("Unknown native liveness source.")?;
+        if !state.available || state.generation != generation.0 {
+            return Err("Native liveness cannot replace a fresh current-generation baseline.".into());
+        }
+        let mut refreshed = BTreeSet::new();
+        for port in &self.compiled.program.sources {
+            if port.endpoint.node_id == source
+                && ports.is_none_or(|ports|ports.contains(&port.endpoint.port_id))
+                && matches!(port.contract, PortContract::State { .. })
+                && matches!(self.values[&port.endpoint].sample, SignalSample::Known(_))
+            {
+                self.values.get_mut(&port.endpoint).unwrap().observed = now.0;
+                refreshed.insert(port.endpoint.clone());
+            }
+        }
+        for &index in &self.compiled.order {
+            let node = &self.compiled.program.nodes[index];
+            if matches!(node.operation, Operation::Script { .. })
+                || !node.inputs.iter().any(|input| refreshed.contains(&input.from))
+                || !node.inputs.iter().all(|input| {
+                    matches!(self.values[&input.from].sample,SignalSample::Known(_))
+                        && matches!(self.compiled.contracts[&input.from],PortContract::State{freshness_ms,..}
+                            if self.values[&input.from].observed.saturating_add(freshness_ms as u64*1000)>now.0)
+                })
+            {
+                continue;
+            }
+            for output in &node.outputs {
+                let endpoint = Endpoint { node_id: node.id.clone(), port_id: output.id.clone() };
+                if matches!(output.contract, PortContract::State { .. })
+                    && matches!(self.values[&endpoint].sample, SignalSample::Known(_))
+                {
+                    self.values.get_mut(&endpoint).unwrap().observed = now.0;
+                    refreshed.insert(endpoint);
+                }
+            }
+        }
+        Ok(())
     }
     fn put(&mut self, endpoint: &Endpoint, sample: SignalSample) -> bool {
         let state = self.values.get_mut(endpoint).expect("compiled endpoint");
@@ -304,6 +395,7 @@ impl Phase {
         }
         state.sample = sample;
         state.observed = self.clock;
+        state.captured = self.clock;
         changed
     }
     fn invalidate(&mut self, source: &str, status: SignalSample) {
@@ -739,6 +831,8 @@ impl Phase {
             };
             self.put(&endpoint, sample);
             self.values.get_mut(&endpoint).unwrap().observed = frame.captured_us.0;
+            self.values.get_mut(&endpoint).unwrap().captured = frame.captured_us.0;
+            self.values.get_mut(&endpoint).unwrap().captured_sequence = frame.sequence.0;
             dirty.insert(endpoint.clone());
             if event && !baseline {
                 events.insert(endpoint);
@@ -953,6 +1047,13 @@ impl Phase {
             }
             Operation::Not {} => {
                 SignalSample::scalar(PortValue::Boolean(!boolean(&first).unwrap()))
+            }
+            Operation::HatDirection { direction, diagonals } => {
+                if let Some(value)=number(&first) {
+                    SignalSample::scalar(PortValue::Boolean(crate::desktop::hat_direction(
+                        (value>=0.0).then_some(value as u8),*direction,
+                        if *diagonals { crate::desktop::HatDiagonal::IncludeAdjacent }else{crate::desktop::HatDiagonal::CardinalOnly})))
+                }else{missing.clone().unwrap_or(SignalSample::Unknown)}
             }
             Operation::Gate {} => {
                 if boolean(&inputs["gate"]) == Some(true) {
@@ -1188,6 +1289,24 @@ impl Phase {
             run: self.run.clone(),
             node_id: node_id.into(),
             dependencies,
+        })
+    }
+    /// Capture validity for an exact executable endpoint, including a direct
+    /// native source port which has no processing-node entry in the graph.
+    pub fn endpoint_token(&self, endpoint: &Endpoint) -> Result<Token, String> {
+        if !self.active || !self.values.contains_key(endpoint) {
+            return Err("Unknown or stopped typed endpoint producer.".into());
+        }
+        if self.compiled.dependencies.contains_key(&endpoint.node_id) {
+            return self.token(&endpoint.node_id);
+        }
+        Ok(Token {
+            run: self.run.clone(), node_id: endpoint.node_id.clone(),
+            dependencies: vec![Dependency {
+                endpoint: endpoint.clone(),
+                generation: Counter(self.sources.get(&endpoint.node_id).map_or(0,|source|source.generation)),
+                epoch: Counter(self.values[endpoint].epoch),
+            }],
         })
     }
     fn validate_token(&self, token: &Token) -> Result<(), String> {
@@ -1710,6 +1829,16 @@ impl Phase {
             return;
         }
         for (sink, sample) in updates {
+            let producer=if matches!(sink.kind,SinkKind::Desktop { .. }) {
+                let endpoints=self.compiled.dependencies.get(&sink.from.node_id).cloned()
+                    .unwrap_or_else(||BTreeSet::from([sink.from.clone()]));
+                Some(Token { run:self.run.clone(),node_id:sink.from.node_id.clone(),
+                    dependencies:endpoints.into_iter().map(|endpoint| Dependency {
+                        generation:Counter(self.sources.get(&endpoint.node_id).map_or(0,|source|source.generation)),
+                        epoch:Counter(self.values[&endpoint].epoch),endpoint,
+                    }).collect() })
+            }else{None};
+            let observations=producer.as_ref().map_or_else(Vec::new,|producer|self.source_observations(producer));
             self.sequence = self.sequence.saturating_add(1);
             self.last.insert(sink.id.clone(), sample.clone());
             self.effects.push_back(Effect {
@@ -1720,6 +1849,8 @@ impl Phase {
                 endpoint: sink.endpoint,
                 sample,
                 reason,
+                producer,
+                observations,
             });
         }
         let mut controllers = self.compiled.program.controllers.clone();

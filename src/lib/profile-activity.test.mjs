@@ -1,6 +1,13 @@
 import assert from'node:assert/strict';import test from'node:test';import{loadModules}from'./test-module-loader.mjs';
 import{owner,graph,node,edge,plain,topologyPage,hash}from'./profile-activity-fixtures.mjs';
 const modules=await loadModules(['./profiles','./profile-inspection','./profile-activity']);const{ProfileTopologyClient,profileTopologyMatches,profileActivityPath}=modules.get('./profile-activity');
+test('applied desktop output is an inspectable destination without a virtual controller',async()=>{
+  const data=graph();data.nodes.find(node=>node.id==='light').kind='desktop';
+  const client=new ProfileTopologyClient(async request=>topologyPage(request,data));
+  const captured=await client.load(owner()),path=profileActivityPath(captured,'a');
+  assert.equal(path.nodes.find(node=>node.id==='light').kind,'desktop');
+  assert.ok(!path.nodes.some(node=>node.kind==='virtual'));
+});
 test('applied topology is read-only, captures exact native identity, and freezes independent metadata without consulting a draft',async()=>{
   const calls=[],native=topologyPage({owner:owner(),section:'nodes',offset:0,limit:64}),client=new ProfileTopologyClient(async request=>{calls.push(request);return native;}),run=owner(),pending=client.page(run,'nodes');run.generation++;const page=await pending;
   assert.deepEqual(plain(calls),[{command:'profile_runtime_topology',owner:owner(),section:'nodes',offset:0,limit:64}]);assert.ok(Object.isFrozen(page.items[0]));native.items[0].name='changed';assert.equal(page.items[0].name,'source');assert.ok(profileTopologyMatches(graph(),page));assert.equal(profileTopologyMatches(graph(),{...page,programHash:`sha256:${'2'.repeat(64)}`}),false);

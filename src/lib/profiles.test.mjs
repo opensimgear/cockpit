@@ -13,6 +13,18 @@ const blank = () => ({ schemaVersion: 2, id: DEFAULT_PROFILE_ID, name: 'Default'
 const nativeSession = () => ({ selectedProfileId: DEFAULT_PROFILE_ID, selectionMode: 'manual', state: 'stopped', appliedSnapshot: null, fault: null });
 const port = (id = 'button') => ({ id, name: id, direction: 'output', contract: {delivery:'state',schema:{type:'boolean'},freshnessMs:1500,fallback:false} });
 const resource = () => ({ id: 'wheel', name: 'Wheel', kind: 'device', required: true, ports: [port()] });
+test('native-loaded portable validator preserves desktop-only action definitions and rejects malformed output authority',async()=>{
+  const source=await readFile(new URL('../../tests/fixtures/profiles/desktop-only.json',import.meta.url),'utf8');
+  const document=parseProfileDocument(source);
+  assert.deepEqual(parseProfileDocument(exportProfileDocument(document)),document);
+  assert.equal(document.virtualOutputs.length,0);
+  assert.deepEqual(document.desktopOutputs[0].actions.map(action=>action.action.kind),['key-hold','key-tap']);
+  for(const mutate of [value=>value.desktopOutputs=null,value=>value.desktopOutputs.push({...clone(value.desktopOutputs[0]),id:'second'}),value=>value.desktopOutputs[0].actions[0].action.key=65535,value=>value.desktopOutputs[0].actions[1].portId='hold',value=>value.desktopOutputs[0].ports[0].contract={delivery:'event',schema:{type:'boolean'}}]){
+    const value=clone(document);mutate(value);assert.ok(profileDocumentError(value));assert.throws(()=>parseProfileDocument(JSON.stringify(value)));
+  }
+  assert.ok(profileDocumentError({...document,enabled:true}));
+  assert.ok(profileDocumentError({...document,scope:{kind:'desktop-wide'}}));
+});
 const withResource = () => ({ ...blank(), resources: [resource()] });
 const invalid = document => assert.ok(profileDocumentError(document));
 

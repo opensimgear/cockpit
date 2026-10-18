@@ -528,7 +528,7 @@ impl GatewayManager {
                 .cloned();
             crate::profile_session::apply_staged_admitted(
                 &self.profile_session,
-                crate::profile_session::Candidate {
+                crate::profile_session::Candidate { launch_preparation: false,
                     document,
                     assignments,
                     read_only,
@@ -568,7 +568,7 @@ impl GatewayManager {
                         .stage
                         .as_ref()
                         .ok_or("Automatic native preparation is missing.")?
-                        .validate(&crate::profile_session::Candidate {
+                        .validate(&crate::profile_session::Candidate { launch_preparation: false,
                             document,
                             assignments,
                             read_only,

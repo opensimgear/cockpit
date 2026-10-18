@@ -26,6 +26,7 @@ fn fingerprint(candidate: &Candidate) -> Result<[u8; 32], String> {
         &candidate.assignments,
         candidate.read_only,
         &candidate.game_id,
+        candidate.launch_preparation,
         candidate.admission_epoch,
     ))
     .map_err(|error| error.to_string())?;

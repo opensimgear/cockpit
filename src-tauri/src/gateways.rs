@@ -21,6 +21,8 @@ type ProfilePrepare = Arc<dyn Fn(&crate::profile_session::Candidate) -> Result<A
 
 #[path = "profile_session_panels_io.rs"]
 mod profile_panels_io;
+#[path = "profile_desktop_gateway.rs"]
+mod profile_desktop_gateway;
 pub(crate) use profile_panels_io::ProfilePanelIo;
 #[path = "profile_automatic.rs"]
 mod automatic;
@@ -139,6 +141,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 /// catalogue and editor reads must not keep cancelling the native learner.
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
+    if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview");}
     if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
     if command.starts_with("mapping_") || command=="companion_feedback_routes" { return false; }
     if command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
@@ -286,6 +289,7 @@ impl GatewayManager {
             let closed = profile_closed.clone();
             std::thread::spawn(move || {
                 while !closed.load(Ordering::Acquire) {
+                    crate::profile_session_desktop::observe_foreground();
                     let active = {
                         let mut runtime = runtime.lock().unwrap_or_else(|p| p.into_inner());
                         let _ = runtime.poll();
@@ -364,7 +368,7 @@ impl GatewayManager {
                 self.pin_staged_manual(id,admission_epoch)?;
                 crate::profile_session::apply_staged_admitted(
                     &self.profile_session,
-                    crate::profile_session::Candidate { document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
+                    crate::profile_session::Candidate { launch_preparation: false, document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
                     |candidate| self.prepare_profile_at(candidate,admission_epoch),
                     |candidate| {
                         let admission = self.profile_admission.write().unwrap_or_else(|p| p.into_inner());
@@ -376,7 +380,7 @@ impl GatewayManager {
                         self.guard_retired_recovery()?;
                         let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
                         let (document, assignments, read_only) = profiles.compile_source(id)?;
-                        let saved = crate::profile_session::Candidate {
+                        let saved = crate::profile_session::Candidate { launch_preparation: false,
                             document, assignments, read_only, game_id: candidate.game_id.clone(), admission_epoch: candidate.admission_epoch, stage: None,
                         };
                         candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
@@ -508,9 +512,14 @@ impl GatewayManager {
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
-        let profile_mutation = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
-        let _policy=self.profile_automatic.begin_control(request["command"].as_str().unwrap_or(""));
-        self.profile_automatic.control(request["command"].as_str().unwrap_or(""));
+        let profile_mutation = request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let automatic_control = match request["command"].as_str().unwrap_or("") {
+            "profile_desktop_stop" => "profile_stop",
+            "profile_desktop_configure" | "profile_desktop_capture_application" => "profile_pause",
+            "profile_desktop_recover" => "profile_recover", other => other,
+        };
+        let _policy=self.profile_automatic.begin_control(automatic_control);
+        self.profile_automatic.control(automatic_control);
         let staging = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch"));
         let learning_start=request["command"]=="profile_input_learn_start";
         let learning_passive=matches!(request["command"].as_str(),Some("profile_input_learn_status"|"profile_input_learn_cancel"));
@@ -553,7 +562,7 @@ impl GatewayManager {
         let profile_request = request["command"]
             .as_str()
             .is_some_and(|command| command.starts_with("profile_"));
-        let request_limit = if matches!(request["command"].as_str(), Some("profile_editor_save" | "profile_compile")) {
+        let request_limit = if matches!(request["command"].as_str(), Some("profile_editor_save" | "profile_compile" | "profile_desktop_preview")) {
             PROFILE_EDITOR_REQUEST_LIMIT
         } else if profile_request {
             PROFILE_REQUEST_LIMIT
@@ -631,7 +640,7 @@ impl GatewayManager {
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
-        if matches!(command.as_str(), "profile_compile" | "profile_compilation_inspect") {
+        if matches!(command.as_str(), "profile_compile" | "profile_compilation_inspect" | "profile_desktop_preview") {
             request.as_object_mut().unwrap().remove("clientId");
             return match self.profile_compilation.request(&request, |document, draft_assignments| {
                 if let Some(assignments) = draft_assignments {
@@ -640,6 +649,7 @@ impl GatewayManager {
                     let read_only = self.profiles.lock().unwrap_or_else(|p| p.into_inner())
                         .compile_source(osg_profiles::DEFAULT_PROFILE_ID)?.2;
                     let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                    crate::profile_session_desktop::capabilities(&mut snapshot.backend,self.profile_native);
                     snapshot.read_only |= read_only;
                     return Ok(snapshot);
                 }
@@ -655,11 +665,12 @@ impl GatewayManager {
                     assignment.ports.retain(|port| resource.ports.iter().any(|logical| logical.id == port.profile_port_id));
                 }
                 let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                crate::profile_session_desktop::capabilities(&mut snapshot.backend,self.profile_native);
                 snapshot.read_only |= read_only;
                 if read_only { snapshot.inventory_diagnostics.push("The profile library is read-only; repair its storage before activation.".into()); }
                 Ok(snapshot)
             }) {
-                Ok(compilation) => json!({"ok":true,"state":{"profileCompilation":compilation}}),
+                Ok(compilation) => if command=="profile_desktop_preview" {json!({"ok":true,"state":{"profileDesktopPreview":compilation}})}else{json!({"ok":true,"state":{"profileCompilation":compilation}})},
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
@@ -680,6 +691,9 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if command.starts_with("profile_desktop_") {
+                return match self.desktop_request(&request) { Ok(desktop)=>json!({"ok":true,"state":{"desktop":desktop}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()}) };
+            }
             if command.starts_with("profile_retired_recovery_"){
                 return match self.retired_recovery_request(&request){Ok(status)=>json!({"ok":true,"state":{"retiredRecovery":status}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
             }
@@ -947,6 +961,27 @@ mod tests {
     use super::*;
     use std::{path::PathBuf, sync::mpsc, time::Duration};
     const CLIENT: &str = "cockpit-fleet-test-client";
+    #[test]
+    fn desktop_controls_cannot_inject_or_accept_browser_process_identity() {
+        let (manager, _) = setup();
+        let status = request(&manager,"profile_desktop_status",None,json!({}));
+        assert_eq!(status["ok"],true,"{status}");
+        assert_eq!(status["state"]["desktop"]["enabled"],false);
+        assert_eq!(status["state"]["desktop"]["state"],"stopped");
+        for (command, fields) in [
+            ("profile_desktop_configure",json!({"enabled":true,"scope":{"kind":"desktop-wide"}})),
+            ("profile_desktop_capture_application",json!({"pid":42,"path":"forged.exe"})),
+            ("profile_desktop_status",json!({"actions":[{"key":4}]})),
+        ] {
+            let rejected=request(&manager,command,None,fields);
+            assert_eq!(rejected["ok"],false,"{rejected}");
+        }
+        assert_eq!(request(&manager,"profile_desktop_stop",None,json!({}))["ok"],true);
+        let paused=request(&manager,"profile_status",None,json!({}));
+        assert_eq!(paused["state"]["profiles"]["profileSession"]["paused"],true);
+        assert!(paused["state"]["profiles"]["profileSession"]["owner"].is_null());
+        assert_eq!(request(&manager,"profile_desktop_status",None,json!({}))["state"]["desktop"]["enabled"],false);
+    }
     const FIRST: &str = "stm32:00112233445566778899aabb";
     const SECOND: &str = "stm32:112233445566778899aabbcc";
     const PICO: &str = "pico:OSG-PICO-0123456789ABCDEF";
@@ -1186,7 +1221,7 @@ mod tests {
         let retained_owner = applied["state"]["profiles"]["profileSession"]["owner"].clone();
         let captured = manager.profile_admission_epoch.load(Ordering::Acquire);
         let (document, assignments, read_only) = manager.profiles.lock().unwrap().compile_source(osg_profiles::DEFAULT_PROFILE_ID).unwrap();
-        let mut candidate = crate::profile_session::Candidate {
+        let mut candidate = crate::profile_session::Candidate { launch_preparation: false,
             document, assignments, read_only, game_id: None, admission_epoch: Some(captured), stage: None,
         };
         candidate.stage = Some((manager.profile_prepare)(&candidate).unwrap());

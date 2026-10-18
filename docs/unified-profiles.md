@@ -27,6 +27,7 @@ Schema version 2 contains:
 | `bindings` | Explicit directional source-port to destination-port connections |
 | `processingNodes` | Visible typed processing declarations compiled for the applied session |
 | `virtualOutputs` | Logical virtual controller definitions, without machine-specific vJoy slot IDs |
+| `desktopOutputs` | Optional keyboard and mouse endpoint with exact typed action ports; no OS process or local enablement |
 | `visibility` | Intent referring to logical resources, without HidHide instance paths |
 | `overrides` | Optional peripheral runtime intent, separate from permanent calibration/firmware setup |
 | `companionAssignments` | Logical companion assignments and immutable publication hashes, without pairing secrets |

@@ -3,6 +3,7 @@
   import Icon from './Icon.svelte';
   import ProfileRoutingEditor from './ProfileRoutingEditor.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
+  import ProfileDesktopControls from './ProfileDesktopControls.svelte';
   import ProfileAutomaticControls from './ProfileAutomaticControls.svelte';
   import ProfileLiveInspector from './ProfileLiveInspector.svelte';
   import ProfilePathActivity from './ProfilePathActivity.svelte';
@@ -108,6 +109,7 @@
 <details class="runtime-tools" bind:open={runtimeOpen}>
   <summary>Apply, Pause and applied runtime inspection</summary>
   <ProfileRuntimeControls controller={runtime} editor={runtimeTarget} profiles={workspace.profiles} gameIds={editor?.document.eligibility.gameIds??[]} {active} onState={next=>runtimeState=next}/>
+  <ProfileDesktopControls {active} requested={!!editor?.document.desktopOutputs?.length}/>
   <ProfileLiveInspector controller={inspection} owner={runtimeState.stale?null:runtimeState.status?.owner??null} active={active&&runtimeOpen} selectedId={routingSelection} editorProfileId={editor?.document.id} editorRevision={editor?.document.revision} editorDirty={dirty} profileName={appliedName}/>
   <ProfilePathActivity controller={activity} owner={runtimeState.stale?null:runtimeState.status?.owner??null} active={active&&runtimeOpen} selectedId={routingSelection} editorProfileId={editor?.document.id}/>
 </details>

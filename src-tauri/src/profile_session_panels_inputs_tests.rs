@@ -68,6 +68,30 @@ fn activation_requires_a_new_live_read_and_consumes_its_baseline_exactly_once() 
         inputs.stop();
     }
 }
+#[test]
+fn verified_panel_reads_keep_latched_buttons_fresh_for_five_seconds_without_inventing_edges(){
+    use osg_mapping::{engine::typed::Phase,program::{Program,SourcePort}};
+    let (plan,io)=fixture(false,1);io.press(true);
+    let mut inputs=PanelInputs::prepare_io(&plan,io.clone()).unwrap();inputs.acquire(0).unwrap();
+    eventually(||inputs.baseline(&plan,|_|Ok(())).unwrap());inputs.begin_live_baseline().unwrap();
+    let baseline=eventually(||inputs.live_baseline(&plan,|_|Ok(())).unwrap());
+    let program=Program{sources:plan.sources.iter().map(|source|SourcePort{endpoint:osg_mapping::program::Endpoint{node_id:source.endpoint.node_id.clone(),port_id:source.endpoint.port_id.clone()},contract:source.contract.clone()}).collect(),nodes:vec![],sinks:vec![],controllers:vec![]};
+    let mut phase=Phase::new(program,Counter(1),uuid::Uuid::new_v4().to_string()).unwrap();
+    for frame in baseline{phase.accept(frame).unwrap();}phase.drain();
+    let button=osg_mapping::program::Endpoint{node_id:"logical0".into(),port_id:"button:0".into()};
+    let start=Instant::now();let mut markers=0;
+    while start.elapsed()<Duration::from_secs(5){
+        let poll=inputs.poll(|_|Ok(())).unwrap();assert!(poll.frames.is_empty(),"Stationary panel control must not manufacture edges");
+        let (epoch,origin)=inputs.clock.unwrap();let now=Counter(origin+epoch.elapsed().as_micros() as u64);
+        for (source,generation,ports) in poll.liveness{assert_eq!(ports,vec!["button:0"]);phase.observe_port_liveness(&source,generation,now,&ports).unwrap();markers+=1;}
+        phase.advance(now).unwrap();assert_eq!(phase.sample(&button),Some(&SignalSample::scalar(PortValue::Boolean(true))));
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(markers>100);io.fail.store(true,Ordering::Release);
+    let loss=eventually(||{let poll=inputs.poll(|_|Ok(())).unwrap();poll.frames.iter().any(|frame|frame.reason==Reason::Gap).then_some(poll)});
+    assert!(loss.liveness.is_empty());phase.accept_batch(loss.frames).unwrap();
+    assert!(!matches!(phase.sample(&button),Some(SignalSample::Known(_))));inputs.stop();
+}
 
 #[test]
 fn delayed_live_peer_keeps_other_baselines_fresh_and_admits_only_postbaseline_changes() {

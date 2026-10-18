@@ -123,7 +123,7 @@ impl Host for Fake {
     }
 }
 fn candidate() -> Candidate {
-    Candidate {
+    Candidate { launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,
@@ -461,6 +461,7 @@ fn native_stage_is_bound_to_the_complete_candidate_and_consumed_once() {
         Box::new(|value| value.document.revision += 1),
         Box::new(|value| value.read_only = true),
         Box::new(|value| value.game_id = Some("dcs".into())),
+        Box::new(|value| value.launch_preparation = true),
         Box::new(|value| value.admission_epoch = Some(7)),
         Box::new(|value| {
             value

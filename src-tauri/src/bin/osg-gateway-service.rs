@@ -52,6 +52,7 @@ fn emit(output: &Mutex<io::Stdout>, response: Value) {
     let _ = output.flush();
 }
 fn main() {
+    if let Some(code) = osg_desktop_output::entry::helper_main() { std::process::exit(code); }
     if let Some(code) = osg_mapping_host::logic_helper_main() {
         std::process::exit(code);
     }

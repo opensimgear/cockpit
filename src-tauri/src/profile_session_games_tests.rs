@@ -199,6 +199,8 @@ fn authorize(source: &mut GameSources) {
 }
 fn effect(port: &PortDescriptor, sequence: u64) -> Effect {
     Effect {
+        producer: None,
+        observations: vec![],
         run: RunToken {
             session: "2b78de32-f0bc-40a3-9fd6-22ec3e0bd1cb".into(),
             generation: Counter(3),

@@ -60,7 +60,7 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *host_profiles, '-o', profile], root)
-    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game', 'companions', 'companion_native', 'companion_runs', 'typed_sources']]
+    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game', 'companions', 'companion_native', 'companion_runs', 'typed_sources', 'desktop']]
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',

@@ -55,6 +55,7 @@ impl Request {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum NodeKind {
+    Desktop,
     Device,
     Companion,
     Game,
@@ -238,6 +239,7 @@ fn summary(operation: &Operation) -> String {
         Operation::DeclareQuantity{quantity,unit}=>bounded_summary(format!("Quantity {quantity} [{unit}]")),
         Operation::Gate{}=>"Explicit gate".into(),Operation::Any{}=>"Boolean OR".into(),Operation::All{}=>"Boolean AND".into(),
         Operation::EventToState{}=>"Event to state".into(),Operation::Constant{value}=>format!("Constant {}",scalar(value)),
+        Operation::HatDirection{direction,diagonals}=>format!("Hat {direction:?} · {diagonals:?}"),
         Operation::Scale{factor,offset}=>format!("Scale × {} + {}",number(*factor),number(*offset)),
         Operation::RangeMap{input_min,input_max,output_min,output_max,rounding}=>format!("Map {}…{} → {}…{} · {rounding:?}",number(*input_min),number(*input_max),number(*output_min),number(*output_max)),
         Operation::UnitConvert{from,to,rounding}=>format!("Units {from} → {to} · {rounding:?}"),
@@ -311,6 +313,10 @@ pub(crate) fn capture(
                         node.layout.axes.len(),
                         node.layout.hats.len()
                     ),
+                }))
+                .chain(document.desktop_outputs.iter().map(|node| Node {
+                    id: node.id.clone(), name: node.name.clone(), kind: NodeKind::Desktop,
+                    summary: format!("{} exact keyboard and mouse actions", node.actions.len()),
                 }))
                 .collect::<Vec<_>>();
             nodes.sort_by(|a, b| a.id.cmp(&b.id));

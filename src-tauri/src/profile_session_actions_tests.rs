@@ -233,6 +233,8 @@ fn stopped(actions: &mut PanelActions) {
 }
 fn effect(owner: &RunOwner, n: usize, sequence: u64, value: bool) -> Effect {
     Effect {
+        producer: None,
+        observations: vec![],
         run: RunToken {
             session: owner.session.clone(),
             generation: Counter(owner.generation),

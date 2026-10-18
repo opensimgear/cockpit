@@ -64,13 +64,20 @@ pub fn show_main(app: &tauri::AppHandle) {
 fn create_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open-cockpit", "Open Cockpit", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit-cockpit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let stop = MenuItem::with_id(app, "stop-desktop-output", "Stop keyboard and mouse output", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &stop, &quit])?;
     let mut tray = TrayIconBuilder::with_id("cockpit")
         .tooltip("OpenSimGear Cockpit")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open-cockpit" => show_main(app),
+            "stop-desktop-output" => {
+                if let Some(gateway) = app.try_state::<crate::NativeGateway>() {
+                    let gateway = gateway.0.clone();
+                    std::thread::spawn(move || { let _ = gateway.request(json!({"command":"profile_desktop_stop","clientId":"cockpit-native-tray"})); });
+                }
+            }
             "quit-cockpit" => app.exit(0),
             _ => {}
         })

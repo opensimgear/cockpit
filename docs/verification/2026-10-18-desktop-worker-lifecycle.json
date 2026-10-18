@@ -1,0 +1,91 @@
+{
+  "checks": [
+    {
+      "cleanJournal": {
+        "cleanupComplete": true,
+        "enabled": true,
+        "error": null,
+        "held": [],
+        "inFlight": null,
+        "journalOwner": {
+          "generation": "1",
+          "session": "native-receiver-90"
+        },
+        "journalScope": {
+          "kind": "desktop-wide"
+        },
+        "owners": [],
+        "phase": "stopped",
+        "possibleHeld": [],
+        "qualified": true,
+        "runs": [],
+        "sharedControls": 0,
+        "uncertain": false
+      },
+      "cycle": 0,
+      "repeatedStopInert": true,
+      "secondWorkerExcluded": true,
+      "sessionLockReacquiredAfterDrop": true,
+      "wrongOwnerRejectedAfterCleanStop": true
+    },
+    {
+      "cleanJournal": {
+        "cleanupComplete": true,
+        "enabled": true,
+        "error": null,
+        "held": [],
+        "inFlight": null,
+        "journalOwner": {
+          "generation": "1",
+          "session": "native-receiver-91"
+        },
+        "journalScope": {
+          "kind": "desktop-wide"
+        },
+        "owners": [],
+        "phase": "stopped",
+        "possibleHeld": [],
+        "qualified": true,
+        "runs": [],
+        "sharedControls": 0,
+        "uncertain": false
+      },
+      "cycle": 1,
+      "repeatedStopInert": true,
+      "secondWorkerExcluded": true,
+      "sessionLockReacquiredAfterDrop": true,
+      "wrongOwnerRejectedAfterCleanStop": true
+    },
+    {
+      "cleanJournal": {
+        "cleanupComplete": true,
+        "enabled": true,
+        "error": null,
+        "held": [],
+        "inFlight": null,
+        "journalOwner": {
+          "generation": "1",
+          "session": "native-receiver-92"
+        },
+        "journalScope": {
+          "kind": "desktop-wide"
+        },
+        "owners": [],
+        "phase": "stopped",
+        "possibleHeld": [],
+        "qualified": true,
+        "runs": [],
+        "sharedControls": 0,
+        "uncertain": false
+      },
+      "cycle": 2,
+      "repeatedStopInert": true,
+      "secondWorkerExcluded": true,
+      "sessionLockReacquiredAfterDrop": true,
+      "wrongOwnerRejectedAfterCleanStop": true
+    }
+  ],
+  "experiment": "same-executable native worker stop/drop/reacquire regression",
+  "nativeInputSubmitted": false,
+  "productionQualified": false
+}

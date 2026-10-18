@@ -60,7 +60,7 @@ impl GatewayManager {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .compile_source(&original.document.id)?;
-        let saved = Candidate {
+        let saved = Candidate { launch_preparation: original.launch_preparation,
             document,
             assignments,
             read_only,
@@ -251,7 +251,7 @@ impl GatewayManager {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .check_apply()?;
-        let mut candidate = Candidate {
+        let mut candidate = Candidate { launch_preparation: true,
             document,
             assignments,
             read_only,
@@ -427,7 +427,7 @@ impl GatewayManager {
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .compile_source(&capture.intent.profile_id)?;
-                candidate.stage.as_ref().unwrap().validate(&Candidate {
+                candidate.stage.as_ref().unwrap().validate(&Candidate { launch_preparation: candidate.launch_preparation,
                     document,
                     assignments,
                     read_only,

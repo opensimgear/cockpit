@@ -150,6 +150,8 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
         document.resources.len() <= MAX_RESOURCES
             && document.processing_nodes.len() <= MAX_PROCESSING_NODES
             && document.virtual_outputs.len() <= MAX_VIRTUAL_OUTPUTS
+            && document.desktop_outputs.len() <= 1
+            && document.processing_nodes.len() + document.desktop_outputs.iter().map(|output| output.actions.len()).sum::<usize>() <= 256
             && document.bindings.len() <= MAX_BINDINGS,
         "Profile exceeds resource, processing, output or binding limits.",
     )?;
@@ -240,6 +242,20 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
             nodes.insert(&output.id, ports(&output.ports)?).is_none(),
             "Duplicate graph node identifier.",
         )?;
+    }
+    for output in &document.desktop_outputs {
+        id(&output.id)?;
+        label(&output.name)?;
+        let declared = ports(&output.ports)?;
+        check(!declared.is_empty() && output.actions.len() == declared.len(), "A desktop endpoint needs one exact action definition per typed input port.")?;
+        let mut actions = BTreeSet::new();
+        for definition in &output.actions {
+            check(actions.insert(&definition.port_id), "Duplicate desktop action port.")?;
+            definition.action.validate()?;
+            let port = declared.iter().find(|port| port.id == definition.port_id).ok_or("Desktop action references a missing exact port.")?;
+            check(port.direction == Direction::Input && port.contract == definition.action.contract(), "Desktop input contract does not match its explicit action.")?;
+        }
+        check(nodes.insert(&output.id, declared).is_none(), "Duplicate graph node identifier.")?;
     }
     check(
         nodes.values().map(Vec::len).sum::<usize>() <= MAX_PORTS,
@@ -438,6 +454,7 @@ pub fn semantic_hash(document: &ProfileDocument) -> Result<String, String> {
                             "resources"
                                 | "processingNodes"
                                 | "virtualOutputs"
+                                | "desktopOutputs"
                                 | "ports"
                                 | "inputs"
                                 | "outputs"
@@ -451,6 +468,7 @@ pub fn semantic_hash(document: &ProfileDocument) -> Result<String, String> {
                         | "bindings"
                         | "processingNodes"
                         | "virtualOutputs"
+                        | "desktopOutputs"
                         | "ports"
                         | "inputs"
                         | "outputs"
@@ -458,6 +476,8 @@ pub fn semantic_hash(document: &ProfileDocument) -> Result<String, String> {
                     array.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
                 } else if matches!(field, "visibility" | "overrides" | "companionAssignments") {
                     array.sort_by(|a, b| a["resourceId"].as_str().cmp(&b["resourceId"].as_str()));
+                } else if field == "actions" {
+                    array.sort_by(|a, b| a["portId"].as_str().cmp(&b["portId"].as_str()));
                 } else if matches!(field, "gameIds") {
                     array.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
                 }

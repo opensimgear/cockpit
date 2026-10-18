@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "id": "00000000-0000-4000-8000-000000000097",
+  "name": "Desktop output fixture",
+  "revision": 1,
+  "eligibility": {"gameIds": []},
+  "resources": [],
+  "bindings": [
+    {"id":"hold-route","from":{"nodeId":"trigger","portId":"out"},"to":{"nodeId":"desktop","portId":"hold"}},
+    {"id":"edge-route","from":{"nodeId":"trigger","portId":"out"},"to":{"nodeId":"press-edge","portId":"in"}},
+    {"id":"tap-route","from":{"nodeId":"press-edge","portId":"out"},"to":{"nodeId":"desktop","portId":"tap"}}
+  ],
+  "processingNodes": [
+    {"id":"trigger","name":"Explicit neutral trigger","operation":{"kind":"constant","value":false},"inputs":[],"outputs":[{"id":"out","name":"Button state","direction":"output","contract":{"delivery":"state","schema":{"type":"boolean"},"freshnessMs":1000,"fallback":false}}]},
+    {"id":"press-edge","name":"Visible press edge","operation":{"kind":"event-edge","edge":"rising"},"inputs":[{"id":"in","name":"Button state","direction":"input","contract":{"delivery":"state","schema":{"type":"boolean"},"freshnessMs":1000,"fallback":false}}],"outputs":[{"id":"out","name":"Ordered press","direction":"output","contract":{"delivery":"event","schema":{"type":"boolean"}}}]}
+  ],
+  "virtualOutputs": [],
+  "desktopOutputs": [{"id":"desktop","name":"Keyboard and mouse","required":true,"ports":[
+    {"id":"hold","name":"Physical Space hold","direction":"input","contract":{"delivery":"state","schema":{"type":"boolean"},"freshnessMs":1000,"fallback":false}},
+    {"id":"tap","name":"Physical Enter tap","direction":"input","contract":{"delivery":"event","schema":{"type":"boolean"}}}
+  ],"actions":[{"portId":"hold","action":{"kind":"key-hold","key":44}},{"portId":"tap","action":{"kind":"key-tap","key":40,"downMs":30,"upMs":30}}]}],
+  "visibility": [],
+  "overrides": [],
+  "companionAssignments": [],
+  "editor": {"positions":[],"viewport":{"x":0,"y":0,"zoom":1}}
+}

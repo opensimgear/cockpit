@@ -40,6 +40,7 @@ jobs:
       - run: pnpm profile-port-browser:coverage
       - run: pnpm profile-companion-authoring:coverage
       - run: pnpm profile-workspace:test
+      - run: pnpm desktop:coverage
       - run: pnpm profile-graph:coverage
       - run: pnpm profile-graph-history:coverage
       - run: pnpm profile-processing:coverage
@@ -307,6 +308,10 @@ jobs:
         run: python scripts/virtual-coverage.py
       - name: Native mapping-host tests with per-module coverage
         run: python scripts/mapping-host-coverage.py
+      - name: Desktop ownership, protocol and failure tests (no injection)
+        run: cargo test --locked --manifest-path crates/desktop-output/Cargo.toml --all-targets
+      - name: Portable desktop backend coverage (no injection)
+        run: python scripts/desktop-output-coverage.py
       - name: Build unavailable Apple helper and inspect without activation
         if: runner.os == 'macOS'
         run: |
@@ -376,6 +381,9 @@ jobs:
             .research/mapping-host-coverage/summary.json
             .research/mapping-host-coverage/*-lines.txt
             .research/mapping-host-coverage/tests.log
+            .research/desktop-output-coverage/summary.json
+            .research/desktop-output-coverage/*-lines.txt
+            .research/desktop-output-coverage/tests.log
             .research/mapping-m3/native-acceptance.json
             .research/windows-mapping-package/qualification.json
             .research/companion-coverage/summary.json

@@ -8,6 +8,7 @@ rust-version = "1.90"
 osg-companion-service = { path = "../companion-service" }
 osg-logic = { path = "../logic" }
 osg-mapping = { path = "../mapping" }
+osg-desktop-output = { path = "../desktop-output" }
 osg-controller-input = { path = "../controller-input" }
 osg-virtual-controller = { path = "../virtual-controller" }
 serde = { version = "1", features = ["derive"] }

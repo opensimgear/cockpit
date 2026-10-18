@@ -14,6 +14,8 @@ pub struct ProfileDocument {
     pub bindings: Vec<Binding>,
     pub processing_nodes: Vec<ProcessingNode>,
     pub virtual_outputs: Vec<VirtualOutput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub desktop_outputs: Vec<DesktopOutput>,
     pub visibility: Vec<VisibilityIntent>,
     pub overrides: Vec<RuntimeOverride>,
     pub companion_assignments: Vec<CompanionAssignment>,
@@ -31,6 +33,7 @@ impl ProfileDocument {
             bindings: vec![],
             processing_nodes: vec![],
             virtual_outputs: vec![],
+            desktop_outputs: vec![],
             visibility: vec![],
             overrides: vec![],
             companion_assignments: vec![],
@@ -94,13 +97,18 @@ impl ProfileDocument {
             .virtual_outputs
             .iter()
             .map(|output| output.ports.len());
+        let desktop_ports = document.desktop_outputs.iter().map(|output| output.ports.len());
         let ports = resource_ports
             .chain(processing_ports)
             .chain(output_ports)
+            .chain(desktop_ports)
             .collect::<Vec<_>>();
         if document.resources.len() > crate::validation::MAX_RESOURCES
             || document.processing_nodes.len() > crate::validation::MAX_PROCESSING_NODES
             || document.virtual_outputs.len() > crate::validation::MAX_VIRTUAL_OUTPUTS
+            || document.desktop_outputs.len() > 1
+            || document.desktop_outputs.iter().any(|output| output.actions.len() > 128)
+            || document.processing_nodes.len() + document.desktop_outputs.iter().map(|output| output.actions.len()).sum::<usize>() > 256
             || document.bindings.len() > crate::validation::MAX_BINDINGS
             || document.eligibility.game_ids.len() > 32
             || document.visibility.len() > 64
@@ -203,6 +211,22 @@ pub struct VirtualOutput {
     pub name: String,
     pub required: bool,
     pub ports: Vec<Port>,
+}
+/// One logical desktop endpoint; its typed inputs never allocate a controller.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DesktopOutput {
+    pub id: String,
+    pub name: String,
+    pub required: bool,
+    pub ports: Vec<Port>,
+    pub actions: Vec<DesktopActionDefinition>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DesktopActionDefinition {
+    pub port_id: String,
+    pub action: osg_mapping::desktop::Action,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

@@ -61,7 +61,7 @@ export function blankProfile(id: string, name = 'New profile'): ProfileDocument 
 }
 const boundedName = (name: string) => [...name.trim()].slice(0, 80).join('') || 'Resource';
 function freshResourceId(document: ProfileDocument): string {
-    const used = new Set([...document.resources, ...document.processingNodes, ...document.virtualOutputs].map(node => node.id));
+    const used = new Set([...document.resources, ...document.processingNodes, ...document.virtualOutputs,...(document.desktopOutputs??[])].map(node => node.id));
     for (let n = 1; n <= 400; n++)
         if (!used.has(`resource-${n}`))
             return `resource-${n}`;
@@ -85,7 +85,7 @@ export function addProfileResources(document: ProfileDocument, assignments: Prof
         local.push({ resourceId: id, sourceId: resource.id, ports: [] });
     }
     const placed = new Set(next.editor.positions.map(position => position.nodeId));
-    const missing = [...next.resources, ...next.processingNodes, ...next.virtualOutputs].map(node => node.id).filter(id => !placed.has(id));
+    const missing = [...next.resources, ...next.processingNodes, ...next.virtualOutputs,...(next.desktopOutputs??[])].map(node => node.id).filter(id => !placed.has(id));
     const bottom = next.editor.positions.reduce((value, position) => Math.max(value, position.y + PROFILE_BLOCK_HEIGHT + 48), 0);
     next.editor.positions.push(...profileAutoLayout(missing).map(position => ({ ...position, y: position.y + bottom })));
     const error = profileDocumentError(next) || profileAssignmentsError(local);

@@ -22,6 +22,7 @@ osg-companion-service = { path = "../crates/companion-service" }
 osg-mapping-host = { path = "../crates/mapping-host" }
 osg-virtual-controller = { path = "../crates/virtual-controller" }
 osg-mapping = { path = "../crates/mapping" }
+osg-desktop-output = { path = "../crates/desktop-output" }
 osg-controller-input = { path = "../crates/controller-input" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"

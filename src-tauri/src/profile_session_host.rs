@@ -42,6 +42,7 @@ struct NativePreparation {
     visibility: crate::profile_session_visibility::StagedVisibility,
     publication: crate::profile_session_overrides::Staged,
     dcs_hid: dcs_hid::Guard,
+    desktop_scope: Option<osg_desktop_output::Scope>,
 }
 struct NativeRun {
     owner: RunOwner,
@@ -61,6 +62,8 @@ struct NativeRun {
     clock_origin: u64,
     bindings: Vec<osg_virtual_controller::vjoy::Binding>,
     output: Option<osg_virtual_controller::session::Session>,
+    desktop: Option<crate::profile_session_desktop::Desktop>,
+    desktop_scope: Option<osg_desktop_output::Scope>,
     output_handoff: Option<crate::profile_session_virtual::PreparedHandoff>,
     scripts: crate::profile_session_scripts::Scripts,
     game: crate::profile_session_games::GameSources,
@@ -89,6 +92,7 @@ pub(crate) struct NativeProfileHost {
     recovery_visibility: BTreeMap<String, crate::profile_session_visibility::Visibility>,
     recovery_actions: BTreeMap<String, crate::profile_session_actions::PanelActions>,
     recovery_publications: BTreeMap<String, crate::profile_session_overrides::Overrides>,
+    last_desktop_status: serde_json::Value,
 }
 fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
@@ -116,6 +120,7 @@ impl NativeProfileHost {
             recovery_visibility: BTreeMap::new(),
             recovery_actions: BTreeMap::new(),
             recovery_publications: BTreeMap::new(),
+            last_desktop_status: serde_json::Value::Null,
         }
     }
     fn run(&mut self, owner: &RunOwner) -> Result<&mut NativeRun, String> {
@@ -137,6 +142,7 @@ impl NativeProfileHost {
             if let Some(output) = state.output.as_mut() {
                 output.keep_alive().map_err(|error| format!("Virtual output could not stay neutral while acquiring game telemetry. {error}"))?;
             }
+            if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
             let now = controllers.stream_page("", 0).captured_us;
             let sample = if first { state.game.baseline(&games, now) } else { state.game.poll_baseline(&games, now) };
             first = false;
@@ -168,6 +174,7 @@ impl NativeProfileHost {
                 return Err("The selected native panels did not supply fresh baselines before activation.".into());
             }
             if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
+            if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
@@ -221,7 +228,7 @@ impl NativeProfileHost {
             if sink.readiness == PlanReadiness::Ready
                 && !matches!(
                     sink.adapter,
-                    SinkAdapter::VirtualController | SinkAdapter::SimulatorCommand | SinkAdapter::CompanionFeedback | SinkAdapter::PhysicalAction
+                    SinkAdapter::VirtualController | SinkAdapter::SimulatorCommand | SinkAdapter::CompanionFeedback | SinkAdapter::PhysicalAction | SinkAdapter::DesktopInput
                 )
             {
                 blockers.push(AdmissionBlocker {
@@ -424,6 +431,7 @@ impl NativeProfileHost {
         inspect:&dyn Fn()->Result<Vec<osg_virtual_controller::vjoy::Slot>,String>,
         sample:&dyn Fn(&[u8])->Result<(Vec<osg_virtual_controller::vjoy::Slot>,Instant),String>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
+        if candidate.launch_preparation&&candidate.game_id.is_some(){return Err("Hardware-first launch preparation cannot capture a running game scope.".into())}
         let game_preparation = match candidate.game_id.as_deref() {
             Some(id) => games.prepare_profile_game_context(id)?,
             None => None,
@@ -455,6 +463,7 @@ impl NativeProfileHost {
         snapshot.backend.available = slots.is_some();
         snapshot.backend.qualified =
             native && osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED;
+        crate::profile_session_desktop::capabilities(&mut snapshot.backend, native);
         let report = osg_profiles::compiler::compile_for_preparation(
             &candidate.document,
             &snapshot,
@@ -551,6 +560,16 @@ impl NativeProfileHost {
                 .ok_or("The compiled profile has no program identity.")?,
             capture_fingerprint: report.capture_fingerprint.clone(),
         };
+        let desktop_scope = if prepared.plan.requirements.desktop_input {
+            let preferences = crate::profile_desktop_settings::Settings::native();
+            if let Some(error) = preferences.error { return Err(error); }
+            if preferences.value.scope == crate::profile_desktop_settings::Scope::DesktopWide { Some(osg_desktop_output::Scope::DesktopWide) }
+            else if candidate.launch_preparation { None }
+            else if let Some(game_id) = candidate.game_id.as_deref() {
+                Some(crate::profile_session_desktop::selected_game_scope(games.desktop_process(game_id)?)?)
+            } else if preferences.value.application.is_none() { None }
+            else { Some(crate::profile_session_desktop::scope(game_preparation.as_ref())?) }
+        } else { None };
         let scripts = crate::profile_session_scripts::Scripts::prepare(
             &prepared.plan.program,
             &std::env::current_exe().map_err(|error| error.to_string())?,
@@ -579,11 +598,15 @@ impl NativeProfileHost {
         } else { None };
         crate::profile_session::Stage::new(candidate, NativePreparation {
             prepared, report, backend: snapshot.backend, bindings, output_handoff, scripts, game, game_preparation,
-            companions, companion_catalogues, visibility, publication, dcs_hid,
+            companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope,
         })
     }
 }
 impl Host for NativeProfileHost {
+    fn desktop_status(&self) -> serde_json::Value {
+        self.authority.as_ref().and_then(|owner| self.prepared.get(&key(owner)))
+            .and_then(|state| state.desktop.as_ref()).map_or_else(||self.last_desktop_status.clone(), |desktop| desktop.status())
+    }
     fn output_handoff(&mut self, run: &OwnedRun, admission_epoch: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> {
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
         self.fence(&run.owner)?;
@@ -620,7 +643,7 @@ impl Host for NativeProfileHost {
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
-        let NativePreparation {mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid} = candidate.stage.as_ref()
+        let NativePreparation {mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
@@ -632,7 +655,7 @@ impl Host for NativeProfileHost {
             owner: owner.clone(), admission_epoch, report, assignments: candidate.assignments.clone(),
             document: candidate.document.clone(), backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
-            started: Instant::now(), clock_origin: 0, bindings, output: None, output_handoff, scripts, game, game_preparation,
+            started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
             child_game_owner: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_retry: None, visibility,
             actions,
@@ -708,6 +731,10 @@ impl Host for NativeProfileHost {
             receipts.push(Receipt { kind: "virtual-output".into(), resource_id:"virtual-output".into(),
                 state: json!({"journal":crate::profile_session_virtual::journal_name(owner)?}) });
         }
+        if prepared.plan.requirements.desktop_input {
+            receipts.push(Receipt { kind: "desktop-output".into(), resource_id: "desktop-output".into(),
+                state: json!({"journal":crate::profile_session_desktop::journal_name(owner)?,"scope":state.desktop_scope,"gameId":owner.game_id}) });
+        }
         Ok(receipts)
     }
 
@@ -742,8 +769,11 @@ impl Host for NativeProfileHost {
         let resources = self.resources.clone();
         let companions = self.companions.clone();
         let mut adapter_result=Ok(());
+        let mut desktop_result=Ok(());
+        let mut desktop_status=None;
         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
             state.publication.revoke_renewal();
+            if let Some(mut desktop) = state.desktop.take() { desktop_result = desktop.stop(); desktop_status=Some(desktop.status()); }
             if let Some(reducer) = state.reducer.as_mut() {
                 reducer.stop();
                 state.recording.record(reducer.drain_reports());
@@ -761,9 +791,10 @@ impl Host for NativeProfileHost {
             }
             adapter_result=withdrawal.and(output_result).and(companion_stop);
         }
+        if let Some(status)=desktop_status {self.last_desktop_status=status;}
         let visibility_result=self.restore_visibility(run);
         let action_result=self.restore_actions(run,false);
-        adapter_result.and(visibility_result).and(action_result)?;
+        adapter_result.and(desktop_result).and(visibility_result).and(action_result)?;
         self.restore_publication(run)
     }
     fn enter(
@@ -782,6 +813,9 @@ impl Host for NativeProfileHost {
                 let state = self.run(&run.owner)?;
                 state.clock_origin = origin;
                 state.panels.acquire(origin)?;
+                if prepared.plan.requirements.desktop_input {
+                    state.desktop = Some(crate::profile_session_desktop::Desktop::acquire(&run.owner, &prepared.plan.program, state.desktop_scope.clone())?);
+                }
                 if !state.bindings.is_empty() {
                     if !native || !osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED {
                         return Err(osg_mapping_host::service::QUALIFICATION.into());
@@ -925,6 +959,9 @@ impl Host for NativeProfileHost {
                 state.recording.record(reducer.drain_reports());
                 let effects = reducer.drain();
                 state.reducer = Some(reducer);
+                if let Some(desktop) = state.desktop.as_mut() {
+                    desktop.start(state.reducer.as_ref().unwrap(), state.game_preparation.as_ref(), state.desktop_scope.clone())?;
+                }
                 Self::check_epoch(&admission_epoch,state.admission_epoch)?;
                 action::start(state)?;
                 state.started = started;
@@ -946,6 +983,13 @@ impl Host for NativeProfileHost {
         let _publication_receipts=crate::profile_session_overrides::Overrides::from_run(run,self.panels.clone())?;
         let visibility_receipt=crate::profile_session_visibility::Visibility::from_receipts(run,self.controllers.clone())?;
         for receipt in &run.receipts {
+            if receipt.kind == "desktop-output" {
+                let scope: Option<osg_desktop_output::Scope> = serde_json::from_value(receipt.state["scope"].clone()).map_err(|_|"Malformed desktop application scope receipt.")?;
+                if receipt.resource_id != "desktop-output" || receipt.state != json!({"journal":crate::profile_session_desktop::journal_name(&run.owner)?,"scope":scope,"gameId":run.owner.game_id}) {
+                    return Err("The desktop cleanup journal does not match the exact native run.".into());
+                }
+                continue;
+            }
             if companion::has_receipts(std::slice::from_ref(receipt)) || action::has_receipts(std::slice::from_ref(receipt)) || receipt.kind==crate::profile_session_overrides::KIND || receipt.kind=="controller-visibility" && visibility_receipt.is_some() { continue; }
             if receipt.kind != "virtual-output" || receipt.resource_id != "virtual-output"
                 || receipt.state != json!({"journal":crate::profile_session_virtual::journal_name(&run.owner)?}) {
@@ -956,6 +1000,24 @@ impl Host for NativeProfileHost {
         self.restore_actions(run,recovery)?;
         self.restore_publication(run)?;
         if run.attempted.contains(&ApplyPhase::Acquire) {
+            if run.receipts.iter().any(|r|r.kind=="desktop-output") {
+                let path = crate::config_paths::config_path().with_file_name(crate::profile_session_desktop::journal_name(&run.owner)?);
+                if path.exists() {
+                    let receipt=run.receipts.iter().find(|r|r.kind=="desktop-output").unwrap();
+                    let scope:Option<osg_desktop_output::Scope>=serde_json::from_value(receipt.state["scope"].clone()).map_err(|_|"Malformed desktop scope receipt.")?;
+                    let token=osg_mapping::engine::RunToken {session:run.owner.session.clone(),generation:Counter(run.owner.generation)};
+                    let record = osg_desktop_output::Coordinator::inspect_owned_journal(&path,&token,scope.as_ref())?;
+                    if record.uncertain || !record.cleanup_complete || !record.held.is_empty() || record.in_flight.is_some() {
+                        if !recovery { return Err("Desktop cleanup is uncertain; use explicit profile recovery.".into()); }
+                        if let Some(state) = self.prepared.get_mut(&key(&run.owner)) { state.desktop.take(); }
+                        let preferences = crate::profile_desktop_settings::Settings::native();
+                        osg_desktop_output::Coordinator::recover_journal(preferences.value.enabled, crate::profile_desktop_settings::qualified(), path)?;
+                        self.last_desktop_status=json!({"state":"stopped","recovered":true,"nativeSubmission":"Explicit recovery releases recorded possible holds only; actions remain stopped."});
+                    }
+                } else if run.attempted.contains(&ApplyPhase::Start) {
+                    return Err("The desktop output journal is missing after Start was attempted. Cleanup cannot be proved; preserve the session and inspect the missing record before recovery.".into());
+                }
+            }
             if run.receipts.iter().any(|r|r.kind=="virtual-output") {
                 if let Some(output) = self.prepared.get_mut(&key(&run.owner)).and_then(|state|state.output.as_mut()) {
                     crate::profile_session_virtual::restore_retained_output(output, &run.owner, recovery)?;
@@ -1001,14 +1063,22 @@ impl Host for NativeProfileHost {
         degraded.extend(reducer.accept_batch(frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames))?);
         let elapsed = u64::try_from(state.started.elapsed().as_micros())
             .map_err(|_| "Profile runtime clock exhausted.")?;
-        reducer.advance(Counter(
+        let tick = Counter(
             reducer.at_us().0.max(
                 state
                     .clock_origin
                     .checked_add(elapsed)
                     .ok_or("Profile runtime clock exhausted.")?,
             ),
-        ))?;
+        );
+        if let Some(inputs) = state.inputs.as_ref() { inputs.refresh_liveness(controllers.as_ref(), reducer, tick)?; }
+        for (source,generation,ports) in panels.liveness {
+            reducer.observe_port_liveness(&source,generation,tick,&ports)?;
+        }
+        for (source,generation) in companion.liveness {
+            reducer.observe_liveness(&source,generation,tick)?;
+        }
+        reducer.advance(tick)?;
         degraded.extend(state.scripts.poll(reducer));
         state.recording.record(reducer.drain_reports());
         let effects = reducer.drain();
@@ -1020,6 +1090,9 @@ impl Host for NativeProfileHost {
             }
         }
         degraded.extend(action::dispatch(state,&effects));
+        if let Some(desktop) = state.desktop.as_mut() {
+            degraded.extend(desktop.poll(&effects, state.reducer.as_ref().unwrap())?);
+        }
         degraded.extend(Self::dispatch_game(&resources, &games, state, &panels_io, effects)?);
         if let Some(output) = state.output.as_mut() {
             output.poll(&state.recording)?;

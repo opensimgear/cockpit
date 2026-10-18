@@ -272,6 +272,29 @@ fn default_needs_no_companion_initialization_or_dependencies() {
     adapter.acquire(&runtime, &[]).unwrap();
     assert!(runtime.profile_metadata().is_err());
 }
+#[test]
+fn native_companion_heartbeats_refresh_latched_state_for_five_seconds_without_synthetic_changes(){
+    let fixture=Fixture::new();let mut adapter=fixture.prepared();fixture.acquire(&mut adapter,&[]);
+    let open=fixture.connect();let plan=fixture.delivery();adapter.bind_delivery_plan(&plan).unwrap();
+    let frames=adapter.baseline(&fixture.hub,|_|Ok(()),100).unwrap().unwrap();
+    let mut phase=Phase::new(plan.program.clone(),Counter(1),uuid::Uuid::new_v4().to_string()).unwrap();
+    for frame in frames{phase.accept(frame).unwrap();}phase.drain();adapter.arm(phase.run_token()).unwrap();
+    for step in 1..=25 {
+        let now=100+step*200_000;fixture.clock.store(now,Ordering::Release);
+        let reply=wire(&fixture.hub,fixture.frame(&open,"heartbeat",&step.to_string()));assert_eq!(reply["ok"],true);
+        let poll=adapter.poll(&fixture.hub,|_|Ok(()),now);
+        // NativeFeed explicitly renews retained State after an actual native
+        // heartbeat. This is not a browser snapshot and cannot create an edge.
+        assert!(poll.frames.iter().all(|frame|frame.reason==Reason::Change&&frame.changes.iter().all(|change|change.sample==SignalSample::scalar(PortValue::Boolean(false)))));
+        phase.accept_batch(poll.frames).unwrap();assert_eq!(poll.liveness.len(),1);
+        for (source,generation) in poll.liveness{phase.observe_liveness(&source,generation,Counter(now)).unwrap();}
+        phase.advance(Counter(now)).unwrap();assert_eq!(phase.sample(&endpoint("button")),Some(&SignalSample::scalar(PortValue::Boolean(false))));
+        assert!(phase.drain().is_empty(),"Liveness cannot fabricate feedback actions");
+    }
+    fixture.hub.disconnect_connection("connection",fixture.hub.now_ms());
+    let loss=adapter.poll(&fixture.hub,|_|Ok(()),5_100_100);assert!(loss.liveness.is_empty());assert!(!loss.frames.is_empty());
+    phase.accept_batch(loss.frames).unwrap();assert!(!matches!(phase.sample(&endpoint("button")),Some(SignalSample::Known(_))));
+}
 
 #[test]
 fn revalidation_after_acquire_uses_owned_receipt_instead_of_obsolete_unowned_proof() {

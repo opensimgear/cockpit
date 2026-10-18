@@ -335,7 +335,7 @@ fn actual_host_final_admission_validates_applied_hide_owner_before_any_neutraliz
     outgoing.attempted.push(ApplyPhase::Start);
     old.start().unwrap();
     let incoming_owner = owner();
-    let mut candidate = Candidate {
+    let mut candidate = Candidate { launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,

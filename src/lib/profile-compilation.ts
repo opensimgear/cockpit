@@ -13,11 +13,12 @@ export type CompileDiagnostic = { code: string; severity: 'error' | 'warning' | 
 export type PlanBudgets = { usedSources: number; virtualTargets: number; sourcePorts: number; processingNodes: number;
   sinkPorts: number; bindings: number; stateSlots: number; eventQueueCapacity: number; actionQueueCapacity: number; timerCapacity: number };
 export type CompilationSummary = { schemaVersion: 1; compilationId: string; profileId: string; profileRevision: number;
+  requirements?:{desktopInput:boolean;virtualDevices:boolean;visibility:boolean}|null;
   programHash: string | null; documentSemanticHash: string | null; captureFingerprint: string; readiness: PlanReadiness;
   diagnostics: CompileDiagnostic[]; sectionTotals: Record<CompilationSection, number>; budgets: PlanBudgets | null };
 export type CompiledSource = { endpoint: ProfileEndpoint; inventoryResourceId: string | null; observedPortId: string | null;
   contract: ProfilePortContract; token: ResourceToken | null; route: ResourceRoute | null; readiness: PlanReadiness };
-export type CompiledSink = CompiledSource & { adapter: 'virtual-controller' | 'physical-state' | 'physical-action' | 'simulator-command' | 'companion-feedback' };
+export type CompiledSink = CompiledSource & { adapter: 'desktop-input' | 'virtual-controller' | 'physical-state' | 'physical-action' | 'simulator-command' | 'companion-feedback' };
 export type CompilationItems = {
   diagnostics: CompileDiagnostic;
   nodes: { nodeId: string; inputPorts: string[]; outputPorts: string[]; incomingEdgeIds: string[]; outgoingEdgeIds: string[] };
@@ -59,7 +60,8 @@ function summary(value: unknown): value is CompilationSummary {
     && Array.isArray(value.diagnostics) && value.diagnostics.length <= 32 && value.diagnostics.every(diagnostic)
     && object(value.sectionTotals) && COMPILATION_SECTIONS.every(section => whole((value.sectionTotals as Record<string, unknown>)[section], 16384))
     && value.diagnostics.length <= (value.sectionTotals.diagnostics as number)
-    && (value.budgets === null || object(value.budgets) && budgetFields.every(field => whole((value.budgets as Record<string, unknown>)[field], 65536)));
+    && (value.budgets === null || object(value.budgets) && budgetFields.every(field => whole((value.budgets as Record<string, unknown>)[field], 65536)))
+    && (value.requirements===undefined||value.requirements===null||object(value.requirements)&&['desktopInput','virtualDevices','visibility'].every(key=>typeof(value.requirements as Record<string,unknown>)[key]==='boolean'));
 }
 function freezeClone<T>(value: T): DeepReadonly<T> {
   const copy: T = JSON.parse(JSON.stringify(value));
@@ -87,7 +89,7 @@ function item(section: CompilationSection, value: unknown): boolean {
       && typeof value.route.baselineReady === 'boolean' && typeof value.route.writable === 'boolean'
       && typeof value.route.priority === 'number' && Number.isInteger(value.route.priority) && value.route.priority >= -2147483648 && value.route.priority <= 2147483647)
     && (value.token === null || object(value.route) && value.token.routeId === value.route.id)
-    && (section !== 'sinks' || ['virtual-controller', 'physical-state', 'physical-action', 'simulator-command', 'companion-feedback'].includes(String(value.adapter)));
+    && (section !== 'sinks' || ['desktop-input', 'virtual-controller', 'physical-state', 'physical-action', 'simulator-command', 'companion-feedback'].includes(String(value.adapter)));
 }
 
 export class ProfileCompilerClient {

@@ -107,7 +107,7 @@ impl Fixture {
             false,
             Arc::new(AtomicU64::new(1)),
         );
-        let mut candidate = Candidate {
+        let mut candidate = Candidate { launch_preparation: false,
             document: osg_profiles::default_document(),
             assignments: vec![],
             read_only: false,
@@ -115,6 +115,7 @@ impl Fixture {
             admission_epoch: Some(1),
             stage: None,
         };
+        candidate.launch_preparation=true;
         candidate.stage = Some(
             NativeProfileHost::stage(
                 &resources,
@@ -169,6 +170,7 @@ impl Fixture {
     }
     fn game_candidate(&self) -> Candidate {
         let mut c = self.candidate.clone();
+        c.launch_preparation=false;
         c.game_id = Some("x-plane-12".into());
         c.admission_epoch = Some(2);
         c.stage = None;
@@ -478,6 +480,21 @@ fn hardware_launch_completes_with_no_selected_context_or_no_optional_provider() 
         assert!(f.host.run(&f.run.owner).unwrap().reducer.is_some());
         assert!(f.host.games.profile_game_context("x-plane-12").is_err());
     }
+}
+#[test]
+fn desktop_launch_scope_uses_verified_started_process_independently_of_selected_telemetry(){
+    use osg_desktop_output::Scope;
+    let f=Fixture::new();let started=f.started();
+    let other=Scope::Application{identity:crate::profile_session_desktop::identity(&secondary_process())};
+    let expected=Scope::Application{identity:crate::profile_session_desktop::identity(&started.process)};
+    assert_eq!(launched_desktop_scope(None,true,&started.process),Some(expected.clone()));
+    assert_eq!(launched_desktop_scope(Some(&other),true,&started.process),Some(expected));
+    assert_eq!(launched_desktop_scope(Some(&Scope::DesktopWide),true,&started.process),Some(Scope::DesktopWide));
+    assert_eq!(launched_desktop_scope(None,false,&started.process),None);
+    // The actual held NativeRun remains unarmed while process identity is
+    // selected. Scope selection creates no reducer, worker or output handles.
+    let state=f.host.prepared.get(&key(&f.run.owner)).unwrap();assert!(state.reducer.is_none());assert!(state.desktop.is_none());
+    assert_eq!(state.document.revision,f.run.snapshot.revision);
 }
 
 #[test]

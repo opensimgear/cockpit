@@ -10,6 +10,8 @@ pub mod service;
 pub mod session;
 pub mod store;
 pub mod validation;
+#[cfg(test)]
+mod desktop_tests;
 
 pub use model::*;
 pub use validation::{semantic_hash, validate_document};

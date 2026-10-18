@@ -28,7 +28,7 @@
     "companion:ui:build": "pnpm --filter @opensimgear/companion ui:build",
     "transport:test": "node --test scripts/native-gateway-bridge.test.mjs src/lib/gateway.test.mjs src/lib/gateway-automation.test.mjs src/lib/gateway-workspace.test.mjs src/lib/controller-lifecycle.test.mjs src/lib/runtime-config.test.mjs src/lib/device-actions.test.mjs src/lib/debug-inputs.test.mjs src/lib/games.test.mjs src/lib/controllers.test.mjs",
     "profiles:test": "node --test src/lib/profiles.test.mjs",
-    "profiles:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profiles.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profiles.test.mjs",
+    "profiles:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profiles.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profiles.test.mjs src/lib/profile-desktop.test.mjs",
     "module-usb:test": "node --test src/lib/module-usb.test.mjs",
     "module-usb:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/module-usb.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/module-usb.test.mjs",
     "profile-inventory:test": "node --test src/lib/profile-inventory.test.mjs",
@@ -69,7 +69,11 @@
     "browser-feedback:coverage": "node --experimental-test-coverage --test-coverage-include=apps/browser-companion/src/feedback.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test apps/browser-companion/src/feedback.test.mjs",
     "profile-retired-recovery:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-retired-recovery.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-retired-recovery.test.mjs",
     "profile-library:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-library.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-library.test.mjs",
-    "profile-authoring:ui": "node --test tests/ui/complete-profile-authoring.mjs"
+    "profile-authoring:ui": "node --test tests/ui/complete-profile-authoring.mjs",
+    "desktop:test": "node --test src/lib/profile-desktop.test.mjs src/lib/profile-desktop-ui.test.mjs src/lib/profile-desktop-preview.test.mjs src/lib/profile-desktop-preview-ui.test.mjs",
+    "desktop:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-desktop.ts --test-coverage-include=src/lib/profile-desktop-runtime.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-desktop.test.mjs src/lib/profile-desktop-ui.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/profile-desktop-preview.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-desktop-preview.test.mjs src/lib/profile-desktop-preview-ui.test.mjs",
+    "desktop:native:ui": "node --test tests/ui/desktop-output-native.mjs",
+    "desktop:companion:native": "node --test tests/ui/desktop-companion-native.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",

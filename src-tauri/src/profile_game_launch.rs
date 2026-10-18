@@ -100,7 +100,7 @@ impl PreparedLaunch {
         if self.prepared_at.elapsed() > PREPARATION_TTL {
             return Err("The hardware-first launch preparation expired; prepare it again.".into());
         }
-        if admission.candidate.game_id.is_some()
+        if !admission.candidate.launch_preparation || admission.candidate.game_id.is_some()
             || admission.candidate.read_only
             || admission.locks.paused
             || admission.locks.emergency_stopped
@@ -200,7 +200,7 @@ impl GamesRuntime {
         }) {
             return Err("Choose a supported native selected context.".into());
         }
-        if candidate.game_id.is_some() || candidate.read_only || candidate.admission_epoch.is_none()
+        if !candidate.launch_preparation || candidate.game_id.is_some() || candidate.read_only || candidate.admission_epoch.is_none()
         {
             return Err("Prepare a writable hardware-only profile candidate before launch.".into());
         }

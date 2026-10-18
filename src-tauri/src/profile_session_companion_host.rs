@@ -207,6 +207,7 @@ impl NativeProfileHost {
             if let Some(output) = self.run(owner)?.output.as_mut() {
                 output.keep_alive()?;
             }
+            if let Some(desktop) = self.run(owner)?.desktop.as_mut() { desktop.keep_alive()?; }
             // The independent inventory worker publishes the replacement
             // browser's actual generation. Wait for that cached observation:
             // synchronous discovery here can starve the acquired output lease.
@@ -299,6 +300,8 @@ impl NativeProfileHost {
                         |token| Self::validate_token(resources, token),
                         now,
                     );
+                    let replaced=rebound.frames.iter().map(|frame|frame.source.as_str()).collect::<BTreeSet<_>>();
+                    poll.liveness.retain(|(source,_)|!replaced.contains(source.as_str()));
                     poll.frames.extend(rebound.frames);
                     poll.diagnostics.extend(rebound.diagnostics);
                 }

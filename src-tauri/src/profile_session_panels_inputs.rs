@@ -472,11 +472,13 @@ struct Mailbox {
     diagnostics: BTreeMap<String, String>,
     blocked: BTreeSet<String>,
     loss_epoch: u64,
+    liveness: BTreeMap<String,(u64,u64,u64)>,
 }
 #[derive(Default)]
 pub(crate) struct PanelPoll {
     pub frames: Vec<Frame>,
     pub diagnostics: Vec<String>,
+    pub liveness: Vec<(String,Counter,Vec<String>)>,
 }
 pub(crate) struct PanelInputs {
     specs: Vec<Spec>,
@@ -666,6 +668,7 @@ impl PanelInputs {
                             Ok(mut frames) => {
                                 for frame in &mut frames { frame.captured_us = Counter(after); }
                                 state.diagnostics.remove(&source.spec.logical);
+                                state.liveness.insert(source.spec.logical.clone(),(source.generation,source.sequence,after));
                                 if baseline {
                                     if let Some(frame) = frames.first() {
                                         state.baselines.insert(source.spec.logical.clone(), frame.clone());
@@ -676,6 +679,7 @@ impl PanelInputs {
                                     if state.frames.len() + frames.len() > MAX_QUEUE {
                                         state.frames.clear();
                                         state.baselines.clear();
+                                        state.liveness.clear();
                                         state.loss_epoch = state.loss_epoch.saturating_add(1);
                                         state.diagnostics.insert(source.spec.logical.clone(), "Panel frame queue overflowed; missing events were discarded and fresh baselines are required.".into());
                                     } else { state.frames.extend(frames); }
@@ -683,6 +687,7 @@ impl PanelInputs {
                                 source.retry = Instant::now() + Duration::from_millis(if running {10} else {100});
                             }
                             Err(error) => {
+                                state.liveness.remove(&source.spec.logical);
                                 source.cursor = None;
                                 source.retry = Instant::now() + Duration::from_millis(100);
                                 state.baselines.remove(&source.spec.logical);
@@ -873,6 +878,7 @@ impl PanelInputs {
         let mut state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
         state.frames.clear();
         state.baselines.clear();
+        state.liveness.clear();
         self.admitted.store(admitted, Ordering::Release);
         self.active.store(true, Ordering::Release);
         Ok(())
@@ -962,6 +968,21 @@ impl PanelInputs {
                 (frame.generation.0, frame.sequence.0, frame.captured_us.0),
             );
         }
+        let state=self.mailbox.lock().unwrap_or_else(|p|p.into_inner());
+        if state.loss_epoch==self.loss_epoch && !self.revoked.load(Ordering::Acquire) {
+            for spec in &self.specs {
+                if state.blocked.contains(&spec.logical) || state.diagnostics.contains_key(&spec.logical) {continue;}
+                if let Some(&(generation,sequence,verified))=state.liveness.get(&spec.logical) {
+                    if at.saturating_sub(verified)>250_000 || self.accepted.get(&spec.logical).is_none_or(|accepted|accepted.0!=generation||accepted.1!=sequence) {continue;}
+                    // Button levels are latched by the verified event journal.
+                    // Axes retain their sampledAt freshness and events retain
+                    // every original edge; neither is made from this marker.
+                    let ports=spec.ports.iter().filter(|port|port.observed.starts_with("button:"))
+                        .map(|port|port.logical.clone()).collect::<Vec<_>>();
+                    if !ports.is_empty(){result.liveness.push((spec.logical.clone(),Counter(generation),ports));}
+                }
+            }
+        }
         Ok(result)
     }
     pub(crate) fn stop(&mut self) {
@@ -972,6 +993,7 @@ impl PanelInputs {
         let mut state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
         state.frames.clear();
         state.baselines.clear();
+        state.liveness.clear();
         drop(state);
         for worker in self.workers.drain(..) {
             if worker.is_finished() {
