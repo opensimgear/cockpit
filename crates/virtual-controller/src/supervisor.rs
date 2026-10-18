@@ -92,13 +92,19 @@ impl Worker {
     }
     /// The read-only inspector has a separate readiness handshake. Its one
     /// inventory request shares the caller's absolute observation deadline.
-    pub(crate) fn inspect_once(&mut self, nonce: &str, deadline: Instant) -> Result<Value, String> {
+    pub(crate) fn inspect_once(
+        &mut self,
+        nonce: &str,
+        slot_ids: &[u8],
+        deadline: Instant,
+    ) -> Result<Value, String> {
         let result = (|| {
             if self.hello["backend"] != "vjoy-inspect-ready" {
                 return Err("This helper is not a ready read-only inspector.".into());
             }
-            let mut bytes = serde_json::to_vec(&serde_json::json!({"nonce":nonce}))
-                .map_err(|e| e.to_string())?;
+            let mut bytes =
+                serde_json::to_vec(&serde_json::json!({"nonce":nonce,"slotIds":slot_ids}))
+                    .map_err(|e| e.to_string())?;
             bytes.push(b'\n');
             if Instant::now() >= deadline {
                 return Err(RESPONSE_DEADLINE_ERROR.into());

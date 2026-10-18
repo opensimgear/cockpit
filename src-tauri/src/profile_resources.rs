@@ -218,6 +218,25 @@ impl Runtime {
     > {
         self.snapshot_for_preparation_with_companions(assignments, &[])
     }
+    /// Check only the runtime/storage status used by final native admission.
+    /// This grants no port or route authority: each retained preparation pin
+    /// must still pass validate_preparation against the current registry.
+    pub(crate) fn validate_preparation_state(
+        &self,
+        assignments: &[osg_profiles::store::LocalAssignment],
+    ) -> Result<(), String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Resource inventory has stopped.".into());
+        }
+        if assignments.len() > 64 || assignments.iter().map(|a| a.ports.len()).sum::<usize>() > 1024 {
+            return Err("Preparation capture exceeds bounded assignments.".into());
+        }
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.read_only || state.registry.session().is_empty() {
+            return Err("The native prepared profile identity changed.".into());
+        }
+        Ok(())
+    }
     pub(crate) fn snapshot_for_preparation_with_companions(
         &self,
         assignments: Vec<osg_profiles::store::LocalAssignment>,

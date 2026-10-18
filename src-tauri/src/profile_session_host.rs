@@ -364,7 +364,7 @@ impl NativeProfileHost {
     )->Result<Arc<crate::profile_session::Stage>,String> {
         Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,None,
             &osg_virtual_controller::inspection::current,
-            &||osg_virtual_controller::inspection::sample_current().map(|sample|sample.into_parts()))
+            &|ids|osg_virtual_controller::inspection::sample_current(ids).map(|sample|sample.into_parts()))
     }
     pub(crate) fn stage_with_output_handoff(
         resources:&crate::profile_resources::Runtime,
@@ -381,7 +381,7 @@ impl NativeProfileHost {
         let outgoing=source.as_ref().map(|source|source.run.clone());
         Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,source,
             &osg_virtual_controller::inspection::current,
-            &||osg_virtual_controller::inspection::sample_current().map(|sample|sample.into_parts()))
+            &|ids|osg_virtual_controller::inspection::sample_current(ids).map(|sample|sample.into_parts()))
     }
     fn stage_internal(
         resources:&crate::profile_resources::Runtime,
@@ -393,7 +393,7 @@ impl NativeProfileHost {
         outgoing:Option<OwnedRun>,
         source:Option<crate::profile_session::HandoffSource>,
         inspect:&dyn Fn()->Result<Vec<osg_virtual_controller::vjoy::Slot>,String>,
-        sample:&dyn Fn()->Result<(Vec<osg_virtual_controller::vjoy::Slot>,Instant),String>,
+        sample:&dyn Fn(&[u8])->Result<(Vec<osg_virtual_controller::vjoy::Slot>,Instant),String>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
         let game_preparation = match candidate.game_id.as_deref() {
             Some(id) => games.prepare_profile_game_context(id)?,
@@ -540,10 +540,12 @@ impl NativeProfileHost {
         // health under the coordinator lock while the inspector starts.
         let output_handoff = if reuses_output {
             let source=source.ok_or("The retiring virtual output proof disappeared.")?;
-            let (slots,observed)=sample()?;
+            let selected=bindings.iter().map(|binding|binding.slot).collect::<Vec<_>>();
+            let (slots,observed)=sample(&selected)?;
             let captured=crate::profile_session_virtual::PreparedHandoff { source, slots, observed };
             captured.validate(Some(&captured.source.run),captured.source.output.as_ref(),&bindings,
-                candidate.admission_epoch.ok_or("Missing native admission epoch.")?,Some(&captured.source.run.owner))?;
+                candidate.admission_epoch.ok_or("Missing native admission epoch.")?,Some(&captured.source.run.owner))
+                .map_err(|error|format!("{error} [phase=stage sampleAgeUs={}]",captured.observed.elapsed().as_micros()))?;
             Some(captured)
         } else { None };
         crate::profile_session::Stage::new(candidate, NativePreparation {
@@ -621,14 +623,12 @@ impl Host for NativeProfileHost {
         if let Some(proof) = proof {
             self.games.validate_game_preparation(&proof)?;
         }
-        let (current, _) = self.resources.snapshot_for_preparation(assignments)?;
+        self.resources.validate_preparation_state(&assignments)?;
         let companions = self.companions.clone();
         let run = self.run(owner)?;
         run.companions.validate_preparation(&companions)?;
         run.publication.validate()?;
-        if current.read_only
-            || current.inventory_session.is_empty()
-            || run.report.capture_fingerprint != prepared.capture_fingerprint
+        if run.report.capture_fingerprint != prepared.capture_fingerprint
             || run.report.program_hash.as_deref() != Some(&prepared.program_hash)
         {
             return Err("The native prepared profile identity changed.".into());
@@ -662,7 +662,8 @@ impl Host for NativeProfileHost {
             let current=self.output_handoff(previous,captured.source.admission_epoch)?;
             let bindings=self.run(owner)?.bindings.clone();
             captured.validate(Some(previous),current.as_ref(),&bindings,
-                self.admission_epoch.load(Ordering::Acquire),self.authority.as_ref())?;
+                self.admission_epoch.load(Ordering::Acquire),self.authority.as_ref())
+                .map_err(|error|format!("{error} [phase=capture sampleAgeUs={}]",captured.observed.elapsed().as_micros()))?;
         }
         let runtime = self.companions.clone();
         let state = self.run(owner)?;

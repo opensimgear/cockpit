@@ -56,7 +56,19 @@ pub fn current() -> Result<Vec<Slot>, String> {
         &[ARGUMENT.into()],
     )
 }
-pub fn sample_with(program: &Path, args: &[String]) -> Result<Sample, String> {
+fn validate_slot_ids(ids: &[u8]) -> Result<(), String> {
+    let unique: std::collections::BTreeSet<_> = ids.iter().copied().collect();
+    if ids.is_empty()
+        || ids.len() > 16
+        || unique.len() != ids.len()
+        || ids.iter().any(|id| !(1..=16).contains(id))
+    {
+        return Err("Read-only inspection needs unique selected slot IDs within 1..16.".into());
+    }
+    Ok(())
+}
+pub fn sample_with(program: &Path, args: &[String], ids: &[u8]) -> Result<Sample, String> {
+    validate_slot_ids(ids)?;
     let mut worker = Worker::spawn(program, args, "vjoy-inspect-ready", Duration::from_secs(3))?;
     let nonce = uuid::Uuid::new_v4().to_string();
     let observed = Instant::now();
@@ -67,12 +79,21 @@ pub fn sample_with(program: &Path, args: &[String]) -> Result<Sample, String> {
         nonce: String,
         result: Value,
     }
-    let reply: Reply = serde_json::from_value(worker.inspect_once(&nonce, deadline)?)
+    let reply: Reply = serde_json::from_value(worker.inspect_once(&nonce, ids, deadline)?)
         .map_err(|e| e.to_string())?;
     if reply.nonce != nonce {
         return Err("Stale read-only inspection acknowledgement.".into());
     }
     let slots = slots(&reply.result)?;
+    let requested: std::collections::BTreeSet<_> = ids.iter().copied().collect();
+    if slots
+        .iter()
+        .map(|slot| slot.id)
+        .collect::<std::collections::BTreeSet<_>>()
+        != requested
+    {
+        return Err("The read-only inspection did not return exactly the selected slots.".into());
+    }
     // Include parsing and child teardown. A queued reply never renews freshness.
     drop(worker);
     if Instant::now() >= deadline {
@@ -80,10 +101,11 @@ pub fn sample_with(program: &Path, args: &[String]) -> Result<Sample, String> {
     }
     Ok(Sample { slots, observed })
 }
-pub fn sample_current() -> Result<Sample, String> {
+pub fn sample_current(ids: &[u8]) -> Result<Sample, String> {
     sample_with(
         &std::env::current_exe().map_err(|e| e.to_string())?,
         &[SAMPLE_ARGUMENT.into()],
+        ids,
     )
 }
 fn serve_sample(
@@ -102,17 +124,34 @@ fn serve_sample(
         .map_err(|e| e.to_string())?
         .ok_or("Read-only inspection request is missing.")?;
     #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct Request {
         nonce: String,
+        slot_ids: Vec<u8>,
     }
     let request: Request = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     let parsed = uuid::Uuid::parse_str(&request.nonce).map_err(|e| e.to_string())?;
     if parsed.is_nil() || parsed.to_string() != request.nonce {
         return Err("Invalid read-only inspection nonce.".into());
     }
+    validate_slot_ids(&request.slot_ids)?;
     // There is exactly one query, after readiness and after receiving the nonce.
-    let result = response(crate::vjoy::inventory(&mut driver));
+    // Do not scan unrelated slots. Even Missing selected slots must be returned
+    // so the consumer can reject their exact native state rather than omit it.
+    let result = response((|| {
+        driver.check()?;
+        request
+            .slot_ids
+            .iter()
+            .map(|id| {
+                let slot = driver.inspect(*id)?;
+                if slot.id != *id {
+                    return Err("Read-only inspection returned another slot identity.".into());
+                }
+                Ok(slot)
+            })
+            .collect::<Result<Vec<_>, String>>()
+    })());
     writeln!(
         output,
         "{}",
@@ -178,8 +217,13 @@ mod tests {
         inspect_with(Path::new(&python()), &["-c".into(), program])
     }
     fn sampled(startup_ms: u32, query_ms: u32, result: &str) -> Result<Sample, String> {
-        let code=format!("import json,sys,time\ntime.sleep({startup_ms}/1000)\nprint(json.dumps({{'ok':True,'protocol':1,'backend':'vjoy-inspect-ready','result':{{'ok':True,'slots':[{{'id':99}}]}}}}),flush=True)\nq=json.loads(sys.stdin.readline())\ntime.sleep({query_ms}/1000)\n{result}\n");
-        sample_with(Path::new(&python()), &["-u".into(), "-c".into(), code])
+        let slot=serde_json::to_string(&serde_json::to_string(&json!({"id":3,"status":"missing","ownerPid":null,"buttons":0,"axes":[],"continuousHats":0,"discreteHats":0,"forceFeedback":false})).unwrap()).unwrap();
+        let code=format!("import json,sys,time\nslot=json.loads({slot})\ntime.sleep({startup_ms}/1000)\nprint(json.dumps({{'ok':True,'protocol':1,'backend':'vjoy-inspect-ready','result':{{'ok':True,'slots':[{{'id':99}}]}}}}),flush=True)\nq=json.loads(sys.stdin.readline())\nassert q['slotIds']==[3]\ntime.sleep({query_ms}/1000)\n{result}\n");
+        sample_with(
+            Path::new(&python()),
+            &["-u".into(), "-c".into(), code],
+            &[3],
+        )
     }
     #[test]
     fn slow_readiness_is_separate_from_the_unchanged_fresh_sample_deadline() {
@@ -187,18 +231,20 @@ mod tests {
         let sample = sampled(
             350,
             0,
-            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[]}}),flush=True)",
+            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[slot]}}),flush=True)",
         )
         .unwrap();
         let (slots, observed) = sample.into_parts();
-        assert!(slots.is_empty()); // Handshake's invalid cached slots were never used.
+        assert_eq!(slots.len(), 1); // Handshake's invalid cached slots were never used.
+        assert_eq!(slots[0].id, 3);
+        assert_eq!(slots[0].status, crate::vjoy::Status::Missing);
         assert!(started.elapsed() >= Duration::from_millis(350));
         assert!(observed.duration_since(started) >= Duration::from_millis(350));
         assert!(observed.elapsed() < Duration::from_micros(crate::feeder::LEASE_US));
         assert!(sampled(
             0,
             350,
-            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[]}}),flush=True)"
+            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[slot]}}),flush=True)"
         )
         .err()
         .unwrap()
@@ -211,14 +257,29 @@ mod tests {
             "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[]},'extra':True}),flush=True)",
             "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':None}}),flush=True)",
             "print(json.dumps({'nonce':q['nonce'],'result':{'ok':False,'error':'native unavailable'}}),flush=True)",
+            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[]}}),flush=True)",
+            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[dict(slot,id=4)]}}),flush=True)",
+            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[slot,dict(slot,id=4)]}}),flush=True)",
+            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[slot,slot]}}),flush=True)",
         ] {
             assert!(sampled(0,0,reply).is_err());
         }
         assert!(sample_with(
             Path::new(&python()),
-            &["-c".into(), "print('{}',flush=True)".into()]
+            &["-c".into(), "print('{}',flush=True)".into()],
+            &[3],
         )
         .is_err());
+    }
+    #[test]
+    fn invalid_selected_slots_fail_before_starting_any_helper() {
+        for ids in [vec![], vec![0], vec![17], vec![3, 3], (1..=17).collect()] {
+            assert!(sample_with(Path::new("must-not-be-launched"), &[], &ids)
+                .err()
+                .unwrap()
+                .contains("unique selected slot IDs"));
+        }
+        validate_slot_ids(&(1..=16).collect::<Vec<_>>()).unwrap();
     }
     #[test]
     fn the_ready_helper_reads_one_exact_nonce_before_any_readonly_inventory() {
@@ -254,17 +315,32 @@ mod tests {
         let nonce = uuid::Uuid::new_v4().to_string();
         for (request, valid) in [
             (
-                format!("{{\"nonce\":\"{nonce}\"}}\n{{\"nonce\":\"second query\"}}\n"),
+                format!(
+                    "{{\"nonce\":\"{nonce}\",\"slotIds\":[3,8]}}\n{{\"nonce\":\"second query\"}}\n"
+                ),
                 true,
             ),
             ("".into(), false),
             (
-                "{\"nonce\":\"00000000-0000-0000-0000-000000000000\"}\n".into(),
+                "{\"nonce\":\"00000000-0000-0000-0000-000000000000\",\"slotIds\":[3]}\n".into(),
                 false,
             ),
-            ("{\"nonce\":\"invalid\"}\n".into(), false),
+            ("{\"nonce\":\"invalid\",\"slotIds\":[3]}\n".into(), false),
             (
-                format!("{{\"nonce\":\"{nonce}\",\"command\":\"acquire\"}}\n"),
+                format!("{{\"nonce\":\"{nonce}\",\"slotIds\":[3],\"command\":\"acquire\"}}\n"),
+                false,
+            ),
+            (format!("{{\"nonce\":\"{nonce}\",\"slotIds\":[]}}\n"), false),
+            (
+                format!("{{\"nonce\":\"{nonce}\",\"slotIds\":[3,3]}}\n"),
+                false,
+            ),
+            (
+                format!("{{\"nonce\":\"{nonce}\",\"slotIds\":[0]}}\n"),
+                false,
+            ),
+            (
+                format!("{{\"nonce\":\"{nonce}\",\"slotIds\":[17]}}\n"),
                 false,
             ),
         ] {
@@ -289,9 +365,12 @@ mod tests {
                 assert_eq!(values.len(), 2);
                 assert_eq!(
                     values[1],
-                    json!({"nonce":nonce,"result":{"ok":true,"slots":[]}})
+                    json!({"nonce":nonce,"result":{"ok":true,"slots":[
+                        {"id":3,"status":"missing","ownerPid":null,"buttons":0,"axes":[],"continuousHats":0,"discreteHats":0,"forceFeedback":false},
+                        {"id":8,"status":"missing","ownerPid":null,"buttons":0,"axes":[],"continuousHats":0,"discreteHats":0,"forceFeedback":false}
+                    ]}})
                 );
-                assert_eq!(*calls.lock().unwrap(), (0..=16).collect::<Vec<_>>());
+                assert_eq!(*calls.lock().unwrap(), vec![0, 3, 8]);
             } else {
                 assert_eq!(values.len(), 1);
                 assert!(calls.lock().unwrap().is_empty());

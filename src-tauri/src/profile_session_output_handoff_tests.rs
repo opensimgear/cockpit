@@ -904,14 +904,17 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
         Some(run.clone()),
         Some(source.clone()),
         &|| Ok(vec![driver.lock().unwrap().slot.clone()]),
-        &|| {
+        &|ids| {
+            assert_eq!(ids, &[3]);
             Ok((
                 vec![driver.lock().unwrap().slot.clone()],
                 Instant::now() - Duration::from_micros(LEASE_US),
             ))
         },
     );
-    assert!(stale.unwrap_err().contains("inspection expired"));
+    let stale_error = stale.unwrap_err();
+    assert!(stale_error.contains("inspection expired"));
+    assert!(stale_error.contains("phase=stage sampleAgeUs="));
     assert!(host.run(&owner).unwrap().output.as_ref().unwrap().active());
     assert_eq!(driver.lock().unwrap().messages.len(), 1);
     let inspections = AtomicU64::new(0);
@@ -931,7 +934,8 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
                 inspections.fetch_add(1, Ordering::SeqCst);
                 Ok(vec![driver.lock().unwrap().slot.clone()])
             },
-            &|| {
+            &|ids| {
+                assert_eq!(ids, &[3]);
                 // This is an injected readiness delay, not a driver operation.
                 // The low-level process test separately proves real readiness
                 // and nonce-query ordering. Only the actual sample is fresh.
@@ -971,6 +975,35 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
             .observed,
         sample_started.get().unwrap()
     );
+    // Delayed admission cannot reinterpret an old sample as current. It must
+    // reject before outgoing neutralization or any incoming worker effect.
+    let observed = host
+        .run(&incoming_owner)
+        .unwrap()
+        .output_handoff
+        .as_ref()
+        .unwrap()
+        .observed;
+    host.run(&incoming_owner)
+        .unwrap()
+        .output_handoff
+        .as_mut()
+        .unwrap()
+        .observed -= Duration::from_micros(LEASE_US);
+    let stale_capture = host
+        .capture(&prepared, &incoming_owner, Some(&run))
+        .unwrap_err();
+    assert!(stale_capture.contains("inspection expired"));
+    assert!(stale_capture.contains("phase=capture sampleAgeUs="));
+    assert!(host.run(&owner).unwrap().output.as_ref().unwrap().active());
+    assert!(host.run(&incoming_owner).unwrap().output.is_none());
+    assert_eq!(driver.lock().unwrap().messages.len(), 1);
+    host.run(&incoming_owner)
+        .unwrap()
+        .output_handoff
+        .as_mut()
+        .unwrap()
+        .observed = observed;
     host.capture(&prepared, &incoming_owner, Some(&run))
         .unwrap();
     assert!(host.run(&owner).unwrap().output.as_ref().unwrap().active());
@@ -1018,4 +1051,357 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
         1
     );
     assert_eq!(s.slot.status, SlotStatus::Free);
+}
+
+#[test]
+fn populated_native_preparation_keeps_exact_pins_without_recapturing_unused_catalogues() {
+    use osg_profiles::resources::{
+        EvidenceKind, IdentityEvidence, Observation, PortExpectation, ProviderBatch, ResourceType,
+        Route, Transport,
+    };
+    use osg_profiles::resources_ports::{PortContract, PortDescriptor, PortUpdate, ScalarSchema};
+    use osg_profiles::{Direction, PortValue, Resource, ResourceKind};
+    let fixture = companion::tests::NativeFixture::new();
+    let mut host = fixture.host();
+    let mut requested = fixture.candidate(false);
+    requested.stage = None;
+    let old_source = requested.assignments[0].source_id.clone();
+    let original = host
+        .resources
+        .snapshot_for_compile(requested.assignments.clone())
+        .unwrap();
+    let panel = &original.resources[0].summary;
+    let details = host
+        .resources
+        .request(&json!({"command":"profile_resources_inspect",
+        "resourceId":old_source,"offset":0,"limit":128}))
+        .unwrap();
+    let panel_ports: Vec<PortDescriptor> = details["ports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| serde_json::from_value(p["descriptor"].clone()).unwrap())
+        .collect();
+    assert_eq!(panel_ports.len(), 14);
+    let panel_observation = Observation {
+        key: "instance".into(),
+        name: panel.name.clone(),
+        resource_type: ResourceType::Companion,
+        evidence: vec![IdentityEvidence {
+            kind: EvidenceKind::CompanionInstance,
+            value: "instance".into(),
+        }],
+        attributes: panel.attributes.clone(),
+        diagnostics: vec![],
+        route: Some(panel.connections[0].route.clone()),
+        ports: Some(PortUpdate::complete(panel_ports).unwrap()),
+    };
+    // The optional local benchmark reads only public retained port descriptors;
+    // no DPAPI, driver, service, real peer or process discovery is involved.
+    let retained = std::env::var_os("OSG_PREPARATION_BENCHMARK_INVENTORY").map(|path| {
+        let bytes = std::fs::read(path).unwrap();
+        let saved: osg_profiles::resources::SavedRegistry = serde_json::from_slice(&bytes).unwrap();
+        use sha2::{Digest, Sha256};
+        (saved, format!("{:x}", Sha256::digest(&bytes)))
+    });
+    let mut physical = vec![];
+    for (name, count) in [("right", 133), ("left", 135)] {
+        let ports = retained
+            .as_ref()
+            .map(|(saved, _)| {
+                saved
+                    .resources
+                    .iter()
+                    .filter(|r| r.resource_type == ResourceType::HostController)
+                    .flat_map(|r| &r.sightings)
+                    .filter_map(|s| s.catalogue.as_ref())
+                    .find(|c| c.ports.len() == count)
+                    .unwrap()
+                    .ports
+                    .clone()
+            })
+            .unwrap_or_else(|| {
+                (0..count)
+                    .map(|i| PortDescriptor {
+                        id: format!("button:{i}"),
+                        name: format!("Button {i}"),
+                        direction: Direction::Output,
+                        contract: PortContract::State {
+                            schema: ScalarSchema::Boolean {},
+                            freshness_ms: 1500,
+                            fallback: Some(PortValue::Boolean(false)),
+                        },
+                    })
+                    .collect()
+            });
+        assert_eq!(ports.len(), count);
+        physical.push(Observation {
+            key: name.into(),
+            name: name.into(),
+            resource_type: ResourceType::HostController,
+            evidence: vec![IdentityEvidence {
+                kind: EvidenceKind::LocalPath,
+                value: format!("fixture-{name}"),
+            }],
+            attributes: BTreeMap::new(),
+            diagnostics: vec![],
+            route: Some(Route {
+                id: format!("hid:{name}"),
+                transport: Transport::Hid,
+                provider_generation: "1".into(),
+                attributes: BTreeMap::new(),
+                baseline_ready: true,
+                writable: false,
+                priority: 0,
+            }),
+            ports: Some(PortUpdate::complete(ports).unwrap()),
+        });
+    }
+    let observations = Arc::new(Mutex::new(physical));
+    let feed = observations.clone();
+    let resources = Arc::new(crate::profile_resources::Runtime::new(
+        None,
+        Arc::new(move |revision| {
+            vec![
+                (
+                    "host-controllers".into(),
+                    Ok(ProviderBatch {
+                        scope: "host-controllers".into(),
+                        session: "fixture-controllers".into(),
+                        revision,
+                        complete: true,
+                        observations: feed.lock().unwrap().clone(),
+                    }),
+                ),
+                (
+                    "companions".into(),
+                    Ok(ProviderBatch {
+                        scope: "companions".into(),
+                        session: "fixture-companions".into(),
+                        revision,
+                        complete: true,
+                        observations: vec![panel_observation.clone()],
+                    }),
+                ),
+            ]
+        }),
+        false,
+    ));
+    resources.refresh_native().unwrap();
+    let listed = resources
+        .request(&json!({"command":"profile_resources_list"}))
+        .unwrap();
+    let id_for = |name: &str| {
+        listed["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    requested.assignments[0].source_id = id_for(&panel.name);
+    for (index, name) in ["right", "left"].into_iter().enumerate() {
+        let observed = observations.lock().unwrap()[index]
+            .ports
+            .as_ref()
+            .unwrap()
+            .ports
+            .clone();
+        let selected = observed
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.contract,
+                    PortContract::State {
+                        schema: ScalarSchema::Boolean {},
+                        ..
+                    }
+                )
+            })
+            .take(if index == 0 { 3 } else { 2 })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), if index == 0 { 3 } else { 2 });
+        requested.document.resources.push(Resource {
+            id: name.into(),
+            name: name.into(),
+            kind: ResourceKind::Device,
+            required: true,
+            ports: selected
+                .iter()
+                .enumerate()
+                .map(|(i, p)| osg_profiles::Port {
+                    id: format!("button-{i}"),
+                    name: p.name.clone(),
+                    direction: p.direction,
+                    contract: p.contract.clone(),
+                })
+                .collect(),
+        });
+        requested
+            .assignments
+            .push(osg_profiles::store::LocalAssignment {
+                resource_id: name.into(),
+                source_id: id_for(name),
+                ports: selected
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| PortExpectation {
+                        profile_port_id: format!("button-{i}"),
+                        observed_port_id: p.id.clone(),
+                        expected_contract_hash: p.contract_hash().unwrap(),
+                    })
+                    .collect(),
+            });
+    }
+    host.resources = resources.clone();
+    let (factory, driver) = factory();
+    let virtual_controller = controller("combined", 0);
+    requested
+        .document
+        .virtual_outputs
+        .push(osg_profiles::VirtualOutput {
+            id: virtual_controller.id.clone(),
+            name: "Combined".into(),
+            required: true,
+            ports: virtual_controller
+                .layout
+                .buttons
+                .iter()
+                .cloned()
+                .chain(
+                    virtual_controller
+                        .layout
+                        .axes
+                        .iter()
+                        .map(|a| a.port_id.clone()),
+                )
+                .chain(virtual_controller.layout.hats.iter().cloned())
+                .map(|id| osg_profiles::Port {
+                    name: id.clone(),
+                    direction: Direction::Input,
+                    contract: virtual_controller
+                        .layout
+                        .virtual_port_contract(&id)
+                        .unwrap(),
+                    id,
+                })
+                .collect(),
+            layout: virtual_controller.layout,
+        });
+    for (name, count, offset) in [("right", 3, 0), ("left", 2, 3)] {
+        for i in 0..count {
+            requested.document.bindings.push(osg_profiles::Binding {
+                id: format!("{name}-{i}"),
+                from: osg_profiles::Endpoint {
+                    node_id: name.into(),
+                    port_id: format!("button-{i}"),
+                },
+                to: osg_profiles::Endpoint {
+                    node_id: "combined".into(),
+                    port_id: format!("button-{}", offset + i),
+                },
+            });
+        }
+    }
+    requested.stage = Some(
+        NativeProfileHost::stage_internal(
+            &resources,
+            &host.games,
+            &host.companions,
+            host.controllers.clone(),
+            true,
+            &requested,
+            None,
+            None,
+            &|| Ok(vec![driver.lock().unwrap().slot.clone()]),
+            &|_| panic!("No outgoing slot sample"),
+        )
+        .unwrap(),
+    );
+    let native_owner = owner(&requested);
+    let prepared = host.prepare(&requested, &native_owner).unwrap();
+    assert_eq!(
+        prepared
+            .plan
+            .sources
+            .iter()
+            .filter(|s| s.preparation.is_some())
+            .count(),
+        6
+    );
+    let binding = host.run(&native_owner).unwrap().bindings[0].clone();
+    let temporary = crate::test_directory();
+    host.run(&native_owner).unwrap().output = Some(start(
+        &factory,
+        temporary.path().join("owned.json"),
+        &native_owner,
+        binding,
+    ));
+    let started = Instant::now();
+    for _ in 0..3 {
+        host.validate_prepared(&prepared, &native_owner).unwrap();
+    }
+    eprintln!(
+        "PREPARATION_BENCHMARK {}",
+        json!({"cataloguePorts":[133,135,14],"wholeNativeValidations":3,
+        "elapsedUs":started.elapsed().as_micros(),"retainedInventorySha256":retained.as_ref().map(|(_,hash)|hash),
+        "scope":"actual NativeHost/Registry/Session, in-memory driver and paired Hub fixture only"})
+    );
+    assert!(host
+        .run(&native_owner)
+        .unwrap()
+        .output
+        .as_ref()
+        .unwrap()
+        .active());
+    assert_eq!(driver.lock().unwrap().messages.len(), 1);
+    // Native storage guards cannot be replaced by the existence of old pins.
+    let corrupt = crate::test_directory();
+    std::fs::write(corrupt.path().join("inventory.json"), b"corrupt").unwrap();
+    let unreadable = Arc::new(crate::profile_resources::Runtime::new(
+        Some(corrupt.path().to_path_buf()),
+        Arc::new(|_| panic!("No discovery")),
+        false,
+    ));
+    host.resources = unreadable.clone();
+    assert!(host
+        .validate_prepared(&prepared, &native_owner)
+        .unwrap_err()
+        .contains("native prepared profile identity"));
+    host.resources = resources.clone();
+    unreadable.shutdown();
+    // A healthy state guard grants no old route authority after actual Registry
+    // generation drift. The exact per-pin native validation must reject it.
+    observations.lock().unwrap()[0]
+        .route
+        .as_mut()
+        .unwrap()
+        .provider_generation = "2".into();
+    resources.refresh_native().unwrap();
+    assert!(host.validate_prepared(&prepared, &native_owner).is_err());
+    assert!(host
+        .run(&native_owner)
+        .unwrap()
+        .output
+        .as_ref()
+        .unwrap()
+        .active());
+    assert_eq!(driver.lock().unwrap().messages.len(), 1);
+    resources.shutdown();
+    assert!(host
+        .validate_prepared(&prepared, &native_owner)
+        .unwrap_err()
+        .contains("inventory has stopped"));
+    assert_eq!(driver.lock().unwrap().messages.len(), 1);
+    host.run(&native_owner)
+        .unwrap()
+        .output
+        .as_mut()
+        .unwrap()
+        .stop()
+        .unwrap();
 }

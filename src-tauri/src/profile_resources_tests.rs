@@ -5,6 +5,112 @@ use osg_profiles::resources_ports::{
 };
 use osg_profiles::{Direction, PortValue};
 #[test]
+fn preparation_state_checks_do_not_recapture_catalogues_or_replace_exact_port_pins() {
+    use osg_profiles::{resources::PortExpectation, store::LocalAssignment};
+    let runtime = Runtime::new(
+        None,
+        Arc::new(|_| panic!("Status validation cannot discover or acquire")),
+        false,
+    );
+    runtime
+        .state
+        .lock()
+        .unwrap()
+        .registry
+        .reconcile(batch("host", "provider", 1, vec![observed(1)]))
+        .unwrap();
+    let id = runtime
+        .state
+        .lock()
+        .unwrap()
+        .registry
+        .list(0, 1)
+        .unwrap()
+        .resources[0]
+        .id
+        .clone();
+    let port = observed(1).ports.unwrap().ports.remove(0);
+    let assignment = LocalAssignment {
+        resource_id: "controller".into(),
+        source_id: id,
+        ports: vec![PortExpectation {
+            profile_port_id: "pressed".into(),
+            observed_port_id: port.id.clone(),
+            expected_contract_hash: port.contract_hash().unwrap(),
+        }],
+    };
+    let (snapshot, pins) = runtime
+        .snapshot_for_preparation(vec![assignment.clone()])
+        .unwrap();
+    assert!(!snapshot.read_only && !snapshot.inventory_session.is_empty());
+    assert_eq!(pins.len(), 1);
+    runtime.validate_preparation(&pins[0]).unwrap();
+    let saved = serde_json::to_vec(&runtime.state.lock().unwrap().registry.saved()).unwrap();
+    for _ in 0..3 {
+        runtime
+            .validate_preparation_state(std::slice::from_ref(&assignment))
+            .unwrap();
+    }
+    assert_eq!(
+        serde_json::to_vec(&runtime.state.lock().unwrap().registry.saved()).unwrap(),
+        saved
+    );
+    // Status remains healthy after a real route generation changes. The exact
+    // retained pin remains mandatory and independently rejects that change.
+    runtime
+        .state
+        .lock()
+        .unwrap()
+        .registry
+        .reconcile(batch("host", "provider", 2, vec![observed(2)]))
+        .unwrap();
+    runtime
+        .validate_preparation_state(std::slice::from_ref(&assignment))
+        .unwrap();
+    assert!(runtime.validate_preparation(&pins[0]).is_err());
+    runtime.state.lock().unwrap().read_only = true;
+    assert!(
+        runtime
+            .snapshot_for_preparation(vec![assignment.clone()])
+            .unwrap()
+            .0
+            .read_only
+    );
+    assert!(runtime
+        .validate_preparation_state(std::slice::from_ref(&assignment))
+        .is_err());
+    assert!(runtime.validate_preparation(&pins[0]).is_err());
+    runtime.state.lock().unwrap().read_only = false;
+    assert!(runtime
+        .validate_preparation_state(&vec![assignment.clone(); 64])
+        .is_ok());
+    let oversized = vec![assignment.clone(); 65];
+    assert_eq!(
+        runtime.validate_preparation_state(&oversized).unwrap_err(),
+        runtime.snapshot_for_preparation(oversized).unwrap_err()
+    );
+    let mut maximum_ports = assignment.clone();
+    maximum_ports.ports = vec![assignment.ports[0].clone(); 1024];
+    runtime
+        .validate_preparation_state(std::slice::from_ref(&maximum_ports))
+        .unwrap();
+    maximum_ports.ports.push(assignment.ports[0].clone());
+    assert_eq!(
+        runtime
+            .validate_preparation_state(std::slice::from_ref(&maximum_ports))
+            .unwrap_err(),
+        runtime
+            .snapshot_for_preparation(vec![maximum_ports])
+            .unwrap_err()
+    );
+    runtime.shutdown();
+    assert_eq!(
+        runtime.validate_preparation_state(&[]).unwrap_err(),
+        runtime.snapshot_for_preparation(vec![]).unwrap_err()
+    );
+}
+
+#[test]
 fn companion_authoring_identity_is_cached_exact_and_retained_when_offline() {
     use osg_profiles::resources::{EvidenceKind,IdentityEvidence};
     let runtime=Runtime::new(None,Arc::new(|_|panic!("Authoring must not start discovery")),false);

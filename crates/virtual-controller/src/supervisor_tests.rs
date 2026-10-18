@@ -60,7 +60,7 @@ fn a_queued_acknowledgement_cannot_extend_an_expired_response_deadline() {
 fn inspector_requests_cannot_use_an_output_worker_or_rebase_an_expired_query() {
     let mut output=spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport time\ntime.sleep(2)\n").unwrap();
     assert!(output
-        .inspect_once("nonce", Instant::now() + Duration::from_millis(250))
+        .inspect_once("nonce", &[3], Instant::now() + Duration::from_millis(250))
         .unwrap_err()
         .contains("not a ready read-only inspector"));
     assert!(!output.alive());
@@ -76,7 +76,7 @@ fn inspector_requests_cannot_use_an_output_worker_or_rebase_an_expired_query() {
     let (outgoing, writes) = mpsc::sync_channel(1);
     inspector.outgoing = Some(outgoing);
     assert!(inspector
-        .inspect_once("nonce", Instant::now() - Duration::from_millis(1))
+        .inspect_once("nonce", &[3], Instant::now() - Duration::from_millis(1))
         .unwrap_err()
         .contains("deadline"));
     assert!(writes.try_recv().is_err()); // Not even an expired queued request is sent.
