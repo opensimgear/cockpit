@@ -35,3 +35,5 @@ src-tauri/resources/firmware/*.uf2
 src-tauri/resources/firmware/*/manifest.json
 
 /apps/browser-companion/dist/
+
+/tests/controller-mapping-m0/*.exe

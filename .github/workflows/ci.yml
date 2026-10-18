@@ -236,7 +236,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Portable framing, readiness, source and visibility contracts
-        run: python -m unittest discover -s .research/controller-mapping-m0 -v
+        run: python -m unittest discover -s tests/controller-mapping-m0 -v
       - name: Qualification evidence validation
         run: python -m unittest discover -s tests/qualification -v
       - name: Install logic coverage tools
@@ -244,7 +244,7 @@ jobs:
       - name: Production script worker budgets, replay and per-module coverage
         run: python scripts/logic-coverage.py
       - name: Bounded Rhai evaluation
-        run: cargo test --locked --manifest-path .research/controller-mapping-m0/rhai/Cargo.toml
+        run: cargo test --locked --manifest-path tests/controller-mapping-m0/rhai/Cargo.toml
       - name: Upload production script evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -258,17 +258,17 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:.research\controller-mapping-m0\RawInputProbe.exe .research\controller-mapping-m0\RawInputProbe.cs
+          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:tests\controller-mapping-m0\RawInputProbe.exe tests\controller-mapping-m0\RawInputProbe.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compile and check Windows recovery experiment
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:.research\controller-mapping-m0\HidHideSessionProbe.exe .research\controller-mapping-m0\HidHideSessionProbe.cs
+          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:tests\controller-mapping-m0\HidHideSessionProbe.exe tests\controller-mapping-m0\HidHideSessionProbe.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\.research\controller-mapping-m0\HidHideSessionProbe.exe selftest
+          & .\tests\controller-mapping-m0\HidHideSessionProbe.exe selftest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-ChildItem .research/controller-mapping-m0 -Filter *.ps1 | ForEach-Object {
+          Get-ChildItem tests/controller-mapping-m0 -Filter *.ps1 | ForEach-Object {
             $tokens = $null
             $errors = $null
             [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null

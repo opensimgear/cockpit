@@ -5,7 +5,7 @@ import select
 import subprocess
 
 root = Path(__file__).resolve().parents[2]
-service = root / ".research/controller-mapping-m0/native-target/debug/osg-gateway-service"
+service = root / "target/controller-mapping-m0/debug/osg-gateway-service"
 process = subprocess.Popen([str(service)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, text=True)
 try:

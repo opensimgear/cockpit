@@ -1,8 +1,7 @@
 # Controller mapping M0 experiments
 
 These are bounded, reproducible experiments for Cockpit #21. They are **not** the
-production mapping service. Selected source files and the Rhai lockfile are tracked
-explicitly inside the otherwise ignored .research directory. Downloaded sources,
+production mapping service. Source files and the Rhai lockfile are maintained here as test fixtures. Downloaded sources,
 drivers/installers, host snapshots, registry backups, logs and binaries stay ignored.
 
 See [the contract candidate](../../docs/controller-mapping-contracts.md) and
@@ -13,10 +12,10 @@ See [the contract candidate](../../docs/controller-mapping-contracts.md) and
 From the repository root:
 
 ~~~sh
-python3 -m unittest discover -s .research/controller-mapping-m0 -v
-cargo test --locked --manifest-path .research/controller-mapping-m0/rhai/Cargo.toml
-cargo run --locked --manifest-path .research/controller-mapping-m0/rhai/Cargo.toml -- operations
-cargo run --locked --manifest-path .research/controller-mapping-m0/rhai/Cargo.toml -- deadline
+python3 -m unittest discover -s tests/controller-mapping-m0 -v
+cargo test --locked --manifest-path tests/controller-mapping-m0/rhai/Cargo.toml
+cargo run --locked --manifest-path tests/controller-mapping-m0/rhai/Cargo.toml -- operations
+cargo run --locked --manifest-path tests/controller-mapping-m0/rhai/Cargo.toml -- deadline
 ~~~
 
 The protocol experiment rejects oversized/malformed envelopes, keeps source
@@ -32,10 +31,10 @@ transaction service, OS sandbox, physical device, game binding or helper deploym
 ## Native startup and Linux readiness
 
 ~~~sh
-CARGO_TARGET_DIR=.research/controller-mapping-m0/native-target cargo build --locked \
+CARGO_TARGET_DIR=target/controller-mapping-m0 cargo build --locked \
   --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
-python3 .research/controller-mapping-m0/probe-startup.py
-python3 .research/controller-mapping-m0/probe-linux.py
+python3 tests/controller-mapping-m0/probe-startup.py
+python3 tests/controller-mapping-m0/probe-linux.py
 ~~~
 
 The startup probe keeps stdin open until the correlated status response arrives,
@@ -66,8 +65,8 @@ Build the Raw Input probe with the Windows .NET Framework x64 compiler, for exam
 from the repository root in PowerShell:
 
 ~~~powershell
-& C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:.research\controller-mapping-m0\RawInputProbe.exe .research\controller-mapping-m0\RawInputProbe.cs
-& .\.research\controller-mapping-m0\RawInputProbe.exe
+& C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:tests\controller-mapping-m0\RawInputProbe.exe tests\controller-mapping-m0\RawInputProbe.cs
+& .\tests\controller-mapping-m0\RawInputProbe.exe
 ~~~
 
 The background-registration result alone does not establish capture while a game
