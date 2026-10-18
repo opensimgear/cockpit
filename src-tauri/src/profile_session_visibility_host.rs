@@ -35,6 +35,12 @@ fn wait(
                 Progress::Active
             }
         {
+            // The last poll may have completed native verification. Renew
+            // before handing control back to the next durable Apply phase.
+            if !restoring {
+                guard()?;
+                renew()?;
+            }
             return Ok(());
         }
         if Instant::now() >= deadline {

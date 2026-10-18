@@ -150,8 +150,16 @@ fn policy_change_after_preflight_and_external_change_during_run_are_preserved() 
     let request = json!({"owner":uuid::Uuid::new_v4().to_string(),"prepared":prepared});
     driver.lock().unwrap().hidden.push(r"HID\EXTERNAL\2".into());
     let external = driver.lock().unwrap().clone();
-    assert!(s.game_request("start", &request).is_err());
+    assert_eq!(s.game_request("start", &request).unwrap()["active"], true);
+    let rejected = wait(&s, &request, &registry, &id, false);
+    assert_eq!(rejected["phase"], "attention");
+    assert_eq!(
+        rejected["message"],
+        "This would change another application's existing hidden-device policy. Resolve that policy explicitly first.",
+        "{rejected}"
+    );
     assert_eq!(*driver.lock().unwrap(), external);
+    s.game_request("stop", &request).unwrap();
     driver.lock().unwrap().hidden.clear();
     let prepared = s.game_request("preflight", &intent).unwrap();
     let request = json!({"owner":uuid::Uuid::new_v4().to_string(),"prepared":prepared});
@@ -171,6 +179,80 @@ fn policy_change_after_preflight_and_external_change_during_run_are_preserved() 
         s.active(),
         "An abandoned dirty journal still blocks a new activation"
     );
+}
+#[test]
+fn slow_start_policy_read_is_worker_owned_and_stop_remains_responsive() {
+    use std::sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Condvar, mpsc};
+    struct Gate {
+        enabled: AtomicBool,
+        state: Mutex<(bool,bool)>,
+        changed: Condvar,
+    }
+    impl Gate {
+        fn release(&self) {
+            self.state.lock().unwrap_or_else(|p|p.into_inner()).1=true;
+            self.changed.notify_all();
+        }
+        fn read(&self)->Result<(),String> {
+            if !self.enabled.load(Ordering::Acquire) { return Ok(()); }
+            let mut state=self.state.lock().unwrap();state.0=true;self.changed.notify_all();
+            let (state,_)=self.changed.wait_timeout_while(state,Duration::from_secs(3),|state|!state.1).unwrap();
+            let released=state.1;drop(state);
+            if released {Ok(())} else {Err("Injected policy read was not released".into())}
+        }
+    }
+    struct Release(Arc<Gate>);
+    impl Drop for Release {fn drop(&mut self){self.0.release();}}
+    struct Slow {
+        driver: Arc<Mutex<State>>,
+        gate: Arc<Gate>,
+        writes: Arc<AtomicUsize>,
+    }
+    impl Backend for Slow {
+        fn read(&mut self)->Result<State,String>{self.gate.read()?;Fixture(self.driver.clone()).read()}
+        fn change(&mut self,before:&State,after:&State)->Result<(),String>{
+            self.writes.fetch_add(1,Ordering::SeqCst);Fixture(self.driver.clone()).change(before,after)
+        }
+    }
+    impl Adapter for Slow {
+        fn executable(&mut self,path:&str)->Result<String,String>{Fixture(self.driver.clone()).executable(path)}
+        fn instance(&mut self,path:&str)->Result<String,String>{Fixture(self.driver.clone()).instance(path)}
+    }
+    let(mut service,_temp,driver,registry,id)=setup();
+    let gate=Arc::new(Gate{enabled:AtomicBool::new(false),state:Mutex::new((false,false)),changed:Condvar::new()});
+    let _release=Release(gate.clone());
+    let writes=Arc::new(AtomicUsize::new(0));
+    service.factory={let(driver,gate,writes)=(driver.clone(),gate.clone(),writes.clone());Arc::new(move||Ok(Box::new(Slow{driver:driver.clone(),gate:gate.clone(),writes:writes.clone()})))};
+    let intent=captured(&service,&id);
+    let prepared=service.game_request("preflight",&intent).unwrap();
+    let request=json!({"owner":uuid::Uuid::new_v4().to_string(),"prepared":prepared});
+    let before=driver.lock().unwrap().clone();
+    gate.enabled.store(true,Ordering::Release);
+    let service=Arc::new(service);let starting=service.clone();let start_request=request.clone();
+    let(tx,rx)=mpsc::channel();
+    let thread=std::thread::spawn(move||{let result=starting.game_request("start",&start_request);tx.send(result).unwrap();});
+    let state=gate.state.lock().unwrap();
+    let(state,_)=gate.changed.wait_timeout_while(state,Duration::from_secs(3),|state|!state.0).unwrap();
+    let entered=state.0;drop(state);assert!(entered,"The intended native policy read must be in flight");
+    let pending=rx.recv_timeout(Duration::from_millis(500));
+    if pending.is_err(){gate.release();thread.join().unwrap();panic!("Start blocked on the duplicate caller-side native policy read instead of returning Pending");}
+    let pending=pending.unwrap().unwrap();thread.join().unwrap();
+    assert_eq!(pending["active"],true);
+    std::thread::sleep(Duration::from_millis(300)); // Beyond the unchanged virtual-output 250ms lease.
+    assert_eq!(service.game_request("poll",&request).unwrap()["active"],true);
+    assert_eq!(writes.load(Ordering::SeqCst),0);
+    let stopping=Instant::now();
+    assert_eq!(service.game_request("stop",&request).unwrap()["active"],true);
+    assert!(stopping.elapsed()<Duration::from_millis(500),"Stop acknowledgement waited on blocked backend I/O");
+    assert!(!gate.state.lock().unwrap().1,"Stop must return before the policy read is released");
+    gate.release();
+    let stopped=wait(&service,&request,&registry,&id,false);
+    assert_eq!(stopped["phase"],"attention");
+    assert!(stopped["message"].as_str().unwrap().contains("cancelled"));
+    service.game_request("stop",&request).unwrap();
+    assert_eq!(writes.load(Ordering::SeqCst),0);
+    assert_eq!(*driver.lock().unwrap(),before);
+    assert!(!service.active());
 }
 #[test]
 fn ephemeral_suppression_is_scoped_and_never_restored_by_reapplying_it() {

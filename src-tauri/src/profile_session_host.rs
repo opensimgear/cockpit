@@ -134,7 +134,9 @@ impl NativeProfileHost {
             self.check_transition(owner)?;
             let state = self.run(owner)?;
             if !state.game.requires_baseline() { return Ok(vec![]); }
-            if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
+            if let Some(output) = state.output.as_mut() {
+                output.keep_alive().map_err(|error| format!("Virtual output could not stay neutral while acquiring game telemetry. {error}"))?;
+            }
             let now = controllers.stream_page("", 0).captured_us;
             let sample = if first { state.game.baseline(&games, now) } else { state.game.poll_baseline(&games, now) };
             first = false;
@@ -821,7 +823,7 @@ impl Host for NativeProfileHost {
                     &delivery,
                     self.controllers.as_ref(),
                     |token| Self::validate_token(&self.resources, token),
-                )?;
+                ).map_err(|error| format!("Initial physical input baseline failed. {error}"))?;
                 let state = self.run(&run.owner)?;
                 state.inputs = Some(inputs);
                 state.baselines = baselines;
@@ -852,7 +854,7 @@ impl Host for NativeProfileHost {
                 // Acquisition/visibility can outlast telemetry freshness. Wait
                 // without starving Stop or the already acquired output lease.
                 self.game_baseline(&run.owner)
-                    .map_err(|error| format!("The game baseline expired before command admission. {error}"))?;
+                    .map_err(|error| format!("Profile activation could not refresh game telemetry before command admission. {error}"))?;
                 {
                     let state = self.run(&run.owner)?;
                     state.game.admit(&games)?;
@@ -884,13 +886,14 @@ impl Host for NativeProfileHost {
                     &delivery,
                     controllers.as_ref(),
                     |token| Self::validate_token(&resources, token),
-                )?;
+                ).map_err(|error| format!("Final physical input baseline failed. {error}"))?;
                 let game_frames = self.game_baseline(&run.owner)
-                    .map_err(|error| format!("The game baseline expired before arming the profile. {error}"))?;
+                    .map_err(|error| format!("Profile activation could not refresh game telemetry before arming. {error}"))?;
                 let state = self.run(&run.owner)?;
                 state.companions.bind_delivery_plan(&delivery)?;
                 let companion_frames = match companion_hub {
-                    Some(ref hub) => state.companions.baseline(hub, |token|Self::validate_token(&resources,token), controllers.stream_page("",0).captured_us)?
+                    Some(ref hub) => state.companions.baseline(hub, |token|Self::validate_token(&resources,token), controllers.stream_page("",0).captured_us)
+                        .map_err(|error| format!("Final companion baseline failed. {error}"))?
                         .ok_or("The companion baseline expired before arming the profile.")?,
                     None => vec![],
                 };

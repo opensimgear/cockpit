@@ -165,6 +165,40 @@ fn failed_renewal_or_foreign_owner_preserves_cleanup_authority() {
 }
 
 #[test]
+fn immediately_active_visibility_still_checks_cancellation_and_output_before_admission() {
+    for cancelled in [false, true] {
+        let io = Fake::new();
+        let mut visibility = visibility(io.clone());
+        let mut checks = 0;
+        let mut renewals = 0;
+        let error = wait(
+            &mut visibility,
+            false,
+            Duration::from_secs(30),
+            || {
+                checks += 1;
+                if cancelled && checks > 1 {
+                    Err("Stop changed admission epoch".into())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                renewals += 1;
+                Err("Output renewal failed".into())
+            },
+        ).unwrap_err();
+        assert_eq!(checks, 2);
+        assert_eq!(renewals, usize::from(!cancelled));
+        assert!(error.contains(if cancelled { "admission epoch" } else { "Output renewal" }));
+        assert!(visibility.needs_cleanup());
+        assert!(io.driver.lock().unwrap().active);
+        wait(&mut visibility, true, Duration::from_secs(30), || Ok(()), || Ok(())).unwrap();
+        assert!(!visibility.needs_cleanup());
+    }
+}
+
+#[test]
 fn visible_empty_plan_skips_native_dependencies_guards_and_renewals() {
     let io = Fake::new();
     let snapshot = snapshot();

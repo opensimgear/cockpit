@@ -387,10 +387,22 @@ impl Service {
                     self.handoff_restored(proof)?;
                 }
                 let intent = IntentCapture::parse(&json!(prepared.intent))?;
-                let policy = self.game_policy(&intent)?;
-                if policy != prepared.policy {
-                    return Err("Visibility policy or controller instance changed after preflight; preserve the external state.".into());
-                }
+                let policy = if self.platform == Platform::Windows {
+                    // Native reads belong to the existing worker so its caller
+                    // can keep neutral output leased and acknowledge Stop.
+                    // Task::Apply reconstructs this exact plan from fresh
+                    // identities/policy and compares it before any mutation.
+                    let policy = prepared.policy.clone()
+                        .ok_or("Windows visibility requires its captured native policy.")?;
+                    policy.validate()?;
+                    Some(policy)
+                } else {
+                    let policy = self.game_policy(&intent)?;
+                    if policy != prepared.policy {
+                        return Err("Visibility policy or controller instance changed after preflight; preserve the external state.".into());
+                    }
+                    policy
+                };
                 let job = if self.platform == Platform::Windows {
                     let expected = self.observer()(&intent.source_ids)?;
                     self.worker
