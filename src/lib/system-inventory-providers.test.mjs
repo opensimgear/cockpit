@@ -160,6 +160,26 @@ test('temporarily unavailable identity evidence preserves previously proved grou
   assert.match(h.controller.snapshot.diagnostics.join(' '), /Identity provider restarting/);
 });
 
+test('partial native inspection keeps omitted devices unknown while retaining affirmative current observations', async () => {
+  const virtual = id => ({ id, name: id, available: true, status: 'Available', createdByCockpit: null, diagnostics: [] });
+  const hidden = id => ({ id, name: id, instanceId: 'HID\\' + id, present: true, hidden: true, diagnostics: [] });
+  const h = harness({ native: { virtualDevices: [virtual('current'), virtual('omitted')], hiddenDevices: [hidden('hidden')], diagnostics: [] } });
+  await h.controller.refresh();
+  h.state.native = { virtualDevices: [virtual('current')], hiddenDevices: [], diagnostics: ['HidHide inspection was incomplete; permission unavailable.'] };
+  await h.controller.refresh();
+  assert.equal(h.component('virtual:current').presence, 'connected');
+  assert.equal(h.component('virtual:omitted').presence, 'unknown');
+  assert.equal(h.component('virtual:omitted').stale, true);
+  assert.equal(h.component('virtual:omitted').forget.allowed, false);
+  assert.equal(h.component('visibility:hidden').presence, 'unknown');
+  assert.equal(h.component('visibility:hidden').connections.every(connection => !connection.current), true);
+  assert.match(h.controller.snapshot.diagnostics.join(' '), /incomplete/);
+  h.state.native = { virtualDevices: [virtual('current')], hiddenDevices: [], diagnostics: [] };
+  await h.controller.refresh();
+  assert.equal(h.component('virtual:omitted').presence, 'offline');
+  assert.equal(h.component('visibility:hidden').presence, 'offline');
+});
+
 test('malformed, changed-session and truncated pages fail one provider without discarding other categories', async () => {
   const badPages = [
     request => ({ controllers: { session: 'a', offset: request.offset + 1, total: 1, sources: [source()] } }),
