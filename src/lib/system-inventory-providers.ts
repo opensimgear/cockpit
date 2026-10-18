@@ -9,6 +9,7 @@ import { SystemInventoryRegistry, type InventoryStorage, type SystemObservation,
 
 export type NativeSystemInventory = {
   observedAt?: number;
+  offset?: number; total?: number; nextOffset?: number | null;
   virtualDevices: { id: string; name: string; available: boolean | null; status: string; createdByCockpit: boolean | null; owner?: string | null; ownerPid?: number | null; diagnostics: string[] }[];
   hiddenDevices: { id: string; name: string; instanceId: string; present: boolean | null; hidden: boolean | null; configured?: boolean; inverse?: boolean; scope?: string; controllerId?: string | null; controllerIds?: string[]; interfacePaths?: string[]; ancestors?: string[]; diagnostics: string[] }[];
   diagnostics: string[];
@@ -201,14 +202,21 @@ export class SystemInventoryController {
     }), diagnostics: state.error ? [state.error] : [] };
   }
   private async native(now: number): Promise<Capture> {
-    const state = (await this.send({ command: 'system_inventory' })).systemInventory;
+    const state = (await this.send({ command: 'system_inventory', offset: 0, limit: 32 })).systemInventory;
     if (!state || !Array.isArray(state.virtualDevices) || !Array.isArray(state.hiddenDevices)) throw Error('Native system inspection unavailable. Restart the updated service.');
+    const hiddenDevices = [...state.hiddenDevices]; let nextOffset = state.nextOffset;
+    while (nextOffset != null) {
+      if (!Number.isSafeInteger(nextOffset) || nextOffset !== hiddenDevices.length || nextOffset > 4096) throw Error('Native inspection returned an invalid page.');
+      const page = (await this.send({ command: 'system_inventory', offset: nextOffset, limit: 32, observedAt: state.observedAt })).systemInventory;
+      if (!page || page.observedAt !== state.observedAt || page.total !== state.total || page.offset !== nextOffset || !page.hiddenDevices?.length || nextOffset + page.hiddenDevices.length > page.total!) throw Error('Native system inventory changed during inspection. Refresh again.');
+      hiddenDevices.push(...page.hiddenDevices); nextOffset = page.nextOffset;
+    }
     return { provider: 'native', diagnostics: state.diagnostics, observations: [
       ...state.virtualDevices.map(v => {
         const id = `virtual:${v.id}`, owned = v.owner ?? (v.ownerPid ? `PID ${v.ownerPid}` : null);
         return observation(id, v.name, 'virtual', 'native', now, { role: 'vJoy', presence: v.available === true ? 'connected' : v.available === false ? 'unavailable' : 'unknown', owner: owned, status: `${v.status}${v.createdByCockpit === true ? ' · Created by Cockpit' : ' · Creation provenance unknown'}`, diagnostics: v.diagnostics, evidence: [v.id], targets: [target('virtual', v.id)], connections: [link(id, 'host', 'software', v.available === true)], forget: { allowed: v.available === false && !owned, reason: 'Available or owned virtual devices cannot be forgotten.', effect: 'Forget only local virtual-device inventory metadata. The OS device, vJoy layout, driver and bindings are retained.' } });
       }),
-      ...state.hiddenDevices.map(h => {
+      ...hiddenDevices.map(h => {
         const id = `visibility:${h.id}`;
         return observation(id, h.name, 'controller', 'native', now, { role: 'Physical device', presence: h.present === true ? 'connected' : h.present === false ? 'offline' : 'unknown', hidden: h.hidden,
           status: h.configured ? 'Configured visibility rule' : '', diagnostics: [...h.diagnostics, ...(h.inverse ? ['HidHide inverse application policy is active.'] : [])],
@@ -216,6 +224,24 @@ export class SystemInventoryController {
           forget: { allowed: false, reason: 'Manage visibility rules explicitly. Inventory cleanup cannot remove HidHide configuration.', effect: '' } });
       }),
     ] };
+  }
+  /** Inspect existing local bindings for confirmation only; never change or activate them. */
+  async reviewForget(ids: string[]): Promise<SystemComponent[]> {
+    const selected = this.snapshot.components.filter(c => ids.includes(c.id));
+    const result = selected.map(c => ({ ...c, references: [...c.references] }));
+    try {
+      const profiles = (await this.send({ command: 'profile_list' })).profiles?.profiles;
+      if (!profiles || profiles.length > 256) throw Error('Stored binding inventory unavailable.');
+      for (const profile of profiles) {
+        const assignments = (await this.send({ command: 'profile_assignments_get', id: profile.id })).profiles?.assignments;
+        if (!assignments) throw Error(`Stored references for ${profile.name} unavailable.`);
+        for (const c of result) {
+          const sourceIds = new Set([c.id, c.id.replace(/^resource:/, ''), ...c.targets.map(t => t.id)]);
+          for (const a of assignments) if (sourceIds.has(a.sourceId)) c.references.push({ kind: 'binding', id: `${profile.id}/${a.resourceId}`, name: `${profile.name} / ${a.resourceId}` });
+        }
+      }
+    } catch (error) { for (const c of result) c.diagnostics = [...c.diagnostics, `Affected stored references could not be fully inspected: ${message(error)} All user bindings are retained and may show unresolved targets.`]; }
+    return result;
   }
   /** Refresh and revalidate immediately before a one-shot guarded provider mutation. */
   async forget(id: string): Promise<void> {

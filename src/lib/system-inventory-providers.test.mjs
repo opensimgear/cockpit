@@ -36,6 +36,25 @@ function harness(options = {}) {
   return { controller, state, requests, failures, custom, changes, component: id => controller.snapshot.components.find(component => component.id === id) };
 }
 
+test('native supplemental pages preserve the exact snapshot and never omit hidden records', async () => {
+ const h=harness();
+ const hidden=Array.from({length:35},(_,i)=>({id:'pn-'+i,name:'Hidden '+i,instanceId:'HID/'+i,present:true,hidden:true,diagnostics:[]}));
+ h.custom.set('system_inventory',r=>({systemInventory:{observedAt:123,total:35,offset:r.offset,nextOffset:r.offset===0?32:null,virtualDevices:[],diagnostics:[],hiddenDevices:hidden.slice(r.offset,r.offset+32)}}));
+ await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.hidden).length,35);
+ assert.equal(h.requests.filter(r=>r.command==='system_inventory')[1].observedAt,123);
+ h.custom.set('system_inventory',r=>({systemInventory:{observedAt:r.offset===0?123:124,total:35,offset:r.offset,nextOffset:r.offset===0?32:null,virtualDevices:[],diagnostics:[],hiddenDevices:hidden.slice(r.offset,r.offset+32)}}));
+ await h.controller.refresh();assert.match(h.controller.snapshot.diagnostics.join(' '),/changed/);assert.equal(h.component('visibility:pn-0').stale,true);
+});
+
+test('forget review explains exact retained local bindings and degrades honestly on missing metadata', async () => {
+ const h=harness({controllers:[source('offline',{online:false})]}); await h.controller.refresh();
+ h.custom.set('profile_list',()=>({profiles:{profiles:[{id:'saved',name:'Driving'}]}}));
+ h.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{resourceId:'steering',sourceId:'offline',ports:[]}]}}));
+ const review=await h.controller.reviewForget(['controller:offline']);assert.equal(review[0].references[0].name,'Driving / steering');
+ assert.ok(h.component('controller:offline'));assert.equal(h.requests.some(r=>r.command==='controller_forget'),false);
+ h.failures.set('profile_list',Error('Metadata unavailable'));const partial=await h.controller.reviewForget(['controller:offline']);assert.match(partial[0].diagnostics.join(' '),/retained/);
+});
+
 test('current inventory includes every category, current transport, diagnostics and unsupported integration without any profile requirement', async () => {
   const h = harness({ controllers: [source()], usb: [usb()], gateways: [gateway()], games: { catalogue: [game(), game('x-plane-12', { installed: false, provider: 'x-plane', integrationSetup: undefined })], error: 'Catalogue warning' }, companions: { host: { clients: [{ companionId: 'tablet', name: 'Tablet', kind: 'mobile', connected: true }, { companionId: 'offline', name: 'Desktop', connected: false }, { name: 'Malformed without identity' }], instances: [{ instanceId: 'panel-1', name: 'Radio', companionId: 'tablet', connected: true, armed: true, sessionId: 'session-1' }, { instanceId: 'saved', name: 'Saved panel', companionId: 'offline', connected: false, armed: false, sessionId: null }, {}] }, usb: { devices: [{ connected: true, port: 'COM10', device: { companionId: 'tablet', name: 'Same tablet', boardProfile: 'ESP32' } }, { connected: false, port: 'COM11', stage: 'Disconnected', device: { name: 'Unpaired USB companion' } }, { connected: false }] }, listener: { lastError: 'Listener warning' } }, native: { virtualDevices: [{ id: 'vjoy-1', name: 'vJoy 1', available: true, status: 'Available', createdByCockpit: true, ownerPid: 123, diagnostics: ['Virtual diagnostic'] }, { id: 'vjoy-2', name: 'vJoy 2', available: false, status: 'Missing', createdByCockpit: null, diagnostics: [] }, { id: 'vjoy-3', name: 'vJoy 3', available: null, status: 'Unknown', createdByCockpit: false, owner: 'External app', diagnostics: [] }], hiddenDevices: [{ id: 'hidden', name: 'Hidden external device', instanceId: 'HID\\external', present: null, hidden: true, configured: true, inverse: true, diagnostics: ['External rule'] }], diagnostics: ['Native inspection warning'] } });
   const snapshot = await h.controller.refresh();
