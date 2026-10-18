@@ -10,8 +10,6 @@ pub mod service;
 pub mod session;
 pub mod store;
 pub mod validation;
-#[cfg(test)]
-mod desktop_tests;
 
 pub use model::*;
 pub use validation::{semantic_hash, validate_document};
@@ -53,3 +51,6 @@ fn test_directory_in(parent: &std::path::Path) -> tempfile::TempDir {
     let parent = parent.to_owned();
     tempfile::tempdir_in(parent).expect("test temporary directory")
 }
+
+#[cfg(test)]
+mod desktop_tests;
