@@ -57,7 +57,7 @@ async function appHarness() {
   const filename=new URL('../App.svelte',import.meta.url);
   const source=(await readFile(filename,'utf8')).replace('</script>',`captureAppNavigation({navigate,openGameSettings,returnToSettingsOrigin,readSettingsHash,setPanel(panel){profilesPanel=panel;},get state(){return{view,selectedGameId,settingsVisit};}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'});
-  const helpers=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./gateway-capabilities','./controller-lifecycle','./devices',]);
+  const helpers=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./gateway-capabilities','./controller-lifecycle','./devices',]);
   const exports={},events=[];let navigation,location=new URL('http://localhost/#workspace');
   const window={get location(){return location;},dispatchEvent(event){events.push(event);}};
   const history={pushState(_state,_unused,url){location=new URL(url,location);},replaceState(_state,_unused,url){location=new URL(url,location);}};
