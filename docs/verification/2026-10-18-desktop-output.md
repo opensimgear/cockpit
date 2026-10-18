@@ -24,6 +24,7 @@ gate. Virtual controller, hiding and script qualification remain independent.
 | Running cockpit authoring | Create/save/reopen/export/import, no fabricated virtual controller, native compilation and pure recording preview through actual Tauri IPC | `pnpm desktop:native:ui`; local artifacts `.research/desktop-output-native-authoring/` |
 | Running cockpit live output | Actual authenticated WSS source through the applied native ProfileSession and worker: shared Control, ten ordered taps, stationary pointer, mouse/key/chord release, focus loss with fresh-neutral rearming and companion lease loss | [Companion receiver](2026-10-18-desktop-companion-receiver.json); `OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:companion:native` |
 | Actual game launch and scope | Native Cockpit launches installed Steam Assetto Corsa Rally, binds its actual process/creation identity, submits a scoped key, releases on focus loss, waits for neutral on return, preserves the applied revision after a save, and Stops cleanly | [ACR native scope](2026-10-18-desktop-game-native.json); `OSG_DESKTOP_GAME_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:game:native` |
+| Staged development package | Existing packaging script copies the same executable; three hidden private-worker launches receive zero command bytes, emit the exact hello, exit on EOF and reacquire the session lock | [Package worker](2026-10-18-desktop-package-worker.json); `scripts/desktop-package-worker.ps1` |
 
 Native `SendInput` return counts establish submission to Windows, not delivery
 to a particular application. Receiver messages are a separate observation and
@@ -58,7 +59,7 @@ passed. These software results do not complete the release matrix below.
 | Integrity and desktop transitions | Ordinary receiver tested; elevated-target refusal, session lock/unlock and sleep/wake require interactive acceptance. |
 | Optional driver absence | Desktop-only compiler/host paths request no virtual devices or visibility. A clean installation with both optional drivers absent still needs acceptance. |
 | Process termination | Parent loss and worker death after submission tested. Whole-process-tree termination can prevent release and needs explicit interrupted-session/recovery evidence. |
-| Packaging | Same-executable worker exercised in a development build. Installer/upgrade, relocated executable and packaged-worker deployment remain unqualified. |
+| Packaging | Staged development executable startup/EOF and unchanged hash verified. Installer/upgrade, signed release deployment and packaged input delivery remain unqualified. |
 | Loaded performance | High-rate and simultaneous-source traffic, UI load and clock-correlated capture-to-successful-submission p95/p99 remain unmeasured. Pointer settings and focus-switch race remain OS limits. |
 | Other platforms and advanced actions | Linux/macOS native injection, live script desktop output and J5 are unavailable. Portable authoring/recording does not qualify them. |
 

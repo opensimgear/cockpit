@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "result": "pass",
+  "experiment": "Development staged Windows executable private desktop-worker startup and EOF shutdown",
+  "buildKind": "development",
+  "artifact": "osg-cockpit.exe",
+  "sha256": "977d44309eae40f64b4782308354e87ca2eb5bfc07b32660ad947471d51e63d1",
+  "signatureStatus": "NotSigned",
+  "stagingScript": "scripts/package-windows-mapping.ps1",
+  "sameExecutableHashUnchanged": true,
+  "workingDirectory": "staged package directory",
+  "soleArgument": "--osg-desktop-input-worker",
+  "protocolCommandsSent": 0,
+  "stdin": "Empty redirected file; immediate EOF",
+  "startupAndEofExitBoundMs": 5000,
+  "helloMaxBytes": 1024,
+  "checks": [
+    {
+      "cycle": 1,
+      "hello": {
+        "backend": "desktop-input",
+        "ok": true,
+        "protocol": 1
+      },
+      "exitCode": 0,
+      "startupAndEofExitMs": 486,
+      "stdoutBytes": 51,
+      "stderrBytes": 0,
+      "stdinBytes": 0
+    },
+    {
+      "cycle": 2,
+      "hello": {
+        "backend": "desktop-input",
+        "ok": true,
+        "protocol": 1
+      },
+      "exitCode": 0,
+      "startupAndEofExitMs": 34,
+      "stdoutBytes": 51,
+      "stderrBytes": 0,
+      "stdinBytes": 0
+    },
+    {
+      "cycle": 3,
+      "hello": {
+        "backend": "desktop-input",
+        "ok": true,
+        "protocol": 1
+      },
+      "exitCode": 0,
+      "startupAndEofExitMs": 34,
+      "stdoutBytes": 51,
+      "stderrBytes": 0,
+      "stdinBytes": 0
+    }
+  ],
+  "sessionLockReacquiredAcrossSequentialLaunches": true,
+  "nativeInputSubmitted": false,
+  "noInputBasis": "No protocol frames sent; the audited worker starts with no runs or held controls and empty cleanup skips native submit. Native input APIs were not instrumented by this probe.",
+  "productionQualified": false,
+  "measurementBoundary": "Same built executable copied by the development packaging script, launched from its staged directory, emitted its private hello, and exited cleanly on EOF three times. No cockpit runtime path, input delivery, installer, upgrade, driver setup, game, hardware or physical overlap qualification."
+}
