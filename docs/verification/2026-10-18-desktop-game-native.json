@@ -5,11 +5,14 @@
   "actualGame": "assetto-corsa-rally",
   "actualSteamAppId": "3917090",
   "actualLaunchRequested": true,
+  "injected": true,
   "source": "Native process/foreground identity, typed ownership and SendInput counts; game consumption and displayed response are not measured.",
   "productionQualified": false,
   "observedGameBehavior": false,
   "virtualControllers": 0,
   "command": "OSG_DESKTOP_GAME_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-game-native.mjs",
+  "sourceRevision": "8169da1",
+  "nativeExecutableSha256": "fef8e40379d9538ee33827f5df8378049bb6b39f2be49a995195929b021a4b2d",
   "checks": [
     "Manual saved profile launches the installed Steam game and binds its exact PID/executable/creation identity into the owned desktop journal",
     "Actual foreground game and a real authenticated WSS press produce one acknowledged native Right Arrow key-down; game response remains unmeasured",
@@ -19,7 +22,7 @@
   ],
   "appliedOwner": {
     "gameId": null,
-    "generation": 6,
+    "generation": 2,
     "profileId": "<test-profile-id>",
     "profileRevision": 1,
     "session": "<native-run-session>"
@@ -32,7 +35,7 @@
   "firstHold": {
     "state": "active",
     "waitingNeutral": [],
-    "focusBoundaryUs": "1059676940",
+    "focusBoundaryUs": "231817141",
     "backend": {
       "phase": "active",
       "held": [
@@ -76,7 +79,7 @@
         ],
         "ok": true,
         "operationId": "2",
-        "sequence": "13",
+        "sequence": "10",
         "skipped": false,
         "uncertain": false
       }
@@ -86,7 +89,7 @@
     "paused": {
       "state": "paused",
       "waitingNeutral": [],
-      "focusBoundaryUs": "1059676940",
+      "focusBoundaryUs": "231817141",
       "backend": {
         "phase": "paused",
         "held": [],
@@ -109,7 +112,7 @@
           "held": [],
           "ok": true,
           "operationId": "3",
-          "sequence": "15",
+          "sequence": "12",
           "skipped": false,
           "uncertain": false
         }
@@ -120,7 +123,7 @@
       "waitingNeutral": [
         "route-key"
       ],
-      "focusBoundaryUs": "1059985229",
+      "focusBoundaryUs": "232059084",
       "backend": {
         "phase": "paused",
         "held": [],
@@ -143,7 +146,7 @@
           "held": [],
           "ok": true,
           "operationId": "3",
-          "sequence": "15",
+          "sequence": "12",
           "skipped": false,
           "uncertain": false
         }
@@ -154,7 +157,7 @@
       "waitingNeutral": [
         "route-key"
       ],
-      "focusBoundaryUs": "1059985229",
+      "focusBoundaryUs": "232059084",
       "backend": {
         "phase": "paused",
         "held": [],
@@ -177,7 +180,7 @@
           "held": [],
           "ok": true,
           "operationId": "3",
-          "sequence": "15",
+          "sequence": "12",
           "skipped": false,
           "uncertain": false
         }
@@ -186,7 +189,7 @@
     "rearmed": {
       "state": "active",
       "waitingNeutral": [],
-      "focusBoundaryUs": "1059985229",
+      "focusBoundaryUs": "232059084",
       "backend": {
         "phase": "active",
         "held": [
@@ -230,7 +233,7 @@
           ],
           "ok": true,
           "operationId": "4",
-          "sequence": "38",
+          "sequence": "35",
           "skipped": false,
           "uncertain": false
         }
@@ -239,7 +242,7 @@
   },
   "receiverReleaseObservations": [
     {
-      "atUs": "97109234000",
+      "atUs": "99337046000",
       "extended": 1,
       "injectedMarker": true,
       "lparam": "2169307137",
@@ -256,7 +259,7 @@
     },
     "appliedOwner": {
       "gameId": null,
-      "generation": 6,
+      "generation": 2,
       "profileId": "<test-profile-id>",
       "profileRevision": 1,
       "session": "<native-run-session>"
@@ -269,7 +272,7 @@
     "nativeHold": {
       "state": "active",
       "waitingNeutral": [],
-      "focusBoundaryUs": "1059985229",
+      "focusBoundaryUs": "232059084",
       "backend": {
         "phase": "active",
         "held": [
@@ -313,7 +316,7 @@
           ],
           "ok": true,
           "operationId": "6",
-          "sequence": "49",
+          "sequence": "46",
           "skipped": false,
           "uncertain": false
         }
@@ -332,7 +335,7 @@
     "desktop": {
       "state": "stopped",
       "waitingNeutral": [],
-      "focusBoundaryUs": "1059985229",
+      "focusBoundaryUs": "232059084",
       "backend": {
         "phase": "stopped",
         "held": [],
@@ -366,7 +369,7 @@
           ],
           "ok": true,
           "operationId": "6",
-          "sequence": "49",
+          "sequence": "46",
           "skipped": false,
           "uncertain": false
         }
@@ -404,7 +407,7 @@
         "kind": "application"
       },
       "waitingNeutral": [],
-      "focusBoundaryUs": "1059985229",
+      "focusBoundaryUs": "232059084",
       "backend": {
         "phase": "stopped",
         "held": [],
@@ -428,17 +431,10 @@
     "signalCode": null
   },
   "finalProcessQuery": {
-    "capturedAtUtc": "2026-10-18T20:21:50.1061529Z",
     "gameProcesses": [],
-    "nativeInputWorkers": [],
-    "hostProcesses": [
-      {
-        "pid": "<cockpit-host-pid>",
-        "name": "osg-cockpit.exe",
-        "inputWorker": false
-      }
-    ]
+    "nativeInputWorkers": []
   },
+  "processQuerySource": "Final run wrapper-cleanup.json; the older manual process-cleanup.json was not reused.",
   "wrapperCleanupErrors": [],
   "selectionAfterTest": "Stopped with Manual pinned to the test profile; no automatic reactivation was requested.",
   "redaction": "Machine paths, native session/profile IDs, PID/creation values and window handles are replaced consistently; equality relationships are retained. Private certificate/account/peer material is omitted.",
@@ -473,7 +469,7 @@
       "kind": "application"
     },
     "journalOwner": {
-      "generation": "6",
+      "generation": "2",
       "session": "<native-run-session>"
     }
   },

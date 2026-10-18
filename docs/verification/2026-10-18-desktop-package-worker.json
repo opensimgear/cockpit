@@ -4,7 +4,7 @@
   "experiment": "Development staged Windows executable private desktop-worker startup and EOF shutdown",
   "buildKind": "development",
   "artifact": "osg-cockpit.exe",
-  "sha256": "977d44309eae40f64b4782308354e87ca2eb5bfc07b32660ad947471d51e63d1",
+  "sha256": "fef8e40379d9538ee33827f5df8378049bb6b39f2be49a995195929b021a4b2d",
   "signatureStatus": "NotSigned",
   "stagingScript": "scripts/package-windows-mapping.ps1",
   "sameExecutableHashUnchanged": true,
@@ -23,7 +23,7 @@
         "protocol": 1
       },
       "exitCode": 0,
-      "startupAndEofExitMs": 486,
+      "startupAndEofExitMs": 504,
       "stdoutBytes": 51,
       "stderrBytes": 0,
       "stdinBytes": 0
@@ -49,7 +49,7 @@
         "protocol": 1
       },
       "exitCode": 0,
-      "startupAndEofExitMs": 34,
+      "startupAndEofExitMs": 37,
       "stdoutBytes": 51,
       "stderrBytes": 0,
       "stdinBytes": 0

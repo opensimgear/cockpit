@@ -17,13 +17,13 @@ gate. Virtual controller, hiding and script qualification remain independent.
 | Area | Verified boundary | Evidence |
 | --- | --- | --- |
 | Portable graph and scheduler | Typed desktop-only branches; exact physical keys; explicit hats; ordered taps, repeat and pointer integration; bounded replay; ownership and source-generation cancellation | `crates/profiles/src/desktop_tests.rs`, `crates/mapping/src/desktop_tests.rs` |
-| Native host bridge | Direct source bindings; source-loss cancellation; ten ordered encoder occurrences; fresh neutral after focus return; stale/rebased input rejection; bounded outcome/collision inspection | `crates/mapping-host/src/desktop_tests.rs` |
+| Native host bridge | Direct source bindings; source-loss cancellation; ten ordered encoder occurrences; isolated desktop rule state, fresh effective neutral after focus return and same-batch neutral/press ordering; stale/rebased input rejection; bounded outcome/collision inspection | `crates/mapping-host/src/desktop_tests.rs` |
 | Windows API | Requested versus returned native record counts, US/German physical-key behavior, left/right modifiers, AltGr, extended keys, five mouse buttons, wheel axes and sustained motion | [Native receiver](2026-10-18-desktop-native-receiver.json) |
 | Worker and coordinator | Shared ownership through real private-worker IPC; focus/lease cleanup; actual parent loss; worker exit after successful submission before ACK; retained uncertainty, no replay and explicit recovery | [Worker receiver](2026-10-18-desktop-worker-receiver.json) |
 | Worker lifecycle | Second-injector exclusion; repeated Stop preserves a clean journal; Drop closes transport; session lock immediately reacquired over three cycles | [Worker lifecycle](2026-10-18-desktop-worker-lifecycle.json) |
 | Whole development app interruption | Exact worker and application tree termination while holding KeyA; ordinary restart sends no input; explicit recovery releases only recorded KeyA and remains stopped | [Crash recovery](2026-10-18-desktop-crash-native.json); `OSG_DESKTOP_CRASH_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:crash:native` |
 | Running cockpit authoring | Create/save/reopen/export/import, no fabricated virtual controller, native compilation and pure recording preview through actual Tauri IPC | `pnpm desktop:native:ui`; local artifacts `.research/desktop-output-native-authoring/` |
-| Running cockpit live output | Actual authenticated WSS source through the applied native ProfileSession and worker: shared Control, ten ordered taps, stationary pointer, mouse/key/chord release, focus loss with fresh-neutral rearming and companion lease loss | [Companion receiver](2026-10-18-desktop-companion-receiver.json); `OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:companion:native` |
+| Running cockpit live output | Actual authenticated WSS source through the applied native ProfileSession and worker: shared Control, ten ordered taps, stationary pointer, mouse/key/chord release, focus loss with fresh-neutral rearming, cancellation of an upstream Macro and companion lease loss | [Companion receiver](2026-10-18-desktop-companion-receiver.json); `OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:companion:native` |
 | Actual game launch and scope | Native Cockpit launches installed Steam Assetto Corsa Rally, binds its actual process/creation identity, submits a scoped key, releases on focus loss, waits for neutral on return, preserves the applied revision after a save, and Stops cleanly | [ACR native scope](2026-10-18-desktop-game-native.json); `OSG_DESKTOP_GAME_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:game:native` |
 | Staged development package | Existing packaging script copies the same executable; three hidden private-worker launches receive zero command bytes, emit the exact hello, exit on EOF and reacquire the session lock | [Package worker](2026-10-18-desktop-package-worker.json); `scripts/desktop-package-worker.ps1` |
 
@@ -41,7 +41,7 @@ acceptance boundary. Reproduce with `pnpm desktop:coverage`,
 `python scripts/mapping-host-coverage.py` and
 `python scripts/desktop-output-coverage.py`. Ordinary tests do not inject input.
 
-The final portable runs passed 123 mapping, 112 profile, 97 mapping-host and 26
+The final portable runs passed 125 mapping, 112 profile, 102 mapping-host and 26
 desktop-backend tests. The native library run covered 843 cases: 836 passed,
 six explicit environment-dependent tests were ignored, and one shared compiler
 fixture needed its new capability fields and capture hash. After updating that
@@ -49,6 +49,21 @@ fixture, all eight native compiler tests and ten frontend compiler tests passed.
 The desktop frontend coverage suite passed 13 tests; the portable profile
 validator coverage suite passed 37. Svelte checks and the production UI build
 passed. These software results do not complete the release matrix below.
+
+After the focus-state isolation fix, all 235 selected native ProfileSession
+tests passed, with two explicit environment-dependent tests ignored. Mapping
+coverage passed all 14 measured modules (typed engine 93.58%); mapping-host
+coverage passed all 11 modules (desktop bridge 78.41%). The profile validator's
+37 frontend tests passed on Node 22.23.3 and 24.20.0, with native validator
+coverage at 100% lines, 98.83% branches and 99.15% functions. Native and VM-loaded
+validator tests run separately to avoid merging incompatible coverage offsets.
+
+The final running-Cockpit companion, actual ACR and whole-app crash tests each
+passed against the rebuilt executable. The source is recorded at `8169da1` and
+the executable SHA-256 is
+`fef8e40379d9538ee33827f5df8378049bb6b39f2be49a995195929b021a4b2d`.
+That same executable passed the three-cycle staged worker startup/EOF check.
+The cockpit was left stopped, with desktop output disabled and no input worker.
 
 ## Remaining release qualification
 

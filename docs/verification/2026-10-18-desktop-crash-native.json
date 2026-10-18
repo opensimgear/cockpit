@@ -4,14 +4,15 @@
   "actualNativeCockpit": true,
   "actualWholeAppInterruption": true,
   "explicitRecovery": true,
+  "injected": true,
   "command": "OSG_DESKTOP_CRASH_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-crash-native.mjs",
   "productionQualified": false,
   "hardwareTested": false,
   "gameTested": false,
   "virtualControllers": 0,
   "measurement": "Native ACK counts, exact Win32 process ownership, durable journal and receiver-observed injected KeyA edges. No latency or hardware claim.",
-  "sourceRevision": "00affe53e235f6756ec19489608fa56ca34bc3e5",
-  "nativeExecutableSha256": "977d44309eae40f64b4782308354e87ca2eb5bfc07b32660ad947471d51e63d1",
+  "sourceRevision": "8169da1",
+  "nativeExecutableSha256": "fef8e40379d9538ee33827f5df8378049bb6b39f2be49a995195929b021a4b2d",
   "checks": [
     "One authenticated real WSS button produced exactly one receiver-observed and natively acknowledged application-scoped KeyA hold with durable exact run ownership",
     "Exact private worker, main dev app and owned WebView descendants were forcibly terminated without Drop; the receiver and external harness survived and held KeyA remained durably recorded",
@@ -38,13 +39,15 @@
     ],
     "ok": true,
     "operationId": "1",
-    "sequence": "10",
+    "sequence": "12",
     "skipped": false,
     "uncertain": false
   },
   "interruption": {
     "method": "TerminateProcess on exact opened identity handles; private worker then main application then its snapshotted WebView descendants",
     "treeProcesses": 10,
+    "webViewDescendants": 6,
+    "consoleDescendants": 2,
     "exactExecutablePidAndCreationVerified": true,
     "privateWorkerTerminatedBeforeMain": true,
     "openedProcessHandlesVerified": true,
@@ -52,6 +55,23 @@
     "receiverAndHarnessOutsideAppTree": true,
     "snapshottedDescendantsOnly": true,
     "restartedSameDevelopmentExecutable": true
+  },
+  "interruptedJournal": {
+    "phase": "active",
+    "held": [
+      {
+        "kind": "key",
+        "key": 4
+      }
+    ],
+    "possibleHeld": [
+      {
+        "kind": "key",
+        "key": 4
+      }
+    ],
+    "inFlight": null,
+    "ownerAndScopePreserved": true
   },
   "ordinaryRestart": {
     "profileSession": {
@@ -65,7 +85,8 @@
     "desktopState": "recovery-needed",
     "inputWorkers": 0,
     "receiverKeyDowns": 1,
-    "receiverKeyUps": 0
+    "receiverKeyUps": 0,
+    "recordedHeldPreserved": true
   },
   "explicitRecoveryResult": {
     "profileSession": {
@@ -119,8 +140,11 @@
     "activeConnections": 0,
     "desktopPreferencesRestoredByteForByte": true,
     "receiveOnlyProcessExitCode": 0,
-    "developmentCockpitLeftRunning": true
+    "receiverRetainedForRootCleanup": false,
+    "developmentCockpitLeftRunning": true,
+    "nativeAppMatchesRestartedIdentity": true
   },
   "cleanupErrors": [],
-  "remainingQualification": "Physical controls, real game response and production qualification remain unmeasured."
+  "remainingQualification": "Physical controls, real game response and production qualification remain unmeasured.",
+  "redaction": "Native process IDs, creation values, user paths, session/profile IDs and certificate/peer material are omitted."
 }
