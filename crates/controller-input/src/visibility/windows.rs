@@ -11,7 +11,7 @@ use windows_sys::Win32::{
     Storage::FileSystem::*,
     System::{SystemInformation::GetSystemDirectoryW, IO::DeviceIoControl},
 };
-pub const QUALIFIED: bool = false;
+pub const QUALIFIED: bool = super::capabilities::DEVELOPMENT_NATIVE_PROFILES;
 const HASH: &str = "e3bb8b6a4e4ff90290b34e710edbef88cf71cec6ba0cadcb8e1685d5dd65ddb2";
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()

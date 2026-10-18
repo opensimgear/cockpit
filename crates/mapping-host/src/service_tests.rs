@@ -47,8 +47,28 @@ pub(super) fn setup() -> (
     (service, root, profile, assignments, calls)
 }
 #[test]
+fn native_development_readiness_matches_visibility_without_inspection_or_output() {
+    let (service, _root, _profile, _assignments, calls) = setup();
+    assert_eq!(LIVE_OUTPUT_QUALIFIED, osg_controller_input::visibility::capabilities::DEVELOPMENT_NATIVE_PROFILES);
+    assert_eq!(service.qualified, LIVE_OUTPUT_QUALIFIED);
+    assert!(!SCRIPT_LIVE_QUALIFIED);
+    assert!(!service.script_live_qualified);
+    #[cfg(windows)]
+    {
+        assert_eq!(osg_controller_input::visibility::windows::QUALIFIED, LIVE_OUTPUT_QUALIFIED);
+        assert!(!osg_virtual_controller::windows_launcher::QUALIFIED);
+    }
+    assert_eq!(service.request(&json!({"command":"mapping_status"})).unwrap()["running"], false);
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    if LIVE_OUTPUT_QUALIFIED {
+        assert!(QUALIFICATION.starts_with("Development acceptance mode:"));
+    }
+    service.shutdown();
+}
+#[test]
 fn stored_preview_runs_without_optional_drivers_and_keeps_edges() {
-    let (service, root, profile, assignments, calls) = setup();
+    let (mut service, root, profile, assignments, calls) = setup();
+    service.qualified = false; // Preserve the explicit default-gate oracle in acceptance builds.
     assert_eq!(
         service
             .request(&json!({"command":"mapping_status"}))
@@ -105,10 +125,9 @@ fn stored_preview_runs_without_optional_drivers_and_keeps_edges() {
         "mapping_virtual_start",
         "mapping_virtual_recover",
     ] {
-        assert!(service
+        assert_eq!(service
             .request(&json!({"command":command}))
-            .unwrap_err()
-            .contains("disabled"));
+            .unwrap_err(), QUALIFICATION);
     }
     assert_eq!(
         service

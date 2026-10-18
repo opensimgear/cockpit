@@ -71,6 +71,17 @@ pnpm dev
 
 The desktop uses Rust IPC and its own frontend assets. Development serves the UI on `127.0.0.1:1420`. The installed application needs no Node runtime, Swift compiler, firmware checkout or simulation executable.
 
+For an explicit Windows native-profile acceptance run, stop the existing dev app,
+then rebuild that same app from PowerShell with
+`$env:OSG_DEV_NATIVE_PROFILES='1'; pnpm dev`. Its readiness labels say
+**Development acceptance mode**. This build-time opt-in enables the existing
+vJoy output and HidHide adapters only in Windows debug builds; explicit settings,
+profile Apply, ownership, freshness and recovery checks still apply. Scripts,
+layout provisioning and other platforms remain gated. Remove the environment
+variable and rebuild to return to the default disabled state. Release builds
+remain disabled even when the variable is set; this mode does not graduate
+release qualification.
+
 ```sh
 pnpm check
 pnpm transport:test

@@ -1,5 +1,22 @@
 //! Scope is explicit. Unsupported visibility never falls back to broader blocking.
 use serde::Serialize;
+
+/// Explicit acceptance runs use the normal Windows debug app, never release builds.
+pub const DEVELOPMENT_NATIVE_PROFILES: bool = development_native_profiles(
+    cfg!(windows),
+    cfg!(debug_assertions),
+    option_env!("OSG_DEV_NATIVE_PROFILES"),
+);
+const fn development_native_profiles(windows: bool, debug: bool, value: Option<&str>) -> bool {
+    if !windows || !debug {
+        return false;
+    }
+    match value {
+        Some(value) => value.len() == 1 && value.as_bytes()[0] == b'1',
+        None => false,
+    }
+}
+pub const DEVELOPMENT_REASON: &str = "Development acceptance mode: Windows vJoy output and HidHide are enabled for explicit profile Apply. Release qualification remains unchanged.";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     Windows,
@@ -43,8 +60,10 @@ pub fn modes(platform: Platform) -> Vec<Mode> {
             mode: "hide-all",
             label: "Hide from all applications",
             supported: windows,
-            qualified: false,
-            reason: if windows {
+            qualified: windows && DEVELOPMENT_NATIVE_PROFILES,
+            reason: if windows && DEVELOPMENT_NATIVE_PROFILES {
+                DEVELOPMENT_REASON
+            } else if windows {
                 "HidHide global policy and capture exception require native qualification."
             } else {
                 "A capture grab/seizure does not establish enumeration hiding or block every alternative input path."
@@ -54,8 +73,10 @@ pub fn modes(platform: Platform) -> Vec<Mode> {
             mode: "hide-from-process",
             label: "Hide from a specific process",
             supported: windows,
-            qualified: false,
-            reason: if windows {
+            qualified: windows && DEVELOPMENT_NATIVE_PROFILES,
+            reason: if windows && DEVELOPMENT_NATIVE_PROFILES {
+                "Development acceptance mode: the saved executable path applies to every matching instance; HidHide shares one global policy. Release qualification remains unchanged."
+            } else if windows {
                 "The saved executable path applies to every matching instance; HidHide shares one global policy."
             } else if platform == Platform::Linux {
                 "Only a separately qualified controlled-launch boundary can isolate selected device nodes. Already-running applications cannot be retrofitted."
@@ -89,6 +110,9 @@ pub fn validate(platform: Platform, mode: &str) -> Result<(), String> {
     Ok(())
 }
 pub fn reason(platform: Platform) -> &'static str {
+    if platform == Platform::Windows && DEVELOPMENT_NATIVE_PROFILES {
+        return DEVELOPMENT_REASON;
+    }
     match platform{
  Platform::Windows=>"Device hiding is unavailable until native visibility and recovery qualification is complete. Saving a selection does not hide anything.",
  Platform::Linux=>"Linux input suppression and controlled-launch isolation remain unqualified. Event blocking does not imply device hiding. Saving a selection does not apply it.",
@@ -98,6 +122,19 @@ pub fn reason(platform: Platform) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_development_acceptance_requires_exact_opt_in_and_windows_debug() {
+        for windows in [false, true] {
+            for debug in [false, true] {
+                for value in [None, Some(""), Some("0"), Some("true"), Some("01"), Some("1 "), Some("1")] {
+                    assert_eq!(development_native_profiles(windows, debug, value),
+                        windows && debug && value == Some("1"));
+                }
+            }
+        }
+        #[cfg(windows)]
+        assert_eq!(super::super::windows::QUALIFIED, DEVELOPMENT_NATIVE_PROFILES);
+    }
     #[test]
     fn policies_never_broaden_scope_and_unqualified_actions_stay_disabled() {
         let _ = current();
@@ -112,7 +149,9 @@ mod tests {
             assert!(validate(p, "missing").is_err());
             for m in modes(p) {
                 assert_eq!(validate(p, m.mode).is_ok(), m.supported);
-                assert_eq!(m.qualified, m.mode == "visible");
+                assert_eq!(m.qualified, m.mode == "visible" ||
+                    (p == Platform::Windows && DEVELOPMENT_NATIVE_PROFILES &&
+                        matches!(m.mode, "hide-all" | "hide-from-process")));
             }
         }
         assert!(validate(Platform::Linux, "hide-all").is_err());

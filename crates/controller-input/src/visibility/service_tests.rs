@@ -49,10 +49,27 @@ impl Adapter for Fixture {
     }
 }
 #[test]
+fn native_development_readiness_keeps_explicit_visibility_settings_inert() {
+    let (registry, id) = inventory();
+    let temp = tempfile::tempdir().unwrap();
+    let service = Service::new(Some(temp.path().into()), registry);
+    let status = service.request(&json!({"command":"controller_visibility_status","sourceId":id})).unwrap();
+    assert_eq!(status["visibility"]["qualified"], super::super::capabilities::DEVELOPMENT_NATIVE_PROFILES);
+    assert_eq!(status["visibility"]["enabled"], false);
+    assert_eq!(status["visibility"]["selectedCount"], 0);
+    assert_eq!(status["visibility"]["global"]["inspected"], false);
+    assert!(!service.active());
+    assert!(temp.path().read_dir().unwrap().next().is_none());
+    if super::super::capabilities::DEVELOPMENT_NATIVE_PROFILES {
+        assert!(status["visibility"]["reason"].as_str().unwrap().starts_with("Development acceptance mode:"));
+    }
+}
+#[test]
 fn default_status_and_saved_intent_are_inert_without_optional_dependencies() {
     let (registry, id) = inventory();
     let temp = tempfile::tempdir().unwrap();
     let mut service = Service::new(Some(temp.path().into()), registry.clone());
+    service.qualified = false; // Exercise the default gate independently of the dev opt-in.
     service.platform = super::super::capabilities::Platform::Windows;
     service.factory = Arc::new(|| Err("HidHide missing or restart required".into()));
     let status = service
@@ -204,6 +221,7 @@ fn unix_capabilities_save_without_driver_access_and_never_broaden() {
         let mut service =
             Service::new(Some(dir.path().into()), registry).with_suppression(control.clone());
         service.platform = platform;
+        service.qualified = false;
         service.factory = Arc::new(|| panic!("Unix visibility must not inspect HidHide"));
         assert!(service
             .request(&json!({"command":"controller_visibility_inspect"}))

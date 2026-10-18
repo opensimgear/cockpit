@@ -33,21 +33,24 @@ fn absent_unsupported_and_installed_dependency_inspection_never_mutates() {
     assert!(artifact(&path).is_err());
     if let Ok(mut driver) = installed() {
         driver.read().unwrap().validate().unwrap();
-        assert!(driver
-            .0
-            .call(2053, Some(&[1]))
-            .unwrap_err()
-            .contains("disabled"));
+        // Never send a mutation to an installed driver in acceptance builds.
+        if !QUALIFIED {
+            assert!(driver
+                .0
+                .call(2053, Some(&[1]))
+                .unwrap_err()
+                .contains("disabled"));
+        }
     }
 }
 #[test]
 fn native_transport_rejects_writes_and_malformed_requests_before_io() {
     let temp = tempfile::NamedTempFile::new().unwrap();
     let mut kernel = Kernel(open(temp.path().to_str().unwrap(), 0).unwrap());
-    assert!(kernel
-        .call(2049, Some(&[0, 0]))
-        .unwrap_err()
-        .contains("disabled"));
+    let error = kernel.call(2049, Some(&[0, 0])).unwrap_err();
+    if !QUALIFIED {
+        assert!(error.contains("disabled"));
+    }
     assert!(kernel.call(9000, None).is_err());
     assert!(kernel.call(2048, Some(&[0])).is_err());
     assert!(kernel.call(2049, None).is_err());
