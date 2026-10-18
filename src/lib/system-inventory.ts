@@ -27,9 +27,14 @@ export function systemStateLabel(component: SystemComponent): string {
 }
 export function filterSystem(components: readonly SystemComponent[], search: string, filter: string, transport = 'all'): SystemComponent[] {
   const query = search.trim().toLocaleLowerCase();
-  return components.filter(c => c.type !== 'host' && `${c.name} ${c.role} ${c.id} ${systemTypeLabels[c.type]} ${c.status} ${c.connections.map(x => `${x.transport} ${x.endpoint ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(query)
+  return components.filter(c => isVisibleSystemComponent(c) && `${c.name} ${c.role} ${c.id} ${systemTypeLabels[c.type]} ${c.status} ${c.connections.map(x => `${x.transport} ${x.endpoint ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(query)
     && (filter === 'all' || filter === c.type || filter === c.presence || filter === 'hidden' && c.hidden === true)
     && (transport === 'all' || c.connections.some(connection => connection.transport === transport) || transport === 'unknown' && !c.connections.length));
+}
+/** Panels belong to their companion; integrations appear when the applied profile uses them. */
+export function isVisibleSystemComponent(component: SystemComponent): boolean {
+  return component.type !== 'host' && !component.id.startsWith('companion-instance:')
+    && (component.type !== 'integration' || component.evidence.includes('active-bindings') && !component.stale);
 }
 function signature(c: SystemComponent | SystemObservation): string {
   // Report counters, timestamps and polling generations cannot resurrect a forgotten record.

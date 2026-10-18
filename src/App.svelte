@@ -5,7 +5,7 @@
   import Notification from './lib/Notification.svelte';
   import { onMount } from 'svelte';
   import SystemDevices from './lib/SystemDevices.svelte';
-  import type { SystemSnapshot } from './lib/system-inventory';
+  import { isVisibleSystemComponent, type SystemSnapshot } from './lib/system-inventory';
   import ProfileRetiredRecovery from './lib/ProfileRetiredRecovery.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import HeaderStatus from './lib/HeaderStatus.svelte';
@@ -407,7 +407,7 @@
       <button class="nav-label cockpit-home" onclick={() => navigate('overview')}>COCKPIT</button>
       <nav aria-label="Main navigation">
         {#each navigation as item (item.id)}
-          <button title={item.label} class:current={view === item.id || (item.id === 'devices' && view === 'device')} onclick={() => navigate(item.id)}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{systemSnapshot?.components.filter(c => c.type !== 'host').length ?? devices.length}</span>{/if}</button>
+          <button title={item.label} class:current={view === item.id || (item.id === 'devices' && view === 'device')} onclick={() => navigate(item.id)}><Icon name={item.icon} size={19} />{item.label}{#if item.id === 'devices'}<span class="nav-count">{systemSnapshot?.components.filter(isVisibleSystemComponent).length ?? devices.length}</span>{/if}</button>
         {/each}
       </nav>
       <div class="sidebar-bottom">

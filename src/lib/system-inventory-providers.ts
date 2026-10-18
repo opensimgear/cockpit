@@ -2,6 +2,7 @@ import type { GatewayRequest, GatewayState } from './gateway';
 import type { GatewayEntry } from './gateway-workspace';
 import type { HostController } from './controllers';
 import type { UsbModuleSummary } from './module-usb';
+import { ProfileTopologyClient } from './profile-activity';
 import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory.ts';
 import { canChangeController } from './controller-lifecycle.ts';
 import { gameIntegrationLabel, type GameId } from './games.ts';
@@ -232,9 +233,10 @@ export class SystemInventoryController {
     for (const c of rows(state.host.clients)) {
       const key = string(c.companionId); if (!key) continue; const id = `companion:${key}`;
       const online = c.connected === true || c.online === true || !!c.sessionId;
+      const panelNames = [...new Set(rows(state.host.instances).filter(instance => instance.companionId === key).map(instance => string(instance.name)).filter(Boolean))];
       const transports = [...new Set([...(Array.isArray(c.transports) ? c.transports.filter((t): t is string => t === 'network' || t === 'usb') : []), ...rows(state.host.instances).filter(instance => instance.companionId === key && instance.connected === true && ['network', 'usb'].includes(string(instance.transport))).map(instance => string(instance.transport)), ...(c.peer || c.address ? ['network'] : [])])];
       observations.push(observation(id, string(c.name, key), 'companion', 'companions', now, { role: string(c.kind, 'Installation'), presence: online ? 'connected' : 'offline',
-        status: 'Paired installation', targets: [target('companion', key)], evidence: [`companion:${key}`],
+        status: ['Paired installation', ...panelNames.map(name => `Panel: ${name}`)].join(' · '), targets: [target('companion', key)], evidence: [`companion:${key}`],
         connections: online ? (transports.length ? transports : ['unknown']).map(transport => link(id, 'host', transport as 'usb' | 'network' | 'unknown', true, transport === 'network' ? string(c.peer, string(c.address)) || undefined : undefined)) : (this.snapshot.components.find(previous => previous.id === id)?.connections ?? []).map(connection => ({ ...connection, current: false })),
         forget: { allowed: !online, reason: 'Disconnect the companion before revoking it.', effect: 'Revoke this companion installation and its assignments. Re-pairing will be required. Saved panel definitions and user bindings remain intact.' } }));
     }
@@ -271,12 +273,19 @@ export class SystemInventoryController {
   private async integrations(now: number): Promise<Capture> {
     const state = (await this.send({ command: 'game_get_state' })).games;
     if (!state?.catalogue) throw Error('Integration inventory unavailable.');
+    const runtime = (await this.send({ command: 'profile_status' })).profiles?.profileSession;
+    let activeGame: string | undefined;
+    if (runtime?.owner?.gameId && runtime.appliedSnapshot && ['running', 'degraded', 'awaiting-game'].includes(runtime.state)) {
+      const topology = await new ProfileTopologyClient(async request => (await this.send(request)).profileTopology).load(runtime.owner);
+      const gameNodes = new Set(topology.nodes.filter(node => node.kind === 'game').map(node => node.id));
+      if (topology.edges.some(edge => gameNodes.has(edge.from.nodeId) || gameNodes.has(edge.to.nodeId))) activeGame = runtime.owner.gameId;
+    }
     return { provider: 'integrations', observations: state.catalogue.map(game => {
       const id = `integration:${game.id}`, setup = game.integrationSetup;
       const receiving = setup?.live === 'receiving';
       const endpoints = Object.entries(setup?.connection ?? {}).filter(([key, value]) => /host|address|port|endpoint|source/i.test(key) && ['string', 'number'].includes(typeof value)).map(([key, value]) => `${key}: ${value}`).join(', ');
       return observation(id, `${game.name} · ${game.provider}`, 'integration', 'integrations', now, { role: game.provider, presence: receiving ? 'connected' : !game.installed || setup?.state === 'unsupported-platform' ? 'unavailable' : 'unknown',
-        status: gameIntegrationLabel(game), diagnostics: [setup?.message, setup?.liveMessage].filter((x): x is string => !!x), evidence: [`integration:${game.id}`], targets: [target('integration', game.id)],
+        status: gameIntegrationLabel(game), diagnostics: [setup?.message, setup?.liveMessage].filter((x): x is string => !!x), evidence: [`integration:${game.id}`, ...(activeGame === game.id ? ['active-bindings'] : [])], targets: [target('integration', game.id)],
         connections: [{ ...link(id, 'host', 'software', receiving, endpoints || undefined), observed: receiving || this.snapshot.components.find(previous => previous.id === id)?.connections.some(connection => connection.observed !== false && connection.endpoint === (endpoints || undefined)) || false }],
         forget: { allowed: false, reason: 'This integration is in the supported catalogue. Manage installation and settings in game details.', effect: '' } });
     }), diagnostics: state.error ? [state.error] : [] };

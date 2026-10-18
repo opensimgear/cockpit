@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './system-inventory-providers']);
+const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './profile-inspection', './profile-activity', './system-inventory-providers']);
 const { SystemInventoryController, gatewayObservations, correlateSystem, integrationGameId } = modules.get('./system-inventory-providers');
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -27,6 +27,7 @@ function harness(options = {}) {
     if (input.command === 'module_usb_list') return { moduleUsb: { offset: input.offset, total: state.usb.length, modules: state.usb.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'profile_resources_list') return { profileResources: { session: 'inventory-1', revision: '1', offset: input.offset, total: state.resources.length, resources: state.resources.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'companion_status') return { companions: state.companions };
+    if (input.command === 'profile_status') return { profiles: { profileSession: state.runtime ?? { state: 'stopped', owner: null, appliedSnapshot: null } } };
     if (input.command === 'game_get_state') return { games: state.games };
     if (input.command === 'system_inventory') return { systemInventory: state.native };
     if (['controller_forget', 'forget', 'companion_revoke'].includes(input.command)) return {};
@@ -238,7 +239,7 @@ test('current inventory includes every category, current transport, diagnostics 
   assert.equal(h.component('companion-instance:saved').presence, 'offline');
   assert.match(h.component('visibility:hidden').diagnostics.join(' '), /inverse/);
   assert.match(snapshot.diagnostics.join(' '), /Catalogue warning.*Native inspection warning|Native inspection warning.*Catalogue warning/);
-  assert.equal(h.requests.some(request => /claim|apply|activate|session|arm|profile_(?!resources)/.test(request.command)), false);
+  assert.equal(h.requests.some(request => /claim|apply|activate|session|arm|profile_(?!resources|status)/.test(request.command)), false);
 });
 
 test('providers traverse every controller, USB and verified-identity resource page', async () => {
@@ -472,4 +473,21 @@ test('identity grouping combines independent hidden, ownership and readiness evi
   assert.equal(grouped[0].owner, 'External writer');
   assert.equal(grouped[0].capture, 'ready');
   assert.equal(grouped[0].forget.allowed, false);
+});
+
+test('integration visibility follows immutable applied bindings even while telemetry waits', async()=>{
+ const {filterSystem}=modules.get('./system-inventory');
+ const id='00000000-0000-4000-8000-000000000001';
+ const owner={session:id,generation:1,profileId:id,profileRevision:1,gameId:'assetto-corsa-rally'};
+ const snapshot={profileId:id,revision:1,semanticHash:'sha256:'+'a'.repeat(64)};
+ const h=harness({runtime:{state:'running',owner,appliedSnapshot:snapshot},games:{catalogue:[game('assetto-corsa-rally',{integrationSetup:{state:'ready',live:'waiting'}}),game('dcs')]},companions:{host:{clients:[{companionId:'tablet',name:'Tablet',connected:true}],instances:[{instanceId:'radio',name:'Radio',companionId:'tablet'}]}}});
+ let edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];
+ h.custom.set('profile_runtime_topology',request=>({profileTopology:{schemaVersion:1,owner,appliedSnapshot:snapshot,programHash:'sha256:'+'b'.repeat(64),capturedUs:'1',offset:0,total:request.section==='nodes'?2:edges.length,section:request.section,items:request.section==='nodes'?[{id:'acr',name:'ACR',kind:'game',summary:'Integration'},{id:'radio',name:'Radio',kind:'companion',summary:'Panel'}]:edges}}));
+ await h.controller.refresh();
+ let visible=filterSystem(h.controller.snapshot.components,'','all');
+ assert.ok(visible.some(c=>c.id==='integration:assetto-corsa-rally'));
+ assert.ok(!visible.some(c=>c.id==='integration:dcs'||c.id.startsWith('companion-instance:')));
+ assert.match(h.component('companion:tablet').status,/Panel: Radio/);
+ edges=[];await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'','all').some(c=>c.type==='integration'));
+ edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];h.state.runtime={state:'stopped',owner:null,appliedSnapshot:null};await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'','all').some(c=>c.type==='integration'));
 });

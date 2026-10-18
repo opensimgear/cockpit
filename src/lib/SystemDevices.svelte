@@ -9,7 +9,7 @@
   import type { GatewayEntry } from './gateway-workspace';
   import type { GameId } from './games';
   import { SystemInventoryController, integrationGameId } from './system-inventory-providers';
-  import { filterSystem, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
+  import { filterSystem, isVisibleSystemComponent, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
   let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
     gatewayError?: string;
@@ -25,8 +25,8 @@
   let controller: SystemInventoryController;
   let reviewEpoch = 0;
   const visible = $derived(filterSystem(snapshot.components, search, filter, transport));
-  const components = $derived(snapshot.components.filter(c => c.type !== 'host'));
-  const selected = $derived(snapshot.components.find(c => c.id === selectedId));
+  const components = $derived(snapshot.components.filter(isVisibleSystemComponent));
+  const selected = $derived(components.find(c => c.id === selectedId));
   const showingDetails = $derived(detailsOpen && !!selected && active);
   const eligible = $derived(visible.filter(c => c.forget.allowed));
   const icon = (c: SystemComponent) => c.type === 'gateway' ? 'network' : c.type === 'integration' ? 'play' : c.type === 'virtual' ? 'monitor' : 'devices';

@@ -30,7 +30,7 @@ test('durable tombstones suppress stale records and allow genuinely reconnected 
 test('duplicates are rejected; all known types remain searchable without connection evidence',()=>{
  const r=new SystemInventoryRegistry();assert.throws(()=>r.update([observation(),observation()],['controllers']),/duplicate/);
  const components=r.update(['integration','virtual','gateway','osg','companion'].map(type=>observation(type,{type,connections:[],presence:'unknown'})),[]).components;
- assert.equal(filterSystem(components,'','all').length,5);assert.equal(filterSystem(components,'','virtual').length,1);assert.equal(filterSystem(components,'missing','all').length,0);
+ assert.equal(filterSystem(components,'','all').length,4);assert.equal(filterSystem(components,'','virtual').length,1);assert.equal(filterSystem(components,'missing','all').length,0);
 });
 
 test('transport filters include current and remembered routes and unknown unconnected nodes',()=>{
@@ -145,4 +145,11 @@ test('legacy tombstones remain readable and malformed persisted tombstones canno
  const disk=storage(),registry=new SystemInventoryRegistry(disk),item=offline('__proto__');
  registry.update([item],['controllers']);registry.forget('__proto__');
  const restarted=new SystemInventoryRegistry(disk);restarted.update([item],['controllers']);assert.equal(restarted.snapshot.components.length,0);
+});
+
+test('bound integrations appear without telemetry and panels stay on companions',()=>{
+ const items=[observation('integration:acr',{type:'integration',presence:'unknown',evidence:['active-bindings']}),observation('integration:dcs',{type:'integration'}),observation('companion-instance:panel',{type:'companion'}),observation('companion:tablet',{type:'companion',status:'Panel: Radio'})];
+ assert.deepEqual(filterSystem(items,'','all').map(c=>c.id),['integration:acr','companion:tablet']);
+ assert.deepEqual(filterSystem(items,'Radio','all').map(c=>c.id),['companion:tablet']);
+ assert.equal(filterSystem([{...items[0],stale:true}],'','all').length,0);
 });
