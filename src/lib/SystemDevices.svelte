@@ -98,10 +98,9 @@
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
   <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="bluetooth">Bluetooth</option><option value="software">Software</option><option value="unknown">Unknown connection</option></select>
-  <span aria-live="polite">{visible.length} / {components.length} components</span>
   <button class="text-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}>Forget eligible ({eligible.length})</button>
 </div>
-<div class="type-counts" aria-label="Component counts">{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
+<div class="type-counts" aria-label="Component counts"><span aria-live="polite">{visible.length} / {components.length} components</span>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
 {#if snapshot.diagnostics.length}<details class="provider-diagnostics"><summary>Inventory diagnostics ({snapshot.diagnostics.length})</summary>{#each snapshot.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}
 {#if mode === 'topology'}
   <SystemTopology components={visible} context={snapshot.components} {selectedId} onselect={select} />
@@ -155,7 +154,7 @@
   .system-inventory[hidden] {display:none}
   .details-toolbar {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
   .system-toolbar,.component-actions { display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px; }
-  .system-toolbar > span {font-size:12px;opacity:.75}.mode-switch {display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .mode-switch {display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
   .type-counts {display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--soft);margin-bottom:18px}
   .mode-switch button {padding:10px 18px;background:var(--surface);color:inherit;border:0;cursor:pointer}.mode-switch .chosen {background:var(--accent-bg);color:var(--accent)}
   select {background:var(--input-bg);color:inherit;border:1px solid var(--line);padding:10px;border-radius:6px}.search-field {flex:1;min-width:180px}
