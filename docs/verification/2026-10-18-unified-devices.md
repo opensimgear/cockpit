@@ -24,10 +24,11 @@ external virtual target and an unavailable remembered virtual target.
 | Workflow | Automated evidence |
 | --- | --- |
 | Complete shared inventory | Identical List/Topology component IDs, no duplicate verified sightings, complete controller/USB/shared-resource/native paging |
-| Observed state | Hidden and connected remain separate; virtual ownership and creation provenance are independent; unknown/unavailable records remain visible |
+| Observed state | Hidden and connected remain separate; virtual ownership and creation provenance are independent; unknown/unavailable records remain visible; graph summaries retain the same full state in accessible text and tooltips |
 | Partial-provider lifecycle | Controller failure retains independent providers; recovery rejoins the PnP observation without retaining a duplicate physical component |
 | Shared presentation | Search, type/state/transport filters, type-aware counts, selection and details survive view switches; topology retains upstream context; remembered mode survives page reload |
 | Gateway workflows | Disconnect/connect, module management and configuration navigation remain reachable from Devices; returning retains search and selected gateway |
+| Companion lifecycle | Disconnect retains last-known network links; USB-only connections gain no fabricated network link; pending pairing is visible as an unverified request and is never automatically approved |
 | Accessible interaction | Native buttons, keyboard graph panning/fitting, zoom controls and type-appropriate shared actions |
 | Single Forget | Explicit virtual metadata confirmation explains OS device/layout/driver/binding retention; existing saved assignment references are disclosed |
 | Bulk Forget | Confirmation revalidates a reconnected controller; a separate failed removal is reported and sent once; independent failures do not remove other components |
@@ -48,7 +49,7 @@ integration and paired companion is represented, and compares all rendered IDs
 between List and Topology. It checks that the recorded HTTP requests contain no
 configuration, visibility, cleanup or runtime acquisition mutations.
 
-The Windows observation at **2026-10-18 16:05 Europe/Berlin** contained:
+The Windows observation at **2026-10-18 16:17 Europe/Berlin** contained:
 
 | Native observation | Count and interpretation |
 | --- | --- |
@@ -56,29 +57,29 @@ The Windows observation at **2026-10-18 16:05 Europe/Berlin** contained:
 | Virtual devices | Three installed, free vJoy slots, including observed Cockpit creation metadata |
 | Integrations | Four known catalogue entries, including unavailable X-Plane 11 and independently reported setup/health states |
 | Companions | Three paired installations and three assigned panel instances, all retained offline |
-| HidHide | Three unmatched retained PnP rules; kept separate because no current controller identity proved equivalence |
-| Shared inventory | 28 component IDs matched exactly in List and Topology; eight components reported connected |
+| HidHide | The exact parent USB rule joins its saved HID controller; two unmatched retained PnP rules stay separate because no identity proved equivalence |
+| Shared inventory | 27 component IDs matched exactly in List and Topology; all 12 native controller IDs remain represented in component targets and eight components reported connected |
 | Provider limitation | The existing desktop owned companion listener `127.0.0.1:54437`; the second service reported its bind failure while preserving all companion records |
 
 Evidence is under `.research/system-devices-native-browser/`, including
 `evidence.json`, `native-system-list.png`, `native-system-topology-initial.png`
 and `native-system-topology.png`.
 The observed service copy was
-`.research/feature78-native/latest/osg-gateway-service.exe`, SHA-256
-`5aac033ff0146cbb20322cec2aaf9fe6b7dc5fbee1fb1c4f4b1ec9f81d43f1d0`.
+`.research/feature78-native/transport/osg-gateway-service.exe`, SHA-256
+`837150b1126ab653687cf9633c60fffbf7db9e5e2663485d8f0e182df24917cf`.
 This identifies the measured executable, rather than claiming later source edits
 were present in that native binary. The UI uses the current development sources.
 
-Screenshots were opened for visual inspection. The 28-node topology uses bounded
+Screenshots were opened for visual inspection. The 27-node topology uses bounded
 six-row sibling groups, starts at a readable 80% zoom with keyboard/pointer
 panning, and fits the entire rig at 55% when Fit is selected. Labels, connection
 types, current versus last-known links and type-aware counts remain distinct.
 The final fixture and native runs passed together with no browser exceptions.
 
 The final fixture evidence JSON has SHA-256
-`9cecd1477c591848887678ce9b90f680caee2ca8852116354367d68c9cd6ab86`;
+`0a150756d49fca12b9ae52c2796dedb0ae3cfb649dfd09578fbb9761eafa5c45`;
 the final native evidence JSON has SHA-256
-`a16c8ebeb5eedd4a6c42975e3d5275b2ddae4db7f22faa0413309e06ae0c313e`.
+`6d90a6454f10c8031ea6c36b827e678860ce9c074d847cff5ebc9fba3f8574ca`.
 
 ## Reproduction
 

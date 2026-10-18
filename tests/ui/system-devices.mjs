@@ -107,7 +107,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     if (request.command === 'profile_retired_recovery_status') return result({ retiredRecovery: { required: false, outputs: [], provisioning: [], job: null, diagnostics: [], outputQualified: false, provisioningQualified: false } });
     if (request.command === 'controller_list') {
       if (fixture.failControllers) return { ok: false, error: 'Fixture controller provider unavailable.' };
-      return result({ controllers: { session: 'fixture-controllers', backendStatus: 'fixture only', offset, total: fixture.controllers.length,
+      return result({ controllers: { session: 'fixture-controllers', backendStatus: 'ready', offset, total: fixture.controllers.length,
         limit: 2, sources: fixture.controllers.slice(offset, offset + 2) } });
     }
     if (request.command === 'controller_forget') {
