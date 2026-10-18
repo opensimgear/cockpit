@@ -81,6 +81,10 @@ fn configured() -> Result<(Vec<Value>,Vec<String>),String> {
 }
 fn compose(visibility: osg_controller_input::inventory::Inventory, slots: Result<Vec<Slot>, String>, configured:Result<(Vec<Value>,Vec<String>),String>) -> Value {
     let mut diagnostics = visibility.diagnostics;
+    // Successful SDK inspection queries every slot. Its inventory omits Missing
+    // slots; only a separately known configured target can turn that absence
+    // into a device row. A failed inspection leaves availability unknown.
+    let inspected=slots.is_ok();
     let mut virtual_devices = match slots {
         Ok(slots) => slots.into_iter().filter(|slot|slot.status != Status::Missing).map(|slot| {
             let status = serde_json::to_value(slot.status).unwrap();
@@ -100,12 +104,15 @@ fn compose(visibility: osg_controller_input::inventory::Inventory, slots: Result
     match configured {
         Ok((configured,issues)) => {
             diagnostics.extend(issues);
-            for configuration in configured {
+            for mut configuration in configured {
                 if let Some(device)=virtual_devices.iter_mut().find(|device|device["id"]==configuration["id"]) {
                     device["configured"]=json!(true);
                     device["createdByCockpit"]=configuration["createdByCockpit"].clone();
                     device["creationOperation"]=configuration["creationOperation"].clone();
-                } else {virtual_devices.push(configuration);}
+                } else {
+                    if inspected {configuration["available"]=json!(false);configuration["status"]=json!("missing");}
+                    virtual_devices.push(configuration);
+                }
             }
         }
         Err(error)=>diagnostics.push(format!("Configured virtual device inventory is unavailable: {error}")),
@@ -139,6 +146,27 @@ mod tests {
         assert_eq!(value["virtualDevices"][0]["id"],"vjoy:4");
         assert_eq!(value["virtualDevices"][0]["createdByCockpit"],true);
         assert!(value["virtualDevices"][0]["available"].is_null());
+    }
+    #[test]
+    fn configured_virtual_targets_preserve_sdk_missing_without_adding_unused_slots() {
+        let configured=json!({"id":"vjoy:4","name":"vJoy Device 4","status":"unknown","available":null,"configured":true,"createdByCockpit":true});
+        let missing=(1..=16).map(|id|Slot {id,status:Status::Missing,owner_pid:None,buttons:0,axes:vec![],discrete_hats:0,continuous_hats:0,force_feedback:false}).collect::<Vec<_>>();
+        let value=compose(Default::default(),Ok(missing.clone()),Ok((vec![configured.clone()],vec![])));
+        assert_eq!(value["virtualDevices"].as_array().unwrap().len(),1);
+        assert_eq!(value["virtualDevices"][0]["id"],"vjoy:4");
+        assert_eq!(value["virtualDevices"][0]["status"],"missing");
+        assert_eq!(value["virtualDevices"][0]["available"],false);
+        assert_eq!(value["virtualDevices"][0]["createdByCockpit"],true);
+        // The production inspector omits all Missing slots after querying them.
+        let omitted=compose(Default::default(),Ok(vec![]),Ok((vec![configured.clone()],vec![])));
+        assert_eq!(omitted["virtualDevices"][0]["status"],"missing");
+        let unavailable=compose(Default::default(),Err("SDK unavailable".into()),Ok((vec![configured.clone()],vec![])));
+        assert_eq!(unavailable["virtualDevices"][0]["status"],"unknown");
+        assert!(unavailable["virtualDevices"][0]["available"].is_null());
+        let mut unknown=missing[3].clone();unknown.status=Status::Unknown;
+        let uncertain=compose(Default::default(),Ok(vec![unknown]),Ok((vec![configured],vec![])));
+        assert_eq!(uncertain["virtualDevices"][0]["status"],"unknown");
+        assert!(uncertain["virtualDevices"][0]["available"].is_null());
     }
     #[test]
     fn hidden_inventory_pages_preserve_all_devices_within_native_transport_budget() {
