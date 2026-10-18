@@ -231,6 +231,8 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
             sender.send_to(&crate::profile_session_games::test_baseline_export(counter, true), address).unwrap();
         }
         let observed = driver.clone();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let peer_finished = finished.clone();
         let peer = std::thread::spawn(move || {
             if cancelled {
                 let deadline = Instant::now() + Duration::from_secs(1);
@@ -243,13 +245,21 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
                 epoch.fetch_add(1, Ordering::AcqRel);
             } else {
                 std::thread::sleep(Duration::from_millis(350));
-                sender.send_to(&crate::profile_session_games::test_baseline_export(100, false), address).unwrap();
-                std::thread::sleep(Duration::from_millis(20));
-                sender.send_to(&crate::profile_session_games::test_baseline_export(101, false), address).unwrap();
+                // A busy runner can delay the receiver's backlog reset past a
+                // single pair of packets. Supply bounded advancing live data
+                // until admission finishes, just as a running game would.
+                let deadline = Instant::now() + Duration::from_secs(2);
+                let mut counter = 100u8;
+                while !peer_finished.load(Ordering::Acquire) && Instant::now() < deadline {
+                    sender.send_to(&crate::profile_session_games::test_baseline_export(counter, false), address).unwrap();
+                    counter = counter.wrapping_add(1);
+                    std::thread::sleep(Duration::from_millis(20));
+                }
             }
         });
         let began = Instant::now();
         let result = host.game_baseline(&owner);
+        finished.store(true, Ordering::Release);
         peer.join().unwrap();
         if cancelled {
             assert!(result.unwrap_err().contains("cancelled"));
