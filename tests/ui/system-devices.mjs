@@ -170,6 +170,31 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const listIds = (await devices.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId))).sort();
     assert.ok(listIds.length >= 16, 'All required component categories and remembered records must appear.');
     assert.equal(new Set(listIds).size, listIds.length, 'HID collections and verified USB/CAN sightings share one component.');
+    const tiles = devices.locator('.system-list .component-tile');
+    await expect(tiles).toHaveCount(listIds.length);
+    const tilePositions = await tiles.evaluateAll(nodes => nodes.map(node => {
+      const bounds = node.getBoundingClientRect();
+      return { x: Math.round(bounds.x), y: Math.round(bounds.y) };
+    }));
+    assert.ok(tilePositions.some(tile => tile.y === tilePositions[0].y && tile.x !== tilePositions[0].x),
+      'The desktop inventory presents multiple component tiles per row.');
+    const offlineTile = devices.locator('[data-component-id="controller:remembered-wheel"]');
+    const hiddenTile = devices.locator('[data-component-id="controller:pedals"]');
+    await expect(offlineTile).toHaveClass(/\boffline\b/);
+    await expect(offlineTile).toContainText('Offline');
+    await expect(offlineTile).toHaveCSS('opacity', '1');
+    await expect(hiddenTile).not.toHaveClass(/\boffline\b/);
+    const offlineNameColor = await offlineTile.locator('strong').evaluate(node => getComputedStyle(node).color);
+    const connectedNameColor = await hiddenTile.locator('strong').evaluate(node => getComputedStyle(node).color);
+    assert.notEqual(offlineNameColor, connectedNameColor, 'Offline names are muted independently of their readable controls.');
+    const offlineBackground = await offlineTile.evaluate(node => getComputedStyle(node).backgroundColor);
+    // A retained node during a live update can still have the original card
+    // class. Its basic styling must not depend on the new presentation marker.
+    await offlineTile.evaluate(node => node.classList.remove('component-tile'));
+    await expect(offlineTile).toHaveCSS('background-color', offlineBackground);
+    await expect(offlineTile).toHaveCSS('text-align', 'left');
+    await offlineTile.evaluate(node => node.classList.add('component-tile'));
+    await page.screenshot({ path: resolve(artifacts, 'system-tiles.png'), fullPage: true });
     await expect(devices.locator('.type-counts')).toContainText('Physical · Third-party: 3');
     await expect(devices.locator('.type-counts')).toContainText('Physical · OSG: 4');
     await expect(devices.locator('.type-counts')).toContainText('Gateway · OSG: 2');

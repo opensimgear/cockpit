@@ -49,7 +49,7 @@ integration and paired companion is represented, and compares all rendered IDs
 between List and Topology. It checks that the recorded HTTP requests contain no
 configuration, visibility, cleanup or runtime acquisition mutations.
 
-The Windows observation at **2026-10-18 16:27 Europe/Berlin** contained:
+The Windows observation at **2026-10-18 17:29 Europe/Berlin** contained:
 
 | Native observation | Count and interpretation |
 | --- | --- |
@@ -76,10 +76,16 @@ panning, and fits the entire rig at 55% when Fit is selected. Labels, connection
 types, current versus last-known links and type-aware counts remain distinct.
 The final fixture and native runs passed together with no browser exceptions.
 
+List now presents responsive component tiles. Running-Cockpit acceptance checks
+multiple tiles per row, muted offline names with full text/control opacity,
+connected-hidden emphasis, and stable base styles on retained live-update nodes.
+The dev server was restarted to refresh the existing desktop after the layout
+change. The actual-native List screenshot records the same 27 components as tiles.
+
 The final fixture evidence JSON has SHA-256
-`441d06bb5e15a7defb7b28bff530939274cfcb335f1d51926f8ed3d50c974c13`;
+`08d1e9ba419119e994ee207f92903224cca24937f90716cfddb3fb078c1a4e14`;
 the final native evidence JSON has SHA-256
-`d932877b2c760fe4e3b9629b468a6e0d56ab92f9f80b7e1cb41aae1409323a45`.
+`25bb612cd93f2f1adcfc05e36ef7d86ac0bea2f819db83e7a27066a9a6d2a792`.
 
 ## Final automated checks
 
@@ -87,7 +93,7 @@ The final inventory/frontend suite passes **67 tests**, including compiled USB
 and topology component behavior. The full native library run passes **825 tests**
 with zero failures and six existing ignored qualification tests in 48.89 seconds;
 its log is `.research/feature78-final/native-tests.log`. The final running-browser
-fixture passes in 6.40 seconds and actual-native browser acceptance in 9.80 seconds.
+fixture passes in 6.27 seconds and actual-native browser acceptance in 8.51 seconds.
 
 Eleven focused native inventory tests cover visibility/PnP, exact publication
 associations, bounded paging and configured virtual targets. A successful Missing

@@ -5,6 +5,10 @@ component identities, status, filters, selection and details. The separate
 Gateways and Topology navigation sections have been removed. The remembered
 presentation does not change connections or runtime configuration.
 
+List presents a responsive grid of component tiles. Confirmed offline tiles use
+muted surfaces, names and icons while retaining readable status and actions.
+Hidden-but-present, unavailable and unknown states remain distinct from offline.
+
 ## Inspecting the system
 
 Every supported provider contributes its known components: third-party

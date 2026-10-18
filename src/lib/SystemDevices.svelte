@@ -85,9 +85,10 @@
 {:else}
   <div class="system-list" aria-label="System components">
     {#each visible as c (c.id)}
-      <button class="system-card" data-component-id={c.id} class:chosen={selectedId === c.id} class:offline={c.presence === 'offline'} aria-pressed={selectedId === c.id} onclick={() => select(c.id)}>
-        <Icon name={icon(c)} size={24} /><div class="component-copy"><strong>{c.name}</strong><span>{systemTypeLabels[c.type]}{c.role ? ` · ${c.role}` : ''}</span><span>{systemStateLabel(c)}</span></div>
-        <div class="component-transports">{#each [...new Set(c.connections.map(x => x.transport))] as transport}<span class="quiet-tag">{transport === 'software' ? 'Software' : transport === 'unknown' ? 'Connection unknown' : transport.toUpperCase()}</span>{/each}</div><Icon name="chevron" size={14} />
+      <button class="system-card component-tile" data-component-id={c.id} class:chosen={selectedId === c.id} class:offline={c.presence === 'offline'} aria-pressed={selectedId === c.id} onclick={() => select(c.id)}>
+        <div class="component-heading"><span class="component-icon"><Icon name={icon(c)} size={24} /></span><div class="component-copy"><strong>{c.name}</strong><span>{systemTypeLabels[c.type]}{c.role ? ` · ${c.role}` : ''}</span></div><Icon name="chevron" size={14} /></div>
+        <div class="component-status">{systemStateLabel(c)}</div>
+        <div class="component-transports">{#each [...new Set(c.connections.map(x => x.transport))] as transport}<span class="quiet-tag">{transport === 'software' ? 'Software' : transport === 'unknown' ? 'Connection unknown' : transport.toUpperCase()}</span>{:else}<span class="quiet-tag">Connection unknown</span>{/each}</div>
       </button>
     {:else}<div class="empty-state"><strong>{components.length ? 'No matching components' : busy ? 'Loading known components…' : 'No known components'}</strong><p>Connected, offline and unavailable components appear here when their providers report them.</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; transport = 'all'; }}>Clear filters</button></div>{/each}
   </div>
@@ -131,8 +132,17 @@
   .type-counts {display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--soft);margin-bottom:18px}
   .mode-switch button {padding:10px 18px;background:var(--surface);color:inherit;border:0;cursor:pointer}.mode-switch .chosen {background:var(--accent-bg);color:var(--accent)}
   select {background:var(--input-bg);color:inherit;border:1px solid var(--line);padding:10px;border-radius:6px}.search-field {flex:1;min-width:180px}
-  .system-list {display:grid;gap:10px}.system-card {display:flex;align-items:center;gap:18px;padding:20px;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:12px;text-align:left;cursor:pointer}
-  .system-card.chosen {border-color:var(--accent)}.system-card.offline {opacity:.65}.component-copy {flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}.component-copy strong {overflow-wrap:anywhere}.component-copy span {font-size:12px;opacity:.8}.component-transports {display:flex;flex-wrap:wrap;gap:5px}
+  .system-list {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,248px),1fr));gap:14px;align-items:stretch}
+  .system-card {display:flex;flex-direction:column;align-items:stretch;gap:18px;min-width:0;min-height:184px;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:12px;text-align:left;cursor:pointer;transition:background .15s,border-color .15s}
+  .system-card:hover {background:var(--surface-raised);border-color:var(--muted)}
+  .component-heading {display:flex;align-items:flex-start;gap:12px;min-width:0}.component-heading > :global(svg) {flex-shrink:0;margin-top:11px;color:var(--soft)}
+  .component-icon {display:grid;place-items:center;flex-shrink:0;width:40px;height:40px;border-radius:9px;background:var(--accent-bg);color:var(--accent)}
+  .component-copy {flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}.component-copy strong {font-size:14px;line-height:1.4;overflow-wrap:anywhere}.component-copy span {font-size:12px;line-height:1.5;color:var(--soft);overflow-wrap:anywhere}
+  .component-status {font-size:12px;line-height:1.6;color:var(--soft);overflow-wrap:anywhere}
+  .component-transports {display:flex;flex-wrap:wrap;gap:5px;margin-top:auto;padding-top:12px;border-top:1px solid var(--faint-line)}
+  .system-card.offline {background:var(--subtle);border-color:var(--faint-line)}.system-card.offline .component-copy strong {color:var(--soft)}.system-card.offline .component-icon {background:var(--surface);color:var(--muted)}
+  .system-card.offline:hover {background:var(--surface);border-color:var(--muted)}
+  .system-card.chosen {border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}.system-card:focus-visible {outline-offset:3px}
   .component-details {padding:24px;margin-top:24px;overflow-wrap:anywhere}.provider-diagnostics {margin:16px 0}.provider-diagnostics p {font-size:12px}dialog {max-width:650px;max-height:80vh;overflow:auto;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:14px;padding:28px}dialog::backdrop {background:#0009}
-  @media(max-width:700px){.system-card {gap:10px;padding:14px}.component-transports {max-width:110px}}
+  @media(max-width:700px){.system-list {gap:12px}.system-card {padding:16px;min-height:172px}}
 </style>
