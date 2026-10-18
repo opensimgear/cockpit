@@ -56,12 +56,13 @@ function fixtures() {
       controller('gateway-hid', 'Gateway HID collection', true, { osgHid: true }),
       controller('remembered-throttle', 'Remembered throttle', false)],
     modules: [usb(usbKey, 'Dual USB sighting'), usb('ffeeddccbbaa:COM-fixture-output', 'Standalone output module')],
-    resources: [resource('verified-dual', [[`gateway:${firstGateway}`, 'dual', 'can'], ['standalone-usb', usbKey, 'usb'], ['host-controllers', 'gateway-hid', 'hid']]),
+    resources: [resource('verified-dual', [[`gateway:${firstGateway}`, 'dual', 'can'], ['standalone-usb', usbKey, 'usb']]),
       resource('unproven-second', [[`gateway:${secondGateway}`, 'dual', 'can']])],
     native: { observedAt: Date.now(), virtualDevices: [
       { id: 'vjoy:3', name: 'External busy virtual joystick', available: true, status: 'busy', createdByCockpit: null, ownerPid: 9999, diagnostics: [] },
       { id: 'vjoy:4', name: 'Missing remembered virtual joystick', available: false, status: 'missing', createdByCockpit: true, diagnostics: ['Driver cannot currently expose this target.'] },
-    ], hiddenDevices: [{ id: 'pedals-pnp', name: 'Hidden pedals PnP record', instanceId: 'HID\\FIXTURE_PEDALS', present: true, hidden: true,
+    ], controllerAssociations: [{ controllerId: 'gateway-hid', gatewayId: firstGateway, moduleId: 'dual', evidence: ['verified-gateway-serial-and-usb-identity', 'exact-hid-report-id'] }],
+    hiddenDevices: [{ id: 'pedals-pnp', name: 'Hidden pedals PnP record', instanceId: 'HID\\FIXTURE_PEDALS', present: true, hidden: true,
       configured: true, scope: 'capture-exception', controllerIds: ['pedals'], diagnostics: ['Observed in the capture process; other process exceptions may differ.'] }], diagnostics: [] },
     companions: { listener: { enabled: true, endpoint: 'wss://127.0.0.1:9980' }, host: { clients: [
       { companionId: 'browser-fixture', name: 'Browser companion', kind: 'browser', connected: true, peer: '192.0.2.10' },
@@ -126,8 +127,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     if (request.command === 'module_usb_list') return result({ moduleUsb: { offset, total: fixture.modules.length, modules: fixture.modules.slice(offset, offset + 1) } });
     if (request.command === 'profile_resources_list') return result({ profileResources: { session: 'fixture-evidence', revision: '1', offset,
       total: fixture.resources.length, resources: fixture.resources.slice(offset, offset + 1), inventoryDiagnostics: [], readOnly: false } });
-    if (request.command === 'system_inventory') return result({ systemInventory: { ...fixture.native, offset, total: fixture.native.hiddenDevices.length,
-      hiddenDevices: fixture.native.hiddenDevices.slice(offset, offset + 32), nextOffset: offset + 32 < fixture.native.hiddenDevices.length ? offset + 32 : null } });
+    if (request.command === 'system_inventory') return result({ systemInventory: { ...fixture.native, offset,
+      total: fixture.native.hiddenDevices.length + fixture.native.controllerAssociations.length,
+      hiddenDevices: offset === 0 ? fixture.native.hiddenDevices : [], controllerAssociations: offset === 0 ? [] : fixture.native.controllerAssociations,
+      nextOffset: offset === 0 ? fixture.native.hiddenDevices.length : null } });
     if (request.command === 'companion_status') return result({ companions: fixture.companions });
     if (request.command === 'game_get_state') return result({ games: fixture.games });
     if (request.command === 'ports') return result({ ports: fixture.ports });
@@ -150,6 +153,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
     const search = page.getByRole('textbox', { name: 'Search components', exact: true });
     const filter = page.getByRole('combobox', { name: 'Filter components', exact: true });
+    const connections = page.getByRole('combobox', { name: 'Filter connections', exact: true });
     const list = page.getByRole('button', { name: 'List', exact: true }), topology = page.getByRole('button', { name: 'Topology', exact: true });
     const refresh = page.getByRole('button', { name: 'Refresh devices', exact: true });
     await expect(devices.getByText('Dual transport panel', { exact: true })).toBeVisible();
@@ -162,9 +166,19 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect.poll(() => requests.filter(request => request.command === 'controller_list' && request.offset === 2).length).toBeGreaterThan(0);
     assert.ok(requests.some(request => request.command === 'module_usb_list' && request.offset === 1));
     assert.ok(requests.some(request => request.command === 'profile_resources_list' && request.offset === 1));
+    assert.ok(requests.some(request => request.command === 'system_inventory' && request.offset === 1));
     const listIds = (await devices.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId))).sort();
     assert.ok(listIds.length >= 16, 'All required component categories and remembered records must appear.');
     assert.equal(new Set(listIds).size, listIds.length, 'HID collections and verified USB/CAN sightings share one component.');
+    await expect(devices.locator('.type-counts')).toContainText('Physical · Third-party: 3');
+    await expect(devices.locator('.type-counts')).toContainText('Physical · OSG: 4');
+    await expect(devices.locator('.type-counts')).toContainText('Gateway · OSG: 2');
+    await connections.selectOption('can');
+    await expect(devices.locator('.system-list [data-component-id]')).toHaveCount(3);
+    await topology.click(); await expect(connections).toHaveValue('can');
+    await expect(devices.locator(`[data-component-id="gateway:${firstGateway}"]`)).toBeVisible();
+    await expect(devices.locator(`[data-component-id="gateway:${secondGateway}"]`)).toBeVisible();
+    await list.click(); await expect(connections).toHaveValue('can'); await connections.selectOption('all');
     await devices.locator('[data-component-id="virtual:vjoy:3"]').click();
     const details = page.getByRole('region', { name: 'Component details', exact: true });
     await expect(details).toContainText('External busy virtual joystick');
@@ -208,6 +222,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.getByText('Standalone output module', { exact: true })).toBeVisible();
     fixture.failControllers = false; await refresh.click();
     await expect(devices).not.toContainText('Fixture controller provider unavailable');
+    await expect(devices.getByText('Hidden pedals PnP record', { exact: true })).toHaveCount(0);
+    assert.deepEqual(await devices.locator('.system-list [data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).sort()), listIds,
+      'Provider recovery must merge the correlated PnP alias without retaining a duplicate physical device.');
     // Gateway management and existing module configuration remain reachable
     // through the shared details; returning retains selection and search.
     await search.fill('OpenSimGear CAN gateway');
@@ -282,7 +299,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.deepEqual(requests.filter(request => prohibited.test(request.command)), []);
     assert.deepEqual(unexpected, []); assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: resolve(artifacts, 'complete-system-topology.png'), fullPage: true });
-    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ scope: 'Running dev Cockpit frontend with fixture IPC only', endpoint,
+    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ observedAt: new Date().toISOString(), scope: 'Running dev Cockpit frontend with fixture IPC only', endpoint,
       expectedNames, listIds, graphIds, commands: requests.map(request => request.command), unexpected, pageErrors }, null, 2) + '\n');
   } catch (error) {
     await page.screenshot({ path: resolve(artifacts, 'failure.png'), fullPage: true });

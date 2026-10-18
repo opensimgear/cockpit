@@ -60,6 +60,7 @@ test('running native Cockpit exposes every observed provider record in both inve
     await expect(graph).toBeVisible();
     const graphIds = await graph.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).filter(id => id !== 'host').sort());
     assert.deepEqual(graphIds, listIds);
+    await page.screenshot({ path: resolve(artifacts, 'native-system-topology-initial.png'), fullPage: true });
     await graph.getByRole('button', { name: 'Fit all components', exact: true }).click();
     await page.screenshot({ path: resolve(artifacts, 'native-system-topology.png'), fullPage: true });
     await devices.getByRole('button', { name: 'List', exact: true }).click();
