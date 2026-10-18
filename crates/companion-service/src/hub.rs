@@ -96,7 +96,8 @@ struct Session {
     values: BTreeMap<String, InputValue>,
     feedback_cursor: crate::feedback::FeedbackCursor,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SourceTransport { Network, Usb }
 struct Inner {
     record: Record,
@@ -788,7 +789,25 @@ impl Hub {
         }
     }
     fn status(inner: &Inner) -> Value {
-        json!({"hostId":inner.record.host_id,"diagnostic":inner.diagnostic,"clients":inner.record.credentials.iter().map(|c|json!({"companionId":c.companion_id,"name":c.name,"kind":c.kind,"connected":inner.connections.values().any(|v|v==&c.companion_id)})).collect::<Vec<_>>(),"pending":inner.pending.iter().map(|(id,p)|json!({"requestId":id,"companionId":p.companion_id,"name":p.name,"expiresAtMs":p.expires,"approved":p.token.is_some()})).collect::<Vec<_>>(),"instances":inner.record.instances.iter().map(|a|{let s=inner.sessions.values().find(|s|s.token.source_id==a.instance_id);json!({"instanceId":a.instance_id,"sourceId":a.instance_id,"companionId":a.companion_id,"publicationHash":a.publication_hash,"name":a.definition.name,"connected":s.is_some(),"armed":s.is_some_and(|s|s.armed),"generation":s.map(|s|s.token.generation.to_string()),"sessionId":s.map(|s|&s.token.session_id),"values":s.map(|s|&s.values)})}).collect::<Vec<_>>(),"publications":inner.publications.values().map(|p|json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title,"controlCount":p.controls.len(),"assetCount":p.assets.len()})).collect::<Vec<_>>()})
+        json!({"hostId":inner.record.host_id,"diagnostic":inner.diagnostic,
+            "clients":inner.record.credentials.iter().map(|client| {
+                // The native adapter supplies each Session's transport. Kind,
+                // display names and an authenticated connection cannot prove it.
+                let transports=inner.sessions.values().filter(|session|session.companion_id==client.companion_id)
+                    .map(|session|session.transport).collect::<BTreeSet<_>>();
+                json!({"companionId":client.companion_id,"name":client.name,"kind":client.kind,
+                    "connected":inner.connections.values().any(|value|value==&client.companion_id),"transports":transports})
+            }).collect::<Vec<_>>(),
+            "pending":inner.pending.iter().map(|(id,pending)|json!({"requestId":id,"companionId":pending.companion_id,"name":pending.name,"expiresAtMs":pending.expires,"approved":pending.token.is_some()})).collect::<Vec<_>>(),
+            "instances":inner.record.instances.iter().map(|assignment| {
+                let session=inner.sessions.values().find(|session|session.token.source_id==assignment.instance_id);
+                json!({"instanceId":assignment.instance_id,"sourceId":assignment.instance_id,"companionId":assignment.companion_id,
+                    "publicationHash":assignment.publication_hash,"name":assignment.definition.name,
+                    "connected":session.is_some(),"transport":session.map(|session|session.transport),
+                    "armed":session.is_some_and(|session|session.armed),"generation":session.map(|session|session.token.generation.to_string()),
+                    "sessionId":session.map(|session|&session.token.session_id),"values":session.map(|session|&session.values)})
+            }).collect::<Vec<_>>(),
+            "publications":inner.publications.values().map(|publication|json!({"publicationHash":publication.publication_hash,"capabilityFingerprint":publication.capability_fingerprint,"uiId":publication.ui_id,"title":publication.title,"controlCount":publication.controls.len(),"assetCount":publication.assets.len()})).collect::<Vec<_>>()})
     }
     pub fn handle_wire(&self, frame: Value, connection_id: &str, now_ms: u64) -> Value {
         self.handle_native_wire(frame, connection_id, now_ms, SourceTransport::Network)

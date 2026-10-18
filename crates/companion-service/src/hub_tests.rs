@@ -381,16 +381,55 @@ fn source_transport_is_native_adapter_metadata_and_tracks_the_current_owner() {
     let publication = publish(&hub, fixture());
     assign(&hub, "panel", "instance", &publication.publication_hash);
     assert_eq!(hub.handle_serial_wire(json!({"type":"auth","token":secret}), "usb-connection", hub.now_ms())["ok"], true);
+    let pending=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(pending["clients"][0]["connected"],true);
+    assert_eq!(pending["clients"][0]["transports"],json!([]));
+    assert!(pending["instances"][0]["transport"].is_null());
     let opened = hub.handle_serial_wire(json!({"type":"open","instanceId":"instance"}), "usb-connection", hub.now_ms());
+    let opened_status=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(opened_status["clients"][0]["transports"],json!(["usb"]));
+    assert_eq!(opened_status["instances"][0]["transport"],"usb");
+    assert_eq!(opened_status["instances"][0]["armed"],false);
     let mut initial = frame(&opened, "baseline", "0");
     initial["values"] = serde_json::to_value(publication.controls.iter().map(|control| (control.id.clone(), control.fallback())).collect::<BTreeMap<_,_>>()).unwrap();
     assert_eq!(hub.handle_serial_wire(initial, "usb-connection", hub.now_ms())["ok"], true);
     assert_eq!(hub.source_transport("instance"), Some(SourceTransport::Usb));
     hub.disconnect_connection("usb-connection", hub.now_ms());
     assert_eq!(hub.source_transport("instance"), None);
+    let disconnected=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(disconnected["clients"][0]["transports"],json!([]));
+    assert!(disconnected["instances"][0]["transport"].is_null());
     let opened = connect(&hub, "network-connection", &secret, "instance");
     assert_eq!(baseline(&hub, "network-connection", &opened, &publication)["ok"], true);
     assert_eq!(hub.source_transport("instance"), Some(SourceTransport::Network));
+    let connected=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(connected["clients"][0]["transports"],json!(["network"]));
+    assert_eq!(connected["instances"][0]["transport"],"network");
+}
+#[test]
+fn source_transport_status_deduplicates_actual_concurrent_sessions_without_kind_inference() {
+    let hub=Hub::new("host".into(),Arc::new(Sink::default()));
+    let token=paired(&hub,"same-installation");
+    let publication=publish(&hub,fixture());
+    for instance in ["usb-instance","network-one","network-two"] {assign(&hub,"same-installation",instance,&publication.publication_hash);}
+    assert_eq!(hub.handle_serial_wire(json!({"type":"auth","token":token}),"usb",hub.now_ms())["ok"],true);
+    assert_eq!(hub.handle_serial_wire(json!({"type":"open","instanceId":"usb-instance"}),"usb",hub.now_ms())["ok"],true);
+    connect(&hub,"network-one",&token,"network-one");
+    let status=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(status["clients"][0]["kind"],"desktop");
+    assert_eq!(status["clients"][0]["transports"],json!(["network","usb"]));
+    assert_eq!(status["instances"].as_array().unwrap().iter().find(|instance|instance["instanceId"]=="usb-instance").unwrap()["transport"],"usb");
+    hub.disconnect_connection("network-one",hub.now_ms());
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["clients"][0]["transports"],json!(["usb"]));
+    connect(&hub,"network-two",&token,"network-two");
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["clients"][0]["transports"],json!(["network","usb"]));
+    hub.disconnect_connection("usb",hub.now_ms());
+    connect(&hub,"network-one",&token,"network-one");
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["clients"][0]["transports"],json!(["network"]));
+    hub.disconnect_connection("network-two",hub.now_ms());
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["clients"][0]["transports"],json!(["network"]));
+    hub.disconnect_connection("network-one",hub.now_ms());
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["clients"][0]["transports"],json!([]));
 }
 #[test]
 fn forged_assignments_versions_and_sessions_never_gain_input_authority() {
