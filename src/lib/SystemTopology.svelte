@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
+  import { systemDeviceIcon } from './system-device-icons';
   import { systemStateLabel, type SystemComponent } from './system-inventory';
   import { systemTopology, topologyFit, topologyInitialView, topologyZoom, TOPOLOGY_NODE_HEIGHT, TOPOLOGY_NODE_WIDTH, type TopologyView } from './system-topology';
 
@@ -59,9 +60,6 @@
     if (x < 0 || y < 0 || x + TOPOLOGY_NODE_WIDTH * view.zoom > width || y + TOPOLOGY_NODE_HEIGHT * view.zoom > height)
       view = { ...view, x: width / 2 - (node.x + TOPOLOGY_NODE_WIDTH / 2) * view.zoom, y: height / 2 - (node.y + TOPOLOGY_NODE_HEIGHT / 2) * view.zoom };
   }
-  function icon(type: SystemComponent['type']) {
-    return type === 'host' ? 'monitor' : type === 'gateway' ? 'network' : type === 'companion' ? 'mobile' : type === 'virtual' ? 'command' : type === 'integration' ? 'link' : type === 'controller' ? 'wheel' : 'devices';
-  }
   function kind(type: SystemComponent['type']) {
     return type === 'osg' ? 'OSG device' : type === 'controller' ? 'Third-party controller' : type === 'host' ? 'System host' : type[0].toUpperCase() + type.slice(1);
   }
@@ -109,7 +107,7 @@
         {@const component = node.component}
         {@const state = systemStateLabel(component)}
         <button type="button" class="topology-node" data-component-id={component.id} class:selected={selectedId === component.id} class:context={node.context} class:offline={component.presence !== 'connected'} style:left={`${node.x}px`} style:top={`${node.y}px`} style:width={`${TOPOLOGY_NODE_WIDTH}px`} style:height={`${TOPOLOGY_NODE_HEIGHT}px`} aria-pressed={selectedId === component.id} aria-label={`${component.name}, ${kind(component.type)}, ${state}${node.context ? ', connection context' : ''}`} onclick={() => onselect(component.id)} onfocus={() => reveal(component.id)} title={`${component.name}\n${component.role}\n${state}${component.diagnostics.length ? '\n' + component.diagnostics.join('\n') : ''}`}>
-          <span class="node-icon"><Icon name={icon(component.type)} size={18} /></span>
+          <span class="node-icon"><Icon name={component.type === 'companion' ? 'mobile' : systemDeviceIcon(component)} size={18} /></span>
           <span class="node-copy"><span class="node-kind">{kind(component.type)}{node.context ? ' · Context' : ''}</span><strong>{component.name}</strong><span class="node-status" title={state}><i class:connected={component.presence === 'connected'}></i><span>{state}</span></span></span>
           <span class="node-role">{component.role || 'Connection details unknown'}{component.diagnostics.length ? ` · ${component.diagnostics.length} diagnostic${component.diagnostics.length === 1 ? '' : 's'}` : ''}</span>
         </button>
