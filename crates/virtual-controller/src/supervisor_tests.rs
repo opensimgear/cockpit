@@ -57,6 +57,37 @@ fn a_queued_acknowledgement_cannot_extend_an_expired_response_deadline() {
     assert!(!child.alive());
 }
 #[test]
+fn inspector_requests_cannot_use_an_output_worker_or_rebase_an_expired_query() {
+    let mut output=spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport time\ntime.sleep(2)\n").unwrap();
+    assert!(output
+        .inspect_once("nonce", Instant::now() + Duration::from_millis(250))
+        .unwrap_err()
+        .contains("not a ready read-only inspector"));
+    assert!(!output.alive());
+    let mut inspector=Worker::spawn(&python(),&["-u".into(),"-c".into(),"print('{\"ok\":true,\"backend\":\"vjoy-inspect-ready\",\"protocol\":1}',flush=True)\nimport time\ntime.sleep(2)\n".into()],
+        "vjoy-inspect-ready",Duration::from_secs(3)).unwrap();
+    let (queued, incoming) = mpsc::sync_channel(1);
+    inspector.incoming = incoming;
+    queued
+        .send(Ok(
+            serde_json::json!({"nonce":"nonce","result":{"ok":true,"slots":[]}}),
+        ))
+        .unwrap();
+    let (outgoing, writes) = mpsc::sync_channel(1);
+    inspector.outgoing = Some(outgoing);
+    assert!(inspector
+        .inspect_once("nonce", Instant::now() - Duration::from_millis(1))
+        .unwrap_err()
+        .contains("deadline"));
+    assert!(writes.try_recv().is_err()); // Not even an expired queued request is sent.
+    assert_eq!(
+        inspector.incoming.try_recv().unwrap().unwrap()["nonce"],
+        "nonce"
+    );
+    assert!(!inspector.alive());
+}
+
+#[test]
 fn native_activation_has_a_separate_bounded_budget_from_lease_traffic() {
     let hello = "print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\n";
     let code = format!("{hello}import sys,json,time\nfor line in sys.stdin:\n msg=json.loads(line)\n time.sleep(0.15)\n print(json.dumps({{'ok':True,'token':msg['token']}}),flush=True)\n");

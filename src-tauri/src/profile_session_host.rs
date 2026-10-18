@@ -362,7 +362,9 @@ impl NativeProfileHost {
         candidate:&Candidate,
         outgoing:Option<OwnedRun>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
-        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,None,&osg_virtual_controller::inspection::current)
+        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,None,
+            &osg_virtual_controller::inspection::current,
+            &||osg_virtual_controller::inspection::sample_current().map(|sample|sample.into_parts()))
     }
     pub(crate) fn stage_with_output_handoff(
         resources:&crate::profile_resources::Runtime,
@@ -377,7 +379,9 @@ impl NativeProfileHost {
             return Err("The outgoing virtual proof belongs to another admission epoch.".into());
         }
         let outgoing=source.as_ref().map(|source|source.run.clone());
-        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,source,&osg_virtual_controller::inspection::current)
+        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,source,
+            &osg_virtual_controller::inspection::current,
+            &||osg_virtual_controller::inspection::sample_current().map(|sample|sample.into_parts()))
     }
     fn stage_internal(
         resources:&crate::profile_resources::Runtime,
@@ -389,6 +393,7 @@ impl NativeProfileHost {
         outgoing:Option<OwnedRun>,
         source:Option<crate::profile_session::HandoffSource>,
         inspect:&dyn Fn()->Result<Vec<osg_virtual_controller::vjoy::Slot>,String>,
+        sample:&dyn Fn()->Result<(Vec<osg_virtual_controller::vjoy::Slot>,Instant),String>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
         let game_preparation = match candidate.game_id.as_deref() {
             Some(id) => games.prepare_profile_game_context(id)?,
@@ -529,12 +534,13 @@ impl NativeProfileHost {
         let visibility=crate::profile_session_visibility::Visibility::stage_with_handoff(&prepared.plan,&snapshot,controllers,outgoing.as_ref())?;
         let dcs_hid = dcs_hid::Guard::capture(&prepared.plan, &snapshot);
         // Final off-lock I/O follows every slow catalogue/script/visibility
-        // preparation. Never block the outgoing health worker under the
-        // coordinator lock while an isolated driver inspector starts.
+        // preparation. The inspector supplies the parent timestamp from before
+        // its nonce-bound sample enqueue, after separate driver readiness.
+        // Never replace that timestamp with a post-I/O clock or block outgoing
+        // health under the coordinator lock while the inspector starts.
         let output_handoff = if reuses_output {
             let source=source.ok_or("The retiring virtual output proof disappeared.")?;
-            let observed=Instant::now();
-            let slots=inspect()?;
+            let (slots,observed)=sample()?;
             let captured=crate::profile_session_virtual::PreparedHandoff { source, slots, observed };
             captured.validate(Some(&captured.source.run),captured.source.output.as_ref(),&bindings,
                 candidate.admission_epoch.ok_or("Missing native admission epoch.")?,Some(&captured.source.run.owner))?;

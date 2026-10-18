@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 pub(crate) struct PreparedHandoff {
     pub source: crate::profile_session::HandoffSource,
     pub slots: Vec<Slot>,
-    /// Starts before inspection I/O, so slow queries cannot extend freshness.
+    /// Parent clock before nonce enqueue, after isolated driver readiness.
+    /// Query, reply and teardown time remain inside the unchanged lease.
     pub observed: std::time::Instant,
 }
 impl PreparedHandoff {

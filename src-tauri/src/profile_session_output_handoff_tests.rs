@@ -892,7 +892,31 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
             layout,
             ports,
         });
+    // A received sample is already stale if the query itself consumed the
+    // lease. Native staging must carry that start, never retimestamp receipt.
+    let stale = NativeProfileHost::stage_internal(
+        &resources,
+        &games,
+        &companions,
+        controllers.clone(),
+        true,
+        &incoming,
+        Some(run.clone()),
+        Some(source.clone()),
+        &|| Ok(vec![driver.lock().unwrap().slot.clone()]),
+        &|| {
+            Ok((
+                vec![driver.lock().unwrap().slot.clone()],
+                Instant::now() - Duration::from_micros(LEASE_US),
+            ))
+        },
+    );
+    assert!(stale.unwrap_err().contains("inspection expired"));
+    assert!(host.run(&owner).unwrap().output.as_ref().unwrap().active());
+    assert_eq!(driver.lock().unwrap().messages.len(), 1);
     let inspections = AtomicU64::new(0);
+    let sample_started = std::cell::Cell::new(None);
+    let startup_started = Instant::now();
     incoming.stage = Some(
         NativeProfileHost::stage_internal(
             &resources,
@@ -907,10 +931,27 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
                 inspections.fetch_add(1, Ordering::SeqCst);
                 Ok(vec![driver.lock().unwrap().slot.clone()])
             },
+            &|| {
+                // This is an injected readiness delay, not a driver operation.
+                // The low-level process test separately proves real readiness
+                // and nonce-query ordering. Only the actual sample is fresh.
+                std::thread::sleep(Duration::from_micros(LEASE_US + 50_000));
+                let observed = Instant::now();
+                sample_started.set(Some(observed));
+                inspections.fetch_add(1, Ordering::SeqCst);
+                Ok((vec![driver.lock().unwrap().slot.clone()], observed))
+            },
         )
         .unwrap(),
     );
     assert_eq!(inspections.load(Ordering::SeqCst), 2);
+    assert!(
+        sample_started
+            .get()
+            .unwrap()
+            .duration_since(startup_started)
+            >= Duration::from_micros(LEASE_US)
+    );
     let incoming_owner = RunOwner {
         session: uuid::Uuid::new_v4().to_string(),
         generation: 2,
@@ -921,6 +962,15 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
     // Passive proof tests do not qualify or activate the real backend.
     assert!(!prepared.admission.blockers.is_empty());
     assert_eq!(host.run(&incoming_owner).unwrap().bindings[0].slot, 3);
+    assert_eq!(
+        host.run(&incoming_owner)
+            .unwrap()
+            .output_handoff
+            .as_ref()
+            .unwrap()
+            .observed,
+        sample_started.get().unwrap()
+    );
     host.capture(&prepared, &incoming_owner, Some(&run))
         .unwrap();
     assert!(host.run(&owner).unwrap().output.as_ref().unwrap().active());
