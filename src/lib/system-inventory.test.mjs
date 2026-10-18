@@ -153,3 +153,15 @@ test('bound integrations appear without telemetry and panels stay on companions'
  assert.deepEqual(filterSystem(items,'Radio','all').map(c=>c.id),['companion:tablet']);
  assert.equal(filterSystem([{...items[0],stale:true}],'','all').length,0);
 });
+
+test('device inventory excludes unpaired setup records and drops revoked installations',()=>{
+ const disk=storage(),registry=new SystemInventoryRegistry(disk);
+ const paired=observation('companion:tablet',{type:'companion',provider:'companions',presence:'offline'});
+ const setup=observation('companion-usb:COM7',{type:'companion',provider:'companions'});
+ const pending=observation('companion-pending:request',{type:'companion',provider:'companions'});
+ registry.update([paired,setup,pending],['companions']);
+ assert.deepEqual(filterSystem(registry.snapshot.components,'','all').map(c=>c.id),['companion:tablet']);
+ const reloaded=new SystemInventoryRegistry(disk);assert.deepEqual(filterSystem(reloaded.snapshot.components,'','all').map(c=>c.id),['companion:tablet']);
+ reloaded.update([],[],['Companions unavailable']);assert.equal(filterSystem(reloaded.snapshot.components,'','all').length,1);
+ reloaded.update([],['companions']);assert.equal(filterSystem(reloaded.snapshot.components,'','all').length,0);
+});

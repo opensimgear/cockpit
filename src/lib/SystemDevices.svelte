@@ -110,7 +110,7 @@
     {#each visible as c (c.id)}
       <button class="system-card component-tile" data-component-id={c.id} class:chosen={selectedId === c.id} class:offline={c.presence === 'offline'} aria-pressed={selectedId === c.id} onclick={() => select(c.id)}>
         <div class="component-heading"><span class="component-icon"><Icon name={icon(c)} size={24} /></span><div class="component-copy"><strong>{c.name}</strong><span>{systemTypeLabels[c.type]}{c.role ? ` · ${c.role}` : ''}</span></div><Icon name="chevron" size={14} /></div>
-        <div class="component-status">{systemStateLabel(c)}</div>
+        {#if c.type === 'companion' && c.status.includes('Panel: ')}<div class="companion-panels">{c.status.split(' · ').filter(part => part.startsWith('Panel: ')).join(' · ')}</div>{/if}
         <div class="component-transports">{#each [...new Set(c.connections.map(x => x.transport))] as transport}<span class="quiet-tag">{transport === 'software' ? 'Software' : transport === 'unknown' ? 'Connection unknown' : transport.toUpperCase()}{#if c.connections.some(connection => connection.transport === transport && connection.observed === false) && !c.connections.some(connection => connection.transport === transport && connection.current)} · Configured{/if}</span>{:else}<span class="quiet-tag">Connection unknown</span>{/each}</div>
       </button>
     {:else}<div class="empty-state"><strong>{components.length ? 'No matching components' : busy ? 'Loading known components…' : 'No known components'}</strong><p>Connected, offline and unavailable components appear here when their providers report them.</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; transport = 'all'; }}>Clear filters</button></div>{/each}
@@ -165,7 +165,7 @@
   .component-heading {display:flex;align-items:flex-start;gap:12px;min-width:0}.component-heading > :global(svg) {flex-shrink:0;margin-top:11px;color:var(--soft)}
   .component-icon {display:grid;place-items:center;flex-shrink:0;width:40px;height:40px;border-radius:9px;background:var(--accent-bg);color:var(--accent)}
   .component-copy {flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}.component-copy strong {font-size:14px;line-height:1.4;overflow-wrap:anywhere}.component-copy span {font-size:12px;line-height:1.5;color:var(--soft);overflow-wrap:anywhere}
-  .component-status {font-size:12px;line-height:1.6;color:var(--soft);overflow-wrap:anywhere}
+  .companion-panels {font-size:12px;line-height:1.6;color:var(--soft);overflow-wrap:anywhere}
   .component-transports {display:flex;flex-wrap:wrap;gap:5px;margin-top:auto;padding-top:12px;border-top:1px solid var(--faint-line)}
   .system-card.offline {background:var(--subtle);border-color:var(--faint-line)}.system-card.offline .component-copy strong {color:var(--soft)}.system-card.offline .component-icon {background:var(--surface);color:var(--muted)}
   .system-card.offline:hover {background:var(--surface);border-color:var(--muted)}

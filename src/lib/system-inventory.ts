@@ -33,7 +33,7 @@ export function filterSystem(components: readonly SystemComponent[], search: str
 }
 /** Panels belong to their companion; integrations appear when the applied profile uses them. */
 export function isVisibleSystemComponent(component: SystemComponent): boolean {
-  return component.type !== 'host' && !component.id.startsWith('companion-instance:')
+  return component.type !== 'host' && !['companion-instance:', 'companion-usb:', 'companion-pending:'].some(prefix => component.id.startsWith(prefix))
     && (component.type !== 'integration' || component.evidence.includes('active-bindings') && !component.stale);
 }
 function signature(c: SystemComponent | SystemObservation): string {
@@ -132,6 +132,8 @@ export class SystemInventoryRegistry {
       next.push({ ...observation, evidence: [...new Set([...(old?.evidence.filter(e => e.startsWith('binding-source:')) ?? []), ...observation.evidence])], firstSeen: old?.firstSeen ?? now, lastSeen: observation.presence === 'connected' ? now : old?.lastSeen ?? 0 });
     }
     for (const c of previous.values()) if (!seen.has(c.id) && !hasTombstone(candidate, c.id)) {
+      // A complete companion response lists all paired installations, including offline ones.
+      if (c.provider === 'companions' && completeProviders.includes('companions')) continue;
       const complete = completeProviders.includes(c.provider);
       const remembered = this.remembered(c);
       if (complete) {
