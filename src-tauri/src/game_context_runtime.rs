@@ -179,7 +179,9 @@ impl GamesRuntime {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .set_owner(owner)?;
-        self.inner.refresh_game_contexts(true);
+        // Owner publication only remints authority from the retained native
+        // observation. Admission still verifies current process/setup/catalogue;
+        // discovery here would block renewal of already acquired output leases.
         Ok(())
     }
     pub(crate) fn profile_game_context(&self, id: &str) -> Result<ContextToken, String> {
@@ -311,6 +313,7 @@ mod tests {
     struct FakePlatform {
         process: Mutex<Option<ProcessIdentity>>,
         failed: AtomicBool,
+        reads: std::sync::atomic::AtomicUsize,
     }
     impl FakePlatform {
         fn new() -> Self {
@@ -321,19 +324,23 @@ mod tests {
                     epoch: 10,
                 })),
                 failed: AtomicBool::new(false),
+                reads: std::sync::atomic::AtomicUsize::new(0),
             }
         }
     }
     impl Platform for FakePlatform {
         fn integration_setup_supported(&self) -> bool {
+            self.reads.fetch_add(1, Ordering::SeqCst);
             true
         }
         fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
             vec![
                 json!({"id":"x-plane-12","name":"X-Plane 12","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe","launchSupported":true,"processMonitoringSupported":true}),
             ]
         }
         fn validate(&self, _: &str, path: &str) -> Result<(), String> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
             if path == "/fixture/X-Plane.exe" {
                 Ok(())
             } else {
@@ -344,6 +351,7 @@ mod tests {
             Err("Unexpected launch".into())
         }
         fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
             if self.failed.load(Ordering::Acquire) {
                 Err("Process inspection failed".into())
             } else {
@@ -351,6 +359,7 @@ mod tests {
             }
         }
         fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
             Ok(self.process.lock().unwrap().as_ref() == Some(identity))
         }
     }
@@ -400,6 +409,56 @@ mod tests {
         assert_eq!(token.process.pid, 42);
         assert_eq!(token.process.epoch, 10);
         assert!(runtime.validate_profile_game_context(&token).is_ok());
+        runtime.shutdown();
+    }
+    #[test]
+    fn owner_publication_does_no_discovery_and_admission_still_rechecks_the_process() {
+        let scratch = Scratch::new();
+        let (runtime, platform, calls) = runtime(&scratch);
+        // Isolate the publication call from the independently running native
+        // observers; preparation and admission below still use real Runtime paths.
+        runtime.inner.closed.store(true, Ordering::Release);
+        for observer in [&runtime.observer, &runtime.activation_observer] {
+            if let Some(observer) = observer.lock().unwrap().take() {
+                observer.join().unwrap();
+            }
+        }
+        runtime.inner.closed.store(false, Ordering::Release);
+        let prepared = runtime
+            .prepare_profile_game_context("x-plane-12")
+            .unwrap()
+            .unwrap();
+        *runtime.inner.context_setup_check.lock().unwrap() = None;
+        let before = platform.reads.load(Ordering::SeqCst);
+        runtime
+            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
+            .unwrap();
+        assert_eq!(
+            platform.reads.load(Ordering::SeqCst),
+            before,
+            "Publishing the applied owner must not perform synchronous native discovery"
+        );
+        assert!(runtime.inner.context_setup_check.lock().unwrap().is_none());
+        let token = runtime
+            .admit_prepared_game_context(&prepared.proof)
+            .unwrap();
+        assert_eq!(token.process, prepared.proof.process);
+        assert!(platform.reads.load(Ordering::SeqCst) > before);
+        platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
+        assert_eq!(
+            runtime
+                .admit_prepared_game_context(&prepared.proof)
+                .unwrap_err(),
+            "The prepared game process exited, was replaced or became ambiguous."
+        );
+        assert!(runtime
+            .inner
+            .contexts
+            .lock()
+            .unwrap()
+            .token("x-plane-12")
+            .is_err());
+        assert!(calls.lock().unwrap().is_empty());
         runtime.shutdown();
     }
     #[test]

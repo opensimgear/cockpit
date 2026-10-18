@@ -400,7 +400,9 @@ impl<H: Host> Coordinator<H> {
                     .unwrap()
                     .attempted
                     .push(phase);
+                let journal_started = std::time::Instant::now();
                 self.persist(next)?;
+                let journal_elapsed = journal_started.elapsed();
                 let run = self
                     .manifest
                     .pending
@@ -409,10 +411,19 @@ impl<H: Host> Coordinator<H> {
                     .incoming
                     .as_ref()
                     .unwrap();
+                let authority_started = std::time::Instant::now();
                 if phase == ApplyPhase::Start {
                     self.host.set_authority(Some(&owner))?;
                 }
-                self.host.enter(phase, &prepared, run)?;
+                let authority_elapsed = authority_started.elapsed();
+                let entry_started = std::time::Instant::now();
+                let result = self.host.enter(phase, &prepared, run);
+                if cfg!(debug_assertions) && option_env!("OSG_DEV_NATIVE_PROFILES") == Some("1") {
+                    eprintln!("Native profile {phase:?}: journal={}ms authority={}ms entry={}ms ok={}",
+                        journal_elapsed.as_millis(), authority_elapsed.as_millis(),
+                        entry_started.elapsed().as_millis(), result.is_ok());
+                }
+                result?;
             }
             Ok::<_, String>(())
         })();
