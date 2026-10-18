@@ -173,4 +173,20 @@ mod tests {
         let mut wrong=request;wrong["observedAt"]=json!(2);
         assert!(runtime.request(&wrong,&controllers,|_|vec![]).unwrap_err().contains("expired"));
     }
+    #[test]
+    fn native_snapshot_inspects_available_optional_services_without_acquiring_devices() {
+        let runtime=Runtime::new(true);
+        let controllers=osg_controller_input::ControllerService::new(None,false);
+        let request=json!({"command":"system_inventory","clientId":"native-inventory-test-client"});
+        let value=runtime.request(&request,&controllers,|_|vec![json!({"controllerId":"test","gatewayId":"exact-test-evidence"})]).unwrap();
+        assert!(value["observedAt"].as_u64().is_some());
+        assert!(value["virtualDevices"].is_array());
+        assert!(value["hiddenDevices"].is_array());
+        assert!(value["controllerAssociations"].is_array());
+        assert_eq!(value,runtime.request(&request,&controllers,|_|panic!("Cached inspection must not observe providers again")).unwrap());
+        for fields in [json!({"offset":4097}),json!({"offset":-1}),json!({"limit":0}),json!({"limit":33}),json!({"observedAt":0})] {
+            let mut invalid=request.clone();for (key,value) in fields.as_object().unwrap(){invalid[key]=value.clone();}
+            assert!(runtime.request(&invalid,&controllers,|_|vec![]).is_err());
+        }
+    }
 }

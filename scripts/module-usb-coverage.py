@@ -27,6 +27,8 @@ TEST_FILTERS.extend(["profile_session_virtual::tests", "profile_session_host::ou
                      "gateways::recovery_transport::tests", "stm32::tests::recovery_transport"])
 TEST_FILTERS.append("profile_session_overrides::publication")
 MODULE_TEST_SOURCES = {
+    "system_inventory": [],
+    "system_inventory_associations": [],
     "profile_recovery_transport": ["profile_recovery_transport_tests", "profile_recovery_transport_stm32_tests"],
     "profile_session_virtual": ["profile_session_output_handoff_tests"],
     "profile_publication": ["profile_publication_tests", "profile_publication_rebind_tests",
@@ -34,6 +36,8 @@ MODULE_TEST_SOURCES = {
     "profile_session_publication_host": ["profile_publication_tests",
                                          "profile_publication_action_tests"],
 }
+MODULES.extend(["system_inventory", "system_inventory_associations"])
+TEST_FILTERS.append("system_inventory")
 
 
 def source_stamp(paths, root):
@@ -139,6 +143,7 @@ def main():
     # Profile hide handoff depends on the exact native owner/journal proof,
     # including restore-only worker admission rather than current hidden state.
     tracked.append(root / "crates/controller-input/src/lib.rs")
+    tracked.append(root / "crates/controller-input/src/inventory.rs")
     tracked.extend(root / f"crates/controller-input/src/visibility/{name}.rs" for name in
                    ["mod", "game", "game_tests", "game_handoff_tests", "handoff", "handoff_tests",
                     "journal", "policy", "runtime", "service", "service_tests"])
