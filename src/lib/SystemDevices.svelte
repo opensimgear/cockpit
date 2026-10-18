@@ -9,7 +9,7 @@
   import type { GatewayEntry } from './gateway-workspace';
   import type { GameId } from './games';
   import { SystemInventoryController, integrationGameId } from './system-inventory-providers';
-  import { filterSystem, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot } from './system-inventory';
+  import { filterSystem, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
   let { active, entries, openModule, openCompanions, openIntegration, gatewayDetails, oninventory }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
     openCompanions: () => void; openIntegration: (gameId: GameId) => void;
@@ -55,8 +55,9 @@
   }
   function dialog(node: HTMLDialogElement) { node.showModal(); return { destroy: () => node.close() }; }
   onMount(() => {
-    let storage: Storage | undefined;
-    try { storage = localStorage; mode = storage.getItem('osg-devices-mode') === 'topology' ? 'topology' : 'list'; } catch { /* unavailable storage is reported by registry writes */ }
+    let storage: InventoryStorage;
+    try { storage = localStorage; mode = storage.getItem('osg-devices-mode') === 'topology' ? 'topology' : 'list'; }
+    catch { storage = { getItem: () => { throw Error('Local inventory storage unavailable.'); }, setItem: () => { throw Error('Local inventory storage unavailable.'); } }; }
     controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, storage, onChange: next => { snapshot = next; oninventory(next); } });
     snapshot = controller.snapshot;
     void refresh();

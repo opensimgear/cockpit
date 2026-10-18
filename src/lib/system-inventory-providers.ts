@@ -12,11 +12,11 @@ export type NativeSystemInventory = {
   offset?: number; total?: number; nextOffset?: number | null;
   controllerAssociations?: { controllerId: string; gatewayId?: string; moduleId?: string; usbKey?: string; evidence: string[] }[];
   virtualDevices: { id: string; name: string; available: boolean | null; status: string; createdByCockpit: boolean | null; owner?: string | null; ownerPid?: number | null; diagnostics: string[] }[];
-  hiddenDevices: { id: string; name: string; instanceId: string; present: boolean | null; hidden: boolean | null; configured?: boolean | null; inverse?: boolean | null; scope?: string; controllerId?: string | null; controllerIds?: string[]; interfacePaths?: string[]; ancestors?: string[]; diagnostics: string[] }[];
+  hiddenDevices: { id: string; name: string; instanceId: string; present: boolean | null; hidden: boolean | null; configured?: boolean | null; inverse?: boolean | null; scope?: string; controllerId?: string | null; controllerIds?: string[]; interfacePaths?: string[]; parentInstanceId?: string | null; containerId?: string | null; ancestors?: string[]; diagnostics: string[] }[];
   diagnostics: string[];
 };
 type Send = (request: GatewayRequest) => Promise<GatewayState>;
-type Capture = { provider: string; observations: SystemObservation[]; diagnostics?: string[]; associations?: NativeSystemInventory['controllerAssociations'] };
+type Capture = { provider: string; observations: SystemObservation[]; complete?: boolean; diagnostics?: string[]; associations?: NativeSystemInventory['controllerAssociations'] };
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const string = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback;
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -62,7 +62,7 @@ export function correlateSystem(observations: SystemObservation[], resources: re
   const native = new Map<string, string>();
   const bindings = new Map<string, string[]>();
   for (const r of resources) for (const c of r.connections) {
-    const id = c.scope === 'standalone-usb' ? `usb:${c.key}` : c.scope === 'host-controllers' ? `controller:${c.key}` : c.scope.startsWith('gateway:') ? `module:${c.scope.slice(8)}/${c.key}` : '';
+    const id = c.scope === 'standalone-usb' ? `usb:${c.key}` : c.scope === 'host-controllers' ? `controller:${c.key}` : c.scope === 'companions' ? `companion-instance:${c.key}` : c.scope.startsWith('gateway:') ? `module:${c.scope.slice(8)}/${c.key}` : '';
     if (id) {
       bindings.set(id, [...(bindings.get(id) ?? []), `binding-source:${r.id}`]);
       if (r.resourceType === 'osg-module') native.set(id, r.id);
@@ -117,7 +117,8 @@ export class SystemInventoryController {
     if (this.disposed || epoch !== this.epoch) return this.snapshot;
     const names = ['controllers', 'usb', 'companions', 'integrations', 'native'];
     results.forEach((result, index) => {
-      if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (names[index] !== 'native' || !result.value.diagnostics?.length) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); }
+      if (result.status === 'fulfilled' && new Set(result.value.observations.map(c => c.id)).size !== result.value.observations.length) { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: Provider returned duplicate identities; its inspection is incomplete.`); return; }
+      if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (result.value.complete !== false && (names[index] !== 'native' || !result.value.diagnostics?.length)) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); }
       else { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: ${message(result.reason)}`); }
     });
     const native = this.captures.get('native');
@@ -142,7 +143,8 @@ export class SystemInventoryController {
         h.connections = h.connections.map(c => link(h.id, c.from, c.transport, c.current, c.endpoint));
       }
       for (const source of sources) {
-      source.hidden = h.hidden; source.diagnostics.push(...h.diagnostics); source.evidence.push(...h.evidence);
+      source.hidden = source.hidden === true || h.hidden === true ? true : h.hidden;
+      source.diagnostics.push(...h.diagnostics); source.evidence.push(...h.evidence); source.targets.push(...h.targets.filter(t => t.kind === 'visibility'));
       if (h.connections.length) source.connections = h.connections.map(c => link(source.id, c.from, c.transport, c.current, c.endpoint));
       if (h.presence !== 'unknown') source.presence = h.presence;
       if (h.hidden || h.presence === 'connected') source.forget.allowed = false;
@@ -184,18 +186,21 @@ export class SystemInventoryController {
     const snapshot = this.registry.update(observations, complete, diagnostics, now, aliases); this.onChange(snapshot); return snapshot;
   }
   private async controllers(now: number): Promise<Capture> {
-    const sources: HostController[] = []; let offset = 0, session: string | undefined, total: number | undefined;
+    const sources: HostController[] = []; let offset = 0, session: string | undefined, total: number | undefined, backend = 'ready', diagnostic = '';
     do {
       const page = (await this.send({ command: 'controller_list', offset, limit: 32 })).controllers;
       if (!page?.sources || page.sources.length > 32 || offset + page.sources.length > page.total || page.offset !== offset || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > 4096 || (offset < page.total && !page.sources.length) || (session !== undefined && page.session !== session) || (total !== undefined && total !== page.total)) throw Error('Controller inventory changed or returned an incomplete page.');
       session = page.session; total = page.total; sources.push(...page.sources); offset += page.sources.length;
+      if (page.backendStatus && page.backendStatus !== 'ready') backend = page.backendStatus;
+      if (page.diagnostic) diagnostic = page.diagnostic;
     } while (offset < total!);
-    return { provider: 'controllers', observations: sources.map(s => {
+    const healthy = backend === 'ready';
+    return { provider: 'controllers', complete: healthy, diagnostics: diagnostic || !healthy ? [`Controller capture ${backend}${diagnostic ? `: ${diagnostic}` : ''}`] : [], observations: sources.map(s => {
       const id = `controller:${s.id}`;
-      return observation(id, s.name, s.osgHid ? 'osg' : 'controller', 'controllers', now, { role: s.role, presence: s.online ? 'connected' : 'offline', capture: s.online ? s.baselineReady ? 'ready' : 'waiting' : 'unavailable',
+      return observation(id, s.name, s.osgHid ? 'osg' : 'controller', 'controllers', now, { role: s.role, presence: healthy ? s.online ? 'connected' : 'offline' : 'unknown', stale: !healthy, capture: healthy && s.online ? s.baselineReady ? 'ready' : 'waiting' : 'unavailable',
         status: `${s.controlCount} controls`, evidence: [`controller:${s.id}`, `identity:${s.identityConfidence}`], targets: [target('controller', s.id)],
-        connections: [link(id, 'host', 'unknown', s.online)],
-        forget: { allowed: !s.online, reason: 'Disconnect this controller before forgetting it.', effect: localEffect } });
+        connections: [link(id, 'host', 'unknown', healthy && s.online)],
+        forget: { allowed: healthy && !s.online, reason: healthy ? 'Disconnect this controller before forgetting it.' : 'Current capture availability cannot confirm this device is offline.', effect: localEffect } });
     }) };
   }
   private async usb(now: number): Promise<Capture> {
@@ -293,9 +298,11 @@ export class SystemInventoryController {
         // through a USB radio. Parent chains are observations, never name guesses.
         const bus = [h.instanceId, ...(h.ancestors ?? [])].find(path => /^(USB|BTH|BTHLE|BTHENUM|BTHLEDEVICE)\\/i.test(path));
         const transport = bus && /^USB\\/i.test(bus) ? 'usb' as const : bus ? 'bluetooth' as const : 'unknown' as const;
+        const ownControllers = h.controllerIds ?? (h.controllerId ? [h.controllerId] : []);
+        const childControllers = /^USB\\VID_/i.test(h.instanceId) ? hiddenDevices.filter(child => (child.parentInstanceId ?? child.ancestors?.[0])?.toLowerCase() === h.instanceId.toLowerCase()).flatMap(child => child.controllerIds ?? (child.controllerId ? [child.controllerId] : [])) : [];
         return observation(id, h.name, 'controller', 'native', now, { role: 'Physical device', presence: h.present === true ? 'connected' : h.present === false ? 'offline' : 'unknown', hidden: h.hidden,
-          status: h.configured ? 'Configured visibility rule' : '', diagnostics: [...h.diagnostics, ...(h.inverse ? ['HidHide inverse application policy is active.'] : [])],
-          evidence: [h.instanceId, ...(h.controllerIds ?? (h.controllerId ? [h.controllerId] : [])).map(x => `controller:${x}`)], targets: [target('visibility', h.instanceId)],
+          status: h.configured ? 'Configured visibility rule' : '', diagnostics: [...h.diagnostics, ...(childControllers.length ? ['Visibility evidence includes the exact physical USB parent; application exceptions may limit its scope.'] : []), ...(h.inverse ? ['HidHide inverse application policy is active.'] : [])],
+          evidence: [h.instanceId, ...[...new Set([...ownControllers, ...childControllers])].map(id => `controller:${id}`)], targets: [target('visibility', h.instanceId)],
           connections: [link(id, 'host', transport, h.present === true, h.interfacePaths?.[0] ?? h.instanceId)],
           forget: { allowed: false, reason: 'Manage visibility rules explicitly. Inventory cleanup cannot remove HidHide configuration.', effect: '' } });
       }),

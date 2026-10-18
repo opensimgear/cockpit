@@ -94,7 +94,7 @@ export class SystemInventoryRegistry {
     this.snapshot = { components: this.memory.components.map(c => this.remembered(c)), diagnostics: this.storageError ? [this.storageError] : [], observedAt: 0 };
   }
   private remembered(c: SystemComponent): SystemComponent {
-    return { ...c, presence: 'unknown', stale: true, owner: null, capture: 'unknown', connections: c.connections.map(x => ({ ...x, current: false })), forget: { ...c.forget, allowed: false, reason: 'Refresh this provider before forgetting a remembered component.' } };
+    return { ...c, presence: 'unknown', stale: true, owner: null, inputOwner: null, configurationOwner: null, configurationRoute: null, capture: 'unknown', connections: c.connections.map(x => ({ ...x, current: false })), forget: { ...c.forget, allowed: false, reason: 'Refresh this provider before forgetting a remembered component.' } };
   }
   update(observations: SystemObservation[], completeProviders: string[], diagnostics: string[] = [], now = Date.now(), aliases: Record<string, string> = {}): SystemSnapshot {
     if (new Set(observations.map(c => c.id)).size !== observations.length) throw new Error('System inventory contains duplicate logical identities.');

@@ -2,7 +2,7 @@
 
 Windows Cockpit captures joystick, gamepad and multi-axis HID application collections through a dedicated Raw Input message thread. Capture continues while another application has focus. It does not request exclusive access, install drivers, provision virtual devices or alter hiding policy. Keyboard and mouse collections are excluded. Unknown standard controllers are usable without a model database; unknown, relative and array fields remain diagnostic.
 
-Open **Devices → Host controllers**, select a card, and inspect input pages. **Topology** places the same controllers directly beneath the computer. A published OpenSimGear HID collection appears here as a host route; its gateway configuration remains in the existing gateway workspace. Local names and roles do not change firmware or Windows product names.
+Open **Devices**, select a physical controller in List or Topology, and inspect its shared details and input pages. A published OpenSimGear HID collection is associated with its source gateway/module when native serial/interface/report evidence proves the relationship; it remains an input capability without increasing the physical-device count. Gateway and module configuration is reachable from the same Devices details. Ambiguous or unresolved identities stay separate. Local names and roles do not change firmware or Windows product names. See the [Devices guide](system-inventory.md).
 
 ## Identity and reconnects
 

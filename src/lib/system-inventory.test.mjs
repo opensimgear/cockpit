@@ -37,6 +37,13 @@ test('transport filters include current and remembered routes and unknown unconn
  const r=new SystemInventoryRegistry();const components=r.update([observation('wheel'),observation('network',{connections:[{from:'host',to:'network',id:'n',transport:'network',current:false}]}),observation('unknown',{connections:[]})],[]).components;
  assert.equal(filterSystem(components,'','all','usb').length,1);assert.equal(filterSystem(components,'','all','network')[0].id,'network');assert.equal(filterSystem(components,'','all','unknown')[0].id,'unknown');
 });
+
+test('unavailable providers and restart clear current input/configuration ownership rather than repeating old claims',()=>{
+ const disk=storage(),r=new SystemInventoryRegistry(disk);
+ r.update([observation('wheel',{owner:'Setup',inputOwner:'USB',configurationOwner:'Setup',configurationRoute:'USB · COM7'})],['controllers']);
+ const reload=new SystemInventoryRegistry(disk);assert.equal(reload.snapshot.components[0].configurationOwner,null);assert.equal(reload.snapshot.components[0].inputOwner,null);
+ r.update([],[]);assert.equal(r.snapshot.components[0].configurationRoute,null);assert.equal(r.snapshot.components[0].configurationOwner,null);
+});
 test('storage errors are explicit and failed durable removal is not reported successful',()=>{
  const disk={getItem:()=>'{',setItem:()=>{throw Error('full');}},r=new SystemInventoryRegistry(disk);
  assert.match(r.snapshot.diagnostics[0],/loaded/);r.update([observation('wheel',{presence:'offline',forget:{allowed:true,reason:'',effect:'local'}})],['controllers']);
