@@ -23,6 +23,7 @@ gate. Virtual controller, hiding and script qualification remain independent.
 | Worker lifecycle | Second-injector exclusion; repeated Stop preserves a clean journal; Drop closes transport; session lock immediately reacquired over three cycles | [Worker lifecycle](2026-10-18-desktop-worker-lifecycle.json) |
 | Running cockpit authoring | Create/save/reopen/export/import, no fabricated virtual controller, native compilation and pure recording preview through actual Tauri IPC | `pnpm desktop:native:ui`; local artifacts `.research/desktop-output-native-authoring/` |
 | Running cockpit live output | Actual authenticated WSS source through the applied native ProfileSession and worker: shared Control, ten ordered taps, stationary pointer, mouse/key/chord release, focus loss with fresh-neutral rearming and companion lease loss | [Companion receiver](2026-10-18-desktop-companion-receiver.json); `OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:companion:native` |
+| Actual game launch and scope | Native Cockpit launches installed Steam Assetto Corsa Rally, binds its actual process/creation identity, submits a scoped key, releases on focus loss, waits for neutral on return, preserves the applied revision after a save, and Stops cleanly | [ACR native scope](2026-10-18-desktop-game-native.json); `OSG_DESKTOP_GAME_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 pnpm desktop:game:native` |
 
 Native `SendInput` return counts establish submission to Windows, not delivery
 to a particular application. Receiver messages are a separate observation and
@@ -51,7 +52,7 @@ passed. These software results do not complete the release matrix below.
 
 | Required check | Current limit |
 | --- | --- |
-| DCS or Assetto Corsa Rally | Actual captured launch, foreground/Alt-Tab, editor revision isolation and failed-launch rollback still need game acceptance. Native identity/launch/recovery software tests are narrower. |
+| DCS or Assetto Corsa Rally | Actual ACR launch, foreground scope, neutral rearming, applied-revision isolation and Stop verified. Game consumption/displayed response, driving controls, DCS, and the remaining game matrix are unverified. Failed-launch rollback and PID replacement have software coverage. |
 | Physical controller and panel input | Real model/firmware matrix, ten physical encoder detents, unplug/hotplug, stationary physical stick, and simultaneous hardware/companion sources remain unqualified. |
 | Physical keyboard overlap | Cockpit owners share one injected ledger, but the OS stream also contains physical keys. Actual overlap behavior and product limits need native qualification. |
 | Integrity and desktop transitions | Ordinary receiver tested; elevated-target refusal, session lock/unlock and sleep/wake require interactive acceptance. |

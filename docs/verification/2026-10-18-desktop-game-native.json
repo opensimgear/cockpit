@@ -1,0 +1,486 @@
+{
+  "date": "2026-10-18",
+  "passed": true,
+  "actualNativeCockpit": true,
+  "actualGame": "assetto-corsa-rally",
+  "actualSteamAppId": "3917090",
+  "actualLaunchRequested": true,
+  "source": "Native process/foreground identity, typed ownership and SendInput counts; game consumption and displayed response are not measured.",
+  "productionQualified": false,
+  "observedGameBehavior": false,
+  "virtualControllers": 0,
+  "command": "OSG_DESKTOP_GAME_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-game-native.mjs",
+  "checks": [
+    "Manual saved profile launches the installed Steam game and binds its exact PID/executable/creation identity into the owned desktop journal",
+    "Actual foreground game and a real authenticated WSS press produce one acknowledged native Right Arrow key-down; game response remains unmeasured",
+    "Focus away releases owned key; returning while held and repeated true stay disarmed until a new false then true",
+    "Saving draft Left Arrow increments revision while the applied owner, snapshot and native Right Arrow action remain unchanged",
+    "Native Stop while the companion button is held clears run ownership and all native held/possible-held state without uncertainty"
+  ],
+  "appliedOwner": {
+    "gameId": null,
+    "generation": 6,
+    "profileId": "<test-profile-id>",
+    "profileRevision": 1,
+    "session": "<native-run-session>"
+  },
+  "appliedSnapshot": {
+    "profileId": "<test-profile-id>",
+    "revision": 1,
+    "semanticHash": "sha256:e7e4c1fbce6e43933087f8ba90713ff880cbcc805bd85323be8fd49f9337cf06"
+  },
+  "firstHold": {
+    "state": "active",
+    "waitingNeutral": [],
+    "focusBoundaryUs": "1059676940",
+    "backend": {
+      "phase": "active",
+      "held": [
+        {
+          "key": 79,
+          "kind": "key"
+        }
+      ],
+      "possibleHeld": [
+        {
+          "key": 79,
+          "kind": "key"
+        }
+      ],
+      "inFlight": null,
+      "uncertain": false,
+      "cleanupComplete": true
+    },
+    "lastDelivery": {
+      "intent": {
+        "controls": [
+          {
+            "key": 79,
+            "kind": "key"
+          }
+        ],
+        "kind": "held"
+      },
+      "actionId": "route-key",
+      "acknowledgement": {
+        "attempted": 1,
+        "cleanupComplete": true,
+        "collision": false,
+        "confirmed": 1,
+        "error": null,
+        "held": [
+          {
+            "key": 79,
+            "kind": "key"
+          }
+        ],
+        "ok": true,
+        "operationId": "2",
+        "sequence": "13",
+        "skipped": false,
+        "uncertain": false
+      }
+    }
+  },
+  "focusReturn": {
+    "paused": {
+      "state": "paused",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "1059676940",
+      "backend": {
+        "phase": "paused",
+        "held": [],
+        "possibleHeld": [],
+        "inFlight": null,
+        "uncertain": false,
+        "cleanupComplete": true
+      },
+      "lastDelivery": {
+        "intent": {
+          "kind": "cleanup"
+        },
+        "actionId": "route-key",
+        "acknowledgement": {
+          "attempted": 0,
+          "cleanupComplete": true,
+          "collision": false,
+          "confirmed": 0,
+          "error": null,
+          "held": [],
+          "ok": true,
+          "operationId": "3",
+          "sequence": "15",
+          "skipped": false,
+          "uncertain": false
+        }
+      }
+    },
+    "returned": {
+      "state": "active",
+      "waitingNeutral": [
+        "route-key"
+      ],
+      "focusBoundaryUs": "1059985229",
+      "backend": {
+        "phase": "paused",
+        "held": [],
+        "possibleHeld": [],
+        "inFlight": null,
+        "uncertain": false,
+        "cleanupComplete": true
+      },
+      "lastDelivery": {
+        "intent": {
+          "kind": "cleanup"
+        },
+        "actionId": "route-key",
+        "acknowledgement": {
+          "attempted": 0,
+          "cleanupComplete": true,
+          "collision": false,
+          "confirmed": 0,
+          "error": null,
+          "held": [],
+          "ok": true,
+          "operationId": "3",
+          "sequence": "15",
+          "skipped": false,
+          "uncertain": false
+        }
+      }
+    },
+    "repeatedTrue": {
+      "state": "active",
+      "waitingNeutral": [
+        "route-key"
+      ],
+      "focusBoundaryUs": "1059985229",
+      "backend": {
+        "phase": "paused",
+        "held": [],
+        "possibleHeld": [],
+        "inFlight": null,
+        "uncertain": false,
+        "cleanupComplete": true
+      },
+      "lastDelivery": {
+        "intent": {
+          "kind": "cleanup"
+        },
+        "actionId": "route-key",
+        "acknowledgement": {
+          "attempted": 0,
+          "cleanupComplete": true,
+          "collision": false,
+          "confirmed": 0,
+          "error": null,
+          "held": [],
+          "ok": true,
+          "operationId": "3",
+          "sequence": "15",
+          "skipped": false,
+          "uncertain": false
+        }
+      }
+    },
+    "rearmed": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "1059985229",
+      "backend": {
+        "phase": "active",
+        "held": [
+          {
+            "key": 79,
+            "kind": "key"
+          }
+        ],
+        "possibleHeld": [
+          {
+            "key": 79,
+            "kind": "key"
+          }
+        ],
+        "inFlight": null,
+        "uncertain": false,
+        "cleanupComplete": true
+      },
+      "lastDelivery": {
+        "intent": {
+          "controls": [
+            {
+              "key": 79,
+              "kind": "key"
+            }
+          ],
+          "kind": "held"
+        },
+        "actionId": "route-key",
+        "acknowledgement": {
+          "attempted": 1,
+          "cleanupComplete": true,
+          "collision": false,
+          "confirmed": 1,
+          "error": null,
+          "held": [
+            {
+              "key": 79,
+              "kind": "key"
+            }
+          ],
+          "ok": true,
+          "operationId": "4",
+          "sequence": "38",
+          "skipped": false,
+          "uncertain": false
+        }
+      }
+    }
+  },
+  "receiverReleaseObservations": [
+    {
+      "atUs": "97109234000",
+      "extended": 1,
+      "injectedMarker": true,
+      "lparam": "2169307137",
+      "message": 257,
+      "scanCode": 77,
+      "wparam": "39"
+    }
+  ],
+  "laterSave": {
+    "savedRevision": 2,
+    "savedAction": {
+      "key": 80,
+      "kind": "key-hold"
+    },
+    "appliedOwner": {
+      "gameId": null,
+      "generation": 6,
+      "profileId": "<test-profile-id>",
+      "profileRevision": 1,
+      "session": "<native-run-session>"
+    },
+    "appliedSnapshot": {
+      "profileId": "<test-profile-id>",
+      "revision": 1,
+      "semanticHash": "sha256:e7e4c1fbce6e43933087f8ba90713ff880cbcc805bd85323be8fd49f9337cf06"
+    },
+    "nativeHold": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "1059985229",
+      "backend": {
+        "phase": "active",
+        "held": [
+          {
+            "key": 79,
+            "kind": "key"
+          }
+        ],
+        "possibleHeld": [
+          {
+            "key": 79,
+            "kind": "key"
+          }
+        ],
+        "inFlight": null,
+        "uncertain": false,
+        "cleanupComplete": true
+      },
+      "lastDelivery": {
+        "intent": {
+          "controls": [
+            {
+              "key": 79,
+              "kind": "key"
+            }
+          ],
+          "kind": "held"
+        },
+        "actionId": "route-key",
+        "acknowledgement": {
+          "attempted": 1,
+          "cleanupComplete": true,
+          "collision": false,
+          "confirmed": 1,
+          "error": null,
+          "held": [
+            {
+              "key": 79,
+              "kind": "key"
+            }
+          ],
+          "ok": true,
+          "operationId": "6",
+          "sequence": "49",
+          "skipped": false,
+          "uncertain": false
+        }
+      }
+    }
+  },
+  "stopped": {
+    "profileSession": {
+      "appliedSnapshot": null,
+      "degradation": [],
+      "fault": null,
+      "owner": null,
+      "paused": false,
+      "state": "stopped"
+    },
+    "desktop": {
+      "state": "stopped",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "1059985229",
+      "backend": {
+        "phase": "stopped",
+        "held": [],
+        "possibleHeld": [],
+        "inFlight": null,
+        "uncertain": false,
+        "cleanupComplete": true
+      },
+      "lastDelivery": {
+        "intent": {
+          "controls": [
+            {
+              "key": 79,
+              "kind": "key"
+            }
+          ],
+          "kind": "held"
+        },
+        "actionId": "route-key",
+        "acknowledgement": {
+          "attempted": 1,
+          "cleanupComplete": true,
+          "collision": false,
+          "confirmed": 1,
+          "error": null,
+          "held": [
+            {
+              "key": 79,
+              "kind": "key"
+            }
+          ],
+          "ok": true,
+          "operationId": "6",
+          "sequence": "49",
+          "skipped": false,
+          "uncertain": false
+        }
+      }
+    }
+  },
+  "gameCleanup": {
+    "state": "closed",
+    "identity": {
+      "created": "<game-creation-filetime>",
+      "executable": "<SteamLibrary>\\steamapps\\common\\Assetto Corsa Rally\\acr\\Binaries\\Win64\\acr.exe",
+      "pid": "<game-pid>"
+    },
+    "method": "WM_CLOSE to visible windows of the exact newly launched process; no forced termination"
+  },
+  "cleanupErrors": [],
+  "finalStatus": {
+    "profileSession": {
+      "appliedSnapshot": null,
+      "degradation": [],
+      "fault": null,
+      "owner": null,
+      "paused": false,
+      "state": "stopped"
+    },
+    "desktop": {
+      "enabled": false,
+      "state": "stopped",
+      "scope": {
+        "identity": {
+          "created": "<game-creation-filetime>",
+          "executable": "<SteamLibrary>\\steamapps\\common\\Assetto Corsa Rally\\acr\\Binaries\\Win64\\acr.exe",
+          "pid": "<game-pid>"
+        },
+        "kind": "application"
+      },
+      "waitingNeutral": [],
+      "focusBoundaryUs": "1059985229",
+      "backend": {
+        "phase": "stopped",
+        "held": [],
+        "possibleHeld": [],
+        "uncertain": false,
+        "cleanupComplete": true,
+        "runs": []
+      }
+    },
+    "listener": {
+      "activeConnections": 0,
+      "configuredEnabled": false,
+      "discovery": "disabled",
+      "enabled": false,
+      "lastError": null
+    }
+  },
+  "wrapperReceiver": {
+    "pid": "<receiver-pid>",
+    "exitCode": 0,
+    "signalCode": null
+  },
+  "finalProcessQuery": {
+    "capturedAtUtc": "2026-10-18T20:21:50.1061529Z",
+    "gameProcesses": [],
+    "nativeInputWorkers": [],
+    "hostProcesses": [
+      {
+        "pid": "<cockpit-host-pid>",
+        "name": "osg-cockpit.exe",
+        "inputWorker": false
+      }
+    ]
+  },
+  "wrapperCleanupErrors": [],
+  "selectionAfterTest": "Stopped with Manual pinned to the test profile; no automatic reactivation was requested.",
+  "redaction": "Machine paths, native session/profile IDs, PID/creation values and window handles are replaced consistently; equality relationships are retained. Private certificate/account/peer material is omitted.",
+  "identityBinding": {
+    "actualProcess": {
+      "created": "<game-creation-filetime>",
+      "executable": "<SteamLibrary>\\steamapps\\common\\Assetto Corsa Rally\\acr\\Binaries\\Win64\\acr.exe",
+      "pid": "<game-pid>"
+    },
+    "foreground": {
+      "window": "<game-window>",
+      "identity": {
+        "executable": "<SteamLibrary>\\steamapps\\common\\Assetto Corsa Rally\\acr\\Binaries\\Win64\\acr.exe",
+        "pid": "<game-pid>",
+        "created": "<game-creation-filetime>"
+      }
+    },
+    "scope": {
+      "identity": {
+        "created": "<game-creation-filetime>",
+        "executable": "<SteamLibrary>\\steamapps\\common\\Assetto Corsa Rally\\acr\\Binaries\\Win64\\acr.exe",
+        "pid": "<game-pid>"
+      },
+      "kind": "application"
+    },
+    "journalScope": {
+      "identity": {
+        "created": "<game-creation-filetime>",
+        "executable": "<SteamLibrary>\\steamapps\\common\\Assetto Corsa Rally\\acr\\Binaries\\Win64\\acr.exe",
+        "pid": "<game-pid>"
+      },
+      "kind": "application"
+    },
+    "journalOwner": {
+      "generation": "6",
+      "session": "<native-run-session>"
+    }
+  },
+  "gameWindow": {
+    "window": "<game-window>",
+    "width": 2560,
+    "height": 1440,
+    "title": "Assetto Corsa Rally  "
+  }
+}
