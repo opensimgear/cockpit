@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import unittest
@@ -81,6 +82,7 @@ class ReleaseReadinessTests(unittest.TestCase):
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(release.ROOT / relative, target)
+            shutil.copyfile(release.ROOT / release.DEVELOPMENT_POLICY, root / release.DEVELOPMENT_POLICY)
             self.assertFalse(release.validate(self.matrix, root)["releaseEligible"])
             for name, (relative, _) in release.GATES.items():
                 target = root / relative
@@ -88,11 +90,11 @@ class ReleaseReadinessTests(unittest.TestCase):
                 if name == "mobile-authentication":
                     changed = original.replace("if mobile {\n        Some(", "if mobile {\n        None.or(", 1)
                 elif name == "host-live-output":
-                    changed = original.replace("LIVE_OUTPUT_QUALIFIED: bool = false", "LIVE_OUTPUT_QUALIFIED: bool = true", 1)
+                    changed = re.sub(r"LIVE_OUTPUT_QUALIFIED: bool = [^;]+;", "LIVE_OUTPUT_QUALIFIED: bool = true;", original, count=1)
                 elif name == "live-scripts":
                     changed = original.replace("SCRIPT_LIVE_QUALIFIED: bool = false", "SCRIPT_LIVE_QUALIFIED: bool = true", 1)
                 else:
-                    changed = original.replace("QUALIFIED: bool = false", "QUALIFIED: bool = true", 1)
+                    changed = re.sub(r"QUALIFIED: bool = [^;]+;", "QUALIFIED: bool = true;", original, count=1)
                 self.assertNotEqual(changed, original, name)
                 target.write_text(changed, encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, name):
@@ -106,6 +108,7 @@ class ReleaseReadinessTests(unittest.TestCase):
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(release.ROOT / relative, target)
+            shutil.copyfile(release.ROOT / release.DEVELOPMENT_POLICY, root / release.DEVELOPMENT_POLICY)
             target = root / release.GATES['host-live-output'][0]
             source = target.read_text(encoding='utf-8')
             changed = source.replace('osg_virtual_controller::entry::factory(),\n            LIVE_OUTPUT_QUALIFIED,',
@@ -114,6 +117,26 @@ class ReleaseReadinessTests(unittest.TestCase):
             target.write_text(changed, encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'host-live-output'):
                 release.validate(self.matrix, root)
+
+    def test_development_acceptance_cannot_enable_release_or_other_platforms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative, _ in release.GATES.values():
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(release.ROOT / relative, target)
+            target = root / release.DEVELOPMENT_POLICY
+            original = (release.ROOT / release.DEVELOPMENT_POLICY).read_text(encoding="utf-8")
+            for before, after in [("cfg!(windows)", "true"), ("cfg!(debug_assertions)", "true"),
+                                  ("!windows || !debug", "!windows && !debug"),
+                                  ("value.len() == 1 &&", "value.len() >= 1 &&"),
+                                  ("None => false", "None => true")]:
+                with self.subTest(change=before):
+                    changed = original.replace(before, after, 1)
+                    self.assertNotEqual(changed, original)
+                    target.write_text(changed, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "Development acceptance"):
+                        release.validate(self.matrix, root)
 
     def test_matrix_reader_rejects_duplicates_oversize_invalid_and_symlink(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -24,15 +24,25 @@ BUDGETS = {
 # These are repository consistency checks, not runtime/native qualification.
 GATES = {
     "host-live-output": ("crates/mapping-host/src/service.rs",
-        r"^pub const LIVE_OUTPUT_QUALIFIED: bool = false;$[\s\S]*?pub fn new\([\s\S]*?Self::with_output\([\s\S]*?osg_virtual_controller::entry::factory\(\),\s*LIVE_OUTPUT_QUALIFIED,\s*\)"),
+        r"^pub const LIVE_OUTPUT_QUALIFIED: bool = osg_controller_input::visibility::capabilities::DEVELOPMENT_NATIVE_PROFILES;$[\s\S]*?pub fn new\([\s\S]*?Self::with_output\([\s\S]*?osg_virtual_controller::entry::factory\(\),\s*LIVE_OUTPUT_QUALIFIED,\s*\)"),
     "windows-provisioning": ("crates/virtual-controller/src/windows_launcher.rs", r"^pub const QUALIFIED: bool = false;$"),
-    "windows-hiding": ("crates/controller-input/src/visibility/windows.rs", r"^pub const QUALIFIED: bool = false;$"),
+    "windows-hiding": ("crates/controller-input/src/visibility/windows.rs", r"^pub const QUALIFIED: bool = super::capabilities::DEVELOPMENT_NATIVE_PROFILES;$"),
     "live-scripts": ("crates/mapping-host/src/service.rs", r"^pub const SCRIPT_LIVE_QUALIFIED: bool = false;$"),
     "linux-output": ("crates/virtual-controller/src/uinput.rs", r"^pub const QUALIFIED: bool = false;$"),
     "macos-output": ("crates/virtual-controller/src/apple_helper.rs", r"^pub const QUALIFIED: bool = false;$"),
     "linux-isolated-launch": ("crates/controller-input/src/visibility/launch.rs", r"^pub const QUALIFIED: bool = false;$"),
     "mobile-authentication": ("crates/companion-service/src/client.rs", r"fn authentication_reason\([\s\S]{0,200}?if mobile \{\s*Some\("),
 }
+# Explicit Windows debug acceptance is separate from release qualification.
+# Check the entire predicate so a shared constant cannot bypass either gate.
+DEVELOPMENT_POLICY = "crates/controller-input/src/visibility/capabilities.rs"
+DEVELOPMENT_PATTERN = (
+    r"pub const DEVELOPMENT_NATIVE_PROFILES: bool = development_native_profiles\(\s*"
+    r"cfg!\(windows\),\s*cfg!\(debug_assertions\),\s*option_env!\(\"OSG_DEV_NATIVE_PROFILES\"\),\s*\);\s*"
+    r"const fn development_native_profiles\(windows: bool, debug: bool, value: Option<&str>\) -> bool \{\s*"
+    r"if !windows \|\| !debug \{\s*return false;\s*\}\s*match value \{\s*"
+    r"Some\(value\) => value.len\(\) == 1 && value.as_bytes\(\)\[0\] == b'1',\s*None => false,\s*\}\s*\}"
+)
 
 
 def require(condition, message):
@@ -85,6 +95,8 @@ def validate(matrix, root=ROOT):
         require(re.search(pattern, source, re.M) is not None,
                 "Native gate changed; retain separate qualification and reviewed enablement: " + name)
         verified.append(name)
+    require(re.search(DEVELOPMENT_PATTERN, (root / DEVELOPMENT_POLICY).read_text(encoding="utf-8")) is not None,
+            "Development acceptance must require exact Windows debug opt-in; release qualification remains blocked.")
     return {"schemaVersion": 1, "releaseEligible": False, "status": "blocked",
             "qualifiedClientTargets": [], "pendingQualificationIssues": ISSUES,
             "verifiedDisabledSourceGates": verified, "budgets": BUDGETS,

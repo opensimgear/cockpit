@@ -21,7 +21,10 @@ trust migration or application upgrades.
 The companion is a narrow client and needs no local vJoy/HidHide. Windows is the
 selected **host** qualification target. Browser and mobile clients connect to the same host; they do not enable Linux/macOS host virtual output. Those backends
 remain deferred in #48/#49. Windows host output and production recovery remain
-#54/#66; existing unqualified provisioning, hiding and live scripts stay disabled.
+#54/#66; unqualified provisioning and live scripts stay disabled. Windows host
+output and hiding permit explicit development acceptance only in debug builds
+compiled with `OSG_DEV_NATIVE_PROFILES=1`. Release builds and other platforms
+cannot enable that opt-in, and the release matrix remains blocked.
 
 ## Evidence and release decision
 
@@ -35,7 +38,8 @@ python scripts/companion-release-check.py --require-release
 ```
 
 The ordinary check succeeds when the declared **blocked** matrix and disabled
-native source gates agree. `--require-release` returns exit code **2** while
+native source gates agree, including the shared Windows debug acceptance predicate.
+`--require-release` returns exit code **2** while
 qualification is missing; malformed/inconsistent evidence returns **1**. The
 check is a repository consistency guard, not a signing verifier, runtime probe or
 automatic release authorizer. Editing the matrix cannot qualify a capability.
