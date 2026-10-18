@@ -10,7 +10,7 @@ use osg_mapping::{
 };
 use osg_profiles::{compiler_models::CompileSnapshot, default_document};
 use osg_virtual_controller::{
-    feeder::{Feeder, Message, LEASE_US},
+    feeder::{Feeder, Message, LEASE_US, RENEW_US},
     output_journal::{self, Phase as JournalPhase},
     session::{Channel, Factory, RunningOutput, Session},
     vjoy::{Axis, Binding, Driver, Position, Slot, Status as SlotStatus},
@@ -77,7 +77,7 @@ struct Child {
     pid: u32,
     alive: bool,
     clock: u64,
-    real_clock: Option<Instant>,
+    renewal_clock: bool,
 }
 impl Channel for Child {
     fn request(&mut self, message: &Message) -> Result<(), String> {
@@ -91,7 +91,11 @@ impl Channel for Child {
                 return Err("Injected cleanup failure".into());
             }
         }
-        self.clock = self.real_clock.map_or(self.clock + 1, |origin| origin.elapsed().as_micros() as u64 + 1);
+        self.clock += if self.renewal_clock && matches!(message, Message::Renew { .. }) {
+            RENEW_US
+        } else {
+            1
+        };
         self.feeder.receive(message.clone(), self.clock)
     }
     fn alive(&mut self) -> bool {
@@ -106,9 +110,9 @@ impl Channel for Child {
     }
 }
 fn factory() -> (Factory, Arc<Mutex<DriverState>>) {
-    factory_with_clock(false)
+    factory_with_renewal_clock(false)
 }
-fn factory_with_clock(real_clock: bool) -> (Factory, Arc<Mutex<DriverState>>) {
+fn factory_with_renewal_clock(renewal_clock: bool) -> (Factory, Arc<Mutex<DriverState>>) {
     let state = Arc::new(Mutex::new(DriverState {
         slot: Slot {
             id: 3,
@@ -150,7 +154,7 @@ fn factory_with_clock(real_clock: bool) -> (Factory, Arc<Mutex<DriverState>>) {
             pid,
             alive: true,
             clock: 1,
-            real_clock: real_clock.then(Instant::now),
+            renewal_clock,
         }))
     });
     (factory, state)
@@ -216,7 +220,9 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
             controllers, false, &candidate).unwrap());
         let owner = owner(&candidate);
         host.prepare(&candidate, &owner).unwrap();
-        let (factory, driver) = factory_with_clock(true);
+        // Advance feeder time from actual host renewal requests, so unrelated
+        // fixture setup or CI scheduling cannot consume its simulated lease.
+        let (factory, driver) = factory_with_renewal_clock(true);
         let binding = output::bindings(&[controller("combined", 0)],
             &[driver.lock().unwrap().slot.clone()]).unwrap().remove(0);
         let session = start(&factory, directory.path().join("output.json"), &owner, binding.clone());
@@ -233,18 +239,22 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
         let observed = driver.clone();
         let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let peer_finished = finished.clone();
+        let required_renewals = if cancelled { 1 } else { (LEASE_US / RENEW_US + 1) as usize };
         let peer = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let renewals = observed.lock().unwrap().messages.iter()
+                    .filter(|(_, message)| matches!(message, Message::Renew { .. })).count();
+                if renewals >= required_renewals { break; }
+                if peer_finished.load(Ordering::Acquire) { return; }
+                assert!(Instant::now() < deadline, "Host never pumped its output lease");
+                std::thread::sleep(Duration::from_millis(1));
+            }
             if cancelled {
-                let deadline = Instant::now() + Duration::from_secs(1);
-                loop {
-                    let polled = observed.lock().unwrap().messages.len() >= 2;
-                    if polled { break; }
-                    assert!(Instant::now() < deadline, "Host never pumped its output lease");
-                    std::thread::yield_now();
-                }
                 epoch.fetch_add(1, Ordering::AcqRel);
             } else {
-                std::thread::sleep(Duration::from_millis(350));
+                // Release fresh telemetry only after actual renewals have kept
+                // the real feeder alive for more than one simulated lease.
                 // A busy runner can delay the receiver's backlog reset past a
                 // single pair of packets. Supply bounded advancing live data
                 // until admission finishes, just as a running game would.
@@ -266,6 +276,8 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
             assert!(began.elapsed() < Duration::from_secs(2), "Stop must interrupt the baseline wait before its three-second deadline");
         } else {
             assert!(began.elapsed() > Duration::from_micros(LEASE_US));
+            assert!(driver.lock().unwrap().messages.iter()
+                .filter(|(_, message)| matches!(message, Message::Renew { .. })).count() >= required_renewals);
             let frames = result.unwrap();
             assert_eq!(frames.len(), 1);
             assert_eq!(frames[0].reason, osg_mapping::engine::Reason::Baseline);
