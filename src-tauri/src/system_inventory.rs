@@ -11,30 +11,65 @@ impl Runtime {
     pub(crate) fn new(native: bool) -> Self { Self { native, snapshot: Mutex::new(None) } }
     pub(crate) fn request(&self, request: &Value, controllers: &osg_controller_input::ControllerService) -> Result<Value, String> {
         if !request.is_object() || request.to_string().len() > 65_536
-            || request.as_object().unwrap().keys().any(|key| !matches!(key.as_str(), "command" | "clientId")) {
-            return Err("System inventory accepts only its command and Cockpit client identity.".into());
+            || request.as_object().unwrap().keys().any(|key| !matches!(key.as_str(), "command" | "clientId" | "offset" | "limit" | "observedAt")) {
+            return Err("System inventory accepts only its command, page and Cockpit client identity.".into());
         }
         if !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
             return Err("Missing Cockpit client identity; reload the application.".into());
         }
+        let offset=request.get("offset").map_or(Ok(0),|value|value.as_u64().filter(|offset|*offset<=4096).map(|offset|offset as usize).ok_or("Invalid system inventory page."))?;
+        let limit=request.get("limit").map_or(Ok(32),|value|value.as_u64().filter(|limit|*limit>0 && *limit<=32).map(|limit|limit as usize).ok_or("System inventory page limit must be 1–32."))?;
+        let expected=request.get("observedAt").map(|value|value.as_u64().filter(|at|*at>0).ok_or("Invalid system inventory observation token.")).transpose()?;
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());
+        if let Some(expected)=expected {
+            let (_,value)=snapshot.as_ref().filter(|(_,value)|value["observedAt"].as_u64()==Some(expected)).ok_or("System inventory snapshot expired; restart from its first page.")?;
+            return page(value,offset,limit);
+        }
         if let Some((observed, value)) = &*snapshot {
-            if observed.elapsed() < Duration::from_secs(2) { return Ok(value.clone()); }
+            if observed.elapsed() < Duration::from_secs(2) { return page(value,offset,limit); }
         }
         let observed = Instant::now();
         let value = if self.native {
             let visibility = osg_controller_input::inventory::current(controllers.resource_inventory());
-            compose(visibility, osg_virtual_controller::inspection::current())
+            compose(visibility, osg_virtual_controller::inspection::current(), configured())
         } else {
-            compose(Default::default(), Ok(vec![]))
+            compose(Default::default(), Ok(vec![]), Ok((vec![],vec![])))
         };
         *snapshot = Some((observed, value.clone()));
-        Ok(value)
+        page(&value,offset,limit)
     }
 }
-fn compose(visibility: osg_controller_input::inventory::Inventory, slots: Result<Vec<Slot>, String>) -> Value {
+fn page(value:&Value,offset:usize,limit:usize)->Result<Value,String> {
+    let devices=value["hiddenDevices"].as_array().ok_or("Invalid native system inventory snapshot.")?;
+    let mut selected=devices.iter().skip(offset).take(limit).cloned().collect::<Vec<_>>();
+    loop {
+        let next=offset+selected.len();
+        let response=json!({"observedAt":value["observedAt"],"virtualDevices":value["virtualDevices"],
+            "diagnostics":value["diagnostics"],"hiddenDevices":selected,"offset":offset,"total":devices.len(),
+            "nextOffset":if next<devices.len(){Some(next)}else{None}});
+        if serde_json::to_vec(&response).map_err(|e|e.to_string())?.len()<=60_000 {return Ok(response);}
+        if selected.len()<=1 {return Err("System inventory metadata exceeds the native reply budget.".into());}
+        selected.pop();
+    }
+}
+fn configured() -> Result<(Vec<Value>,Vec<String>),String> {
+    #[cfg(windows)]
+    {
+        let inventory=osg_virtual_controller::windows_provision::NativeBackend::native(&uuid::Uuid::new_v4().to_string())?.configured_inventory()?;
+        let slots=inventory.slots.into_iter().map(|slot|json!({
+            "id":format!("vjoy:{}",slot.id),"name":format!("vJoy Device {}",slot.id),"slot":slot.id,"backend":"vjoy",
+            "available":null,"status":"unknown","configured":true,"createdByCockpit":slot.created_by_cockpit,
+            "creationOperation":slot.creation_operation,"layout":slot.layout,"diagnostics":slot.diagnostics,
+            "ownerPid":null,"owner":null,
+        })).collect();
+        Ok((slots,inventory.diagnostics))
+    }
+    #[cfg(not(windows))]
+    { Ok((vec![],vec![])) }
+}
+fn compose(visibility: osg_controller_input::inventory::Inventory, slots: Result<Vec<Slot>, String>, configured:Result<(Vec<Value>,Vec<String>),String>) -> Value {
     let mut diagnostics = visibility.diagnostics;
-    let virtual_devices = match slots {
+    let mut virtual_devices = match slots {
         Ok(slots) => slots.into_iter().filter(|slot|slot.status != Status::Missing).map(|slot| {
             let status = serde_json::to_value(slot.status).unwrap();
             json!({
@@ -50,6 +85,19 @@ fn compose(visibility: osg_controller_input::inventory::Inventory, slots: Result
             vec![]
         }
     };
+    match configured {
+        Ok((configured,issues)) => {
+            diagnostics.extend(issues);
+            for configuration in configured {
+                if let Some(device)=virtual_devices.iter_mut().find(|device|device["id"]==configuration["id"]) {
+                    device["configured"]=json!(true);
+                    device["createdByCockpit"]=configuration["createdByCockpit"].clone();
+                    device["creationOperation"]=configuration["creationOperation"].clone();
+                } else {virtual_devices.push(configuration);}
+            }
+        }
+        Err(error)=>diagnostics.push(format!("Configured virtual device inventory is unavailable: {error}")),
+    }
     json!({"observedAt":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
         "virtualDevices":virtual_devices,"hiddenDevices":visibility.hidden_devices,"diagnostics":diagnostics})
 }
@@ -60,7 +108,7 @@ mod tests {
     #[test]
     fn virtual_inventory_reports_external_ownership_without_claiming_creation() {
         let slot=Slot {id:3,status:Status::Busy,owner_pid:Some(1234),buttons:16,axes:vec![],discrete_hats:0,continuous_hats:1,force_feedback:false};
-        let value=compose(Default::default(),Ok(vec![slot]));
+        let value=compose(Default::default(),Ok(vec![slot]),Ok((vec![],vec![])));
         assert_eq!(value["virtualDevices"][0]["id"],"vjoy:3");
         assert_eq!(value["virtualDevices"][0]["status"],"busy");
         assert_eq!(value["virtualDevices"][0]["ownerPid"],1234);
@@ -68,8 +116,33 @@ mod tests {
     }
     #[test]
     fn inspection_failure_is_reported_as_unavailable_not_an_empty_successful_provider() {
-        let value=compose(Default::default(),Err("driver unavailable".into()));
+        let value=compose(Default::default(),Err("driver unavailable".into()),Ok((vec![],vec![])));
         assert_eq!(value["virtualDevices"],json!([]));
         assert!(value["diagnostics"][0].as_str().unwrap().contains("driver unavailable"));
+    }
+    #[test]
+    fn configured_virtual_slots_remain_visible_when_optional_sdk_is_unavailable() {
+        let configured=json!({"id":"vjoy:4","name":"vJoy Device 4","status":"unknown","available":null,"configured":true,"createdByCockpit":true,"creationOperation":"verified-operation"});
+        let value=compose(Default::default(),Err("driver unavailable".into()),Ok((vec![configured],vec![])));
+        assert_eq!(value["virtualDevices"][0]["id"],"vjoy:4");
+        assert_eq!(value["virtualDevices"][0]["createdByCockpit"],true);
+        assert!(value["virtualDevices"][0]["available"].is_null());
+    }
+    #[test]
+    fn hidden_inventory_pages_preserve_all_devices_within_native_transport_budget() {
+        let devices=(0..100).map(|id|json!({"id":id,"ancestors":["a".repeat(4000)]})).collect::<Vec<_>>();
+        let inventory=json!({"observedAt":1,"virtualDevices":[],"hiddenDevices":devices,"diagnostics":[]});
+        let mut offset=0;
+        let mut count=0;
+        loop {
+            let response=page(&inventory,offset,32).unwrap();
+            assert!(response.to_string().len()<=60_000);
+            assert_eq!(response["total"],100);
+            count+=response["hiddenDevices"].as_array().unwrap().len();
+            let Some(next)=response["nextOffset"].as_u64() else {break;};
+            assert!(next as usize>offset);
+            offset=next as usize;
+        }
+        assert_eq!(count,100);
     }
 }

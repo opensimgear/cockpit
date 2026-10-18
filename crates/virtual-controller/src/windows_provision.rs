@@ -29,6 +29,22 @@ pub struct Pending {
     pub refresh_uncertain: bool,
     pub written: Vec<u8>,
 }
+/// Registry evidence remains available even when the optional driver SDK cannot
+/// be inspected. Creation proof requires a committed protected journal and an
+/// unchanged exact descriptor; missing proof remains unknown.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfiguredSlot {
+    pub id: u8,
+    pub layout: Option<crate::descriptor::Layout>,
+    pub created_by_cockpit: Option<bool>,
+    pub creation_operation: Option<String>,
+    pub diagnostics: Vec<String>,
+}
+pub struct ConfiguredInventory {
+    pub slots: Vec<ConfiguredSlot>,
+    pub diagnostics: Vec<String>,
+}
 pub struct NativeBackend {
     hive: HKEY,
     parameters: String,
@@ -102,6 +118,50 @@ fn validated_descriptor(slot: u8, value: &Entry) -> Result<&[u8], String> {
     Ok(bytes)
 }
 impl NativeBackend {
+    /// Inspect configured slots and durable creation evidence without loading
+    /// the SDK, launching a helper, taking ownership or modifying registry keys.
+    pub fn configured_inventory(&self) -> Result<ConfiguredInventory, String> {
+        let Some(parameters) = Key::open(self.hive, &self.parameters, KEY_READ, None)? else {
+            return Ok(ConfiguredInventory { slots:vec![],diagnostics:vec![] });
+        };
+        let (current, _) = entries(&parameters)?;
+        let mut inventory = ConfiguredInventory {
+            slots: current.iter().map(|(id,value)| {
+                let layout=validated_descriptor(*id,value).ok().and_then(|bytes|crate::descriptor::Layout::from_descriptor(*id,bytes).ok());
+                ConfiguredSlot { id:*id,layout,created_by_cockpit:None,creation_operation:None,
+                    diagnostics:if layout.is_none(){vec!["The configured descriptor has an unknown layout; capabilities require native inspection.".into()]}else{vec![]} }
+            }).collect(),
+            diagnostics:vec![],
+        };
+        let provenance = (|| -> Result<(),String> {
+            let Some(root) = Key::open(self.hive, &self.journals, KEY_READ, None)? else { return Ok(()); };
+            if self.protected { crate::journal_security::verify_protected(&root)?; }
+            let names=root.names(true)?;
+            if names.len()>256 { return Err("More than 256 provisioning journals require inspection.".into()); }
+            for id in names {
+                operation_id(&id)?;
+                let key=Key::open(root.0,&id,KEY_READ,None)?.ok_or("Creation journal changed during inspection.")?;
+                if self.protected { crate::journal_security::verify_protected(&key)?; }
+                let record=Self::read_record(&key)?;
+                crate::provision::validate_journal(&record)?;
+                if record.id!=id { return Err("Creation journal identity does not match its key.".into()); }
+                if !record.committed || Self::settled(&key).is_err() { continue; }
+                for slot in &mut inventory.slots {
+                    if record.written.contains(&slot.id) && record.owned.get(&slot.id)==current.get(&slot.id) {
+                        slot.created_by_cockpit=Some(true);
+                        slot.creation_operation=Some(id.clone());
+                    }
+                }
+            }
+            if entries(&parameters)?.0!=current { return Err("Configured slots changed while inspecting creation evidence.".into()); }
+            Ok(())
+        })();
+        if let Err(error)=provenance {
+            for slot in &mut inventory.slots { slot.created_by_cockpit=None;slot.creation_operation=None; }
+            inventory.diagnostics.push(format!("vJoy creation provenance is unknown: {error}"));
+        }
+        Ok(inventory)
+    }
     /// Construct callbacks without loading the SDK, elevating, or changing a key.
     pub fn native(operation: &str) -> Result<Self, String> {
         Self::open(

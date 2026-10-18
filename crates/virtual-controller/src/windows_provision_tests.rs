@@ -151,6 +151,31 @@ impl Drop for Fixture {
     }
 }
 #[test]
+fn configured_inventory_is_read_only_and_requires_exact_committed_creation_evidence() {
+    let mut f=Fixture::new();
+    assert!(f.backend.configured_inventory().unwrap().slots.is_empty());
+    let mut record=f.plan();
+    f.backend.journal(&record).unwrap();
+    for (id,value) in &record.owned { f.device(*id,value); }
+    let uncommitted=f.backend.configured_inventory().unwrap();
+    assert!(uncommitted.slots.iter().all(|slot|slot.created_by_cockpit.is_none()));
+    // Write committed test evidence directly: the inventory path itself never
+    // invokes transactional creation, refresh or the SDK callbacks.
+    record.written=record.owned.keys().copied().collect();
+    record.committed=true;
+    let key=Key::open(f.backend.hive,&f.backend.journal_path(),KEY_READ|KEY_WRITE,None).unwrap().unwrap();
+    NativeBackend::write_record(&key,&record).unwrap();
+    let committed=f.backend.configured_inventory().unwrap();
+    assert_eq!(committed.slots.len(),2);
+    assert!(committed.slots.iter().all(|slot|slot.created_by_cockpit==Some(true)));
+    assert_eq!(f.refreshes.get(),0);
+    let device=Key::open(f.backend.hive,&format!("{}\\Device02",f.backend.parameters),KEY_READ|KEY_WRITE,None).unwrap().unwrap();
+    device.write("Unexpected",REG_DWORD,&1u32.to_le_bytes()).unwrap();
+    let changed=f.backend.configured_inventory().unwrap();
+    assert!(changed.slots.iter().find(|slot|slot.id==2).unwrap().created_by_cockpit.is_none());
+    assert!(changed.slots.iter().find(|slot|slot.id==1).unwrap().created_by_cockpit==Some(true));
+}
+#[test]
 fn snapshot_preserves_raw_unknown_fields_and_fingerprints_ancillary_settings() {
     let mut f = Fixture::new();
     let initial = f.backend.snapshot().unwrap();
