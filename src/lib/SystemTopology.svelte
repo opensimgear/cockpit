@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import type { SystemComponent } from './system-inventory';
-  import { systemTopology, topologyFit, topologyZoom, TOPOLOGY_NODE_HEIGHT, TOPOLOGY_NODE_WIDTH, type TopologyView } from './system-topology';
+  import { systemTopology, topologyFit, topologyInitialView, topologyZoom, TOPOLOGY_NODE_HEIGHT, TOPOLOGY_NODE_WIDTH, type TopologyView } from './system-topology';
 
   let { components, context = components, selectedId, onselect }: {
     components: readonly SystemComponent[];
@@ -20,6 +20,7 @@
   let drag: { id: number; x: number; y: number; view: TopologyView } | null = null;
 
   function fit() { view = topologyFit(graph.width, graph.height, width, height); }
+  function initialView() { view = topologyInitialView(graph.width, graph.height, width, height); }
   function zoom(multiplier: number, point = { x: width / 2, y: height / 2 }) { view = topologyZoom(view, multiplier, point); }
   function wheel(event: WheelEvent) {
     event.preventDefault();
@@ -64,14 +65,14 @@
   function kind(type: SystemComponent['type']) {
     return type === 'osg' ? 'OSG device' : type === 'controller' ? 'Third-party controller' : type === 'host' ? 'System host' : type[0].toUpperCase() + type.slice(1);
   }
-  $effect(() => { geometry; untrack(fit); });
+  $effect(() => { geometry; untrack(initialView); });
   onMount(() => {
     const observer = new ResizeObserver(entries => {
       const bounds = entries[0]?.contentRect;
       if (!bounds) return;
       const initial = width === 800 && height === 560;
       width = bounds.width; height = bounds.height;
-      if (initial) fit();
+      if (initial) initialView();
     });
     observer.observe(viewport);
     return () => observer.disconnect();

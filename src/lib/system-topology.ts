@@ -71,17 +71,21 @@ export function systemTopology(components: readonly SystemComponent[], context: 
     const level = depth.get(component.id)!;
     columns.set(level, [...(columns.get(level) ?? []), component]);
   }
-  const rowHeight = TOPOLOGY_NODE_HEIGHT + 46;
-  const largestColumn = Math.max(1, ...[...columns.values()].map(column => column.length));
+  const rowHeight = TOPOLOGY_NODE_HEIGHT + 46, columnWidth = TOPOLOGY_NODE_WIDTH + 100;
+  const rowsFor = (count: number) => count > 6 ? Math.min(6, Math.ceil(Math.sqrt(count * 1.2))) : count;
+  const largestColumn = Math.max(1, ...[...columns.values()].map(column => rowsFor(column.length)));
   const height = largestColumn * rowHeight + 48;
   const nodes: TopologyNode[] = [];
-  for (const [level, column] of [...columns.entries()].sort(([a], [b]) => a - b)) {
-    column.forEach((component, row) => nodes.push({
+  let layerX = 40;
+  for (const [, column] of [...columns.entries()].sort(([a], [b]) => a - b)) {
+    const rows = rowsFor(column.length), subcolumns = Math.ceil(column.length / rows);
+    column.forEach((component, index) => nodes.push({
       component,
       context: !matches.has(component.id),
-      x: 40 + level * (TOPOLOGY_NODE_WIDTH + 140),
-      y: 24 + (largestColumn - column.length) * rowHeight / 2 + row * rowHeight,
+      x: layerX + Math.floor(index / rows) * columnWidth,
+      y: 24 + (largestColumn - rows) * rowHeight / 2 + index % rows * rowHeight,
     }));
+    layerX += subcolumns * columnWidth + 40;
   }
   const positions = new Map(nodes.map(node => [node.component.id, node]));
   const pairs = new Map<string, SystemConnection[]>();
@@ -101,10 +105,15 @@ export function systemTopology(components: readonly SystemComponent[], context: 
     const startY = from.y + TOPOLOGY_NODE_HEIGHT / 2 + offset;
     const endY = to.y + TOPOLOGY_NODE_HEIGHT / 2 + offset;
     const middleX = sameColumn ? startX + 55 + Math.abs(offset) : (startX + endX) / 2;
+    // Long edges use the gaps between rows and columns instead of passing
+    // through intervening cards in a wrapped layer.
+    const long = Math.abs(to.x - from.x) > columnWidth + 40;
+    const direction = leftToRight ? 1 : -1, exitX = startX + direction * 28, approachX = endX - direction * 28;
+    const railY = to.y - 23 + offset;
     edges.push({ connection,
-      path: `M ${startX} ${startY} C ${middleX} ${startY}, ${middleX} ${endY}, ${endX} ${endY}`,
-      x: sameColumn ? middleX : (startX + endX) / 2,
-      y: (startY + endY) / 2,
+      path: long ? `M ${startX} ${startY} L ${exitX} ${startY} L ${exitX} ${railY} L ${approachX} ${railY} L ${approachX} ${endY} L ${endX} ${endY}` : `M ${startX} ${startY} C ${middleX} ${startY}, ${middleX} ${endY}, ${endX} ${endY}`,
+      x: long ? (exitX + approachX) / 2 : sameColumn ? middleX : (startX + endX) / 2,
+      y: long ? railY : (startY + endY) / 2,
       label: topologyConnectionLabel(connection),
     });
   });
@@ -114,6 +123,14 @@ export function systemTopology(components: readonly SystemComponent[], context: 
 export function topologyFit(width: number, height: number, viewportWidth: number, viewportHeight: number): TopologyView {
   const zoom = Math.max(0.08, Math.min(1, (Math.max(1, viewportWidth) - 48) / width, (Math.max(1, viewportHeight) - 48) / height));
   return { x: (viewportWidth - width * zoom) / 2, y: (viewportHeight - height * zoom) / 2, zoom };
+}
+
+/** Start at a readable scale on larger rigs. Fit remains an explicit all-node
+ * overview; keyboard focus and pan make every component reachable at this scale. */
+export function topologyInitialView(width: number, height: number, viewportWidth: number, viewportHeight: number): TopologyView {
+  const fitted = topologyFit(width, height, viewportWidth, viewportHeight);
+  const zoom = Math.max(0.8, fitted.zoom);
+  return { x: width * zoom <= viewportWidth ? (viewportWidth - width * zoom) / 2 : 24, y: height * zoom <= viewportHeight ? (viewportHeight - height * zoom) / 2 : 24, zoom };
 }
 
 export function topologyZoom(view: TopologyView, multiplier: number, point: { x: number; y: number }): TopologyView {

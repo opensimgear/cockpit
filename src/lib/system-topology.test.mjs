@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadModules } from './test-module-loader.mjs';
 const modules = await loadModules(['./system-topology']);
-const { systemTopology, topologyFit, topologyZoom, topologyConnectionLabel, TOPOLOGY_NODE_WIDTH, TOPOLOGY_NODE_HEIGHT } = modules.get('./system-topology');
+const { systemTopology, topologyFit, topologyInitialView, topologyZoom, topologyConnectionLabel, TOPOLOGY_NODE_WIDTH, TOPOLOGY_NODE_HEIGHT } = modules.get('./system-topology');
 const plain = value => JSON.parse(JSON.stringify(value));
 const edge = (id, from, to, transport = 'usb', current = true) => ({ id, from, to, transport, current });
 const component = (id, type = 'controller', connections = [], presence = 'connected') => ({ id, name: id, type, role: type, presence, connections, hidden: null, enabled: null, owner: null, diagnostics: [], firstSeen: 1, lastSeen: 1 });
@@ -57,4 +57,25 @@ test('cyclic sightings do not loop and fitting includes every node with finite a
   assert.ok(Math.abs((anchor.y - view.y) / view.zoom - (anchor.y - next.y) / next.zoom) < 1e-8);
   assert.equal(topologyZoom(view, 1e9, anchor).zoom, 2);
   assert.equal(topologyZoom(view, 1e-9, anchor).zoom, 0.08);
+});
+
+test('larger rigs wrap siblings into bounded-height layers with readable initial zoom and an explicit complete overview', () => {
+  const devices = Array.from({ length: 28 }, (_, index) => component('device-' + index, 'controller', [edge('edge-' + index, 'host', 'device-' + index)]));
+  const inventory = [component('host', 'host'), ...devices], graph = systemTopology(inventory);
+  assert.equal(graph.nodes.length, 29);
+  assert.ok(graph.height <= 6 * (TOPOLOGY_NODE_HEIGHT + 46) + 48);
+  assert.ok(new Set(graph.nodes.filter(node => node.component.id !== 'host').map(node => node.x)).size >= 4);
+  for (let index = 0; index < graph.nodes.length; index++) for (const other of graph.nodes.slice(index + 1)) {
+    const node = graph.nodes[index];
+    assert.ok(node.x + TOPOLOGY_NODE_WIDTH <= other.x || other.x + TOPOLOGY_NODE_WIDTH <= node.x || node.y + TOPOLOGY_NODE_HEIGHT <= other.y || other.y + TOPOLOGY_NODE_HEIGHT <= node.y, `${node.component.id} overlaps ${other.component.id}`);
+  }
+  assert.deepEqual(plain(systemTopology([...inventory].reverse())), plain(graph));
+  assert.deepEqual(plain(systemTopology(inventory.map(item => ({ ...item, presence: 'offline', name: item.name }))).nodes.map(node => [node.component.id, node.x, node.y])), plain(graph.nodes.map(node => [node.component.id, node.x, node.y])));
+  const initial = topologyInitialView(graph.width, graph.height, 1280, 640), fitted = topologyFit(graph.width, graph.height, 1280, 640);
+  assert.equal(initial.zoom, 0.8);
+  assert.ok(fitted.zoom > 0.5, 'packing avoids the old 14% vertical-stack overview');
+  assert.ok(fitted.zoom < initial.zoom);
+  assert.ok(graph.edges.some(edge => edge.path.includes(' L ')), 'long edges route through gaps between packed cards');
+  const small = topologyInitialView(500, 300, 1280, 640);
+  assert.equal(small.zoom, 1); assert.ok(small.x > 0 && small.y > 0);
 });
