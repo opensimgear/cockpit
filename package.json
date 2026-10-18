@@ -74,7 +74,8 @@
     "desktop:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-desktop.ts --test-coverage-include=src/lib/profile-desktop-runtime.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-desktop.test.mjs src/lib/profile-desktop-ui.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/profile-desktop-preview.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-desktop-preview.test.mjs src/lib/profile-desktop-preview-ui.test.mjs",
     "desktop:native:ui": "node --test tests/ui/desktop-output-native.mjs",
     "desktop:companion:native": "node --test tests/ui/desktop-companion-native.mjs",
-    "desktop:game:native": "node --test tests/ui/desktop-game-native.mjs"
+    "desktop:game:native": "node --test tests/ui/desktop-game-native.mjs",
+    "desktop:crash:native": "node --test tests/ui/desktop-crash-native.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",

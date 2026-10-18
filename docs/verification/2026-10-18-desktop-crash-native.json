@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-18",
+  "passed": true,
+  "actualNativeCockpit": true,
+  "actualWholeAppInterruption": true,
+  "explicitRecovery": true,
+  "command": "OSG_DESKTOP_CRASH_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-crash-native.mjs",
+  "productionQualified": false,
+  "hardwareTested": false,
+  "gameTested": false,
+  "virtualControllers": 0,
+  "measurement": "Native ACK counts, exact Win32 process ownership, durable journal and receiver-observed injected KeyA edges. No latency or hardware claim.",
+  "sourceRevision": "00affe53e235f6756ec19489608fa56ca34bc3e5",
+  "nativeExecutableSha256": "977d44309eae40f64b4782308354e87ca2eb5bfc07b32660ad947471d51e63d1",
+  "checks": [
+    "One authenticated real WSS button produced exactly one receiver-observed and natively acknowledged application-scoped KeyA hold with durable exact run ownership",
+    "Exact private worker, main dev app and owned WebView descendants were forcibly terminated without Drop; the receiver and external harness survived and held KeyA remained durably recorded",
+    "Ordinary whole-app restart exposes RecoveryNeeded with no owner, applied snapshot, input worker, release or replay",
+    "Explicit profile recovery releases exactly recorded KeyA once, preserves journal owner/scope, clears held/possible/in-flight ownership, leaves ProfileSession stopped and terminates its recovery worker"
+  ],
+  "singleControl": {
+    "kind": "key",
+    "usbHidUsage": 4,
+    "scanCode": 30,
+    "modifiers": []
+  },
+  "nativeHoldAcknowledgement": {
+    "attempted": 1,
+    "cleanupComplete": true,
+    "collision": false,
+    "confirmed": 1,
+    "error": null,
+    "held": [
+      {
+        "key": 4,
+        "kind": "key"
+      }
+    ],
+    "ok": true,
+    "operationId": "1",
+    "sequence": "10",
+    "skipped": false,
+    "uncertain": false
+  },
+  "interruption": {
+    "method": "TerminateProcess on exact opened identity handles; private worker then main application then its snapshotted WebView descendants",
+    "treeProcesses": 10,
+    "exactExecutablePidAndCreationVerified": true,
+    "privateWorkerTerminatedBeforeMain": true,
+    "openedProcessHandlesVerified": true,
+    "ancestryRevalidatedAfterPinningHandles": true,
+    "receiverAndHarnessOutsideAppTree": true,
+    "snapshottedDescendantsOnly": true,
+    "restartedSameDevelopmentExecutable": true
+  },
+  "ordinaryRestart": {
+    "profileSession": {
+      "appliedSnapshot": null,
+      "degradation": [],
+      "fault": "A previous profile run needs explicit recovery. No workers, hiding or commands were restarted.",
+      "owner": null,
+      "paused": false,
+      "state": "recovery-needed"
+    },
+    "desktopState": "recovery-needed",
+    "inputWorkers": 0,
+    "receiverKeyDowns": 1,
+    "receiverKeyUps": 0
+  },
+  "explicitRecoveryResult": {
+    "profileSession": {
+      "appliedSnapshot": null,
+      "degradation": [],
+      "fault": null,
+      "owner": null,
+      "paused": false,
+      "state": "stopped"
+    },
+    "recordedControlOnly": true,
+    "extraKeyDowns": 0,
+    "journalOwnerAndScopePreserved": true,
+    "journal": {
+      "phase": "stopped",
+      "held": [],
+      "possibleHeld": [],
+      "inFlight": null,
+      "uncertain": false,
+      "cleanupComplete": true,
+      "runs": [],
+      "owners": []
+    }
+  },
+  "receiverEvents": [
+    {
+      "message": 256,
+      "scanCode": 30,
+      "extended": 0,
+      "injectedMarker": true
+    },
+    {
+      "message": 257,
+      "scanCode": 30,
+      "extended": 0,
+      "injectedMarker": true
+    }
+  ],
+  "finalState": {
+    "profileSession": {
+      "appliedSnapshot": null,
+      "degradation": [],
+      "fault": null,
+      "owner": null,
+      "paused": false,
+      "state": "stopped"
+    },
+    "desktopEnabled": false,
+    "inputWorkers": 0,
+    "listenerEnabled": false,
+    "activeConnections": 0,
+    "desktopPreferencesRestoredByteForByte": true,
+    "receiveOnlyProcessExitCode": 0,
+    "developmentCockpitLeftRunning": true
+  },
+  "cleanupErrors": [],
+  "remainingQualification": "Physical controls, real game response and production qualification remain unmeasured."
+}
