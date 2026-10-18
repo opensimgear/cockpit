@@ -78,6 +78,45 @@ test('verified multiple HID collections are capabilities of one physical node ac
  h.failures.set('controller_list',Error('Capture failed'));await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);
 });
 
+test('exact physical USB parent folds sibling HID collections and rules while an unproved orphan remains separate', async () => {
+ const parent='USB\\VID_0079&PID_0126\\exact-parent',container='40000000-0000-4000-8000-000000000001';
+ const child=(id,controllerId)=>({id,name:'Composite controller',instanceId:'HID\\VID_0079&PID_0126\\'+id,controllerIds:[controllerId],parentInstanceId:parent,containerId:container,ancestors:[parent,'USB\\ROOT_HUB'],present:true,hidden:false,diagnostics:[]});
+ const h=harness({controllers:[source('col-a'),source('col-b')],native:{virtualDevices:[],diagnostics:[],hiddenDevices:[
+  child('child-a','col-a'),child('child-b','col-b'),{id:'parent',name:'USB physical parent',instanceId:parent,controllerIds:[],containerId:container,present:true,hidden:true,configured:true,diagnostics:[]},
+  {id:'orphan',name:'Same vendor but unproved',instanceId:'HID\\VID_0079&PID_0126\\unresolved',controllerIds:[],parentInstanceId:null,containerId:null,ancestors:[],present:false,hidden:true,diagnostics:[]},
+ ]}});
+ await h.controller.refresh();
+ assert.equal(h.controller.snapshot.components.filter(component=>component.type==='controller').length,2);
+ const physical=h.component('controller:col-a');
+ assert.ok(physical);assert.equal(physical.hidden,true);assert.equal(physical.presence,'connected');
+ assert.deepEqual(plain([...new Set(physical.targets.filter(target=>target.kind==='controller').map(target=>target.id))].sort()),['col-a','col-b']);
+ assert.equal(h.component('controller:col-b'),undefined);assert.equal(h.component('visibility:parent'),undefined);
+ assert.ok(h.component('visibility:orphan'),'VID/PID similarity cannot absorb an unproved orphan rule');
+ h.failures.set('controller_list',Error('Capture lost'));
+ await h.controller.refresh();
+ assert.equal(h.controller.snapshot.components.filter(component=>component.type==='controller').length,2);
+});
+
+test('an unavailable or stopped controller backend cannot turn remembered presence into confirmed offline or allow Forget', async () => {
+ for(const backendStatus of ['unavailable','starting','stopped']){
+  const h=harness({controllers:[source()],usb:[usb()]});await h.controller.refresh();
+  const lastConnected=h.component('controller:wheel').lastSeen;
+  h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:1,sources:[source('wheel',{online:false})],backendStatus,diagnostic:'Capture access unavailable'}}));
+  await h.controller.refresh();
+  assert.equal(h.component('controller:wheel').presence,'unknown',backendStatus);
+  assert.equal(h.component('controller:wheel').stale,true);
+  assert.equal(h.component('controller:wheel').capture,'unavailable');
+  assert.equal(h.component('controller:wheel').forget.allowed,false);
+  assert.equal(h.component('controller:wheel').lastSeen,lastConnected);
+  assert.equal(h.component('usb:serial').presence,'connected');
+  assert.match(h.controller.snapshot.diagnostics.join(' '),/Capture access unavailable/);
+  await assert.rejects(h.controller.forget('controller:wheel'),/cannot confirm|offline|eligible/i);
+  assert.equal(h.requests.some(request=>request.command==='controller_forget'),false);
+  h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:0,sources:[],backendStatus,diagnostic:'Capture access unavailable'}}));
+  await h.controller.refresh();assert.equal(h.component('controller:wheel').presence,'unknown','partial empty capture cannot prove absence');
+ }
+});
+
 test('dual transport input ownership and configuration writer are independent observed facts', async () => {
  const h=harness({gateways:[gateway({state:{...gateway().state,modules:[module('panel',{directUsb:true})]}})],usb:[usb('serial',{...usb(),snapshot:{...usb().snapshot,claimedBy:'USB setup writer'}})],resources:[resource('proven',[connection('standalone-usb','serial'),connection('gateway:gateway-one','panel')])]});
  await h.controller.refresh();const component=h.component('resource:proven');assert.equal(component.inputOwner,'Device USB');assert.equal(component.configurationOwner,'USB setup writer');assert.equal(component.configurationRoute,'USB · COM7');assert.equal(component.connections.length,2);
@@ -96,6 +135,46 @@ test('forget review explains exact retained local bindings and degrades honestly
  const review=await h.controller.reviewForget(['controller:offline']);assert.equal(review[0].references[0].name,'Driving / steering');
  assert.ok(h.component('controller:offline'));assert.equal(h.requests.some(r=>r.command==='controller_forget'),false);
  h.failures.set('profile_list',Error('Metadata unavailable'));const partial=await h.controller.reviewForget(['controller:offline']);assert.match(partial[0].diagnostics.join(' '),/retained/);
+});
+
+test('forget review resolves actual host facade UUID assignments and preserves source evidence through an offline provider refresh', async () => {
+ const facade='10000000-0000-4000-8000-000000000001',unrelated='10000000-0000-4000-8000-000000000002';
+ const h=harness({controllers:[source('offline',{online:false})],resources:[resource(facade,[connection('host-controllers','offline','hid')],{resourceType:'host-controller',availability:'offline'})]});
+ h.custom.set('profile_list',()=>({profiles:{profiles:[{id:'saved',name:'Driving'}]}}));
+ h.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{resourceId:'steering',sourceId:facade,ports:[]},{resourceId:'unrelated',sourceId:unrelated,ports:[]}]}}));
+ await h.controller.refresh();
+ let review=await h.controller.reviewForget(['controller:offline']);
+ assert.deepEqual(plain(review[0].references.map(reference=>reference.name)),['Driving / steering']);
+ assert.ok(h.component('controller:offline').evidence.includes('binding-source:'+facade));
+ h.state.resources=[];
+ await h.controller.refresh();
+ review=await h.controller.reviewForget(['controller:offline']);
+ assert.deepEqual(plain(review[0].references.map(reference=>reference.name)),['Driving / steering']);
+ assert.equal(h.requests.some(request=>/forget|revoke|apply|save/.test(request.command)),false);
+});
+
+test('gateway forget confirmation enumerates real facade UUID bindings affected by sole child-route cleanup', async () => {
+ const facade='20000000-0000-4000-8000-000000000001';
+ const h=harness({gateways:[gateway({present:false,state:{...gateway().state,connected:false,modules:[module('panel',{online:false})]}})],resources:[resource(facade,[connection('gateway:gateway-one','panel','can')],{availability:'offline'})]});
+ h.custom.set('profile_list',()=>({profiles:{profiles:[{id:'saved',name:'Flight'}]}}));
+ h.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{resourceId:'radio',sourceId:facade,ports:[]}]}}));
+ await h.controller.refresh();
+ const review=await h.controller.reviewForget(['gateway:gateway-one']);
+ assert.deepEqual(plain(review[0].references.map(reference=>reference.name)),['Flight / radio']);
+ assert.ok(h.component('resource:'+facade));
+ assert.equal(h.requests.some(request=>request.command==='forget'),false);
+});
+
+test('companion installation revoke confirmation includes assigned-instance bindings via native companions scope and facade UUID', async () => {
+ const instance='30000000-0000-4000-8000-000000000001',facade='30000000-0000-4000-8000-000000000002';
+ const h=harness({companions:{host:{clients:[{companionId:'tablet',name:'Tablet',connected:false}],instances:[{instanceId:instance,sourceId:instance,companionId:'tablet',name:'Assigned radio',connected:false,armed:false,sessionId:null}]}},resources:[resource(facade,[connection('companions',instance,'network')],{resourceType:'companion',availability:'offline'})]});
+ h.custom.set('profile_list',()=>({profiles:{profiles:[{id:'saved',name:'Flight'}]}}));
+ h.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{resourceId:'radio-panel',sourceId:facade,ports:[]}]}}));
+ await h.controller.refresh();
+ assert.ok(h.component('companion-instance:'+instance).evidence.includes('binding-source:'+facade));
+ const review=await h.controller.reviewForget(['companion:tablet']);
+ assert.deepEqual(plain(review[0].references.map(reference=>reference.name)),['Flight / radio-panel']);
+ assert.equal(h.requests.some(request=>request.command==='companion_revoke'),false);
 });
 
 test('companion transport is evidence-backed, pending requests remain visible, and USB presence prevents revocation', async () => {
