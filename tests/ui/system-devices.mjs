@@ -192,6 +192,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const graphIds = await graph.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).filter(id => id !== 'host').sort());
     assert.deepEqual(graphIds, listIds);
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-label', /busy.*Creation provenance unknown/);
+    await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('title', /busy.*Creation provenance unknown/);
     await expect(details).toContainText('External busy virtual joystick');
     await details.getByRole('button', { name: 'Close details', exact: true }).click();
     await expect(graph.getByRole('button', { name: 'Zoom in', exact: true })).toBeEnabled();
@@ -225,6 +227,34 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.getByText('Hidden pedals PnP record', { exact: true })).toHaveCount(0);
     assert.deepEqual(await devices.locator('.system-list [data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).sort()), listIds,
       'Provider recovery must merge the correlated PnP alias without retaining a duplicate physical device.');
+    // Native companion transport evidence is independent from installation,
+    // pairing approval and assigned input ownership. Offline network history
+    // remains visible while a USB-only installation gains no network edge.
+    const browserClient = fixture.companions.host.clients.find(client => client.companionId === 'browser-fixture');
+    browserClient.connected = false; delete browserClient.peer;
+    fixture.companions.host.instances[0].connected = false;
+    fixture.companions.host.pending = [{ requestId: 'pairing-fixture', name: 'Unverified tablet', transport: 'network', approved: false }];
+    fixture.companions.usb.devices[0].connected = true;
+    await refresh.click();
+    await devices.locator('[data-component-id="companion:browser-fixture"]').click();
+    await expect(details).toContainText('Offline');
+    await expect(details).toContainText('NETWORK · Your computer · 192.0.2.10 · Last-known connection');
+    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await devices.locator('[data-component-id="companion:esp32-fixture"]').click();
+    await expect(details).toContainText('USB · Your computer · COM-fixture-companion · Current connection');
+    await expect(details).not.toContainText('NETWORK ·');
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    await devices.locator('[data-component-id="companion-pending:pairing-fixture"]').click();
+    await expect(details).toContainText('Pairing request · Unverified installation');
+    await expect(details).toContainText('Waiting for pairing approval');
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await details.getByRole('button', { name: 'Close details', exact: true }).click();
+    assert.equal(requests.filter(request => request.command === 'companion_approve').length, 0);
+    await topology.click();
+    await expect(graph.locator('[data-component-id="companion:browser-fixture"]')).toContainText('Offline');
+    await expect(graph.locator('[data-component-id="companion-pending:pairing-fixture"]')).toContainText('Waiting for pairing approval');
+    await list.click();
     // Gateway management and existing module configuration remain reachable
     // through the shared details; returning retains selection and search.
     await search.fill('OpenSimGear CAN gateway');
@@ -295,7 +325,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await refresh.click();
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
     await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
-    const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_revoke|claim|register|apply|save|configure)$/;
+    const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_approve|companion_revoke|claim|register|apply|save|configure)$/;
     assert.deepEqual(requests.filter(request => prohibited.test(request.command)), []);
     assert.deepEqual(unexpected, []); assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: resolve(artifacts, 'complete-system-topology.png'), fullPage: true });
