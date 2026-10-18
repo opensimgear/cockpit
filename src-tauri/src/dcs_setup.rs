@@ -1,5 +1,7 @@
 //! Pinned DCS-Skunkworks installation. No game installation files or Lua execute here.
 //! A write-ahead journal owns only matching bytes; recovery preserves external edits.
+mod aircraft;
+
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -928,7 +930,7 @@ fn module_check(module: &Path) -> Result<(), String> {
     validate_catalogue(&module.join("doc/json"))
 }
 /// Readiness of game-side files only. The caller also validates saved Cockpit connection settings.
-pub(crate) fn inspect(target: &Path) -> Result<Value, String> {
+fn inspect_base(target: &Path) -> Result<Value, String> {
     let target = checked_target(target)?;
     let module = target.join("Scripts/DCS-BIOS");
     let present = module.exists();
@@ -957,6 +959,51 @@ pub(crate) fn inspect(target: &Path) -> Result<Value, String> {
         json!({"userFolder":target,"modulePresent":present,"moduleReady":module_error.is_none(),"loaderReady":loader_ready,"version":if present&&module_error.is_none(){Some(VERSION)}else{None},"supportedVersion":VERSION,"cataloguePath":module.join("doc/json"),"ready":module_error.is_none()&&loader_ready,"repairable":(!present||module_error.is_none())&&loader.is_ok(),"diagnostics":diagnostics}),
     )
 }
+pub(crate) fn inspect_for_installation(
+    target: &Path,
+    installation: Option<&Path>,
+) -> Result<Value, String> {
+    let mut state = inspect_base(target)?;
+    match aircraft::plan(target, installation) {
+        Ok(mut plan) => {
+            let export = target.join("Scripts/Export.lua");
+            let current = if export.exists() {
+                read(&export, MAX_EXPORT)?
+            } else {
+                Vec::new()
+            };
+            let ready = plan.before == plan.after && current == plan.export;
+            for hook in &mut plan.status {
+                hook["installed"] = json!(ready && hook["compatible"] == true);
+                if hook["compatible"] == true {
+                    hook["message"] = json!(if ready {
+                        "Hook installed for the detected mod. Launch DCS to generate its catalogue."
+                    } else {
+                        "Matching mod detected. Run setup to install its hook, then launch DCS to generate its catalogue."
+                    });
+                }
+            }
+            state["aircraftExports"] = json!(plan.status);
+            state["aircraftExportsReady"] = json!(ready);
+            if !ready {
+                state["ready"] = json!(false);
+                state["diagnostics"].as_array_mut().unwrap().push(json!(
+                    "Optional aircraft exports need setup for the detected mods."
+                ));
+            }
+        }
+        Err(error) => {
+            state["ready"] = json!(false);
+            state["repairable"] = json!(false);
+            state["diagnostics"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(error));
+        }
+    }
+    Ok(state)
+}
+
 fn cancelled(check: &impl Fn() -> bool) -> Result<(), String> {
     if check() {
         Err("DCS integration setup was cancelled.".into())
@@ -1129,6 +1176,17 @@ fn journal(work: &Path) -> Result<Value, String> {
     {
         return Err("The DCS setup recovery journal is invalid.".into());
     }
+    for key in ["aircraftBefore", "aircraftAfter"] {
+        if let Some(digest) = value.get(key) {
+            if !digest.is_null()
+                && !digest
+                    .as_str()
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err("Invalid aircraft export recovery digest.".into());
+            }
+        }
+    }
     for (name, expected) in value["files"].as_object().unwrap() {
         safe_relative(name)?;
         if !expected
@@ -1247,6 +1305,7 @@ fn restore(work: &Path, value: &Value) -> Result<Value, String> {
             );
         }
     }
+    aircraft::restore(&target, &work.join(id), value, &mut conflicts)?;
     if value["installModule"] == true && scripts.join("DCS-BIOS").exists() {
         let ownership = scripts.join("DCS-BIOS/.osg-cockpit-install.json");
         if ownership.exists()
@@ -1284,7 +1343,8 @@ pub(crate) fn recover(work: &Path) -> Result<Value, String> {
     }
     restore(work, &journal(work)?)
 }
-fn install_guarded(
+fn install_guarded_for_installation(
+    installation: Option<&Path>,
     target: &Path,
     work: &Path,
     files: BTreeMap<String, Vec<u8>>,
@@ -1293,7 +1353,7 @@ fn install_guarded(
     write_boundary: &impl Fn() -> Result<(), String>,
 ) -> Result<Value, String> {
     let target = checked_target(target)?;
-    let state = inspect(&target)?;
+    let state = inspect_for_installation(&target, installation)?;
     if state["repairable"] != true {
         return Err(state["diagnostics"][0]
             .as_str()
@@ -1307,9 +1367,10 @@ fn install_guarded(
     } else {
         None
     };
-    let after = with_loader(before.as_deref().unwrap_or(&[]))?;
+    let aircraft = aircraft::plan(&target, installation)?;
+    let after = aircraft.export.clone();
     let install_module = state["modulePresent"] != true;
-    if !install_module && before.as_ref() == Some(&after) {
+    if !install_module && before.as_ref() == Some(&after) && aircraft.before == aircraft.after {
         progress("DCS-BIOS already configured", 100);
         return Ok(state);
     }
@@ -1323,6 +1384,9 @@ fn install_guarded(
     fs::create_dir(&backup).map_err(|e| e.to_string())?;
     if let Some(bytes) = before.as_ref() {
         write_new(&backup.join("Export.lua.before"), bytes)?;
+    }
+    if let Some(bytes) = &aircraft.before {
+        write_new(&backup.join("DCSAircraft.lua.before"), bytes)?;
     }
     let mut files = files;
     if install_module {
@@ -1338,6 +1402,10 @@ fn install_guarded(
         .map(|(name, bytes)| (name.clone(), json!(hash(bytes))))
         .collect();
     let value = json!({"schemaVersion":1,"id":id,"target":target,"createdScripts":!scripts.exists(),"installModule":install_module,"files":manifest,"exportBefore":before.as_ref().map(|b|hash(b)),"exportAfter":hash(&after),"version":VERSION,"archiveSha256":ARCHIVE_SHA256});
+    let mut value = value;
+    value["aircraftBefore"] = json!(aircraft.before.as_ref().map(|b| hash(b)));
+    value["aircraftAfter"] = json!(aircraft.after.as_ref().map(|b| hash(b)));
+    value["createdAircraftDir"] = json!(!scripts.join("OpenSimGear").exists());
     save_journal(work, &value)?;
     let result: Result<Value, String> = (|| {
         cancelled(check)?;
@@ -1376,6 +1444,10 @@ fn install_guarded(
                 .map_err(|e| format!("Cannot install DCS-BIOS module: {e}"))?;
         }
         cancelled(check)?;
+        if aircraft.before != aircraft.after {
+            write_boundary()?;
+            aircraft::apply(&target, &aircraft)?;
+        }
         let current = if export.exists() {
             Some(read(&export, MAX_EXPORT)?)
         } else {
@@ -1392,7 +1464,7 @@ fn install_guarded(
         }
         progress("Verifying DCS-BIOS module and export loader", 95);
         cancelled(check)?;
-        let ready = inspect(&target)?;
+        let ready = inspect_for_installation(&target, installation)?;
         if ready["ready"] != true {
             return Err("DCS-BIOS verification failed. Previous files will be restored.".into());
         }
@@ -1415,7 +1487,8 @@ fn install_guarded(
     }
 }
 /// The caller serializes this operation, guards active sessions, and supplies Windows capability.
-pub(crate) fn setup(
+pub(crate) fn setup_for_installation(
+    installation: Option<&Path>,
     target: &Path,
     work: &Path,
     check: impl Fn() -> bool,
@@ -1425,7 +1498,7 @@ pub(crate) fn setup(
     if recovery_pending(work) {
         return Err("Recover the interrupted DCS setup before starting again.".into());
     }
-    let state = inspect(target)?;
+    let state = inspect_for_installation(target, installation)?;
     if state["repairable"] != true {
         return Err(state["diagnostics"][0]
             .as_str()
@@ -1438,7 +1511,41 @@ pub(crate) fn setup(
     } else {
         BTreeMap::new()
     };
-    install_guarded(target, work, files, &check, &progress, &write_boundary)
+    install_guarded_for_installation(
+        installation,
+        target,
+        work,
+        files,
+        &check,
+        &progress,
+        &write_boundary,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn inspect(target: &Path) -> Result<Value, String> {
+    inspect_for_installation(target, None)
+}
+#[cfg(test)]
+fn install_guarded(
+    target: &Path,
+    work: &Path,
+    files: BTreeMap<String, Vec<u8>>,
+    check: &impl Fn() -> bool,
+    progress: &impl Fn(&str, u8),
+    write_boundary: &impl Fn() -> Result<(), String>,
+) -> Result<Value, String> {
+    install_guarded_for_installation(None, target, work, files, check, progress, write_boundary)
+}
+#[cfg(test)]
+fn setup(
+    target: &Path,
+    work: &Path,
+    check: impl Fn() -> bool,
+    progress: impl Fn(&str, u8),
+    write_boundary: impl Fn() -> Result<(), String>,
+) -> Result<Value, String> {
+    setup_for_installation(None, target, work, check, progress, write_boundary)
 }
 
 #[cfg(test)]

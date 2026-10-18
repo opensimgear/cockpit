@@ -86,6 +86,14 @@
           <p class="field-help">{selected.integrationContext?.message ?? 'Game discovery identifies an installation. A verified running game and an active matching profile are required for live integration.'}</p>
           {#if selected.id === 'dcs'}
             <p class="setup-version">DCS-BIOS <strong>{selected.integrationSetup?.version ?? '0.11.7'}</strong></p>
+            {#if selected.integrationSetup?.aircraftExports?.length}
+              <details class="telemetry-channel-details aircraft-hooks"><summary>Aircraft mod export hooks</summary>
+                <p>Only mods in the selected DCS installation and Saved Games folder are included. Recheck and run setup after adding, updating or removing a mod.</p>
+                <dl>{#each selected.integrationSetup.aircraftExports as hook (hook.aircraft)}
+                  <div><dt>{hook.aircraft === 'OH-6A' ? 'OH-6A Cayuse' : hook.aircraft}<small>{hook.capability === 'common-data-only' ? 'Common flight telemetry' : 'Controls and cockpit instruments'}</small></dt><dd>{hook.message}</dd></div>
+                {/each}</dl>
+              </details>
+            {/if}
           {:else if selected.provider === 'x-plane'}
             <p class="setup-version">RREF UDP · X-Plane {selected.id.endsWith('12') ? '12' : '11'}</p>
             <p class="field-help">Set up integration preserves local UDP settings and changes no game files. Connection settings belong to this game. Its profile graph chooses the telemetry channels to use.</p>
@@ -272,6 +280,8 @@
   .telemetry-channel-details dl > div { display: flex; justify-content: space-between; gap: 10px; line-height: 1.8; padding: 4px 0; }
   .telemetry-channel-details dt { text-transform: capitalize; }
   .telemetry-channel-details dd { text-align: right; margin: 0; }
+  .aircraft-hooks dt { text-transform: none; }
+  .aircraft-hooks dt small { display: block; margin-top: 4px; color: var(--muted); font-weight: normal; }
   .setup-main-action { width: 100%; margin-top: 17px; font-size: 10px; }
   .setup-warning { font-size: 10px; line-height: 1.8; margin-top: 12px; }
   .setup-recheck { padding-left: 0; font-size: 9px; margin-top: 13px; }

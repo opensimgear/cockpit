@@ -26,7 +26,7 @@ def production_end(lines):
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    module_names = ['dcs_setup.rs', 'game_integration_setup.rs', 'acr_setup.rs',
+    module_names = ['dcs_setup.rs', 'dcs_setup/aircraft.rs', 'game_integration_setup.rs', 'acr_setup.rs',
                     'game_context.rs', 'game_context_runtime.rs', 'game_provider_settings.rs',
                     'profile_session.rs', 'profile_session_journal.rs', 'profile_session_games.rs',
                     'profile_session_stage.rs', 'profile_session_inputs.rs',

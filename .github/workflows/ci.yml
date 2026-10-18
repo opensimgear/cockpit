@@ -112,7 +112,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev bubblewrap apparmor-profiles dbus-x11 gnome-keyring
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev bubblewrap apparmor-profiles dbus-x11 gnome-keyring lua5.1
           # Disposable runner: permit only the distro helper profile's namespaces.
           # Keep global user-namespace restrictions enabled.
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
@@ -172,6 +172,7 @@ jobs:
             --max-filesize 8234988 \
             --output "$OSG_DCS_SETUP_ARCHIVE" \
             'https://github.com/DCS-Skunkworks/dcs-bios/releases/download/v0.11.7/DCS-BIOS_v0.11.7.zip'
+          python3 scripts/test-dcs-aircraft-exports.py --archive "$OSG_DCS_SETUP_ARCHIVE" --lua lua5.1
           dbus-run-session -- bash -euo pipefail -c '
             printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
             python3 scripts/setup-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/setup-coverage"

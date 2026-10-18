@@ -434,7 +434,8 @@ impl GameIntegrationSetup {
             let _ = previous.join();
         }
         *worker = Some(thread::spawn(move || {
-            let result = crate::dcs_setup::setup(
+            let result = crate::dcs_setup::setup_for_installation(
+                game["installPath"].as_str().map(Path::new),
                 &target,
                 &inner.work,
                 || inner.cancel.load(Ordering::Acquire),
@@ -725,7 +726,10 @@ impl Inner {
         };
         match folder(&chosen).and_then(|target| {
             reject_game_install_folder(&target, game)?;
-            crate::dcs_setup::inspect(&target)
+            crate::dcs_setup::inspect_for_installation(
+                &target,
+                game["installPath"].as_str().map(Path::new),
+            )
         }) {
             Err(error) => {
                 status["message"] = json!(error);
@@ -734,7 +738,8 @@ impl Inner {
                 status["cataloguePath"] = inspected["cataloguePath"].clone();
                 status["diagnostics"] = inspected["diagnostics"].clone();
                 status["repairable"] = inspected["repairable"].clone();
-                if inspected["moduleReady"] == true && inspected["loaderReady"] == true {
+                status["aircraftExports"] = inspected["aircraftExports"].clone();
+                if inspected["ready"] == true {
                     let connection = if saved["userFolder"] == chosen
                         && saved["connection"].is_object()
                     {

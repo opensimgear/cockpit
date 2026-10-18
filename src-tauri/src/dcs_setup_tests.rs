@@ -1,5 +1,107 @@
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+fn mh6_mod(target: &Path) -> PathBuf {
+    let root = target.join("Mods/aircraft/AH-6J");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("entry.lua"), "make_flyable('MH-6J')").unwrap();
+    root
+}
+
+#[test]
+fn optional_aircraft_install_repeat_remove_and_cancel_restore_owned_bytes() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    let mod_root = mh6_mod(&target);
+    let ready = install_guarded(
+        &target,
+        &work,
+        fixture_files(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(ready["ready"], true);
+    assert_eq!(inspect(&target).unwrap()["ready"], true);
+    assert_eq!(ready["aircraftExports"][0]["compatible"], true);
+    let path = target.join("Scripts").join(aircraft::RELATIVE);
+    let hook_before = read(&path, MAX_FILE).unwrap();
+    let export_before = read(&target.join("Scripts/Export.lua"), MAX_EXPORT).unwrap();
+    assert_eq!(
+        setup(&target, &work, || false, |_, _| {}, || Ok(())).unwrap()["ready"],
+        true
+    );
+    assert_eq!(read(&path, MAX_FILE).unwrap(), hook_before);
+    fs::write(mod_root.join("entry.lua"), "-- removed").unwrap();
+    let cancel = AtomicBool::new(false);
+    let error = install_guarded(
+        &target,
+        &work,
+        BTreeMap::new(),
+        &|| cancel.load(Ordering::Relaxed),
+        &|_, percent| {
+            if percent == 95 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+        &|| Ok(()),
+    )
+    .unwrap_err();
+    assert!(error.contains("restored"), "{error}");
+    assert_eq!(read(&path, MAX_FILE).unwrap(), hook_before);
+    assert_eq!(
+        read(&target.join("Scripts/Export.lua"), MAX_EXPORT).unwrap(),
+        export_before
+    );
+    assert!(!recovery_pending(&work));
+    assert_eq!(
+        setup(&target, &work, || false, |_, _| {}, || Ok(())).unwrap()["ready"],
+        true
+    );
+    assert!(!path.exists());
+    assert!(
+        !String::from_utf8(read(&target.join("Scripts/Export.lua"), MAX_EXPORT).unwrap())
+            .unwrap()
+            .contains("DCSAircraft")
+    );
+}
+
+#[test]
+fn aircraft_rollback_removes_new_hook_but_preserves_concurrent_edits() {
+    for external_edit in [false, true] {
+        let scratch = Scratch::new();
+        let target = scratch.target();
+        let work = scratch.work();
+        mh6_mod(&target);
+        let path = target.join("Scripts").join(aircraft::RELATIVE);
+        let cancel = AtomicBool::new(false);
+        let error = install_guarded(
+            &target,
+            &work,
+            fixture_files(),
+            &|| cancel.load(Ordering::Relaxed),
+            &|_, percent| {
+                if percent == 95 {
+                    if external_edit {
+                        fs::write(&path, b"external aircraft edit").unwrap();
+                    }
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+        assert_eq!(recovery_pending(&work), external_edit);
+        assert_eq!(path.exists(), external_edit);
+        if external_edit {
+            assert_eq!(fs::read(&path).unwrap(), b"external aircraft edit");
+        }
+        assert!(!target.join("Scripts/Export.lua").exists());
+    }
+}
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
