@@ -37,3 +37,4 @@ src-tauri/resources/firmware/*/manifest.json
 /apps/browser-companion/dist/
 
 /tests/controller-mapping-m0/*.exe
+/.local-archive/
