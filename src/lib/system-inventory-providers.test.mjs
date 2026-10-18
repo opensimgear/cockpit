@@ -245,11 +245,18 @@ test('companion transport is evidence-backed, pending requests remain visible, a
 });
 
 test('offline companions keep observed attachments while configured integration endpoints stay explicitly unconfirmed', async () => {
- const h=harness({companions:{host:{clients:[{companionId:'tablet',name:'Tablet',connected:true,transports:['network'],peer:'192.0.2.2'}],instances:[]}},games:{catalogue:[game('dcs',{integrationSetup:{state:'ready',live:'waiting',message:'Waiting',connection:{host:'127.0.0.1',port:7778}}})]}});
+ const h=harness({companions:{host:{clients:[{companionId:'tablet',name:'Tablet',kind:'browser',connected:true,transports:['network'],peer:'192.0.2.2'}],instances:[]}},games:{catalogue:[game('dcs',{integrationSetup:{state:'ready',live:'waiting',message:'Waiting',connection:{host:'127.0.0.1',port:7778}}})]}});
  await h.controller.refresh();assert.equal(h.component('integration:dcs').connections[0].observed,false);
- h.state.companions.host.clients[0].connected=false;h.state.games.catalogue[0].integrationSetup.live='receiving';await h.controller.refresh();
+ h.state.companions.host.clients[0].connected=false;delete h.state.companions.host.clients[0].peer;h.state.games.catalogue[0].integrationSetup.live='receiving';await h.controller.refresh();
  assert.equal(h.component('companion:tablet').connections[0].current,false);assert.equal(h.component('companion:tablet').connections[0].endpoint,'192.0.2.2');assert.equal(h.component('integration:dcs').connections[0].observed,true);
  h.state.games.catalogue[0].integrationSetup.live='waiting';await h.controller.refresh();assert.equal(h.component('integration:dcs').connections[0].observed,true);assert.equal(h.component('integration:dcs').connections[0].current,false);
+ assert.equal(h.component('companion:tablet').connections[0].endpoint,'192.0.2.2','Configured browser transport must not erase last-known network attachment on later polls.');
+ h.state.companions.host.clients[0].kind='esp32';h.state.companions.firmware={tablet:{connectionMode:'serial'}};await h.controller.refresh();
+ const changed=h.component('companion:tablet').connections;
+ assert.ok(changed.some(c=>c.transport==='network'&&c.endpoint==='192.0.2.2'&&!c.current&&c.observed!==false));
+ assert.ok(changed.some(c=>c.transport==='usb'&&!c.current&&c.observed===false),'A changed offline setup is an additional unconfirmed route.');
+ h.state.companions.host.clients[0].connected=true;h.state.companions.host.clients[0].transports=['usb'];await h.controller.refresh();
+ assert.ok(h.component('companion:tablet').connections.every(c=>c.transport==='usb'&&c.current),'Fresh actual USB connection replaces old observed routes.');
 });
 
 test('gateway cleanup review includes child binding references without deleting or rewriting them', async () => {

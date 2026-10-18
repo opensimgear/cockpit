@@ -243,7 +243,10 @@ export class SystemInventoryController {
       const mode = usbSetup?.device?.connectionMode ?? state.firmware?.[key]?.connectionMode;
       const configuredTransport = mode === 'serial' ? 'usb' : mode === 'wifi' || c.kind === 'browser' || c.kind === 'desktop' ? 'network' : undefined;
       const rememberedConnections = (this.snapshot.components.find(previous => previous.id === id)?.connections ?? []).map(connection => ({ ...connection, current: false }));
-      const offlineConnections = configuredTransport ? [{ ...link(id, 'host', configuredTransport, false), observed: false }] : rememberedConnections;
+      const observedConnections = rememberedConnections.filter(connection => connection.observed !== false && connection.transport !== 'unknown');
+      const offlineConnections = configuredTransport
+        ? [...observedConnections, ...(observedConnections.some(connection => connection.transport === configuredTransport) ? [] : [{ ...link(id, 'host', configuredTransport, false), observed: false }])]
+        : rememberedConnections;
       const transports = [...new Set([...(Array.isArray(c.transports) ? c.transports.filter((t): t is string => t === 'network' || t === 'usb') : []), ...rows(state.host.instances).filter(instance => instance.companionId === key && instance.connected === true && ['network', 'usb'].includes(string(instance.transport))).map(instance => string(instance.transport)), ...(c.peer || c.address ? ['network'] : [])])];
       observations.push(observation(id, string(c.name, key), 'companion', 'companions', now, { role: string(c.kind, 'Installation'), presence: online ? 'connected' : 'offline',
         status: ['Paired installation', ...panelNames.map(name => `Panel: ${name}`)].join(' · '), targets: [target('companion', key)], evidence: [`companion:${key}`],
