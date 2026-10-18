@@ -4,7 +4,7 @@
   import RuntimeEditor from './RuntimeEditor.svelte';
   import ActionControl from './ActionControl.svelte';
   import { gatewayRequest, type GatewayCommand } from './gateway';
-  import { ModuleUsbClient, type UsbModule, type UsbActions } from './module-usb';
+  import { ModuleUsbClient, usbRoutesEqual, type UsbModule, type UsbActions } from './module-usb';
   import { cloneConfig, type RuntimeConfig } from './runtime-config';
   import type { DeepReadonly } from './profiles';
   import type { DeviceAction, ActionValue } from './device-actions';
@@ -14,12 +14,24 @@
   let draft = $state<RuntimeConfig>();
   let busy = $state(false), editing = $state(false), error = $state('');
   let disposed = false;
+  let claimSnapshot: DeepReadonly<UsbModule> | undefined;
   const snapshot = $derived(module?.snapshot.config);
   const actions = $derived(module?.snapshot.actions?.status === 'ready' ? module.snapshot.actions as UsbActions : undefined);
-  async function run(operation: () => Promise<DeepReadonly<UsbModule>>, replaceDraft = true): Promise<boolean> {
+  async function run(operation: () => Promise<DeepReadonly<UsbModule>>, replaceDraft = true, claiming = false, configurationChange = false): Promise<boolean> {
     if (busy) return false;
     busy = true;
-    try { const next = await operation(); if (disposed) return false; module = next; if (replaceDraft && next.snapshot.config) draft = cloneConfig(JSON.parse(JSON.stringify(next.snapshot.config.config))); error = ''; return true; }
+    try {
+      const next = await operation();
+      if (disposed) { if (claiming || next.snapshot.claimedBy && next.snapshot.claimedBy === claimSnapshot?.snapshot.claimedBy) await client.release(next).catch(() => {}); return false; }
+      const nextRoute = next.snapshot.route, claimedRoute = claimSnapshot?.snapshot.route;
+      const expectedConfiguration = configurationChange && nextRoute && claimedRoute && nextRoute.moduleId === claimedRoute.moduleId && nextRoute.serial === claimedRoute.serial && nextRoute.connectionGeneration === claimedRoute.connectionGeneration && nextRoute.boot === claimedRoute.boot;
+      if (editing && (!next.snapshot.connected || !nextRoute || !claimedRoute || !usbRoutesEqual(nextRoute, claimedRoute) && !expectedConfiguration || !next.snapshot.claimedBy || next.snapshot.claimedBy !== claimSnapshot?.snapshot.claimedBy)) editing = false;
+      if (claiming) claimSnapshot = next;
+      else if (claimSnapshot && next.snapshot.connected && next.snapshot.claimedBy === claimSnapshot.snapshot.claimedBy) claimSnapshot = next;
+      module = next;
+      if (replaceDraft && next.snapshot.config) draft = cloneConfig(JSON.parse(JSON.stringify(next.snapshot.config.config)));
+      error = ''; return true;
+    }
     catch (e) { if (!disposed) error = String(e); return false; }
     finally { if (!disposed) busy = false; }
   }
@@ -30,11 +42,11 @@
       return client.connect(port);
     });
   }
-  async function claim() { if (module && await run(() => client.claim(module!))) editing = true; }
-  async function release() { if (module && await run(() => client.release(module!))) editing = false; }
+  async function claim() { if (module && await run(() => client.claim(module!), true, true) && !disposed) editing = true; }
+  async function release() { if (module && await run(() => client.release(module!))) { editing = false; claimSnapshot = undefined; } }
   async function configure(command: GatewayCommand, config?: RuntimeConfig): Promise<boolean> {
     if (!module || !editing) return false;
-    if (command === 'config_apply' || command === 'config_apply_save') return run(() => client.apply(module!, config!, command === 'config_apply_save'));
+    if (command === 'config_apply' || command === 'config_apply_save') return run(() => client.apply(module!, config!, command === 'config_apply_save'), true, false, true);
     if (command === 'config_save') return run(() => client.save(module!));
     if (command === 'config_discard') return run(() => client.discard(module!));
     if (command === 'config_reset') return run(() => client.reset(module!));
@@ -43,7 +55,8 @@
   async function invoke(action: DeviceAction, values: ActionValue[]) { return module ? run(() => client.invoke(module!, action.id, values), false) : false; }
   onMount(() => {
     void run(() => client.status(endpointKey));
-    return () => { disposed = true; if (editing && module) void client.release(module).catch(() => {}); };
+    const timer = setInterval(() => { if (module?.snapshot.connected && !busy && !document.hidden) void run(() => client.eventsState(module!), false); }, 750);
+    return () => { disposed = true; clearInterval(timer); if (claimSnapshot) void client.release(claimSnapshot).catch(() => {}); };
   });
 </script>
 
