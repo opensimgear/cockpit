@@ -10,12 +10,13 @@ import { SystemInventoryRegistry, type InventoryStorage, type SystemObservation,
 export type NativeSystemInventory = {
   observedAt?: number;
   offset?: number; total?: number; nextOffset?: number | null;
+  controllerAssociations?: { controllerId: string; gatewayId?: string; moduleId?: string; usbKey?: string; evidence: string[] }[];
   virtualDevices: { id: string; name: string; available: boolean | null; status: string; createdByCockpit: boolean | null; owner?: string | null; ownerPid?: number | null; diagnostics: string[] }[];
   hiddenDevices: { id: string; name: string; instanceId: string; present: boolean | null; hidden: boolean | null; configured?: boolean; inverse?: boolean; scope?: string; controllerId?: string | null; controllerIds?: string[]; interfacePaths?: string[]; ancestors?: string[]; diagnostics: string[] }[];
   diagnostics: string[];
 };
 type Send = (request: GatewayRequest) => Promise<GatewayState>;
-type Capture = { provider: string; observations: SystemObservation[]; diagnostics?: string[] };
+type Capture = { provider: string; observations: SystemObservation[]; diagnostics?: string[]; associations?: NativeSystemInventory['controllerAssociations'] };
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const string = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback;
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -33,7 +34,7 @@ export function gatewayObservations(entries: readonly GatewayEntry[], now: numbe
     const id = `gateway:${entry.id}`, state = entry.state, connected = !!state?.connected;
     const gateway = observation(id, entry.port.backend === 'stm32' ? 'OpenSimGear CAN gateway' : 'Pico W USB gateway', 'gateway', 'gateways', now, {
       presence: connected ? 'connected' : entry.present ? 'unavailable' : 'offline',
-      role: entry.port.serialNumber ?? entry.id, status: state?.reconnecting ? 'Reconnecting' : entry.busy ? 'Working' : connected && state?.running ? 'USB HID active' : '',
+      role: entry.port.serialNumber ?? entry.id, status: entry.autoConnectPaused ? 'Connection paused' : state?.reconnecting ? 'Reconnecting' : entry.busy ? 'Working' : connected && state?.running ? 'USB HID active' : '',
       connections: [link(id, 'host', 'usb', entry.present, state?.port ?? entry.port.path)], targets: [target('gateway', entry.id)],
       evidence: [entry.id], diagnostics: entry.error ? [entry.error] : [],
       forget: { allowed: !entry.present && !connected && !state?.claimedModules?.length, reason: 'Disconnect the gateway and release its owned modules before forgetting its local observations.', effect: 'Forget local gateway and stale child-route observations. An unavailable gateway cannot confirm removal from its persistent storage. Independently observed USB connections and user bindings remain intact.' },
@@ -86,6 +87,7 @@ export class SystemInventoryController {
   private disposed = false;
   private captures = new Map<string, Capture>();
   private resources: ResourceSummary[] = [];
+  private associations: NonNullable<NativeSystemInventory['controllerAssociations']> = [];
   private onChange: (snapshot: SystemSnapshot) => void;
   constructor(options: { request: Send; gateways: () => readonly GatewayEntry[]; storage?: InventoryStorage; onChange?: (snapshot: SystemSnapshot) => void }) {
     this.send = options.request; this.gateways = options.gateways; this.registry = new SystemInventoryRegistry(options.storage); this.onChange = options.onChange ?? (() => {});
@@ -108,6 +110,8 @@ export class SystemInventoryController {
       if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (names[index] !== 'native' || !result.value.diagnostics?.length) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); }
       else { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: ${message(result.reason)}`); }
     });
+    const native = this.captures.get('native');
+    if (native?.associations) this.associations = native.associations;
     // The common resource facade already proves USB/CAN/host HID equivalence.
     try {
       const client = new ProfileInventoryClient(async request => { const value = (await this.send(request)).profileResources; if (!value) throw Error('Shared native identity evidence unavailable.'); return value; });
@@ -117,16 +121,56 @@ export class SystemInventoryController {
     let observations = [observation('host', 'Your computer', 'host', 'host', now, { presence: 'connected', role: 'Host', forget: { allowed: false, reason: 'The host cannot be forgotten.', effect: '' } }), ...gatewayObservations(this.gateways(), now), ...[...this.captures.values()].flatMap(c => c.observations)];
     // Resolve HidHide PnP collections to the original controller, not duplicate nodes.
     const hidden = this.captures.get('native')?.observations.filter(c => c.targets.some(t => t.kind === 'visibility')) ?? [];
+    const visibilityIds = new Map(hidden.map(c => [c, c.id]));
     const consumed = new Set<string>();
-    for (const h of hidden) for (const source of observations.filter(c => c.targets.some(t => t.kind === 'controller'))) if (source.targets.some(t => h.evidence.includes(`controller:${t.id}`))) {
+    for (const h of hidden) {
+      const identities = h.evidence.filter(e => e.startsWith('controller:')).sort();
+      const sources = observations.filter(c => c !== h && c.targets.some(t => t.kind === 'controller' && identities.includes(`controller:${t.id}`)));
+      if (!sources.length && identities.length) {
+        h.id = identities[0]; h.name = this.snapshot.components.find(c => c.id === h.id)?.name ?? h.name;
+        h.targets.push(...identities.map(id => target('controller', id.slice(11))));
+        h.connections = [link(h.id, 'host', 'unknown', h.presence === 'connected')];
+      }
+      for (const source of sources) {
       source.hidden = h.hidden; source.diagnostics.push(...h.diagnostics); source.evidence.push(...h.evidence);
       if (h.presence !== 'unknown') source.presence = h.presence;
       if (h.hidden || h.presence === 'connected') source.forget.allowed = false;
       consumed.add(h.id);
+      }
+      if (sources.length > 1) {
+        sources.sort((a, b) => a.id.localeCompare(b.id)); const first = sources[0];
+        for (const other of sources.slice(1)) { first.targets.push(...other.targets); first.evidence.push(...other.evidence); first.diagnostics.push(...other.diagnostics); consumed.add(other.id); }
+        first.connections = [...new Map(first.connections.map(c => [c.id, c])).values()];
+      }
     }
     observations = observations.filter(c => !consumed.has(c.id));
+    // Native protocol serial + interface/report evidence links published HID collections
+    // to their source; a published collection is a capability, not another physical wire.
+    for (const a of this.associations) {
+      const source = observations.find(c => c.targets.some(t => t.kind === 'controller' && t.id === a.controllerId));
+      const id = a.usbKey ? `usb:${a.usbKey}` : a.gatewayId && a.moduleId ? `module:${a.gatewayId}/${a.moduleId}` : a.gatewayId ? `gateway:${a.gatewayId}` : '';
+      const destination = observations.find(c => c.id === id);
+      if (!source || !destination || source === destination) continue;
+      destination.targets.push(...source.targets); destination.evidence.push(...source.evidence, ...a.evidence);
+      destination.diagnostics.push(...source.diagnostics);
+      if (source.hidden !== null) destination.hidden = source.hidden;
+      if (source.capture === 'ready') destination.capture = 'ready';
+      observations = observations.filter(c => c !== source);
+    }
     observations = correlateSystem(observations, this.resources);
-    const snapshot = this.registry.update(observations, complete, diagnostics, now); this.onChange(snapshot); return snapshot;
+    const aliases: Record<string, string> = {};
+    for (const c of observations) for (const t of c.targets) {
+      const raw = t.kind === 'controller' ? `controller:${t.id}` : t.kind === 'usb' ? `usb:${t.id}` : t.kind === 'module' ? `module:${t.gatewayId}/${t.id}` : '';
+      if (raw && raw !== c.id) aliases[raw] = c.id;
+    }
+    for (const h of hidden) {
+      const controllerId = h.evidence.find(e => e.startsWith('controller:'))?.slice(11);
+      const c = observations.find(c => c.targets.some(t => t.kind === 'controller' && t.id === controllerId));
+      const visibility = h.targets.find(t => t.kind === 'visibility');
+      if (c && visibility) aliases[`visibility:pnp:${visibility.id.toLowerCase()}`] = c.id;
+      if (c) aliases[visibilityIds.get(h)!] = c.id;
+    }
+    const snapshot = this.registry.update(observations, complete, diagnostics, now, aliases); this.onChange(snapshot); return snapshot;
   }
   private async controllers(now: number): Promise<Capture> {
     const sources: HostController[] = []; let offset = 0, session: string | undefined, total: number | undefined;
@@ -204,14 +248,15 @@ export class SystemInventoryController {
   private async native(now: number): Promise<Capture> {
     const state = (await this.send({ command: 'system_inventory', offset: 0, limit: 32 })).systemInventory;
     if (!state || !Array.isArray(state.virtualDevices) || !Array.isArray(state.hiddenDevices)) throw Error('Native system inspection unavailable. Restart the updated service.');
-    const hiddenDevices = [...state.hiddenDevices]; let nextOffset = state.nextOffset;
+    const hiddenDevices = [...state.hiddenDevices], associations = [...(state.controllerAssociations ?? [])]; let nextOffset = state.nextOffset;
     while (nextOffset != null) {
-      if (!Number.isSafeInteger(nextOffset) || nextOffset !== hiddenDevices.length || nextOffset > 4096) throw Error('Native inspection returned an invalid page.');
+      if (!Number.isSafeInteger(nextOffset) || nextOffset !== hiddenDevices.length + associations.length || nextOffset > 4096) throw Error('Native inspection returned an invalid page.');
       const page = (await this.send({ command: 'system_inventory', offset: nextOffset, limit: 32, observedAt: state.observedAt })).systemInventory;
-      if (!page || page.observedAt !== state.observedAt || page.total !== state.total || page.offset !== nextOffset || !page.hiddenDevices?.length || nextOffset + page.hiddenDevices.length > page.total!) throw Error('Native system inventory changed during inspection. Refresh again.');
-      hiddenDevices.push(...page.hiddenDevices); nextOffset = page.nextOffset;
+      const count = (page?.hiddenDevices?.length ?? 0) + (page?.controllerAssociations?.length ?? 0);
+      if (!page || page.observedAt !== state.observedAt || page.total !== state.total || page.offset !== nextOffset || !count || nextOffset + count > page.total!) throw Error('Native system inventory changed during inspection. Refresh again.');
+      hiddenDevices.push(...page.hiddenDevices); associations.push(...(page.controllerAssociations ?? [])); nextOffset = page.nextOffset;
     }
-    return { provider: 'native', diagnostics: state.diagnostics, observations: [
+    return { provider: 'native', diagnostics: state.diagnostics, associations, observations: [
       ...state.virtualDevices.map(v => {
         const id = `virtual:${v.id}`, owned = v.owner ?? (v.ownerPid ? `PID ${v.ownerPid}` : null);
         return observation(id, v.name, 'virtual', 'native', now, { role: 'vJoy', presence: v.available === true ? 'connected' : v.available === false ? 'unavailable' : 'unknown', owner: owned, status: `${v.status}${v.createdByCockpit === true ? ' · Created by Cockpit' : ' · Creation provenance unknown'}`, diagnostics: v.diagnostics, evidence: [v.id], targets: [target('virtual', v.id)], connections: [link(id, 'host', 'software', v.available === true)], forget: { allowed: v.available === false && !owned, reason: 'Available or owned virtual devices cannot be forgotten.', effect: 'Forget only local virtual-device inventory metadata. The OS device, vJoy layout, driver and bindings are retained.' } });

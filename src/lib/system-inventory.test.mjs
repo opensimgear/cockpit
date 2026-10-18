@@ -32,6 +32,11 @@ test('duplicates are rejected; all known types remain searchable without connect
  const components=r.update(['integration','virtual','gateway','osg','companion'].map(type=>observation(type,{type,connections:[],presence:'unknown'})),[]).components;
  assert.equal(filterSystem(components,'','all').length,5);assert.equal(filterSystem(components,'','virtual').length,1);assert.equal(filterSystem(components,'missing','all').length,0);
 });
+
+test('transport filters include current and remembered routes and unknown unconnected nodes',()=>{
+ const r=new SystemInventoryRegistry();const components=r.update([observation('wheel'),observation('network',{connections:[{from:'host',to:'network',id:'n',transport:'network',current:false}]}),observation('unknown',{connections:[]})],[]).components;
+ assert.equal(filterSystem(components,'','all','usb').length,1);assert.equal(filterSystem(components,'','all','network')[0].id,'network');assert.equal(filterSystem(components,'','all','unknown')[0].id,'unknown');
+});
 test('storage errors are explicit and failed durable removal is not reported successful',()=>{
  const disk={getItem:()=>'{',setItem:()=>{throw Error('full');}},r=new SystemInventoryRegistry(disk);
  assert.match(r.snapshot.diagnostics[0],/loaded/);r.update([observation('wheel',{presence:'offline',forget:{allowed:true,reason:'',effect:'local'}})],['controllers']);

@@ -46,6 +46,28 @@ test('native supplemental pages preserve the exact snapshot and never omit hidde
  await h.controller.refresh();assert.match(h.controller.snapshot.diagnostics.join(' '),/changed/);assert.equal(h.component('visibility:pn-0').stale,true);
 });
 
+test('native association-only pages fold published HID into its actual gateway or module without inventing physical host edges', async () => {
+ const h=harness({gateways:[gateway()],controllers:[source('panel-hid',{osgHid:true}),source('gateway-hid',{osgHid:true})]});
+ const associations=[{controllerId:'panel-hid',gatewayId:'gateway-one',moduleId:'panel',evidence:['exact-report']},{controllerId:'gateway-hid',gatewayId:'gateway-one',evidence:['verified-gateway-serial']}];
+ h.custom.set('system_inventory',r=>({systemInventory:{observedAt:321,total:2,offset:r.offset,nextOffset:r.offset===0?1:null,hiddenDevices:[],controllerAssociations:associations.slice(r.offset,r.offset+1),virtualDevices:[],diagnostics:[]}}));
+ await h.controller.refresh();assert.equal(h.component('controller:panel-hid'),undefined);assert.equal(h.component('controller:gateway-hid'),undefined);
+ assert.equal(h.component('module:gateway-one/panel').connections.length,1);assert.equal(h.component('module:gateway-one/panel').connections[0].transport,'can');
+ assert.ok(h.component('module:gateway-one/panel').targets.some(t=>t.id==='panel-hid'));assert.ok(h.component('gateway:gateway-one').targets.some(t=>t.id==='gateway-hid'));
+});
+
+test('hidden controller discovery survives capture outage and recovery without retaining stale aliases', async () => {
+ const h=harness({controllers:[source('pedals')],native:{virtualDevices:[],hiddenDevices:[{id:'pnp-pedals',name:'PnP pedals',instanceId:'HID/pedals',controllerIds:['pedals'],present:true,hidden:true,diagnostics:[]}],diagnostics:[]}});
+ await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);
+ h.failures.set('controller_list',Error('Capture unavailable'));await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('controller:pedals').presence,'connected');
+ h.failures.delete('controller_list');await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('visibility:pnp-pedals'),undefined);
+});
+
+test('newly verified USB CAN grouping supersedes remembered sightings and preserves their history', async () => {
+ const h=harness({gateways:[gateway()],usb:[usb()]});await h.controller.refresh();assert.ok(h.component('usb:serial'));assert.ok(h.component('module:gateway-one/panel'));
+ h.state.resources=[resource('proven',[connection('standalone-usb','serial'),connection('gateway:gateway-one','panel')])];
+ await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='osg').length,1);assert.ok(h.component('resource:proven'));
+});
+
 test('forget review explains exact retained local bindings and degrades honestly on missing metadata', async () => {
  const h=harness({controllers:[source('offline',{online:false})]}); await h.controller.refresh();
  h.custom.set('profile_list',()=>({profiles:{profiles:[{id:'saved',name:'Driving'}]}}));

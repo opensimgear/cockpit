@@ -24,10 +24,11 @@ export const presenceLabels: Record<SystemPresence, string> = { connected: 'Conn
 export function systemStateLabel(component: SystemComponent): string {
   return [presenceLabels[component.presence], component.hidden === true ? 'Hidden via HidHide' : '', component.enabled === false ? 'Disabled' : '', component.stale ? 'Stale observation' : '', component.status].filter(Boolean).join(' · ');
 }
-export function filterSystem(components: readonly SystemComponent[], search: string, filter: string): SystemComponent[] {
+export function filterSystem(components: readonly SystemComponent[], search: string, filter: string, transport = 'all'): SystemComponent[] {
   const query = search.trim().toLocaleLowerCase();
   return components.filter(c => c.type !== 'host' && `${c.name} ${c.role} ${c.id} ${systemTypeLabels[c.type]} ${c.status} ${c.connections.map(x => `${x.transport} ${x.endpoint ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(query)
-    && (filter === 'all' || filter === c.type || filter === c.presence || filter === 'hidden' && c.hidden === true));
+    && (filter === 'all' || filter === c.type || filter === c.presence || filter === 'hidden' && c.hidden === true)
+    && (transport === 'all' || c.connections.some(connection => connection.transport === transport) || transport === 'unknown' && !c.connections.length));
 }
 function signature(c: SystemComponent | SystemObservation): string {
   // Report counters, timestamps and polling generations cannot resurrect a forgotten record.
@@ -94,9 +95,20 @@ export class SystemInventoryRegistry {
   private remembered(c: SystemComponent): SystemComponent {
     return { ...c, presence: 'unknown', stale: true, owner: null, capture: 'unknown', connections: c.connections.map(x => ({ ...x, current: false })), forget: { ...c.forget, allowed: false, reason: 'Refresh this provider before forgetting a remembered component.' } };
   }
-  update(observations: SystemObservation[], completeProviders: string[], diagnostics: string[] = [], now = Date.now()): SystemSnapshot {
+  update(observations: SystemObservation[], completeProviders: string[], diagnostics: string[] = [], now = Date.now(), aliases: Record<string, string> = {}): SystemSnapshot {
     if (new Set(observations.map(c => c.id)).size !== observations.length) throw new Error('System inventory contains duplicate logical identities.');
     const candidate = cloneMemory(this.memory);
+    // Positive provider identity evidence supersedes remembered sightings. This
+    // preserves observation history without retaining a second stale physical node.
+    for (const [from, to] of Object.entries(aliases)) {
+      if (from === to) continue;
+      const old = candidate.components.find(c => c.id === from), destination = candidate.components.find(c => c.id === to);
+      if (old && destination) { destination.firstSeen = Math.min(old.firstSeen, destination.firstSeen); destination.lastSeen = Math.max(old.lastSeen, destination.lastSeen); destination.references = [...destination.references, ...old.references]; }
+      else if (old) candidate.components.push({ ...old, id: to });
+      candidate.components = candidate.components.filter(c => c.id !== from);
+      if (candidate.forgotten[from] && !candidate.forgotten[to]) candidate.forgotten[to] = candidate.forgotten[from];
+      delete candidate.forgotten[from];
+    }
     const previous = new Map(candidate.components.map(c => [c.id, c]));
     const seen = new Set(observations.map(c => c.id));
     // Positive current observations can restore forgotten records. Timestamp or
