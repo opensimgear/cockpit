@@ -1,9 +1,12 @@
 # Feature 78 acceptance map
 
 This maps the revised system-state scope of [#78](https://github.com/opensimgear/cockpit/issues/78)
-and D0–D6 to production code and automated acceptance. Profiles are not required
-for inspection. Existing assignment metadata is read only when disclosing Forget
-impact. Native hardware observations and fixture limits are recorded in the
+and D0–D6 to production code and automated acceptance. Hardware discovery needs
+no profile. The later refinements from the related **Show active integrations
+only** chat are authoritative: integration visibility follows active applied
+bindings, panels appear as names on paired companions, unpaired setup records are
+excluded, and compact tiles omit the visible status line. Existing assignment
+metadata is read without authoring or activation. Native hardware observations and fixture limits are recorded in the
 [running-Cockpit verification](2026-10-18-unified-devices.md).
 
 | Story and requirements | Production authority | Direct acceptance evidence |

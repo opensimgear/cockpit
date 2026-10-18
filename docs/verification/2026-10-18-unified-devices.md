@@ -1,5 +1,9 @@
 # Unified Devices inventory verification
 
+The observations below record the earlier complete-provider presentation. The
+later user-requested active-integration/paired-companion projection supersedes
+its visible counts; see [final acceptance](2026-10-18-devices-final-acceptance.md).
+
 Feature #78 and stories #90–#96 consolidate system inspection in Devices, with
 shared List and Topology presentations. Profile authoring, activation and profile
 attribution are deferred. Reading existing saved assignments before a Forget

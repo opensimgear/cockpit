@@ -5,14 +5,16 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { loadModules } from '../../src/lib/test-module-loader.mjs';
 
 const require = createRequire(import.meta.url);
 const module = process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright';
 const { chromium } = require(module), { expect } = require(module + '/test');
 const endpoint = process.env.OSG_DEVICES_NATIVE_UI_URL ?? 'http://127.0.0.1:5173';
 const artifacts = resolve(process.env.OSG_DEVICES_NATIVE_ARTIFACTS ?? '.research/system-devices-native-browser');
+const { isVisibleSystemComponent } = (await loadModules(['./system-inventory'])).get('./system-inventory');
 
-test('running native Cockpit exposes every observed provider record in both inventory modes', { timeout: 120_000 }, async () => {
+test('running native Cockpit retains provider records and shares the refined Devices projection', { timeout: 120_000 }, async () => {
   await mkdir(artifacts, { recursive: true });
   const browser = await chromium.launch({ headless: true, ...(process.env.OSG_BROWSER_CHANNEL ? { channel: process.env.OSG_BROWSER_CHANNEL } : {}) });
   const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } });
@@ -46,13 +48,14 @@ test('running native Cockpit exposes every observed provider record in both inve
     const companions = (await native({ command: 'companion_status' })).companions;
     const memory = await page.evaluate(() => JSON.parse(localStorage.getItem('osg-system-inventory-v1')));
     const components = memory.components.filter(component => component.type !== 'host');
+    const visibleComponents = components.filter(isVisibleSystemComponent);
     const targets = components.flatMap(component => component.targets);
     for (const controller of controllers) assert.ok(targets.some(target => target.kind === 'controller' && target.id === controller.id), `Missing observed native controller ${controller.name} (${controller.id})`);
     for (const game of games.catalogue) assert.ok(targets.some(target => target.kind === 'integration' && target.id === game.id), `Missing known integration ${game.id}`);
     for (const virtual of supplemental.virtualDevices) assert.ok(targets.some(target => target.kind === 'virtual' && target.id === virtual.id), `Missing known virtual device ${virtual.id}`);
     for (const client of companions.host?.clients ?? []) assert.ok(targets.some(target => target.kind === 'companion' && target.id === client.companionId), `Missing paired companion ${client.companionId}`);
     const listIds = await devices.locator('.system-list [data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).sort());
-    assert.deepEqual(listIds, components.map(component => component.id).sort());
+    assert.deepEqual(listIds, visibleComponents.map(component => component.id).sort());
     await devices.getByRole('button', { name: 'Topology', exact: true }).click();
     const graph = page.getByRole('region', { name: 'System topology', exact: true });
     await expect(graph).toBeVisible();
@@ -63,7 +66,7 @@ test('running native Cockpit exposes every observed provider record in both inve
     await page.screenshot({ path: resolve(artifacts, 'native-system-topology.png'), fullPage: true });
     await devices.getByRole('button', { name: 'List', exact: true }).click();
     await page.screenshot({ path: resolve(artifacts, 'native-system-list.png'), fullPage: true });
-    const inspected = components.find(component => component.type === 'virtual' || component.type === 'integration') ?? components[0];
+    const inspected = visibleComponents.find(component => component.type === 'virtual' || component.type === 'integration') ?? visibleComponents[0];
     assert.ok(inspected, 'A known native component is available for passive detail inspection.');
     await devices.locator(`[data-component-id="${inspected.id}"]`).click();
     const details = devices.getByRole('region', { name: 'Component details', exact: true });
@@ -80,7 +83,8 @@ test('running native Cockpit exposes every observed provider record in both inve
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ observedAt: new Date().toISOString(), endpoint,
       scope: 'Actual native provider observations through running development Cockpit. No hardware output, visibility mutation or driver qualification asserted.',
       listIds, graphIds, components, controllerCount: controllers.length, virtualCount: supplemental.virtualDevices.length,
-      integrationCount: games.catalogue.length, companionCount: companions.host?.clients?.length ?? 0,
+      integrationCount: visibleComponents.filter(component => component.type === 'integration').length,
+      catalogueIntegrationCount: games.catalogue.length, companionCount: companions.host?.clients?.length ?? 0,
       diagnostics: await devices.locator('.provider-diagnostics').allTextContents(), commands: requests.map(request => request.command), mutations, pageErrors }, null, 2) + '\n');
   } catch (error) {
     await page.screenshot({ path: resolve(artifacts, 'failure.png'), fullPage: true });

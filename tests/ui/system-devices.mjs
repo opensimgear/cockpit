@@ -76,7 +76,7 @@ function fixtures() {
         integrationSetup: { state: 'missing-installation', live: 'unavailable', message: 'Fixture installation unavailable.', connection: {} } },
     ], cleanup: { phase: 'idle' } },
     failControllers: false, failForget: null, keepForgotten: false,
-    controllerDelayMs: 0, completedControllerPages: 0,
+    controllerDelayMs: 0, completedControllerPages: 0, integrationBound: true,
   };
 }
 
@@ -86,7 +86,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
   const browser = await chromium.launch({ headless: true, ...(process.env.OSG_BROWSER_CHANNEL ? { channel: process.env.OSG_BROWSER_CHANNEL } : {}) });
   const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } }), page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
-  const session = { state: 'stopped', paused: false, appliedSnapshot: null, owner: null, degradation: [], fault: null };
+  const owner = { session: defaultId, generation: 1, profileId: defaultId, profileRevision: 1, gameId: 'dcs' };
+  const appliedSnapshot = { profileId: defaultId, revision: 1, semanticHash: hash };
+  const session = { state: 'running', paused: false, appliedSnapshot, owner, degradation: [], fault: null };
   const listing = { profiles: [{ id: defaultId, name: 'Default', revision: 1, isDefault: true, semanticHash: hash }],
     profileSession: session, session: { selectedProfileId: defaultId, state: 'idle', appliedSnapshot: null, fault: null },
     automatic: { schemaVersion: 1, mode: 'manual', manualProfileId: defaultId, rules: [], status: 'manual', message: 'Fixture idle.', conflicts: [], lastAttempt: null, target: null, readOnly: false }, readOnly: false, diagnostics: [] };
@@ -100,6 +102,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const request = clone(args.request); requests.push(request);
     const offset = request.offset ?? 0;
     if (['profile_list', 'profile_status', 'profile_automatic_status'].includes(request.command)) return result({ profiles: listing });
+    if (request.command === 'profile_runtime_topology') {
+      const items = request.section === 'nodes'
+        ? [{ id: 'dcs', name: 'DCS', kind: 'game', summary: 'Integration' }, { id: 'panel', name: 'Panel', kind: 'companion', summary: 'Assigned panel' }]
+        : fixture.integrationBound ? [{ id: 'telemetry', from: { nodeId: 'dcs', portId: 'altitude' }, to: { nodeId: 'panel', portId: 'altitude' } }] : [];
+      return result({ profileTopology: { schemaVersion: 1, owner, appliedSnapshot, programHash: hash, capturedUs: '1',
+        section: request.section, offset, total: items.length, items: items.slice(offset, offset + request.limit) } });
+    }
     if (request.command === 'profile_assignments_get') return result({ profiles: { ...listing, assignments: [
       { resourceId: 'retained-throttle-binding', sourceId: 'remembered-throttle', ports: [] },
       { resourceId: 'retained-wheel-binding', sourceId: 'remembered-wheel', ports: [] },
@@ -166,8 +175,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.getByText('Dual transport panel', { exact: true })).toBeVisible();
     const expectedNames = ['Hidden pedals', 'Remembered wheel', 'Remembered throttle', 'Dual transport panel', 'Unproven second panel',
       'CAN output module', 'Standalone output module', 'External busy virtual joystick', 'Missing remembered virtual joystick',
-      'DCS World · dcs-bios', 'X-Plane 12 · x-plane', 'Browser companion', 'Known ESP32 companion', 'Assigned panel instance'];
+      'DCS World · dcs-bios', 'Browser companion', 'Known ESP32 companion'];
     for (const name of expectedNames) await expect(devices.getByText(name, { exact: true }).first()).toBeVisible();
+    await expect(devices.getByText('Panel: Assigned panel instance', { exact: true })).toBeVisible();
+    await expect(devices.locator('[data-component-id="companion-instance:assigned-fixture"]')).toHaveCount(0);
+    await expect(devices.locator('[data-component-id="integration:x-plane-12"]')).toHaveCount(0);
     await expect(devices.getByText('Gateway HID collection', { exact: true })).toHaveCount(0);
     await expect(devices.getByText('Dual USB sighting', { exact: true })).toHaveCount(0);
     await expect.poll(() => requests.filter(request => request.command === 'controller_list' && request.offset === 2).length).toBeGreaterThan(0);
@@ -175,7 +187,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.ok(requests.some(request => request.command === 'profile_resources_list' && request.offset === 1));
     assert.ok(requests.some(request => request.command === 'system_inventory' && request.offset === 1));
     const listIds = (await devices.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId))).sort();
-    assert.ok(listIds.length >= 16, 'All required component categories and remembered records must appear.');
+    assert.equal(listIds.length, 14, 'All hardware/paired companions and the bound integration appear; panels stay folded into companions.');
     assert.equal(new Set(listIds).size, listIds.length, 'HID collections and verified USB/CAN sightings share one component.');
     const tiles = devices.locator('.system-list .component-tile');
     await expect(tiles).toHaveCount(listIds.length);
@@ -188,9 +200,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const offlineTile = devices.locator('[data-component-id="controller:remembered-wheel"]');
     const hiddenTile = devices.locator('[data-component-id="controller:pedals"]');
     await expect(offlineTile).toHaveClass(/\boffline\b/);
-    await expect(offlineTile).toContainText('Offline');
+    await expect(offlineTile).toHaveAccessibleName(/Offline/);
+    await expect(offlineTile.locator('.component-status')).toHaveCount(0);
     await expect(offlineTile).toHaveCSS('opacity', '1');
     await expect(hiddenTile).not.toHaveClass(/\boffline\b/);
+    await expect(hiddenTile).toHaveAccessibleName(/Connected · Hidden/);
     const offlineNameColor = await offlineTile.locator('strong').evaluate(node => getComputedStyle(node).color);
     const connectedNameColor = await hiddenTile.locator('strong').evaluate(node => getComputedStyle(node).color);
     assert.notEqual(offlineNameColor, connectedNameColor, 'Offline names are muted independently of their readable controls.');
@@ -252,7 +266,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.locator('[data-component-id]')).toHaveCount(1);
     await search.fill(''); await filter.selectOption('hidden');
     await expect(devices.locator('[data-component-id]')).toHaveCount(1);
-    await expect(devices).toContainText('Connected · Hidden');
+    await expect(devices.locator('[data-component-id="controller:pedals"]')).toHaveAccessibleName(/Connected · Hidden/);
     await devices.locator('[data-component-id="controller:pedals"]').click();
     await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
@@ -271,6 +285,24 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.getByText('Hidden pedals PnP record', { exact: true })).toHaveCount(0);
     assert.deepEqual(await devices.locator('.system-list [data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).sort()), listIds,
       'Provider recovery must merge the correlated PnP alias without retaining a duplicate physical device.');
+    // Active bindings, rather than telemetry traffic or catalogue support, decide
+    // integration visibility. Reads never activate or edit the applied profile.
+    fixture.games.catalogue[0].integrationSetup.live = 'waiting';
+    await waitForInventoryRefresh();
+    await expect(devices.locator('[data-component-id="integration:dcs"]')).toBeVisible();
+    fixture.integrationBound = false;
+    fixture.games.catalogue[0].integrationSetup.live = 'receiving';
+    await waitForInventoryRefresh();
+    await expect(devices.locator('[data-component-id="integration:dcs"]')).toHaveCount(0);
+    await topology.click();
+    await expect(graph.locator('[data-component-id="integration:dcs"]')).toHaveCount(0);
+    await list.click();
+    fixture.integrationBound = true; session.state = 'stopped'; session.owner = null; session.appliedSnapshot = null;
+    await waitForInventoryRefresh();
+    await expect(devices.locator('[data-component-id="integration:dcs"]')).toHaveCount(0);
+    session.state = 'running'; session.owner = owner; session.appliedSnapshot = appliedSnapshot;
+    await waitForInventoryRefresh();
+    await expect(devices.locator('[data-component-id="integration:dcs"]')).toBeVisible();
     // Native companion transport evidence is independent from installation,
     // pairing approval and assigned input ownership. Offline network history
     // remains visible while a USB-only installation gains no network edge.
@@ -289,15 +321,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(details).not.toContainText('NETWORK ·');
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
     await backToDevices.click();
-    await devices.locator('[data-component-id="companion-pending:pairing-fixture"]').click();
-    await expect(details).toContainText('Pairing request · Unverified installation');
-    await expect(details).toContainText('Waiting for pairing approval');
-    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
-    await backToDevices.click();
+    await expect(devices.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);
     assert.equal(requests.filter(request => request.command === 'companion_approve').length, 0);
     await topology.click();
     await expect(graph.locator('[data-component-id="companion:browser-fixture"]')).toContainText('Offline');
-    await expect(graph.locator('[data-component-id="companion-pending:pairing-fixture"]')).toContainText('Waiting for pairing approval');
+    await expect(graph.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);
     await list.click();
     // Gateway management and existing module configuration remain reachable
     // through the shared details; returning retains selection and search.

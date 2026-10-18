@@ -107,7 +107,7 @@
 {:else}
   <div class="system-list" aria-label="System components">
     {#each visible as c (c.id)}
-      <button class="system-card component-tile" data-component-id={c.id} class:chosen={selectedId === c.id} class:offline={c.presence === 'offline'} aria-pressed={selectedId === c.id} onclick={() => select(c.id)}>
+      <button class="system-card component-tile" data-component-id={c.id} class:chosen={selectedId === c.id} class:offline={c.presence === 'offline'} aria-pressed={selectedId === c.id} aria-label={`${c.name} · ${systemTypeLabels[c.type]} · ${c.role} · ${systemStateLabel(c)} · ${[...new Set(c.connections.map(x => x.transport))].join(', ') || 'Connection unknown'}`} title={systemStateLabel(c)} onclick={() => select(c.id)}>
         <div class="component-heading"><span class="component-icon"><Icon name={systemDeviceIcon(c)} size={24} /></span><div class="component-copy"><strong>{c.name}</strong><span>{systemTypeLabels[c.type]}{c.role ? ` · ${c.role}` : ''}</span></div></div>
         {#if c.type === 'companion' && c.status.includes('Panel: ')}<div class="companion-panels">{c.status.split(' · ').filter(part => part.startsWith('Panel: ')).join(' · ')}</div>{/if}
         <div class="component-transports">{#each [...new Set(c.connections.map(x => x.transport))] as transport}<span class="quiet-tag">{transport === 'software' ? 'Software' : transport === 'network' ? 'Network' : transport === 'unknown' ? 'Connection unknown' : transport.toUpperCase()}</span>{:else}<span class="quiet-tag">Connection unknown</span>{/each}</div>

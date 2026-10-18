@@ -5,8 +5,10 @@ component identities, status, filters, selection and details. The separate
 Gateways and Topology navigation sections have been removed. The remembered
 presentation does not change connections or runtime configuration.
 
-List presents a responsive grid of component tiles. Confirmed offline tiles use
-muted surfaces, names and icons while retaining readable status and actions.
+List presents a responsive grid of component tiles with distinct device-type icons.
+Confirmed offline tiles use muted surfaces, names and icons. The compact tile
+omits the visible status line; its accessible name and tooltip retain the observed
+state, and full state and actions remain in details.
 Hidden-but-present, unavailable and unknown states remain distinct from offline.
 Inventory updates run automatically in the background; there is no manual refresh
 button. Selecting a tile or topology node opens its details in place of the
@@ -24,8 +26,11 @@ See the [startup access verification](verification/2026-10-18-hidhide-self-acces
 
 Every supported provider contributes its known components: third-party
 controllers; OSG modules over direct USB or CAN; gateways; virtual vJoy targets;
-integrations; paired companion installations, their assigned controller
-instances, USB endpoints and pending pairing requests. Hidden, remembered,
+integrations with active applied bindings; and paired companion installations.
+Bindings determine integration visibility even while telemetry is waiting; an
+unbound supported integration remains in its catalogue/settings. Assigned panels
+are folded into the companion tile by name. Separate panel entries, unpaired USB
+setup records and pending pairing requests stay in Companions. Hidden, remembered,
 unavailable and unknown components remain visible. Type counts distinguish
 software components from physical devices; HID collections remain capabilities
 of the physical component when exact native association evidence is available.
@@ -106,8 +111,11 @@ is asserted only from a committed protected provisioning journal matching the
 current native descriptor. Configured targets remain known when SDK inspection
 fails. Inventory rendering never acquires/provisions an output, activates a
 profile, writes driver state or changes visibility. Existing qualification and
-single-writer gates remain in force. Profile requirements are deferred from this
-feature; existing saved assignments are read only for Forget impact disclosure.
+single-writer gates remain in force. Profile authoring, activation and routing
+visualization are deferred from this feature. Integration visibility reads the
+immutable applied binding metadata; discovery of hardware, virtual devices and
+paired companions does not require a profile. Saved assignments are also read
+for panel names and Forget impact disclosure, without editing or activating them.
 
 ## Automated acceptance
 
