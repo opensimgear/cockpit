@@ -1,0 +1,19 @@
+# Prepare visibility handoff through the retained control connection
+
+The actual `28e4fcb` Windows rig successfully applies its VKB/browser profile and hides the selected pedals. During that active run, a separate direct HidHide inspection returns AccessDenied. HidHide v1.5.230.0 explicitly configures an [exclusive control device](https://raw.githubusercontent.com/nefarius/HidHide/v1.5.230.0/HidHide/src/ControlDevice.c). Our Windows handle's share flags do not make a second control connection available.
+
+Source review identifies a replacement defect: visibility `handoff_proof` opens a fresh backend to read current policy, and `game_policy_from` opens another to resolve executable/device identities. The active visibility Session already owns that exclusive backend. This prevents replacement preparation before the old profile is retired. No second actual Apply is sent to manufacture a failure; the live direct-read failure and the exact source paths establish the gap. The original profile remains healthy until explicit Stop, which succeeds and fully restores the rig as recorded in `2026-10-17-native-profile-rig-preflight.md`.
+
+Replacement preparation must borrow the active Session's connection through its existing worker. It must retain exact owner, job, session, journal, policy, physical identity and cancellation checks, perform no additional policy writes, and reject a response crossing Stop. A caller waiting for read-only preparation must release service locks so Stop admission remains responsive. A blocked backend read cannot be claimed to have completed restoration.
+
+The implementation now sends bounded read-only preparation requests to that worker. It reads policy and resolves executable/device identities through the retained adapter, checks the exact held journal before and after inspection, and builds the incoming plan against the outgoing session's original policy. The request deadline starts at enqueue and expires after two seconds. Cancellation, abandonment, job/session changes, policy/identity drift and expired queued replies invalidate preparation. Waiting releases service locks; Stop immediately cancels admission, while restoration still waits for any underlying driver call to return. Final service metadata and cancellation checks remain in place before a proof is returned.
+
+The regression uses an adapter that refuses a second open while the active connection exists. The test fails against the previous implementation with `Exclusive visibility control endpoint already open`; the corrected implementation prepares both unchanged and changed executable policies without another open or policy write, then restores the original policy on Stop. Additional tests cover blocked reads crossing Stop, stale proofs, exact journal edits, changed identities/policy and expired replies. Read-only inspection errors do not stop or rewrite the active session.
+
+Local verification:
+
+- The 21 focused controller tests pass, including an independent rerun from the copied test executable.
+- An independent standard controller run passes all 83 tests and all 19 unchanged 71% coverage gates. Minimum coverage is 86.41%; Session is 98.28%, runtime 89.92%, and game handoff 92.47%. All 47 recorded inputs retain their captured hashes.
+- The normal native library compiles; its injected visibility (14), owned-output handoff (5) and Coordinator (18) tests all pass. All 378 recorded native/controller/profile inputs remain unchanged. These filters do not start GatewayManager or acquire physical devices.
+
+These results establish the software correction. Actual replacement on the selected Windows rig still needs a fresh source-pinned qualification build, real browser/hardware Apply and replacement, and explicit Stop with complete restoration before the DCS cue. The three production qualification flags remain false; no protocol, driver ABI or qualification gate changes are included.

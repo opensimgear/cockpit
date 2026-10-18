@@ -145,13 +145,6 @@ impl Service {
         Ok(())
     }
     fn game_policy(&self, intent: &IntentCapture) -> Result<Option<Plan>, String> {
-        self.game_policy_from(intent, None)
-    }
-    fn game_policy_from(
-        &self,
-        intent: &IntentCapture,
-        original: Option<super::super::policy::State>,
-    ) -> Result<Option<Plan>, String> {
         let preferences = intent.preferences(self.platform)?;
         if self.platform != Platform::Windows {
             let backend = if self.platform == Platform::Linux {
@@ -191,14 +184,7 @@ impl Service {
                 policy,
             });
         }
-        Ok(Some(Plan::build(
-            match original {
-                Some(state) => state,
-                None => adapter.read()?,
-            },
-            selections,
-            image,
-        )?))
+        Ok(Some(Plan::build(adapter.read()?, selections, image)?))
     }
     fn handoff_metadata_snapshot(
         &self,
@@ -244,17 +230,48 @@ impl Service {
             .worker
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .snapshot()
+            .handoff_status()
+            .ok()
             .filter(|status| status.job_id == job)
             .ok_or("The outgoing native visibility worker changed.")?;
         Ok((record, status))
     }
-    fn handoff_proof(&self, owner: &str) -> Result<super::super::handoff::Proof, String> {
+    fn handoff_prepared(&self, owner: &str, intent: IntentCapture) -> Result<Prepared, String> {
         let (record, status) = self.handoff_metadata_snapshot(owner)?;
-        let actual = (self.factory)()?.read()?;
-        let proof = super::super::handoff::Proof::capture(owner, &record, &status, &actual)?;
+        let preferences = intent.preferences(self.platform)?;
+        let sources = self
+            .registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .visibility_sources(&intent.source_ids)?;
+        let capture = std::env::current_exe()
+            .map_err(|e| e.to_string())?
+            .to_str()
+            .ok_or("Invalid capture executable path.")?
+            .to_owned();
+        let ticket = self
+            .worker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .prepare_handoff(super::super::runtime::HandoffInput {
+                job: status.job_id.clone(),
+                record: record.clone(),
+                preferences,
+                sources,
+                capture,
+            })?;
+        // No Service worker, mutation-admission, registry or status lock is held
+        // while the retained adapter performs its bounded read-only work.
+        let read = ticket.wait()?;
+        let proof = super::super::handoff::Proof::capture(owner, &record, &status, &read.actual)?;
         self.handoff_validate_metadata(&proof)?;
-        Ok(proof)
+        self.game_enabled()?;
+        read.validate_live()?;
+        Ok(Prepared {
+            intent,
+            policy: Some(read.policy),
+            handoff: Some(proof),
+        })
     }
     fn handoff_validate_metadata(
         &self,
@@ -309,15 +326,8 @@ impl Service {
             let owner = value["owner"]
                 .as_str()
                 .ok_or("Missing outgoing visibility owner.")?;
-            let proof = self.handoff_proof(owner)?;
             let intent = IntentCapture::parse(&value["intent"])?;
-            let policy = self.game_policy_from(&intent, Some(proof.plan.before.clone()))?;
-            self.handoff_validate_metadata(&proof)?;
-            return Ok(json!(Prepared {
-                intent,
-                policy,
-                handoff: Some(proof)
-            }));
+            return Ok(json!(self.handoff_prepared(owner, intent)?));
         }
         if operation == "handoff_validate" {
             self.game_enabled()?;

@@ -1,7 +1,7 @@
 //! Worker-owned standalone visibility sessions, supervised without frontend polling.
 use super::{
-    journal::{self, Backend, Store},
-    policy::{Plan, Selection},
+    journal::{self, Backend, Record, Store},
+    policy::{Plan, Selection, State},
     session::{self, Session, Source},
     settings::{Intent, Preferences},
 };
@@ -10,6 +10,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, SyncSender},
         Arc, Mutex,
     },
     thread::JoinHandle,
@@ -21,6 +22,69 @@ pub trait Adapter: Backend + Send {
 }
 pub type Factory = Arc<dyn Fn() -> Result<Box<dyn Adapter>, String> + Send + Sync>;
 pub type Observe = Arc<dyn Fn(&[String]) -> Result<Vec<Source>, String> + Send + Sync>;
+const READ_BUDGET: Duration = Duration::from_secs(2);
+pub(super) struct HandoffInput {
+    pub job: String,
+    pub record: Record,
+    pub preferences: Preferences,
+    pub sources: Vec<Source>,
+    pub capture: String,
+}
+struct ReadRequest {
+    input: HandoffInput,
+    deadline: Instant,
+    abandoned: Arc<AtomicBool>,
+    reply: SyncSender<Result<(State, Plan), String>>,
+}
+pub(super) struct ReadTicket {
+    receive: Receiver<Result<(State, Plan), String>>,
+    deadline: Instant,
+    cancelled: Arc<AtomicBool>,
+    abandoned: Arc<AtomicBool>,
+}
+pub(super) struct HandoffRead {
+    pub actual: State,
+    pub policy: Plan,
+    deadline: Instant,
+    cancelled: Arc<AtomicBool>,
+}
+fn live_read(deadline: Instant, cancelled: &AtomicBool) -> Result<(), String> {
+    if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+        return Err("Native visibility preparation expired or was cancelled.".into());
+    }
+    Ok(())
+}
+impl ReadTicket {
+    /// Called only after releasing the service's worker/admission locks.
+    pub(super) fn wait(self) -> Result<HandoffRead, String> {
+        live_read(self.deadline, &self.cancelled)?;
+        let result = self
+            .receive
+            .recv_timeout(self.deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| {
+                "Native visibility preparation did not complete within its bounded ticket."
+            })?;
+        // A queued reply does not extend the deadline when its caller is delayed.
+        live_read(self.deadline, &self.cancelled)?;
+        let (actual, policy) = result?;
+        Ok(HandoffRead {
+            actual,
+            policy,
+            deadline: self.deadline,
+            cancelled: self.cancelled.clone(),
+        })
+    }
+}
+impl Drop for ReadTicket {
+    fn drop(&mut self) {
+        self.abandoned.store(true, Ordering::Release);
+    }
+}
+impl HandoffRead {
+    pub(super) fn validate_live(&self) -> Result<(), String> {
+        live_read(self.deadline, &self.cancelled)
+    }
+}
 #[derive(Clone)]
 pub enum Task {
     Apply {
@@ -47,6 +111,7 @@ pub struct Worker {
     pub status: Arc<Mutex<Option<Status>>>,
     cancel: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    reads: Option<SyncSender<ReadRequest>>,
 }
 impl Default for Worker {
     fn default() -> Self {
@@ -54,10 +119,51 @@ impl Default for Worker {
             status: Arc::new(Mutex::new(None)),
             cancel: Arc::new(AtomicBool::new(false)),
             thread: None,
+            reads: None,
         }
     }
 }
 impl Worker {
+    pub(super) fn handoff_status(&self) -> Result<Status, String> {
+        if self.cancel.load(Ordering::Acquire) {
+            return Err("The outgoing visibility worker is stopping.".into());
+        }
+        let status = self
+            .snapshot()
+            .filter(|s| s.active && s.phase == "active")
+            .ok_or("The outgoing visibility worker is not active.")?;
+        if self.cancel.load(Ordering::Acquire) {
+            return Err("The outgoing visibility worker is stopping.".into());
+        }
+        Ok(status)
+    }
+    pub(super) fn prepare_handoff(&self, input: HandoffInput) -> Result<ReadTicket, String> {
+        let status = self.handoff_status()?;
+        if status.job_id != input.job
+            || status.session_id.as_deref() != Some(input.record.id.as_str())
+        {
+            return Err("The outgoing native visibility job or session changed.".into());
+        }
+        let deadline = Instant::now() + READ_BUDGET;
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let (reply, receive) = mpsc::sync_channel(1);
+        self.reads
+            .as_ref()
+            .ok_or("The outgoing visibility reader is unavailable.")?
+            .try_send(ReadRequest {
+                input,
+                deadline,
+                abandoned: abandoned.clone(),
+                reply,
+            })
+            .map_err(|_| "The native visibility preparation queue is busy or closed.")?;
+        Ok(ReadTicket {
+            receive,
+            deadline,
+            cancelled: self.cancel.clone(),
+            abandoned,
+        })
+    }
     pub fn active(&self) -> bool {
         self.status
             .lock()
@@ -99,18 +205,22 @@ impl Worker {
         *self.status.lock().unwrap_or_else(|p| p.into_inner()) = Some(status.clone());
         let shared = self.status.clone();
         let cancel = self.cancel.clone();
+        let (sender, reads) = mpsc::sync_channel(1);
+        let job = status.job_id.clone();
         let spawned=std::thread::Builder::new().name("device-visibility".into()).spawn(move||{
             let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||run(task,path,factory,observe,cancel,|id|{
                 if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.phase="active".into();status.message="Persistent visibility session active; restore before changing device assignments.".into();status.session_id=Some(id);}
-            }))).unwrap_or_else(|_|Err("Visibility worker failed; inspect the durable recovery journal.".into()));
+            },reads,job))).unwrap_or_else(|_|Err("Visibility worker failed; inspect the durable recovery journal.".into()));
             if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.active=false;status.phase=if result.is_ok(){"restored"}else{"attention"}.into();status.message=result.err().unwrap_or("Owned visibility changes restored and verified.".into()).chars().take(512).collect();}
         });
         match spawned {
             Ok(thread) => {
                 self.thread = Some(thread);
+                self.reads = Some(sender);
                 Ok(status)
             }
             Err(error) => {
+                self.reads = None;
                 if let Some(status) = self
                     .status
                     .lock()
@@ -155,8 +265,10 @@ fn run(
     observe: Observe,
     cancel: Arc<AtomicBool>,
     active: impl FnOnce(String),
+    reads: Receiver<ReadRequest>,
+    job: String,
 ) -> Result<(), String> {
-    let check = || {
+    let check = || -> Result<(), String> {
         if cancel.load(Ordering::Acquire) {
             Err("Visibility operation cancelled.".to_owned())
         } else {
@@ -253,6 +365,14 @@ fn run(
             let mut last_verification = Instant::now() - Duration::from_secs(1);
             while !cancel.load(Ordering::Acquire) {
                 session.check(observe(&ids))?;
+                if let Ok(request) = reads.try_recv() {
+                    let result =
+                        inspect_handoff(&mut session, &request, &job, &cancel, &observe, &paths);
+                    // Stop can race the last backend read. The receiver also
+                    // checks this same per-start cancellation flag after recv.
+                    let result = live_read(request.deadline, &cancel).and(result);
+                    let _ = request.reply.try_send(result);
+                }
                 if last_verification.elapsed() >= Duration::from_millis(250) {
                     session.verify(|adapter| {
                         for (path, image) in &paths {
@@ -282,6 +402,110 @@ fn run(
             session.stop()
         }
     }
+}
+fn inspect_handoff(
+    session: &mut Session<Box<dyn Adapter>>,
+    request: &ReadRequest,
+    job: &str,
+    cancel: &AtomicBool,
+    observe: &Observe,
+    paths: &[(String, String)],
+) -> Result<(State, Plan), String> {
+    let check = || -> Result<(), String> {
+        live_read(request.deadline, cancel)?;
+        if request.abandoned.load(Ordering::Acquire) || request.input.job != job {
+            return Err(
+                "The native visibility preparation ticket no longer owns this worker.".into(),
+            );
+        }
+        Ok(())
+    };
+    check()?;
+    let input = &request.input;
+    input.preferences.validate()?;
+    if !input.preferences.enabled {
+        return Err("Enable optional visibility before preparation.".into());
+    }
+    let ids = input
+        .sources
+        .iter()
+        .map(|s| s.id.clone())
+        .collect::<Vec<_>>();
+    let outgoing = session.sources.clone();
+    let outgoing_ids = outgoing.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+    session.inspect(|adapter, record| {
+        check()?;
+        if serde_json::to_vec(record).map_err(|e| e.to_string())?
+            != serde_json::to_vec(&input.record).map_err(|e| e.to_string())?
+        {
+            return Err(
+                "The outgoing native visibility journal no longer matches the requested session."
+                    .into(),
+            );
+        }
+        let steps = record.validate()?;
+        if record.clean
+            || record.restoring
+            || record.pending.is_some()
+            || record.position + 1 != steps.len()
+        {
+            return Err(
+                "Only a fully applied native visibility session can prepare handoff.".into(),
+            );
+        }
+        session::validate_sources(&input.sources, &observe(&ids)?, false)?;
+        session::validate_sources(&outgoing, &observe(&outgoing_ids)?, false)?;
+        let actual = adapter.read()?;
+        check()?;
+        if actual != record.plan.after {
+            return Err("The outgoing native driver policy changed; preserve it.".into());
+        }
+        let image = adapter.executable(&input.capture)?;
+        check()?;
+        // The live session's own executable and instances remain immutable.
+        if image != record.plan.capture {
+            return Err("The capture executable changed during native handoff.".into());
+        }
+        for (path, image) in paths {
+            if adapter.executable(path)? != *image {
+                return Err("An outgoing visibility executable changed.".into());
+            }
+            check()?;
+        }
+        if outgoing.len() != record.plan.selections.len() {
+            return Err("The outgoing native selections changed.".into());
+        }
+        for (source, selection) in outgoing.iter().zip(&record.plan.selections) {
+            let instance = adapter.instance(&source.interface)?;
+            check()?;
+            if instance != selection.instance {
+                return Err("An outgoing hidden controller instance changed.".into());
+            }
+        }
+        let mut selections = Vec::new();
+        for source in &input.sources {
+            let policy = match input.preferences.devices.get(&source.id) {
+                Some(Intent::HideAll) => super::policy::Policy::HideAll,
+                Some(Intent::HideFromProcess { executable }) => {
+                    let image = adapter.executable(executable)?;
+                    check()?;
+                    super::policy::Policy::HideFromProcess { executable: image }
+                }
+                _ => return Err("Unsupported captured policy in native visibility handoff.".into()),
+            };
+            let instance = adapter.instance(&source.interface)?;
+            check()?;
+            selections.push(Selection { instance, policy });
+        }
+        let policy = Plan::build(record.plan.before.clone(), selections, image)?;
+        session::validate_sources(&input.sources, &observe(&ids)?, false)?;
+        session::validate_sources(&outgoing, &observe(&outgoing_ids)?, false)?;
+        if adapter.read()? != actual {
+            return Err("The native driver policy changed during handoff preparation.".into());
+        }
+        check()?;
+        Ok((actual, policy))
+    })
 }
 #[cfg(test)]
 #[path = "runtime_tests.rs"]

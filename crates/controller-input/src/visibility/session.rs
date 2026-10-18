@@ -130,6 +130,33 @@ impl<B: Backend> Session<B> {
         }
         Ok(())
     }
+    /// Borrow the retained adapter for read-only preparation. Unlike verify,
+    /// rejection never restores or changes policy. The held journal must remain
+    /// byte-for-byte current around the entire inspection.
+    pub(super) fn inspect<R>(
+        &mut self,
+        read: impl FnOnce(&mut B, &Record) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let current = |this: &Self| -> Result<(), String> {
+            if this.stopped
+                || this
+                    .store
+                    .read()?
+                    .as_ref()
+                    .map(serde_json::to_vec)
+                    .transpose()
+                    .map_err(|e| e.to_string())?
+                    != Some(serde_json::to_vec(&this.record).map_err(|e| e.to_string())?)
+            {
+                return Err("The retained visibility session or journal changed.".into());
+            }
+            Ok(())
+        };
+        current(self)?;
+        let result = read(&mut self.backend, &self.record);
+        current(self)?;
+        result
+    }
     pub fn stop(&mut self) -> Result<(), String> {
         if !self.stopped {
             self.record = journal::restore(&mut self.backend, &mut self.store, &self.record.id)?;

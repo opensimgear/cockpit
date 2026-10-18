@@ -31,6 +31,55 @@ fn plan() -> Plan {
     Plan::build(state(), selected(Policy::HideAll), capture()).unwrap()
 }
 #[test]
+fn retained_inspection_errors_and_journal_edits_never_stop_or_rewrite_the_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("inspect.json");
+    let state = Arc::new(Mutex::new(state()));
+    let source = observed();
+    let mut session = Session::start(
+        Driver(state.clone()),
+        Store::open(path.clone()).unwrap(),
+        plan(),
+        vec![source.clone()],
+        |fresh| {
+            let mut source = source.clone();
+            if fresh {
+                source.sequence += 1;
+            }
+            Ok(vec![source])
+        },
+    )
+    .unwrap();
+    let active = state.lock().unwrap().clone();
+    let original = std::fs::read(&path).unwrap();
+    assert!(session
+        .inspect::<()>(|_, _| Err("Read-only preparation rejected".into()))
+        .unwrap_err()
+        .contains("preparation rejected"));
+    assert_eq!(*state.lock().unwrap(), active);
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert!(!session.record.clean);
+    let mut edited = original.clone();
+    edited.push(b' ');
+    assert!(session
+        .inspect::<()>(|_, _| {
+            std::fs::write(&path, &edited).unwrap();
+            Ok(())
+        })
+        .unwrap_err()
+        .contains("changed externally"));
+    assert_eq!(*state.lock().unwrap(), active);
+    assert_eq!(std::fs::read(&path).unwrap(), edited);
+    assert!(session
+        .inspect::<()>(|_, _| panic!("Do not inspect a changed journal"))
+        .is_err());
+    std::fs::write(&path, original).unwrap();
+    session.stop().unwrap();
+    assert!(session
+        .inspect::<()>(|_, _| panic!("Do not inspect a stopped session"))
+        .is_err());
+}
+#[test]
 fn fresh_capture_is_required_and_standalone_stop_or_drop_restores() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("v.json");
