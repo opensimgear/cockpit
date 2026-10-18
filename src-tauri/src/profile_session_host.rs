@@ -124,6 +124,33 @@ impl NativeProfileHost {
             .filter(|run| run.owner == *owner)
             .ok_or_else(|| "The native prepared run expired; capture a fresh profile plan.".into())
     }
+    fn game_baseline(&mut self, owner: &RunOwner) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
+        let games = self.games.clone();
+        let resources = self.resources.clone();
+        let controllers = self.controllers.clone();
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        let mut first = true;
+        loop {
+            self.check_transition(owner)?;
+            let state = self.run(owner)?;
+            if !state.game.requires_baseline() { return Ok(vec![]); }
+            if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
+            let now = controllers.stream_page("", 0).captured_us;
+            let sample = if first { state.game.baseline(&games, now) } else { state.game.poll_baseline(&games, now) };
+            first = false;
+            let batch = state.game.delivery_batch();
+            self.check_transition(owner)?;
+            if let Some(batch) = batch { resources.publish_profile_game_delivery(batch)?; }
+            if sample.context_lost {
+                return Err(format!("The verified game context changed during baseline acquisition. {}", sample.diagnostics.join(" ")));
+            }
+            if Instant::now() >= deadline {
+                return Err("The game provider did not produce an advancing fresh baseline before activation.".into());
+            }
+            if sample.fresh { return Ok(sample.frames); }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
     fn panel_baseline(&mut self, owner: &RunOwner, delivery: &ExecutionPlan, live: bool) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
         let resources = self.resources.clone();
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
@@ -784,36 +811,9 @@ impl Host for NativeProfileHost {
                 self.acquire_actions(&run.owner)
             }
             ApplyPhase::Baseline => {
-                let games = self.games.clone();
                 let resources = self.resources.clone();
                 let controllers = self.controllers.clone();
-                let deadline = Instant::now() + std::time::Duration::from_secs(3);
-                let mut game_frames = vec![];
-                while self.run(&run.owner)?.game.requires_baseline() {
-                    self.check_transition(&run.owner)?;
-                    let now = controllers.stream_page("", 0).captured_us;
-                    let state = self.run(&run.owner)?;
-                    let sample = state.game.poll(&games, now);
-                    if let Some(batch) = state.game.delivery_batch() {
-                        resources.publish_profile_game_delivery(batch)?;
-                    }
-                    if sample.context_lost {
-                        return Err(
-                            "The verified game context changed during baseline acquisition.".into(),
-                        );
-                    }
-                    if sample.fresh {
-                        game_frames = sample.frames;
-                        break;
-                    }
-                    if Instant::now() >= deadline {
-                        return Err("The game provider did not produce an advancing fresh baseline before activation.".into());
-                    }
-                    if let Some(output) = state.output.as_mut() {
-                        output.keep_alive()?;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
+                let game_frames = self.game_baseline(&run.owner)?;
                 self.check_transition(&run.owner)?;
                 let (delivery, companion_frames) = self.companion_baseline(&run.owner, &prepared.plan)?;
                 let panel_frames = self.panel_baseline(&run.owner, &delivery, false)?;
@@ -849,17 +849,12 @@ impl Host for NativeProfileHost {
                         state.game_preparation.clone(),
                     )
                 };
+                // Acquisition/visibility can outlast telemetry freshness. Wait
+                // without starving Stop or the already acquired output lease.
+                self.game_baseline(&run.owner)
+                    .map_err(|error| format!("The game baseline expired before command admission. {error}"))?;
                 {
                     let state = self.run(&run.owner)?;
-                    // Acquisition/visibility can outlast telemetry freshness.
-                    // Recheck the real reader before exposing any writable route.
-                    let baseline = state.game.baseline(&games, controllers.stream_page("", 0).captured_us);
-                    if baseline.context_lost || state.game.requires_baseline() && !baseline.fresh {
-                        return Err(format!(
-                            "The game baseline expired before command admission. {}",
-                            baseline.diagnostics.join(" ")
-                        ));
-                    }
                     state.game.admit(&games)?;
                     if let Some(batch) = state.game.delivery_batch() {
                         resources.publish_profile_game_delivery(batch)?;
@@ -890,15 +885,9 @@ impl Host for NativeProfileHost {
                     controllers.as_ref(),
                     |token| Self::validate_token(&resources, token),
                 )?;
+                let game_frames = self.game_baseline(&run.owner)
+                    .map_err(|error| format!("The game baseline expired before arming the profile. {error}"))?;
                 let state = self.run(&run.owner)?;
-                let game_baseline = state
-                    .game
-                    .baseline(&games, controllers.stream_page("", 0).captured_us);
-                if game_baseline.context_lost
-                    || state.game.requires_baseline() && !game_baseline.fresh
-                {
-                    return Err("The game baseline expired before arming the profile.".into());
-                }
                 state.companions.bind_delivery_plan(&delivery)?;
                 let companion_frames = match companion_hub {
                     Some(ref hub) => state.companions.baseline(hub, |token|Self::validate_token(&resources,token), controllers.stream_page("",0).captured_us)?
@@ -907,7 +896,7 @@ impl Host for NativeProfileHost {
                 };
                 state.inputs = Some(inputs);
                 state.baselines = baselines;
-                state.baselines.extend(game_baseline.frames);
+                state.baselines.extend(game_frames);
                 state.baselines.extend(panel_frames);
                 state.baselines.extend(companion_frames);
                 state.delivery = Some(delivery);

@@ -77,6 +77,7 @@ struct Child {
     pid: u32,
     alive: bool,
     clock: u64,
+    real_clock: Option<Instant>,
 }
 impl Channel for Child {
     fn request(&mut self, message: &Message) -> Result<(), String> {
@@ -90,7 +91,7 @@ impl Channel for Child {
                 return Err("Injected cleanup failure".into());
             }
         }
-        self.clock += 1;
+        self.clock = self.real_clock.map_or(self.clock + 1, |origin| origin.elapsed().as_micros() as u64 + 1);
         self.feeder.receive(message.clone(), self.clock)
     }
     fn alive(&mut self) -> bool {
@@ -105,6 +106,9 @@ impl Channel for Child {
     }
 }
 fn factory() -> (Factory, Arc<Mutex<DriverState>>) {
+    factory_with_clock(false)
+}
+fn factory_with_clock(real_clock: bool) -> (Factory, Arc<Mutex<DriverState>>) {
     let state = Arc::new(Mutex::new(DriverState {
         slot: Slot {
             id: 3,
@@ -146,6 +150,7 @@ fn factory() -> (Factory, Arc<Mutex<DriverState>>) {
             pid,
             alive: true,
             clock: 1,
+            real_clock: real_clock.then(Instant::now),
         }))
     });
     (factory, state)
@@ -175,6 +180,96 @@ fn start(factory: &Factory, path: PathBuf, owner: &RunOwner, binding: Binding) -
         Some(path),
     )
     .unwrap()
+}
+
+#[test]
+fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
+    use crate::game_discovery::{Platform, ProcessIdentity};
+    struct NoGame;
+    impl Platform for NoGame {
+        fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<serde_json::Value> { vec![] }
+        fn validate(&self, _: &str, _: &str) -> Result<(), String> { Err("No real game".into()) }
+        fn launch(&self, _: &serde_json::Value) -> Result<ProcessIdentity, String> { panic!("No launch") }
+        fn find(&self, _: &serde_json::Value) -> Result<Option<ProcessIdentity>, String> { Ok(None) }
+        fn alive(&self, _: &ProcessIdentity) -> Result<bool, String> { Ok(false) }
+    }
+    for cancelled in [false, true] {
+        let directory = crate::test_directory();
+        let resources = Arc::new(crate::profile_resources::Runtime::new(None, Arc::new(|_| vec![]), false));
+        resources.refresh_native().unwrap();
+        let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
+        let games = Arc::new(crate::games::GamesRuntime::new(
+            Arc::new(|_| panic!("No physical I/O")),
+            crate::games::Paths {
+                installations: directory.path().join("installations.json"),
+                provider_setup: directory.path().join("setup.json"),
+                recovery: directory.path().join("recovery.json"),
+            }, Arc::new(NoGame),
+        ));
+        let companions = Arc::new(crate::companion_host::Runtime::new(None,
+            Arc::new(osg_mapping_host::companions::CompanionProvider::new(Arc::new(|| 0)))));
+        let epoch = Arc::new(AtomicU64::new(7));
+        let mut host = NativeProfileHost::new(resources.clone(), controllers.clone(), games.clone(),
+            companions.clone(), Arc::new(crate::gateways::ProfilePanelIo::empty()), false, epoch.clone());
+        let mut candidate = candidate(1);
+        candidate.stage = Some(NativeProfileHost::stage(&resources, &games, &companions,
+            controllers, false, &candidate).unwrap());
+        let owner = owner(&candidate);
+        host.prepare(&candidate, &owner).unwrap();
+        let (factory, driver) = factory_with_clock(true);
+        let binding = output::bindings(&[controller("combined", 0)],
+            &[driver.lock().unwrap().slot.clone()]).unwrap().remove(0);
+        let session = start(&factory, directory.path().join("output.json"), &owner, binding.clone());
+        let (reader, address, _catalogue) = crate::profile_session_games::test_baseline_reader();
+        host.run(&owner).unwrap().game = reader;
+        host.run(&owner).unwrap().output = Some(session);
+        host.run(&owner).unwrap().bindings = vec![binding];
+        let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        // Initial Acquire work left an old held backlog. No old value may be
+        // admitted when the new baseline policy reopens its receiver.
+        for counter in 1..81 {
+            sender.send_to(&crate::profile_session_games::test_baseline_export(counter, true), address).unwrap();
+        }
+        let observed = driver.clone();
+        let peer = std::thread::spawn(move || {
+            if cancelled {
+                let deadline = Instant::now() + Duration::from_secs(1);
+                loop {
+                    let polled = observed.lock().unwrap().messages.len() >= 2;
+                    if polled { break; }
+                    assert!(Instant::now() < deadline, "Host never pumped its output lease");
+                    std::thread::yield_now();
+                }
+                epoch.fetch_add(1, Ordering::AcqRel);
+            } else {
+                std::thread::sleep(Duration::from_millis(350));
+                sender.send_to(&crate::profile_session_games::test_baseline_export(100, false), address).unwrap();
+                std::thread::sleep(Duration::from_millis(20));
+                sender.send_to(&crate::profile_session_games::test_baseline_export(101, false), address).unwrap();
+            }
+        });
+        let began = Instant::now();
+        let result = host.game_baseline(&owner);
+        peer.join().unwrap();
+        if cancelled {
+            assert!(result.unwrap_err().contains("cancelled"));
+            assert!(began.elapsed() < Duration::from_secs(2), "Stop must interrupt the baseline wait before its three-second deadline");
+        } else {
+            assert!(began.elapsed() > Duration::from_micros(LEASE_US));
+            let frames = result.unwrap();
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames[0].reason, osg_mapping::engine::Reason::Baseline);
+            assert!(frames[0].changes.iter().all(|change| change.sample == osg_mapping::program::SignalSample::scalar(osg_mapping::signal::PortValue::Number(0.0))));
+        }
+        let state = host.run(&owner).unwrap();
+        state.output.as_mut().unwrap().keep_alive().unwrap();
+        assert!(state.output.as_mut().unwrap().handoff_snapshot().unwrap().is_some());
+        assert!(state.reducer.is_none(), "Waiting cannot arm the reducer or physical actions");
+        assert_eq!(driver.lock().unwrap().slot.status, SlotStatus::Busy);
+        assert!(!driver.lock().unwrap().messages.iter().any(|(_, message)| matches!(message, Message::Report { .. })));
+        output::neutralize_output(state.output.as_mut().unwrap(), &state.recording).unwrap();
+        assert_eq!(driver.lock().unwrap().slot.status, SlotStatus::Free);
+    }
 }
 fn token(owner: &RunOwner) -> RunToken {
     RunToken {

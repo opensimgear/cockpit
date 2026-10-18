@@ -393,22 +393,12 @@ impl GameSources {
         for source in self.sources.values_mut() {
             source.available = false;
         }
-        let started = Instant::now();
-        loop {
-            let sample = self.poll_with_policy(
-                games,
-                now_us.saturating_add(started.elapsed().as_micros() as u64),
-                true,
-            );
-            if sample.fresh
-                || sample.context_lost
-                || !self.requires_baseline()
-                || started.elapsed() >= std::time::Duration::from_secs(3)
-            {
-                return sample;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        self.poll_baseline(games, now_us)
+    }
+    /// One bounded pre-arm read. The host owns waiting, cancellation and output
+    /// heartbeats, including after discarding a queued pre-activation backlog.
+    pub(crate) fn poll_baseline(&mut self, games: &GamesRuntime, now_us: u64) -> GamePoll {
+        self.poll_with_policy(games, now_us, true)
     }
     pub(crate) fn requires_baseline(&self) -> bool {
         self.reader.is_some()
@@ -774,6 +764,15 @@ impl Drop for GameSources {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_baseline_reader() -> (GameSources, std::net::SocketAddr, tempfile::TempDir) {
+    tests::baseline_reader()
+}
+#[cfg(test)]
+pub(crate) fn test_baseline_export(counter: u8, on: bool) -> Vec<u8> {
+    tests::bytes(counter, on)
 }
 
 #[cfg(test)]

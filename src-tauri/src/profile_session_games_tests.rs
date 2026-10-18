@@ -145,7 +145,7 @@ impl Dcs {
         source
     }
 }
-fn bytes(counter: u8, on: bool) -> Vec<u8> {
+pub(super) fn bytes(counter: u8, on: bool) -> Vec<u8> {
     fn block(bytes: &mut Vec<u8>, address: u16, value: &[u8]) {
         bytes.extend(address.to_le_bytes());
         bytes.extend((value.len() as u16).to_le_bytes());
@@ -158,6 +158,19 @@ fn bytes(counter: u8, on: bool) -> Vec<u8> {
     block(&mut bytes, 4660, &[if on { 64 } else { 0 }, 0]);
     block(&mut bytes, 65534, &[counter, 0]);
     bytes
+}
+pub(super) fn baseline_reader() -> (GameSources, std::net::SocketAddr, tempfile::TempDir) {
+    let fixture = Dcs::new();
+    let mut source = fixture.sources();
+    // The real decoder/socket is exercised; native process proof has separate
+    // tests. This fixture cannot admit simulator commands or a real game.
+    source.game = None;
+    let Some(Reader::Dcs { network, transport, .. }) = &mut source.reader else { panic!() };
+    network.listen_port = 0;
+    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
+    let address = transport.as_ref().unwrap().local_addr().unwrap();
+    network.listen_port = address.port();
+    (source, address, fixture.folder)
 }
 fn feed(source: &mut GameSources, counter: u8, on: bool, now_us: u64) -> GamePoll {
     let Some(Reader::Dcs { decoder, .. }) = source.reader.as_mut() else {
