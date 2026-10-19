@@ -105,6 +105,10 @@ test("left and right alignment use outer selection edges regardless of selection
     const right=apply(h,{type:'align',ids,edge:'right'}).present.presentation.widgets;
     assert.ok(right.every(widget=>Math.abs(widget.bounds.x+widget.bounds.width-0.8)<1e-10));
     assert.deepEqual(right.map(widget=>widget.bounds.width),[0.2,0.3]);
+    const top=apply(h,{type:'align',ids,edge:'top'}).present.presentation.widgets;
+    assert.ok(top.every(widget=>Math.abs(widget.bounds.y-0.1)<1e-10));
+    const bottom=apply(h,{type:'align',ids,edge:'bottom'}).present.presentation.widgets;
+    assert.ok(bottom.every(widget=>Math.abs(widget.bounds.y+widget.bounds.height-0.6)<1e-10));
   }
 });
 test("page/viewport operations and deletion clean references atomically", () => {

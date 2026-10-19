@@ -411,12 +411,20 @@
         <button disabled={!history.past.length} onclick={() => { stop(); dirty=true;history = undoDesigner(history); name = document.ui.title; select([]); }}><Icon name="undo" size={16} />Undo</button><button disabled={!history.future.length} onclick={() => { stop(); dirty=true;history = redoDesigner(history); name = document.ui.title; select([]); }}><Icon name="redo" size={16} />Redo</button></div>
 
       <div class="toolbar layout-tools" role="group" aria-label="Widget layout tools">
+        <div class="layout-toolset">
         <button class:active={document.presentation.grid.snap} aria-label="Snap to grid" title="Snap to grid" aria-pressed={document.presentation.grid.snap} onclick={() => command({ type: 'set-grid', ...document.presentation.grid, snap: !document.presentation.grid.snap })}><Icon name="grid" size={18}/></button>
+        </div><div class="layout-toolset" role="group" aria-label="Vertical alignment">
         <button disabled={selected.length < 2} aria-label="Align left" title="Align left" onclick={() => command({ type: 'align', ids: selected, edge: 'left' })}><Icon name="align-left" size={18}/></button>
-        <button disabled={selected.length < 2} aria-label="Align center" title="Align center" onclick={() => command({ type: 'align', ids: selected, edge: 'center-x' })}><Icon name="align-center" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Align vertical" title="Align vertical" onclick={() => command({ type: 'align', ids: selected, edge: 'center-x' })}><Icon name="align-center" size={18}/></button>
         <button disabled={selected.length < 2} aria-label="Align right" title="Align right" onclick={() => command({ type: 'align', ids: selected, edge: 'right' })}><Icon name="align-right" size={18}/></button>
+        </div><div class="layout-toolset" role="group" aria-label="Horizontal alignment">
+        <button disabled={selected.length < 2} aria-label="Align top" title="Align top" onclick={() => command({ type: 'align', ids: selected, edge: 'top' })}><Icon name="align-top" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Align horizontal" title="Align horizontal" onclick={() => command({ type: 'align', ids: selected, edge: 'center-y' })}><Icon name="align-horizontal" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Align bottom" title="Align bottom" onclick={() => command({ type: 'align', ids: selected, edge: 'bottom' })}><Icon name="align-bottom" size={18}/></button>
+        </div><div class="layout-toolset" role="group" aria-label="Widget grouping">
         <button disabled={selected.length < 2} aria-label="Group" title="Group" onclick={() => command({ type: 'add-group', pageId: page.id, label: 'Group', widgetIds: selected })}><Icon name="group" size={18}/></button>
         <button disabled={!widget?.groupId} aria-label="Ungroup" title="Ungroup" onclick={() => widget?.groupId && command({ type: 'ungroup', id: widget.groupId })}><Icon name="ungroup" size={18}/></button>
+        </div>
       </div>
       <div class="canvas-caption"><strong>{viewport.width} × {viewport.height} px</strong><span>{regions.length} {regions.length === 1 ? 'viewport' : 'viewports'}</span></div>
       {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
@@ -474,6 +482,7 @@
 </section>
 
 <style>
+  .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .panel-properties-layout{position:relative;overflow:hidden;min-width:0}.properties-overlay{position:absolute;inset:0 0 0 auto;width:75%;box-sizing:border-box;padding:20px;overflow:auto;background:var(--surface);border-left:1px solid var(--line);box-shadow:-12px 0 32px #0003;z-index:20}.properties-overlay > h3{margin-top:0}.properties-close{float:right;display:grid;place-items:center;padding:6px;margin:-6px -6px 8px 12px;background:transparent;border:0;color:var(--muted)}
   .asset-import{display:none}.asset-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.asset-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px;border:1px solid var(--line);border-radius:5px}.asset-list img{width:30px;height:30px;object-fit:contain;flex-shrink:0;background:var(--bg);border-radius:3px}.asset-list li > div{flex:1;min-width:0}.asset-list strong,.asset-list small{display:block;font-size:10px;overflow-wrap:anywhere}.asset-list small{font-size:9px;color:var(--muted);margin-top:4px}.asset-list .assets-empty{font-size:11px;color:var(--muted);border-style:dashed}.asset-delete{display:grid;place-items:center;flex-shrink:0;padding:5px;opacity:0;pointer-events:none;color:#e39b9b}.asset-list li:hover .asset-delete,.asset-list li:focus-within .asset-delete{opacity:1;pointer-events:auto}@media(hover:none){.asset-delete{opacity:1;pointer-events:auto}}
   .layout-tools button{display:grid;place-items:center;width:36px;height:36px;padding:0}.layout-tools button.active{color:var(--accent);background:var(--accent-bg);border-color:var(--accent)}

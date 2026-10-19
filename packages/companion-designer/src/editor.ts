@@ -165,12 +165,14 @@ export function applyDesignerCommand(history: DesignerHistory, command: Designer
       const widgets = selected(command.ids), first = widgets[0].bounds;
       const left = Math.min(...widgets.map(widget => widget.bounds.x));
       const right = Math.max(...widgets.map(widget => widget.bounds.x + widget.bounds.width));
+      const top = Math.min(...widgets.map(widget => widget.bounds.y));
+      const bottom = Math.max(...widgets.map(widget => widget.bounds.y + widget.bounds.height));
       for (const widget of widgets) {
         const b = widget.bounds;
         if (command.edge === "left") b.x = left;
         else if (command.edge === "right") b.x = right - b.width;
-        else if (command.edge === "top") b.y = first.y;
-        else if (command.edge === "bottom") b.y = first.y + first.height - b.height;
+        else if (command.edge === "top") b.y = top;
+        else if (command.edge === "bottom") b.y = bottom - b.height;
         else if (command.edge === "center-x") b.x = first.x + (first.width - b.width) / 2;
         else b.y = first.y + (first.height - b.height) / 2;
       } break;
