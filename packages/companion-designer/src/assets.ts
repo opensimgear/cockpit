@@ -119,7 +119,7 @@ function freeze<T>(value: T): T {
   return value;
 }
 export async function publishDocument(document: DesignerDocument, assets: AssetPayload[]): Promise<Publication> {
-  const doc = checked(document); assert(doc.bindings.length === doc.ui.controls.length, "Every input requires a logical target binding before publication");
+  const doc = checked(document); assert(doc.ui.controls.length > 0, "Add at least one input before publishing this panel"); assert(doc.bindings.length === doc.ui.controls.length, "Every input requires a logical target binding before publication");
   const payloads = await validateAssets(doc, assets), publicationHash = "sha256:" + await digest(new TextEncoder().encode(canonical(doc)));
   const capabilityFingerprint = "sha256:" + await digest(new TextEncoder().encode(canonical(capabilityData(doc))));
   return freeze({ document: doc, assets: payloads, publicationHash, capabilityFingerprint });

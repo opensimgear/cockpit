@@ -659,6 +659,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(pageChoice.getByRole('button',{name:/^Delete page/})).toHaveCount(0);
     await panelLibrary.getByRole('button',{name:'Add page',exact:true}).click();await expect(pageChoice.locator('li')).toHaveCount(2);
     await expect(pageChoice.getByRole('button',{name:'Page 1',exact:true})).toHaveAttribute('aria-pressed','true');
+    await pageChoice.locator('li').first().hover();await pageChoice.getByRole('button',{name:'Delete page 0',exact:true}).click();
+    await expect(pageChoice.locator('li')).toHaveCount(1);await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toBeVisible();
+    await expect(panelEditor.locator('.widget')).toHaveCount(0);await expect(panelEditor.locator('.layout-error')).toHaveCount(0);
+    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(pageChoice.locator('li')).toHaveCount(2);
+    await pageChoice.getByRole('button',{name:'Page 0',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(1);
     await pageChoice.getByRole('button',{name:'Page 0',exact:true}).click();await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toHaveAttribute('aria-pressed','true');
     const secondPage=pageChoice.locator('li').last(),deletePage=secondPage.getByRole('button',{name:'Delete page 1',exact:true});
     await page.mouse.move(0,0);await expect(deletePage).toHaveCSS('opacity','0');await secondPage.hover();await expect(deletePage).toHaveCSS('opacity','1');

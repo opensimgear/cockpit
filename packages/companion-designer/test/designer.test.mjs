@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { validateAssets, canonical } from "../src/index.ts";
 import { newDocument, createDesignerHistory, applyDesignerCommand as apply, undoDesigner, redoDesigner, widgetPresets, validateDesignerDocument as validate, normalizeToPortableUi, migratePortableUi, flightTemplate, racingTemplate, compareDesignerPublications, publishDocument, importAsset, exportBundle, importBundle, imageDimensions, encodeBase64, decodeBase64, createLibrary, saveDraft, openDraft, duplicateDraft, deleteDraft, validateLibrary, DESIGNER_LIMITS as L } from "../src/index.ts";
-import { exampleUi } from "../../companion-contracts/src/index.ts";
+import { exampleUi, validatePortableUi } from "../../companion-contracts/src/index.ts";
 const clone = value => structuredClone(value);
 const seed = () => newDocument("Test panel");
 const history = () => createDesignerHistory(seed());
@@ -121,22 +121,33 @@ test("page/viewport operations and deletion clean references atomically", () => 
   h = apply(h, { type: "delete-page", id: pageId }); assert.equal(h.present.ui.pages.length, 1); assert.equal(h.present.presentation.groups.length, 0);
   assert.equal(h.present.ui.controls.length, original.ui.controls.length);
   assert.throws(() => apply(h, { type: "delete-page", id: h.present.ui.pages[0].id }));
-  assert.throws(() => apply(h, { type: "delete-widget", id: first(h.present).id }));
+  assert.equal(apply(h, { type: "delete-widget", id: first(h.present).id }).present.presentation.widgets.length,0);
 });
 test("default page numbering starts at zero and closes gaps after deletion with undo", () => {
   let h=history();
   assert.equal(h.present.ui.pages[0].title,'Page 0');
   h=apply(h,{type:'add-page',title:'Page 1'});
   h=apply(h,{type:'add-page',title:'Page 2'});
-  h=apply(h,{type:'add-widget',kind:'button',pageId:h.present.ui.pages[1].id});
   const remainingIds=h.present.ui.pages.slice(1).map(page=>page.id);
   h=apply(h,{type:'delete-page',id:h.present.ui.pages[0].id});
   assert.deepEqual(h.present.ui.pages.map(page=>page.title),['Page 0','Page 1']);
   assert.deepEqual(h.present.ui.pages.map(page=>page.id),remainingIds);
+  assert.equal(h.present.presentation.widgets.length,0);
+  assert.equal(h.present.ui.controls.length,0);
   h=undoDesigner(h);
   assert.deepEqual(h.present.ui.pages.map(page=>page.title),['Page 0','Page 1','Page 2']);
   h=redoDesigner(h);
   assert.deepEqual(h.present.ui.pages.map(page=>page.title),['Page 0','Page 1']);
+});
+
+test('blank drafts round-trip through storage and export but cannot be published',async()=>{
+  let h=history();h=apply(h,{type:'add-page',title:'Page 1'});h=apply(h,{type:'delete-page',id:h.present.ui.pages[0].id});
+  const imported=await importBundle(await exportBundle(h.present,[]));assert.deepEqual(imported.document,h.present);
+  assert.equal(validatePortableUi(h.present.ui).ok,false);
+  assert.equal(validatePortableUi(h.present.ui,{allowEmptyControls:true}).ok,true);
+  const library=await saveDraft(createLibrary(),{id:'blank-draft',name:'Blank',document:h.present,assets:[]});
+  assert.deepEqual(openDraft(library,'blank-draft').document,h.present);
+  await assert.rejects(()=>publishDocument(h.present,[]),/Add at least one input/);
 });
 
 test("logical targets enforce range/index compatibility independently of machine assignments", () => {

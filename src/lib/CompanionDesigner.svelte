@@ -224,6 +224,12 @@
       const previousHashes=panelHashes(draftId);
       const simplified=simplifyFirmwareWidgets(document);
       if(simplified.removed)history=createDesignerHistory(simplified.document);
+      if (!document.ui.controls.length) {
+        const next=await saveDraft(library,{id:draftId,name:document.ui.title,document,assets:activeAssets});
+        await persist(next,publications);dirty=false;
+        message='Draft saved. Add an input to update companions.';
+        return;
+      }
       const panel=await publishDocument(document,activeAssets);
       const next=await saveDraft(library,{id:draftId,name:document.ui.title,document,assets:activeAssets});
       await persist(next,{...publications,[draftId]:[panel]});dirty=false;

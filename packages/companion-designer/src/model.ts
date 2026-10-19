@@ -99,7 +99,7 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
     const json = JSON.stringify(input); assert(json && new TextEncoder().encode(json).length <= 1024 * 1024, "Designer document exceeds 1 MiB");
     const doc = exact(JSON.parse(json), ["schemaVersion", "ui", "presentation", "targets", "bindings"]);
     assert(doc.schemaVersion === 2, "Unsupported designer schema");
-    const logical = validatePortableUi(doc.ui); assert(logical.ok, logical.ok ? "" : logical.error);
+    const logical = validatePortableUi(doc.ui, { allowEmptyControls:true }); assert(logical.ok, logical.ok ? "" : logical.error);
     const ui = logical.value, p = exact(doc.presentation, ["widgets", "groups", "viewports", "grid"]);
     const usedIds = new Set([...ui.controls.map(c => c.id), ...ui.feedbackWidgets.map(w => w.id), ...ui.pages.map(p => p.id), ...ui.assets.map(a => a.id)]);
     const newId = (value: unknown) => { stableId(value); assert(!usedIds.has(value), "Duplicate stable ID"); usedIds.add(value); };
@@ -134,7 +134,7 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
       }
     }
     const controlIds: string[] = [], feedbackIds: string[] = [];
-    const widgets = array(p.widgets, 1, DESIGNER_LIMITS.widgets) as DesignerWidget[];
+    const widgets = array(p.widgets, 0, DESIGNER_LIMITS.widgets) as DesignerWidget[];
     for (const widget of widgets) {
       exact(widget, ["id", "pageId", "kind", "label", "bounds", "controlIds", "feedbackIds", "config"], ["groupId", "style"]);
       newId(widget.id); label(widget.label); bounds(widget.bounds); assert(pageIds.includes(widget.pageId), "Unknown widget page");

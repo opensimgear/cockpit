@@ -81,13 +81,13 @@ function bounded<T>(input: unknown, max: number, check: (value: Record<string, u
     return { ok: true, value: JSON.parse(serialized) as T };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Invalid document" }; }
 }
-export function validatePortableUi(input: unknown): Validation<PortableUi> {
+export function validatePortableUi(input: unknown, options: { allowEmptyControls?: boolean } = {}): Validation<PortableUi> {
   return bounded(input, COMPANION_LIMITS.uiBytes, ui => {
     keys(ui, ["schemaVersion", "id", "title", "controls", "pages", "feedbackWidgets", "assets"]);
     if (ui.schemaVersion !== 1) reject("Unsupported UI version"); id(ui.id); text(ui.title);
     const ids = new Set<string>();
     const unique = (value: unknown) => { id(value); if (ids.has(value)) reject("Duplicate stable ID"); ids.add(value); };
-    const controls = list(ui.controls, 1, COMPANION_LIMITS.controls).map(value => {
+    const controls = list(ui.controls, options.allowEmptyControls ? 0 : 1, COMPANION_LIMITS.controls).map(value => {
       const control = record(value);
       const extra = control.kind === "axis" ? ["axisMode", "fallback"] : control.kind === "hat" ? ["fallback"] : [];
       keys(control, ["id", "label", "kind", ...extra], ["style"]); unique(control.id); text(control.label);
