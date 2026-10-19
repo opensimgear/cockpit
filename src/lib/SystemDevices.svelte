@@ -120,10 +120,10 @@
 <div class="system-inventory" bind:this={inventoryElement} hidden={showingDetails}>
 <div class="page-heading inventory-heading"><div><div class="eyebrow">YOUR CONNECTED SYSTEM</div><h1>Devices</h1><p>Every known component, its current state, and how it connects.</p></div><button class="secondary-button cleanup-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}>Cleanup ({eligible.length})</button></div>
 <div class="system-toolbar">
-  <div class="mode-switch" role="group" aria-label="Devices presentation"><button class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}>List</button><button class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}>Topology</button></div>
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
   <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="bluetooth">Bluetooth</option><option value="software">Software</option><option value="unknown">Unknown connection</option></select>
+  <div class="mode-switch" role="group" aria-label="Devices presentation"><button aria-label="List" title="List" class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}><Icon name="grid" size={18} /></button><button aria-label="Topology" title="Topology" class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}><Icon name="network" size={18} /></button></div>
 </div>
 <div class="type-counts" aria-label="Component counts"><span aria-live="polite">{visible.length} / {components.length} components</span>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
 {#if snapshot.diagnostics.length}<details class="provider-diagnostics"><summary>Inventory diagnostics ({snapshot.diagnostics.length})</summary>{#each snapshot.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}
@@ -228,9 +228,10 @@
   .inventory-heading {align-items:center}.inventory-heading > div {min-width:0}.cleanup-button {flex-shrink:0}
   .details-toolbar {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
   .system-toolbar,.component-actions { display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px; }
-  .mode-switch {display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .mode-switch {display:flex;flex-shrink:0;height:38px;margin-left:auto;border:1px solid var(--line);border-radius:6px;overflow:hidden}
   .type-counts {display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--soft);margin-bottom:18px}
-  .mode-switch button {padding:10px 18px;background:var(--surface);color:inherit;border:0;cursor:pointer}.mode-switch .chosen {background:var(--accent-bg);color:var(--accent)}
+  .mode-switch button {display:grid;place-items:center;width:38px;height:100%;padding:0;background:var(--surface);color:var(--soft);border:0;cursor:pointer}.mode-switch .chosen {background:var(--accent-bg);color:var(--accent)}
+  .system-toolbar .search-field,.system-toolbar select {height:38px}
   select {background:var(--input-bg);color:inherit;border:1px solid var(--line);padding:10px;border-radius:6px}.search-field {flex:1;min-width:180px}
   .system-list {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,248px),1fr));gap:14px;align-items:stretch}
   .system-card {display:flex;flex-direction:column;align-items:stretch;gap:18px;min-width:0;min-height:184px;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:12px;text-align:left;cursor:pointer;transition:background .15s,border-color .15s}
