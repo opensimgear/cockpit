@@ -33,6 +33,7 @@
   let draftId = $state<string>(crypto.randomUUID());
   let name = $state('New panel');
   let editingName = $state(false), nameDraft = $state('');
+  let editingViewportId = $state(''), viewportNameDraft = $state('');
   let assets = $state.raw<AssetPayload[]>([]);
   let publications = $state.raw<Record<string, Publication[]>>({});
   let pageId = $state('');
@@ -163,6 +164,14 @@
   }
   function removeViewport(id: string) {
     if (command({ type:'remove-viewport',pageId:page.id,id })) { selectedViewportId='';select([]); }
+  }
+  function editViewportName(id: string, label: string) {
+    selectedViewportId=id;select([]);propertiesOpen=true;
+    viewportNameDraft=label;editingViewportId=id;
+  }
+  function finishViewportName() {
+    const id=editingViewportId,label=viewportNameDraft.trim();editingViewportId='';
+    if (id && label && regions.some(region=>region.id===id && region.label!==label)) command({type:'update-viewport',pageId:page.id,id,patch:{label}});
   }
   function changeViewportBounds(key: keyof Bounds, input: HTMLInputElement) {
     const scale = key === 'x' || key === 'width' ? usableWidth : usableHeight;
@@ -413,7 +422,8 @@
         <p>Widgets must stay inside a viewport, and viewports cannot overlap. Move or delete a viewport’s widgets before deleting it. Every page must keep at least one viewport.</p>
       </div>
       <div class="viewport-list">{#each regions as region}<div class="viewport-row">
-        <button class="viewport-select" class:active={propertiesOpen && !selected.length && region.id === activeViewport.id} aria-pressed={propertiesOpen && !selected.length && region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}>{region.label}<small>{Math.round(region.bounds.width * usableWidth)} × {Math.round(region.bounds.height * usableHeight)}</small></button>
+        {#if editingViewportId===region.id}<input class="viewport-name-input" aria-label="Viewport name" maxlength="120" bind:value={viewportNameDraft} use:focusName onblur={finishViewportName} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();finishViewportName();}else if(event.key==='Escape'){event.preventDefault();editingViewportId='';}}}/>
+        {:else}<button class="viewport-select" class:active={propertiesOpen && !selected.length && region.id === activeViewport.id} aria-pressed={propertiesOpen && !selected.length && region.id === activeViewport.id} title="Edit viewport name" disabled={preview} onclick={() => editViewportName(region.id,region.label)}><span>{region.label}</span><span class="viewport-pencil"><Icon name="pencil" size={14}/></span></button>{/if}
         {#if regions.length > 1}<button class="viewport-delete" aria-label={`Delete viewport ${region.label}`} title={document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(region.bounds,w.bounds)) ? 'Move or delete its widgets before removing this viewport' : 'Delete viewport'} disabled={preview || document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(region.bounds,w.bounds))} onclick={() => removeViewport(region.id)}><Icon name="trash" size={15}/></button>{/if}
       </div>{/each}</div>
       <button class="add-viewport" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={14} />Add viewport</button>
@@ -521,6 +531,8 @@
 <style>
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
+  .viewport-row .viewport-select{display:flex;align-items:center;gap:8px}.viewport-select > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewport-pencil{display:flex;opacity:0;color:var(--muted)}.viewport-row:hover .viewport-pencil,.viewport-row:focus-within .viewport-pencil{opacity:1}.viewport-name-input{width:100%;padding-right:36px}
+  @media(hover:none){.viewport-pencil{opacity:1}}
   .accordion-info{float:right;display:inline-flex;align-items:center;justify-content:center;padding:3px;margin:-3px 0;background:transparent;border:0;color:var(--muted)}.viewport-help{width:min(360px,calc(100vw - 32px));box-sizing:border-box;max-height:80vh;overflow:auto;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px #0005}.viewport-help h3{margin:0 28px 12px 0;font-size:16px}.viewport-help p:last-child{margin-bottom:0}.help-close{float:right;display:grid;place-items:center;padding:3px;background:transparent;border:0;color:var(--muted)}
   .viewport-row{position:relative;min-width:0}.viewport-select{width:100%;padding-right:36px}.viewport-row .viewport-delete{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;padding:5px;color:#e39b9b;opacity:0;pointer-events:none}.viewport-row:hover .viewport-delete,.viewport-row:focus-within .viewport-delete{opacity:1;pointer-events:auto}
   @media(hover:none){.viewport-row .viewport-delete{opacity:1;pointer-events:auto}}
@@ -534,7 +546,7 @@
   @media(prefers-reduced-motion:reduce){.editor-accordion::details-content{transition:none}}
   .editor-title{min-width:min(100%,240px);flex:1}.editor-title-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.editor-title .panel-title-button{display:inline-flex;align-items:center;gap:12px;max-width:100%;text-align:left;font:inherit;letter-spacing:inherit;background:transparent;border:0;padding:0;color:inherit}.panel-title-button span{overflow-wrap:anywhere}.panel-title-button :global(svg){flex-shrink:0;color:var(--muted)}.editor-title .panel-name-input{font:inherit;letter-spacing:inherit;width:100%;padding:0 6px;margin:0;line-height:inherit}.editor-title-actions .delete-panel{color:#e39b9b}
   .designer{color:var(--text);min-width:0}.designer>[hidden]{display:none}
-  .viewport-list{display:grid;gap:6px}.viewport-list button{text-align:left;overflow-wrap:anywhere}.viewport-list button.active{border-color:var(--accent);background:var(--accent-bg,var(--surface-raised))}.viewport-list small{display:block;color:var(--muted);font-size:10px;margin-top:4px}.add-viewport{display:flex;align-items:center;gap:5px;width:100%;margin-top:8px}.screen-dimension{width:92px}.layout-error{border:1px solid #d9666c;background:#52262c44;color:#ffb9bd;border-radius:5px;padding:10px;font-size:12px}.viewport-properties .eyebrow{margin-top:0}
+  .viewport-list{display:grid;gap:6px}.viewport-list button{text-align:left;overflow-wrap:anywhere}.viewport-list button.active{border-color:var(--accent);background:var(--accent-bg,var(--surface-raised))}.add-viewport{display:flex;align-items:center;gap:5px;width:100%;margin-top:8px}.screen-dimension{width:92px}.layout-error{border:1px solid #d9666c;background:#52262c44;color:#ffb9bd;border-radius:5px;padding:10px;font-size:12px}.viewport-properties .eyebrow{margin-top:0}
   .back-panels{display:inline-flex;align-items:center;gap:6px;background:transparent;border:0;color:var(--accent);font-size:10px;padding:6px 0;margin-bottom:18px}.back-panels:hover{background:transparent;text-decoration:underline}
   .editor-heading{flex-wrap:wrap}.editor-heading h1{overflow-wrap:anywhere}
   .panel-list-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}.panel-import{display:none}.action,.toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px}.panels-section{margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}.panel-list-heading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:20px 0}

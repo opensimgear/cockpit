@@ -609,6 +609,15 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.locator('.viewport-list')).toBeVisible();
     await page.keyboard.press('Escape');await expect(viewportHelp).not.toBeVisible();
     const viewportRows=panelEditor.locator('.viewport-row');
+    const originalViewportName=await viewportRows.first().locator('.viewport-select').innerText();
+    await expect(viewportRows.locator('small')).toHaveCount(0);
+    await viewportRows.first().locator('.viewport-select').click();
+    const inlineViewportName=viewportRows.getByRole('textbox',{name:'Viewport name',exact:true});
+    await expect(inlineViewportName).toBeFocused();await inlineViewportName.fill('Cancelled viewport name');await inlineViewportName.press('Escape');
+    await expect(viewportRows.first().locator('.viewport-select')).toHaveText(originalViewportName);
+    await viewportRows.first().locator('.viewport-select').click();await inlineViewportName.fill('Renamed viewport');await inlineViewportName.press('Enter');
+    await expect(viewportRows.first().locator('.viewport-select')).toHaveText('Renamed viewport');
+    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(viewportRows.first().locator('.viewport-select')).toHaveText(originalViewportName);
     await expect(viewportRows).toHaveCount(1);await expect(viewportRows.locator('.viewport-delete')).toHaveCount(0);
     await panelEditor.getByRole('button',{name:'Add viewport',exact:true}).click();await expect(viewportRows).toHaveCount(2);
     await expect(viewportRows.first().locator('.viewport-delete')).toBeDisabled();
@@ -618,10 +627,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(viewportRows).toHaveCount(1);await expect(viewportRows.locator('.viewport-delete')).toHaveCount(0);
     await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(viewportRows).toHaveCount(2);
     await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(viewportRows).toHaveCount(1);
-    await panelEditor.locator('.viewport-list button').first().click();await expect(panelProperties).toBeVisible();
+    await panelEditor.locator('.viewport-label').first().click();await expect(panelProperties).toBeVisible();
     await expect.poll(()=>panelProperties.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(panelCanvasWidth*.50));
     assert.equal(await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth),panelCanvasWidth,'Properties overlay does not resize the panel canvas.');
-    await panelEditor.locator('.viewport-list button').first().click();await expect(panelProperties).toHaveCount(0);
+    await panelEditor.locator('.viewport-label').first().click();await expect(panelProperties).toHaveCount(0);
     await expect(panelEditor.locator('.viewport-outline.viewport-selected')).toHaveCount(0);
     const viewportLabel=panelEditor.locator('.viewport-label').first();
     await viewportLabel.click();await expect(panelProperties).toBeVisible();
