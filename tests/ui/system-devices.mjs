@@ -1059,11 +1059,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.locator('[data-component-id="visibility:stale-hide"]')).toHaveCount(0);
     await companionsNav.click();await panels.getByRole('button',{name:'New panel',exact:true}).click();
     await panelEditor.locator('.widget').first().click();await panelEditor.getByRole('button',{name:'Delete widget',exact:true}).click();
-    await expect(deleteItemDialog).toContainText('Delete widget');await deleteItemDialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(1);
+    await expect(deleteItemDialog).toHaveCount(0);await expect(panelEditor.locator('.widget')).toHaveCount(0);
+    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(1);
+    await panelEditor.locator('.widget').first().click();
     const selectedWidgetLabel=panelProperties.getByRole('textbox',{name:'Label',exact:true});
     await selectedWidgetLabel.focus();await page.keyboard.press('Delete');await expect(deleteItemDialog).toHaveCount(0);
     await panelEditor.locator('.widget .edit-hit').first().focus();await page.keyboard.press('Delete');
-    await expect(deleteItemDialog).toContainText('Delete widget');await deleteItemDialog.getByRole('button',{name:'Delete',exact:true}).click();
+    await expect(deleteItemDialog).toHaveCount(0);await expect(panelEditor.locator('.widget')).toHaveCount(0);
     for(const name of ['Preview','Save','Export']){const action=panelEditor.getByRole('button',{name,exact:true});await expect(action).toBeDisabled();await expect(action).toHaveAttribute('title',/widget to page 0/);}
     await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(leavePanelDialog).toBeVisible();
     await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();

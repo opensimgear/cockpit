@@ -201,12 +201,10 @@
   async function removePage(id:string,index:number) {
     if(await confirmDelete(`Delete page ${index} and all its widgets?`)){command({type:'delete-page',id});select([]);}
   }
-  async function removeSelectedWidget() {
+  function removeSelectedWidget() {
     const widgets=document.presentation.widgets.filter(item=>selected.includes(item.id));
-    if(widgets.length && await confirmDelete(widgets.length===1?`Delete widget "${widgets[0].label}"?`:`Delete ${widgets.length} selected widgets?`)){
-      for(const item of widgets)command({type:'delete-widget',id:item.id});
-      select([]);
-    }
+    for(const item of widgets)command({type:'delete-widget',id:item.id});
+    select([]);
   }
   function widgetDeleteKey(event:KeyboardEvent) {
     if(event.key!=='Delete'||event.defaultPrevented||event.repeat||event.ctrlKey||event.metaKey||event.altKey||!active||!editorOpen||preview||busy||pendingDelete||pendingLeave||!widget)return;
