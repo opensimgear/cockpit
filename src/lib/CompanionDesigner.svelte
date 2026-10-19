@@ -373,12 +373,13 @@
         <button onclick={() => { command({ type: 'add-page', title: `Page ${document.ui.pages.length + 1}` }); pageId = document.ui.pages.at(-1)!.id; select([]); }}><Icon name="plus" size={16} />Add page</button>
         <button disabled={document.ui.pages.length <= 1} onclick={() => { command({ type: 'delete-page', id: page.id }); select([]); }}><Icon name="trash" size={16} />Remove page</button>
       </div>
-      <div class="toolbar"><label><input type="checkbox" checked={document.presentation.grid.snap} onchange={e => command({ type: 'set-grid', ...document.presentation.grid, snap: e.currentTarget.checked })} />Snap to grid</label>
-        <button disabled={!selected.length} onclick={() => command({ type: 'snap', ids: selected })}>Snap selection</button>
-        <button disabled={selected.length < 2} onclick={() => command({ type: 'align', ids: selected, edge: 'left' })}>Align left</button>
-        <button disabled={selected.length < 2} onclick={() => command({ type: 'align', ids: selected, edge: 'center-y' })}>Align centres</button>
-        <button disabled={selected.length < 2} onclick={() => command({ type: 'add-group', pageId: page.id, label: 'Group', widgetIds: selected })}>Group</button>
-        <button disabled={!widget?.groupId} onclick={() => widget?.groupId && command({ type: 'ungroup', id: widget.groupId })}>Ungroup</button>
+      <div class="toolbar layout-tools" role="group" aria-label="Widget layout tools">
+        <button class:active={document.presentation.grid.snap} aria-label="Snap to grid" title="Snap to grid" aria-pressed={document.presentation.grid.snap} onclick={() => command({ type: 'set-grid', ...document.presentation.grid, snap: !document.presentation.grid.snap })}><Icon name="grid" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Align left" title="Align left" onclick={() => command({ type: 'align', ids: selected, edge: 'left' })}><Icon name="align-left" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Align center" title="Align center" onclick={() => command({ type: 'align', ids: selected, edge: 'center-x' })}><Icon name="align-center" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Align right" title="Align right" onclick={() => command({ type: 'align', ids: selected, edge: 'right' })}><Icon name="align-right" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Group" title="Group" onclick={() => command({ type: 'add-group', pageId: page.id, label: 'Group', widgetIds: selected })}><Icon name="group" size={18}/></button>
+        <button disabled={!widget?.groupId} aria-label="Ungroup" title="Ungroup" onclick={() => widget?.groupId && command({ type: 'ungroup', id: widget.groupId })}><Icon name="ungroup" size={18}/></button>
       </div>
       <div class="canvas-caption"><strong>{viewport.width} × {viewport.height} px</strong><span>{regions.length} {regions.length === 1 ? 'viewport' : 'viewports'}</span></div>
       {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
@@ -431,6 +432,7 @@
 </section>
 
 <style>
+  .layout-tools button{display:grid;place-items:center;width:36px;height:36px;padding:0}.layout-tools button.active{color:var(--accent);background:var(--accent-bg);border-color:var(--accent)}
   .workspace > aside.panel-library{padding:0}.editor-accordion{margin:0;border-bottom:1px solid var(--line)}.editor-accordion:last-child{border-bottom:0}.editor-accordion > summary{padding:14px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}.accordion-content{padding:0 14px 14px;display:grid;gap:8px;min-width:0}.accordion-content .hint,.accordion-content label{margin:0}.accordion-content input,.accordion-content select{width:100%}.accordion-content button{max-width:100%}
   .editor-title{min-width:min(100%,240px);flex:1}.editor-title-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.editor-title .panel-title-button{display:inline-flex;align-items:center;gap:12px;max-width:100%;text-align:left;font:inherit;letter-spacing:inherit;background:transparent;border:0;padding:0;color:inherit}.panel-title-button span{overflow-wrap:anywhere}.panel-title-button :global(svg){flex-shrink:0;color:var(--muted)}.editor-title .panel-name-input{font:inherit;letter-spacing:inherit;width:100%;padding:0 6px;margin:0;line-height:inherit}.editor-title-actions .delete-panel{color:#e39b9b}
   .designer{color:var(--text);min-width:0}.designer>[hidden]{display:none}

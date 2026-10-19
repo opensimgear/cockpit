@@ -568,6 +568,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.getByRole('button', { name: 'Duplicate panel', exact: true })).toHaveCount(0);
     await expect(panelEditor.getByRole('button', { name: /^(Flight|Racing) template$/ })).toHaveCount(0);
     const panelTitleActions=panelEditor.locator('.editor-title-actions');
+    const layoutTools=panelEditor.getByRole('group',{name:'Widget layout tools',exact:true});
+    const snapGrid=layoutTools.getByRole('button',{name:'Snap to grid',exact:true});
+    await expect(snapGrid).toHaveAttribute('aria-pressed','true');await snapGrid.click();await expect(snapGrid).toHaveAttribute('aria-pressed','false');
+    await snapGrid.click();await expect(snapGrid).toHaveAttribute('aria-pressed','true');
+    await expect(panelEditor.getByRole('button',{name:'Snap selection',exact:true})).toHaveCount(0);
+    for(const name of ['Align left','Align center','Align right','Group','Ungroup'])await expect(layoutTools.getByRole('button',{name,exact:true})).toBeDisabled();
     const panelLibrary=panelEditor.getByRole('complementary',{name:'Panel library',exact:true});
     for(const title of ['Viewports','Widgets','Assets','Screen size'])await expect(panelLibrary.locator('summary').filter({hasText:new RegExp(`^${title}$`)})).toBeVisible();
     await panelLibrary.getByText('Screen size',{exact:true}).click();
