@@ -16,7 +16,7 @@
   const ports = $derived([...new Map([...graph.edges.flatMap(edge => [edge.start, edge.end].map(point => [
     `${point.x}:${point.y}:${edge.connection.transport}`, { ...point, label: edge.label, transport: edge.connection.transport },
   ] as const)), ...graph.rows.filter(row => row.path).map(row => [
-    `${row.x}:${row.busY}:${row.transport}`, { x: row.x, y: row.busY, transport: row.transport, label: row.transport === 'software' ? 'Software' : row.transport === 'unknown' ? 'Unknown transport' : row.transport.toUpperCase() },
+    `${row.x}:${row.busY}:${row.transport}`, { x: row.x, y: row.busY, transport: row.transport, label: row.transport === 'software' ? 'Virtual' : row.transport === 'unknown' ? 'Unknown transport' : row.transport.toUpperCase() },
   ] as const)]).values()]);
   const protocolIcons = { usb: 'usb', can: 'chip', network: 'network', bluetooth: 'bluetooth', software: 'command', unknown: 'help' };
   const geometry = $derived(graph.nodes.map(node => `${node.component.id}:${node.x}:${node.y}`).join('|') + graph.edges.map(edge => edge.connection.id).join('|'));
@@ -94,7 +94,7 @@
     </div>
   </div>
   <div class="topology-legend" aria-label="Connection legend">
-    <span><i class="physical"></i>Current connection</span><span><i class="software"></i>Software relationship</span><span>Hover a connector to see its protocol</span>
+    <span><i class="physical"></i>Current connection</span><span><i class="software"></i>Virtual connection</span><span>Hover a connector to see its protocol</span>
   </div>
   <!-- A focusable region provides keyboard panning; its nodes remain native buttons. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->

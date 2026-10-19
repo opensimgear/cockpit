@@ -39,7 +39,7 @@ function compare(a: SystemComponent, b: SystemComponent): number {
 }
 
 export function topologyConnectionLabel(connection: SystemConnection): string {
-  const kind = connection.transport === 'software' ? 'Software' : connection.transport === 'unknown' ? 'Unknown transport' : connection.transport.toUpperCase();
+  const kind = connection.transport === 'software' ? 'Virtual' : connection.transport === 'unknown' ? 'Unknown transport' : connection.transport.toUpperCase();
   return connection.current ? kind : connection.observed === false ? `${kind} · Configured (unconfirmed)` : `${kind} · Last known`;
 }
 
@@ -84,7 +84,7 @@ export function systemTopology(components: readonly SystemComponent[], context: 
   const nodes: TopologyNode[] = [], rows: TopologyBusRow[] = [], placed = new Set<string>();
   const positions = new Map<string, TopologyNode>();  const rowForComponent = new Map<string, TopologyBusRow>();
   let top = 44;
-  const protocolName = (transport: SystemConnection['transport']) => transport === 'software' ? 'Software' : transport === 'unknown' ? 'Unknown transport' : transport.toUpperCase();
+  const protocolName = (transport: SystemConnection['transport']) => transport === 'software' ? 'Virtual' : transport === 'unknown' ? 'Unknown transport' : transport.toUpperCase();
   const childGroups = (parentId: string | null) => [...groups.values()].filter(group => group.parentId === parentId)
     .sort((a, b) => transportOrder[a.transport] - transportOrder[b.transport] || a.id.localeCompare(b.id));
   function place(group: Group) {

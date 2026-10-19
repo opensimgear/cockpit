@@ -42,7 +42,7 @@ test('layout and parallel transport labels are deterministic despite discovery o
   assert.equal(graph.edges.some(item => item.connection.id === 'old-route'),false);
   assert.equal(topologyConnectionLabel(remembered), 'NETWORK · Last known');
   assert.equal(topologyConnectionLabel(edge('unknown', 'host', 'panel', 'unknown')), 'Unknown transport');
-  assert.equal(topologyConnectionLabel(edge('software', 'host', 'panel', 'software')), 'Software');
+  assert.equal(topologyConnectionLabel(edge('software', 'host', 'panel', 'software')), 'Virtual');
 });
 
 test('cyclic sightings do not loop and fitting includes every node with finite anchored zoom', () => {
