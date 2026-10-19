@@ -516,7 +516,7 @@
 </section>
 
 <style>
-  .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
+  .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
   .viewport-row{position:relative;min-width:0}.viewport-select{width:100%;padding-right:36px}.viewport-row .viewport-delete{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;padding:5px;color:#e39b9b;opacity:0;pointer-events:none}.viewport-row:hover .viewport-delete,.viewport-row:focus-within .viewport-delete{opacity:1;pointer-events:auto}
   @media(hover:none){.viewport-row .viewport-delete{opacity:1;pointer-events:auto}}
