@@ -160,7 +160,10 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, and inspect a
    await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
    await expect(inspector).toHaveCount(0);
    await page.mouse.move(box.x+box.width/2+48,box.y+box.height/2+24,{steps:5});
+   await expect(page.getByRole('application',{name:'Profile canvas'})).toHaveCSS('cursor','grabbing');
+   await expect(firstBlock.locator(surface)).toHaveCSS('cursor','grabbing');
    await expect(inspector).toHaveCount(0);await page.mouse.up();
+   await expect(firstBlock.locator(surface)).toHaveCSS('cursor','grab');
    await expect(inspector).toHaveCount(0);assert.notEqual(await firstBlock.getAttribute('style'),before,'Dragging the body or heading moves the node without selecting it.');
   }
   const clickBox=await firstBlock.locator('.block-body').boundingBox();
