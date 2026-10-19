@@ -146,7 +146,7 @@
   <div class="details-toolbar"><button class="text-button" use:focusDetails onclick={backToDevices}><Icon name="back" size={16} />Back to Devices</button></div>
   <section class="component-details" aria-label="Component details">
     <div class="page-heading detail-heading">
-      <div class="detail-title"><span class="detail-icon"><Icon name={systemDeviceIcon(selected)} size={26} /></span><div><div class="eyebrow">DEVICE DETAILS</div><h1>{selected.name}</h1><p>{systemTypeLabels[selected.type]}{selected.role ? ` · ${selected.role}` : ''}</p></div></div>
+      <div class="detail-title"><span class="detail-icon" class:disconnected={selected.presence !== 'connected'}><Icon name={systemDeviceIcon(selected)} size={26} /></span><div><div class="eyebrow">DEVICE DETAILS</div><h1>{selected.name}</h1><p>{systemTypeLabels[selected.type]}{selected.role ? ` · ${selected.role}` : ''}</p></div></div>
       <span class="connection-badge"><span class="status-dot" class:offline={selected.presence !== 'connected'}></span>{presenceLabels[selected.presence]}</span>
     </div>
     <div class="component-actions">
@@ -250,6 +250,7 @@
   .detail-title h1 { overflow-wrap: anywhere; }
   .detail-title .eyebrow { margin-bottom: 8px; }
   .detail-icon { display: grid; place-items: center; flex-shrink: 0; width: 52px; height: 52px; border: 1px solid var(--line); border-radius: 10px; color: var(--accent); background: var(--accent-bg); }
+  .detail-icon.disconnected { color: var(--muted); background: transparent; border-color: transparent; }
   .detail-heading .connection-badge { flex-shrink: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
   .component-details > .component-actions { margin: 0; gap: 10px; }
   .detail-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
