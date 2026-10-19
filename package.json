@@ -16,7 +16,7 @@
     "web:native": "vite --mode native --host 127.0.0.1",
     "web:build": "pnpm browser:build && vite build",
     "notifications:test": "node --test src/lib/notifications.test.mjs",
-    "system-inventory:test": "node --test src/lib/system-inventory.test.mjs src/lib/system-inventory-providers.test.mjs src/lib/system-topology.test.mjs src/lib/system-topology-ui.test.mjs src/lib/system-usb-ui.test.mjs",
+    "system-inventory:test": "node --test src/lib/system-inventory.test.mjs src/lib/system-inventory-providers.test.mjs src/lib/system-topology.test.mjs src/lib/system-topology-ui.test.mjs src/lib/system-usb-ui.test.mjs src/lib/host-controllers-ui.test.mjs",
     "system-inventory:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/system-inventory.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/system-inventory.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/system-inventory-providers.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/system-inventory-providers.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/system-topology.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/system-topology.test.mjs",
     "devices:ui": "node --test tests/ui/system-devices.mjs",
     "devices:native:ui": "node --test tests/ui/system-devices-native.mjs",

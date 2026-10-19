@@ -60,8 +60,9 @@
   });
 </script>
 
-<section aria-label="Direct USB device details">
-  <h3>Direct USB</h3>
+<section class="panel usb-details" aria-label="Direct USB device details">
+  <div class="panel-heading"><div><h2>Direct USB</h2><p>Connection, module configuration and device actions.</p></div><span class="quiet-tag">{!module ? 'Checking…' : editing ? 'Setup active' : module.snapshot.connected ? 'Connected' : 'Disconnected'}</span></div>
+  <div class="usb-body">
   {#if error}<Notification message={error} kind="error" />{/if}
   <div class="usb-actions">
     <button class="secondary-button" disabled={busy} onclick={() => run(() => client.status(endpointKey), !editing)}>Refresh USB state</button>
@@ -72,13 +73,25 @@
       {:else}<button class="secondary-button" disabled={busy} onclick={claim}>Begin USB setup</button>{/if}
     {/if}
   </div>
-  {#if snapshot && draft}<RuntimeEditor bind:config={draft} snapshot={snapshot as import('./runtime-config').RuntimeSnapshot} {editing} {busy} request={configure} automatic controllerEnabled={false} />{/if}
+  {#if snapshot && draft}<div class="usb-configuration"><RuntimeEditor bind:config={draft} snapshot={snapshot as import('./runtime-config').RuntimeSnapshot} {editing} {busy} request={configure} automatic controllerEnabled={false} /></div>{/if}
   {#if module?.snapshot.connected}
-    <h3>Device actions</h3>
-    <button class="secondary-button" disabled={busy} onclick={() => run(() => client.describeActions(module!), false)}>Discover USB actions</button>
+    <section class="usb-device-actions" aria-label="USB device actions">
+    <div class="actions-heading"><h3>Device actions</h3><button class="secondary-button" disabled={busy} onclick={() => run(() => client.describeActions(module!), false)}>Discover USB actions</button></div>
     {#each actions?.actions ?? [] as action (action.id)}<ActionControl action={action as DeviceAction} snapshot={actions!} ready={!busy} {busy} {invoke} />{/each}
-    {#if module.snapshot.events && !('status' in module.snapshot.events)}<p>Live inputs: {module.snapshot.events.held.filter(Boolean).length} pressed · {module.snapshot.events.axes?.join(', ') ?? 'No axes'}</p>{/if}
+    {#if module.snapshot.events && !('status' in module.snapshot.events)}<p class="usb-input-status">Live inputs: {module.snapshot.events.held.filter(Boolean).length} pressed · {module.snapshot.events.axes?.join(', ') ?? 'No axes'}</p>{/if}
+    </section>
   {/if}
   <p class="field-help">Configuration changes require an explicit setup claim and Apply or Save. Connection inspection does not claim the writer.</p>
+  </div>
 </section>
-<style>.usb-actions {display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}</style>
+<style>
+  .usb-details { min-width: 0; }
+  .usb-body { padding: 20px 21px; }
+  .usb-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+  .usb-configuration, .usb-device-actions { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .actions-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  h3 { font-size: 12px; font-weight: 550; }
+  .usb-input-status { color: var(--soft); font-size: 10px; line-height: 1.7; margin-top: 14px; overflow-wrap: anywhere; }
+  .field-help { font-size: 9px; line-height: 1.7; }
+  @media(max-width:520px) { .usb-body { padding: 17px 15px; } }
+</style>

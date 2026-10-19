@@ -10,7 +10,7 @@
   import type { GatewayEntry } from './gateway-workspace';
   import type { GameId } from './games';
   import { SystemInventoryController, integrationGameId } from './system-inventory-providers';
-  import { filterSystem, isVisibleSystemComponent, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
+  import { filterSystem, isVisibleSystemComponent, presenceLabels, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
   let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
     gatewayError?: string;
@@ -30,6 +30,7 @@
   const selected = $derived(components.find(c => c.id === selectedId));
   const showingDetails = $derived(detailsOpen && !!selected && active);
   const eligible = $derived(visible.filter(c => c.forget.allowed));
+  const captureLabels: Record<SystemComponent['capture'], string> = { ready: 'Ready', waiting: 'Waiting', unavailable: 'Unavailable', unknown: 'Unknown' };
   const date = (timestamp: number) => timestamp ? new Date(timestamp).toLocaleString() : 'Never observed connected';
   function select(id: string) { selectedId = id; detailsOpen = true; }
   export function showInventory() { detailsOpen = false; }
@@ -119,26 +120,57 @@
 </div>
 {#if selected && showingDetails}
   <div class="details-toolbar"><button class="text-button" use:focusDetails onclick={backToDevices}><Icon name="back" size={16} />Back to Devices</button></div>
-  <section class="panel component-details" aria-label="Component details">
-    <div class="panel-heading"><div><h1>{selected.name}</h1><p>{systemTypeLabels[selected.type]} · {selected.role}</p></div></div>
-    <p>{systemStateLabel(selected)}</p>
-    <p>Capture: {selected.capture}{selected.owner ? ` · Owner: ${selected.owner}` : ''}</p>
-    {#if selected.type === 'osg'}<p>Input owner: {selected.inputOwner ?? 'None confirmed'} · Configuration writer: {selected.configurationOwner ?? 'None observed'} · Active configuration route: {selected.configurationRoute ?? 'None observed'}</p>{/if}
-    <p class="field-help">First seen: {date(selected.firstSeen)} · Last seen connected: {date(selected.lastSeen)}{selected.stale ? ' · Refresh needed' : ''}</p>
-    <p class="field-help">Observed by {selected.provider} · {date(selected.observedAt)}{selected.stale ? ' · Observation stale' : ''}</p>
-    {#each selected.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}
-    <ul>{#each selected.connections as edge}<li>{edge.transport.toUpperCase()} · {snapshot.components.find(c => c.id === edge.from)?.name ?? edge.from}{edge.endpoint ? ` · ${edge.endpoint}` : ''} · {edge.current ? 'Current connection' : edge.observed === false ? 'Configured connection (unconfirmed)' : 'Last-known connection'}</li>{:else}<li>Connection unknown</li>{/each}</ul>
+  <section class="component-details" aria-label="Component details">
+    <div class="page-heading detail-heading">
+      <div class="detail-title"><span class="detail-icon"><Icon name={systemDeviceIcon(selected)} size={26} /></span><div><div class="eyebrow">DEVICE DETAILS</div><h1>{selected.name}</h1><p>{systemTypeLabels[selected.type]}{selected.role ? ` · ${selected.role}` : ''}</p></div></div>
+      <span class="connection-badge"><span class="status-dot" class:offline={selected.presence !== 'connected'}></span>{presenceLabels[selected.presence]}</span>
+    </div>
     <div class="component-actions">
       {#each selected.targets.filter(t => t.kind === 'module') as t}<button class="primary-button" onclick={() => openModule(t.gatewayId!, t.id)}>Configure device</button>{/each}
       {#if selected.type === 'companion'}<button class="secondary-button" onclick={openCompanions}>Manage companion</button>{/if}
       {#if integrationGameId(selected)}<button class="secondary-button" onclick={() => openIntegration(integrationGameId(selected)!)}>Integration settings</button>{/if}
       <button class="secondary-button" disabled={busy || !selected.forget.allowed} title={selected.forget.reason} onclick={() => reviewForget([selected])}>Forget device</button>
     </div>
-    {#if !selected.forget.allowed}<p class="field-help">{selected.forget.reason}</p>{/if}
+    <div class="detail-summary">
+      <section class="panel" aria-label="Device status">
+        <div class="panel-heading"><h2>Status</h2>{#if selected.stale}<span class="quiet-tag">Refresh needed</span>{/if}</div>
+        <div class="detail-body">
+          <p class="status-summary">{systemStateLabel(selected)}</p>
+          <dl class="detail-metadata">
+            <div><dt>Input capture</dt><dd>{captureLabels[selected.capture] ?? 'Unknown'}</dd></div>
+            <div><dt>Owner</dt><dd>{selected.owner ?? 'None observed'}</dd></div>
+            {#if selected.type === 'osg'}
+              <div><dt>Input owner</dt><dd>{selected.inputOwner ?? 'None confirmed'}</dd></div>
+              <div><dt>Configuration writer</dt><dd>{selected.configurationOwner ?? 'None observed'}</dd></div>
+              <div><dt>Configuration route</dt><dd>{selected.configurationRoute ?? 'None observed'}</dd></div>
+            {/if}
+          </dl>
+          {#if !selected.forget.allowed}<p class="detail-help">{selected.forget.reason}</p>{/if}
+        </div>
+      </section>
+      <section class="panel" aria-label="Device connections">
+        <div class="panel-heading"><h2>Connections</h2><span class="quiet-tag">{selected.connections.length} {selected.connections.length === 1 ? 'route' : 'routes'}</span></div>
+        <ul class="connection-list">
+          {#each selected.connections as edge (edge.id)}
+            <li><span class="connection-icon"><Icon name={edge.transport === 'usb' ? 'usb' : edge.transport === 'can' || edge.transport === 'network' ? 'network' : 'link'} size={18} /></span><div><strong>{edge.transport.toUpperCase()} · {snapshot.components.find(c => c.id === edge.from)?.name ?? edge.from}</strong>{#if edge.endpoint}<code>{edge.endpoint}</code>{/if}<p>{edge.current ? 'Current connection' : edge.observed === false ? 'Configured connection (unconfirmed)' : 'Last-known connection'}</p></div></li>
+          {:else}<li><span class="connection-icon"><Icon name="link" size={18} /></span><div><strong>Connection unknown</strong><p>No connection has been observed for this device.</p></div></li>{/each}
+        </ul>
+      </section>
+    </div>
+    {#if selected.diagnostics.length}<section class="panel" aria-label="Device diagnostics"><div class="panel-heading"><h2>Diagnostics</h2></div><ul class="diagnostic-list">{#each selected.diagnostics as diagnostic}<li>{diagnostic}</li>{/each}</ul></section>{/if}
     {#each selected.targets.filter(t => t.kind === 'gateway') as t}{@render gatewayDetails(t.id)}{/each}
     {#each selected.targets.filter(t => t.kind === 'controller') as t (t.id)}{#key t.id}<HostControllers initialSourceId={t.id} detailsOnly />{/key}{/each}
     {#each selected.targets.filter(t => t.kind === 'usb') as t (t.id)}{#key t.id}<SystemUsbDetails endpointKey={t.id} />{/key}{/each}
-    <details><summary>Identity and evidence</summary><code>{selected.id}</code>{#each selected.evidence as evidence}<p>{evidence}</p>{/each}</details>
+    <details class="panel identity-details">
+      <summary>Identity and evidence</summary>
+      <div class="detail-body"><dl class="detail-metadata">
+        <div><dt>Stable identity</dt><dd><code>{selected.id}</code></dd></div>
+        <div><dt>First seen</dt><dd>{date(selected.firstSeen)}</dd></div>
+        <div><dt>Last connected</dt><dd>{date(selected.lastSeen)}</dd></div>
+        <div><dt>Observed by</dt><dd>{selected.provider}</dd></div>
+        <div><dt>Last observation</dt><dd>{date(selected.observedAt)}{selected.stale ? ' · Observation stale' : ''}</dd></div>
+      </dl>{#if selected.evidence.length}<ul class="evidence-list">{#each selected.evidence as evidence}<li><code>{evidence}</code></li>{/each}</ul>{/if}</div>
+    </details>
   </section>
 {/if}
 {#if confirmation.length}
@@ -170,6 +202,40 @@
   .system-card.offline {background:var(--subtle);border-color:var(--faint-line)}.system-card.offline .component-copy strong {color:var(--soft)}.system-card.offline .component-icon {background:var(--surface);color:var(--muted)}
   .system-card.offline:hover {background:var(--surface);border-color:var(--muted)}
   .system-card.chosen {border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}.system-card:focus-visible {outline-offset:3px}
-  .component-details {padding:24px;overflow-wrap:anywhere}.provider-diagnostics {margin:16px 0}.provider-diagnostics p {font-size:12px}dialog {max-width:650px;max-height:80vh;overflow:auto;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:14px;padding:28px}dialog::backdrop {background:#0009}
+  .component-details { display: grid; gap: 20px; min-width: 0; }
+  .component-details > *, .detail-title > div { min-width: 0; }
+  .detail-heading { margin-bottom: 0; }
+  .detail-title { display: flex; align-items: center; gap: 16px; min-width: 0; }
+  .detail-title h1 { overflow-wrap: anywhere; }
+  .detail-title .eyebrow { margin-bottom: 8px; }
+  .detail-icon { display: grid; place-items: center; flex-shrink: 0; width: 52px; height: 52px; border: 1px solid var(--line); border-radius: 10px; color: var(--accent); background: var(--accent-bg); }
+  .detail-heading .connection-badge { flex-shrink: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+  .component-details > .component-actions { margin: 0; gap: 10px; }
+  .detail-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .detail-summary > .panel { min-width: 0; }
+  .detail-body { padding: 20px 21px; }
+  .status-summary { color: var(--soft); font-size: 12px; line-height: 1.7; margin-bottom: 18px; overflow-wrap: anywhere; }
+  .detail-metadata { display: grid; gap: 12px; margin: 0; }
+  .detail-metadata > div { display: grid; grid-template-columns: minmax(100px, .4fr) minmax(0, 1fr); gap: 16px; font-size: 10px; line-height: 1.7; }
+  .detail-metadata dt { color: var(--muted); }
+  .detail-metadata dd { margin: 0; color: var(--soft); overflow-wrap: anywhere; }
+  .detail-help { color: var(--muted); font-size: 9px; line-height: 1.7; margin-top: 18px; }
+  .connection-list { list-style: none; margin: 0; padding: 0; }
+  .connection-list li { display: flex; align-items: flex-start; gap: 12px; padding: 18px 21px; border-bottom: 1px solid var(--line); }
+  .connection-list li:last-child { border-bottom: 0; }
+  .connection-list li > div { min-width: 0; }
+  .connection-icon { display: grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: 5px; color: var(--accent); background: var(--accent-bg); }
+  .connection-list strong { font-size: 11px; font-weight: 550; color: var(--soft); overflow-wrap: anywhere; }
+  .connection-list code { display: block; margin-top: 7px; }
+  .connection-list p { margin-top: 7px; color: var(--muted); font-size: 9px; line-height: 1.7; }
+  .component-details code { font-size: 9px; color: var(--soft); line-height: 1.7; overflow-wrap: anywhere; }
+  .diagnostic-list { margin: 0; padding: 18px 21px 18px 36px; font-size: 10px; line-height: 1.8; color: var(--soft); overflow-wrap: anywhere; }
+  .identity-details > summary { padding: 18px 21px; color: var(--soft); font-size: 11px; font-weight: 550; cursor: pointer; }
+  .identity-details[open] > summary { border-bottom: 1px solid var(--line); }
+  .identity-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .evidence-list { margin: 18px 0 0; padding-left: 16px; }
+  .provider-diagnostics {margin:16px 0}.provider-diagnostics p {font-size:12px}dialog {max-width:650px;max-height:80vh;overflow:auto;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:14px;padding:28px}dialog::backdrop {background:#0009}
+  @media(max-width:1000px){.detail-summary {grid-template-columns:minmax(0,1fr)}}
   @media(max-width:700px){.system-list {gap:12px}.system-card {padding:16px;min-height:172px}}
+  @media(max-width:520px){.detail-heading {flex-wrap:wrap;gap:14px}.detail-title {gap:10px}.detail-icon {width:40px;height:40px}.detail-body {padding:17px 15px}.connection-list li {padding:17px 15px}.detail-metadata > div {grid-template-columns:1fr;gap:3px}.identity-details > summary {padding:17px 15px}}
 </style>

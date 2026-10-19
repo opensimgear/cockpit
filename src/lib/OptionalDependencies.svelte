@@ -45,7 +45,10 @@
 {/if}
 
 <style>
-  .optional-dependencies { margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+  .optional-dependencies { margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  h3 { font-size: 11px; font-weight: 570; }
+  strong { font-size: 10px; font-weight: 570; color: var(--soft); }
   .dependency { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; flex-wrap: wrap; }
-  p { margin: 8px 0; }
+  .dependency > div { flex: 1; min-width: min(100%, 200px); }
+  p { margin: 8px 0; font-size: 9px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
 </style>

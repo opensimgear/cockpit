@@ -52,7 +52,7 @@ function fixtures() {
   }]));
   return {
     ports, states,
-    controllers: [controller('pedals', 'Hidden pedals'), controller('remembered-wheel', 'Remembered wheel', false),
+    controllers: [controller('pedals', 'Hidden pedals', true, { role: 'pedals' }), controller('remembered-wheel', 'Remembered wheel', false),
       controller('gateway-hid', 'Gateway HID collection', true, { osgHid: true }),
       controller('remembered-throttle', 'Remembered throttle', false)],
     modules: [usb(usbKey, 'Dual USB sighting'), usb('ffeeddccbbaa:COM-fixture-output', 'Standalone output module')],
@@ -304,6 +304,31 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await devices.locator('[data-component-id="controller:pedals"]').click();
     await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    const controllerDetails = details.getByRole('region', { name: 'Selected host controller', exact: true });
+    const localName = controllerDetails.getByRole('textbox', { name: 'Local name', exact: true });
+    const controllerRole = controllerDetails.getByRole('combobox', { name: 'Role', exact: true });
+    await expect(localName).toHaveValue('Hidden pedals');
+    await expect(controllerRole).toHaveValue('pedals');
+    await expect(controllerDetails.getByRole('button', { name: 'Close', exact: true })).toHaveCount(0);
+    // Opening a component directly must hydrate its editable metadata once.
+    // A subsequent live input report must preserve the user's unsaved draft.
+    await localName.fill('Pedals local draft');
+    await controllerRole.selectOption('throttle');
+    fixture.controllers.find(source => source.id === 'pedals').sequence = '2';
+    await expect(controllerDetails).toContainText('report 2');
+    await expect(localName).toHaveValue('Pedals local draft');
+    await expect(controllerRole).toHaveValue('throttle');
+    await page.setViewportSize({ width: 520, height: 900 });
+    const narrowDetails = await details.evaluate(node => ({
+      clientWidth: node.clientWidth, scrollWidth: node.scrollWidth,
+      right: node.getBoundingClientRect().right, viewportWidth: window.innerWidth,
+    }));
+    assert.ok(narrowDetails.scrollWidth <= narrowDetails.clientWidth + 1, 'Component detail content stays inside its card at a narrow width.');
+    assert.ok(narrowDetails.right <= narrowDetails.viewportWidth + 1, 'Component details stay inside the viewport.');
+    await expect(localName).toBeVisible();
+    await expect(controllerRole).toBeVisible();
+    await page.screenshot({ path: resolve(artifacts, 'component-controller-narrow.png'), fullPage: true });
+    await page.setViewportSize({ width: 1500, height: 1100 });
     await backToDevices.click();
     await topology.click(); await expect(filter).toHaveValue('hidden');
     await expect(graph.locator('[data-component-id="controller:pedals"]')).toHaveAttribute('aria-pressed', 'true');
@@ -348,11 +373,18 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await waitForInventoryRefresh();
     await devices.locator('[data-component-id="companion:browser-fixture"]').click();
     await expect(details).toContainText('Offline');
-    await expect(details).toContainText('NETWORK · Your computer · 192.0.2.10 · Last-known connection');
+    const deviceConnections = details.getByRole('region', { name: 'Device connections', exact: true });
+    await expect(deviceConnections).toContainText('NETWORK');
+    await expect(deviceConnections).toContainText('Your computer');
+    await expect(deviceConnections).toContainText('192.0.2.10');
+    await expect(deviceConnections).toContainText('Last-known connection');
     await backToDevices.click();
     await devices.locator('[data-component-id="companion:esp32-fixture"]').click();
-    await expect(details).toContainText('USB · Your computer · COM-fixture-companion · Current connection');
-    await expect(details).not.toContainText('NETWORK ·');
+    await expect(deviceConnections).toContainText('USB');
+    await expect(deviceConnections).toContainText('Your computer');
+    await expect(deviceConnections).toContainText('COM-fixture-companion');
+    await expect(deviceConnections).toContainText('Current connection');
+    await expect(deviceConnections).not.toContainText('NETWORK');
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
     await backToDevices.click();
     await expect(devices.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);

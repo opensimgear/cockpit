@@ -43,7 +43,7 @@
   }
   onMount(() => { void refresh(); const timer = setInterval(refresh, 1000); return () => { disposed = true; clearInterval(timer); }; });
 </script>
-<section class="visibility">
+<section class="visibility" aria-label="Device visibility">
   <h3>Device visibility</h3>
   <OptionalDependencies only="hidhide" />
   <p>These are local visibility preferences and inspection tools. Saving a selection does not hide a device. Author and apply device hiding in Profiles.</p>
@@ -61,7 +61,7 @@
     {/if}
     <p class="notice">{status.reason}</p>
     {#if status.settingsError}<Notification message={'Saved settings need attention: ' + String(status.settingsError)} kind="error" />{/if}
-    <label class="check"><input type="checkbox" checked={status.enabled} disabled={busy || status.job?.active} onchange={event => action({ command: 'controller_visibility_enable', enabled: event.currentTarget.checked })} />Enable optional visibility controls on this computer</label>
+    <div class="visibility-toggle"><strong>Enable optional visibility controls on this computer</strong><button class="toggle" class:on={status.enabled} role="switch" aria-label="Enable optional visibility controls on this computer" aria-checked={status.enabled} disabled={busy || status.job?.active} onclick={() => action({ command: 'controller_visibility_enable', enabled: !status?.enabled })}><span></span></button></div>
     <div class="fields">
       <label>Saved policy<select bind:value={mode} disabled={busy || status.job?.active}>{#each status.modes as option}<option value={option.mode} disabled={!option.supported}>{option.label}{option.supported ? '' : ' · unavailable'}</option>{/each}</select></label>
       {#if mode === 'hide-from-process'}
@@ -91,15 +91,26 @@
   {/if}
 </section>
 <style>
-  .visibility { margin: 24px 0; padding: 20px; border: 1px solid var(--line); border-radius: 8px; }
+  .visibility { margin: 22px 0; padding: 18px; border: 1px solid var(--line); border-radius: 7px; background: var(--subtle); min-width: 0; }
+  h3 { font-size: 12px; font-weight: 570; margin: 0 0 10px; }
+  h4 { font-size: 11px; font-weight: 570; margin: 14px 0 8px; }
+  p { font-size: 10px; line-height: 1.7; color: var(--muted); margin: 8px 0; overflow-wrap: anywhere; }
   .fields, .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 14px 0; }
-  label { display: flex; flex-direction: column; gap: 8px; min-width: 200px; flex: 1; }
-  .check { flex-direction: row; align-items: center; }
-  select, input:not([type=checkbox]) { padding: 9px; color: inherit; background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
-  .hint { font-size: 12px; opacity: .7; }
-  .startup-access { margin: 16px 0; padding: 12px 16px; background: var(--subtle); border: 1px solid var(--line); border-radius: 6px; }
+  label { display: flex; flex-direction: column; gap: 8px; min-width: min(100%, 200px); flex: 1; font-size: 10px; color: var(--soft); }
+  select, input { width: 100%; min-width: 0; padding: 10px 11px; font-size: 10px; color: var(--text); background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
+  .visibility-toggle { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 16px 0; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .visibility-toggle strong { font-size: 10px; line-height: 1.6; font-weight: 500; color: var(--soft); }
+  .hint { font-size: 9px; }
+  .notice { display: block; font-size: 10px; line-height: 1.7; margin: 12px 0; background: var(--surface); }
+  .startup-access { margin: 16px 0; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
   .startup-access.attention { border-left: 3px solid var(--muted); }
   .startup-access p { margin: 6px 0; }
   .startup-access code { overflow-wrap: anywhere; }
-  li { overflow-wrap: anywhere; }
+  .startup-access strong { color: var(--soft); font-weight: 500; }
+  details { margin: 14px 0; font-size: 10px; color: var(--soft); line-height: 1.7; }
+  summary { cursor: pointer; }
+  ul { padding-left: 18px; }
+  li { overflow-wrap: anywhere; color: var(--muted); }
+  code { font-size: 9px; }
+  @media (max-width: 600px) { .visibility { padding: 14px; } .fields > button { width: 100%; } .actions > button { white-space: normal; } }
 </style>
