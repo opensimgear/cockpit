@@ -52,6 +52,7 @@
   const clients = $derived(hostState.host?.clients ?? []);
   const text = (row: Record<string, unknown>, key: string) => typeof row[key] === 'string' ? String(row[key]) : '';
   const selected=$derived(clients.find(c=>text(c,'companionId')===selectedId));
+  const firmwareUpdateDisabledReason = $derived(selected?.connected!==true ? 'This companion is offline. Connect it by USB to update its firmware.' : updating ? 'A firmware update is already in progress.' : busy ? 'Wait for the current operation to finish.' : '');
   const multipleAssignments = $derived((hostState.host?.instances ?? []).filter(instance => instance.companionId===selectedId).length > 1);
   $effect(() => { onViewChange?.(!!pendingCompanionId || !!selected || pairingOpen); });
   const selectedUsb=$derived(hostState.usb?.devices?.find(usb=>usb.device?.companionId===selectedId)??(hostState.usb?.device?.companionId===selectedId?hostState.usb:undefined));
@@ -247,7 +248,7 @@
             {#if hostState.firmwareVersion}<p>Available: {hostState.firmwareVersion}</p>{/if}
           </div>
           {#if !updateOpen && (!hostState.firmwareVersion || firmwareInfo(selected)?.version!==hostState.firmwareVersion)}
-            <button class="firmware-update" disabled={busy || updating || selected.connected!==true} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button>
+            <span class="firmware-update" title={firmwareUpdateDisabledReason || undefined} aria-label={firmwareUpdateDisabledReason || undefined}><button disabled={!!firmwareUpdateDisabledReason} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button></span>
           {:else if updateOpen}
             <p>Pairing and Wi-Fi settings are preserved. Keep this companion connected by USB throughout the update.</p>
 
@@ -275,7 +276,7 @@
   {:else}<div class="empty"><Icon name="monitor" size={30} /><h3>No companions paired</h3><p>Pair a browser, mobile device or ESP32 screen to get started.</p></div>{/if}
 </section>
 <style>
-  .companion-heading-copy{min-width:0}.companion-title{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px}.companion-title h1{min-width:0}.settings-error{margin:10px 0;color:var(--text);border-left:2px solid var(--warning,#e9b75c);padding-left:10px}
+  .companion-heading-copy{min-width:0}.companion-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px 16px}.companion-title h1{min-width:0}.companion-title .connection-state{display:inline-block;white-space:nowrap}.companion-title .connection-state>span{display:inline-block;vertical-align:middle;margin-right:6px}.firmware-update{display:inline-flex}.firmware-update:has(button:disabled){cursor:not-allowed}.firmware-update button:disabled{pointer-events:none}.settings-error{margin:10px 0;color:var(--text);border-left:2px solid var(--warning,#e9b75c);padding-left:10px}
   .back-companions{background:transparent;border:0;color:var(--accent);padding:6px 0;margin-bottom:18px;font-size:10px}.back-companions:hover{background:transparent;text-decoration:underline}.settings-panel{padding:21px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.settings-panel .settings-columns{margin-top:0}.page-heading h1{overflow-wrap:anywhere}.page-heading .connection-state{flex-shrink:0}@media(max-width:650px){.page-heading{align-items:flex-start;flex-wrap:wrap}.settings-panel{padding:16px}}
   .firmware-versions{display:grid;gap:6px;margin-top:12px}.firmware-versions p{margin:0}
   .settings-columns{display:grid;gap:28px;margin-top:18px}.settings-columns.with-firmware{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.identity-settings{min-width:0}.identity-settings .setting:first-child{margin-top:0}.firmware-settings{min-width:0;border-left:1px solid var(--line,#344452);padding-left:28px}.firmware-settings h3{margin-top:0}@media(max-width:800px){.settings-columns.with-firmware{grid-template-columns:1fr}.firmware-settings{border-left:0;border-top:1px solid var(--line,#344452);padding-left:0;padding-top:20px}}.firmware-update{margin-top:16px}.firmware-warning{display:flex;align-items:center;gap:7px;color:var(--warning,#e9b75c)}
