@@ -8,10 +8,10 @@
     "tests": 1,
     "passed": 1,
     "failed": 0,
-    "elapsedSecondsApprox": 16.3
+    "elapsedSecondsApprox": 13.1
   },
   "sourceRevision": "d711f14",
-  "testHarnessRevision": "8220ce8",
+  "testHarnessRevision": "9d35000",
   "nativeExecutableSha256": "c6d3b0b0affd5981d233915938f93e9280253ff918fe5104e2edf50582d85497",
   "path": "Two independently authenticated pinned-CA WSS peers -> running native Cockpit -> one typed ProfileSession -> same-executable desktop worker -> one receive-only Windows process",
   "actualNativeCockpit": true,
@@ -23,9 +23,10 @@
     "Two independently authenticated WSS peers bind exact native source identities to two MouseLeft actions in one applied desktop-only profile",
     "Shared MouseLeft has one down; A release, refused independent publication write and A WSS close preserve B; final B release has exactly one up",
     "A new WSS/native provider generation rejects true before baseline and a held baseline, accepts a complete neutral baseline, then can share B without replacing B's session or native generation",
+    "A's underlying TCP shutdown sends no protocol/WebSocket close; only A revokes while B's exact held producer persists without an extra native edge; a new transport reuses A's credential, requires full neutral, rejoins B, and final B release produces one up",
     "After clean Stop only A receives a different immutable publication; B's session/generation stays exact until explicit Apply, then independent shared ownership and final release work again"
   ],
-  "sourceLossMode": "Acknowledged authenticated WSS session close for A; its socket stays available for a new session. Abrupt socket termination and physical unplug were not exercised.",
+  "sourceLossMode": "Two distinct cases: acknowledged authenticated WSS protocol session close with its socket retained, and underlying SSLSocket.shutdown(SHUT_RDWR) followed by socket close without protocol/WebSocket close or TLS unwrap. The latter reconnects over a new authenticated TCP/WSS transport using the same credential.",
   "nativeMouseEvidence": {
     "markedReceiverMessages": [
       513,
@@ -33,10 +34,12 @@
       513,
       514,
       513,
+      514,
+      513,
       514
     ],
-    "mouseDowns": 3,
-    "mouseUps": 3,
+    "mouseDowns": 4,
+    "mouseUps": 4,
     "firstDownAck": {
       "attempted": 1,
       "confirmed": 1,
@@ -48,7 +51,9 @@
       "collision": true
     },
     "AReleaseAndSessionClosePreserveBHeld": true,
-    "finalBReleaseProducesExactlyOneUpPerCycle": true
+    "finalBReleaseProducesExactlyOneUpPerCycle": true,
+    "completeDownUpPairs": 4,
+    "abruptATransportLossPreservesBHeldWithoutMouseEdge": true
   },
   "sourceGenerations": {
     "initialApplied": {
@@ -59,16 +64,20 @@
       "A": 3,
       "B": 2
     },
-    "afterStopAndFreshBaselines": {
+    "afterAAbruptTransportReconnect": {
       "A": 4,
-      "B": 3
+      "B": 2
     },
-    "afterStoppedAPublicationAssignment": {
+    "afterStopAndFreshBaselines": {
       "A": 5,
       "B": 3
     },
-    "afterExplicitRevision2Apply": {
+    "afterStoppedAPublicationAssignment": {
       "A": 6,
+      "B": 3
+    },
+    "afterExplicitRevision2Apply": {
+      "A": 7,
       "B": 4
     }
   },
@@ -95,7 +104,7 @@
       ],
       "nodeId": "panel-a",
       "run": {
-        "generation": "11",
+        "generation": "14",
         "session": "<native-run-session>"
       }
     },
@@ -114,11 +123,135 @@
       ],
       "nodeId": "panel-b",
       "run": {
-        "generation": "11",
+        "generation": "14",
         "session": "<native-run-session>"
       }
     },
     "allHeldProducersPinnedToAppliedRunAndExactSourceDependency": true
+  },
+  "abruptTransportLoss": {
+    "lossMode": "SSLSocket.shutdown(SHUT_RDWR) followed by socket close",
+    "protocolSessionCloseSent": false,
+    "webSocketCloseFrameSent": false,
+    "tlsUnwrapCalled": false,
+    "transportBefore": {
+      "localEndpoint": "<original A loopback TCP endpoint>",
+      "remoteEndpoint": "<same authorized loopback WSS listener>"
+    },
+    "transportAfter": {
+      "localEndpoint": "<new A loopback TCP endpoint>",
+      "remoteEndpoint": "<same authorized loopback WSS listener>"
+    },
+    "differentLocalTcpEndpoint": true,
+    "sameRemoteWssEndpoint": true,
+    "authenticatedWithSameCredential": true,
+    "newPairingApproval": false,
+    "authenticated": true,
+    "sameAuthorizedCompanionAndInstance": true,
+    "oldClientId": "<A client before transport shutdown>",
+    "newClientId": "<A client after fresh transport authentication>",
+    "oldSessionId": "<A session before transport shutdown>",
+    "newSessionId": "<A neutral-gated session on new transport>",
+    "newClientIdConfirmed": true,
+    "newSessionIdConfirmed": true,
+    "newSessionWireGeneration": "1",
+    "pressBeforeBaselineAccepted": false,
+    "pressBeforeBaselineError": "Fresh neutral baseline required before input.",
+    "heldBaselineAccepted": false,
+    "heldBaselineError": "Baseline must contain every control at its declared fallback.",
+    "completeNeutralBaselineAccepted": true,
+    "neutralBaselineAckStage": "source-accepted",
+    "neutralBaselineNativeSubmission": false,
+    "afterLossHeldActions": [
+      "route-b"
+    ],
+    "afterNeutralHeldActions": [
+      "route-b"
+    ],
+    "afterRejoinHeldActions": [
+      "route-a",
+      "route-b"
+    ],
+    "afterAReleaseHeldActions": [
+      "route-b"
+    ],
+    "finalBReleaseHeld": [],
+    "finalBReleasePossibleHeld": [],
+    "cleanupComplete": true,
+    "uncertain": false,
+    "AProviderGenerationBefore": 3,
+    "AProviderGenerationAfter": 4,
+    "AStrictNativeGenerationAdvance": true,
+    "actualNewAHeldProducer": {
+      "dependencies": [
+        {
+          "endpoint": {
+            "nodeId": "panel-a",
+            "portId": "button"
+          },
+          "epoch": "12",
+          "generation": "4"
+        }
+      ],
+      "nodeId": "panel-a",
+      "run": {
+        "generation": "14",
+        "session": "<native-run-session>"
+      }
+    },
+    "BSourceSessionPublicationResourceAndGenerationUnchanged": true,
+    "BFullHeldProducerUnchanged": true,
+    "heldBProducerBefore": {
+      "dependencies": [
+        {
+          "endpoint": {
+            "nodeId": "panel-b",
+            "portId": "button"
+          },
+          "epoch": "2",
+          "generation": "2"
+        }
+      ],
+      "nodeId": "panel-b",
+      "run": {
+        "generation": "14",
+        "session": "<native-run-session>"
+      }
+    },
+    "heldBProducerAfter": {
+      "dependencies": [
+        {
+          "endpoint": {
+            "nodeId": "panel-b",
+            "portId": "button"
+          },
+          "epoch": "2",
+          "generation": "2"
+        }
+      ],
+      "nodeId": "panel-b",
+      "run": {
+        "generation": "14",
+        "session": "<native-run-session>"
+      }
+    },
+    "noExtraNativeMouseEdgeWhileBHeld": true,
+    "finalBReleaseProducesExactlyOneUp": true
+  },
+  "nativeCatalogCorrelation": {
+    "baselineAckStage": "source-accepted",
+    "baselineAcknowledgementAndNativeCatalogPublicationAreSeparate": true,
+    "wait": "Bounded A-only wait requires a different acknowledged WSS session and strictly greater native provider generation before checkpointing; B is not required to reconnect.",
+    "strictGenerationAndUnchangedBAssertionsRetained": true,
+    "firstCatalogCheckpointAfterBaseline": {
+      "A": 4,
+      "B": 2
+    },
+    "confirmedCatalogCheckpoint": {
+      "A": 4,
+      "B": 2
+    },
+    "boundary": "The native resource catalog publishes asynchronously. This is an observation-correlation boundary, not a production generation defect claim."
   },
   "publicationReplacement": {
     "whileAppliedAccepted": false,
@@ -128,8 +261,8 @@
     "onlyAImmutablePublicationChanged": true,
     "BSessionNativeGenerationAndPublicationUnchangedDuringAssignment": true,
     "explicitSavedRevisionApplied": 2,
-    "appliedRunGenerationBefore": 11,
-    "appliedRunGenerationAfter": 12,
+    "appliedRunGenerationBefore": 14,
+    "appliedRunGenerationAfter": 15,
     "BFullHeldProducerUnchangedAcrossARejoinAndLoss": true
   },
   "receiverPositioning": {
@@ -197,7 +330,8 @@
     "Debug opt-in Windows acceptance only; production qualification remains closed.",
     "No physical controller or physical keyboard overlap was exercised.",
     "No game behavior, elevated-target, desktop lock/sleep or installed-package qualification.",
-    "No native polling interval, dwell or end-to-end latency measurement."
+    "No native polling interval, dwell or end-to-end latency measurement.",
+    "Transport loss here is an actual local TLS/TCP shutdown without WebSocket or application close; physical unplug, packet-loss/network-partition behavior and a forced TCP reset are not established."
   ],
   "localRawArtifacts": [
     ".research/desktop-ownership-native/evidence.json",

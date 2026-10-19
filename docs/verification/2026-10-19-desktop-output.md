@@ -22,7 +22,8 @@ reported zero errors and warnings.
 The running development executable was built with explicit
 `OSG_DEV_DESKTOP_INPUT=1`; its SHA-256 is
 `c6d3b0b0affd5981d233915938f93e9280253ff918fe5104e2edf50582d85497`.
-Native application sources match `d711f14`; the final test harness is `8220ce8`.
+Native application sources match `d711f14`; the ownership test harness is `9d35000`
+and the companion/game harness is `8220ce8`.
 The production gate remains false. These results establish software behavior
 and native UI authoring, without qualifying physical controllers, game input
 consumption, installed deployment or capture-to-submission latency.
@@ -31,13 +32,19 @@ The running Cockpit also passed the two-source [native mouse ownership check](20
 Two real authenticated WSS peers share MouseLeft without duplicate edges. A's
 release and acknowledged protocol session close preserve B's hold; reopening A
 requires a complete neutral baseline and uses a new native generation. B's full
-held producer stays unchanged. After Stop, replacing only A's publication and
-explicitly applying revision 2 works again. The receiver observed exactly three
+held producer stays unchanged. Abruptly shutting down A's underlying TLS socket
+also preserves B's full held producer. A reconnects through a fresh TCP/WSS
+transport using its existing credential, receives a new native generation, and
+must submit a complete neutral baseline before it can press again. This path
+sends no protocol close, WebSocket close frame or TLS unwrap. After Stop,
+replacing only A's publication and
+explicitly applying revision 2 works again. The receiver observed exactly four
 down/up pairs. Cleanup proved an empty ledger and zero workers, restored local
 preferences and removed the test profile. Reproduce with both
 `OSG_DESKTOP_OWNERSHIP_NATIVE=1` and `OSG_DESKTOP_NATIVE_INJECT=1`, then run
-`pnpm desktop:ownership:native`. This covers protocol session loss rather than
-abrupt socket termination or physical unplug.
+`pnpm desktop:ownership:native`. The five checks cover protocol close and abrupt
+transport loss; physical unplug remains untested. The reconnect wait correlates
+the new native generation with its asynchronous resource-catalog publication.
 
 The updated [companion acceptance](2026-10-19-desktop-companion-native.json) and
 [actual ACR launch/scope acceptance](2026-10-19-desktop-game-native.json) each
