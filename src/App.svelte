@@ -431,7 +431,13 @@
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
         {:else if view === 'preferences'}
           <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Settings</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
-          <section class="panel preferences-panel"><div class="panel-heading"><h2>Appearance</h2></div><div class="preference-row"><div><strong>Color theme</strong><p>The green and slate palette from opensimgear.org.</p></div><button class="secondary-button" onclick={toggleTheme}><Icon name={light ? 'moon' : 'sun'} size={16} />{light ? 'Switch to dark' : 'Switch to light'}</button></div></section>
+          <section class="panel preferences-panel">
+            <div class="panel-heading"><h2>Appearance</h2></div>
+            <div class="preference-row">
+              <div><strong>Color theme</strong><p>{light ? 'Light' : 'Dark'} theme. Changes are saved automatically.</p></div>
+              <button class="toggle" class:on={light} role="switch" aria-label="Light theme" aria-checked={light} onclick={toggleTheme}><span></span></button>
+            </div>
+          </section>
           <DesktopPreferences />
           <CompanionListenerSettings />
         {:else if view === 'profiles'}
