@@ -159,7 +159,15 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, and inspect a
   await page.mouse.click(emptyPoint.x,emptyPoint.y);
   await expect(inspector).toHaveCount(0);await expect(page.locator('.resource-block.selected')).toHaveCount(0);
   await chooseBlock('OSG direct USB device');
-  await inspector.getByRole('button',{name:'Close node details',exact:true}).click();await expect(inspector).toHaveCount(0);
+  await expect(inspector).toHaveCSS('transform','none');
+  const exitMotion=await inspector.evaluate(node=>new Promise(resolve=>{
+   node.addEventListener('outrostart',()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    resolve({attached:node.isConnected,animated:node.getAnimations().some(animation=>animation.playState==='running')});
+   })),{once:true});
+   node.querySelector('[aria-label="Close node details"]').click();
+  }));
+  assert.deepEqual(exitMotion,{attached:true,animated:true},'Details remain mounted during their slide-out transition.');
+  await expect(inspector).toHaveCount(0);
   await chooseBlock('OSG direct USB device');await inspector.getByText('Connection metadata (2)',{exact:true}).click();await expect(inspector.locator('.connection-row').getByText('USB',{exact:true})).toBeVisible();await expect(inspector.locator('.connection-row').getByText('CAN',{exact:true})).toBeVisible();await expect(inspector.getByText('COM-fixture',{exact:true})).toBeVisible();await expect(inspector.getByText('OSG gateway',{exact:true})).toBeVisible();await expect(page.locator('path.signal-edge')).toHaveCount(0);
   for(const resource of blueprint.resources.filter(resource=>resource.kind!=='companion'&&resource.ports.length))await selectProvider(resource.name,resource.ports.map(port=>port.name));
   await chooseBlock('Hidden third party C');await inspector.getByText('Resource assignment and policy',{exact:true}).click();await inspector.getByLabel('Game visibility intent').selectOption('hidden-while-active');
