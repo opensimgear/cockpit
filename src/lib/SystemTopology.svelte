@@ -122,7 +122,7 @@
         {@const state = systemStateLabel(component)}
         <button type="button" class="topology-node" data-component-id={component.id} class:selected={selectedId === component.id} class:context={node.context} class:offline={component.presence !== 'connected'} style:left={`${node.x}px`} style:top={`${node.y}px`} style:width={`${TOPOLOGY_NODE_WIDTH}px`} style:height={`${node.height}px`} aria-pressed={selectedId === component.id} aria-label={`${component.name}, ${kind(component.type)}, ${state}${node.context ? ', connection context' : ''}`} onclick={() => onselect(component.id)} onfocus={event => { if (event.currentTarget.matches(':focus-visible')) reveal(component.id); }} title={`${component.name}\n${component.role}\n${state}${component.diagnostics.length ? '\n' + component.diagnostics.join('\n') : ''}`}>
           <span class="node-icon"><Icon name={component.type === 'companion' ? 'mobile' : systemDeviceIcon(component)} size={18} /></span>
-          <span class="node-copy"><span class="node-kind">{kind(component.type)}{node.context ? ' · Context' : ''}</span><strong>{component.name}</strong><span class="node-status" title={state}><i class:connected={component.presence === 'connected'}></i><span>{systemDeviceSubtext(component)}</span></span></span>
+          <span class="node-copy"><span class="node-kind">{kind(component.type)}{node.context ? ' · Context' : ''}</span><strong>{component.name}</strong><span class="node-status" title={state}><span>{systemDeviceSubtext(component)}</span></span></span>
           <span class="node-role">{component.role || 'Connection details unknown'}{node.alternateConnections ? ` · +${node.alternateConnections} other route${node.alternateConnections === 1 ? '' : 's'}` : ''}{component.diagnostics.length ? ` · ${component.diagnostics.length} diagnostic${component.diagnostics.length === 1 ? '' : 's'}` : ''}</span>
         </button>
       {/each}
@@ -170,8 +170,6 @@
   .node-copy strong { font-size: 12px; font-weight: 550; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .node-status { display: flex; align-items: start; gap: 5px; font-size: 9px; line-height: 1.25; color: var(--muted); margin-top: 7px; }
   .node-status > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
-  .node-status i { height: 5px; width: 5px; margin-top: 3px; flex-shrink: 0; border-radius: 50%; background: var(--muted); }
-  .node-status i.connected { background: var(--accent); }
   .node-role { flex-basis: 100%; font-size: 9px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid var(--faint-line); padding-top: 9px; }
   .topology-help { padding: 12px 18px; font-size: 9px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--line); }
   .topology-empty { position: absolute; left: 20px; right: 20px; top: 35px; text-align: center; font-size: 12px; color: var(--muted); pointer-events: none; }
