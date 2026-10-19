@@ -600,6 +600,18 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     for(const name of ['Align left','Align vertical','Align right','Align top','Align horizontal','Align bottom','Group','Ungroup'])await expect(layoutTools.getByRole('button',{name,exact:true})).toBeDisabled();
     const panelLibrary=panelEditor.getByRole('complementary',{name:'Panel library',exact:true});
     for(const title of ['Pages','Viewports','Widgets','Assets','Screen size'])await expect(panelLibrary.locator('summary').filter({hasText:new RegExp(`^${title}$`)})).toBeVisible();
+    const accordionMotion=await panelLibrary.locator('.editor-accordion').first().evaluate(async node=>{
+      const samples=[];
+      for(const open of [true,false]){
+        const heights=[node.getBoundingClientRect().height];
+        node.open=open;
+        const start=performance.now();
+        do{await new Promise(requestAnimationFrame);heights.push(node.getBoundingClientRect().height);}while(performance.now()-start<240);
+        samples.push(heights);
+      }
+      return samples;
+    });
+    for(const heights of accordionMotion){const min=Math.min(...heights),max=Math.max(...heights);assert.ok(heights.some(height=>height>min+1&&height<max-1),`Accordion expands and collapses through intermediate heights: ${heights}`);}
     await panelLibrary.getByText('Pages',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(1);
     const pageChoice=panelLibrary.getByRole('combobox',{name:'Page',exact:true});
     await panelLibrary.getByRole('button',{name:'Add page',exact:true}).click();await expect(pageChoice.locator('option')).toHaveCount(2);
