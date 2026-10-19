@@ -28,7 +28,7 @@
   let content: HTMLDivElement;
   let contentWidth = $state(0);
   let contentHeight = $state(0);
-  let drag = $state<{ pointerId: number; id: string; x: number; y: number; bounds: Bounds; preview: Bounds; resize: boolean } | null>(null);
+  let drag = $state<{ pointerId: number; id: string; x: number; y: number; bounds: Bounds; preview: Bounds; resize: boolean; moved: boolean; shift: boolean } | null>(null);
   let viewportDrag = $state<{ pointerId: number; id: string; x: number; y: number; bounds: Bounds; preview: Bounds; resize: boolean } | null>(null);
   const shownRegions = $derived(regions.map(region => ({ ...region, bounds: viewportDrag?.id === region.id ? viewportDrag.preview : region.bounds })));
   const viewportError = $derived(viewportDrag ? viewportLayoutError(viewportDrag.id, viewportDrag.preview) : '');
@@ -96,20 +96,25 @@
   function editStart(event: PointerEvent, widget: DesignerWidget, resize = false) {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault(); event.stopPropagation();
-    onselect?.(event.shiftKey ? selectedIds.includes(widget.id) ? selectedIds.filter(id => id !== widget.id) : [...selectedIds, widget.id] : [widget.id]);
-    if (!onlayout) return;
-    drag = { pointerId: event.pointerId, id: widget.id, x: event.clientX, y: event.clientY, bounds: { ...widget.bounds }, preview: { ...widget.bounds }, resize };
+    drag = { pointerId: event.pointerId, id: widget.id, x: event.clientX, y: event.clientY, bounds: { ...widget.bounds }, preview: { ...widget.bounds }, resize, moved: false, shift: event.shiftKey };
     try { (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); } catch { drag = null; }
   }
   function editMove(event: PointerEvent) {
     if (!drag || event.pointerId !== drag.pointerId || !content) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 4) return;
+    drag.moved = true;
+    if (!onlayout) return;
     const rect = content.getBoundingClientRect();
     drag.preview = (drag.resize ? resizedBounds : movedBounds)(drag.bounds, (event.clientX - drag.x) / rect.width, (event.clientY - drag.y) / rect.height, document.presentation.grid);
   }
   function editFinish(event: PointerEvent) {
     if (!drag || drag.pointerId !== event.pointerId) return;
     const completed = drag; drag = null;
-    if (boundsChanged(completed.bounds, completed.preview)) applyWidgetLayout(completed.id, completed.preview);
+    if (completed.moved) {
+      if (boundsChanged(completed.bounds, completed.preview)) applyWidgetLayout(completed.id, completed.preview);
+    } else if (!completed.resize) {
+      onselect?.(completed.shift ? selectedIds.includes(completed.id) ? selectedIds.filter(id => id !== completed.id) : [...selectedIds, completed.id] : [completed.id]);
+    }
   }
   function shownBounds(widget: DesignerWidget) {
     if (drag?.id === widget.id) return drag.preview;

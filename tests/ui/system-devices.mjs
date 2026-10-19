@@ -567,6 +567,18 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
     const panelProperties=panelEditor.getByRole('complementary',{name:'Widget properties',exact:true});
     await expect(panelProperties).toHaveCount(0);
+    const draggableWidget=panelEditor.locator('.widget').first();
+    await draggableWidget.scrollIntoViewIfNeeded();
+    const widgetBeforeDrag=await draggableWidget.getAttribute('style'),widgetDragBox=await draggableWidget.locator('.edit-hit').boundingBox();
+    await page.mouse.move(widgetDragBox.x+12,widgetDragBox.y+12);await page.mouse.down();
+    await expect(panelProperties).toHaveCount(0);await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
+    await page.mouse.move(widgetDragBox.x+60,widgetDragBox.y+36,{steps:5});await expect(panelProperties).toHaveCount(0);await page.mouse.up();
+    await expect(panelProperties).toHaveCount(0);await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
+    assert.notEqual(await draggableWidget.getAttribute('style'),widgetBeforeDrag,'Dragging moves the widget without selecting it.');
+    const widgetClickBox=await draggableWidget.locator('.edit-hit').boundingBox();
+    await page.mouse.move(widgetClickBox.x+12,widgetClickBox.y+12);await page.mouse.down();await expect(panelProperties).toHaveCount(0);
+    await page.mouse.up();await expect(panelProperties).toBeVisible();await expect(panelEditor.locator('.widget.selected')).toHaveCount(1);
+    await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
     const panelCanvasWidth=await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth);
     await panelEditor.locator('.viewport-list button').first().click();await expect(panelProperties).toBeVisible();
     await expect.poll(()=>panelProperties.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(panelCanvasWidth*.75));
