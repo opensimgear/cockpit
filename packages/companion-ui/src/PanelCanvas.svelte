@@ -113,7 +113,7 @@
     if (completed.moved) {
       if (boundsChanged(completed.bounds, completed.preview)) applyWidgetLayout(completed.id, completed.preview);
     } else if (!completed.resize) {
-      onselect?.(completed.shift ? selectedIds.includes(completed.id) ? selectedIds.filter(id => id !== completed.id) : [...selectedIds, completed.id] : [completed.id]);
+      onselect?.(selectedIds.includes(completed.id) ? selectedIds.filter(id => id !== completed.id) : completed.shift ? [...selectedIds, completed.id] : [completed.id]);
     }
   }
   function shownBounds(widget: DesignerWidget) {
