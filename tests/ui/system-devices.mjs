@@ -675,6 +675,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await page.keyboard.down('Shift');
     try{await page.mouse.wheel(0,-120);await expect(screenWidth).toHaveValue('1291');await page.mouse.wheel(0,120);await expect(screenWidth).toHaveValue('1281');}
     finally{await page.keyboard.up('Shift');}
+    await page.keyboard.down('Control');
+    try{await page.mouse.wheel(0,-120);await expect(screenWidth).toHaveValue('1291');await page.mouse.wheel(0,120);await expect(screenWidth).toHaveValue('1281');}
+    finally{await page.keyboard.up('Control');}
     await page.mouse.wheel(0,120);await expect(screenWidth).toHaveValue('1280');
     assert.equal(await page.locator('main').evaluate(node=>node.scrollTop),scrollBeforeWheel,'Wheel editing changes the numeric input without scrolling the page.');
     await screenWidth.fill('1600');await screenWidth.press('Tab');await expect(marginInput).toHaveValue('20');
