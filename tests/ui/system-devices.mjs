@@ -77,15 +77,34 @@ function fixtures() {
     ], cleanup: { phase: 'idle' } },
     failControllers: false, failForget: null, keepForgotten: false,
     controllerDelayMs: 0, completedControllerPages: 0, integrationBound: true,
+    companionUpdateDelayMs: 0, failCompanionUpdate: false,
   };
 }
 
 test('running Devices shares complete inventory, topology, filtering, lifecycle and durable guarded cleanup', { timeout: 120_000 }, async () => {
   await mkdir(artifacts, { recursive: true });
-  const fixture = fixtures(), requests = [], unexpected = [], pageErrors = [];
+  const fixture = fixtures(), requests = [], unexpected = [], pageErrors = [], suppressedHmrMessages = [];
   const browser = await chromium.launch({ headless: true, ...(process.env.OSG_BROWSER_CHANNEL ? { channel: process.env.OSG_BROWSER_CHANNEL } : {}) });
   const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } }), page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
+  // This shared dev server can receive unrelated edits during acceptance. Keep
+  // the initially served app/CSS for this run; Vite errors, other socket traffic
+  // and Cockpit's real polling/validation still pass through unchanged.
+  await page.routeWebSocket(url => url.host === new URL(endpoint).host, socket => {
+    const server = socket.connectToServer();
+    if (!socket.protocols().includes('vite-hmr')) return;
+    server.onMessage(message => {
+      if (typeof message === 'string') {
+        let payload;
+        try { payload = JSON.parse(message); } catch { /* Forward non-JSON messages. */ }
+        if (['update', 'full-reload', 'prune'].includes(payload?.type)) {
+          suppressedHmrMessages.push(payload.type);
+          return;
+        }
+      }
+      socket.send(message);
+    });
+  });
   const owner = { session: defaultId, generation: 1, profileId: defaultId, profileRevision: 1, gameId: 'dcs' };
   const appliedSnapshot = { profileId: defaultId, revision: 1, semanticHash: hash };
   const session = { state: 'running', paused: false, appliedSnapshot, owner, degradation: [], fault: null };
@@ -144,6 +163,17 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       hiddenDevices: offset === 0 ? fixture.native.hiddenDevices : [], controllerAssociations: offset === 0 ? [] : fixture.native.controllerAssociations,
       nextOffset: offset === 0 ? fixture.native.hiddenDevices.length : null } });
     if (request.command === 'companion_status') return result({ companions: fixture.companions });
+    if (request.command === 'companion_update') {
+      const { companionId, name } = request.companion;
+      const client = fixture.companions.host.clients.find(client => client.companionId === companionId);
+      assert.ok(client, 'Autosave may update only an existing fixture companion.');
+      assert.equal(typeof name, 'string');
+      assert.ok(name.trim().length > 0 && name.length <= 80);
+      if (fixture.companionUpdateDelayMs) await new Promise(resolve => setTimeout(resolve, fixture.companionUpdateDelayMs));
+      if (fixture.failCompanionUpdate) return { ok: false, error: 'Fixture companion autosave failed; edit to retry.' };
+      client.name = name;
+      return result({ companions: fixture.companions });
+    }
     if (request.command === 'game_get_state') return result({ games: fixture.games });
     if (request.command === 'ports') return result({ ports: fixture.ports });
     if (['connect', 'status', 'disconnect', 'config_read', 'events_state', 'action_describe', 'action_state'].includes(request.command) && fixture.states.has(request.gatewayId)) {
@@ -387,8 +417,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(deviceConnections).toContainText('192.0.2.10');
     await expect(deviceConnections).toContainText('Last-known connection');
     // Managing a device opens that exact paired companion, including offline
-    // installations. Live status updates must preserve an unsaved settings draft.
+    // installations. Autosave preserves newer edits while status and an earlier
+    // write are in flight, without reassigning the unchanged current panel.
     const companions = page.getByRole('region', { name: 'Companions', exact: true });
+    const companionsNav = nav.getByRole('button', { name: /^Companions(?:\s|$)/ });
     const companionSettings = page.getByRole('region', { name: 'Companion settings', exact: true });
     const panels = page.getByRole('region', { name: 'Panels', exact: true });
     const panelEditor = page.getByRole('region', { name: 'Panel editor', exact: true });
@@ -402,14 +434,48 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(companionName).toHaveValue('Browser companion');
     await expect(companionSettings).toContainText('Offline');
     await expect(companionSettings.getByRole('combobox', { name: 'Assigned panel', exact: true })).toHaveValue(hash);
-    await companionName.fill('Browser companion local draft');
+    await expect(companionSettings.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+    const companionUpdates = () => requests.filter(request => request.command === 'companion_update');
+    fixture.companionUpdateDelayMs = 600;
+    await companionName.fill('Browser companion first edit');
+    await expect.poll(() => companionUpdates().length).toBe(1);
     browserClient.name = 'Browser companion refreshed';
-    await expect(companionSettings.getByRole('heading', { name: 'Browser companion refreshed', exact: true, level: 1 })).toBeVisible();
+    await companionName.fill('Browser companion local draft');
+    await expect.poll(() => browserClient.name).toBe('Browser companion local draft');
+    fixture.companionUpdateDelayMs = 0;
+    const savedStatusPolls = requests.filter(request => request.command === 'companion_status').length;
+    await expect.poll(() => requests.filter(request => request.command === 'companion_status').length).toBeGreaterThan(savedStatusPolls);
     await expect(companionName).toHaveValue('Browser companion local draft');
+    assert.deepEqual(companionUpdates().map(request => request.companion), [
+      { companionId: 'browser-fixture', name: 'Browser companion first edit' },
+      { companionId: 'browser-fixture', name: 'Browser companion local draft' },
+    ]);
     await page.screenshot({ path: resolve(artifacts, 'companion-full-page.png'), fullPage: true });
-    await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
+    // Clicking the active sidebar entry opens the main page, including when a
+    // direct Manage companion link originally opened the editor.
+    await companionsNav.click();
     await expect(companionSettings).toHaveCount(0);
-    browserClient.name = 'Browser companion';
+    await expect(companions.getByRole('button', { name: 'Edit Browser companion local draft', exact: true })).toBeVisible();
+    await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
+    await companions.getByRole('button', { name: 'Edit Browser companion local draft', exact: true }).click();
+    await expect(companionName).toHaveValue('Browser companion local draft');
+    const beforeBlank = companionUpdates().length;
+    const beforeBlankPolls = requests.filter(request => request.command === 'companion_status').length;
+    await companionName.fill('   ');
+    await expect.poll(() => requests.filter(request => request.command === 'companion_status').length).toBeGreaterThan(beforeBlankPolls + 1);
+    assert.equal(companionUpdates().length, beforeBlank, 'A blank companion name never replaces its saved name.');
+    await expect(companionName).toHaveValue('   ');
+    assert.equal(browserClient.name, 'Browser companion local draft');
+    fixture.failCompanionUpdate = true;
+    await companionName.fill('Browser companion failed draft');
+    await expect(companionSettings.getByText(/Fixture companion autosave failed/)).toBeVisible();
+    await expect(companionName).toHaveValue('Browser companion failed draft');
+    assert.equal(browserClient.name, 'Browser companion local draft');
+    fixture.failCompanionUpdate = false;
+    await companionName.fill('Browser companion');
+    await expect.poll(() => browserClient.name).toBe('Browser companion');
+    await expect(companionSettings.getByText(/Fixture companion autosave failed/)).toHaveCount(0);
+    await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(companionSettings).toHaveCount(0);
     await devicesNav.click();
@@ -424,18 +490,20 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(companionName).toHaveValue('Known ESP32 companion');
     await expect(companionSettings.getByRole('combobox', { name: 'Assigned panel', exact: true })).toHaveValue('');
     await expect(companionSettings.getByLabel('USB port', { exact: true })).toHaveValue('COM-fixture-companion');
-    // Ordinary sidebar navigation returns to the companion tiles rather than
-    // retaining a direct-details request from a previous device visit.
-    await nav.getByRole('button', { name: 'Overview', exact: true }).click();
-    await nav.getByRole('button', { name: /^Companions(?:\s|$)/ }).click();
+    // Leaving before the debounce fires still flushes the selected companion's
+    // name, then the active sidebar returns directly to both inventories.
+    await companionName.fill('Known ESP32 companion renamed');
+    await companionsNav.click();
+    await expect.poll(() => fixture.companions.host.clients.find(client => client.companionId === 'esp32-fixture').name).toBe('Known ESP32 companion renamed');
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
-    await expect(companions.getByRole('button', { name: 'Edit Known ESP32 companion', exact: true })).toBeVisible();
+    await expect(companions.getByRole('button', { name: 'Edit Known ESP32 companion renamed', exact: true })).toBeVisible();
     await expect(companionSettings).toHaveCount(0);
     // Tile edits have the same dedicated detail page as direct device links.
     // Returning from either editor restores both inventories without a save.
     await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
-    await companions.getByRole('button', { name: 'Edit Known ESP32 companion', exact: true }).click();
-    await expect(companionSettings.getByRole('heading', { name: 'Known ESP32 companion', exact: true, level: 1 })).toBeVisible();
+    await companions.getByRole('button', { name: 'Edit Known ESP32 companion renamed', exact: true }).click();
+    await expect(companionName).toHaveValue('Known ESP32 companion renamed');
+    await expect(companionSettings.getByRole('heading', { name: 'Known ESP32 companion renamed', exact: true, level: 1 })).toBeVisible();
     await expect(companions.getByRole('heading', { name: 'Companions', exact: true })).toHaveCount(0);
     await expect(panels).toHaveCount(0);
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
@@ -445,7 +513,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panels).toHaveCount(0);
     await expect(companionSettings).toHaveCount(0);
     await page.screenshot({ path: resolve(artifacts, 'panel-full-page.png'), fullPage: true });
-    await panelEditor.getByRole('button', { name: 'Back to Panels', exact: true }).click();
+    await companionsNav.click();
     await expect(panelEditor).toHaveCount(0);
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
@@ -533,10 +601,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.deepEqual(unexpected, []); assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: resolve(artifacts, 'complete-system-topology.png'), fullPage: true });
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ observedAt: new Date().toISOString(), scope: 'Running dev Cockpit frontend with fixture IPC only', endpoint,
-      expectedNames, listIds, graphIds, commands: requests.map(request => request.command), unexpected, pageErrors }, null, 2) + '\n');
+      expectedNames, listIds, graphIds, commands: requests.map(request => request.command), suppressedHmrMessages, unexpected, pageErrors }, null, 2) + '\n');
   } catch (error) {
     await page.screenshot({ path: resolve(artifacts, 'failure.png'), fullPage: true });
-    await writeFile(resolve(artifacts, 'failure.json'), JSON.stringify({ message: String(error), requests, unexpected, pageErrors }, null, 2) + '\n');
+    await writeFile(resolve(artifacts, 'failure.json'), JSON.stringify({ message: String(error), requests, suppressedHmrMessages, unexpected, pageErrors }, null, 2) + '\n');
     throw error;
   } finally { await browser.close(); }
 });

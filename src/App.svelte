@@ -65,6 +65,7 @@
   let selectedCompanionId = $state('');
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
   let devicesPanel = $state.raw<{showInventory:()=>void}>();
+  let companionsPanel = $state.raw<{showMain:()=>boolean}>();
   let profilesPanel = $state.raw<{requestNavigation:(continueNavigation:()=>void)=>void}>();
   const selectedGameName = $derived((games?.catalogue ?? supportedGames).find(game => game.id === selectedGameId)?.name);
   const section = $derived(view === 'device' ? 'devices' : view);
@@ -82,6 +83,7 @@
     commitNavigation(section);
   }
   function commitNavigation(section: View) {
+    if (section === 'companions' && companionsPanel && !companionsPanel.showMain()) return;
     if (view === 'profiles' && section !== 'profiles') void refreshProfileNames();
     if (section === 'devices') devicesPanel?.showInventory();
     settingsVisit = null;
@@ -449,7 +451,7 @@
         {:else if view === 'profiles'}
           <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->
         {:else if view === 'companions'}
-          <CompanionDesigner initialCompanionId={selectedCompanionId} openSettings={() => navigate('preferences')} />
+          <CompanionDesigner bind:this={companionsPanel} initialCompanionId={selectedCompanionId} openSettings={() => navigate('preferences')} />
         {:else if view === 'games'}
           <GamesPanel bind:selectedGameId status={games} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'devices'}

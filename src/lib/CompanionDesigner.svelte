@@ -22,6 +22,7 @@
   let { openSettings, initialCompanionId = '' }: { openSettings: () => void; initialCompanionId?: string } = $props();
 
   let importInput = $state<HTMLInputElement>();
+  let connectionsPanel = $state.raw<{showMain:()=>boolean}>();
   let editorOpen = $state(false);
   let companionDetailsOpen = $state(untrack(() => !!initialCompanionId));
   let dirty = $state(false);
@@ -64,6 +65,12 @@
   }
   function leaveEditor() { return !dirty || window.confirm('Discard unsaved panel changes?'); }
   function backToPanels() { if(leaveEditor()){stop();editorOpen=false;dirty=false;} }
+  export function showMain() {
+    if (editorOpen && !leaveEditor()) return false;
+    if (connectionsPanel && !connectionsPanel.showMain()) return false;
+    stop(); editorOpen=false; companionDetailsOpen=false; dirty=false;
+    return true;
+  }
   function focusEditor(node: HTMLButtonElement) { node.focus(); }
   async function send(command: CompanionCommand, companion: Record<string,unknown> = {}) {
     const result=(await gatewayRequest({command,companion})).companions;
@@ -231,7 +238,7 @@
 </script>
 
 <section class="designer" aria-label="Companion panel designer">
-  <div hidden={editorOpen}><CompanionConnections publications={currentPublications} {openSettings} {initialCompanionId} onViewChange={open => companionDetailsOpen=open} /></div>
+  <div hidden={editorOpen}><CompanionConnections bind:this={connectionsPanel} publications={currentPublications} {openSettings} {initialCompanionId} onViewChange={open => companionDetailsOpen=open} /></div>
   {#if !editorOpen && !companionDetailsOpen}
   <section class="panels-section" aria-label="Panels">
     <h2>Panels</h2>
