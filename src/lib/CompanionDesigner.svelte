@@ -388,9 +388,12 @@
   <div inert={busy}>
   <div class="workspace">
     <aside class="panel-library" aria-label="Panel library">
-      <details class="editor-accordion" name="panel-editor-tools"><summary>Pages</summary><div class="accordion-content"><label>Page<select value={page.id} onchange={e => { stop(); pageId = e.currentTarget.value; select([]); }}>{#each document.ui.pages as p}<option value={p.id}>{p.title}</option>{/each}</select></label>
-        <button onclick={() => { command({ type: 'add-page', title: `Page ${document.ui.pages.length + 1}` }); pageId = document.ui.pages.at(-1)!.id; select([]); }}><Icon name="plus" size={16} />Add page</button>
-        <button disabled={document.ui.pages.length <= 1} onclick={() => { command({ type: 'delete-page', id: page.id }); select([]); }}><Icon name="trash" size={16} />Remove page</button>
+      <details class="editor-accordion" name="panel-editor-tools"><summary>Pages</summary><div class="accordion-content">
+        <ul class="page-list" aria-label="Panel pages">{#each document.ui.pages as p,index (p.id)}<li>
+          <button class="page-select" class:active={p.id === page.id} aria-pressed={p.id === page.id} onclick={() => { stop(); pageId=p.id;select([]); }}>Page {index}{#if !/^Page \d+$/.test(p.title)}<small>{p.title}</small>{/if}</button>
+          {#if document.ui.pages.length > 1}<button class="page-delete" aria-label={`Delete page ${index}`} title="Delete page" onclick={() => { command({ type:'delete-page',id:p.id });select([]); }}><Icon name="trash" size={15}/></button>{/if}
+        </li>{/each}</ul>
+        <div class="page-add"><button class="action" onclick={() => { if(command({ type: 'add-page', title: `Page ${document.ui.pages.length}` })){ pageId = document.ui.pages.at(-1)!.id; select([]); } }}><Icon name="plus" size={16} />Add page</button></div>
       </div></details>
       <details class="editor-accordion" name="panel-editor-tools" open><summary>Viewports</summary><div class="accordion-content">
       <p class="hint">Divide one companion screen into areas for your widgets.</p>
@@ -503,6 +506,8 @@
 <style>
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
+  .page-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.page-list li{position:relative;min-width:0}.page-select{width:100%;text-align:left;padding-right:36px}.page-select.active{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}.page-select small{display:block;color:var(--muted);overflow-wrap:anywhere}.page-delete{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;padding:5px;color:#e39b9b;opacity:0;pointer-events:none}.page-list li:hover .page-delete,.page-list li:focus-within .page-delete{opacity:1;pointer-events:auto}.page-add{border-top:1px solid var(--line);margin-top:4px;padding-top:12px}.page-add button{width:100%}
+  @media(hover:none){.page-delete{opacity:1;pointer-events:auto}}
   .panel-properties-layout{position:relative;overflow:hidden;min-width:0}.properties-overlay{position:absolute;inset:0 0 0 auto;width:50%;box-sizing:border-box;padding:20px;overflow:auto;background:var(--surface);border-left:1px solid var(--line);box-shadow:-12px 0 32px #0003;z-index:20}.properties-overlay > h3{margin-top:0}.properties-close{float:right;display:grid;place-items:center;padding:6px;margin:-6px -6px 8px 12px;background:transparent;border:0;color:var(--muted)}
   .asset-import{display:none}.asset-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.asset-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px;border:1px solid var(--line);border-radius:5px}.asset-list img{width:30px;height:30px;object-fit:contain;flex-shrink:0;background:var(--bg);border-radius:3px}.asset-list li > div{flex:1;min-width:0}.asset-list strong,.asset-list small{display:block;font-size:10px;overflow-wrap:anywhere}.asset-list small{font-size:9px;color:var(--muted);margin-top:4px}.asset-list .assets-empty{font-size:11px;color:var(--muted);border-style:dashed}.asset-delete{display:grid;place-items:center;flex-shrink:0;padding:5px;opacity:0;pointer-events:none;color:#e39b9b}.asset-list li:hover .asset-delete,.asset-list li:focus-within .asset-delete{opacity:1;pointer-events:auto}@media(hover:none){.asset-delete{opacity:1;pointer-events:auto}}
   .layout-tools button{display:grid;place-items:center;width:36px;height:36px;padding:0}.layout-tools button.active{color:var(--accent);background:var(--accent-bg);border-color:var(--accent)}

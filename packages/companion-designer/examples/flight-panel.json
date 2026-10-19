@@ -97,7 +97,7 @@
       "pages": [
         {
           "id": "flight-page-0",
-          "title": "Page 1",
+          "title": "Page 0",
           "items": [
             {
               "kind": "control",

@@ -98,7 +98,7 @@ export function newDocument(title = "Untitled panel"): DesignerDocument {
   const pageId = newId("page");
   const doc: DesignerDocument = {
     schemaVersion: 2,
-    ui: { schemaVersion: 1, id: newId("ui"), title, controls: [], feedbackWidgets: [], pages: [{ id: pageId, title: "Page 1", items: [] }], assets: [] },
+    ui: { schemaVersion: 1, id: newId("ui"), title, controls: [], feedbackWidgets: [], pages: [{ id: pageId, title: "Page 0", items: [] }], assets: [] },
     presentation: { widgets: [], groups: [], viewports: [{ pageId, width: 1280, height: 800 }], grid: { columns: 24, rows: 16, snap: true } },
     targets: [{ id: newId("target"), label: "Logical controller", axes: ["bipolar", "bipolar"], buttons: 8, hats: 1 }], bindings: [],
   };
@@ -154,7 +154,9 @@ export function applyDesignerCommand(history: DesignerHistory, command: Designer
     case "delete-page":
       assert(doc.ui.pages.length > 1, "A panel needs a page"); assert(doc.ui.pages.some(page => page.id === command.id), "Unknown page");
       for (const widget of [...doc.presentation.widgets].filter(widget => widget.pageId === command.id)) removeWidget(doc, widget.id);
-      doc.ui.pages = doc.ui.pages.filter(page => page.id !== command.id); doc.presentation.groups = doc.presentation.groups.filter(group => group.pageId !== command.id); doc.presentation.viewports = doc.presentation.viewports.filter(viewport => viewport.pageId !== command.id); break;
+      doc.ui.pages = doc.ui.pages.filter(page => page.id !== command.id);
+      doc.ui.pages.forEach((page, index) => { if (/^Page \d+$/.test(page.title)) page.title = `Page ${index}`; });
+      doc.presentation.groups = doc.presentation.groups.filter(group => group.pageId !== command.id); doc.presentation.viewports = doc.presentation.viewports.filter(viewport => viewport.pageId !== command.id); break;
     case "add-group": {
       const widgets = selected(command.widgetIds); assert(widgets.every(widget => widget.pageId === command.pageId), "Group page mismatch");
       const group = { id: newId("group"), pageId: command.pageId, label: command.label }; doc.presentation.groups.push(group); for (const widget of widgets) widget.groupId = group.id; break;

@@ -123,6 +123,22 @@ test("page/viewport operations and deletion clean references atomically", () => 
   assert.throws(() => apply(h, { type: "delete-page", id: h.present.ui.pages[0].id }));
   assert.throws(() => apply(h, { type: "delete-widget", id: first(h.present).id }));
 });
+test("default page numbering starts at zero and closes gaps after deletion with undo", () => {
+  let h=history();
+  assert.equal(h.present.ui.pages[0].title,'Page 0');
+  h=apply(h,{type:'add-page',title:'Page 1'});
+  h=apply(h,{type:'add-page',title:'Page 2'});
+  h=apply(h,{type:'add-widget',kind:'button',pageId:h.present.ui.pages[1].id});
+  const remainingIds=h.present.ui.pages.slice(1).map(page=>page.id);
+  h=apply(h,{type:'delete-page',id:h.present.ui.pages[0].id});
+  assert.deepEqual(h.present.ui.pages.map(page=>page.title),['Page 0','Page 1']);
+  assert.deepEqual(h.present.ui.pages.map(page=>page.id),remainingIds);
+  h=undoDesigner(h);
+  assert.deepEqual(h.present.ui.pages.map(page=>page.title),['Page 0','Page 1','Page 2']);
+  h=redoDesigner(h);
+  assert.deepEqual(h.present.ui.pages.map(page=>page.title),['Page 0','Page 1']);
+});
+
 test("logical targets enforce range/index compatibility independently of machine assignments", () => {
   let h = apply(history(), { type: "add-widget", kind: "slider" }); const axis = h.present.ui.controls.find(c => c.kind === "axis"), target = h.present.targets[0];
   h = apply(h, { type: "unbind", controlId: axis.id });
