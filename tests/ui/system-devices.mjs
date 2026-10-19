@@ -582,7 +582,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelProperties).toHaveCount(0);await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
     const panelCanvasWidth=await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth);
     await panelEditor.locator('.viewport-list button').first().click();await expect(panelProperties).toBeVisible();
-    await expect.poll(()=>panelProperties.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(panelCanvasWidth*.75));
+    await expect.poll(()=>panelProperties.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(panelCanvasWidth*.30));
     assert.equal(await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth),panelCanvasWidth,'Properties overlay does not resize the panel canvas.');
     await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
     await panelEditor.locator('.widget').first().click();
