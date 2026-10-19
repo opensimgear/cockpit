@@ -563,6 +563,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(companions.getByRole('heading', { name: 'Companions', exact: true })).toHaveCount(0);
     await expect(panels).toHaveCount(0);
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
+    const panelTile=panels.locator('.panel-tile-container').filter({hasText:'Fixture panel'});
+    const listDelete=panelTile.getByRole('button',{name:'Delete Fixture panel',exact:true});
+    await page.mouse.move(0,0);await expect(listDelete).toHaveCSS('opacity','0');
+    await panelTile.hover();await expect(listDelete).toHaveCSS('opacity','1');
+    let listDeleteConfirmation='';page.once('dialog',async dialog=>{listDeleteConfirmation=dialog.message();await dialog.dismiss();});
+    await listDelete.click();assert.match(listDeleteConfirmation,/Delete "Fixture panel" and its assets/);
+    await expect(panels.getByRole('button',{name:/^Fixture panel/})).toBeVisible();
+    await expect(panelEditor).toHaveCount(0);
     await panels.getByRole('button', { name: /^Fixture panel/ }).click();
     await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
     const panelProperties=panelEditor.getByRole('complementary',{name:'Widget properties',exact:true});

@@ -346,6 +346,7 @@
     {:else if !library.drafts.length}<div class="empty-panels"><h3>No panels yet</h3><p>Create your first panel to get started.</p></div>
     {:else}<div class="panel-tiles">
       {#each library.drafts as entry (entry.id)}
+        <div class="panel-tile-container">
         <button class="panel-tile" onclick={() => load(entry.id)}>
           <svg class="panel-thumbnail" viewBox="0 0 320 180" aria-hidden="true">
             <rect width="320" height="180" fill="#101b25" />
@@ -356,6 +357,8 @@
           </svg>
           <div class="tile-copy"><h3>{entry.name}</h3><p>{entry.document.ui.pages.length} {entry.document.ui.pages.length===1?'page':'pages'} · {entry.document.presentation.widgets.length} {entry.document.presentation.widgets.length===1?'widget':'widgets'}</p><span>{new Set(panelAssignments(entry.id).map(i => i.companionId)).size} {new Set(panelAssignments(entry.id).map(i => i.companionId)).size===1?'companion':'companions'}</span></div>
         </button>
+        <button class="panel-tile-delete" aria-label={`Delete ${entry.name}`} title="Delete panel" disabled={busy} onclick={() => removeDraft(entry.id)}><Icon name="trash" size={16}/></button>
+        </div>
       {/each}
     </div>{/if}
 
@@ -507,7 +510,8 @@
   .back-panels{display:inline-flex;align-items:center;gap:6px;background:transparent;border:0;color:var(--accent);font-size:10px;padding:6px 0;margin-bottom:18px}.back-panels:hover{background:transparent;text-decoration:underline}
   .editor-heading{flex-wrap:wrap}.editor-heading h1{overflow-wrap:anywhere}
   .panel-list-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}.panel-import{display:none}.action,.toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px}.panels-section{margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}.panel-list-heading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:20px 0}
-  .panel-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:18px;margin:20px 0}.panel-tile{padding:0;text-align:left;overflow:hidden;border-radius:10px;background:var(--surface)}.panel-thumbnail{display:block;width:100%;aspect-ratio:16/9}.tile-copy{padding:16px}.tile-copy h3{font-size:17px;margin:0 0 8px}.tile-copy p{margin:0 0 10px}.tile-copy span{font-size:12px;color:var(--accent)}.empty-panels{padding:60px 24px;text-align:center;border:1px dashed var(--line);border-radius:10px;margin:20px 0}
+  .panel-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:18px;margin:20px 0}.panel-tile-container{position:relative;min-width:0}.panel-tile{padding:0;width:100%;height:100%;text-align:left;overflow:hidden;border-radius:10px;background:var(--surface)}.panel-tile-delete{position:absolute;top:10px;right:10px;display:grid;place-items:center;width:34px;height:34px;padding:0;color:var(--danger,#e67979);opacity:0;pointer-events:none;transition:opacity 120ms ease}.panel-tile-container:hover .panel-tile-delete,.panel-tile-container:focus-within .panel-tile-delete{opacity:1;pointer-events:auto}.panel-thumbnail{display:block;width:100%;aspect-ratio:16/9}.tile-copy{padding:16px}.tile-copy h3{font-size:17px;margin:0 0 8px}.tile-copy p{margin:0 0 10px}.tile-copy span{font-size:12px;color:var(--accent)}.empty-panels{padding:60px 24px;text-align:center;border:1px dashed var(--line);border-radius:10px;margin:20px 0}
+  @media(hover:none){.panel-tile-delete{opacity:1;pointer-events:auto}}
   h2{font-size:22px;margin:0}h3{font-size:13px;margin:18px 0 10px}p{font-size:13px;color:var(--muted);line-height:1.6}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:12px 0}.workspace{display:grid;grid-template-columns:180px minmax(0,1fr);gap:18px}.workspace>aside,.panel-canvas-workspace{min-width:0}.workspace>aside{padding:16px;background:var(--surface);border:1px solid var(--line);border-radius:7px;align-self:start}.palette{display:grid;grid-template-columns:1fr 1fr;gap:5px}
   button,select,input,textarea{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);padding:8px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}label{display:flex;flex-direction:column;gap:5px;font-size:12px;margin:7px 0}input,select,textarea{max-width:100%;min-width:0;box-sizing:border-box}input[type=checkbox]{width:auto;accent-color:var(--accent)}.bounds{display:grid;grid-template-columns:1fr 1fr;gap:6px}.hint{font-size:11px;line-height:1.5;overflow-wrap:anywhere}code{font-size:10px;overflow-wrap:anywhere}details{margin-top:20px}textarea{width:100%;font-family:monospace}
   @media(max-width:1050px){.workspace{grid-template-columns:180px minmax(0,1fr)}}@media(max-width:650px){.workspace{grid-template-columns:1fr}.panel-list-actions{flex-wrap:wrap}.editor-heading{align-items:flex-start}}
