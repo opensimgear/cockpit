@@ -404,14 +404,19 @@
         </li>{/each}</ul>
         <div class="page-add"><button class="action" onclick={() => { if(command({ type: 'add-page', title: `Page ${document.ui.pages.length}` })){ pageId = document.ui.pages.at(-1)!.id; select([]); } }}><Icon name="plus" size={16} />Add page</button></div>
       </div></details>
-      <details class="editor-accordion" open><summary>Viewports</summary><div class="accordion-content">
-      <p class="hint">Divide one companion screen into areas for your widgets.</p>
+      <details class="editor-accordion" open><summary>Viewports<button class="accordion-info" aria-label="About viewports" title="About viewports" popovertarget="viewport-help" onclick={e => e.stopPropagation()}><Icon name="info" size={16}/></button></summary><div class="accordion-content">
+      <div id="viewport-help" class="viewport-help" popover role="dialog" aria-label="Viewport help">
+        <button class="help-close" aria-label="Close viewport help" popovertarget="viewport-help" popovertargetaction="hide"><Icon name="close" size={16}/></button>
+        <h3>Viewports</h3>
+        <p>Divide a companion screen into separate areas for widgets. Add viewport uses free space, or splits the current viewport when the screen is full.</p>
+        <p>Click a viewport to edit its properties; click it again to deselect. Drag its label to move it, or its corner to resize it. Hold Ctrl while dragging to bypass grid snapping.</p>
+        <p>Widgets must stay inside a viewport, and viewports cannot overlap. Move or delete a viewport’s widgets before deleting it. Every page must keep at least one viewport.</p>
+      </div>
       <div class="viewport-list">{#each regions as region}<div class="viewport-row">
         <button class="viewport-select" class:active={propertiesOpen && !selected.length && region.id === activeViewport.id} aria-pressed={propertiesOpen && !selected.length && region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}>{region.label}<small>{Math.round(region.bounds.width * usableWidth)} × {Math.round(region.bounds.height * usableHeight)}</small></button>
         {#if regions.length > 1}<button class="viewport-delete" aria-label={`Delete viewport ${region.label}`} title={document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(region.bounds,w.bounds)) ? 'Move or delete its widgets before removing this viewport' : 'Delete viewport'} disabled={preview || document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(region.bounds,w.bounds))} onclick={() => removeViewport(region.id)}><Icon name="trash" size={15}/></button>{/if}
       </div>{/each}</div>
       <button class="add-viewport" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={14} />Add viewport</button>
-      <p class="hint">Uses free space, or splits the selected viewport.</p>
       </div></details>
       <details class="editor-accordion"><summary>Widgets</summary><div class="accordion-content">
       <p class="hint">Add to {activeViewport.label}</p>
@@ -516,6 +521,7 @@
 <style>
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
+  .accordion-info{float:right;display:inline-flex;align-items:center;justify-content:center;padding:3px;margin:-3px 0;background:transparent;border:0;color:var(--muted)}.viewport-help{width:min(360px,calc(100vw - 32px));box-sizing:border-box;max-height:80vh;overflow:auto;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px #0005}.viewport-help h3{margin:0 28px 12px 0;font-size:16px}.viewport-help p:last-child{margin-bottom:0}.help-close{float:right;display:grid;place-items:center;padding:3px;background:transparent;border:0;color:var(--muted)}
   .viewport-row{position:relative;min-width:0}.viewport-select{width:100%;padding-right:36px}.viewport-row .viewport-delete{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;padding:5px;color:#e39b9b;opacity:0;pointer-events:none}.viewport-row:hover .viewport-delete,.viewport-row:focus-within .viewport-delete{opacity:1;pointer-events:auto}
   @media(hover:none){.viewport-row .viewport-delete{opacity:1;pointer-events:auto}}
   .page-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.page-list li{position:relative;min-width:0}.page-select{width:100%;text-align:left;padding-right:36px}.page-select.active{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}.page-select small{display:block;color:var(--muted);overflow-wrap:anywhere}.page-delete{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;padding:5px;color:#e39b9b;opacity:0;pointer-events:none}.page-list li:hover .page-delete,.page-list li:focus-within .page-delete{opacity:1;pointer-events:auto}.page-add{border-top:1px solid var(--line);margin-top:4px;padding-top:12px}.page-add button{width:100%}

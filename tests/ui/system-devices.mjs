@@ -602,6 +602,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelProperties).toHaveCount(0);await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
     const panelCanvasWidth=await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth);
     await expect(panelEditor.getByRole('complementary',{name:'Panel library',exact:true})).toHaveCSS('width','220px');
+    const viewportHelp=panelEditor.getByRole('dialog',{name:'Viewport help',exact:true});
+    await expect(viewportHelp).not.toBeVisible();
+    await panelEditor.getByRole('button',{name:'About viewports',exact:true}).click();await expect(viewportHelp).toBeVisible();
+    await expect(viewportHelp).toContainText('Every page must keep at least one viewport');
+    await expect(panelEditor.locator('.viewport-list')).toBeVisible();
+    await page.keyboard.press('Escape');await expect(viewportHelp).not.toBeVisible();
     const viewportRows=panelEditor.locator('.viewport-row');
     await expect(viewportRows).toHaveCount(1);await expect(viewportRows.locator('.viewport-delete')).toHaveCount(0);
     await panelEditor.getByRole('button',{name:'Add viewport',exact:true}).click();await expect(viewportRows).toHaveCount(2);
