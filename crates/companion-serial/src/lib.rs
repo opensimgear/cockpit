@@ -684,6 +684,7 @@ fn worker(
                                                 "firmwareVersion",
                                                 "boardProfile",
                                                 "status",
+                                                "statusMessage",
                                                 "name",
                                                 "ssid",
                                                 "wifiPasswordSaved",
@@ -705,7 +706,7 @@ fn worker(
                                             set(
                                                 public,
                                                 "stage",
-                                                json!(match v["status"].as_str() {
+                                                json!(v["statusMessage"].as_str().filter(|s| !s.is_empty() && s.len()<=120 && !s.chars().any(char::is_control)).unwrap_or(match v["status"].as_str() {
                                                     Some("live-armed") =>
                                                         "Panel connected · touch ready",
                                                     Some("live-disarmed") =>
@@ -718,8 +719,9 @@ fn worker(
                                                         "Pairing device",
                                                     Some("authenticating" | "opening-panel") =>
                                                         "Connecting panel",
+                                                    Some("panel-error") => "Panel could not load or render",
                                                     _ => "Device ready",
-                                                }),
+                                                })),
                                             );
                                             if (v["setupSaved"] == true || v["status"] == "error")
                                                 && provision.as_ref().is_some_and(|p| {
@@ -738,7 +740,7 @@ fn worker(
                                             scan_started=None;last_status=Some(Instant::now());set(public,"scanning",json!(false));
                                             set(public,"scanError",json!("The screen could not scan Wi-Fi networks. Try again or enter the network name."));
                                         } else if let Some(status) = v["status"].as_str() {
-                                            if status=="panel-unsupported-corrupt-or-over-budget" {
+                                            if matches!(status,"panel-unsupported-corrupt-or-over-budget"|"panel-load-failed"|"panel-render-failed") {
                                                 let device=public.lock().unwrap_or_else(|p|p.into_inner())["device"].clone();
                                                 let host=hub.command(&json!({"command":"companion_status"}))?;
                                                 blocked_panel=assignment_hash(&host,device["companionId"].as_str().unwrap_or(""));

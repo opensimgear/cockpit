@@ -209,5 +209,5 @@ test('discard cancels pending or failed settings before removal without dropping
 test('image panels require image-capable screen firmware',()=>{
   const doc=newDocument('Images');doc.presentation.widgets=[{...doc.presentation.widgets[0],kind:'image',controlIds:[],feedbackIds:[],config:{assetId:'picture'}}];
   const panel={document:doc};assert.match(panelScreenReason(panel,{width:480,height:320},'2026.10.19.3'),/Update this screen/);assert.match(panelScreenReason(panel,{width:480,height:320},'unknown'),/Update this screen/);
-  assert.doesNotMatch(panelScreenReason(panel,{width:480,height:320},'2026.10.19.5'),/Update this screen/);
+  assert.doesNotMatch(panelScreenReason(panel,{width:480,height:320},'2026.10.19.7'),/Update this screen/);
 });

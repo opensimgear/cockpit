@@ -45,6 +45,11 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
         v=osg_json_parse(osg_transport_frame,used);used=0;
         if(!v)break;
         const char *command=osg_string(v,"command");
+        /* Keep USB liveness responsive throughout multi-chunk panel downloads.
+         * Mutating commands still wait for the outer network task. */
+        if(command&&!strcmp(command,"status")){
+            osg_network_status(osg_string(v,"requestId"));cJSON_Delete(v);continue;
+        }
         if(!command||strcmp(command,"serial-reply")){
             if(deferred){cJSON_Delete(v);break;}
             deferred=v;continue;

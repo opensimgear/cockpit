@@ -181,15 +181,18 @@ static void status_line(osg_runtime *r,int x,int y,int unit,int x0,int y0,int x1
     }
 }
 static void status_screen(osg_runtime *r){
-    const char *message=r->screen==OSG_SCREEN_UNPAIRED?"Pair with OSG Cockpit":
+    const char *message=r->screen_message?r->screen_message:r->screen==OSG_SCREEN_UNPAIRED?"Pair with OSG Cockpit":
         r->screen==OSG_SCREEN_NO_PANEL?"No panel assigned":
-        r->screen==OSG_SCREEN_PANEL_ERROR?"Panel could not render correctly":"No connection to OSG Cockpit";
+        r->screen==OSG_SCREEN_PANEL_ERROR?"Panel could not render correctly":
+        r->screen==OSG_SCREEN_CONNECTING?"Connecting to OSG Cockpit":
+        r->screen==OSG_SCREEN_LOADING?"Loading panel":
+        r->screen==OSG_SCREEN_ERROR?"Cockpit request failed":"No connection to OSG Cockpit";
     int unit=r->display.height/100;if(unit<1)unit=1;if(unit>4)unit=4;
     int font=3;const int length=(int)strlen(message);
     while(font>1&&length*4*font>r->display.width-32)font--;
     const int icon=24*unit,gap=5*unit,height=icon+gap+5*font;
     const int x=(r->display.width-25*unit)/2,y=(r->display.height-height)/2;
-    const uint16_t color=r->screen==OSG_SCREEN_PANEL_ERROR?0xfbaa:0x8d18;
+    const uint16_t color=(r->screen==OSG_SCREEN_PANEL_ERROR||r->screen==OSG_SCREEN_ERROR)?0xfbaa:0x8d18;
 #define LINE(a,b,c,d) status_line(r,x,y,unit,a,b,c,d,color)
     if(r->screen==OSG_SCREEN_DISCONNECTED){
         /* Two unplugged connectors, with a break between their exposed pins. */
@@ -197,10 +200,14 @@ static void status_screen(osg_runtime *r){
         LINE(9,9,11,9);LINE(9,15,11,15);
         LINE(23,12,20,12);LINE(20,7,20,17);LINE(20,7,15,7);LINE(20,17,15,17);LINE(15,7,15,17);
         LINE(13,9,15,9);LINE(13,15,15,15);LINE(14,2,10,22);
-    }else if(r->screen==OSG_SCREEN_PANEL_ERROR){
+    }else if(r->screen==OSG_SCREEN_PANEL_ERROR||r->screen==OSG_SCREEN_ERROR){
         LINE(8,2,16,2);LINE(16,2,22,8);LINE(22,8,22,16);LINE(22,16,16,22);
         LINE(16,22,8,22);LINE(8,22,2,16);LINE(2,16,2,8);LINE(2,8,8,2);
         LINE(12,7,12,13);LINE(12,17,12,18);
+    }else if(r->screen==OSG_SCREEN_CONNECTING||r->screen==OSG_SCREEN_LOADING){
+        /* Hourglass: work is in progress, rather than a disconnected cable. */
+        LINE(5,2,19,2);LINE(5,22,19,22);LINE(6,3,6,7);LINE(18,3,18,7);
+        LINE(6,7,18,17);LINE(18,7,6,17);LINE(6,17,6,21);LINE(18,17,18,21);
     }else{
         LINE(3,3,21,3);LINE(21,3,21,21);LINE(21,21,3,21);LINE(3,21,3,3);LINE(3,7,21,7);
         if(r->screen==OSG_SCREEN_NO_PANEL){LINE(1,23,23,1);}
@@ -219,7 +226,7 @@ osg_damage osg_render_damage(const osg_runtime *r,const osg_runtime *old,uint64_
     osg_damage d={0};
     if(!old || !old->panel || r->panel!=old->panel || r->page!=old->page ||
        r->display.width!=old->display.width || r->display.height!=old->display.height ||
-       r->screen!=old->screen || r->connected!=old->connected || r->armed!=old->armed ||
+       r->screen!=old->screen || r->screen_message!=old->screen_message || r->connected!=old->connected || r->armed!=old->armed ||
        r->arming!=old->arming || r->live_input!=old->live_input){d.full=true;return d;}
     for(size_t i=0;i<r->panel->widget_count;i++){
         const osg_widget *w=&r->panel->widgets[i];

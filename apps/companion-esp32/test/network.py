@@ -8,14 +8,14 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/companion-esp32"
 OUT = ROOT / ".research/esp32-network"
 OUT.mkdir(parents=True, exist_ok=True)
-for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda"):
+for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda", "serial-wire-test-*.gcda"):
     for counter in OUT.glob(pattern):
         counter.unlink()
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g", "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048"]
 includes = ["test/include", "core", "network", "third_party/cjson", "test"]
 flags += ["-I" + str(APP / p) for p in includes]
 common = ["core/companion.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
-for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c")):
+for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c"), ("serial-wire-test", "serial_wire_test.c")):
     subprocess.run([*flags, *[str(APP / p) for p in common], str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
     with (OUT / (binary + ".log")).open("w") as log:
         subprocess.run([str(OUT / binary), str(APP / "test/live-publication.json")], check=True, cwd=ROOT, stdout=log)

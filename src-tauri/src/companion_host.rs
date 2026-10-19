@@ -23,8 +23,16 @@ fn describe_usb_presence(host:&mut Value,devices:&[Value]){
         client["connected"]=json!(true);
         if let Some(transports)=client["transports"].as_array_mut(){if !transports.contains(&json!("usb")){transports.push(json!("usb"));}}
         else{client["transports"]=json!(["usb"]);}
-        if usb["device"]["status"]=="panel-error" || (usb["device"]["status"]=="error" && (usb["deviceStatus"]=="panel-unsupported-corrupt-or-over-budget" || usb["lastHostError"].as_str().is_some_and(|s|s.contains("ESP32 memory budget")))){
-            client["panelError"]=json!("The panel uses content this ESP32 screen cannot display. Remove unsupported features in the panel editor, then save the panel.");
+        client["connectionStatus"]=json!(usb["device"]["statusMessage"].as_str().unwrap_or_else(||match usb["device"]["status"].as_str(){
+            Some("authenticating")=>"Connecting to Cockpit",
+            Some("opening-panel")=>"Loading panel",
+            Some("error")=>"Cockpit connection or session failed",
+            Some("offline")=>"USB connected; panel session stopped",
+            Some("awaiting-assignment")=>"No panel assigned",
+            _=>"",
+        }));
+        if usb["device"]["status"]=="panel-error"{
+            client["panelError"]=json!(usb["device"]["statusMessage"].as_str().unwrap_or("The screen could not load or render this panel."));
         }
     }}
 }
@@ -683,13 +691,24 @@ mod tests {
     #[test]
     fn usb_presence_is_independent_of_panel_session_errors(){
         let mut host=json!({"clients":[{"companionId":"screen","connected":false}]});
-        describe_usb_presence(&mut host,&[json!({"connected":true,"ready":true,"device":{"companionId":"screen","status":"error"},"deviceStatus":"panel-unsupported-corrupt-or-over-budget"})]);
+        describe_usb_presence(&mut host,&[json!({"connected":true,"ready":true,"device":{"companionId":"screen","status":"panel-error"},"deviceStatus":"panel-unsupported-corrupt-or-over-budget"})]);
         assert_eq!(host["clients"][0]["connected"],true);
         assert_eq!(host["clients"][0]["sessionConnected"],false);
         assert!(host["clients"][0]["panelError"].is_string());
         let mut offline=json!({"clients":[{"companionId":"screen","connected":false}]});
         describe_usb_presence(&mut offline,&[json!({"connected":false,"ready":true,"device":{"companionId":"screen"}})]);
         assert_eq!(offline["clients"][0]["connected"],false);
+    }
+    #[test]
+    fn usb_status_preserves_the_reported_failure_without_guessing_unsupported_content(){
+        for (status,message,panel_error) in [("panel-error","Panel image download failed",true),("error","Cockpit response timed out",false),("opening-panel","Downloading panel images",false)]{
+            let mut host=json!({"clients":[{"companionId":"screen","connected":false}]});
+            describe_usb_presence(&mut host,&[json!({"connected":true,"ready":true,"device":{"companionId":"screen","status":status,"statusMessage":message},"deviceStatus":"panel-unsupported-corrupt-or-over-budget","lastHostError":"Old ESP32 memory budget failure"})]);
+            let client=&host["clients"][0];
+            assert_eq!(client["connected"],true);
+            assert_eq!(client["connectionStatus"],message);
+            assert_eq!(client["panelError"].as_str(),if panel_error{Some(message)}else{None});
+        }
     }
     #[test]
     fn esp_panels_match_screen_dimensions_on_every_page() {

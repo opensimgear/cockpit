@@ -93,6 +93,7 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         cJSON_AddStringToObject(*out,"publicationHash",osg_string(fixture,"publicationHash"));cJSON_AddStringToObject(*out,"type",!strcmp(type,"close")?"closed":"ack");cJSON_AddStringToObject(*out,"clientId","client");cJSON_AddStringToObject(*out,"sessionId",wrong_session?"old":mock_session);cJSON_AddStringToObject(*out,"generation","1");
         if(!strcmp(type,"close"))cJSON_AddNullToObject(*out,"sequence");else cJSON_AddStringToObject(*out,"sequence",osg_string(v,"sequence"));cJSON_AddStringToObject(*out,"ackStage","source-accepted");cJSON_AddBoolToObject(*out,"submitted",false);cJSON_AddNullToObject(*out,"feedbackSequence");cJSON_AddNullToObject(*out,"feedback");
     }else assert(false);
+    if(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(v,"panelError"))){mock_host_armed=false;mock_button=false;}
     cJSON_Delete(v);return request_ok;
 }
 static void fill(void *p,int x,int y,int w,int h,uint16_t c){(void)p;(void)x;(void)y;(void)w;(void)h;(void)c;}
@@ -117,7 +118,7 @@ static void live_input_tests(void){
     char stale[1024];arm_text(stale);input.epoch++;cmd(stale);assert(baseline_requests==baselines);
     osg_network_touch(true,true,100,100);char held[1024];arm_text(held);cmd(held);assert(!test_runtime.armed&&baseline_requests==baselines);
     osg_network_touch(true,false,0,0);cmd(held);assert(baseline_requests==baselines);arm_text(stale);live_arm();assert(baseline_requests==baselines+1);cmd(stale);assert(baseline_requests==baselines+1);
-    public_status("status-request");fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
+    osg_network_status("status-request");fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
     int sent=input_requests;fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(input_requests==sent&&mock_button);
     fake_ms++;osg_network_touch(true,false,0,0);advance();assert(!mock_button&&input_sequence==2);
     fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(mock_button);sent=input_requests;
@@ -135,8 +136,8 @@ static void live_input_tests(void){
     live_ready();touch_during_baseline=true;baselines=baseline_requests;char out[1024];arm_text(out);cmd(out);touch_during_baseline=false;assert(state==FAULT&&!test_runtime.armed&&!mock_host_armed&&baseline_requests==baselines+1);
     live_ready();request_ok=false;baselines=baseline_requests;arm_text(out);cmd(out);request_ok=true;assert(state==FAULT&&!mock_host_armed&&baseline_requests==baselines+1);sent=requests;advance();assert(requests==sent);
     live_ready();ui.touch_capable=false;input.touch_capable=false;arm_text(out);baselines=baseline_requests;cmd(out);assert(state==LIVE&&!remote_armed&&baseline_requests==baselines);ui.touch_capable=true;
-    live_ready();live_arm();osg_network_render(test_runtime.panel,false,true);for(int i=0;i<31;i++){fake_ms+=20;osg_network_touch(true,false,0,0);advance();}assert(state==FAULT&&input.fault==OSG_INPUT_DISPLAY_FAILED);osg_network_render(test_runtime.panel,true,true);assert(!test_runtime.armed);
-    live_ready();live_arm();osg_network_render(test_runtime.panel,true,false);advance();assert(state==FAULT&&!mock_host_armed);
+    live_ready();live_arm();osg_network_render(test_runtime.panel,false,true);for(int i=0;i<31;i++){fake_ms+=20;osg_network_touch(true,false,0,0);advance();}assert(state==PANEL_ERROR&&input.fault==OSG_INPUT_DISPLAY_FAILED);osg_network_render(test_runtime.panel,true,true);assert(!test_runtime.armed);
+    live_ready();live_arm();osg_network_render(test_runtime.panel,true,false);advance();assert(state==PANEL_ERROR&&!test_runtime.armed);advance();assert(!mock_host_armed);
     live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);input_sequence=UINT64_MAX-1;advance();assert(state==FAULT&&!mock_host_armed);
     live_ready();live_arm();session.heartbeat=UINT64_MAX-1;next_request=fake_ms;advance();assert(state==FAULT);
     live_ready();live_arm();fake_ms++;osg_network_touch(false,false,0,0);advance();assert(state==FAULT&&!mock_host_armed);
@@ -227,7 +228,11 @@ int main(int argc,char **argv){
     osg_copy(settings.token,sizeof(settings.token),"token");
     state=WAIT_ASSIGNMENT;update_screen();assert(test_runtime.screen==OSG_SCREEN_NO_PANEL);
     state=LIVE;update_screen();assert(test_runtime.screen==OSG_SCREEN_PANEL);
-    state=FAULT;update_screen();assert(test_runtime.screen==OSG_SCREEN_DISCONNECTED);
+    state=FAULT;detail="Cockpit response timed out";update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&!strcmp(test_runtime.screen_message,detail));
+    state=AUTH;update_screen();assert(test_runtime.screen==OSG_SCREEN_CONNECTING&&!test_runtime.screen_message);
+    state=OPEN;detail=NULL;update_screen();assert(test_runtime.screen==OSG_SCREEN_LOADING);
+    detail="Downloading panel images";update_screen();assert(!strcmp(test_runtime.screen_message,detail));
+    state=OFF;update_screen();assert(test_runtime.screen==OSG_SCREEN_DISCONNECTED&&!test_runtime.screen_message);
     live_input_tests();
     permit_inputs=true;live_ready();live_arm();
     osg_network_touch(true,true,100,100);fake_ms+=20;advance();
@@ -257,8 +262,15 @@ int main(int argc,char **argv){
     osg_network_render(test_runtime.panel,true,true);osg_network_touch(true,false,0,0);
     arm_when_ready();assert(remote_armed&&test_runtime.armed);
     stop();
+    live_ready();update_screen();assert(!remote_armed);
+    osg_network_render(test_runtime.panel,true,false);advance();update_screen();
+    assert(state==PANEL_ERROR&&test_runtime.screen==OSG_SCREEN_PANEL_ERROR&&!test_runtime.armed);
+    assert(!strcmp(test_runtime.screen_message,"Panel could not render correctly"));
+    const char *reasons[]={"wifi-connection-failed","host-tls-or-connection-failed","pairing-offer-expired","pairing-approval-expired","baseline-not-confirmed-or-touch-changed-reconnect-required","input-cancelled-or-lease-expired-reconnect-required","input-backlog-or-counter-invalid-reconnect-required","session-counter-exhausted","trusted-clock-invalid","setup-storage-unavailable","setup-save-failed-repair-required","setup-delete-failed","invalid-installation-id","host-rejected-or-invalid-reply-stop-and-reconnect"};
+    for(size_t i=0;i<sizeof(reasons)/sizeof(*reasons);i++){fail(reasons[i]);update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&test_runtime.screen_message);}
     osg_image image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
     assert(load_images(&image,0));assert(image.widgets[0].pixels && image.widgets[0].pixels[0]==255);assert(image.widgets[0].image_width>0);
-    image.widgets[0].bounds.width=0;assert(!load_images(&image,1));free(pixel_store[0]);free(pixel_store[1]);
+    request_ok=false;assert(!load_images(&image,1));assert(!strcmp(detail,"Panel image download failed"));request_ok=true;
+    image.widgets[0].bounds.width=0;assert(!load_images(&image,1));assert(!strcmp(detail,"Invalid image dimensions"));free(pixel_store[0]);free(pixel_store[1]);
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

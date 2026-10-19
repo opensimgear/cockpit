@@ -23,9 +23,11 @@ static osg_image images[2];
 static unsigned image_index;
 static osg_live_session session;
 static osg_input input;
-static bool remote_armed, installation_saved;
+static bool remote_armed, installation_saved, panel_render_failed;
 static uint64_t input_sequence, next_input_request;
 static phase state;
+static const char *detail;
+static void update_screen(void);
 static char pending[65], assigned[65], publication[72];
 static uint64_t next_request, pair_deadline;
 static char serial_line[OSG_PROVISION_BYTES+1];
@@ -34,8 +36,23 @@ static uint64_t millis(void){return (uint64_t)(esp_timer_get_time()/1000);}
 static void report(const char *status){printf("{\"status\":\"%s\"}\n",status);fflush(stdout);}
 static void disconnected(void){xSemaphoreTake(ui.mutex,portMAX_DELAY);osg_input_cancel(&input,OSG_INPUT_CANCELLED);osg_connected(ui.runtime,false);*ui.dirty=true;xSemaphoreGive(ui.mutex);}
 static void stop(void);
-static void abort_connection(void){osg_socket_close(&connection);disconnected();state=OFF;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
-static void fail(const char *reason){abort_connection();state=FAULT;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));report(reason);}
+static void abort_connection(void){osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
+static const char *failure_message(const char *reason){
+    if(!strcmp(reason,"wifi-connection-failed"))return "Wi-Fi connection failed";
+    if(!strcmp(reason,"host-tls-or-connection-failed"))return "Could not connect to Cockpit";
+    if(!strcmp(reason,"pairing-offer-expired")||!strcmp(reason,"pairing-approval-expired"))return "Pairing timed out";
+    if(!strcmp(reason,"baseline-not-confirmed-or-touch-changed-reconnect-required"))return "Input activation failed";
+    if(!strcmp(reason,"input-cancelled-or-lease-expired-reconnect-required"))return "Input safety check failed";
+    if(!strcmp(reason,"input-backlog-or-counter-invalid-reconnect-required"))return "Input queue failed";
+    if(!strcmp(reason,"session-counter-exhausted"))return "Session counter exhausted";
+    if(!strncmp(reason,"trusted-clock",13))return "Device clock or setup unavailable";
+    if(!strcmp(reason,"setup-storage-unavailable"))return "Setup storage unavailable";
+    if(!strcmp(reason,"setup-save-failed-repair-required"))return "Could not save setup";
+    if(!strcmp(reason,"setup-delete-failed"))return "Could not delete setup";
+    if(!strcmp(reason,"invalid-installation-id"))return "Invalid companion identity";
+    return "Cockpit request failed";
+}
+static void fail(const char *reason){abort_connection();state=FAULT;detail=failure_message(reason);mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));report(reason);}
 static cJSON *message(const char *type){cJSON *v=cJSON_CreateObject();if(v)cJSON_AddStringToObject(v,"type",type);return v;}
 static bool request(cJSON *v,cJSON **reply,unsigned timeout){return osg_socket_request(&connection,v,reply,timeout);}
 static bool equal(const char *a,const char *b){return a&&b&&!strcmp(a,b);}
@@ -49,17 +66,19 @@ static cJSON *session_message(const char *type,const char *sequence){
     if(state==PANEL_ERROR&&!strcmp(type,"heartbeat"))cJSON_AddBoolToObject(v,"panelError",true);
     return v;
 }
+static bool image_failure(const char *reason){detail=reason;return false;}
 static bool load_images(osg_image *image,unsigned slot){
+    detail="Downloading panel images";update_screen();
     osg_runtime layout={.panel=&image->panel,.display=ui.runtime->display};size_t total=0,offsets[OSG_MAX_WIDGETS]={0};
     for(size_t i=0;i<image->panel.widget_count;i++){
         osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
         layout.page=w->page;int x,y,width,height;osg_widget_rect(&layout,i,&x,&y,&width,&height);
-        if(width<1||height<1||width>800||height>800)return false;
-        offsets[i]=total;total+=(size_t)width*height*3;if(total>1200*1024)return false;
+        if(width<1||height<1||width>800||height>800)return image_failure("Invalid image dimensions");
+        offsets[i]=total;total+=(size_t)width*height*3;if(total>1200*1024)return image_failure("Panel images exceed storage limit");
         w->image_width=(uint16_t)width;w->image_height=(uint16_t)height;
     }
     if(!total)return true;
-    bool cached=false;if(!osg_pixels_begin(slot,session.publication,total,&cached))return false;
+    bool cached=false;if(!osg_pixels_begin(slot,session.publication,total,&cached))return image_failure("Image storage unavailable");
     static unsigned char chunk[6144];
     for(size_t i=0;!cached&&i<image->panel.widget_count;i++){
         osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
@@ -70,10 +89,12 @@ static bool load_images(osg_image *image,unsigned slot){
             bool ok=request(v,&reply,3000)&&cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok"))&&equal(osg_string(reply,"type"),"image-chunk")&&equal(osg_string(reply,"widgetId"),w->id)&&equal(osg_string(reply,"publicationHash"),session.publication);
             size_t count=0;const char *encoded=osg_string(reply,"base64");
             ok=ok && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==(double)offset && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"total"))==(double)bytes && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"width"))==w->image_width && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"height"))==w->image_height && encoded && osg_platform_crypto.base64(encoded,chunk,sizeof(chunk),&count) && count && count<=bytes-offset && count%3==0;
-            cJSON_Delete(reply);if(!ok||!osg_pixels_write(slot,offsets[i]+offset,chunk,count))return false;offset+=count;
+            cJSON_Delete(reply);if(!ok)return image_failure("Panel image download failed");
+            if(!osg_pixels_write(slot,offsets[i]+offset,chunk,count))return image_failure("Could not save panel images");
+            offset+=count;
         }
     }
-    const unsigned char *pixels=osg_pixels_finish(slot,session.publication,total);if(!pixels)return false;
+    const unsigned char *pixels=osg_pixels_finish(slot,session.publication,total);if(!pixels)return image_failure("Could not read panel images");
     for(size_t i=0;i<image->panel.widget_count;i++)if(image->widgets[i].kind==OSG_IMAGE)image->widgets[i].pixels=pixels+offsets[i];
     return true;
 }
@@ -96,11 +117,12 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
     if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)*ui.dirty=true;}
     xSemaphoreGive(ui.mutex);return ok;
 }
-static void public_status(const char *request_id){
+void osg_network_status(const char *request_id){
     cJSON *v=cJSON_CreateObject();char encoded[1024],epoch[21];
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const char *status=state==LIVE&&input.mode==OSG_INPUT_ARMED?"live-armed":phases[state];
     cJSON_AddStringToObject(v,"status",status);
+    if(detail)cJSON_AddStringToObject(v,"statusMessage",detail);
     if(osg_stable_id(request_id))cJSON_AddStringToObject(v,"requestId",request_id);
     cJSON_AddNumberToObject(v,"protocolVersion",2);
     cJSON_AddStringToObject(v,"deviceType","esp32");
@@ -186,8 +208,17 @@ static void advance(void){
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
         bool healthy=osg_input_monitor(&input,millis());
         send_input=remote_armed&&input.mode==OSG_INPUT_ARMED&&input.count&&millis()>=next_input_request;
+        osg_input_fault fault=input.fault;
+        bool render_failed=panel_render_failed;
         xSemaphoreGive(ui.mutex);
-        if(!healthy){fail("input-cancelled-or-lease-expired-reconnect-required");return;}
+        if(!healthy||render_failed){
+            if(render_failed||fault==OSG_INPUT_DISPLAY_FAILED){disconnected();state=PANEL_ERROR;detail="Panel could not render correctly";next_request=millis();report("panel-render-failed");return;}
+            fail("input-cancelled-or-lease-expired-reconnect-required");
+            if(fault==OSG_INPUT_TOUCH_FAILED)detail="Touch input failed";
+            else if(fault==OSG_INPUT_UI_EXPIRED)detail="Touch update timed out";
+            else if(fault==OSG_INPUT_HOST_EXPIRED)detail="Cockpit response timed out";
+            return;
+        }
     }
     if(millis()<next_request&&!send_input)return;
     cJSON *reply=NULL,*v=NULL;bool ok=false;
@@ -215,6 +246,7 @@ static void advance(void){
         /* Refresh through a new authenticated connection, never authenticate twice. */
         osg_socket_close(&connection);state=AUTH;next_request=millis();return;
     }else if(state==OPEN){
+        detail=NULL;update_screen();
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
         bool busy=*ui.drawing_panel==&images[1-image_index].panel;
         xSemaphoreGive(ui.mutex);if(busy)return;
@@ -226,12 +258,14 @@ static void advance(void){
             ok=osg_decode_publication(p,publication,osg_platform_crypto,candidate,ui.runtime->display.width,ui.runtime->display.height);
             cJSON_Delete(reply);reply=NULL;
             if(ok)ok=load_images(candidate,1-image_index);
-            if(!ok){disconnected();state=PANEL_ERROR;next_request=millis();report("panel-unsupported-corrupt-or-over-budget");return;}
+            else detail="Panel data invalid or unsupported";
+            if(!ok){disconnected();state=PANEL_ERROR;next_request=millis();report("panel-load-failed");update_screen();return;}
             if(ok){xSemaphoreTake(ui.mutex,portMAX_DELAY);
                 ok=osg_init(ui.runtime,&candidate->panel,ui.runtime->display,NULL,NULL);
-                if(ok){image_index=1-image_index;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;}
+                if(ok){image_index=1-image_index;panel_render_failed=false;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;}
                 xSemaphoreGive(ui.mutex);}
-            if(ok){state=LIVE;next_request=millis();report("live-disarmed");}
+            if(ok){detail=NULL;state=LIVE;next_request=millis();report("live-disarmed");}
+            else {disconnected();state=PANEL_ERROR;detail="Panel layout is invalid";next_request=millis();report("panel-load-failed");return;}
         }
     }else if(state==LIVE||state==PANEL_ERROR){
         if(millis()>=next_request){
@@ -279,7 +313,7 @@ static void install_identity(void){
 }
 static void command(cJSON *v){
     const char *type=osg_string(v,"command");
-    if(equal(type,"status")){public_status(osg_string(v,"requestId"));return;}
+    if(equal(type,"status")){osg_network_status(osg_string(v,"requestId"));return;}
     if(equal(type,"scan-wifi")){
         stop();osg_wifi_stop();cJSON *list=osg_wifi_scan(),*reply=cJSON_CreateObject();
         cJSON_AddStringToObject(reply,"status",list?"wifi-networks":"wifi-scan-failed");
@@ -361,10 +395,13 @@ static void serial_byte(int c){
     }else if(!serial_overflow){if(serial_used<OSG_PROVISION_BYTES)serial_line[serial_used++]=(char)c;else serial_overflow=true;}
 }
 static void update_screen(void){
-    osg_screen_state screen=!settings.token[0] ? OSG_SCREEN_UNPAIRED :
+    osg_screen_state screen=state==FAULT ? OSG_SCREEN_ERROR :
+        state==PAIR_BEGIN||state==PAIR_POLL ? OSG_SCREEN_CONNECTING :
+        !settings.token[0] ? OSG_SCREEN_UNPAIRED : state==OPEN ? OSG_SCREEN_LOADING : state==AUTH ? OSG_SCREEN_CONNECTING :
         state==LIVE ? OSG_SCREEN_PANEL : state==PANEL_ERROR ? OSG_SCREEN_PANEL_ERROR : state==WAIT_ASSIGNMENT ? OSG_SCREEN_NO_PANEL : OSG_SCREEN_DISCONNECTED;
+    const char *message=state==PAIR_BEGIN||state==PAIR_POLL ? "Approve pairing in Cockpit" : (state==FAULT||state==PANEL_ERROR||state==OPEN) ? detail : NULL;
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
-    if(ui.runtime->screen!=screen){ui.runtime->screen=screen;*ui.dirty=true;}
+    if(ui.runtime->screen!=screen||ui.runtime->screen_message!=message){ui.runtime->screen=screen;ui.runtime->screen_message=message;*ui.dirty=true;}
     xSemaphoreGive(ui.mutex);
 }
 static void network_task(void *arg){
@@ -372,12 +409,12 @@ static void network_task(void *arg){
     if(osg_store_load(&settings)){
         installation_saved=true;
         if(settings.direct){state=AUTH;next_request=millis();}
-        else if(!osg_wifi_start(&settings))report("saved-setup-wifi-unavailable");
-        else if(!osg_wifi_clock())report("saved-setup-clock-unavailable");
+        else if(!osg_wifi_start(&settings))fail("wifi-connection-failed");
+        else if(!osg_wifi_clock())fail("trusted-clock-invalid");
         else {state=AUTH;next_request=millis();report("restoring-saved-setup");}
     }
     (void)fcntl(fileno(stdin),F_SETFL,O_NONBLOCK);report("serial-provisioning-ready");
-    for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);advance();update_screen();arm_when_ready();vTaskDelay(pdMS_TO_TICKS(10));}
+    for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);update_screen();advance();update_screen();arm_when_ready();vTaskDelay(pdMS_TO_TICKS(10));}
 }
 void osg_network_touch(bool valid,bool down,int x,int y){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
@@ -389,6 +426,7 @@ void osg_network_touch(bool valid,bool down,int x,int y){
 void osg_network_render(const osg_panel *panel,bool finished,bool success){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     osg_input_render(&input,panel,finished,success,millis());
+    if(finished&&!success&&panel==ui.runtime->panel&&ui.runtime->screen==OSG_SCREEN_PANEL)panel_render_failed=true;
     if(!success)*ui.dirty=true;
     xSemaphoreGive(ui.mutex);
 }

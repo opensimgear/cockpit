@@ -224,6 +224,7 @@
       <button class="text-button back-companions" use:focusDetails disabled={busy || updateOpen || updating} onclick={backToCompanions}><Icon name="back" size={16} />Back to Companions</button>
       <div class="page-heading"><div class="companion-heading-copy"><div class="eyebrow">COMPANION SETTINGS</div><div class="companion-title"><h1>{text(selected,'name') || 'Companion'}</h1><span class:connected={selected.connected===true} class="connection-state"><span></span>{selected.connected===true?'Connected':'Offline'}</span></div><p id="companion-autosave-status" role="status">{nameError || (settingsState?.saving ? 'Saving…' : settingsState?.error ? 'Changes could not be saved.' : settingsState?.pending ? 'Saving changes…' : settingsState ? 'Changes saved automatically.' : 'Changes save automatically.')}</p></div><button class="danger" disabled={busy || updateOpen || updating || settingsState?.saving || settingsState?.pending && !settingsState.error} onclick={()=>action(()=>remove(selected!))}><Icon name="trash" size={15} />Remove</button></div>
       <div class="settings-panel">
+      {#if text(selected,'connectionStatus') && !text(selected,'panelError')}<p role="status">{text(selected,'connectionStatus')}</p>{/if}
       {#if text(selected,'panelError')}
         <p class="settings-error" role="alert"><strong>Panel error.</strong> {text(selected,'panelError')}</p>
       {/if}
@@ -272,7 +273,8 @@
         <div class="tile-heading"><Icon name={icon(deviceKind(client))} size={27} /><span class:connected={client.connected===true} class="connection-state"><span></span>{client.connected===true?'Connected':'Offline'}</span></div>
         <h3>{text(client,'name') || 'Companion'}</h3><p class="kind">{deviceKind(client)==='esp32'?'ESP32 screen':deviceKind(client)==='mobile'?'Mobile companion':['browser','desktop'].includes(deviceKind(client))?'Browser companion':'Companion'}</p>
         <p>{(hostState.host?.instances ?? []).filter(i=>i.companionId===client.companionId).map(i=>text(i,'name') || 'Panel').join(', ') || 'No panel assigned'}</p>
-        {#if text(client,'panelError')}<p class="firmware-warning"><Icon name="alert" size={15} />Panel error</p>{/if}
+        {#if text(client,'panelError')}<p class="firmware-warning"><Icon name="alert" size={15} />{text(client,'panelError')}</p>
+        {:else if text(client,'connectionStatus') && text(client,'connectionStatus')!=='No panel assigned'}<p>{text(client,'connectionStatus')}</p>{/if}
         {#if outdated(client)}<p class="firmware-warning"><Icon name="alert" size={15} />Firmware update available</p>
         {:else if deviceKind(client)==='esp32' && !firmwareInfo(client)}<p>Firmware version unknown · connect USB to check</p>{/if}
         </button>

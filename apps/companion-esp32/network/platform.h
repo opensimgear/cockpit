@@ -27,6 +27,8 @@ bool osg_store_load(osg_settings *);
 bool osg_store_forget(void);
 typedef struct { osg_runtime *runtime; SemaphoreHandle_t mutex; bool *dirty; const osg_panel **drawing_panel; bool touch_capable; } osg_network_ui;
 void osg_network_start(osg_network_ui);
+/* Read-only status probes may arrive while a serial request is in flight. */
+void osg_network_status(const char *request_id);
 void osg_network_touch(bool valid, bool down, int x, int y);
 void osg_network_render(const osg_panel *, bool finished, bool success);
 #endif

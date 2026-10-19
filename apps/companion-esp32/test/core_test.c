@@ -256,8 +256,8 @@ static void image_test(void){
 int main(int argc, char **argv) {
     for(int size=0;size<3;size++){
         spy status;osg_runtime *r=setup(&status,size==0?480:size==1?800:320,size==0?320:size==1?480:240);
-        const char *messages[]={"Pair with OSG Cockpit","No panel assigned","No connection to OSG Cockpit","Panel could not render correctly"};
-        for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_PANEL_ERROR;screen++){
+        const char *messages[]={"Pair with OSG Cockpit","No panel assigned","No connection to OSG Cockpit","Panel could not render correctly","Connecting to OSG Cockpit","Loading panel","Cockpit request failed"};
+        for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_ERROR;screen++){
             osg_runtime previous=*r;r->screen=(osg_screen_state)screen;
             assert(osg_render_damage(r,&previous,0,0).full);
             status.log[0]=0;status.texts=0;osg_render(r,0);
@@ -266,6 +266,10 @@ int main(int argc, char **argv) {
             assert(abs(2*status.text_x+status.text_width-font-status.width)<=1);
             assert(status.text_y>status.height/2 && status.draws>20);
         }
+        osg_runtime previous=*r;r->screen_message="Panel image download failed";
+        assert(osg_render_damage(r,&previous,0,0).full);
+        status.log[0]=0;osg_render(r,0);assert(strstr(status.log,"Panel image download failed"));
+        r->screen_message=NULL;
         r->screen=OSG_SCREEN_PANEL;status.log[0]=0;osg_render(r,0);
         assert(!strstr(status.log,"LIVE INPUT")&&!strstr(status.log,"RECORDING ONLY"));
     }
@@ -273,7 +277,7 @@ int main(int argc, char **argv) {
     validation(); input(); feedback(); bridge_test();
     for (int i = 0; i < 3; i++) { spy s; osg_runtime *r = setup(&s, i == 0 ? 800 : i == 1 ? 320 : 480, i == 0 ? 480 : i == 1 ? 240 : 800); osg_render(r, 0); assert(s.draws && s.texts); }
     preview(argc > 1 ? argv[1] : NULL, 800, 480,OSG_SCREEN_PANEL); preview(NULL, 320, 240,OSG_SCREEN_PANEL); preview(NULL, 480, 800,OSG_SCREEN_PANEL);
-    for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_PANEL_ERROR;screen++){
+    for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_ERROR;screen++){
         char path[512];if(argc>2){snprintf(path,sizeof(path),"%s/status-%d.ppm",argv[2],screen);}
         preview(argc>2?path:NULL,480,320,(osg_screen_state)screen);
         preview(NULL,800,480,(osg_screen_state)screen);
