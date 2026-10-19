@@ -86,6 +86,10 @@ Persist integration preferences separately from profile intent. Start/game prefl
 
 Vendor firmware updates, onboard calibration writes, wheelbase force-feedback forwarding, XInput gamepad emulation and keyboard/mouse injection are separate follow-up features. Initial macros emit virtual-controller actions. Vendor LEDs, displays, settings and haptics belong to optional vendor adapters after the generic input and mapping release.
 
+The [JoyToKey analysis and keyboard and mouse mapping plan](https://github.com/opensimgear/cockpit/issues/97)
+describes the proposed Windows desktop-output extension, shared key ownership,
+foreground scope, unified profile integration and independent qualification milestones.
+
 ## Architecture and existing integration points
 
 ```mermaid
