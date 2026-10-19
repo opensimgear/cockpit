@@ -583,6 +583,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await marginInput.fill('20');await marginInput.press('Tab');
     assert.deepEqual(await panelEditor.locator('.safe-area').evaluate(node=>({left:node.style.left,right:node.style.right,top:node.style.top,bottom:node.style.bottom})),{left:'1.5625%',right:'1.5625%',top:'2.5%',bottom:'2.5%'});
     const screenWidth=panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true});
+    await screenWidth.hover();
+    const scrollBeforeWheel=await page.locator('main').evaluate(node=>node.scrollTop);
+    await page.mouse.wheel(0,-120);await expect(screenWidth).toHaveValue('1281');
+    await page.keyboard.down('Shift');
+    try{await page.mouse.wheel(0,-120);await expect(screenWidth).toHaveValue('1291');await page.mouse.wheel(0,120);await expect(screenWidth).toHaveValue('1281');}
+    finally{await page.keyboard.up('Shift');}
+    await page.mouse.wheel(0,120);await expect(screenWidth).toHaveValue('1280');
+    assert.equal(await page.locator('main').evaluate(node=>node.scrollTop),scrollBeforeWheel,'Wheel editing changes the numeric input without scrolling the page.');
     await screenWidth.fill('1600');await screenWidth.press('Tab');await expect(marginInput).toHaveValue('20');
     await expect.poll(()=>panelEditor.locator('.safe-area').evaluate(node=>node.style.left)).toBe('1.25%');
     await marginInput.fill('9999');await marginInput.press('Tab');await expect(marginInput).toHaveValue('20');
