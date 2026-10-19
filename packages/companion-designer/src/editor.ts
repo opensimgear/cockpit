@@ -163,10 +163,12 @@ export function applyDesignerCommand(history: DesignerHistory, command: Designer
       assert(doc.presentation.groups.some(group => group.id === command.id), "Unknown group"); doc.presentation.groups = doc.presentation.groups.filter(group => group.id !== command.id); for (const widget of doc.presentation.widgets) if (widget.groupId === command.id) delete widget.groupId; break;
     case "align": {
       const widgets = selected(command.ids), first = widgets[0].bounds;
+      const left = Math.min(...widgets.map(widget => widget.bounds.x));
+      const right = Math.max(...widgets.map(widget => widget.bounds.x + widget.bounds.width));
       for (const widget of widgets) {
         const b = widget.bounds;
-        if (command.edge === "left") b.x = first.x;
-        else if (command.edge === "right") b.x = first.x + first.width - b.width;
+        if (command.edge === "left") b.x = left;
+        else if (command.edge === "right") b.x = right - b.width;
         else if (command.edge === "top") b.y = first.y;
         else if (command.edge === "bottom") b.y = first.y + first.height - b.height;
         else if (command.edge === "center-x") b.x = first.x + (first.width - b.width) / 2;

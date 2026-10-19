@@ -93,6 +93,20 @@ test("grid, alignment and group translation stay normalized", () => {
   assert.throws(() => apply(h, { type: "translate", ids, dx: 5, dy: 0 }));
   assert.throws(() => apply(h, { type: "snap", ids: ["missing"] }));
 });
+
+test("left and right alignment use outer selection edges regardless of selection order or widget width", () => {
+  let h=history();const original=first(h.present).id;
+  h=apply(h,{type:'update-widget',id:original,patch:{bounds:{x:0.1,y:0.1,width:0.2,height:0.2}}});
+  h=apply(h,{type:'add-widget',kind:'button',bounds:{x:0.5,y:0.4,width:0.3,height:0.2}});
+  const added=h.present.presentation.widgets.at(-1).id;
+  for(const ids of [[original,added],[added,original]]){
+    const left=apply(h,{type:'align',ids,edge:'left'}).present.presentation.widgets;
+    assert.ok(left.every(widget=>Math.abs(widget.bounds.x-0.1)<1e-10));
+    const right=apply(h,{type:'align',ids,edge:'right'}).present.presentation.widgets;
+    assert.ok(right.every(widget=>Math.abs(widget.bounds.x+widget.bounds.width-0.8)<1e-10));
+    assert.deepEqual(right.map(widget=>widget.bounds.width),[0.2,0.3]);
+  }
+});
 test("page/viewport operations and deletion clean references atomically", () => {
   let h = history(); const original = clone(h.present);
   h = apply(h, { type: "add-page", title: "Engine" }); const pageId = h.present.ui.pages[1].id;

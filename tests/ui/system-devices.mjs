@@ -646,6 +646,22 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(companions).not.toBeVisible();
     await expect(panels).toHaveCount(0);
     await expect(companionSettings).toHaveCount(0);
+    await panelLibrary.getByText('Widgets',{exact:true}).click();
+    await panelLibrary.locator('.palette').getByRole('button',{name:'Button',exact:true}).click();
+    const widgetWidth=panelProperties.getByRole('spinbutton',{name:'width',exact:true}),widgetX=panelProperties.getByRole('spinbutton',{name:'x',exact:true});
+    await widgetWidth.fill('0.2');await widgetWidth.press('Tab');await widgetX.fill('0.6');await widgetX.press('Tab');
+    await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
+    const widgets=panelEditor.locator('.widget');
+    const originalBounds=await widgets.evaluateAll(nodes=>nodes.map(node=>({left:parseFloat(node.style.left),width:parseFloat(node.style.width)})));
+    async function selectAlignmentWidgets(){await widgets.last().click({position:{x:8,y:12}});await widgets.first().click({position:{x:8,y:12},modifiers:['Shift']});await expect(panelEditor.locator('.widget.selected')).toHaveCount(2);}
+    await selectAlignmentWidgets();await layoutTools.getByRole('button',{name:'Align left',exact:true}).click();
+    const leftEdge=Math.min(...originalBounds.map(bounds=>bounds.left));
+    assert.ok((await widgets.evaluateAll(nodes=>nodes.map(node=>parseFloat(node.style.left)))).every(left=>Math.abs(left-leftEdge)<.001));
+    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(panelProperties).toHaveCount(0);
+    await selectAlignmentWidgets();await layoutTools.getByRole('button',{name:'Align right',exact:true}).click();
+    const rightEdge=Math.max(...originalBounds.map(bounds=>bounds.left+bounds.width));
+    assert.ok((await widgets.evaluateAll(nodes=>nodes.map(node=>parseFloat(node.style.left)+parseFloat(node.style.width)))).every(right=>Math.abs(right-rightEdge)<.001));
+    await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
     await page.screenshot({ path: resolve(artifacts, 'panel-full-page.png'), fullPage: true });
     page.once('dialog',dialog=>dialog.accept());
     await companionsNav.click();
