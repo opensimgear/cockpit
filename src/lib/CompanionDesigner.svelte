@@ -26,7 +26,6 @@
   let editorOpen = $state(false);
   let companionDetailsOpen = $state(untrack(() => !!initialCompanionId));
   let dirty = $state(false);
-  let assignmentSelection = $state<string[] | null>(null);
   let hostState = $state.raw<CompanionHostState>({});
   let library = $state.raw(createLibrary());
   let history = $state.raw<DesignerHistory>(createDesignerHistory(newDocument('New panel')));
@@ -70,10 +69,6 @@
   function panelAssignments(id: string) {
     const hashes = new Set(panelHashes(id));
     return (hostState.host?.instances ?? []).filter(i => typeof i.publicationHash==='string' && hashes.has(i.publicationHash));
-  }
-  const assignedCompanions = $derived(assignmentSelection ?? panelAssignments(draftId).map(i => String(i.companionId)));
-  function toggleAssignment(id: string, checked: boolean) {
-    assignmentSelection = checked ? [...new Set([...assignedCompanions,id])] : assignedCompanions.filter(i => i!==id); dirty=true;
   }
   function leaveEditor() { return !dirty || window.confirm('Discard unsaved panel changes?'); }
   function backToPanels() { if(leaveEditor()){stop();editorOpen=false;dirty=false;discardPanelOnRestore=false;onNavigate?.({kind:'main'});} }
@@ -156,13 +151,13 @@
     }
   }
   function create() {
-    if(!leaveEditor())return;editorOpen=true;dirty=true;assignmentSelection=null;
+    if(!leaveEditor())return;editorOpen=true;dirty=true;
     stop(); name = `Panel ${library.drafts.length + 1}`; draftId = crypto.randomUUID();
     history = createDesignerHistory(newDocument(name)); pageId = document.ui.pages[0].id; selected = []; assets = []; message = '';error='';
     onNavigate?.({kind:'panel',id:draftId});
   }
   function template(source: DesignerDocument) {
-    if(!leaveEditor())return;editorOpen=true;dirty=true;assignmentSelection=null;
+    if(!leaveEditor())return;editorOpen=true;dirty=true;
     const seed = { schemaVersion: 1 as const, drafts: [{ id: 'template', name: source.ui.title, document: simplifyFirmwareWidgets(source).document, assets: [] }] };
     const entry = duplicateDraft(seed, 'template', source.ui.title).drafts[1];
     stop(); draftId = entry.id; name = entry.name; history = createDesignerHistory(entry.document); assets = entry.assets;
@@ -172,7 +167,7 @@
   function load(id: string, recordNavigation = true, checkLeave = true) {
     try {
       if(checkLeave && !leaveEditor())return;
-      const entry = openDraft(library, id); stop();editorOpen=true;dirty=false;assignmentSelection=null; draftId = entry.id; name = entry.name;
+      const entry = openDraft(library, id); stop();editorOpen=true;dirty=false; draftId = entry.id; name = entry.name;
       const simplified=simplifyFirmwareWidgets(entry.document);
       history = createDesignerHistory(simplified.document); assets = entry.assets; pageId = document.ui.pages[0].id; select([]); error = '';
       dirty=simplified.removed>0;
@@ -209,9 +204,9 @@
       message='Panel saved';
       try {
         await compactSnapshots(await send('companion_status'),true);
-        const state=await synchronizePanel(panel,previousHashes,send,assignmentSelection ?? undefined);
+        const state=await synchronizePanel(panel,previousHashes,send);
         await compactSnapshots(state);
-        assignmentSelection=null;message='Panel saved and assigned companions updated';
+        message='Panel saved and assigned companions updated';
       } catch(e) { error='Panel saved locally. Companion update failed: '+String(e); }
     });
   }
@@ -243,7 +238,7 @@
       const result = await importBundle(await file.text()); stop();
       const seed={schemaVersion:1 as const,drafts:[{id:'import',name:result.document.ui.title,document:simplifyFirmwareWidgets(result.document).document,assets:result.assets}]};
       const entry=duplicateDraft(seed,'import',result.document.ui.title).drafts[1];
-      editorOpen=true;dirty=true;assignmentSelection=null;history = createDesignerHistory(entry.document); assets = entry.assets; draftId = entry.id; name = entry.name;
+      editorOpen=true;dirty=true;history = createDesignerHistory(entry.document); assets = entry.assets; draftId = entry.id; name = entry.name;
       pageId = document.ui.pages[0].id; select([]); message = 'Panel imported. Save to add it to Panels.';
       onNavigate?.({kind:'panel',id:draftId});
     });
@@ -339,7 +334,7 @@
   {:else if editorOpen}
   <section aria-label="Panel editor">
   <button class="text-button back-panels" use:focusEditor onclick={backToPanels} disabled={busy}><Icon name="back" size={16} />Back to Panels</button>
-  <div class="page-heading editor-heading"><div><div class="eyebrow">PANEL EDITOR</div><h1>{name || 'Untitled panel'}</h1><p>{dirty ? 'Unsaved changes' : 'Edit the layout and companion assignments.'}</p></div><button class="primary-button" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save panel'}</button></div>
+  <div class="page-heading editor-heading"><div><div class="eyebrow">PANEL EDITOR</div><h1>{name || 'Untitled panel'}</h1><p>{dirty ? 'Unsaved changes' : 'Edit the panel layout.'}</p></div><button class="primary-button" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save panel'}</button></div>
   {#if error}<Notification message={String(error)} kind="error" />{/if}
   {#if message}<Notification message={String(message)} />{/if}
   <div inert={busy}>
@@ -349,13 +344,6 @@
     <button onclick={() => template(flightTemplate)}><Icon name="monitor" size={16} />Flight template</button><button onclick={() => template(racingTemplate)}><Icon name="wheel" size={16} />Racing template</button>
     {#if library.drafts.some(d => d.id===draftId)}<button onclick={duplicate}><Icon name="copy" size={16} />Duplicate panel</button><button onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete panel</button>{/if}
   </div>
-  <details class="panel-assignments" open><summary>Assigned companions</summary>
-    {#if !hostState.host?.clients?.length}<p>No paired companions yet. Pair one from the Companions page.</p>{/if}
-    {#each hostState.host?.clients ?? [] as client}
-      <label class="companion-choice"><input type="checkbox" checked={assignedCompanions.includes(String(client.companionId))} onchange={e => toggleAssignment(String(client.companionId),e.currentTarget.checked)} />{String(client.name || 'Companion')} <small>{client.connected?'Connected':'Offline'} · {String(client.companionId).slice(-6)}</small></label>
-    {/each}
-    <p class="hint">Select one or more companions. Save panel applies the layout and assignments.</p>
-  </details>
   <div class="workspace">
     <aside aria-label="Panel library">
       <h3>Viewports</h3>
@@ -446,7 +434,6 @@
   .editor-heading{flex-wrap:wrap}.editor-heading h1{overflow-wrap:anywhere}.editor-heading .primary-button{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:var(--accent-text);border-color:transparent;padding:11px 14px;font-size:11px;font-weight:600}
   .panel-list-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}.panel-import{display:none}.action,.toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px}.panels-section{margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}.panel-list-heading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:20px 0}
   .panel-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:18px;margin:20px 0}.panel-tile{padding:0;text-align:left;overflow:hidden;border-radius:10px;background:var(--surface)}.panel-thumbnail{display:block;width:100%;aspect-ratio:16/9}.tile-copy{padding:16px}.tile-copy h3{font-size:17px;margin:0 0 8px}.tile-copy p{margin:0 0 10px}.tile-copy span{font-size:12px;color:var(--accent)}.empty-panels{padding:60px 24px;text-align:center;border:1px dashed var(--line);border-radius:10px;margin:20px 0}
-  .panel-assignments{padding:16px;border:1px solid var(--line);border-radius:7px;margin-bottom:18px;background:var(--surface)}.companion-choice{display:inline-flex;flex-direction:row;align-items:center;margin-right:20px}
   h2{font-size:22px;margin:0}h3{font-size:13px;margin:18px 0 10px}p{font-size:13px;color:var(--muted);line-height:1.6}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:12px 0}.workspace{display:grid;grid-template-columns:180px minmax(0,1fr) 250px;gap:18px}.workspace>aside,.panel-canvas-workspace{min-width:0}.workspace>aside{padding:16px;background:var(--surface);border:1px solid var(--line);border-radius:7px;align-self:start}.workspace>aside>h3:first-child{margin-top:0}.palette{display:grid;grid-template-columns:1fr 1fr;gap:5px}
   button,select,input,textarea{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);padding:8px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}label{display:flex;flex-direction:column;gap:5px;font-size:12px;margin:7px 0}input,select,textarea{max-width:100%;min-width:0;box-sizing:border-box}input[type=checkbox]{width:auto;accent-color:var(--accent)}.bounds{display:grid;grid-template-columns:1fr 1fr;gap:6px}.hint{font-size:11px;line-height:1.5;overflow-wrap:anywhere}code{font-size:10px;overflow-wrap:anywhere}details{margin-top:20px}textarea{width:100%;font-family:monospace}
   @media(max-width:1050px){.workspace{grid-template-columns:180px minmax(0,1fr)}.workspace>aside:last-child{grid-column:1/-1}}@media(max-width:650px){.workspace{grid-template-columns:1fr}.workspace>aside:last-child{grid-column:auto}.panel-list-actions{flex-wrap:wrap}.editor-heading{align-items:flex-start}}
