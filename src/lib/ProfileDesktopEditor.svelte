@@ -1,10 +1,11 @@
 <script lang="ts">
-  import{untrack,onDestroy}from'svelte';
+  import{untrack,onDestroy,tick}from'svelte';
   import { desktopActionLabel,desktopActionValid,desktopActionPort,DESKTOP_KEYS,DESKTOP_KEY_CODES,type DesktopAction,type ProfileDesktopOutput } from './profile-desktop';
   import type {DeepReadonly} from './profiles';
   import {gatewayRequest}from'./gateway';
   let{output,change}:{output:DeepReadonly<ProfileDesktopOutput>;change:(output:ProfileDesktopOutput)=>void}=$props();
   let draft=$state.raw<ProfileDesktopOutput>(JSON.parse(JSON.stringify(untrack(()=>output)))),error=$state(''),capture=$state(''),captureBusy=$state(false),captureEpoch=0;
+  let picker=$state<HTMLInputElement|null>(null);
   $effect(()=>{draft=JSON.parse(JSON.stringify(output));captureEpoch++;capture='';captureBusy=false;error='';});
   onDestroy(()=>{captureEpoch++;});
   const valid=$derived(draft.actions.every(definition=>desktopActionValid(definition.action))&&draft.actions.length>0);
@@ -13,7 +14,7 @@
   function edit(index:number,action:DesktopAction){draft={...draft,actions:draft.actions.map((definition,i)=>i===index?{...definition,action}:definition)};}
   function field(index:number,key:string,value:unknown){edit(index,{...draft.actions[index].action,[key]:value} as DesktopAction);}
   function add(){let n=1;while(draft.actions.some(action=>action.portId===`action-${n}`))n++;const portId=`action-${n}`,action=initial('key-hold');draft={...draft,ports:[...draft.ports,desktopActionPort(portId,portId,action)],actions:[...draft.actions,{portId,action}]};}
-  async function beginCapture(portId:string){const epoch=++captureEpoch;captureBusy=true;error='';try{await gatewayRequest({command:'profile_pause',paused:true});if(epoch===captureEpoch)capture=portId;}catch(reason){if(epoch===captureEpoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(epoch===captureEpoch)captureBusy=false;}}
+  async function beginCapture(portId:string){const epoch=++captureEpoch;captureBusy=true;error='';try{await gatewayRequest({command:'profile_pause',paused:true});if(epoch===captureEpoch){capture=portId;await tick();if(epoch===captureEpoch&&capture===portId)picker?.focus();}}catch(reason){if(epoch===captureEpoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(epoch===captureEpoch)captureBusy=false;}}
   function keyCapture(event:KeyboardEvent,index:number){if(capture!==draft.actions[index].portId)return;event.preventDefault();event.stopPropagation();const usage=Object.hasOwn(DESKTOP_KEY_CODES,event.code)?DESKTOP_KEY_CODES[event.code]:undefined;
     if(usage===undefined){error='This physical key has no supported USB HID mapping. Choose a supported key.';return;}
     const action=draft.actions[index].action;if('key'in action)field(index,'key',usage);else if(action.kind==='chord')field(index,'keys',[...new Set([...action.keys,usage])]);capture='';
@@ -31,7 +32,7 @@
       <label>Action<select value={action.kind} onchange={event=>edit(index,initial(event.currentTarget.value as DesktopAction['kind']))}>{#each kinds as kind}<option value={kind}>{kind}</option>{/each}</select></label>
       {#if 'key'in action}<label>Physical key<select aria-label="Physical key" value={action.key} onchange={event=>field(index,'key',Number(event.currentTarget.value))}>{#each DESKTOP_KEYS as key (key.usage)}<option value={key.usage}>{key.label} · HID {key.usage}</option>{/each}</select></label>{/if}
       {#if action.kind==='chord'}<label>Ordered physical HID usages (comma separated)<input value={action.keys.join(', ')} onchange={event=>field(index,'keys',event.currentTarget.value.split(',').map(value=>Number(value.trim())))}/></label><p>Modifiers press before ordinary keys and release after them. Shared owners retain their holds.</p>{/if}
-      {#if 'key'in action||action.kind==='chord'}<button type="button" class="secondary-button" disabled={captureBusy} onclick={()=>beginCapture(definition.portId)}>{captureBusy?'Pausing runtime…':capture===definition.portId?'Picker ready below':'Capture a physical key'}</button>{#if capture===definition.portId}<input class="key-picker" aria-label="Physical key capture" placeholder="Focus here and press a key" onkeydown={event=>keyCapture(event,index)} onblur={()=>capture=''}/><p>Profile output is paused. Clearing Pause and Apply remain explicit after editing.</p>{/if}{/if}
+      {#if 'key'in action||action.kind==='chord'}<button type="button" class="secondary-button" disabled={captureBusy} onclick={()=>beginCapture(definition.portId)}>{captureBusy?'Pausing runtime…':capture===definition.portId?'Picker ready below':'Capture a physical key'}</button>{#if capture===definition.portId}<input bind:this={picker} class="key-picker" aria-label="Physical key capture" placeholder="Focus here and press a key" onkeydown={event=>keyCapture(event,index)} onblur={()=>capture=''}/><p>Profile output is paused. Clearing Pause and Apply remain explicit after editing.</p>{/if}{/if}
       {#if 'button'in action}<label>Mouse button<select value={action.button} onchange={event=>field(index,'button',event.currentTarget.value)}>{#each ['left','right','middle','x1','x2'] as button}<option value={button}>{button}</option>{/each}</select></label>{/if}
       {#if 'downMs'in action}<div class="pair"><label>Down dwell (ms)<input type="number" min="1" max="60000" value={action.downMs} onchange={event=>field(index,'downMs',Number(event.currentTarget.value))}/></label><label>Up dwell (ms)<input type="number" min="1" max="60000" value={action.upMs} onchange={event=>field(index,'upMs',Number(event.currentTarget.value))}/></label></div><p>Ordered taps use a bounded queue. Shared holds never release to manufacture another tap edge.</p>{/if}
       {#if action.kind==='wheel'}<div class="pair"><label>Horizontal steps<input type="number" min="-120" max="120" value={action.horizontal} onchange={event=>field(index,'horizontal',Number(event.currentTarget.value))}/></label><label>Vertical steps<input type="number" min="-120" max="120" value={action.vertical} onchange={event=>field(index,'vertical',Number(event.currentTarget.value))}/></label></div>{/if}

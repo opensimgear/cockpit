@@ -2,7 +2,7 @@ import assert from'node:assert/strict';import test from'node:test';import{readFi
 const modules=await loadModules(['./profiles','./profile-desktop','./profile-desktop-runtime']),plain=value=>JSON.parse(JSON.stringify(value));
 async function component(name,send){
  const filename=new URL(name,import.meta.url);let source=await readFile(filename,'utf8'),handlers;
- source=source.replace('</script>',name.includes('Editor')?'captureDesktopUI({beginCapture,keyCapture,save,field,get state(){return{draft,capture,error,captureBusy}}});</script>':'captureDesktopUI({request,configure,get state(){return{status,busy,error}}});</script>');
+ source=source.replace('</script>',name.includes('Editor')?'captureDesktopUI({beginCapture,keyCapture,save,field,setPicker(value){picker=value;},get state(){return{draft,capture,error,captureBusy}}});</script>':'captureDesktopUI({request,configure,get state(){return{status,busy,error}}});</script>');
  const{js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};
  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,captureDesktopUI:value=>handlers=value,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:send};throw Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});
  return{render(props={}){return{html:render(exports.default,{props}).body,get handlers(){return handlers;}};}};
@@ -19,7 +19,12 @@ test('desktop action authoring is passive and physical key capture pauses output
  await h.beginCapture('action-1');h.keyCapture(event('AudioVolumeUp'),0);assert.match(h.state.error,/no supported USB HID mapping/);assert.equal(h.state.draft.actions[0].action.key,79);
 });
 test('rejected native pause cannot install key capture or mutate a desktop action',async()=>{
- const view=await component('./ProfileDesktopEditor.svelte',async()=>{throw Error('Native pause unavailable');});const{handlers:h}=view.render({output:preset,change(){throw Error('No edit expected');}});await h.beginCapture('action-1');assert.equal(h.state.capture,'');assert.match(h.state.error,/Native pause unavailable/);assert.equal(h.state.draft.actions[0].action.key,44);
+ let focused=0;const view=await component('./ProfileDesktopEditor.svelte',async()=>{throw Error('Native pause unavailable');});const{handlers:h}=view.render({output:preset,change(){throw Error('No edit expected');}});h.setPicker({focus(){focused++;}});await h.beginCapture('action-1');assert.equal(h.state.capture,'');assert.match(h.state.error,/Native pause unavailable/);assert.equal(h.state.draft.actions[0].action.key,44);assert.equal(focused,0);
+});
+test('key capture waits for native pause before focusing the rendered picker',async()=>{
+ let resolvePause,focused=0;const view=await component('./ProfileDesktopEditor.svelte',()=>new Promise(resolve=>resolvePause=resolve));
+ const{handlers:h}=view.render({output:preset,change(){throw Error('No edit expected');}});h.setPicker({focus(){focused++;assert.equal(h.state.capture,'action-1');}});
+ const pending=h.beginCapture('action-1');assert.equal(h.state.capture,'');assert.equal(focused,0);resolvePause({});await pending;assert.equal(focused,1);assert.equal(h.state.captureBusy,false);
 });
 test('desktop controls keep preferences separate, send exact stop and ignore an older status after Stop',async()=>{
  const calls=[];let resolveOld;const stopped={enabled:false,qualified:false,state:'paused',reason:'Explicit Stop',scope:{kind:'application'},application:null,runtime:null};

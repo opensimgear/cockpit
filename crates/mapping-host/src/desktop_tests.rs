@@ -428,6 +428,75 @@ fn event_actions_wait_for_a_real_neutral_observation_and_discard_earlier_same_ti
     assert_eq!(events.lock().unwrap().len(), 1);
 }
 #[test]
+fn waiting_status_keeps_other_armed_actions_eligible_and_stop_releases_them() {
+    let mut program = source_program(Action::KeyHold { key: Key(4) }, false);
+    program.sources.push(SourcePort {
+        endpoint: endpoint("second", "button"),
+        contract: contract(),
+    });
+    let mut second = program.sinks[0].clone();
+    second.id = "second-action".into();
+    second.endpoint.port_id = "second-action".into();
+    second.from = endpoint("second", "button");
+    second.kind = SinkKind::Desktop {
+        action: Action::KeyHold { key: Key(5) },
+    };
+    program.sinks.push(second);
+    let (mut desktop, mut phase, focused, events) = prepared_program_fixture(program);
+    frame(&mut phase, 1, 1, Reason::Baseline, false);
+    phase
+        .accept(Frame {
+            source: "second".into(),
+            generation: Counter(8),
+            sequence: Counter(1),
+            captured_us: Counter(1),
+            reason: Reason::Baseline,
+            changes: vec![Change {
+                port_id: "button".into(),
+                sample: boolean(false),
+            }],
+        })
+        .unwrap();
+    desktop.start_focused(&phase, true).unwrap();
+    assert_eq!(desktop.status()["state"], "active");
+    focused.store(false, Ordering::Release);
+    phase.advance(Counter(3)).unwrap();
+    desktop.poll_focused(&[], &phase, false).unwrap();
+    focused.store(true, Ordering::Release);
+    phase.advance(Counter(4)).unwrap();
+    desktop.poll_focused(&[], &phase, true).unwrap();
+    assert_eq!(desktop.status()["state"], "waiting");
+    assert_eq!(desktop.waiting_neutral.len(), 2);
+    let frames = frame(&mut phase, 2, 5, Reason::Change, false);
+    desktop.poll_focused(&frames, &phase, true).unwrap();
+    assert_eq!(
+        desktop.waiting_neutral,
+        BTreeSet::from(["second-action".into()])
+    );
+    let frames = frame(&mut phase, 3, 6, Reason::Change, true);
+    desktop.poll_focused(&frames, &phase, true).unwrap();
+    assert_eq!(desktop.status()["state"], "waiting");
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![NativeEvent::Key {
+            usage: 4,
+            down: true,
+            repeat: false
+        }]
+    );
+    desktop.stop().unwrap();
+    assert_eq!(desktop.status()["state"], "stopped");
+    assert_eq!(
+        events.lock().unwrap().last(),
+        Some(&NativeEvent::Key {
+            usage: 4,
+            down: false,
+            repeat: false
+        })
+    );
+    assert!(desktop.output.snapshot().held.is_empty());
+}
+#[test]
 fn unchanged_fresh_neutral_then_press_in_one_native_batch_rearms_in_order() {
     let (mut desktop, mut phase, focused, events) = fixture(Action::KeyHold { key: Key(4) }, false);
     focused.store(false, Ordering::Release);

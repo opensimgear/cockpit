@@ -392,6 +392,8 @@ impl Desktop {
             "faulted"
         } else if !self.started {
             "stopped"
+        } else if self.focused && !self.waiting_neutral.is_empty() {
+            "waiting"
         } else if self.focused {
             "active"
         } else {

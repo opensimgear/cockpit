@@ -17,6 +17,7 @@
   {#if status}
     <div class="settings"><label class="check"><input type="checkbox" checked={status.enabled} disabled={!!busy||!!status.error} onchange={event=>configure(event.currentTarget.checked,status!.scope)}/>Enable desktop output on this computer</label><label>Application scope<select value={status.scope.kind} disabled={!!busy||!!status.error} onchange={event=>configure(status!.enabled,{kind:event.currentTarget.value as DesktopScope['kind']})}><option value="application">Selected application (default)</option><option value="desktop-wide">Desktop-wide navigation</option></select></label><button class="secondary-button" disabled={!!busy||!!status.error} onclick={()=>request({command:'profile_desktop_capture_application'})}>Use last focused external application</button></div>
     <dl><div><dt>Qualification</dt><dd>{status.qualified?'Development qualification build':'Awaiting Windows qualification'}</dd></div><div><dt>Selected application</dt><dd>{applicationName}</dd></div></dl>
+    {#if status.state==='waiting'}<p role="status">Release or center the waiting controls to rearm them. Actions already armed can continue.</p>{/if}
     {#if status.reason}<p role="status">{status.reason}</p>{/if}{#if status.error}<p class="error" role="alert">{status.error}</p>{/if}
     {#if runtime}<details><summary>Native owners, operations and cleanup</summary><p>Submission acknowledgements describe the OS API result. Verify receiver behavior separately.</p><pre>{JSON.stringify(runtime,null,2)}</pre></details>{/if}
   {/if}
