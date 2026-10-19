@@ -44,3 +44,15 @@ export function viewportWidgetBounds(bounds: Bounds, from: Bounds, to: Bounds): 
   const y = to.y + (bounds.y - from.y) / from.height * to.height;
   return { x, y, width: Math.min(bounds.width / from.width * to.width, to.x + to.width - x, 1 - x), height: Math.min(bounds.height / from.height * to.height, to.y + to.height - y, 1 - y) };
 }
+
+export type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
+/** Move the dragged edges while leaving the opposite corner fixed. */
+export function resizedCornerBounds(bounds:Bounds,dx:number,dy:number,grid:{columns:number;rows:number;snap:boolean},corner:ResizeCorner):Bounds {
+  const snap=(value:number,steps:number)=>grid.snap?Math.round(value*steps)/steps:value;
+  let left=bounds.x,top=bounds.y,right=left+bounds.width,bottom=top+bounds.height;
+  if(corner.includes('w'))left=Math.max(0,Math.min(right-Math.min(1/grid.columns,right),snap(left+dx,grid.columns)));
+  else right=Math.min(1,Math.max(left+Math.min(1/grid.columns,1-left),snap(right+dx,grid.columns)));
+  if(corner.includes('n'))top=Math.max(0,Math.min(bottom-Math.min(1/grid.rows,bottom),snap(top+dy,grid.rows)));
+  else bottom=Math.min(1,Math.max(top+Math.min(1/grid.rows,1-top),snap(bottom+dy,grid.rows)));
+  return {x:left,y:top,width:right-left,height:bottom-top};
+}

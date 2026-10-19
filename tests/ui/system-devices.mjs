@@ -825,6 +825,17 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await widgetWidth.fill('9999');await widgetWidth.press('Tab');await expect(widgetWidth).toHaveValue('256');
     await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
     const widgets=panelEditor.locator('.widget');
+    await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
+    const resizeWidget=widgets.first();await expect(resizeWidget.locator('.resize-corner')).toHaveCount(4);await expect(resizeWidget.locator('.resize-hit')).toHaveCount(0);
+    for(const [corner,dx,dy] of [['nw',8,8],['ne',-8,8],['sw',8,-8],['se',-8,-8]]){
+      const before=await resizeWidget.evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)})),handle=await resizeWidget.locator(`.resize-corner.${corner}`).boundingBox();
+      await page.keyboard.down('Control');await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();await page.mouse.move(handle.x+handle.width/2+dx,handle.y+handle.height/2+dy,{steps:4});await page.mouse.up();await page.keyboard.up('Control');
+      const after=await resizeWidget.evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));assert.ok(after.width<before.width&&after.height<before.height);
+      assert.ok(Math.abs((corner.includes('w')?after.x+after.width:after.x)-(corner.includes('w')?before.x+before.width:before.x))<.2);
+      assert.ok(Math.abs((corner.includes('n')?after.y+after.height:after.y)-(corner.includes('n')?before.y+before.height:before.y))<.2);
+      await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);await expect(panelProperties).toHaveCount(0);
+      await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();
+    }
     const originalBounds=await widgets.evaluateAll(nodes=>nodes.map(node=>({left:parseFloat(node.style.left),width:parseFloat(node.style.width)})));
     async function selectAlignmentWidgets(){await widgets.last().click({position:{x:8,y:12}});await widgets.first().click({position:{x:8,y:12},modifiers:['Shift']});await expect(panelEditor.locator('.widget.selected')).toHaveCount(2);}
     await selectAlignmentWidgets();await layoutTools.getByRole('button',{name:'Align left',exact:true}).click();
