@@ -159,7 +159,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
   try {
     await page.goto(endpoint);
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
-    await nav.getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
+    const devicesNav = nav.getByRole('button', { name: /^Devices(?:\s|$)/ });
+    await devicesNav.click();
     await expect(nav.getByRole('button', { name: 'Gateways', exact: true })).toHaveCount(0);
     await expect(nav.getByRole('button', { name: 'Topology', exact: true })).toHaveCount(0);
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
@@ -245,6 +246,31 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
     await backToDevices.click();
     await expect(devices.locator('.system-list')).toBeVisible();
+    // Sidebar navigation always opens the inventory, even when Devices is
+    // already active, without discarding the current presentation or filters.
+    const virtualTile = devices.locator('.system-list [data-component-id="virtual:vjoy:3"]');
+    await virtualTile.click();
+    await expect(details).toBeVisible();
+    await devicesNav.click();
+    await expect(details).not.toBeVisible();
+    await expect(devices.locator('.system-list')).toBeVisible();
+    await expect(list).toHaveAttribute('aria-pressed', 'true');
+    await expect(virtualTile).toHaveAttribute('aria-pressed', 'true');
+    await search.fill('External busy virtual joystick');
+    await filter.selectOption('virtual');
+    await connections.selectOption('software');
+    await virtualTile.click();
+    await expect(details).toBeVisible();
+    await nav.getByRole('button', { name: 'Overview', exact: true }).click();
+    await devicesNav.focus();
+    await devicesNav.press('Enter');
+    await expect(details).not.toBeVisible();
+    await expect(devices.locator('.system-list')).toBeVisible();
+    await expect(search).toHaveValue('External busy virtual joystick');
+    await expect(filter).toHaveValue('virtual');
+    await expect(connections).toHaveValue('software');
+    await expect(virtualTile).toHaveAttribute('aria-pressed', 'true');
+    await search.fill(''); await filter.selectOption('all'); await connections.selectOption('all');
     await topology.click();
     const graph = page.getByRole('region', { name: 'System topology', exact: true });
     await expect(graph).toBeVisible();
@@ -254,6 +280,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-label', /busy.*Creation provenance unknown/);
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('title', /busy.*Creation provenance unknown/);
     await expect(details).not.toBeVisible();
+    await graph.locator('[data-component-id="virtual:vjoy:3"]').click();
+    await expect(details).toBeVisible();
+    await devicesNav.focus();
+    await devicesNav.press('Space');
+    await expect(details).not.toBeVisible();
+    await expect(graph).toBeVisible();
+    await expect(topology).toHaveAttribute('aria-pressed', 'true');
+    await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-pressed', 'true');
     await expect(graph.getByRole('button', { name: 'Zoom in', exact: true })).toBeEnabled();
     await graph.getByRole('button', { name: 'Zoom in', exact: true }).click();
     await graph.getByRole('button', { name: 'Fit all components', exact: true }).click();

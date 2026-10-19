@@ -32,8 +32,9 @@
   const eligible = $derived(visible.filter(c => c.forget.allowed));
   const date = (timestamp: number) => timestamp ? new Date(timestamp).toLocaleString() : 'Never observed connected';
   function select(id: string) { selectedId = id; detailsOpen = true; }
+  export function showInventory() { detailsOpen = false; }
   async function backToDevices() {
-    detailsOpen = false;
+    showInventory();
     await tick();
     const target = mode === 'topology' ? '.topology-viewport' : `[data-component-id="${CSS.escape(selectedId)}"]`;
     inventoryElement?.querySelector<HTMLElement>(target)?.focus();

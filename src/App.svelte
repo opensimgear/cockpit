@@ -63,6 +63,7 @@
   let gamesStale = $state(true);
   let selectedGameId = $state<GameId | ''>('');
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
+  let devicesPanel = $state.raw<{showInventory:()=>void}>();
   let profilesPanel = $state.raw<{requestNavigation:(continueNavigation:()=>void)=>void}>();
   const selectedGameName = $derived((games?.catalogue ?? supportedGames).find(game => game.id === selectedGameId)?.name);
   const section = $derived(view === 'device' ? 'devices' : view);
@@ -81,6 +82,7 @@
   }
   function commitNavigation(section: View) {
     if (view === 'profiles' && section !== 'profiles') void refreshProfileNames();
+    if (section === 'devices') devicesPanel?.showInventory();
     settingsVisit = null;
     if (gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     selectedGameId = '';
@@ -419,7 +421,7 @@
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
         {#if view === 'devices' || view === 'device' || systemSnapshot}
-          <div hidden={view !== 'devices'}><SystemDevices active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={() => navigate('companions')} openIntegration={openGameSettings} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
+          <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={() => navigate('companions')} openIntegration={openGameSettings} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
         {/if}
         {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} active={view==='profiles'} /></div>{/if}
         {#if view === 'overview'}
