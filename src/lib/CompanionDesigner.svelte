@@ -397,14 +397,14 @@
   <div inert={busy}>
   <div class="workspace">
     <aside class="panel-library" aria-label="Panel library">
-      <details class="editor-accordion" name="panel-editor-tools"><summary>Pages</summary><div class="accordion-content">
+      <details class="editor-accordion"><summary>Pages</summary><div class="accordion-content">
         <ul class="page-list" aria-label="Panel pages">{#each document.ui.pages as p,index (p.id)}<li>
           <button class="page-select" class:active={p.id === page.id} aria-pressed={p.id === page.id} onclick={() => { stop(); pageId=p.id;select([]); }}>Page {index}{#if !/^Page \d+$/.test(p.title)}<small>{p.title}</small>{/if}</button>
           {#if document.ui.pages.length > 1}<button class="page-delete" aria-label={`Delete page ${index}`} title="Delete page" onclick={() => { command({ type:'delete-page',id:p.id });select([]); }}><Icon name="trash" size={15}/></button>{/if}
         </li>{/each}</ul>
         <div class="page-add"><button class="action" onclick={() => { if(command({ type: 'add-page', title: `Page ${document.ui.pages.length}` })){ pageId = document.ui.pages.at(-1)!.id; select([]); } }}><Icon name="plus" size={16} />Add page</button></div>
       </div></details>
-      <details class="editor-accordion" name="panel-editor-tools" open><summary>Viewports</summary><div class="accordion-content">
+      <details class="editor-accordion" open><summary>Viewports</summary><div class="accordion-content">
       <p class="hint">Divide one companion screen into areas for your widgets.</p>
       <div class="viewport-list">{#each regions as region}<div class="viewport-row">
         <button class="viewport-select" class:active={propertiesOpen && !selected.length && region.id === activeViewport.id} aria-pressed={propertiesOpen && !selected.length && region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}>{region.label}<small>{Math.round(region.bounds.width * usableWidth)} × {Math.round(region.bounds.height * usableHeight)}</small></button>
@@ -413,11 +413,11 @@
       <button class="add-viewport" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={14} />Add viewport</button>
       <p class="hint">Uses free space, or splits the selected viewport.</p>
       </div></details>
-      <details class="editor-accordion" name="panel-editor-tools"><summary>Widgets</summary><div class="accordion-content">
+      <details class="editor-accordion"><summary>Widgets</summary><div class="accordion-content">
       <p class="hint">Add to {activeViewport.label}</p>
       <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} onclick={() => { if (command({ type: 'add-widget', kind: preset.kind, pageId: page.id, viewportId: activeViewport.id })) select([document.presentation.widgets.at(-1)!.id]); }}>{preset.title}</button>{/each}</div>
       </div></details>
-      <details class="editor-accordion" name="panel-editor-tools"><summary>Assets</summary><div class="accordion-content"><p class="hint">PNG, JPEG or WebP · 2 MiB each · 8 MiB total</p>
+      <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content"><p class="hint">PNG, JPEG or WebP · 2 MiB each · 8 MiB total</p>
       <button class="action" disabled={busy} onclick={()=>assetInput?.click()}><Icon name="plus" size={14}/>Add asset</button>
       <input class="asset-import" bind:this={assetInput} aria-label="Add panel image" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onchange={e => {void addAsset(e.currentTarget.files?.[0]);e.currentTarget.value='';}} />
       <ul class="asset-list" aria-label="Panel assets">{#each document.ui.assets as asset,index (asset.id)}<li data-asset-id={asset.id}>
@@ -426,12 +426,12 @@
       </li>{:else}<li class="assets-empty">No assets yet.</li>{/each}</ul>
       <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id}>{a.id}</option>{/each}</select></label>
       </div></details>
-      <details class="editor-accordion" name="panel-editor-tools"><summary>Grid</summary><div class="accordion-content">
+      <details class="editor-accordion"><summary>Grid</summary><div class="accordion-content">
         <label>Columns<input type="number" min="1" max="128" step="1" disabled={preview} value={document.presentation.grid.columns} onchange={e => changeGrid('columns', e.currentTarget)} /></label>
         <label>Rows<input type="number" min="1" max="128" step="1" disabled={preview} value={document.presentation.grid.rows} onchange={e => changeGrid('rows', e.currentTarget)} /></label>
         <p class="hint">Spacing: {Math.round(usableWidth / document.presentation.grid.columns * 100) / 100} × {Math.round(usableHeight / document.presentation.grid.rows * 100) / 100} px. More columns or rows make a finer grid.</p>
       </div></details>
-      <details class="editor-accordion" name="panel-editor-tools"><summary>Screen size</summary><div class="accordion-content">
+      <details class="editor-accordion"><summary>Screen size</summary><div class="accordion-content">
         <label>Companion screen<select value={`${viewport.width}x${viewport.height}`} onchange={e => { const [w,h] = e.currentTarget.value.split('x').map(Number); setViewport(w,h); }}><option value="390x844">Phone portrait</option><option value="844x390">Phone landscape</option><option value="768x1024">Tablet portrait</option><option value="1024x768">Tablet landscape</option><option value="800x480">ESP32 screen · 800 × 480</option><option value="1280x800">Large panel · 1280 × 800</option><option value="1280x720">Desktop · 1280 × 720</option><option value="1920x1080">Full HD · 1920 × 1080</option><option value="2560x1440">QHD · 2560 × 1440</option><option value="3840x2160">4K · 3840 × 2160</option>{#if !['390x844','844x390','768x1024','1024x768','800x480','1280x800','1280x720','1920x1080','2560x1440','3840x2160'].includes(`${viewport.width}x${viewport.height}`)}<option value={`${viewport.width}x${viewport.height}`}>Custom · {viewport.width} × {viewport.height}</option>{/if}</select></label>
         <label>Screen width<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.width} onchange={e => { setViewport(e.currentTarget.valueAsNumber, viewport.height); e.currentTarget.value=String(viewport.width); }} /></label>
         <label>Screen height<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.height} onchange={e => { setViewport(viewport.width, e.currentTarget.valueAsNumber); e.currentTarget.value=String(viewport.height); }} /></label>

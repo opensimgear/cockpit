@@ -655,7 +655,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       return samples;
     });
     for(const heights of accordionMotion){const min=Math.min(...heights),max=Math.max(...heights);assert.ok(heights.some(height=>height>min+1&&height<max-1),`Accordion expands and collapses through intermediate heights: ${heights}`);}
-    await panelLibrary.getByText('Pages',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(1);
+    await panelLibrary.getByText('Pages',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(3);
     const pageChoice=panelLibrary.getByRole('list',{name:'Panel pages',exact:true});
     await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toHaveAttribute('aria-pressed','true');
     await expect(pageChoice.getByRole('button',{name:/^Delete page/})).toHaveCount(0);
@@ -670,9 +670,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const secondPage=pageChoice.locator('li').last(),deletePage=secondPage.getByRole('button',{name:'Delete page 1',exact:true});
     await page.mouse.move(0,0);await expect(deletePage).toHaveCSS('opacity','0');await secondPage.hover();await expect(deletePage).toHaveCSS('opacity','1');
     await deletePage.click();await expect(pageChoice.locator('li')).toHaveCount(1);await expect(pageChoice.getByRole('button',{name:/^Delete page/})).toHaveCount(0);
-    await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(1);await expect(pageChoice).not.toBeVisible();
+    await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(4);await expect(pageChoice).toBeVisible();
+    await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(pageChoice).toBeVisible();
     await panelLibrary.getByText('Assets',{exact:true}).click();
-    await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(1);
+    await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(4);
     const pickerEvent=page.waitForEvent('filechooser');await panelLibrary.getByRole('button',{name:'Add asset',exact:true}).click();
     const imageBytes=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=2;canvas.height=2;canvas.getContext('2d').fillRect(0,0,2,2);return canvas.toDataURL('image/png').split(',')[1];});
     await (await pickerEvent).setFiles({name:'pixel.png',mimeType:'image/png',buffer:Buffer.from(imageBytes,'base64')});
