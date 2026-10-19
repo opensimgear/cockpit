@@ -115,7 +115,7 @@
     controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage, onChange: next => { snapshot = next; oninventory(next); } });
     snapshot = controller.snapshot;
     void refresh();
-    const timer = setInterval(() => { if (active && !document.hidden) void refresh(true); }, 3000);
+    const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
     return () => { reviewEpoch++; clearInterval(timer); controller.dispose(); };
   });
 </script>

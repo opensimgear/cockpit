@@ -117,7 +117,11 @@ export class SystemInventoryController {
   private async collect(epoch: number): Promise<SystemSnapshot> {
     const discoveryError = this.gatewayError();
     const now = Date.now(), diagnostics: string[] = discoveryError ? [`Gateway discovery: ${discoveryError}`] : [], complete: string[] = discoveryError ? ['host'] : ['host', 'gateways'];
-    const providers = [this.controllers(now), this.usb(now), this.companions(now), this.integrations(now), this.native(now)];
+    // Native PnP/transport correlation reads the controller and USB inventories.
+    // Capture those first so startup does not publish their uncorrelated aliases.
+    const controllers=this.controllers(now),usb=this.usb(now);
+    const nativeCapture=Promise.allSettled([controllers,usb]).then(()=>this.disposed || epoch!==this.epoch ? {provider:'native',observations:[]} as Capture : this.native(now));
+    const providers = [controllers,usb,this.companions(now),this.integrations(now),nativeCapture];
     const results = await Promise.allSettled(providers);
     if (this.disposed || epoch !== this.epoch) return this.snapshot;
     const names = ['controllers', 'usb', 'companions', 'integrations', 'native'];

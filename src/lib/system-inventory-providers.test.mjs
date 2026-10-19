@@ -574,3 +574,13 @@ test('offline companions expose configured transports on first load and retain t
  const reloaded=harness({storage:disk,companions:h.state.companions});await reloaded.controller.refresh();assert.equal(reloaded.component('companion:direct').connections[0].transport,'usb');
  h.state.companions.usb={connected:true,port:'COM7',device:{companionId:'wifi',connectionMode:'serial'}};await h.controller.refresh();assert.ok(h.component('companion:wifi').connections.some(c=>c.transport==='usb'&&c.current));
 });
+
+test('startup native correlation waits for controller and USB captures before publishing a single count',async()=>{
+  const h=harness({controllers:[source('wheel')]}),controllerGate=deferred(),usbGate=deferred();
+  h.custom.set('controller_list',()=>controllerGate.promise);h.custom.set('module_usb_list',()=>usbGate.promise);
+  h.custom.set('system_inventory',()=>({systemInventory:{virtualDevices:[],diagnostics:[],hiddenDevices:[{id:'pnp-wheel',name:'Wheel collection',instanceId:'HID/wheel',present:true,hidden:false,controllerIds:['wheel'],diagnostics:[]}]}}));
+  const pending=h.controller.refresh();await Promise.resolve();assert.equal(h.requests.some(r=>r.command==='system_inventory'),false);
+  controllerGate.resolve({controllers:{session:'ready',offset:0,total:1,sources:[source('wheel')]}});await new Promise(resolve=>setImmediate(resolve));assert.equal(h.requests.some(r=>r.command==='system_inventory'),false);
+  usbGate.resolve({moduleUsb:{offset:0,total:0,modules:[]}});await pending;
+  assert.equal(h.changes.length,1);assert.equal(h.controller.snapshot.components.filter(c=>c.type!=='host').length,1);assert.ok(h.component('controller:wheel'));assert.equal(h.component('visibility:pnp-wheel'),undefined);
+});

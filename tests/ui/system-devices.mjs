@@ -211,7 +211,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // Startup refresh populates the shared sidebar count before Devices opens.
     await expect(devicesNav.locator('.nav-count')).toHaveText('14');
     await expect(nav.getByRole('button', { name: 'Overview', exact: true })).toHaveClass(/\bcurrent\b/);
+    fixture.companions.host.clients.push({companionId:'background-count-check',name:'Background companion',kind:'browser',connected:true});
+    await expect(devicesNav.locator('.nav-count')).toHaveText('15',{timeout:10000});
+    fixture.companions.host.clients=fixture.companions.host.clients.filter(c=>c.companionId!=='background-count-check');
+    await expect(devicesNav.locator('.nav-count')).toHaveText('14',{timeout:10000});
+    await expect(nav.getByRole('button', { name: 'Overview', exact: true })).toHaveClass(/\bcurrent\b/);
     await devicesNav.click();
+    await expect(devicesNav.locator('.nav-count')).toHaveText('14');
     await page.getByRole('button', { name: 'Manage HidHide', exact: true }).click();
     assert.equal(hidHideOpens,1);
     await expect(nav.getByRole('button', { name: 'Gateways', exact: true })).toHaveCount(0);
