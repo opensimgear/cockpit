@@ -1039,6 +1039,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(leavePanelDialog).toBeVisible();
     await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();
     await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toHaveAttribute('title',/widget to page 0/);
+    await leavePanelDialog.getByRole('button',{name:'Keep editing',exact:true}).click();
+    await panelEditor.getByText('Widgets',{exact:true}).click();
+    await panelEditor.locator('.palette').getByRole('button',{name:'Text',exact:true}).click();
+    for(const name of ['Preview','Save','Export'])await expect(panelEditor.getByRole('button',{name,exact:true})).toBeEnabled();
+    await panelEditor.getByRole('button',{name:'Preview',exact:true}).click();await expect(panelEditor.getByRole('button',{name:'Stop preview',exact:true})).toBeEnabled();
+    await panelEditor.getByRole('button',{name:'Stop preview',exact:true}).click();
+    await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(leavePanelDialog).toBeVisible();
+    await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toBeEnabled();
     await leavePanelDialog.getByRole('button',{name:'Discard and continue',exact:true}).click();await expect(panelEditor).toHaveCount(0);
     await devicesNav.click();await search.fill(''); await topology.click();
     const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_approve|companion_revoke|claim|register|apply|save|configure)$/;

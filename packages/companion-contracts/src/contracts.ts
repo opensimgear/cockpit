@@ -87,7 +87,7 @@ export function validatePortableUi(input: unknown, options: { allowEmptyControls
     if (ui.schemaVersion !== 1) reject("Unsupported UI version"); id(ui.id); text(ui.title);
     const ids = new Set<string>();
     const unique = (value: unknown) => { id(value); if (ids.has(value)) reject("Duplicate stable ID"); ids.add(value); };
-    const controls = list(ui.controls, options.allowEmptyControls ? 0 : 1, COMPANION_LIMITS.controls).map(value => {
+    const controls = list(ui.controls, 0, COMPANION_LIMITS.controls).map(value => {
       const control = record(value);
       const extra = control.kind === "axis" ? ["axisMode", "fallback"] : control.kind === "hat" ? ["fallback"] : [];
       keys(control, ["id", "label", "kind", ...extra], ["style"]); unique(control.id); text(control.label);
@@ -106,6 +106,7 @@ export function validatePortableUi(input: unknown, options: { allowEmptyControls
       if (widget.style !== undefined) style(widget.style); return widget.id;
     });
     const placed = new Set<string>();
+    if (!options.allowEmptyControls && !controls.length && !widgets.length) reject("A panel needs at least one widget");
     for (const value of list(ui.pages, 1, COMPANION_LIMITS.pages)) {
       const page = record(value); keys(page, ["id", "title", "items"]); unique(page.id); text(page.title);
       for (const value of list(page.items, 0, COMPANION_LIMITS.controls + COMPANION_LIMITS.feedbackWidgets)) {

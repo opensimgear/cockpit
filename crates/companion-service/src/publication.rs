@@ -234,7 +234,7 @@ impl Publication {
             Ok(value)
         };
         let mut controls = Vec::new();
-        for c in list(&ui["controls"], 1, 128)? {
+        for c in list(&ui["controls"], 0, 128)? {
             let kind = c["kind"].as_str().ok_or("Missing control kind.")?;
             let extras: &[&str] = match kind {
                 "button" => &[],
@@ -952,6 +952,18 @@ mod viewport_tests {
             capability_fingerprint: None,
             assets: vec![],
         })
+    }
+
+    #[test]
+    fn feedback_only_panel_is_a_valid_publication() {
+        let mut doc = document();
+        let bounds = json!({"x":0.1,"y":0.1,"width":0.3,"height":0.2});
+        doc["ui"]["controls"] = json!([]);
+        doc["bindings"] = json!([]);
+        doc["ui"]["feedbackWidgets"] = json!([{"id":"output","kind":"text","label":"Text","channelId":"channel"}]);
+        doc["ui"]["pages"][0]["items"] = json!([{"kind":"feedback","refId":"output","bounds":bounds}]);
+        doc["presentation"]["widgets"] = json!([{"id":"text-widget","pageId":"page","kind":"text","label":"Text","bounds":bounds,"controlIds":[],"feedbackIds":["output"],"config":{"prefix":"","suffix":""}}]);
+        assert!(validate(doc).is_ok());
     }
 
     #[test]

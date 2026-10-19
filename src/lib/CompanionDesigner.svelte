@@ -62,7 +62,7 @@
   const document = $derived(history.present);
   const page = $derived(document.ui.pages.find(p => p.id === pageId) ?? document.ui.pages[0]);
   const emptyPageNumbers = $derived(document.ui.pages.flatMap((page,index)=>document.presentation.widgets.some(widget=>widget.pageId===page.id)?[]:[index]));
-  const panelInvalidReason = $derived(emptyPageNumbers.length ? `Add at least one widget to ${emptyPageNumbers.length===1?'page':'pages'} ${emptyPageNumbers.join(', ')} before previewing, saving or exporting.` : !document.ui.controls.length ? 'Add at least one input before previewing, saving or exporting.' : '');
+  const panelInvalidReason = $derived(emptyPageNumbers.length ? `Add at least one widget to ${emptyPageNumbers.length===1?'page':'pages'} ${emptyPageNumbers.join(', ')} before previewing, saving or exporting.` : '');
   const widget = $derived(document.presentation.widgets.find(w => w.id === selected[0]));
   const viewport = $derived(document.presentation.viewports.find(v => v.pageId === page.id)!);
   const regions = $derived(viewportRegions(document, page.id));

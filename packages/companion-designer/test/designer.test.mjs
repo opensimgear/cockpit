@@ -147,7 +147,7 @@ test('blank drafts round-trip through storage and export but cannot be published
   assert.equal(validatePortableUi(h.present.ui,{allowEmptyControls:true}).ok,true);
   const library=await saveDraft(createLibrary(),{id:'blank-draft',name:'Blank',document:h.present,assets:[]});
   assert.deepEqual(openDraft(library,'blank-draft').document,h.present);
-  await assert.rejects(()=>publishDocument(h.present,[]),/Add at least one input/);
+  await assert.rejects(()=>publishDocument(h.present,[]),/Every page must contain at least one widget/);
 });
 
 test('publication rejects an empty page even when another page has inputs',async()=>{
@@ -155,6 +155,15 @@ test('publication rejects an empty page even when another page has inputs',async
   await assert.rejects(()=>publishDocument(h.present,[]),/Every page must contain at least one widget/);
   h=apply(h,{type:'add-widget',kind:'button',pageId:h.present.ui.pages[1].id});
   await assert.doesNotReject(()=>publishDocument(h.present,[]));
+});
+
+test('any display-only widget makes a page valid without inputs',async()=>{
+  for(const kind of ['text','indicator','numeric','gauge','icon']){
+    let h=history(),buttonId=h.present.presentation.widgets[0].id;
+    h=apply(h,{type:'add-widget',kind});h=apply(h,{type:'delete-widget',id:buttonId});
+    assert.equal(h.present.ui.controls.length,0);assert.equal(validatePortableUi(h.present.ui).ok,true);
+    await assert.doesNotReject(()=>publishDocument(h.present,[]));
+  }
 });
 
 test("logical targets enforce range/index compatibility independently of machine assignments", () => {
