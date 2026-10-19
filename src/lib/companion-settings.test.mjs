@@ -2,6 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { newDocument, publishDocument } from '../../packages/companion-designer/src/index.ts';
 import { createCompanionSettingsAutosave, saveCompanionSettings } from './companion-settings.ts';
+import { boardScreenSize, companionScreenSize, panelScreenReason } from './companion-screen.ts';
+
+test('ESP screen matching uses saved dimensions and checks every page', async () => {
+  const h = host();
+  h.state.host.clients[0].kind = 'esp32';
+  h.state.firmware = { 'screen-a': { profile: 'sunton-3248s035r', version: 'test' } };
+  const size = companionScreenSize(h.state, 'screen-a');
+  assert.deepEqual(size, { width: 480, height: 320 });
+  assert.deepEqual(boardScreenSize('waveshare-lcd7-s3'), { width: 800, height: 480 });
+  assert.equal(companionScreenSize(h.state, 'screen-b'), undefined);
+  const panel = structuredClone(await publishDocument(newDocument('Screen panel'), []));
+  await assert.rejects(saveCompanionSettings(input({ panelHash: panel.publicationHash, publications: [panel] }), h.send), /480 × 320/);
+  assert.deepEqual(h.calls.map(call => call.command), ['companion_status']);
+  for (const viewport of panel.document.presentation.viewports) { viewport.width = 480; viewport.height = 320; }
+  assert.equal(panelScreenReason(panel, size), '');
+  assert.match(panelScreenReason(panel), /identify its screen size/);
+  panel.document.ui.pages.push({ id: 'second', name: 'Second' });
+  assert.match(panelScreenReason(panel, size), /Every panel page/);
+});
 
 const input = (changes = {}) => ({ companionId: 'screen-a', name: 'Screen A', panelHash: '', publications: [], ...changes });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };

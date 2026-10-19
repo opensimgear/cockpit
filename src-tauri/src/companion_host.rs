@@ -16,6 +16,22 @@ include!(concat!(env!("OUT_DIR"), "/companion_firmware.rs"));
 include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
 
 const MAX_UPLOAD: usize = 13 * 1024 * 1024;
+fn screen_dimensions(profile:&str)->Option<(u64,u64)>{
+    match profile {"sunton-3248s035r"=>Some((480,320)),"waveshare-lcd7-s3"=>Some((800,480)),_=>None}
+}
+fn validate_screen_document(document:&Value,size:(u64,u64))->Result<(),String>{
+    let pages=document["ui"]["pages"].as_array().ok_or("Panel has no pages.")?;
+    let screens=document["presentation"]["viewports"].as_array().ok_or("Panel has no screen size.")?;
+    if pages.is_empty()||pages.iter().any(|page|!screens.iter().any(|screen|screen["pageId"]==page["id"]&&screen["width"].as_u64()==Some(size.0)&&screen["height"].as_u64()==Some(size.1))){
+        return Err(format!("Every panel page must be {} × {} px to match this ESP32 screen.",size.0,size.1));
+    }
+    Ok(())
+}
+fn validate_screen_panel(services:&Services,hash:&str,size:(u64,u64))->Result<(),String>{
+    let panel=services.hub.publication_uploads().into_iter().find(|panel|panel.publication_hash==hash).ok_or("Choose an available panel.")?;
+    let document:Value=serde_json::from_str(&panel.canonical_document).map_err(|e|e.to_string())?;
+    validate_screen_document(&document,size)
+}
 #[path = "profile_companion_authoring.rs"]
 pub(crate) mod authoring;
 struct Upload {
@@ -161,19 +177,21 @@ impl Runtime {
             .unwrap_or_default();
         let firmware_path=services.directory.join("companion-firmware.json");
         let mut firmware:Value=std::fs::read(&firmware_path).ok().filter(|b|b.len()<65536).and_then(|b|serde_json::from_slice(&b).ok()).filter(Value::is_object).unwrap_or(json!({}));
-        let host=services.hub.command(&json!({"command":"companion_status"}))?;
+        let mut host=services.hub.command(&json!({"command":"companion_status"}))?;
         for usb in services.usb.statuses(){
         if let Some(id)=usb["device"]["companionId"].as_str().filter(|id|host["clients"].as_array().is_some_and(|rows|rows.iter().any(|c|c["companionId"]==*id))){
             let info=json!({"version":usb["device"]["firmwareVersion"].as_str().unwrap_or("unknown"),"profile":usb["device"]["boardProfile"].as_str().or_else(||firmware[id]["profile"].as_str()),"connectionMode":usb["device"]["connectionMode"].as_str().filter(|mode|matches!(*mode,"wifi"|"serial")).or_else(||firmware[id]["connectionMode"].as_str())});
             if firmware[id]!=info{firmware[id]=info;std::fs::write(&firmware_path,serde_json::to_vec(&firmware).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;}
         }
         }
+        if let Some(metadata)=firmware.as_object_mut(){for info in metadata.values_mut(){if let Some((width,height))=screen_dimensions(info["profile"].as_str().unwrap_or("")){info["width"]=json!(width);info["height"]=json!(height);}}}
+        if let Some(clients)=host["clients"].as_array_mut(){for client in clients{if client["kind"]=="esp32"{if let Some(id)=client["companionId"].as_str(){if let Some(size)=screen_dimensions(firmware[id]["profile"].as_str().unwrap_or("")){client["screen"]=json!({"width":size.0,"height":size.1});}}}}}
         let mut listener=serde_json::to_value(services.server.status()).map_err(|e|e.to_string())?;
         let config=services.saved_listener.lock().unwrap_or_else(|p|p.into_inner()).clone();
         listener["configuredEnabled"]=json!(config.is_some());
         listener["config"]=json!(config);
         Ok(
-            json!({"firmware":firmware,"firmwareVersion":ESP32_FIRMWARE_VERSION,"host":services.hub.command(&json!({"command":"companion_status"}))?, "listener":listener,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()}),
+            json!({"firmware":firmware,"firmwareVersion":ESP32_FIRMWARE_VERSION,"host":host, "listener":listener,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()}),
         )
     }
     pub(crate) fn hub(&self) -> Result<Hub, String> {
@@ -402,6 +420,9 @@ impl Runtime {
                 if services.usb.status()["ready"] != true {
                     return Err("Wait for the USB device to be ready.".into());
                 }
+                let usb_status=services.usb.status();
+                let size=screen_dimensions(usb_status["device"]["boardProfile"].as_str().unwrap_or("")).ok_or("Identify this ESP32 board and screen size before pairing.")?;
+                if let Some(hash)=payload["publicationHash"].as_str().filter(|hash|!hash.is_empty()){validate_screen_panel(services,hash,size)?;}
                 let name = payload["name"]
                     .as_str()
                     .filter(|s| !s.is_empty() && s.len() <= 80)
@@ -557,6 +578,14 @@ impl Runtime {
             | "companion_assign"
             | "companion_disconnect"
             | "companion_takeover" => {
+                if command=="companion_assign" {
+                    let state=self.status(services)?;
+                    if let Some(client)=state["host"]["clients"].as_array().and_then(|clients|clients.iter().find(|client|client["companionId"]==payload["companionId"]&&client["kind"]=="esp32")){
+                        let width=client["screen"]["width"].as_u64().ok_or("Connect this ESP32 screen by USB to identify its screen size before assigning a panel.")?;
+                        let height=client["screen"]["height"].as_u64().ok_or("Connect this ESP32 screen by USB to identify its screen size before assigning a panel.")?;
+                        validate_screen_panel(services,payload["publicationHash"].as_str().unwrap_or(""),(width,height))?;
+                    }
+                }
                 let mut request = payload;
                 request["command"] = json!(command);
                 let _cache=services.panel_cache.lock().unwrap_or_else(|p|p.into_inner());
@@ -610,6 +639,17 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn esp_panels_match_screen_dimensions_on_every_page() {
+        assert_eq!(screen_dimensions("sunton-3248s035r"),Some((480,320)));
+        assert_eq!(screen_dimensions("waveshare-lcd7-s3"),Some((800,480)));
+        assert_eq!(screen_dimensions("unknown"),None);
+        let mut document=json!({"ui":{"pages":[{"id":"a"}]},"presentation":{"viewports":[{"pageId":"a","width":480,"height":320}]}});
+        assert!(validate_screen_document(&document,(480,320)).is_ok());
+        assert!(validate_screen_document(&document,(320,480)).is_err());
+        document["ui"]["pages"].as_array_mut().unwrap().push(json!({"id":"b"}));
+        assert!(validate_screen_document(&document,(480,320)).is_err());
+    }
     fn runtime() -> Runtime {
         Runtime::new(None, Arc::new(CompanionProvider::new(Arc::new(|| 1))))
     }

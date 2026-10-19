@@ -66,7 +66,7 @@ function fixtures() {
       configured: true, scope: 'capture-exception', controllerIds: ['pedals'], diagnostics: ['Observed in the capture process; other process exceptions may differ.'] }], diagnostics: [] },
     companions: { listener: { enabled: true, endpoint: 'wss://127.0.0.1:9980' }, host: { clients: [
       { companionId: 'browser-fixture', name: 'Browser companion', kind: 'browser', connected: true, peer: '192.0.2.10' },
-      { companionId: 'esp32-fixture', name: 'Known ESP32 companion', kind: 'esp32', connected: false },
+      { companionId: 'esp32-fixture', name: 'Known ESP32 companion', kind: 'esp32', connected: false, screen: { width: 480, height: 320 } },
     ], instances: [{ instanceId: 'assigned-fixture', companionId: 'browser-fixture', name: 'Assigned panel instance', armed: true, sessionId: 'fixture-session', publicationHash: hash }], publications: [{ publicationHash: hash }] },
     usb: { devices: [{ connected: false, port: 'COM-fixture-companion', stage: 'disconnected', device: { companionId: 'esp32-fixture', name: 'Known ESP32 companion', boardProfile: 'fixture-board' } }] } },
     games: { catalogue: [
@@ -553,6 +553,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
     await details.getByRole('button', { name: 'Manage companion', exact: true }).click();
     await expect(companionName).toHaveValue('Known ESP32 companion');
+    await expect(companionSettings.getByLabel('Screen size', { exact: true })).toHaveValue('480 × 320 px');
     await expect(companionSettings.getByRole('combobox', { name: 'Assigned panel', exact: true })).toHaveValue('');
     await expect(companionSettings.getByLabel('USB port', { exact: true })).toHaveValue('COM-fixture-companion');
     // Leaving before the debounce fires still flushes the selected companion's

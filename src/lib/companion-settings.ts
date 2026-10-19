@@ -1,5 +1,6 @@
 import type { Publication } from '../../packages/companion-designer/src/index.ts';
 import { sendPublication, stableCompanionId, type CompanionSend } from './companions.ts';
+import { companionScreenSize, panelScreenReason } from './companion-screen.ts';
 
 export interface CompanionSettingsInput {
   companionId: string;
@@ -37,6 +38,10 @@ export async function saveCompanionSettings(input: CompanionSettingsInput, send:
   if (panelChanged && instances.length > 1) throw new Error('This companion has multiple assignments. Edit assignments in Panels.');
   const panel = publications.find(publication => publication.publicationHash === panelHash);
   if (panelChanged && panelHash && !panel) throw new Error('Choose a saved panel.');
+  if(panelChanged&&panel&&client.kind==='esp32'){
+    const reason=panelScreenReason(panel,companionScreenSize(state,companionId));
+    if(reason)throw new Error(reason);
+  }
 
   if (panelChanged && panel) await sendPublication(panel, send);
   if (saveName && client.name !== name) await send('companion_update', { companionId, name });

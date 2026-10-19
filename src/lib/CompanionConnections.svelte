@@ -10,6 +10,7 @@
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { createCompanionSettingsAutosave } from './companion-settings';
   import type { Publication } from '@opensimgear/companion-designer';
+  import { companionScreenSize, panelScreenReason } from './companion-screen';
   let { publications = [], openSettings, initialCompanionId = '', onViewChange, onNavigate, active = true }: { publications?: Publication[]; openSettings: () => void; initialCompanionId?: string; onViewChange?: (detailsOpen: boolean) => void; onNavigate?: (companionId: string | null) => void; active?: boolean } = $props();
   let hostState = $state.raw<CompanionHostState>({});
   let pendingCompanionId = $state(untrack(() => initialCompanionId));
@@ -52,6 +53,7 @@
   const clients = $derived(hostState.host?.clients ?? []);
   const text = (row: Record<string, unknown>, key: string) => typeof row[key] === 'string' ? String(row[key]) : '';
   const selected=$derived(clients.find(c=>text(c,'companionId')===selectedId));
+  const selectedScreen=$derived(companionScreenSize(hostState,selectedId));
   const firmwareUpdateDisabledReason = $derived(selected?.connected!==true ? 'This companion is offline. Connect it by USB to update its firmware.' : updating ? 'A firmware update is already in progress.' : busy ? 'Wait for the current operation to finish.' : '');
   const multipleAssignments = $derived((hostState.host?.instances ?? []).filter(instance => instance.companionId===selectedId).length > 1);
   $effect(() => { onViewChange?.(!!pendingCompanionId || !!selected || pairingOpen); });
@@ -231,12 +233,14 @@
       <label class="setting">Name<input value={editedName} oninput={event => {editedName=event.currentTarget.value;scheduleSettings('name');}} onblur={() => void settingsAutosave.flush()} disabled={busy || updateOpen || updating} maxlength="80" aria-invalid={!!nameError} aria-describedby="companion-autosave-status" /></label>
       <label class="setting">Assigned panel<select value={editedPanel} onchange={event => {editedPanel=event.currentTarget.value;scheduleSettings('panel',0);}} disabled={busy || updateOpen || updating || multipleAssignments}><option value="">No panel</option>
         {#if editedPanel && !publications.some(p=>p.publicationHash===editedPanel)}<option value={editedPanel}>Current assigned panel</option>{/if}
-        {#each publications as panel}<option value={panel.publicationHash}>{panel.document.ui.title}</option>{/each}
+        {#each publications as panel}<option value={panel.publicationHash} disabled={deviceKind(selected)==='esp32'&&!!panelScreenReason(panel,selectedScreen)}>{panel.document.ui.title}{deviceKind(selected)==='esp32'&&panelScreenReason(panel,selectedScreen)?' · Size mismatch':''}</option>{/each}
       </select></label>
       {#if multipleAssignments}<p>This companion has multiple assignments. Edit panel assignments in Panels.</p>{/if}
       {#if deviceKind(selected)==='esp32'}
         <label class="setting">USB port<input readonly value={detailPort??'Not connected by USB'} /></label>
         <label class="setting">Board / Screen<input readonly value={detailBoard} /></label>
+        <label class="setting">Screen size<input readonly value={selectedScreen?`${selectedScreen.width} × ${selectedScreen.height} px`:'Not identified — connect by USB'} /></label>
+        {#if !selectedScreen}<p>Connect this companion by USB to identify its screen size before assigning a panel.</p>{:else}<p>Panels must use {selectedScreen.width} × {selectedScreen.height} px on every page.</p>{/if}
       {/if}
       </div>
       {#if deviceKind(selected)==='esp32'}

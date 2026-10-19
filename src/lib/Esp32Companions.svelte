@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { boardScreenSize, panelScreenReason } from './companion-screen';
   import { notify } from './notifications';
   import Notification from './Notification.svelte';
   import Icon from './Icon.svelte';
@@ -42,12 +43,13 @@
   const pairedHere=$derived(!!transport?.device?.companionId && (hostState.host?.clients??[]).some(c=>c.companionId===transport?.device?.companionId));
   const usb=$derived(companionId ? (transport?.device?.companionId && transport.device.companionId!==companionId ? undefined : transport) : (pairedHere && step!==4 ? undefined : transport));
   const device=$derived(usb?.device);
+  const screenSize=$derived(boardScreenSize(device?.boardProfile));
   const pairingPorts=$derived((hostState.usbPorts??[]).filter(item=>!!companionId || !(pairedHere && transport?.port===item.port)));
   const selectedDevice=$derived(!!port && usb?.connected && usb.ready && (companionId ? device?.companionId===companionId : !pairedHere) && usb.port===port);
   const identifiedBoard=$derived(selectedDevice && hostState.firmwareProfiles?.some(p=>p.id===device?.boardProfile)?device?.boardProfile:undefined);
   const installedVersion=$derived(selectedDevice?device?.firmwareVersion:undefined);
   const firmwareCurrent=$derived(!detecting && !!hostState.firmwareVersion && installedVersion===hostState.firmwareVersion && device?.boardProfile===profile);
-  const pairDisabledReason=$derived(!port?'Choose a USB device first.':detecting?'Wait for firmware detection to finish.':installing?'Wait for the firmware installation to finish.':installOpen?'Finish or cancel the firmware installation first.':busy?'Wait for the current operation to finish.':!profile?'Choose the Board / Screen model first.':!selectedDevice?'Install the current firmware and wait for the device to respond.':!firmwareCurrent?'Update the device firmware before pairing.':!name.trim()?'Enter a screen name.':mode==='wifi' && !ssid.trim()?'Choose or enter a Wi-Fi network.':'');
+  const pairDisabledReason=$derived(!port?'Choose a USB device first.':detecting?'Wait for firmware detection to finish.':installing?'Wait for the firmware installation to finish.':installOpen?'Finish or cancel the firmware installation first.':busy?'Wait for the current operation to finish.':!profile?'Choose the Board / Screen model first.':!selectedDevice?'Install the current firmware and wait for the device to respond.':!firmwareCurrent?'Update the device firmware before pairing.':!name.trim()?'Enter a screen name.':mode==='wifi' && !ssid.trim()?'Choose or enter a Wi-Fi network.':selectedHash?(publications.find(panel=>panel.publicationHash===selectedHash)?panelScreenReason(publications.find(panel=>panel.publicationHash===selectedHash)!,screenSize):'Choose an available panel.'):'');
   const firmwareProgress=$derived(Math.max(0,Math.min(100,Math.round(transport?.progress??0))));
   async function selectPort(value:string){
     if(value!==port)profile='';
@@ -104,6 +106,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
     try {
       const panel=publications.find(p=>p.publicationHash===selectedHash);
       if(selectedHash && !panel)throw new Error('Choose an available panel.');
+      if(panel){const reason=panelScreenReason(panel,screenSize);if(reason)throw new Error(reason);}
       if(panel)await sendPublication(panel,send);
       await send('companion_usb_provision', { mode, name: companionId ? initialName : name, ssid, password, keepWifiPassword:!passwordChanged && savedPassword && ssid===savedSsid, publicationHash: selectedHash, ...(companionId?{companionId}:{}) });
       step = 4;
@@ -187,8 +190,9 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
       <h4>Panel setup</h4>
       <label>Panel<select bind:value={selectedHash} disabled={busy || installing}>
         <option value="">Assign a panel later</option>
-        {#each publications as panel}<option value={panel.publicationHash}>{panel.document.ui.title}</option>{/each}
+        {#each publications as panel}<option value={panel.publicationHash} disabled={!!panelScreenReason(panel,screenSize)}>{panel.document.ui.title}{panelScreenReason(panel,screenSize)?' · Size mismatch':''}</option>{/each}
       </select></label>
+      <p>{screenSize?`Screen size: ${screenSize.width} × ${screenSize.height} px. Panels must match this size on every page.`:'Connect the screen to identify its size before assigning a panel.'}</p>
     </section>
     <div class="pair-device-actions"><span class="disabled-reason" title={pairDisabledReason || undefined} aria-label={pairDisabledReason || undefined}>
       <button disabled={!!pairDisabledReason || installOpen} onclick={()=>action(provision)}><Icon name="link" size={16} />Pair device</button>
