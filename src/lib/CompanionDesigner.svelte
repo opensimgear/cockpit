@@ -202,8 +202,18 @@
     if(await confirmDelete(`Delete page ${index} and all its widgets?`)){command({type:'delete-page',id});select([]);}
   }
   async function removeSelectedWidget() {
-    const selectedWidget=widget;
-    if(selectedWidget && await confirmDelete(`Delete widget "${selectedWidget.label}"?`)){command({type:'delete-widget',id:selectedWidget.id});select([]);}
+    const widgets=document.presentation.widgets.filter(item=>selected.includes(item.id));
+    if(widgets.length && await confirmDelete(widgets.length===1?`Delete widget "${widgets[0].label}"?`:`Delete ${widgets.length} selected widgets?`)){
+      for(const item of widgets)command({type:'delete-widget',id:item.id});
+      select([]);
+    }
+  }
+  function widgetDeleteKey(event:KeyboardEvent) {
+    if(event.key!=='Delete'||event.defaultPrevented||event.repeat||event.ctrlKey||event.metaKey||event.altKey||!active||!editorOpen||preview||busy||pendingDelete||pendingLeave||!widget)return;
+    const target=event.target;
+    if(target instanceof HTMLElement && (target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"])')||target.closest('dialog')))return;
+    event.preventDefault();
+    void removeSelectedWidget();
   }
   function paletteBounds(viewportId:string,point:{x:number;y:number}):Bounds|undefined {
     const region=regions.find(region=>region.id===viewportId);if(!region)return;
@@ -412,6 +422,7 @@
     return () => { alive = false; disposed=true; resolveStorageLoad(); clearInterval(poll); stop(); unsubscribe?.(); window.removeEventListener('blur', cancel); window.removeEventListener('pagehide', cancel); };
   });
 </script>
+<svelte:window onkeydown={widgetDeleteKey}/>
 
 <script module lang="ts">
   export type CompanionNavigation = { kind: 'main' } | { kind: 'companion'; id: string } | { kind: 'panel'; id: string };
