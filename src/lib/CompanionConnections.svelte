@@ -224,8 +224,8 @@
       <button class="text-button back-companions" use:focusDetails disabled={busy || updateOpen || updating} onclick={backToCompanions}><Icon name="back" size={16} />Back to Companions</button>
       <div class="page-heading"><div class="companion-heading-copy"><div class="eyebrow">COMPANION SETTINGS</div><div class="companion-title"><h1>{text(selected,'name') || 'Companion'}</h1><span class:connected={selected.connected===true} class="connection-state"><span></span>{selected.connected===true?'Connected':'Offline'}</span></div><p id="companion-autosave-status" role="status">{nameError || (settingsState?.saving ? 'Saving…' : settingsState?.error ? 'Changes could not be saved.' : settingsState?.pending ? 'Saving changes…' : settingsState ? 'Changes saved automatically.' : 'Changes save automatically.')}</p></div><button class="danger" disabled={busy || updateOpen || updating || settingsState?.saving || settingsState?.pending && !settingsState.error} onclick={()=>action(()=>remove(selected!))}><Icon name="trash" size={15} />Remove</button></div>
       <div class="settings-panel">
-      {#if hostState.usb?.device?.companionId===selectedId && hostState.usb.device.status==='error' && hostState.usb.deviceStatus==='panel-unsupported-corrupt-or-over-budget'}
-        <Notification message="The assigned panel contains unsupported content or exceeds this screen’s limits. Choose a compatible panel to reconnect." kind="error" />
+      {#if text(selected,'panelError')}
+        <p class="settings-error" role="alert"><strong>Panel error.</strong> {text(selected,'panelError')}</p>
       {/if}
       {#if ['browser','desktop'].includes(deviceKind(selected)) && hostState.browserUrl}<button onclick={()=>action(async()=>{await invoke('open_companion_browser',{url:hostState.browserUrl});})}><Icon name="link" size={16} />Open browser companion</button>{/if}
       <div class="settings-columns" class:with-firmware={deviceKind(selected)==='esp32'}>
@@ -233,7 +233,7 @@
       <label class="setting">Name<input value={editedName} oninput={event => {editedName=event.currentTarget.value;scheduleSettings('name');}} onblur={() => void settingsAutosave.flush()} disabled={busy || updateOpen || updating} maxlength="80" aria-invalid={!!nameError} aria-describedby="companion-autosave-status" /></label>
       <label class="setting">Assigned panel<select value={editedPanel} onchange={event => {editedPanel=event.currentTarget.value;scheduleSettings('panel',0);}} disabled={busy || updateOpen || updating || multipleAssignments}><option value="">No panel</option>
         {#if editedPanel && !publications.some(p=>p.publicationHash===editedPanel)}<option value={editedPanel}>Current assigned panel</option>{/if}
-        {#each publications as panel}<option value={panel.publicationHash} disabled={deviceKind(selected)==='esp32'&&!!panelScreenReason(panel,selectedScreen)}>{panel.document.ui.title}{deviceKind(selected)==='esp32'&&panelScreenReason(panel,selectedScreen)?' · Size mismatch':''}</option>{/each}
+        {#each publications as panel}<option value={panel.publicationHash} title={deviceKind(selected)==='esp32'?panelScreenReason(panel,selectedScreen):undefined} disabled={deviceKind(selected)==='esp32'&&!!panelScreenReason(panel,selectedScreen)}>{panel.document.ui.title}{deviceKind(selected)==='esp32'&&panelScreenReason(panel,selectedScreen)?' · Not compatible':''}</option>{/each}
       </select></label>
       {#if multipleAssignments}<p>This companion has multiple assignments. Edit panel assignments in Panels.</p>{/if}
       {#if deviceKind(selected)==='esp32'}
@@ -272,6 +272,7 @@
         <div class="tile-heading"><Icon name={icon(deviceKind(client))} size={27} /><span class:connected={client.connected===true} class="connection-state"><span></span>{client.connected===true?'Connected':'Offline'}</span></div>
         <h3>{text(client,'name') || 'Companion'}</h3><p class="kind">{deviceKind(client)==='esp32'?'ESP32 screen':deviceKind(client)==='mobile'?'Mobile companion':['browser','desktop'].includes(deviceKind(client))?'Browser companion':'Companion'}</p>
         <p>{(hostState.host?.instances ?? []).filter(i=>i.companionId===client.companionId).map(i=>text(i,'name') || 'Panel').join(', ') || 'No panel assigned'}</p>
+        {#if text(client,'panelError')}<p class="firmware-warning"><Icon name="alert" size={15} />Panel error</p>{/if}
         {#if outdated(client)}<p class="firmware-warning"><Icon name="alert" size={15} />Firmware update available</p>
         {:else if deviceKind(client)==='esp32' && !firmwareInfo(client)}<p>Firmware version unknown · connect USB to check</p>{/if}
         </button>

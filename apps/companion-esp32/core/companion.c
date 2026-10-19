@@ -196,9 +196,9 @@ void osg_render(osg_runtime *r, uint64_t now) {
     fill(r, 0, 0, r->display.width, r->display.height, 0x08c4);
     if(r->screen!=OSG_SCREEN_PANEL){
         const char *first=r->screen==OSG_SCREEN_UNPAIRED ? "Pair this device in" :
-                          r->screen==OSG_SCREEN_NO_PANEL ? "Assign a panel to" : "Panel is not connected.";
+                          r->screen==OSG_SCREEN_NO_PANEL ? "Assign a panel to" : r->screen==OSG_SCREEN_PANEL_ERROR ? "Panel error." : "Panel is not connected.";
         const char *second=r->screen==OSG_SCREEN_UNPAIRED ? "OpenSimGear Cockpit" :
-                           r->screen==OSG_SCREEN_NO_PANEL ? "this companion in Cockpit" : "Verify OpenSimGear Cockpit status.";
+                           r->screen==OSG_SCREEN_NO_PANEL ? "this companion in Cockpit" : r->screen==OSG_SCREEN_PANEL_ERROR ? "Edit the panel in Cockpit." : "Verify OpenSimGear Cockpit status.";
         text(r, 16, r->display.height/2-24, r->display.width-32, 20, first, 0xffff);
         text(r, 16, r->display.height/2+4, r->display.width-32, 20, second, 0xffff);
         return;

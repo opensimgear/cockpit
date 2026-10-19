@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { newDocument, createDesignerHistory, applyDesignerCommand, validateDesignerDocument } from '../../packages/companion-designer/src/index.ts';
-import { firmwareWidgetPresets, simplifyFirmwareWidgets } from './firmware-widgets.ts';
+import { firmwareWidgetPresets, simplifyFirmwareWidgets, firmwarePanelReason } from './firmware-widgets.ts';
 test('palette matches implemented ESP32 widget kinds',()=>{
  assert.deepEqual(firmwareWidgetPresets.map(p=>p.kind),['button','indicator','text','numeric','gauge']);
 });
@@ -19,4 +19,13 @@ test('unsupported widgets and bindings are removed without mutating saved conten
  assert.equal(validateDesignerDocument(cleaned.document).ok,true);
  assert.deepEqual(before,history.present);
  assert.equal(simplifyFirmwareWidgets(cleaned.document).removed,0);
+});
+
+test('ESP compatibility rejects unsupported content and allows supported display widgets',()=>{
+ const doc=newDocument('Device panel');
+ assert.equal(firmwarePanelReason(doc),'');
+ doc.presentation.viewports[0].backgroundAssetId='image';
+ assert.match(firmwarePanelReason(doc),/backgrounds/);delete doc.presentation.viewports[0].backgroundAssetId;
+ doc.presentation.widgets[0].config.buttonMode='toggle';assert.match(firmwarePanelReason(doc),/momentary/);
+ doc.presentation.widgets[0].config.buttonMode='momentary';doc.presentation.widgets[0].label='Unsupported 😀';assert.match(firmwarePanelReason(doc),/font/);
 });

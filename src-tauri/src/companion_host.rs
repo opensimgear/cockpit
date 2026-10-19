@@ -16,11 +16,45 @@ include!(concat!(env!("OUT_DIR"), "/companion_firmware.rs"));
 include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
 
 const MAX_UPLOAD: usize = 13 * 1024 * 1024;
+fn describe_usb_presence(host:&mut Value,devices:&[Value]){
+    if let Some(clients)=host["clients"].as_array_mut(){for client in clients{
+        let Some(usb)=devices.iter().find(|usb|usb["connected"]==true && usb["ready"]==true && usb["device"]["companionId"]==client["companionId"])else{continue};
+        client["sessionConnected"]=client["connected"].clone();
+        client["connected"]=json!(true);
+        if let Some(transports)=client["transports"].as_array_mut(){if !transports.contains(&json!("usb")){transports.push(json!("usb"));}}
+        else{client["transports"]=json!(["usb"]);}
+        if usb["device"]["status"]=="panel-error" || (usb["device"]["status"]=="error" && (usb["deviceStatus"]=="panel-unsupported-corrupt-or-over-budget" || usb["lastHostError"].as_str().is_some_and(|s|s.contains("ESP32 memory budget")))){
+            client["panelError"]=json!("The panel uses content this ESP32 screen cannot display. Remove unsupported features in the panel editor, then save the panel.");
+        }
+    }}
+}
 fn screen_dimensions(profile:&str)->Option<(u64,u64)>{
     match profile {"sunton-3248s035r"=>Some((480,320)),"waveshare-lcd7-s3"=>Some((800,480)),_=>None}
 }
 fn validate_screen_document(document:&Value,size:(u64,u64))->Result<(),String>{
+    let widgets=document["presentation"]["widgets"].as_array().ok_or("Panel has no widgets.")?;
+    if document["ui"]["assets"].as_array().is_some_and(|a|!a.is_empty()) || document["presentation"]["viewports"].as_array().is_some_and(|v|v.iter().any(|v|v.get("backgroundAssetId").is_some())) || widgets.iter().any(|w|w["config"].get("iconAssetId").is_some()){
+        return Err("ESP32 panels do not support images or backgrounds. Remove the background and image assets.".into());
+    }
+    if document["presentation"]["groups"].as_array().is_some_and(|g|!g.is_empty()) || widgets.iter().any(|w|w.get("groupId").is_some()){
+        return Err("ESP32 panels do not support groups. Ungroup widgets before assigning.".into());
+    }
+    if widgets.len()>32 || serde_json::to_vec(document).map_err(|e|e.to_string())?.len()>16384{return Err("ESP32 panel exceeds the 32 widget or 16 KB document limit.".into());}
+    for w in widgets{
+        let text_ok=|v:&Value|v.as_str().is_some_and(|s|s.bytes().all(|c|c.is_ascii_alphanumeric()||b" .,:;-_+=|/%!()?".contains(&c)));
+        if !text_ok(&w["label"]) || ["prefix","suffix","unit"].iter().any(|key|w["config"].get(*key).is_some_and(|v|!text_ok(v))){return Err("ESP32 labels and text must use the supported device font.".into());}
+        if !matches!(w["kind"].as_str(),Some("button"|"indicator"|"text"|"numeric"|"gauge")){return Err("This widget type is not supported on ESP32 screens.".into());}
+        if w["kind"]=="button" && (w["config"]["buttonMode"]!="momentary" || w["config"]["pulseMs"]!=0 || w["config"]["repeatMs"]!=0){return Err("ESP32 buttons must be momentary without pulse or repeat.".into());}
+        if w["kind"]=="button"{if let Some(screen)=document["presentation"]["viewports"].as_array().and_then(|screens|screens.iter().find(|v|v["pageId"]==w["pageId"])){
+            let width=screen["width"].as_f64().unwrap_or(1.0);let height=screen["height"].as_f64().unwrap_or(1.0);
+            let scale=(size.0 as f64/width).min((size.1 as f64-32.0)/height);
+            let insets=&screen["safeInsets"];
+            if (w["bounds"]["width"].as_f64().unwrap_or(0.0)*(1.0-insets["left"].as_f64().unwrap_or(0.0)-insets["right"].as_f64().unwrap_or(0.0))*width*scale).floor()<44.0 || (w["bounds"]["height"].as_f64().unwrap_or(0.0)*(1.0-insets["top"].as_f64().unwrap_or(0.0)-insets["bottom"].as_f64().unwrap_or(0.0))*height*scale).floor()<44.0{return Err("ESP32 buttons must render at least 44 by 44 pixels. Enlarge the button.".into());}
+        }}
+        if matches!(w["kind"].as_str(),Some("numeric"|"gauge")) && (w["config"]["precision"].as_u64().is_none_or(|p|p>4)||w["config"]["min"].as_f64().is_none_or(|n|n< -1e9)||w["config"]["max"].as_f64().is_none_or(|n|n>1e9)){return Err("ESP32 numeric precision must be 0-4 and ranges must stay within +/-1,000,000,000.".into());}
+    }
     let pages=document["ui"]["pages"].as_array().ok_or("Panel has no pages.")?;
+    if pages.len()>4{return Err("ESP32 panels support at most 4 pages.".into());}
     let screens=document["presentation"]["viewports"].as_array().ok_or("Panel has no screen size.")?;
     if pages.is_empty()||pages.iter().any(|page|!screens.iter().any(|screen|screen["pageId"]==page["id"]&&screen["width"].as_u64()==Some(size.0)&&screen["height"].as_u64()==Some(size.1))){
         return Err(format!("Every panel page must be {} × {} px to match this ESP32 screen.",size.0,size.1));
@@ -178,6 +212,7 @@ impl Runtime {
         let firmware_path=services.directory.join("companion-firmware.json");
         let mut firmware:Value=std::fs::read(&firmware_path).ok().filter(|b|b.len()<65536).and_then(|b|serde_json::from_slice(&b).ok()).filter(Value::is_object).unwrap_or(json!({}));
         let mut host=services.hub.command(&json!({"command":"companion_status"}))?;
+        describe_usb_presence(&mut host,&services.usb.statuses());
         for usb in services.usb.statuses(){
         if let Some(id)=usb["device"]["companionId"].as_str().filter(|id|host["clients"].as_array().is_some_and(|rows|rows.iter().any(|c|c["companionId"]==*id))){
             let info=json!({"version":usb["device"]["firmwareVersion"].as_str().unwrap_or("unknown"),"profile":usb["device"]["boardProfile"].as_str().or_else(||firmware[id]["profile"].as_str()),"connectionMode":usb["device"]["connectionMode"].as_str().filter(|mode|matches!(*mode,"wifi"|"serial")).or_else(||firmware[id]["connectionMode"].as_str())});
@@ -640,11 +675,22 @@ impl Runtime {
 mod tests {
     use super::*;
     #[test]
+    fn usb_presence_is_independent_of_panel_session_errors(){
+        let mut host=json!({"clients":[{"companionId":"screen","connected":false}]});
+        describe_usb_presence(&mut host,&[json!({"connected":true,"ready":true,"device":{"companionId":"screen","status":"error"},"deviceStatus":"panel-unsupported-corrupt-or-over-budget"})]);
+        assert_eq!(host["clients"][0]["connected"],true);
+        assert_eq!(host["clients"][0]["sessionConnected"],false);
+        assert!(host["clients"][0]["panelError"].is_string());
+        let mut offline=json!({"clients":[{"companionId":"screen","connected":false}]});
+        describe_usb_presence(&mut offline,&[json!({"connected":false,"ready":true,"device":{"companionId":"screen"}})]);
+        assert_eq!(offline["clients"][0]["connected"],false);
+    }
+    #[test]
     fn esp_panels_match_screen_dimensions_on_every_page() {
         assert_eq!(screen_dimensions("sunton-3248s035r"),Some((480,320)));
         assert_eq!(screen_dimensions("waveshare-lcd7-s3"),Some((800,480)));
         assert_eq!(screen_dimensions("unknown"),None);
-        let mut document=json!({"ui":{"pages":[{"id":"a"}]},"presentation":{"viewports":[{"pageId":"a","width":480,"height":320}]}});
+        let mut document=json!({"ui":{"pages":[{"id":"a"}]},"presentation":{"widgets":[],"viewports":[{"pageId":"a","width":480,"height":320}]}});
         assert!(validate_screen_document(&document,(480,320)).is_ok());
         assert!(validate_screen_document(&document,(320,480)).is_err());
         document["ui"]["pages"].as_array_mut().unwrap().push(json!({"id":"b"}));

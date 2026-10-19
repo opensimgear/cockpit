@@ -18,7 +18,7 @@ test('ESP screen matching uses saved dimensions and checks every page', async ()
   for (const viewport of panel.document.presentation.viewports) { viewport.width = 480; viewport.height = 320; }
   assert.equal(panelScreenReason(panel, size), '');
   assert.match(panelScreenReason(panel), /identify its screen size/);
-  panel.document.ui.pages.push({ id: 'second', name: 'Second' });
+  panel.document.ui.pages.push({ id: 'second', title: 'Second' });
   assert.match(panelScreenReason(panel, size), /Every panel page/);
 });
 

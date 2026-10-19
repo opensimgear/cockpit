@@ -1,9 +1,10 @@
+import { companionScreenSize, panelScreenReason } from './companion-screen.ts';
 import type { Publication } from '../../packages/companion-designer/src/index.ts';
 import { sendPublication, stableCompanionId, type CompanionSend, type CompanionHostState } from './companions.ts';
 
 /** Mutable panel identities use immutable transport snapshots internally. */
 export async function synchronizePanel(panel: Publication, previousHashes: string[], send: CompanionSend, selected?: string[]): Promise<CompanionHostState> {
-  await sendPublication(panel,send);
+
   let state = await send('companion_status');
   const hashes = new Set([panel.publicationHash,...previousHashes]);
   for(const p of state.host?.publications ?? []) if(p.uiId===panel.document.ui.id && typeof p.publicationHash==='string') hashes.add(p.publicationHash);
@@ -14,6 +15,10 @@ export async function synchronizePanel(panel: Publication, previousHashes: strin
     if(selected!==undefined && !(state.host?.clients ?? []).some(c => c.companionId===companionId)) throw new Error('The selected companion is no longer paired.');
     if(!owned.some(i => i.companionId===companionId) && instances.filter(i => i.companionId===companionId).length>1) throw new Error('This companion has multiple controller assignments. Disconnect its extra assignments before assigning a panel.');
   }
+  for(const id of desired)if(state.host?.clients?.some(c=>c.companionId===id&&c.kind==='esp32')){
+    const reason=panelScreenReason(panel,companionScreenSize(state,id));if(reason)throw new Error(reason);
+  }
+  await sendPublication(panel,send);
   for(const instance of owned) {
     if(!desired.includes(stableCompanionId(instance.companionId))) await send('companion_unassign',{instanceId:stableCompanionId(instance.instanceId)});
   }

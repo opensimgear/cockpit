@@ -78,7 +78,7 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         if(!strcmp(type,"baseline")){baseline_requests++;assert(!mock_host_armed);assert(!strcmp(osg_string(v,"sequence"),"0"));cJSON *values=cJSON_GetObjectItemCaseSensitive(v,"values");assert(cJSON_IsObject(values)&&cJSON_GetArraySize(values)==1&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(values,"master")));mock_host_armed=true;mock_button=false;if(touch_during_baseline){osg_network_touch(true,true,100,100);osg_network_touch(true,false,0,0);}}
         if(!strcmp(type,"input")){input_requests++;assert(mock_host_armed);uint64_t sequence;assert(osg_counter(osg_string(v,"sequence"),&sequence)&&sequence==mock_input_sequence+1);mock_input_sequence=sequence;cJSON *changes=cJSON_GetObjectItemCaseSensitive(v,"changes");assert(cJSON_IsArray(changes)&&cJSON_GetArraySize(changes)>0&&cJSON_GetArraySize(changes)<=OSG_INPUT_BATCH_EDGES);for(cJSON *change=changes->child;change;change=change->next){assert(!strcmp(osg_string(change,"controlId"),"master"));mock_button=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(change,"value"));}if(cancel_during_input)osg_network_touch(false,false,0,0);fake_ms+=input_ack_delay;}
         if(!strcmp(type,"close")){close_requests++;mock_host_armed=false;mock_button=false;}
-        cJSON_AddStringToObject(*out,"type",!strcmp(type,"close")?"closed":"ack");cJSON_AddStringToObject(*out,"clientId","client");cJSON_AddStringToObject(*out,"sessionId",wrong_session?"old":mock_session);cJSON_AddStringToObject(*out,"generation","1");
+        cJSON_AddStringToObject(*out,"publicationHash",osg_string(fixture,"publicationHash"));cJSON_AddStringToObject(*out,"type",!strcmp(type,"close")?"closed":"ack");cJSON_AddStringToObject(*out,"clientId","client");cJSON_AddStringToObject(*out,"sessionId",wrong_session?"old":mock_session);cJSON_AddStringToObject(*out,"generation","1");
         if(!strcmp(type,"close"))cJSON_AddNullToObject(*out,"sequence");else cJSON_AddStringToObject(*out,"sequence",osg_string(v,"sequence"));cJSON_AddStringToObject(*out,"ackStage","source-accepted");cJSON_AddBoolToObject(*out,"submitted",false);cJSON_AddNullToObject(*out,"feedbackSequence");cJSON_AddNullToObject(*out,"feedback");
     }else assert(false);
     cJSON_Delete(v);return request_ok;
@@ -149,6 +149,15 @@ int main(int argc,char **argv){
     setup();settings.persist=true;advance();fake_ms+=400;advance();assert(state==AUTH&&installation_saved);
     assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==AUTH);assigned_now=true;advance();
     assert(state==OPEN);test_drawing=&images[1-image_index].panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
+    /* A bad panel does not close a healthy transport or enable live input. */
+    stop();state=AUTH;advance();assert(state==OPEN);
+    cJSON *valid_fixture=fixture;fixture=cJSON_Duplicate(valid_fixture,true);
+    cJSON_ReplaceItemInObjectCaseSensitive(fixture,"canonicalDocument",cJSON_CreateString("{}"));
+    advance();assert(state==PANEL_ERROR&&!test_runtime.armed);update_screen();assert(test_runtime.screen==OSG_SCREEN_PANEL_ERROR);
+    cJSON_Delete(fixture);fixture=valid_fixture;
+    next_request=fake_ms;advance();assert(state==PANEL_ERROR&&!test_runtime.armed&&!strcmp(requested_type,"heartbeat"));
+    obsolete_session=true;fake_ms+=250;advance();obsolete_session=false;assert(state==AUTH);
+    fake_ms+=500;advance();advance();assert(state==LIVE);
     fake_ms+=250;request_ok=false;advance();assert(state==FAULT);
     setup();state=AUTH;wrong_identity=true;advance();assert(state==FAULT);
     setup();state=LIVE;session.heartbeat=UINT64_MAX-1;advance();assert(state==FAULT);

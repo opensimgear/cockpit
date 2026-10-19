@@ -61,3 +61,13 @@ test('an unpaired selection fails preflight before removing existing assignments
  await assert.rejects(synchronizePanel(next,[first.publicationHash],h.send,['missing']),/no longer paired/);
  assert.equal(h.calls.filter(c=>c.command==='companion_unassign').length,0);
 });
+
+test('incompatible ESP updates fail before uploads or assignment changes',async()=>{
+ const {first,next}=await fixture();
+ const h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash}]);
+ h.state.host.clients[0].kind='esp32';h.state.host.clients[0].screen={width:1280,height:800};
+ const bad=structuredClone(next);bad.document.presentation.viewports[0].backgroundAssetId='image';
+ await assert.rejects(synchronizePanel(bad,[first.publicationHash],h.send),/backgrounds/);
+ assert.deepEqual(h.calls.map(c=>c.command),['companion_status']);
+ assert.equal(h.state.host.instances[0].publicationHash,first.publicationHash);
+});

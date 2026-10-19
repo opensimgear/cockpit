@@ -190,7 +190,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
       <h4>Panel setup</h4>
       <label>Panel<select bind:value={selectedHash} disabled={busy || installing}>
         <option value="">Assign a panel later</option>
-        {#each publications as panel}<option value={panel.publicationHash} disabled={!!panelScreenReason(panel,screenSize)}>{panel.document.ui.title}{panelScreenReason(panel,screenSize)?' · Size mismatch':''}</option>{/each}
+        {#each publications as panel}<option value={panel.publicationHash} title={panelScreenReason(panel,screenSize)} disabled={!!panelScreenReason(panel,screenSize)}>{panel.document.ui.title}{panelScreenReason(panel,screenSize)?' · Not compatible':''}</option>{/each}
       </select></label>
       <p>{screenSize?`Screen size: ${screenSize.width} × ${screenSize.height} px. Panels must match this size on every page.`:'Connect the screen to identify its size before assigning a panel.'}</p>
     </section>

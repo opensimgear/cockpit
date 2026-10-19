@@ -14,7 +14,7 @@
 #include <math.h>
 #include <time.h>
 
-typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT } phase;
+typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT, PANEL_ERROR } phase;
 static osg_network_ui ui;
 static osg_settings settings;
 static osg_socket connection;
@@ -28,7 +28,7 @@ static phase state;
 static char pending[65], assigned[65], publication[72];
 static uint64_t next_request, pair_deadline;
 static char serial_line[OSG_PROVISION_BYTES+1];
-static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error"};
+static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error","panel-error"};
 static uint64_t millis(void){return (uint64_t)(esp_timer_get_time()/1000);}
 static void report(const char *status){printf("{\"status\":\"%s\"}\n",status);fflush(stdout);}
 static void disconnected(void){xSemaphoreTake(ui.mutex,portMAX_DELAY);osg_input_cancel(&input,OSG_INPUT_CANCELLED);osg_connected(ui.runtime,false);*ui.dirty=true;xSemaphoreGive(ui.mutex);}
@@ -45,13 +45,20 @@ static cJSON *session_message(const char *type,const char *sequence){
     cJSON_AddStringToObject(v,"sessionId",session.session);cJSON_AddStringToObject(v,"generation",session.generation);
     cJSON_AddStringToObject(v,"publicationHash",session.publication);
     if(sequence)cJSON_AddStringToObject(v,"sequence",sequence);
+    if(state==PANEL_ERROR&&!strcmp(type,"heartbeat"))cJSON_AddBoolToObject(v,"panelError",true);
     return v;
 }
 static void stop(void){
-    const bool close=state==LIVE&&(connection.ws||connection.direct);
+    const bool close=(state==LIVE||state==PANEL_ERROR)&&(connection.ws||connection.direct);
     disconnected(); /* Stop local input before any potentially blocking I/O. */
     if(close){cJSON *reply=NULL;(void)request(session_message("close",NULL),&reply,300);cJSON_Delete(reply);}
     abort_connection();
+}
+static bool panel_error_ack(const cJSON *v,const char *sequence){
+    return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(v,"ok"))&&equal(osg_string(v,"type"),"ack")&&
+        equal(osg_string(v,"clientId"),session.client)&&equal(osg_string(v,"sessionId"),session.session)&&
+        equal(osg_string(v,"generation"),session.generation)&&equal(osg_string(v,"publicationHash"),session.publication)&&
+        equal(osg_string(v,"sequence"),sequence)&&equal(osg_string(v,"ackStage"),"source-accepted")&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(v,"submitted"));
 }
 static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
@@ -188,19 +195,19 @@ static void advance(void){
             osg_image *candidate=&images[1-image_index];
             const cJSON *p=cJSON_GetObjectItemCaseSensitive(reply,"publication");
             ok=osg_decode_publication(p,publication,osg_platform_crypto,candidate,ui.runtime->display.width,ui.runtime->display.height);
-            if(!ok){cJSON_Delete(reply);fail("panel-unsupported-corrupt-or-over-budget");return;}
+            if(!ok){cJSON_Delete(reply);disconnected();state=PANEL_ERROR;next_request=millis();report("panel-unsupported-corrupt-or-over-budget");return;}
             if(ok){xSemaphoreTake(ui.mutex,portMAX_DELAY);
                 ok=osg_init(ui.runtime,&candidate->panel,ui.runtime->display,NULL,NULL);
                 if(ok){image_index=1-image_index;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;}
                 xSemaphoreGive(ui.mutex);}
             if(ok){state=LIVE;next_request=millis();report("live-disarmed");}
         }
-    }else if(state==LIVE){
+    }else if(state==LIVE||state==PANEL_ERROR){
         if(millis()>=next_request){
             if(session.heartbeat>=UINT64_MAX-1){fail("session-counter-exhausted");return;}
             char sequence[21];snprintf(sequence,sizeof(sequence),"%" PRIu64,++session.heartbeat);
             const uint64_t started=millis();
-            ok=request(session_message("heartbeat",sequence),&reply,700)&&acknowledgement(reply,sequence,started);
+            ok=request(session_message("heartbeat",sequence),&reply,700)&&(state==PANEL_ERROR?panel_error_ack(reply,sequence):acknowledgement(reply,sequence,started));
             next_request=millis()+250;
         }else if(send_input){
             osg_input_edge edges[OSG_INPUT_BATCH_EDGES];size_t count=0;uint64_t epoch=0;
@@ -223,7 +230,7 @@ static void advance(void){
     }
     /* Cockpit invalidates the old session when it changes assignment.
      * Reauthenticate for the current assignment, cancelling all old input first. */
-    bool assignment_refresh=!ok&&state==LIVE&&equal(osg_string(reply,"type"),"error")&&
+    bool assignment_refresh=!ok&&(state==LIVE||state==PANEL_ERROR)&&equal(osg_string(reply,"type"),"error")&&
         equal(osg_string(reply,"error"),"Session is obsolete; explicitly reconnect.");
     cJSON_Delete(reply);
     if(assignment_refresh){abort_connection();state=AUTH;next_request=millis()+500;report("refreshing-cockpit-assignment-disarmed");}
@@ -324,7 +331,7 @@ static void serial_byte(int c){
 }
 static void update_screen(void){
     osg_screen_state screen=!settings.token[0] ? OSG_SCREEN_UNPAIRED :
-        state==LIVE ? OSG_SCREEN_PANEL : state==WAIT_ASSIGNMENT ? OSG_SCREEN_NO_PANEL : OSG_SCREEN_DISCONNECTED;
+        state==LIVE ? OSG_SCREEN_PANEL : state==PANEL_ERROR ? OSG_SCREEN_PANEL_ERROR : state==WAIT_ASSIGNMENT ? OSG_SCREEN_NO_PANEL : OSG_SCREEN_DISCONNECTED;
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(ui.runtime->screen!=screen){ui.runtime->screen=screen;*ui.dirty=true;}
     xSemaphoreGive(ui.mutex);

@@ -88,6 +88,7 @@ struct Session {
     companion_id: String,
     token: SourceToken,
     armed: bool,
+    panel_error: bool,
     exhausted: bool,
     sequence: u64,
     heartbeat: u64,
@@ -795,7 +796,8 @@ impl Hub {
                 let transports=inner.sessions.values().filter(|session|session.companion_id==client.companion_id)
                     .map(|session|session.transport).collect::<BTreeSet<_>>();
                 json!({"companionId":client.companion_id,"name":client.name,"kind":client.kind,
-                    "connected":inner.connections.values().any(|value|value==&client.companion_id),"transports":transports})
+                    "connected":inner.connections.values().any(|value|value==&client.companion_id),"transports":transports,
+                    "panelError":if inner.sessions.values().any(|s|s.companion_id==client.companion_id&&s.panel_error){Some("The screen cannot display the assigned panel. Remove unsupported content in the panel editor.")}else{None}})
             }).collect::<Vec<_>>(),
             "pending":inner.pending.iter().map(|(id,pending)|json!({"requestId":id,"companionId":pending.companion_id,"name":pending.name,"expiresAtMs":pending.expires,"approved":pending.token.is_some()})).collect::<Vec<_>>(),
             "instances":inner.record.instances.iter().map(|assignment| {
@@ -1060,6 +1062,7 @@ impl Hub {
                             exhausted: false,
                             sequence: 0,
                             heartbeat: 0,
+                            panel_error: false,
                             last_seen: now,
                             batches: VecDeque::new(),
                             values: BTreeMap::new(),
@@ -1156,8 +1159,10 @@ impl Hub {
                     "publicationHash",
                     "sequence",
                 ],
-                &[],
+                &["panelError"],
             )?;
+            ensure(frame.get("panelError").is_none_or(Value::is_boolean),"Invalid panel error status.")?;
+            ensure(frame["panelError"]!=true || !session.armed,"Disarm inputs before reporting a panel error.")?;
             let seq = counter(&frame["sequence"])?;
             ensure(seq > session.heartbeat, "Stale heartbeat sequence.")?;
             if seq == u64::MAX {
@@ -1172,10 +1177,12 @@ impl Hub {
             }
             let s = inner.sessions.get_mut(session_id).unwrap();
             s.heartbeat = seq;
+            s.panel_error = frame["panelError"]==true;
             s.last_seen = now;
             return Ok(reply(frame["sequence"].clone(), "ack"));
         }
         if frame["type"] == "baseline" {
+            ensure(!session.panel_error,"Repair the panel before arming inputs.")?;
             exact(
                 frame,
                 &[

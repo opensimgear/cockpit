@@ -50,7 +50,7 @@ typedef struct {
 /* Synchronous, bounded event sink. Live use must enqueue locally; it must never
  * wait for network I/O. Session admission/arming belongs to the network layer. */
 typedef bool (*osg_input_sink)(void *, const char *control_id, bool down, uint64_t sequence);
-typedef enum { OSG_SCREEN_PANEL, OSG_SCREEN_UNPAIRED, OSG_SCREEN_NO_PANEL, OSG_SCREEN_DISCONNECTED } osg_screen_state;
+typedef enum { OSG_SCREEN_PANEL, OSG_SCREEN_UNPAIRED, OSG_SCREEN_NO_PANEL, OSG_SCREEN_DISCONNECTED, OSG_SCREEN_PANEL_ERROR } osg_screen_state;
 typedef struct {
     osg_screen_state screen;
     const osg_panel *panel;

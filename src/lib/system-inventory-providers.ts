@@ -253,7 +253,7 @@ export class SystemInventoryController {
         : rememberedConnections;
       const transports = [...new Set([...(Array.isArray(c.transports) ? c.transports.filter((t): t is string => t === 'network' || t === 'usb') : []), ...rows(state.host.instances).filter(instance => instance.companionId === key && instance.connected === true && ['network', 'usb'].includes(string(instance.transport))).map(instance => string(instance.transport)), ...(c.peer || c.address ? ['network'] : [])])];
       observations.push(observation(id, string(c.name, key), 'companion', 'companions', now, { role: string(c.kind, 'Installation'), presence: online ? 'connected' : 'offline',
-        status: ['Paired installation', ...panelNames.map(name => `Panel: ${name}`)].join(' · '), targets: [target('companion', key)], evidence: [`companion:${key}`],
+        status: ['Paired installation', ...panelNames.map(name => `Panel: ${name}`), ...(typeof c.panelError==='string'&&c.panelError?['Panel error: '+c.panelError]:[])].join(' · '), targets: [target('companion', key)], evidence: [`companion:${key}`],
         connections: online ? (transports.length ? transports : ['unknown']).map(transport => link(id, 'host', transport as 'usb' | 'network' | 'unknown', true, transport === 'network' ? string(c.peer, string(c.address)) || undefined : undefined)) : offlineConnections,
         forget: { allowed: !online, reason: 'Disconnect the companion before revoking it.', effect: 'Revoke this companion installation and its assignments. Re-pairing will be required. Saved panel definitions and user bindings remain intact.' } }));
     }

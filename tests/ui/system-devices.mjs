@@ -567,9 +567,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // Tile edits have the same dedicated detail page as direct device links.
     // Returning from either editor restores both inventories without a save.
     await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
+    const panelErrorClient=fixture.companions.host.clients.find(c=>c.companionId==='esp32-fixture');
+    panelErrorClient.connected=true;panelErrorClient.panelError='Panel uses an unsupported background image.';
     await companions.getByRole('button', { name: 'Edit Known ESP32 companion renamed', exact: true }).click();
     await expect(companionName).toHaveValue('Known ESP32 companion renamed');
     await expect(companionSettings.getByRole('heading', { name: 'Known ESP32 companion renamed', exact: true, level: 1 })).toBeVisible();
+    await expect(companionSettings.locator('.connection-state')).toHaveText('Connected');
+    await expect(companionSettings).toContainText('Panel uses an unsupported background image.');
+    panelErrorClient.connected=false;delete panelErrorClient.panelError;
     await expect(companions.getByRole('heading', { name: 'Companions', exact: true })).toHaveCount(0);
     await expect(panels).toHaveCount(0);
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();

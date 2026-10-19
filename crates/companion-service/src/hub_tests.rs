@@ -965,3 +965,14 @@ fn browser_pairing_replacement_revokes_only_the_proven_old_browser(){
     assert_eq!(wire(&hub,"restart-old",json!({"type":"auth","token":old["token"]}))["ok"],false);
     assert_eq!(wire(&hub,"restart-new",json!({"type":"auth","token":fresh["token"]}))["ok"],true);
 }
+
+#[test]
+fn panel_error_keeps_connection_alive_without_arming_inputs(){
+    let h=Hub::new("host".into(),Arc::new(Sink::default()));
+    let token=paired(&h,"screen");let p=publish(&h,fixture());assign(&h,"screen","panel",&p.publication_hash);
+    let opened=connect(&h,"connection",&token,"panel");let mut heartbeat=frame(&opened,"heartbeat","1");heartbeat["panelError"]=json!(true);
+    assert_eq!(wire(&h,"connection",heartbeat)["ok"],true);
+    let status=h.command(&json!({"command":"companion_status"})).unwrap();
+    assert_eq!(status["clients"][0]["connected"],true);assert!(status["clients"][0]["panelError"].is_string());
+    assert_eq!(baseline(&h,"connection",&opened,&p)["ok"],false);
+}

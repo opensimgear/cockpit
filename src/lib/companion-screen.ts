@@ -1,3 +1,4 @@
+import { firmwarePanelReason } from './firmware-widgets.ts';
 import type { Publication } from '../../packages/companion-designer/src/index.ts';
 import type { CompanionHostState } from './companions.ts';
 
@@ -15,6 +16,7 @@ export function companionScreenSize(state:CompanionHostState,id:string):ScreenSi
   return boardScreenSize(usb?.device?.boardProfile)??boardScreenSize(state.firmware?.[id]?.profile);
 }
 export function panelScreenReason(panel:Publication,screen?:ScreenSize):string {
+  const unsupported=firmwarePanelReason(panel.document);if(unsupported)return unsupported;
   if(!screen)return 'Connect this ESP32 screen by USB to identify its screen size before assigning a panel.';
   if(panel.document.ui.pages.some(page=>!panel.document.presentation.viewports.some(viewport=>viewport.pageId===page.id&&viewport.width===screen.width&&viewport.height===screen.height)))return `Every panel page must be ${screen.width} × ${screen.height} px to match this screen.`;
   return '';
