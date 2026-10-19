@@ -105,7 +105,7 @@
     drag.moved = true;
     if (!onlayout) return;
     const rect = content.getBoundingClientRect();
-    drag.preview = (drag.resize ? resizedBounds : movedBounds)(drag.bounds, (event.clientX - drag.x) / rect.width, (event.clientY - drag.y) / rect.height, document.presentation.grid);
+    drag.preview = (drag.resize ? resizedBounds : movedBounds)(drag.bounds, (event.clientX - drag.x) / rect.width, (event.clientY - drag.y) / rect.height, { ...document.presentation.grid, snap: document.presentation.grid.snap && !event.ctrlKey });
   }
   function editFinish(event: PointerEvent) {
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -156,7 +156,7 @@
     viewportDrag.moved = true;
     if (!onviewportbounds) return;
     const rect = content.getBoundingClientRect();
-    viewportDrag.preview = (viewportDrag.resize ? resizedBounds : movedBounds)(viewportDrag.bounds, (event.clientX - viewportDrag.x) / rect.width, (event.clientY - viewportDrag.y) / rect.height, document.presentation.grid);
+    viewportDrag.preview = (viewportDrag.resize ? resizedBounds : movedBounds)(viewportDrag.bounds, (event.clientX - viewportDrag.x) / rect.width, (event.clientY - viewportDrag.y) / rect.height, { ...document.presentation.grid, snap: document.presentation.grid.snap && !event.ctrlKey });
   }
   function viewportFinish(event: PointerEvent) {
     if (!viewportDrag || event.pointerId !== viewportDrag.pointerId) return;

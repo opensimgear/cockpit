@@ -583,6 +583,18 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await page.mouse.move(widgetDragBox.x+60,widgetDragBox.y+36,{steps:5});await expect(panelProperties).toHaveCount(0);await page.mouse.up();
     await expect(panelProperties).toHaveCount(0);await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
     assert.notEqual(await draggableWidget.getAttribute('style'),widgetBeforeDrag,'Dragging moves the widget without selecting it.');
+    const freeDragBox=await draggableWidget.locator('.edit-hit').boundingBox(),contentWidth=await panelEditor.locator('.safe-area').evaluate(node=>node.getBoundingClientRect().width);
+    const freeDragStart=await draggableWidget.evaluate(node=>parseFloat(node.style.left)/100);
+    await page.mouse.move(freeDragBox.x+12,freeDragBox.y+12);await page.mouse.down();await page.keyboard.down('Control');
+    try{
+      await page.mouse.move(freeDragBox.x+25,freeDragBox.y+12);
+      await expect.poll(()=>draggableWidget.evaluate(node=>parseFloat(node.style.left)/100)).toBeCloseTo(freeDragStart+13/contentWidth,5);
+      await page.keyboard.up('Control');await page.mouse.move(freeDragBox.x+32,freeDragBox.y+12);
+      await expect.poll(()=>draggableWidget.evaluate(node=>parseFloat(node.style.left)/100)).toBeCloseTo(Math.round((freeDragStart+20/contentWidth)*24)/24,5);
+      await page.keyboard.down('Control');await page.mouse.move(freeDragBox.x+29,freeDragBox.y+12);await page.mouse.up();
+      await expect.poll(()=>draggableWidget.evaluate(node=>parseFloat(node.style.left)/100)).toBeCloseTo(freeDragStart+17/contentWidth,5);
+    }finally{await page.mouse.up();await page.keyboard.up('Control');}
+    await expect(panelEditor.getByRole('button',{name:'Snap to grid',exact:true})).toHaveAttribute('aria-pressed','true');
     const widgetClickBox=await draggableWidget.locator('.edit-hit').boundingBox();
     await page.mouse.move(widgetClickBox.x+12,widgetClickBox.y+12);await page.mouse.down();await expect(panelProperties).toHaveCount(0);
     await page.mouse.up();await expect(panelProperties).toBeVisible();await expect(panelEditor.locator('.widget.selected')).toHaveCount(1);
