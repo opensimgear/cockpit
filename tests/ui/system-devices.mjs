@@ -579,6 +579,15 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await panelLibrary.getByText('Screen size',{exact:true}).click();
     await expect(panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true})).toBeVisible();
     await expect(panelLibrary.getByRole('combobox',{name:'Companion screen',exact:true})).toBeVisible();
+    const marginInput=panelLibrary.getByRole('spinbutton',{name:'Margin (px)',exact:true});
+    await marginInput.fill('20');await marginInput.press('Tab');
+    assert.deepEqual(await panelEditor.locator('.safe-area').evaluate(node=>({left:node.style.left,right:node.style.right,top:node.style.top,bottom:node.style.bottom})),{left:'1.5625%',right:'1.5625%',top:'2.5%',bottom:'2.5%'});
+    const screenWidth=panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true});
+    await screenWidth.fill('1600');await screenWidth.press('Tab');await expect(marginInput).toHaveValue('20');
+    await expect.poll(()=>panelEditor.locator('.safe-area').evaluate(node=>node.style.left)).toBe('1.25%');
+    await marginInput.fill('9999');await marginInput.press('Tab');await expect(marginInput).toHaveValue('20');
+    await screenWidth.fill('1280');await screenWidth.press('Tab');
+    await marginInput.fill('0');await marginInput.press('Tab');
     await panelLibrary.getByText('Screen size',{exact:true}).click();
     await expect(panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true})).not.toBeVisible();
     await expect(panelTitleActions.getByRole('button',{name:'Export panel',exact:true})).toBeVisible();

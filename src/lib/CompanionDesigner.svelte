@@ -63,6 +63,8 @@
   const activeViewportOccupied = $derived(document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(activeViewport.bounds, w.bounds)));
   const usableWidth = $derived(viewport.width * (1 - (viewport.safeInsets?.left ?? 0) - (viewport.safeInsets?.right ?? 0)));
   const usableHeight = $derived(viewport.height * (1 - (viewport.safeInsets?.top ?? 0) - (viewport.safeInsets?.bottom ?? 0)));
+  const margin = $derived(Math.round((viewport.safeInsets?.left ?? 0) * viewport.width));
+  const maxMargin = $derived(Math.ceil(Math.min(viewport.width, viewport.height) / 4) - 1);
   const activeAssets = $derived(assets.filter(payload => document.ui.assets.some(a => a.id === payload.assetId)));
   const imageAssets = $derived(Object.fromEntries(activeAssets.map(payload => [payload.assetId, `data:${document.ui.assets.find(a => a.id === payload.assetId)?.mime};base64,${payload.base64}`])));
   const currentPublications = $derived(library.drafts.flatMap(d => publications[d.id]?.slice(-1) ?? []));
@@ -269,7 +271,15 @@
     patch({ config } as Partial<DesignerWidget>); select(selected);
   }
   function setViewport(width: number, height: number) {
-    command({ type: 'set-viewport', ...viewport, width, height });
+    const insets = viewport.safeInsets;
+    const safeInsets = insets ? { top: insets.top * viewport.height / height, bottom: insets.bottom * viewport.height / height,
+      left: insets.left * viewport.width / width, right: insets.right * viewport.width / width } : undefined;
+    command({ type: 'set-viewport', ...viewport, width, height, ...(safeInsets ? { safeInsets } : {}) });
+  }
+  function setMargin(value: number) {
+    if (!Number.isInteger(value) || value < 0 || value > maxMargin) { error = `Margin must be between 0 and ${maxMargin} pixels.`; return; }
+    command({ type: 'set-viewport', ...viewport, safeInsets: { top: value / viewport.height, bottom: value / viewport.height,
+      left: value / viewport.width, right: value / viewport.width } });
   }
   function bindControl(controlId: string, value: string) {
     if (!value) { command({ type: 'unbind', controlId }); return; }
@@ -363,7 +373,8 @@
         <label>Screen width<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.width} onchange={e => { setViewport(e.currentTarget.valueAsNumber, viewport.height); e.currentTarget.value=String(viewport.width); }} /></label>
         <label>Screen height<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.height} onchange={e => { setViewport(viewport.width, e.currentTarget.valueAsNumber); e.currentTarget.value=String(viewport.height); }} /></label>
         <button onclick={() => setViewport(viewport.height, viewport.width)}><Icon name="refresh" size={16} />Rotate</button>
-        <label>Safe area<select value={viewport.safeInsets?.top ? 'inset' : 'none'} onchange={e => command({ type: 'set-viewport', ...viewport, safeInsets: e.currentTarget.value === 'inset' ? { top: .04, right: .02, bottom: .04, left: .02 } : { top: 0, right: 0, bottom: 0, left: 0 } })}><option value="none">Full screen</option><option value="inset">Phone inset</option></select></label>
+        <label>Margin (px)<input type="number" min="0" max={maxMargin} step="1" value={margin} onchange={e => { setMargin(e.currentTarget.valueAsNumber); e.currentTarget.value=String(margin); }}/></label>
+        <p class="hint">Applies equally to all four sides. Use 0 for the full screen.</p>
       </div></details>
     </aside>
     <div class="panel-canvas-workspace">
