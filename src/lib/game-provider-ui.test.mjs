@@ -31,7 +31,6 @@ async function component(name) {
   componentModules.set(name,exports.default);return exports.default;
 }
 const GamesPanel = await component('./GamesPanel.svelte');
-const IntegrationsPanel = await component('./IntegrationsPanel.svelte');
 const { supportedGames } = modules.get('./games');
 const { defaultProviderConnection } = modules.get('./game-provider-settings');
 const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup:{state:'setup-required',message:'Configure this provider',providerSetupRevision:`sha256:${'1'.repeat(64)}`,userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}},integrationContext:{status:'waiting-profile',message:'An active matching profile is required',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
@@ -51,12 +50,6 @@ test('telemetry-only game forms expose no simulator command or synthetic/process
     assert.ok(!html.includes('Command UDP port'));assert.ok(!html.includes('Aircraft module'));assert.ok(!html.includes('Synthetic test telemetry'));
     if(id.startsWith('x-plane')){assert.ok(html.includes('Simulator UDP port'));assert.ok(html.includes(`X-Plane ${id.slice(-2)}`));}
   }
-});
-test('provider resource index includes closed games and offers only owning-game settings links',()=>{
-  const html=render(IntegrationsPanel,{props:{setups:supportedGames.map(g=>game(g.id)),openGameSettings:noRequest}}).body;
-  for(const g of supportedGames)assert.ok(html.includes(`href="#games/${g.id}/integration"`));
-  assert.ok(html.includes('Resources remain available to author while a game is closed'));
-  assert.ok(!html.includes('<input'));assert.ok(!html.includes('<select'));assert.ok(!html.includes('Start integration'));
 });
 test('App exposes one profile authoring path and retains only a previously opened Profiles editor during game settings',async()=>{
   const source=await readFile(new URL('../App.svelte',import.meta.url),'utf8');

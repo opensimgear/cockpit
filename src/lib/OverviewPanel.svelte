@@ -6,10 +6,10 @@
   import { DEFAULT_PROFILE_ID, type DeepReadonly, type ProfileSummary } from './profiles';
   import type { RuntimeControlState } from './profile-runtime-controller';
 
-  let { games, profileState, profiles = [], gateways, onlineDevices, totalDevices, inventoryError, openGames, openProfiles, openIntegrations, openDevices }: {
+  let { games, profileState, profiles = [], gateways, onlineDevices, totalDevices, inventoryError, openGames, openProfiles, openDevices }: {
     games?: GamesState; profileState: DeepReadonly<RuntimeControlState>; profiles?: DeepReadonly<ProfileSummary[]>;
     gateways: number; onlineDevices: number; totalDevices: number; inventoryError: string;
-    openGames: () => void; openProfiles: () => void; openIntegrations: () => void; openDevices: () => void;
+    openGames: () => void; openProfiles: () => void; openDevices: () => void;
   } = $props();
   const native = $derived(profileState.stale ? null : profileState.status);
   const snapshot = $derived(native?.appliedSnapshot);
@@ -47,7 +47,7 @@
     <strong class="overview-value">{contextLabel}</strong>
     <p>{selectedContext?.integrationContext?.message ?? 'Each game owns its provider setup. Applied profile inspection shows the actual observed samples.'}</p>
     <p>Context readiness does not confirm fresh telemetry or delivered output.</p>
-    <button class="text-button" onclick={openIntegrations}>Open game settings <Icon name="chevron" size={13} /></button>
+    <button class="text-button" onclick={openGames}>Open games <Icon name="chevron" size={13} /></button>
   </section>
   <section class="panel overview-card">
     <div class="overview-label"><Icon name="devices" size={18} /><h2>Connected hardware</h2></div>

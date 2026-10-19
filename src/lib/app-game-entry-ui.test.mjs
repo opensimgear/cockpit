@@ -57,6 +57,7 @@ async function appGames(selectedGameId=''){
 test('actual App Games tiles expose unified launch without injecting hardware targets or configuration readers',async()=>{
   const{body,props,source}=await appGames();
   assert.match(body,/aria-label="Games"/);assert.match(body,/DCS World/);assert.match(body,/aria-label="Launch DCS World"/);assert.match(body,/Unified profile selection/);
+  assert.doesNotMatch(body,/>Integrations</);
   assert.equal('targets' in props,false);assert.equal('readConfig' in props,false);assert.equal(typeof props.request,'function');
   assert.ok(!source.includes('readGameConfig'));
   const invocation=source.split('\n').find(line=>line.includes('<GamesPanel '));assert.ok(invocation);assert.ok(!/\b(?:targets|readConfig)=/.test(invocation));
