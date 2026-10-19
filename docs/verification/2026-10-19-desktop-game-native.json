@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "feature": "97 keyboard and mouse output",
+  "result": "passed",
+  "sourceRevision": "d711f14",
+  "testHarnessRevision": "8220ce8",
+  "nativeExecutableSha256": "c6d3b0b0affd5981d233915938f93e9280253ff918fe5104e2edf50582d85497",
+  "test": {
+    "command": "OSG_DESKTOP_GAME_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-game-native.mjs",
+    "tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "elapsedSecondsApprox": 16.1
+  },
+  "actualNativeCockpit": true,
+  "injected": true,
+  "virtualControllers": 0,
+  "productionQualified": false,
+  "checks": [
+    "Manual saved profile launches the installed Steam game and binds its exact PID/executable/creation identity into the owned desktop journal",
+    "Actual foreground game and a real authenticated WSS press produce one acknowledged native Right Arrow key-down; game response remains unmeasured",
+    "Focus away releases owned key; returning while held and repeated true stay disarmed until a new false then true",
+    "Saving draft Left Arrow increments revision while the applied owner, snapshot and native Right Arrow action remain unchanged",
+    "Native Stop while the companion button is held clears run ownership and all native held/possible-held state without uncertainty"
+  ],
+  "actualGame": "assetto-corsa-rally",
+  "actualSteamAppId": "3917090",
+  "actualLaunchRequested": true,
+  "observedGameBehavior": false,
+  "measurement": "Native process/foreground identity, typed ownership and SendInput counts; game consumption and displayed response are not measured.",
+  "launch": {
+    "request": "profile_game_launch(assetto-corsa-rally)",
+    "state": "started",
+    "manualSavedProfile": true,
+    "exactProcessIdentityBoundToJournal": true,
+    "exactGameForegroundVerified": true,
+    "processIdentity": {
+      "pid": "<task-launched-game-process>",
+      "executable": "<installed-game-executable>",
+      "created": "<exact-process-creation>"
+    },
+    "noGameSettingsChanged": true
+  },
+  "nativeHold": {
+    "physicalUsage": 79,
+    "action": "Right Arrow key-hold",
+    "appliedRunGeneration": 10,
+    "appliedRevision": 1,
+    "deliverySequence": "2",
+    "operationId": "2",
+    "atUs": "2377362400",
+    "workerSequence": "9",
+    "attempted": 1,
+    "confirmed": 1,
+    "uncertain": false
+  },
+  "focusReturn": {
+    "paused": {
+      "state": "paused",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2377314580",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "receiverObservedRightArrowUps": [
+      {
+        "message": 257,
+        "scanCode": 77,
+        "extended": 1,
+        "atUs": "135219734000"
+      }
+    ],
+    "returnedHeld": {
+      "state": "waiting",
+      "waitingNeutral": [
+        "route-key"
+      ],
+      "focusBoundaryUs": "2377491901",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "repeatedTrue": {
+      "state": "waiting",
+      "waitingNeutral": [
+        "route-key"
+      ],
+      "focusBoundaryUs": "2377491901",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "freshNeutralThenPress": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2377491901",
+      "held": [
+        {
+          "key": 79,
+          "kind": "key"
+        }
+      ],
+      "possibleHeld": [
+        {
+          "key": 79,
+          "kind": "key"
+        }
+      ],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "noAutomaticReplay": true
+  },
+  "immutableApply": {
+    "laterSavedRevision": 2,
+    "laterSavedPhysicalUsage": 80,
+    "appliedOwnerAndSnapshotUnchanged": true,
+    "appliedRevision": 1,
+    "nativePhysicalUsageStill": 79,
+    "confirmedHold": {
+      "deliverySequence": "6",
+      "operationId": "6",
+      "atUs": "2378045887",
+      "workerSequence": "40",
+      "attempted": 1,
+      "confirmed": 1
+    }
+  },
+  "cleanup": {
+    "profileState": "stopped",
+    "stoppedWhileSourceHeld": true,
+    "ledger": {
+      "phase": "stopped",
+      "held": [],
+      "possibleHeld": [],
+      "inFlight": null,
+      "owners": [],
+      "runs": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "gameState": "closed",
+    "gameCloseMethod": "WM_CLOSE to visible windows of the exact newly launched process; no forced termination",
+    "forcedGameTermination": false,
+    "remainingGameProcesses": [],
+    "nativeInputWorkers": [],
+    "receiverExitCode": 0,
+    "desktopPreferencesAndListenerRestored": true,
+    "selection": "Stopped with Manual pinned to the test profile; no automatic reactivation was requested.",
+    "errors": []
+  },
+  "limits": [
+    "Actual launched-process identity, foreground scope and native submission were verified; game input consumption and displayed response were not measured.",
+    "No physical controller, elevated-target, lock/sleep or installed-package qualification.",
+    "No native polling interval or end-to-end latency measurement; production qualification remains closed."
+  ],
+  "localRawArtifacts": [
+    ".research/desktop-game-native/evidence.json",
+    ".research/desktop-game-native/wrapper-cleanup.json"
+  ]
+}

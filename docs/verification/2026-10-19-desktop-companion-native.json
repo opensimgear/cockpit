@@ -1,0 +1,310 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "feature": "97 keyboard and mouse output",
+  "result": "passed",
+  "sourceRevision": "d711f14",
+  "testHarnessRevision": "8220ce8",
+  "nativeExecutableSha256": "c6d3b0b0affd5981d233915938f93e9280253ff918fe5104e2edf50582d85497",
+  "test": {
+    "command": "OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-companion-native.mjs",
+    "tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "elapsedSecondsApprox": 28.8
+  },
+  "actualNativeCockpit": true,
+  "injected": true,
+  "virtualControllers": 0,
+  "productionQualified": false,
+  "checks": [
+    "Actual WSS pairing, publication, neutral baseline and exact native contract/hash pins compile to desktopInput with zero virtual controllers",
+    "Real companion press/release produced receiver-observed key, chord and mouse edges through the applied ProfileSession",
+    "Two actual companion controls share native Left Ctrl; releasing the first route preserves Ctrl until its final owner releases",
+    "Twenty ordered encoder edges in one real WSS socket write produce ten serialized Enter taps with configured 30ms-down/30ms-up dwell; no measured dwell or native polling interval claim",
+    "One actual companion axis update sustains receiver-observed relative motion across explicit host ticks without further axis reports",
+    "Actual application focus loss clears native ownership and OS left-button state; the second eligible foreground receiver observes all four keyboard releases, without claiming a mouse-up recipient; focus return and repeated true stay disarmed until fresh false then true",
+    "Application focus loss cancels an upstream native Macro: its old later press never reaches desktop after fresh neutral and another unchanged false; a fresh press starts a new complete KeyB macro",
+    "Companion heartbeat loss and native Stop cancel owned contributions without a virtual target"
+  ],
+  "path": "Authenticated pinned-CA WSS peer -> applied native ProfileSession -> same-executable worker -> two receive-only Windows processes",
+  "appliedRunGeneration": 9,
+  "observedActions": {
+    "keyHold": "Right Arrow",
+    "chord": [
+      "Left Ctrl",
+      "Left Shift",
+      "Left Arrow"
+    ],
+    "sharedModifier": "Left Ctrl",
+    "mouseHold": "MouseLeft",
+    "encoderEnterTaps": {
+      "downs": 10,
+      "ups": 10,
+      "orderedWssFramesInOneWrite": 20,
+      "configuredDownMs": 30,
+      "configuredUpMs": 30
+    },
+    "markedPointerMessages": 89,
+    "stationaryDeflectionContinuesWithoutNewReport": true
+  },
+  "focusLoss": {
+    "backend": {
+      "state": "paused",
+      "waitingNeutral": [],
+      "focusBoundaryUs": null,
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "secondReceiverKeyReleases": [
+      {
+        "message": 257,
+        "scanCode": 75,
+        "extended": 1,
+        "atUs": "135164125000"
+      },
+      {
+        "message": 257,
+        "scanCode": 77,
+        "extended": 1,
+        "atUs": "135164125000"
+      },
+      {
+        "message": 257,
+        "scanCode": 42,
+        "extended": 0,
+        "atUs": "135164125000"
+      },
+      {
+        "message": 257,
+        "scanCode": 29,
+        "extended": 0,
+        "atUs": "135164125000"
+      }
+    ],
+    "secondReceiverObservedMouseUp": false,
+    "mouseUpRecipientQualified": false,
+    "boundary": "Fresh eligible-foreground OS VK_LBUTTON high-bit state changed from down to up with unswapped buttons; no focus-loss client mouse-up recipient claim",
+    "freshOsMouseState": {
+      "observer": "Fresh receiver-local OS VK_LBUTTON high-bit observation with unswapped buttons and unchanged eligible foreground",
+      "sequencesAreReceiverLocal": true,
+      "held": {
+        "receiver": "<receiver-A>",
+        "sequence": "99",
+        "atUs": "135164093000",
+        "available": true,
+        "leftButtonDown": true,
+        "swapButtons": false,
+        "foregroundBefore": "<receiver-A-window>",
+        "foregroundAfter": "<receiver-A-window>"
+      },
+      "released": {
+        "receiver": "<receiver-B>",
+        "sequence": "98",
+        "atUs": "135164218000",
+        "available": true,
+        "leftButtonDown": false,
+        "swapButtons": false,
+        "foregroundBefore": "<receiver-B-window>",
+        "foregroundAfter": "<receiver-B-window>"
+      }
+    },
+    "priorStrictMouseUpRecipientAssertion": "Failed both before and after cooperative focus changes; the passing boundary does not claim a focus-loss MouseUp message recipient.",
+    "normalInScopeMousePressReleaseMessageAssertionsUnchanged": true
+  },
+  "focusReturn": {
+    "returnedHeld": {
+      "state": "waiting",
+      "waitingNeutral": [
+        "encoder-tap",
+        "pointer-output",
+        "route-chord",
+        "route-key",
+        "route-macro",
+        "route-mouse",
+        "shared"
+      ],
+      "focusBoundaryUs": "2321948993",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "repeatedTrue": {
+      "state": "waiting",
+      "waitingNeutral": [
+        "route-chord",
+        "route-key",
+        "route-mouse"
+      ],
+      "focusBoundaryUs": "2321948993",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "freshNeutral": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2321948993",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "freshNeutralThenPressProducesNewKeyboardAndMouseEdges": true,
+    "noOutOfScopeNativePress": true
+  },
+  "macroCancellation": {
+    "key": {
+      "kind": "key",
+      "key": 5
+    },
+    "configuredSteps": [
+      {
+        "afterUs": 0,
+        "pressed": true
+      },
+      {
+        "afterUs": 1500000,
+        "pressed": false
+      },
+      {
+        "afterUs": 6000000,
+        "pressed": true
+      },
+      {
+        "afterUs": 7000000,
+        "pressed": false
+      }
+    ],
+    "paused": {
+      "state": "paused",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2321948993",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "returned": {
+      "state": "waiting",
+      "waitingNeutral": [
+        "encoder-tap",
+        "pointer-output",
+        "route-chord",
+        "route-key",
+        "route-macro",
+        "route-mouse",
+        "shared"
+      ],
+      "focusBoundaryUs": "2324731540",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "freshNeutral": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2324731540",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "unchangedNeutral": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2324731540",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "oldDeadlinePassedAtUs": "2330525507",
+    "originalGlobalMacroLaterPressObserved": true,
+    "cancelled": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2324731540",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "oldNativeMacroDidNotResume": true,
+    "newMacroPress": {
+      "atUs": "2330666652",
+      "workerSequence": "1601",
+      "attempted": 1,
+      "confirmed": 1
+    },
+    "newMacroCompleteAtUs": "2338382874",
+    "newMacroComplete": {
+      "state": "active",
+      "waitingNeutral": [],
+      "focusBoundaryUs": "2324731540",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    }
+  },
+  "sourceLeaseLoss": {
+    "mode": "Paused companion heartbeats while native holds and pointer motion were active",
+    "after": {
+      "state": "waiting",
+      "waitingNeutral": [
+        "encoder-tap",
+        "pointer-output",
+        "route-chord",
+        "route-key",
+        "route-macro",
+        "route-mouse",
+        "shared"
+      ],
+      "focusBoundaryUs": "2324731540",
+      "held": [],
+      "possibleHeld": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "pointerMotionStopped": true
+  },
+  "cleanup": {
+    "profileState": "stopped",
+    "ledger": {
+      "phase": "stopped",
+      "held": [],
+      "possibleHeld": [],
+      "inFlight": null,
+      "owners": [],
+      "runs": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    },
+    "nativeInputWorkers": [],
+    "receiverExitCodes": [
+      0,
+      0
+    ],
+    "needsRootCleanup": false,
+    "exactDesktopPreferenceBytesRestored": true,
+    "listenerEnablementRestored": true,
+    "testProfileRetainedStopped": true,
+    "errors": []
+  },
+  "limits": [
+    "The focus-loss MouseUp client-message recipient remains unqualified; the new observer proves OS left-button release and all four keyboard releases.",
+    "No physical-controller, elevated-target, lock/sleep or installed-package acceptance.",
+    "Receiver and input-send clocks do not establish end-to-end latency or polling/dwell measurements.",
+    "Production qualification remains closed."
+  ],
+  "localRawArtifacts": [
+    ".research/desktop-companion-native/evidence.json",
+    ".research/desktop-companion-native/process-cleanup.json"
+  ]
+}

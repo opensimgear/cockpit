@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "feature": "97 keyboard and mouse output",
+  "result": "passed",
+  "test": {
+    "command": "OSG_DESKTOP_OWNERSHIP_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-ownership-native.mjs",
+    "tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "elapsedSecondsApprox": 16.3
+  },
+  "sourceRevision": "d711f14",
+  "testHarnessRevision": "8220ce8",
+  "nativeExecutableSha256": "c6d3b0b0affd5981d233915938f93e9280253ff918fe5104e2edf50582d85497",
+  "path": "Two independently authenticated pinned-CA WSS peers -> running native Cockpit -> one typed ProfileSession -> same-executable desktop worker -> one receive-only Windows process",
+  "actualNativeCockpit": true,
+  "actualWssPeers": 2,
+  "injected": true,
+  "virtualControllers": 0,
+  "productionQualified": false,
+  "checks": [
+    "Two independently authenticated WSS peers bind exact native source identities to two MouseLeft actions in one applied desktop-only profile",
+    "Shared MouseLeft has one down; A release, refused independent publication write and A WSS close preserve B; final B release has exactly one up",
+    "A new WSS/native provider generation rejects true before baseline and a held baseline, accepts a complete neutral baseline, then can share B without replacing B's session or native generation",
+    "After clean Stop only A receives a different immutable publication; B's session/generation stays exact until explicit Apply, then independent shared ownership and final release work again"
+  ],
+  "sourceLossMode": "Acknowledged authenticated WSS session close for A; its socket stays available for a new session. Abrupt socket termination and physical unplug were not exercised.",
+  "nativeMouseEvidence": {
+    "markedReceiverMessages": [
+      513,
+      514,
+      513,
+      514,
+      513,
+      514
+    ],
+    "mouseDowns": 3,
+    "mouseUps": 3,
+    "firstDownAck": {
+      "attempted": 1,
+      "confirmed": 1,
+      "uncertain": false
+    },
+    "sharedBHoldAck": {
+      "attempted": 0,
+      "confirmed": 0,
+      "collision": true
+    },
+    "AReleaseAndSessionClosePreserveBHeld": true,
+    "finalBReleaseProducesExactlyOneUpPerCycle": true
+  },
+  "sourceGenerations": {
+    "initialApplied": {
+      "A": 2,
+      "B": 2
+    },
+    "afterASessionReopen": {
+      "A": 3,
+      "B": 2
+    },
+    "afterStopAndFreshBaselines": {
+      "A": 4,
+      "B": 3
+    },
+    "afterStoppedAPublicationAssignment": {
+      "A": 5,
+      "B": 3
+    },
+    "afterExplicitRevision2Apply": {
+      "A": 6,
+      "B": 4
+    }
+  },
+  "generationProof": {
+    "newASessionId": true,
+    "newSessionWireGeneration": "1",
+    "pressBeforeBaselineAccepted": false,
+    "pressBeforeBaselineError": "Fresh neutral baseline required before input.",
+    "heldBaselineAccepted": false,
+    "heldBaselineError": "Baseline must contain every control at its declared fallback.",
+    "completeNeutralBaselineAccepted": true,
+    "neutralBaselineAckStage": "source-accepted",
+    "neutralBaselineNativeSubmission": false,
+    "actualNewAHeldProducer": {
+      "dependencies": [
+        {
+          "endpoint": {
+            "nodeId": "panel-a",
+            "portId": "button"
+          },
+          "epoch": "7",
+          "generation": "3"
+        }
+      ],
+      "nodeId": "panel-a",
+      "run": {
+        "generation": "11",
+        "session": "<native-run-session>"
+      }
+    },
+    "BSourceSessionAndNativeIdentityUnchanged": true,
+    "BFullHeldProducerUnchanged": true,
+    "unchangedBProducer": {
+      "dependencies": [
+        {
+          "endpoint": {
+            "nodeId": "panel-b",
+            "portId": "button"
+          },
+          "epoch": "2",
+          "generation": "2"
+        }
+      ],
+      "nodeId": "panel-b",
+      "run": {
+        "generation": "11",
+        "session": "<native-run-session>"
+      }
+    },
+    "allHeldProducersPinnedToAppliedRunAndExactSourceDependency": true
+  },
+  "publicationReplacement": {
+    "whileAppliedAccepted": false,
+    "whileAppliedRefusal": "The unified profile session owns this runtime state. Stop or recover it before making independent changes.",
+    "refusalPreservedBothHoldsWithoutMouseEdge": true,
+    "replacementAdmittedOnlyAfterCleanStop": true,
+    "onlyAImmutablePublicationChanged": true,
+    "BSessionNativeGenerationAndPublicationUnchangedDuringAssignment": true,
+    "explicitSavedRevisionApplied": 2,
+    "appliedRunGenerationBefore": 11,
+    "appliedRunGenerationAfter": 12,
+    "BFullHeldProducerUnchangedAcrossARejoinAndLoss": true
+  },
+  "receiverPositioning": {
+    "noNativeHoldsBeforeOrDuringCentering": true,
+    "handshakes": [
+      {
+        "stage": "initial",
+        "previousAcknowledgement": 0,
+        "acknowledgement": 1,
+        "clientCursorInside": true,
+        "exactNativeForegroundIdentity": true,
+        "method": "already-foreground"
+      },
+      {
+        "stage": "initialApplied",
+        "previousAcknowledgement": 1,
+        "acknowledgement": 2,
+        "clientCursorInside": true,
+        "exactNativeForegroundIdentity": true,
+        "method": "already-foreground"
+      },
+      {
+        "stage": "beforePublicationApply",
+        "previousAcknowledgement": 2,
+        "acknowledgement": 3,
+        "clientCursorInside": true,
+        "exactNativeForegroundIdentity": true,
+        "method": "already-foreground"
+      },
+      {
+        "stage": "publicationApplied",
+        "previousAcknowledgement": 3,
+        "acknowledgement": 4,
+        "clientCursorInside": true,
+        "exactNativeForegroundIdentity": true,
+        "method": "already-foreground"
+      }
+    ],
+    "cooperativeTwoReceiverHandoffExercisedByThisRun": false
+  },
+  "cleanup": {
+    "profileState": "stopped",
+    "appliedOwner": null,
+    "appliedSnapshot": null,
+    "backendPhase": "stopped",
+    "held": [],
+    "possibleHeld": [],
+    "inFlight": null,
+    "owners": [],
+    "runs": [],
+    "cleanupComplete": true,
+    "uncertain": false,
+    "nativeInputWorkers": [],
+    "receiverExitCode": 0,
+    "receiverRetainedForRootCleanup": false,
+    "needsRootCleanup": false,
+    "deletedOnlyTestProfileRevision": 2,
+    "previousManualSelectionRestoredWithoutActivation": true,
+    "previousListenerEnablementRestored": true,
+    "exactSavedDesktopAndActivationPreferenceBytesRestoredByWrapper": true,
+    "nativeRestoredPreferenceStatusAssertionsPassed": true,
+    "errors": []
+  },
+  "limits": [
+    "Debug opt-in Windows acceptance only; production qualification remains closed.",
+    "No physical controller or physical keyboard overlap was exercised.",
+    "No game behavior, elevated-target, desktop lock/sleep or installed-package qualification.",
+    "No native polling interval, dwell or end-to-end latency measurement."
+  ],
+  "localRawArtifacts": [
+    ".research/desktop-ownership-native/evidence.json",
+    ".research/desktop-ownership-native/wrapper-cleanup.json"
+  ]
+}
