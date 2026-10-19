@@ -13,9 +13,11 @@
   } = $props();
 
   const graph = $derived(systemTopology(components, context));
-  const ports = $derived([...new Map(graph.edges.flatMap(edge => [edge.start, edge.end].map(point => [
+  const ports = $derived([...new Map([...graph.edges.flatMap(edge => [edge.start, edge.end].map(point => [
     `${point.x}:${point.y}:${edge.connection.transport}`, { ...point, label: edge.label, transport: edge.connection.transport },
-  ] as const))).values()]);
+  ] as const)), ...graph.rows.filter(row => row.path).map(row => [
+    `${row.x}:${row.busY}:${row.transport}`, { x: row.x, y: row.busY, transport: row.transport, label: row.transport === 'software' ? 'Software' : row.transport === 'unknown' ? 'Unknown transport' : row.transport.toUpperCase() },
+  ] as const)]).values()]);
   const protocolIcons = { usb: 'usb', can: 'chip', network: 'network', bluetooth: 'bluetooth', software: 'command', unknown: 'help' };
   const geometry = $derived(graph.nodes.map(node => `${node.component.id}:${node.x}:${node.y}`).join('|') + graph.edges.map(edge => edge.connection.id).join('|'));
   let viewport: HTMLDivElement;
@@ -83,7 +85,7 @@
 
 <section class="system-topology" aria-label="System topology">
   <div class="topology-heading">
-    <div><strong>Current system connections</strong><span>{components.length} components · {graph.edges.length} connections{graph.nodes.some(node => node.context) ? ' · upstream context included' : ''}</span></div>
+    <div><strong>Current system connections</strong><span>{components.length} components · {graph.connectionCount} current connections{graph.nodes.some(node => node.context) ? ' · upstream context included' : ''}</span></div>
     <div class="topology-tools" aria-label="Topology view controls">
       <button type="button" onclick={() => zoom(0.8)} aria-label="Zoom out" title="Zoom out">−</button>
       <span aria-live="off">{Math.round(view.zoom * 100)}%</span>
@@ -99,7 +101,10 @@
   <div class="topology-viewport" class:dragging bind:this={viewport} role="region" aria-label="Connection graph. Drag background or use arrow keys to pan; scroll or plus and minus to zoom; Home to fit. Tab to select a component." tabindex="0" onwheel={wheel} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onlostpointercapture={pointerUp} onkeydown={keyboard}>
     <div class="topology-world" style:width={`${graph.width}px`} style:height={`${graph.height}px`} style:transform={`translate(${view.x}px, ${view.y}px) scale(${view.zoom})`}>
       {#if graph.offline}<div class="offline-zone" style:left={`${graph.offline.x}px`} style:top={`${graph.offline.y}px`} style:width={`${graph.offline.width}px`} style:height={`${graph.offline.height}px`}><strong>Disconnected <span>{graph.offline.count}</span></strong></div>{/if}
+      {#each graph.rows as row (row.id)}<div class="bus-label" data-bus-id={row.id} title={row.label} style:left={`${row.x + 48}px`} style:top={`${row.y}px`} style:width={`${row.width - 48}px`}><Icon name={protocolIcons[row.transport]} size={14} /><strong>{row.label}</strong><span>{row.count} {row.count === 1 ? 'device' : 'devices'}</span></div>{/each}
       <svg width={graph.width} height={graph.height} aria-hidden="true" class="topology-edges">
+        <path class="host-trunk" d={graph.trunk} />
+        {#each graph.rows.filter(row => row.path) as row (row.id)}<g data-bus-row={row.id} class:software={row.transport === 'software'}><path d={row.anchor} /><path d={row.path} /></g>{/each}
         {#each graph.edges as edge (edge.connection.id)}
           <g data-from={edge.connection.from} data-to={edge.connection.to} class:software={edge.connection.transport === 'software'} class:unknown={edge.connection.transport === 'unknown'}>
             <path d={edge.path} />
@@ -113,13 +118,13 @@
         <button type="button" class="topology-node" data-component-id={component.id} class:selected={selectedId === component.id} class:context={node.context} class:offline={component.presence !== 'connected'} style:left={`${node.x}px`} style:top={`${node.y}px`} style:width={`${TOPOLOGY_NODE_WIDTH}px`} style:height={`${node.height}px`} aria-pressed={selectedId === component.id} aria-label={`${component.name}, ${kind(component.type)}, ${state}${node.context ? ', connection context' : ''}`} onclick={() => onselect(component.id)} onfocus={event => { if (event.currentTarget.matches(':focus-visible')) reveal(component.id); }} title={`${component.name}\n${component.role}\n${state}${component.diagnostics.length ? '\n' + component.diagnostics.join('\n') : ''}`}>
           <span class="node-icon"><Icon name={component.type === 'companion' ? 'mobile' : systemDeviceIcon(component)} size={18} /></span>
           <span class="node-copy"><span class="node-kind">{kind(component.type)}{node.context ? ' · Context' : ''}</span><strong>{component.name}</strong><span class="node-status" title={state}><i class:connected={component.presence === 'connected'}></i><span>{state}</span></span></span>
-          <span class="node-role">{component.role || 'Connection details unknown'}{component.diagnostics.length ? ` · ${component.diagnostics.length} diagnostic${component.diagnostics.length === 1 ? '' : 's'}` : ''}</span>
+          <span class="node-role">{component.role || 'Connection details unknown'}{node.alternateConnections ? ` · +${node.alternateConnections} other route${node.alternateConnections === 1 ? '' : 's'}` : ''}{component.diagnostics.length ? ` · ${component.diagnostics.length} diagnostic${component.diagnostics.length === 1 ? '' : 's'}` : ''}</span>
         </button>
       {/each}
     </div>
     {#if components.length === 0}<p class="topology-empty">No components match the current filters.</p>{/if}
   </div>
-  <p class="topology-help">Select a device for details. Drag to pan · Scroll to zoom · Fit to show all. Disconnected devices are grouped on the right without connection lines.</p>
+  <p class="topology-help">One row per protocol; gateways have their own device rows. Select a device to inspect all routes. Drag to pan · Scroll to zoom · Fit to show all. Disconnected devices remain unwired on the right.</p>
 </section>
 
 <style>
@@ -139,6 +144,7 @@
   .topology-viewport.dragging { cursor: grabbing; user-select: none; }
   .topology-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   .topology-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  .bus-label {position:absolute;display:flex;align-items:center;gap:9px;height:24px;color:var(--soft);white-space:nowrap;overflow:hidden}.bus-label strong {font-size:12px;font-weight:550;overflow:hidden;text-overflow:ellipsis}.bus-label > span {font-size:10px;color:var(--muted);flex-shrink:0}
   .topology-edges { position: absolute; overflow: visible; pointer-events: none; }
   .topology-edges path { stroke: var(--muted); stroke-opacity: .55; stroke-width: 1.25; fill: none; stroke-linejoin: round; }
   .topology-edges .software path { stroke-dasharray: 3 4; }

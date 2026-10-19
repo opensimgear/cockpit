@@ -332,6 +332,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('.topology-edges text')).toHaveCount(0);
     await expect(graph.locator('.topology-viewport')).toHaveCSS('background-image', /radial-gradient/);
     await expect(graph.locator('.offline-zone')).toContainText('Disconnected');
+    await expect(graph.locator('[data-bus-id="host:usb"]')).toContainText('USB');
+    await expect(graph.locator(`[data-bus-id="gateway:${firstGateway}:can"]`)).toContainText('CAN');
     await expect(graph.locator('.topology-edges g[data-to="controller:remembered-wheel"]')).toHaveCount(0);
     const connector=graph.getByRole('img',{name:'USB connector',exact:true}).first();
     await connector.hover();await expect(connector.locator('.port-tooltip')).toHaveText('USB');await expect(connector.locator('.port-tooltip')).toBeVisible();

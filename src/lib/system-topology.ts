@@ -9,6 +9,7 @@ export interface TopologyNode {
   x: number;
   y: number;
   height: number;
+  alternateConnections: number;
 }
 
 export interface TopologyEdge {
@@ -19,6 +20,11 @@ export interface TopologyEdge {
   label: string;
   start: { x: number; y: number };
   end: { x: number; y: number };
+}
+
+export interface TopologyBusRow {
+  id: string; parentId: string | null; transport: SystemConnection['transport']; label: string;
+  x: number; y: number; busY: number; width: number; count: number; path: string; anchor: string;
 }
 
 export interface TopologyView { x: number; y: number; zoom: number }
@@ -37,82 +43,96 @@ export function topologyConnectionLabel(connection: SystemConnection): string {
   return connection.current ? kind : connection.observed === false ? `${kind} · Configured (unconfirmed)` : `${kind} · Last known`;
 }
 
-/** Only live links are drawn; disconnected devices form a separate unwired group. */
+/** Each device has one visual bus attachment. Additional observed routes remain in its details. */
 export function systemTopology(components: readonly SystemComponent[], context: readonly SystemComponent[] = components) {
-  const inventory = new Map([...context, ...components].map(c => [c.id, c]));
-  const matches = new Set(components.map(c => c.id)), visible = new Set(matches);
-  if (inventory.has('host'))
-    visible.add('host');
-  const connections = [...new Map([...inventory.values()].flatMap(c => c.connections).map(c => [c.id, c])).values()]
-    .filter(c => c.current && inventory.get(c.from)?.presence === 'connected' && inventory.get(c.to)?.presence === 'connected').sort((a, b) => a.id.localeCompare(b.id));
+  const inventory = new Map([...context, ...components].map(component => [component.id, component]));
+  const matches = new Set(components.map(component => component.id)), visible = new Set(matches);
+  if (inventory.has('host')) visible.add('host');
+  const live = [...new Map([...inventory.values()].flatMap(component => component.connections).map(connection => [connection.id, connection])).values()]
+    .filter(connection => connection.current && inventory.get(connection.from)?.presence === 'connected' && inventory.get(connection.to)?.presence === 'connected')
+    .sort((a, b) => a.id.localeCompare(b.id));
   for (let changed = true; changed;) {
     changed = false;
-    for (const c of connections)
-      if (visible.has(c.to) && !visible.has(c.from)) {
-        visible.add(c.from);
-        changed = true;
-      }
+    for (const connection of live) if (visible.has(connection.to) && !visible.has(connection.from)) { visible.add(connection.from); changed = true; }
   }
-  const shown = [...visible].map(id => inventory.get(id)).filter((c): c is SystemComponent => !!c).sort(compare);
-  const shownEdges = connections.filter(c => visible.has(c.from) && visible.has(c.to));
-  const connectionRank = (component: SystemComponent) => Math.min(6, ...(component.presence === 'connected' ? shownEdges.filter(edge => edge.to === component.id) : component.connections).map(edge => transportOrder[edge.transport]));
-  const byConnection = (a: SystemComponent, b: SystemComponent) => connectionRank(a) - connectionRank(b) || compare(a, b);
-  const offline = shown.filter(c => c.id !== 'host' && c.presence !== 'connected').sort(byConnection);
-  const active = shown.filter(c => !offline.includes(c));
-  const depth = new Map<string, number>(), queue: string[] = [];
-  if (visible.has('host')) {
-    depth.set('host', 0);
-    queue.push('host');
+  const shown = [...visible].map(id => inventory.get(id)).filter((component): component is SystemComponent => !!component).sort(compare);
+  const connections = live.filter(connection => visible.has(connection.from) && visible.has(connection.to));
+  const offline = shown.filter(component => component.id !== 'host' && component.presence !== 'connected');
+  const active = shown.filter(component => component.id !== 'host' && component.presence === 'connected');
+  const attachments = new Map<string, SystemConnection>();
+  const sourceRank = (id: string) => inventory.get(id)?.type === 'gateway' ? 0 : id === 'host' ? 1 : 2;
+  // Gateway routes take precedence over a second direct USB observation. Never duplicate a physical card.
+  for (const component of active) {
+    const candidates = connections.filter(connection => connection.to === component.id && connection.from !== component.id)
+      .sort((a, b) => sourceRank(a.from) - sourceRank(b.from) || transportOrder[a.transport] - transportOrder[b.transport] || a.id.localeCompare(b.id));
+    for (const candidate of candidates) {
+      const ancestors = new Set([component.id]);
+      let parent: string | undefined = candidate.from;
+      while (parent && !ancestors.has(parent)) { ancestors.add(parent); parent = attachments.get(parent)?.from; }
+      if (parent) continue;
+      attachments.set(component.id, candidate); break;
+    }
   }
-  for (let i = 0; i < queue.length; i++)
-    for (const c of shownEdges) {
-      if (c.from !== queue[i] || depth.has(c.to))
-        continue;
-      depth.set(c.to, depth.get(c.from)! + 1);
-      queue.push(c.to);
+  type Group = { id: string; parentId: string | null; transport: SystemConnection['transport']; components: SystemComponent[] };
+  const groups = new Map<string, Group>();
+  for (const component of active) {
+    const connection = attachments.get(component.id), transport = connection?.transport ?? 'unknown';    const parentId = connection ? inventory.get(connection.from)?.type === 'gateway' ? connection.from : inventory.has('host') ? 'host' : connection.from : null;
+    const id = `${parentId ?? 'unlinked'}:${transport}`;
+    if (!groups.has(id)) groups.set(id, { id, parentId, transport, components: [] });
+    groups.get(id)!.components.push(component);
+  }
+  const nodes: TopologyNode[] = [], rows: TopologyBusRow[] = [], placed = new Set<string>();
+  const positions = new Map<string, TopologyNode>();  const rowForComponent = new Map<string, TopologyBusRow>();
+  let top = 44;
+  const protocolName = (transport: SystemConnection['transport']) => transport === 'software' ? 'Software' : transport === 'unknown' ? 'Unknown transport' : transport.toUpperCase();
+  const childGroups = (parentId: string | null) => [...groups.values()].filter(group => group.parentId === parentId)
+    .sort((a, b) => transportOrder[a.transport] - transportOrder[b.transport] || a.id.localeCompare(b.id));
+  function place(group: Group) {
+    if (placed.has(group.id)) return;
+    placed.add(group.id);
+    const parent = group.parentId ? positions.get(group.parentId) : undefined;
+    const x = parent ? parent.x + TOPOLOGY_NODE_WIDTH / 2 : 318;
+    const y = top, busY = y + 42;
+    const members = [...group.components].sort(compare);
+    const row: TopologyBusRow = { id: group.id, parentId: group.parentId, transport: group.transport,
+      label: group.parentId && group.parentId !== 'host' ? `${protocolName(group.transport)} · ${inventory.get(group.parentId)!.name}` : group.parentId ? protocolName(group.transport) : 'No current connection',
+      x, y, busY, width: 48 + members.length * (TOPOLOGY_NODE_WIDTH + 24) - 24, count: members.length, path: '', anchor: '' };
+    members.forEach((component, index) => {
+      const node = { component, context: !matches.has(component.id), x: x + 48 + index * (TOPOLOGY_NODE_WIDTH + 24), y: y + 78, height: TOPOLOGY_NODE_HEIGHT,
+        alternateConnections: Math.max(0, connections.filter(connection => connection.to === component.id).length - (attachments.has(component.id) ? 1 : 0)) };
+      nodes.push(node); positions.set(component.id, node); rowForComponent.set(component.id, row);
+    });
+    if (group.parentId) {
+      const last = positions.get(members[members.length - 1].id)!;
+      row.path = `M ${x} ${busY} L ${last.x + TOPOLOGY_NODE_WIDTH / 2} ${busY}`;
+      if (parent) row.anchor = `M ${x} ${parent.y + parent.height} L ${x} ${busY}`;
     }
-  for (const c of active)
-    if (!depth.has(c.id))
-      depth.set(c.id, 1);
-  const groups = [...new Set(active.map(c => depth.get(c.id)!))].sort((a, b) => a - b).map(level => ({ level, components: active.filter(c => depth.get(c.id) === level).sort(byConnection) }));
-  const gap = 120, rowGap = 24, inset = 40;
-  const activeWidth = Math.max(1, groups.length) * (TOPOLOGY_NODE_WIDTH + gap) - gap;
-  const groupHeight = (count: number) => count * TOPOLOGY_NODE_HEIGHT + Math.max(0, count - 1) * rowGap;
-  const height = Math.max(200, ...groups.map(group => groupHeight(group.components.length)), offline.length * 120 + 44) + inset * 2;
-  const nodes: TopologyNode[] = [];
-  groups.forEach((group, column) => {
-    const top = (height - groupHeight(group.components.length)) / 2;
-    group.components.forEach((component, row) => nodes.push({ component, context: !matches.has(component.id), x: inset + column * (TOPOLOGY_NODE_WIDTH + gap), y: top + row * (TOPOLOGY_NODE_HEIGHT + rowGap), height: TOPOLOGY_NODE_HEIGHT }));
+    rows.push(row); top += TOPOLOGY_NODE_HEIGHT + 128;
+    for (const component of members) for (const children of childGroups(component.id)) place(children);
+  }
+  for (const group of [...childGroups('host'), ...childGroups(null)]) place(group);
+  // Incomplete or cyclic provider relationships remain inspectable, without inventing an attachment.
+  for (const group of groups.values()) place(group);
+  const host = shown.find(component => component.id === 'host');
+  const rootRows = rows.filter(row => row.parentId === 'host');
+  let trunk = '';
+  if (host) {
+    const center = rootRows.length ? (rootRows[0].busY + rootRows[rootRows.length - 1].busY) / 2 : 150;
+    nodes.unshift({ component: host, context: !matches.has(host.id), x: 40, y: center - TOPOLOGY_NODE_HEIGHT / 2, height: TOPOLOGY_NODE_HEIGHT, alternateConnections: 0 });
+    if (rootRows.length) trunk = `M ${40 + TOPOLOGY_NODE_WIDTH} ${center} L 318 ${center} M 318 ${rootRows[0].busY} L 318 ${rootRows[rootRows.length - 1].busY}`;
+  }
+  const activeRight = Math.max(40 + TOPOLOGY_NODE_WIDTH, ...nodes.map(node => node.x + TOPOLOGY_NODE_WIDTH));
+  const offlineX = activeRight + 96;
+  offline.sort((a, b) => Math.min(6, ...a.connections.map(connection => transportOrder[connection.transport])) - Math.min(6, ...b.connections.map(connection => transportOrder[connection.transport])) || compare(a, b));
+  offline.forEach((component, index) => nodes.push({ component, context: !matches.has(component.id), x: offlineX, y: 96 + index * 120, height: 100, alternateConnections: 0 }));
+  const edges: TopologyEdge[] = [...attachments.values()].map(connection => {
+    const node = positions.get(connection.to)!, row = rowForComponent.get(connection.to)!;
+    const start = { x: node.x + TOPOLOGY_NODE_WIDTH / 2, y: row.busY }, end = { x: start.x, y: node.y };
+    return { connection, start, end, x: end.x, y: end.y, path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, label: topologyConnectionLabel(connection) };
   });
-  const offlineX = inset + activeWidth + 96;
-  const offlineTop = (height - (offline.length * 120 + 44)) / 2;
-  offline.forEach((component, index) => nodes.push({ component, context: !matches.has(component.id), x: offlineX, y: offlineTop + 52 + index * 120, height: 100 }));
-  const positions = new Map(nodes.map(n => [n.component.id, n]));
-  const protocols = (id: string, outgoing: boolean) => [...new Set(shownEdges.filter(e => outgoing ? e.from === id : e.to === id).map(e => e.transport))].sort((a,b)=>transportOrder[a]-transportOrder[b]);
-  const portY = (node: TopologyNode, c: SystemConnection, outgoing: boolean) => {
-    const list = protocols(node.component.id, outgoing);
-    return node.y + node.height / 2 + (list.indexOf(c.transport) - (list.length - 1) / 2) * 24;
-  };
-  const edges: TopologyEdge[] = shownEdges.map(connection => {
-    const from = positions.get(connection.from)!, to = positions.get(connection.to)!, fromLevel = depth.get(connection.from)!, toLevel = depth.get(connection.to)!;
-    const start = { x: from.x + TOPOLOGY_NODE_WIDTH, y: portY(from, connection, true) };
-    const end = { x: to.x, y: portY(to, connection, false) };
-    const outgoing = protocols(from.component.id, true);
-    const offset = (outgoing.length - 1 - outgoing.indexOf(connection.transport)) * 10;
-    const exitX = start.x + 40 + offset, approachX = end.x - 24;
-    const nextLevel = groups[groups.findIndex(group => group.level === fromLevel) + 1]?.level;
-    let path: string;
-    if (toLevel === nextLevel) {
-      path = `M ${start.x} ${start.y} L ${exitX} ${start.y} L ${exitX} ${end.y} L ${end.x} ${end.y}`;
-    }
-    else {
-      const railY = 16 + offset;
-      path = `M ${start.x} ${start.y} L ${exitX} ${start.y} L ${exitX} ${railY} L ${approachX} ${railY} L ${approachX} ${end.y} L ${end.x} ${end.y}`;
-    }
-    return { connection, path, x: end.x, y: end.y, start, end, label: topologyConnectionLabel(connection) };
-  });
-  return { nodes, edges, offline: offline.length ? { x: offlineX - 16, y: offlineTop, width: TOPOLOGY_NODE_WIDTH + 32, height: offline.length * 120 + 60, count: offline.length } : null,
-    width: (offline.length ? offlineX + TOPOLOGY_NODE_WIDTH : inset + activeWidth) + inset, height };
+  return { nodes, edges, rows, trunk, connectionCount: connections.length,
+    offline: offline.length ? { x: offlineX - 16, y: 44, width: TOPOLOGY_NODE_WIDTH + 32, height: offline.length * 120 + 60, count: offline.length } : null,
+    width: (offline.length ? offlineX + TOPOLOGY_NODE_WIDTH : activeRight) + 40, height: Math.max(top + 24, offline.length * 120 + 120, 300) };
 }
 
 export function topologyFit(width: number, height: number, viewportWidth: number, viewportHeight: number): TopologyView {
@@ -124,7 +144,7 @@ export function topologyFit(width: number, height: number, viewportWidth: number
  * overview; keyboard focus and pan make every component reachable at this scale. */
 export function topologyInitialView(width: number, height: number, viewportWidth: number, viewportHeight: number): TopologyView {
   const fitted = topologyFit(width, height, viewportWidth, viewportHeight);
-  const zoom = Math.min(1, (Math.max(1, viewportWidth) - 48) / width, Math.max(0.65, fitted.zoom));
+  const zoom = Math.max(0.8, fitted.zoom);
   return { x: width * zoom <= viewportWidth ? (viewportWidth - width * zoom) / 2 : 24, y: height * zoom <= viewportHeight ? (viewportHeight - height * zoom) / 2 : 24, zoom };
 }
 
