@@ -41,6 +41,7 @@
   let propertiesOpen = $state(false);
   let selectedViewportId = $state('');
   let preview = $state(false);
+  let paletteDragging = $state(false);
   let controller: PreviewController | undefined;
   let unsubscribe: (() => void) | undefined;
   let previewSnapshot = $state.raw<PreviewSnapshot>();
@@ -181,6 +182,18 @@
   }
   function removeViewport(id: string) {
     if (command({ type:'remove-viewport',pageId:page.id,id })) { selectedViewportId='';select([]); }
+  }
+  function addPaletteWidget(kind:string,viewportId=activeViewport.id,point?:{x:number;y:number}) {
+    const preset=firmwareWidgetPresets.find(preset=>preset.kind===kind),region=regions.find(region=>region.id===viewportId);
+    if(!preset||!region||preview)return;
+    let bounds:Bounds|undefined;
+    if(point){
+      const width=region.bounds.width*.3,height=region.bounds.height*.25,grid=document.presentation.grid;
+      let x=point.x-width/2,y=point.y-height/2;
+      if(grid.snap){x=Math.round(x*grid.columns)/grid.columns;y=Math.round(y*grid.rows)/grid.rows;}
+      bounds={x:Math.max(region.bounds.x,Math.min(region.bounds.x+region.bounds.width-width,x)),y:Math.max(region.bounds.y,Math.min(region.bounds.y+region.bounds.height-height,y)),width,height};
+    }
+    if(command({type:'add-widget',kind:preset.kind,pageId:page.id,viewportId,...(bounds?{bounds}:{})}))select([document.presentation.widgets.at(-1)!.id]);
   }
   function editViewportName(id: string, label: string) {
     selectedViewportId=id;select([]);propertiesOpen=true;
@@ -443,7 +456,7 @@
       </div></details>
       <details class="editor-accordion"><summary>Widgets</summary><div class="accordion-content">
       <p class="hint">Add to {activeViewport.label}</p>
-      <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} onclick={() => { if (command({ type: 'add-widget', kind: preset.kind, pageId: page.id, viewportId: activeViewport.id })) select([document.presentation.widgets.at(-1)!.id]); }}>{preset.title}</button>{/each}</div>
+      <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} draggable={!preview} title="Click to add to the selected viewport, or drag into a viewport" ondragstart={event=>{if(!event.dataTransfer)return;event.dataTransfer.setData('application/x-osg-widget',preset.kind);event.dataTransfer.effectAllowed='copy';paletteDragging=true;select([]);}} ondragend={()=>paletteDragging=false} onclick={() => addPaletteWidget(preset.kind)}>{preset.title}</button>{/each}</div>
       </div></details>
       <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content">
 
@@ -490,8 +503,8 @@
         </div>
       </div>
       {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
-      <div class="panel-properties-layout">
-      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={propertiesOpen && !selected.length ? activeViewport.id : ''} onselectviewport={selectViewport} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
+      <div class="panel-properties-layout" class:palette-dragging={paletteDragging}>
+      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={propertiesOpen && !selected.length ? activeViewport.id : ''} onselectviewport={selectViewport} onwidgetdrop={addPaletteWidget} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
       {#if propertiesOpen}
     <aside class="properties-overlay" aria-label="Widget properties" transition:slideProperties><button class="properties-close" aria-label="Close properties" title="Close properties" onclick={()=>select([])}><Icon name="close" size={18}/></button><h3>Properties</h3>
       {#if widget}
@@ -551,6 +564,7 @@
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
   .action-tooltip{display:inline-flex}
+  .palette-dragging .properties-overlay{pointer-events:none}.palette button[draggable=true]{cursor:grab}.palette button[draggable=true]:active{cursor:grabbing}
   .leave-panel-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);max-width:460px;width:calc(100% - 40px);box-sizing:border-box;padding:26px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005;color:var(--text);margin:0}.leave-panel-dialog::backdrop{background:#0009}.leave-panel-dialog h2{font-size:14px}.leave-panel-dialog p{font-size:11px;color:var(--muted);line-height:1.8;margin:15px 0 23px}.leave-panel-dialog>div{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.leave-panel-dialog button{font-size:10px}
   .viewport-name-space{visibility:hidden}.viewport-row .viewport-name-button{position:absolute;left:9px;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 48px);padding:0;border:0;background:transparent}.viewport-name-button > span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewport-row.active .viewport-name-button{color:var(--accent)}.viewport-pencil{display:flex;opacity:0;color:var(--muted)}.viewport-row:hover .viewport-pencil,.viewport-row:focus-within .viewport-pencil{opacity:1}.viewport-name-input{width:100%;padding-right:36px}
   @media(hover:none){.viewport-pencil{opacity:1}}

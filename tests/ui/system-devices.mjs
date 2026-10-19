@@ -621,6 +621,23 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(viewportRows).toHaveCount(1);await expect(viewportRows.locator('.viewport-delete')).toHaveCount(0);
     await panelEditor.getByRole('button',{name:'Add viewport',exact:true}).click();await expect(viewportRows).toHaveCount(2);
     await expect(viewportRows.first().locator('.viewport-delete')).toBeDisabled();
+    await panelEditor.getByText('Widgets',{exact:true}).click();
+    const paletteButton=panelEditor.locator('.palette').getByRole('button',{name:'Button',exact:true});
+    await paletteButton.scrollIntoViewIfNeeded();
+    const paletteDragBox=await paletteButton.boundingBox();
+    await page.mouse.move(paletteDragBox.x+10,paletteDragBox.y+10);await page.mouse.down();await page.mouse.move(paletteDragBox.x+25,paletteDragBox.y+10,{steps:5});
+    await expect(panelProperties).toHaveCount(0);
+    const paletteTarget=await panelEditor.locator('.viewport-hit').last().boundingBox();
+    await page.mouse.move(paletteTarget.x+paletteTarget.width/2,paletteTarget.y+paletteTarget.height/2,{steps:10});
+    await page.mouse.move(paletteTarget.x+paletteTarget.width/2+1,paletteTarget.y+paletteTarget.height/2);
+    await expect(panelEditor.locator('.viewport-outline.drop-target')).toHaveCount(1);await page.mouse.up();await expect(panelEditor.locator('.widget')).toHaveCount(2);
+    const destinationBounds=await panelEditor.locator('.viewport-outline').last().evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));
+    async function assertLastWidgetInDestination(){const bounds=await panelEditor.locator('.widget').last().evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));assert.ok(bounds.x>=destinationBounds.x-.001&&bounds.y>=destinationBounds.y-.001&&bounds.x+bounds.width<=destinationBounds.x+destinationBounds.width+.001&&bounds.y+bounds.height<=destinationBounds.y+destinationBounds.height+.001);}
+    await assertLastWidgetInDestination();
+    await paletteButton.click();await expect(panelEditor.locator('.widget')).toHaveCount(3);await assertLastWidgetInDestination();
+    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(2);
+    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(1);
+    await panelEditor.getByText('Widgets',{exact:true}).click();
     const emptyViewportDelete=viewportRows.last().locator('.viewport-delete');
     await page.mouse.move(0,0);await expect(emptyViewportDelete).toHaveCSS('opacity','0');
     await viewportRows.last().hover();await expect(emptyViewportDelete).toHaveCSS('opacity','1');await emptyViewportDelete.click();
