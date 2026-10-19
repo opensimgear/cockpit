@@ -7,7 +7,8 @@
     "beforeDevCommand": "pnpm ui:dev",
     "beforeBuildCommand": "pnpm ui:build",
     "devUrl": "http://127.0.0.1:1420",
-    "frontendDist": "../dist"
+    "frontendDist": "../dist",
+    "additionalWatchFolders": ["../crates"]
   },
   "app": {
     "windows": [
