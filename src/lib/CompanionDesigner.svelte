@@ -464,7 +464,7 @@
         </li>{/each}</ul>
         <div class="accordion-add" title="Adding pages is a work in progress and is currently unavailable."><button class="action" disabled><Icon name="plus" size={16} />Add page</button></div>
       </div></details>
-      <details class="editor-accordion" open><summary>Viewports<button class="accordion-info" aria-label="About viewports" title="About viewports" popovertarget="viewport-help" onclick={e => e.stopPropagation()}><Icon name="info" size={16}/></button></summary><div class="accordion-content">
+      <details class="editor-accordion"><summary>Viewports<button class="accordion-info" aria-label="About viewports" title="About viewports" popovertarget="viewport-help" onclick={e => e.stopPropagation()}><Icon name="info" size={16}/></button></summary><div class="accordion-content">
       <div id="viewport-help" class="viewport-help" popover role="dialog" aria-label="Viewport help">
         <button class="help-close" aria-label="Close viewport help" popovertarget="viewport-help" popovertargetaction="hide"><Icon name="close" size={16}/></button>
         <h3>Viewports</h3>
@@ -479,7 +479,7 @@
       </div>{/each}</div>
       <div class="accordion-add"><button class="action" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={16} />Add viewport</button></div>
       </div></details>
-      <details class="editor-accordion"><summary>Widgets</summary><div class="accordion-content">
+      <details class="editor-accordion" open><summary>Widgets</summary><div class="accordion-content">
       <p class="hint">Add to {activeViewport.label}</p>
       <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} draggable={!preview} title="Click to add to the selected viewport, or drag into a viewport" ondragstart={event=>{if(!event.dataTransfer)return;event.dataTransfer.setData('application/x-osg-widget',preset.kind);event.dataTransfer.effectAllowed='copy';paletteDragging=true;select([]);}} ondragend={()=>paletteDragging=false} onclick={() => addPaletteWidget(preset.kind)}>{preset.title}</button>{/each}</div>
       </div></details>
