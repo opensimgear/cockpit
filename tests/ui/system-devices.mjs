@@ -611,6 +611,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelProperties).toHaveCount(0);await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
     const panelCanvasWidth=await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth);
     await expect(panelEditor.getByRole('complementary',{name:'Panel library',exact:true})).toHaveCSS('width','220px');
+    await panelEditor.locator('summary').filter({hasText:'Viewports'}).click();
+    await panelEditor.getByText('Widgets',{exact:true}).click();
     const viewportHelp=panelEditor.getByRole('dialog',{name:'Viewport help',exact:true});
     await expect(viewportHelp).not.toBeVisible();
     await panelEditor.getByRole('button',{name:'About viewports',exact:true}).click();await expect(viewportHelp).toBeVisible();
@@ -630,16 +632,23 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(viewportRows).toHaveCount(1);await expect(viewportRows.locator('.viewport-delete')).toHaveCount(0);
     await panelEditor.getByRole('button',{name:'Add viewport',exact:true}).click();await expect(viewportRows).toHaveCount(2);
     await expect(viewportRows.first().locator('.viewport-delete')).toBeDisabled();
-    await panelEditor.getByText('Widgets',{exact:true}).click();
+    if(!await panelEditor.locator('summary').filter({hasText:/^Widgets$/}).evaluate(node=>node.parentElement.open))await panelEditor.getByText('Widgets',{exact:true}).click();
     const paletteButton=panelEditor.locator('.palette').getByRole('button',{name:'Button',exact:true});
     await paletteButton.scrollIntoViewIfNeeded();
+    await paletteButton.hover();
     const paletteDragBox=await paletteButton.boundingBox();
     await page.mouse.move(paletteDragBox.x+10,paletteDragBox.y+10);await page.mouse.down();await page.mouse.move(paletteDragBox.x+25,paletteDragBox.y+10,{steps:5});
     await expect(panelProperties).toHaveCount(0);
     const paletteTarget=await panelEditor.locator('.viewport-hit').last().boundingBox();
     await page.mouse.move(paletteTarget.x+paletteTarget.width/2,paletteTarget.y+paletteTarget.height/2,{steps:10});
     await page.mouse.move(paletteTarget.x+paletteTarget.width/2+1,paletteTarget.y+paletteTarget.height/2);
-    await expect(panelEditor.locator('.viewport-outline.drop-target')).toHaveCount(1);await page.mouse.up();await expect(panelEditor.locator('.widget')).toHaveCount(2);
+    await expect(panelEditor.locator('.viewport-outline.drop-target')).toHaveCount(1);
+    const placementPreview=panelEditor.getByLabel('Button placement preview',{exact:true});
+    await expect(placementPreview).toBeVisible();
+    const expectedPlacement=await placementPreview.evaluate(node=>({left:node.style.left,top:node.style.top,width:node.style.width,height:node.style.height}));
+    await page.mouse.up();await expect(panelEditor.locator('.widget')).toHaveCount(2);
+    await expect(placementPreview).toHaveCount(0);
+    assert.deepEqual(await panelEditor.locator('.widget').last().evaluate(node=>({left:node.style.left,top:node.style.top,width:node.style.width,height:node.style.height})),expectedPlacement);
     const destinationBounds=await panelEditor.locator('.viewport-outline').last().evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));
     async function assertLastWidgetInDestination(){const bounds=await panelEditor.locator('.widget').last().evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));assert.ok(bounds.x>=destinationBounds.x-.001&&bounds.y>=destinationBounds.y-.001&&bounds.x+bounds.width<=destinationBounds.x+destinationBounds.width+.001&&bounds.y+bounds.height<=destinationBounds.y+destinationBounds.height+.001);}
     await assertLastWidgetInDestination();
@@ -1055,7 +1064,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();
     await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toHaveAttribute('title',/widget to page 0/);
     await leavePanelDialog.getByRole('button',{name:'Keep editing',exact:true}).click();
-    await panelEditor.getByText('Widgets',{exact:true}).click();
+    if(!await panelEditor.locator('summary').filter({hasText:/^Widgets$/}).evaluate(node=>node.parentElement.open))await panelEditor.getByText('Widgets',{exact:true}).click();
     await panelEditor.locator('.palette').getByRole('button',{name:'Text',exact:true}).click();
     for(const name of ['Preview','Save','Export'])await expect(panelEditor.getByRole('button',{name,exact:true})).toBeEnabled();
     await panelEditor.getByRole('button',{name:'Preview',exact:true}).click();await expect(panelEditor.getByRole('button',{name:'Stop preview',exact:true})).toBeEnabled();

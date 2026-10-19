@@ -42,6 +42,7 @@
   let selectedViewportId = $state('');
   let preview = $state(false);
   let paletteDragging = $state(false);
+  let draggedWidget = $state('');
   let controller: PreviewController | undefined;
   let unsubscribe: (() => void) | undefined;
   let previewSnapshot = $state.raw<PreviewSnapshot>();
@@ -204,16 +205,24 @@
     const selectedWidget=widget;
     if(selectedWidget && await confirmDelete(`Delete widget "${selectedWidget.label}"?`)){command({type:'delete-widget',id:selectedWidget.id});select([]);}
   }
+  function paletteBounds(viewportId:string,point:{x:number;y:number}):Bounds|undefined {
+    const region=regions.find(region=>region.id===viewportId);if(!region)return;
+    const grid=document.presentation.grid,width=region.bounds.width*.3,height=region.bounds.height*.25;
+    let x=point.x-width/2,y=point.y-height/2;
+    if(grid.snap){x=Math.round(x*grid.columns)/grid.columns;y=Math.round(y*grid.rows)/grid.rows;}
+    const align=(position:number,size:number,start:number,extent:number,scale:number)=>{
+      const min=Math.ceil(start*scale-1e-8),max=Math.floor((start+extent)*scale+1e-8);
+      const pixels=Math.max(1,Math.min(max-min,Math.round(size*scale)));
+      return [Math.max(min,Math.min(max-pixels,Math.round(position*scale)))/scale,pixels/scale];
+    };
+    const [px,w]=align(x,width,region.bounds.x,region.bounds.width,usableWidth);
+    const [py,h]=align(y,height,region.bounds.y,region.bounds.height,usableHeight);
+    return {x:px,y:py,width:w,height:h};
+  }
   function addPaletteWidget(kind:string,viewportId=activeViewport.id,point?:{x:number;y:number}) {
     const preset=firmwareWidgetPresets.find(preset=>preset.kind===kind),region=regions.find(region=>region.id===viewportId);
     if(!preset||!region||preview)return;
-    let bounds:Bounds|undefined;
-    if(point){
-      const width=region.bounds.width*.3,height=region.bounds.height*.25,grid=document.presentation.grid;
-      let x=point.x-width/2,y=point.y-height/2;
-      if(grid.snap){x=Math.round(x*grid.columns)/grid.columns;y=Math.round(y*grid.rows)/grid.rows;}
-      bounds={x:Math.max(region.bounds.x,Math.min(region.bounds.x+region.bounds.width-width,x)),y:Math.max(region.bounds.y,Math.min(region.bounds.y+region.bounds.height-height,y)),width,height};
-    }
+    const bounds=point?paletteBounds(viewportId,point):undefined;
     if(command({type:'add-widget',kind:preset.kind,pageId:page.id,viewportId,...(bounds?{bounds}:{})}))select([document.presentation.widgets.at(-1)!.id]);
   }
   function editViewportName(id: string, label: string) {
@@ -481,7 +490,7 @@
       </div></details>
       <details class="editor-accordion" open><summary>Widgets</summary><div class="accordion-content">
       <p class="hint">Add to {activeViewport.label}</p>
-      <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} draggable={!preview} title="Click to add to the selected viewport, or drag into a viewport" ondragstart={event=>{if(!event.dataTransfer)return;event.dataTransfer.setData('application/x-osg-widget',preset.kind);event.dataTransfer.effectAllowed='copy';paletteDragging=true;select([]);}} ondragend={()=>paletteDragging=false} onclick={() => addPaletteWidget(preset.kind)}>{preset.title}</button>{/each}</div>
+      <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} draggable={!preview} title="Click to add to the selected viewport, or drag into a viewport" ondragstart={event=>{if(!event.dataTransfer)return;event.dataTransfer.setData('application/x-osg-widget',preset.kind);event.dataTransfer.effectAllowed='copy';paletteDragging=true;draggedWidget=preset.title;select([]);}} ondragend={()=>{paletteDragging=false;draggedWidget='';}} onclick={() => addPaletteWidget(preset.kind)}>{preset.title}</button>{/each}</div>
       </div></details>
       <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content">
 
@@ -529,7 +538,7 @@
       </div>
       {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
       <div class="panel-properties-layout" class:palette-dragging={paletteDragging}>
-      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={propertiesOpen && !selected.length ? activeViewport.id : ''} onselectviewport={selectViewport} onwidgetdrop={addPaletteWidget} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
+      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={propertiesOpen && !selected.length ? activeViewport.id : ''} onselectviewport={selectViewport} onwidgetdrop={addPaletteWidget} {draggedWidget} widgetDropBounds={paletteBounds} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
       {#if propertiesOpen}
     <aside class="properties-overlay" aria-label="Widget properties" transition:slideProperties><button class="properties-close" aria-label="Close properties" title="Close properties" onclick={()=>select([])}><Icon name="close" size={18}/></button><h3>Properties</h3>
       {#if widget}
