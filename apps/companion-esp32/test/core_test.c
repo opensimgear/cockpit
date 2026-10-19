@@ -8,13 +8,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { int draws, texts, edges; bool fail; uint64_t sequence; char log[8192]; int width, height; } spy;
+typedef struct { int draws, texts, edges; bool fail; uint64_t sequence; char log[8192]; int width, height; int text_x,text_y,text_width,text_height; } spy;
 static void rect(void *ctx, int x, int y, int w, int h, uint16_t c) {
     spy *s = ctx; (void)c;
     assert(x >= 0 && y >= 0 && w > 0 && h > 0 && x + w <= s->width && y + h <= s->height); s->draws++;
 }
 static void label(void *ctx, int x, int y, int w, int h, const char *text, uint16_t c) {
     spy *s = ctx; rect(ctx, x, y, w, h, c); s->texts++;
+    s->text_x=x;s->text_y=y;s->text_width=w;s->text_height=h;
     if (strlen(s->log) + strlen(text) + 2 < sizeof(s->log)) { strcat(s->log, text); strcat(s->log, "\n"); }
 }
 static bool record(void *ctx, const char *id, bool down, uint64_t sequence) {
@@ -157,7 +158,7 @@ static bool write_pixels(void *ctx, int x, int y, int w, int h, const uint16_t *
     if (fail_write) return false;
     memcpy(&pixels[y * screen_width + x], p, (size_t)w * sizeof(*p)); return true;
 }
-static void preview(const char *path, int width, int height) {
+static void preview(const char *path, int width, int height, osg_screen_state screen) {
     screen_width = width; screen_height = height; pixels = calloc((size_t)width * height, sizeof(*pixels)); assert(pixels);
     osg_raster raster = {.write = write_pixels};
     assert(osg_init(&runtime, &osg_demo_panel, osg_raster_display(&raster, (uint16_t)width, (uint16_t)height), NULL, NULL));
@@ -165,7 +166,7 @@ static void preview(const char *path, int width, int height) {
     osg_sample sample = {.available = true, .kind = OSG_STRING, .provenance = OSG_LOCAL}; strcpy(sample.text, "123.450");
     assert(osg_feedback(&runtime, "radio-channel", &sample, 0)); sample.kind = OSG_NUMBER; sample.number = 125.5;
     assert(osg_feedback(&runtime, "speed-channel", &sample, 0)); sample.kind = OSG_BOOL; sample.boolean = true;
-    assert(osg_feedback(&runtime, "caution-channel", &sample, 0)); osg_render(&runtime, 100); assert(!raster.failed);
+    assert(osg_feedback(&runtime, "caution-channel", &sample, 0));runtime.screen=screen;osg_render(&runtime, 100); assert(!raster.failed);
     if (path) {
         FILE *f = fopen(path, "wb"); assert(f); fprintf(f, "P6\n%d %d\n255\n", width, height);
         for (int i = 0; i < width * height; i++) {
@@ -238,14 +239,17 @@ static void partial_render_test(void){
     }
 }
 int main(int argc, char **argv) {
-    for(int size=0;size<2;size++){
-        spy status;osg_runtime *r=setup(&status,size?800:480,size?480:320);
-        const char *messages[]={"Pair this device in","Assign a panel to","Panel is not connected."};
-        for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_DISCONNECTED;screen++){
+    for(int size=0;size<3;size++){
+        spy status;osg_runtime *r=setup(&status,size==0?480:size==1?800:320,size==0?320:size==1?480:240);
+        const char *messages[]={"Pair with OSG Cockpit","No panel assigned","No connection to OSG Cockpit","Panel could not render correctly"};
+        for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_PANEL_ERROR;screen++){
             osg_runtime previous=*r;r->screen=(osg_screen_state)screen;
             assert(osg_render_damage(r,&previous,0,0).full);
             status.log[0]=0;status.texts=0;osg_render(r,0);
-            assert(status.texts==2 && strstr(status.log,messages[screen-1]));
+            assert(status.texts==1 && strstr(status.log,messages[screen-1]));
+            const int font=status.text_height/5;
+            assert(abs(2*status.text_x+status.text_width-font-status.width)<=1);
+            assert(status.text_y>status.height/2 && status.draws>20);
         }
         r->screen=OSG_SCREEN_PANEL;status.log[0]=0;osg_render(r,0);
         assert(!strstr(status.log,"LIVE INPUT")&&!strstr(status.log,"RECORDING ONLY"));
@@ -253,7 +257,12 @@ int main(int argc, char **argv) {
     partial_render_test();
     validation(); input(); feedback(); bridge_test();
     for (int i = 0; i < 3; i++) { spy s; osg_runtime *r = setup(&s, i == 0 ? 800 : i == 1 ? 320 : 480, i == 0 ? 480 : i == 1 ? 240 : 800); osg_render(r, 0); assert(s.draws && s.texts); }
-    preview(argc > 1 ? argv[1] : NULL, 800, 480); preview(NULL, 320, 240); preview(NULL, 480, 800);
+    preview(argc > 1 ? argv[1] : NULL, 800, 480,OSG_SCREEN_PANEL); preview(NULL, 320, 240,OSG_SCREEN_PANEL); preview(NULL, 480, 800,OSG_SCREEN_PANEL);
+    for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_PANEL_ERROR;screen++){
+        char path[512];if(argc>2){snprintf(path,sizeof(path),"%s/status-%d.ppm",argv[2],screen);}
+        preview(argc>2?path:NULL,480,320,(osg_screen_state)screen);
+        preview(NULL,800,480,(osg_screen_state)screen);
+    }
     printf("All generic runtime, recording input, feedback and RGB565 raster checks passed. Runtime=%zu bytes; raster=%zu bytes\n", sizeof(osg_runtime), sizeof(osg_raster));
     return 0;
 }

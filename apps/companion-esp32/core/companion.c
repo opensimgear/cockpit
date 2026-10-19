@@ -169,6 +169,47 @@ static void text(osg_runtime *r, int x, int y, int w, int h, const char *s, uint
 void osg_widget_rect(const osg_runtime *r,size_t index,int *x,int *y,int *width,int *height){
     geometry(r,&r->panel->widgets[index],x,y,width,height);
 }
+/* Status icons use the same bounded rectangle backend as widgets, without font
+ * glyph dependencies or image assets. Coordinates are on a 24-unit grid. */
+static void status_line(osg_runtime *r,int x,int y,int unit,int x0,int y0,int x1,int y1,uint16_t color){
+    const int dx=x1>x0?x1-x0:x0-x1,dy=y1>y0?y0-y1:y1-y0;
+    const int sx=x0<x1?1:-1,sy=y0<y1?1:-1;int error=dx+dy;
+    for(;;){
+        fill(r,x+x0*unit,y+y0*unit,unit,unit,color);
+        if(x0==x1&&y0==y1)break;
+        const int twice=2*error;if(twice>=dy){error+=dy;x0+=sx;}if(twice<=dx){error+=dx;y0+=sy;}
+    }
+}
+static void status_screen(osg_runtime *r){
+    const char *message=r->screen==OSG_SCREEN_UNPAIRED?"Pair with OSG Cockpit":
+        r->screen==OSG_SCREEN_NO_PANEL?"No panel assigned":
+        r->screen==OSG_SCREEN_PANEL_ERROR?"Panel could not render correctly":"No connection to OSG Cockpit";
+    int unit=r->display.height/100;if(unit<1)unit=1;if(unit>4)unit=4;
+    int font=3;const int length=(int)strlen(message);
+    while(font>1&&length*4*font>r->display.width-32)font--;
+    const int icon=24*unit,gap=5*unit,height=icon+gap+5*font;
+    const int x=(r->display.width-25*unit)/2,y=(r->display.height-height)/2;
+    const uint16_t color=r->screen==OSG_SCREEN_PANEL_ERROR?0xfbaa:0x8d18;
+#define LINE(a,b,c,d) status_line(r,x,y,unit,a,b,c,d,color)
+    if(r->screen==OSG_SCREEN_DISCONNECTED){
+        /* Two unplugged connectors, with a break between their exposed pins. */
+        LINE(1,12,4,12);LINE(4,7,4,17);LINE(4,7,9,7);LINE(4,17,9,17);LINE(9,7,9,17);
+        LINE(9,9,11,9);LINE(9,15,11,15);
+        LINE(23,12,20,12);LINE(20,7,20,17);LINE(20,7,15,7);LINE(20,17,15,17);LINE(15,7,15,17);
+        LINE(13,9,15,9);LINE(13,15,15,15);LINE(14,2,10,22);
+    }else if(r->screen==OSG_SCREEN_PANEL_ERROR){
+        LINE(8,2,16,2);LINE(16,2,22,8);LINE(22,8,22,16);LINE(22,16,16,22);
+        LINE(16,22,8,22);LINE(8,22,2,16);LINE(2,16,2,8);LINE(2,8,8,2);
+        LINE(12,7,12,13);LINE(12,17,12,18);
+    }else{
+        LINE(3,3,21,3);LINE(21,3,21,21);LINE(21,21,3,21);LINE(3,21,3,3);LINE(3,7,21,7);
+        if(r->screen==OSG_SCREEN_NO_PANEL){LINE(1,23,23,1);}
+        else{LINE(12,10,12,18);LINE(8,14,16,14);}
+    }
+#undef LINE
+    const int width=length*4*font,ink=width-font;
+    text(r,(r->display.width-ink)/2,y+icon+gap,width,5*font,message,0xdedc);
+}
 static bool render_stale(const osg_sample *s,uint64_t now){
     return s->source_status==OSG_FEEDBACK_STALE || (s->available &&
         (now<s->received_ms || s->source_age_ms>=OSG_STALE_MS ||
@@ -195,12 +236,7 @@ void osg_render(osg_runtime *r, uint64_t now) {
     static const char *provenance[] = {"REQUESTED", "LOCAL", "HOST ACCEPTED", "HOST SUBMITTED", "GAME CONFIRMED"};
     fill(r, 0, 0, r->display.width, r->display.height, 0x08c4);
     if(r->screen!=OSG_SCREEN_PANEL){
-        const char *first=r->screen==OSG_SCREEN_UNPAIRED ? "Pair this device in" :
-                          r->screen==OSG_SCREEN_NO_PANEL ? "Assign a panel to" : r->screen==OSG_SCREEN_PANEL_ERROR ? "Panel error." : "Panel is not connected.";
-        const char *second=r->screen==OSG_SCREEN_UNPAIRED ? "OpenSimGear Cockpit" :
-                           r->screen==OSG_SCREEN_NO_PANEL ? "this companion in Cockpit" : r->screen==OSG_SCREEN_PANEL_ERROR ? "Edit the panel in Cockpit." : "Verify OpenSimGear Cockpit status.";
-        text(r, 16, r->display.height/2-24, r->display.width-32, 20, first, 0xffff);
-        text(r, 16, r->display.height/2+4, r->display.width-32, 20, second, 0xffff);
+        status_screen(r);
         return;
     }
     for (size_t i = 0; i < r->panel->widget_count; i++) {

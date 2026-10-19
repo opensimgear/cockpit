@@ -18,7 +18,7 @@ sources = [APP / "core/companion.c", APP / "core/raster.c", APP / "test/core_tes
 subprocess.run([os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g",
                 "-fsanitize=address,undefined", "--coverage", "-I" + str(APP / "core"), "-I" + str(APP / "test"), "-I" + str(APP / "boards"), "-I" + str(APP / "test/include"),
                 *map(str, sources), "-lm", "-o", str(OUT / "core-test")], check=True, cwd=ROOT)
-subprocess.run([str(OUT / "core-test"), str(OUT / "preview.ppm")], check=True, cwd=ROOT)
+subprocess.run([str(OUT / "core-test"), str(OUT / "preview.ppm"), str(OUT)], check=True, cwd=ROOT)
 subprocess.run(["gcov", "-j", "-b", "-c", "core-test-companion.gcno", "core-test-raster.gcno", "core-test-esp_lcd_bridge.gcno"], check=True, cwd=OUT)
 report = {}
 for name in ("companion", "raster", "esp_lcd_bridge"):
@@ -44,3 +44,9 @@ rows = b"".join(b"\0" + rgb[y * width * 3:(y + 1) * width * 3] for y in range(he
 (OUT / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 print(json.dumps(report, indent=2))
 print("Preview:", OUT / "preview.png")
+for status in OUT.glob("status-*.ppm"):
+    magic, dimensions, maximum, rgb = status.read_bytes().split(b"\n", 3)
+    assert magic == b"P6" and maximum == b"255"
+    width, height = map(int, dimensions.split())
+    rows = b"".join(b"\0" + rgb[y * width * 3:(y + 1) * width * 3] for y in range(height))
+    status.with_suffix(".png").write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
