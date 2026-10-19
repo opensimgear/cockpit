@@ -138,6 +138,24 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, and inspect a
   await page.goto(endpoint);await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Profiles',exact:true}).click();await expect(page.getByRole('button',{name:'Edit Default',exact:true})).toBeVisible();await page.getByRole('button',{name:'Add profile',exact:true}).click();await page.getByLabel('Profile name',{exact:true}).fill('Complete browser rig');
   await expect(page.locator('.resource-block')).toHaveCount(9);await expect(page.locator('path.signal-edge')).toHaveCount(0);
   await expect(inspector).toHaveCount(0);
+  await page.getByRole('button',{name:'Fit all',exact:true}).click();
+  await page.getByRole('application',{name:'Profile canvas'}).scrollIntoViewIfNeeded();
+  const firstBlock=page.locator('.resource-block').first();
+  for(const surface of ['.block-body','.block-heading']){
+   const before=await firstBlock.getAttribute('style'),box=await firstBlock.locator(surface).boundingBox();
+   assert.ok(box);
+   await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
+   await expect(inspector).toHaveCount(0);
+   await page.mouse.move(box.x+box.width/2+48,box.y+box.height/2+24,{steps:5});
+   await expect(inspector).toHaveCount(0);await page.mouse.up();
+   await expect(inspector).toHaveCount(0);assert.notEqual(await firstBlock.getAttribute('style'),before,'Dragging the body or heading moves the node without selecting it.');
+  }
+  const clickBox=await firstBlock.locator('.block-body').boundingBox();
+  await page.mouse.move(clickBox.x+clickBox.width/2,clickBox.y+clickBox.height/2);await page.mouse.down();
+  await expect(inspector).toHaveCount(0);await page.mouse.up();await expect(inspector).toBeVisible();
+  await inspector.getByRole('button',{name:'Close node details',exact:true}).click();await expect(inspector).toHaveCount(0);
+  await firstBlock.locator('.block-heading').focus();await page.keyboard.press('Enter');await expect(inspector).toBeVisible();
+  await inspector.getByRole('button',{name:'Close node details',exact:true}).click();await expect(inspector).toHaveCount(0);
   const canvas=page.getByRole('application',{name:'Profile canvas'});
   const fullCanvasWidth=await canvas.evaluate(node=>node.clientWidth);
   await chooseBlock('OSG direct USB device');
