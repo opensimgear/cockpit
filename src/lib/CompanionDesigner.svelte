@@ -361,7 +361,7 @@
       <p>{dirty ? 'Unsaved changes' : 'Edit the panel layout.'}</p>
     </div>
     <div class="editor-title-actions">
-      <button class="action" onclick={togglePreview} disabled={busy}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview locally'}</button>
+      <button class="action" onclick={togglePreview} disabled={busy}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview'}</button>
       <button class="action" onclick={download} disabled={busy}><Icon name="download" size={16} />Export</button>
       <button class="action" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save'}</button>
       {#if library.drafts.some(d => d.id===draftId)}<button class="action delete-panel" disabled={busy} onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete</button>{/if}

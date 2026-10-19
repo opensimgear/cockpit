@@ -85,7 +85,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     if (!await viewportList.isVisible()) await editor.getByText('Viewports', { exact: true }).click();
     await viewportList.getByRole('button', { name: /Right instruments/ }).click();
     await expect(editor.getByRole('button', { name: 'Remove viewport', exact: true })).toBeDisabled();
-    await editor.getByRole('button', { name: 'Preview locally', exact: true }).click();
+    await editor.getByRole('button', { name: 'Preview', exact: true }).click();
     await expect(outlines).toHaveCount(0);
     await expect(editor.locator('.widget')).toHaveCount(2);
     await editor.getByRole('button', { name: 'Stop preview', exact: true }).click();
