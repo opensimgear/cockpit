@@ -514,9 +514,11 @@ fn source_loss_requires_explicit_restart_and_does_not_stop_other_routes() {
     f.baseline("left", 2);
     f.change("left", 2, 1, "flight-input-0", InputValue::Button(true));
     f.wait("left", |v| v["session"]["cleanupComplete"] == true);
+    // Inspection is deliberately nonblocking. Its busy placeholder is unknown
+    // execution state, so await a readable observation before asserting it.
+    let right = f.wait("right", |v| v["session"]["busy"] == false);
     assert_eq!(
-        f.request("right", "inspect", json!({})).unwrap()["session"]["running"],
-        true
+        right["session"]["running"], true, "{right}"
     );
     let rows = f.request("left", "recording", json!({})).unwrap();
     assert!(rows["records"]
@@ -535,6 +537,24 @@ fn source_loss_requires_explicit_restart_and_does_not_stop_other_routes() {
     f.offset
         .store(crate::companions::LEASE_US, Ordering::Release);
     f.wait("left", |v| v["session"]["cleanupComplete"] == true);
+}
+#[test]
+fn running_route_busy_inspection_does_not_establish_a_stopped_route() {
+    let f = Fixture::new(false);
+    f.add("right", publication());
+    f.baseline("right", 1);
+    f.save("right", None);
+    f.start("right", "recording");
+    let route = f.service.companion_runs.lock().unwrap().routes["right"].clone();
+    let router = route.router.lock().unwrap();
+    assert_eq!(router.status()["running"], true);
+    let busy = f.request("right", "inspect", json!({})).unwrap();
+    assert_eq!(busy["session"]["busy"], true, "{busy}");
+    assert_eq!(busy["session"]["running"], false, "the placeholder must not be read as a confirmed stop");
+    assert!(!route.cancelled.load(Ordering::Acquire));
+    drop(router);
+    let readable = f.wait("right", |v| v["session"]["busy"] == false);
+    assert_eq!(readable["session"]["running"], true, "{readable}");
 }
 #[test]
 fn immutable_revision_needs_explicit_reconciliation_and_old_feed_cannot_revive() {
