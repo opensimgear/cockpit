@@ -275,7 +275,6 @@ impl Hub {
                     && a.definition.source_id == a.instance_id
                     && a.definition.publication_hash == a.publication_hash
                     && label(&a.definition.name)
-                    && !a.definition.controls.is_empty()
                     && a.definition.controls.len() <= 128
                     && a.ownership.as_ref().is_none_or(|owner|
                         uuid::Uuid::parse_str(&owner.owner).is_ok_and(|id|id.to_string()==owner.owner)

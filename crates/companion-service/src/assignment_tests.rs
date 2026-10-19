@@ -1,4 +1,26 @@
 use super::*;
+#[test]
+fn display_only_assignment_is_retained_after_restart() {
+    let memory = Arc::new(Memory::default());
+    let h = Hub::with_storage(memory.clone(), Arc::new(Sink::default())).unwrap();
+    paired(&h, "display");
+    let p = publish(&h, mutated(|d| {
+        let bounds = json!({"x":0.1,"y":0.1,"width":0.3,"height":0.2});
+        let page = d["ui"]["pages"][0]["id"].clone();
+        d["ui"]["controls"] = json!([]);
+        d["bindings"] = json!([]);
+        d["ui"]["feedbackWidgets"] = json!([{"id":"output","kind":"text","label":"Text","channelId":"channel"}]);
+        d["ui"]["pages"] = json!([{"id":page,"title":"Main","items":[{"kind":"feedback","refId":"output","bounds":bounds}]}]);
+        d["presentation"]["widgets"] = json!([{"id":"text-widget","pageId":page,"kind":"text","label":"Text","bounds":bounds,"controlIds":[],"feedbackIds":["output"],"config":{"prefix":"","suffix":""}}]);
+        d["presentation"]["groups"] = json!([]);
+        d["presentation"]["viewports"].as_array_mut().unwrap().retain(|v|v["pageId"]==page);
+    }));
+    assert!(p.controls.is_empty());
+    assign(&h, "display", "screen", &p.publication_hash);
+    let sink = Arc::new(Sink::default());
+    let _restored = Hub::with_storage(memory, sink.clone()).unwrap();
+    assert!(sink.defs.lock().unwrap()["screen"].controls.is_empty());
+}
 fn row(instance: &str, companion: &str, p: &Publication) -> Value {
     json!({"instanceId":instance,"companionId":companion,"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint})
 }

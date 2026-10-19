@@ -1,6 +1,14 @@
 use super::*;
 use osg_mapping::{engine::ControlAssignment, profile::AxisRange};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[test]
+fn display_only_companion_definition_can_be_registered() {
+    let (provider, _) = provider();
+    let mut display = definition("display");
+    display.controls.clear();
+    provider.register_definition(display).unwrap();
+    assert_eq!(provider.resource_inventory().len(), 1);
+}
 fn hash() -> String {
     format!("sha256:{}", "a".repeat(64))
 }
@@ -395,7 +403,7 @@ fn malformed_definitions_baselines_and_input_never_partially_update_values() {
             0 => value.source_id = "../path".into(),
             1 => value.name = "\n".into(),
             2 => value.publication_hash = "bad".into(),
-            3 => value.controls.clear(),
+            3 => value.controls = vec![value.controls[0].clone(); 129],
             4 => value.controls.push(value.controls[0].clone()),
             5 => value.controls[0].fallback = Value::Button(true),
             6 => value.controls[2].fallback = Value::Hat(Some(0)),

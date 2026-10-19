@@ -230,7 +230,6 @@ fn validate_definition(value: &Definition) -> Result<(), String> {
         || value.name.chars().count() > 120
         || value.name.chars().any(char::is_control)
         || !valid_hash(&value.publication_hash)
-        || value.controls.is_empty()
         || value.controls.len() > 128
     {
         return Err("Invalid companion source definition.".into());
