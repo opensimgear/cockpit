@@ -10,7 +10,7 @@
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import {
-    newDocument, createDesignerHistory, applyDesignerCommand, undoDesigner, redoDesigner,
+    newDocument, createDesignerHistory, applyDesignerCommand, applyPixelDesignerCommand, undoDesigner, redoDesigner,
     createLibrary, saveDraft, duplicateDraft, openDraft,
     importAsset, validateAssets, exportBundle, importBundle, publishDocument,
     viewportRegions, widgetViewport, boundsContain,
@@ -152,7 +152,7 @@
 
 
   function stop() { controller?.disarm('Designer changed'); preview = false; }
-  async function togglePreview() { if (preview) stop(); else if (!panelInvalidReason) { select([]); preview = true; await tick(); controller?.arm(); } }
+  async function togglePreview() { if (preview) stop(); else if (!panelInvalidReason) { ensurePixelGeometry();select([]); preview = true; await tick(); controller?.arm(); } }
   function select(ids: string[]) {
     selected = ids;
     propertiesOpen = ids.length > 0;
@@ -174,8 +174,12 @@
       css: (t: number) => `transform:translateX(${(1-t)*100}%)` };
   }
   function command(command: Parameters<typeof applyDesignerCommand>[1]) {
-    try { stop(); history = applyDesignerCommand(history, command); dirty=true; if (!document.ui.pages.some(p => p.id === pageId)) pageId = document.ui.pages[0].id; error = ''; return true; }
+    try { stop(); history = applyPixelDesignerCommand(history, command); dirty=true; if (!document.ui.pages.some(p => p.id === pageId)) pageId = document.ui.pages[0].id; error = ''; return true; }
     catch (e) { error = e instanceof Error ? e.message : String(e); return false; }
+  }
+  function ensurePixelGeometry() {
+    const next=applyPixelDesignerCommand(history,{type:'replace',document});
+    if(next.present.presentation.widgets.some((widget,index)=>JSON.stringify(widget.bounds)!==JSON.stringify(document.presentation.widgets[index].bounds))){history=next;dirty=true;}
   }
   function editName() { nameDraft = name; editingName = true; }
   function focusName(node: HTMLInputElement) { node.focus(); node.select(); }
@@ -236,8 +240,8 @@
   function changeBounds(key: keyof Bounds, input: HTMLInputElement) {
     if (widget) {
       const scale = key === 'x' || key === 'width' ? usableWidth : usableHeight;
-      command({ type: 'move-widget', id: widget.id, bounds: { ...widget.bounds, [key]: input.valueAsNumber / scale } });
-      input.value = String(Math.round(widget.bounds[key] * scale * 100) / 100);
+      command({ type: 'move-widget', id: widget.id, bounds: { ...widget.bounds, [key]: Math.round(input.valueAsNumber) / scale } });
+      input.value = String(Math.round(widget.bounds[key] * scale));
     }
   }
   function create() {
@@ -281,6 +285,7 @@
       const previousHashes=panelHashes(draftId);
       const simplified=simplifyFirmwareWidgets(document);
       if(simplified.removed)history=createDesignerHistory(simplified.document);
+      ensurePixelGeometry();
       const panel=await publishDocument(document,activeAssets);
       const next=await saveDraft(library,{id:draftId,name:document.ui.title,document,assets:activeAssets});
       await persist(next,{...publications,[draftId]:[panel]});dirty=false;
@@ -325,6 +330,7 @@
   async function download() {
     if (panelInvalidReason) { error=panelInvalidReason;return; }
     await operation(async () => {
+      ensurePixelGeometry();
       const text = await exportBundle(document, activeAssets); const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
       const link = window.document.createElement('a'); link.href = url; link.download = `${name.replace(/[^a-z0-9_-]/gi, '-')}.osg-panel.json`; link.click(); URL.revokeObjectURL(url); message = 'Portable bundle exported';
     });
@@ -529,7 +535,7 @@
       {#if widget}
         <p class="hint">{widget.kind} · <code>{widget.id}</code></p>
         <label>Label<input value={widget.label} onchange={e => patch({ label: e.currentTarget.value })} /></label>
-        <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field === 'x' ? 'X' : field === 'y' ? 'Y' : field === 'width' ? 'Width' : 'Height'} (px)<input type="number" min={field === 'width' || field === 'height' ? 1 : 0} max={field === 'x' || field === 'width' ? usableWidth : usableHeight} step="1" value={Math.round(widget.bounds[field as keyof Bounds] * (field === 'x' || field === 'width' ? usableWidth : usableHeight) * 100) / 100} onchange={e => changeBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
+        <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field === 'x' ? 'X' : field === 'y' ? 'Y' : field === 'width' ? 'Width' : 'Height'} (px)<input type="number" min={field === 'width' || field === 'height' ? 1 : 0} max={field === 'x' || field === 'width' ? usableWidth : usableHeight} step="1" value={Math.round(widget.bounds[field as keyof Bounds] * (field === 'x' || field === 'width' ? usableWidth : usableHeight))} onchange={e => changeBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
         {#each ['foreground','background','accent'] as color}<label>{color}<input type="color" value={widget.style?.[color as keyof NonNullable<DesignerWidget['style']>] ?? (color === 'background' ? '#12232e' : '#55ddc7')} onchange={e => patch({ style: { ...widget.style, [color]: e.currentTarget.value } })} /></label>{/each}
         {#each Object.entries(widget.config).filter(([key])=>!['buttonMode','pulseMs','repeatMs'].includes(key)) as [key,value]}
           {#if typeof value === 'boolean'}<label><input type="checkbox" checked={value} onchange={e => configPatch(key,e.currentTarget.checked)} />{key}</label>

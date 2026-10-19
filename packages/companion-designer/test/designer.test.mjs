@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateAssets, canonical } from "../src/index.ts";
+import { validateAssets, canonical, applyPixelDesignerCommand } from "../src/index.ts";
 import { newDocument, createDesignerHistory, applyDesignerCommand as apply, undoDesigner, redoDesigner, widgetPresets, validateDesignerDocument as validate, normalizeToPortableUi, migratePortableUi, flightTemplate, racingTemplate, compareDesignerPublications, publishDocument, importAsset, exportBundle, importBundle, imageDimensions, encodeBase64, decodeBase64, createLibrary, saveDraft, openDraft, duplicateDraft, deleteDraft, validateLibrary, DESIGNER_LIMITS as L } from "../src/index.ts";
 import { exampleUi, validatePortableUi } from "../../companion-contracts/src/index.ts";
 const clone = value => structuredClone(value);
@@ -122,6 +122,17 @@ test("page/viewport operations and deletion clean references atomically", () => 
   assert.equal(h.present.ui.controls.length, original.ui.controls.length);
   assert.throws(() => apply(h, { type: "delete-page", id: h.present.ui.pages[0].id }));
   assert.equal(apply(h, { type: "delete-widget", id: first(h.present).id }).present.presentation.widgets.length,0);
+});
+
+test('pixel editor rounds geometry after moves, resizing, screen changes and viewport splits in one undo step',()=>{
+  let h=history();const pageId=h.present.ui.pages[0].id;
+  h=applyPixelDesignerCommand(h,{type:'set-viewport',pageId,width:1279,height:799,safeInsets:{left:11/1279,right:11/1279,top:11/799,bottom:11/799}});
+  const assertPixels=()=>{for(const widget of h.present.presentation.widgets){for(const [key,value] of Object.entries(widget.bounds)){const pixels=value*(key==='x'||key==='width'?1257:777);assert.ok(Math.abs(pixels-Math.round(pixels))<1e-8,`${key} must be whole pixels`);}assert.ok(validate(h.present).ok);}};
+  assertPixels();const before=clone(h.present);
+  h=applyPixelDesignerCommand(h,{type:'move-widget',id:first(h.present).id,bounds:{x:.12345,y:.23456,width:.3333,height:.2222}});assertPixels();
+  assert.deepEqual(undoDesigner(h).present,before);
+  h=applyPixelDesignerCommand(h,{type:'add-viewport',pageId});assertPixels();
+  h=applyPixelDesignerCommand(h,{type:'add-widget',kind:'text',pageId,viewportId:h.present.presentation.viewports[0].regions[1].id});assertPixels();
 });
 test("default page numbering starts at zero and closes gaps after deletion with undo", () => {
   let h=history();

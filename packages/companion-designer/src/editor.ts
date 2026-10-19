@@ -240,6 +240,27 @@ export function undoDesigner(history: DesignerHistory): DesignerHistory {
   if (!history.past.length) return clone(history);
   return { past: clone(history.past.slice(0, -1)), present: clone(history.past.at(-1)!), future: [clone(history.present), ...clone(history.future)].slice(0, DESIGNER_LIMITS.history) };
 }
+
+/** Keep editor geometry on whole physical pixels while retaining normalized storage. */
+export function applyPixelDesignerCommand(history:DesignerHistory, command:DesignerCommand):DesignerHistory {
+  const next=applyDesignerCommand(history,command),doc=next.present;
+  for(const widget of doc.presentation.widgets){
+    const screen=screenFor(doc,widget.pageId),region=widgetViewport(doc,widget)!;
+    const width=screen.width*(1-(screen.safeInsets?.left??0)-(screen.safeInsets?.right??0));
+    const height=screen.height*(1-(screen.safeInsets?.top??0)-(screen.safeInsets?.bottom??0));
+    const align=(position:number,size:number,start:number,extent:number,scale:number)=>{
+      const min=Math.ceil(start*scale-1e-8),max=Math.floor((start+extent)*scale+1e-8);
+      assert(max>min,'Viewport must have room for a whole pixel');
+      const pixels=Math.max(1,Math.min(max-min,Math.round(size*scale)));
+      return [Math.max(min,Math.min(max-pixels,Math.round(position*scale)))/scale,pixels/scale];
+    };
+    const [x,w]=align(widget.bounds.x,widget.bounds.width,region.bounds.x,region.bounds.width,width);
+    const [y,h]=align(widget.bounds.y,widget.bounds.height,region.bounds.y,region.bounds.height,height);
+    widget.bounds={x,y,width:w,height:h};
+  }
+  doc.ui=normalizeToPortableUi(doc);next.present=checked(doc);
+  return next;
+}
 export function redoDesigner(history: DesignerHistory): DesignerHistory {
   if (!history.future.length) return clone(history);
   return { past: [...clone(history.past), clone(history.present)].slice(-DESIGNER_LIMITS.history), present: clone(history.future[0]), future: clone(history.future.slice(1)) };

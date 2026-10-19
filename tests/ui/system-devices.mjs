@@ -592,7 +592,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       await page.keyboard.up('Control');await page.mouse.move(freeDragBox.x+32,freeDragBox.y+12);
       await expect.poll(()=>draggableWidget.evaluate(node=>parseFloat(node.style.left)/100)).toBeCloseTo(Math.round((freeDragStart+20/contentWidth)*24)/24,5);
       await page.keyboard.down('Control');await page.mouse.move(freeDragBox.x+29,freeDragBox.y+12);await page.mouse.up();
-      await expect.poll(()=>draggableWidget.evaluate(node=>parseFloat(node.style.left)/100)).toBeCloseTo(freeDragStart+17/contentWidth,5);
+      await expect.poll(()=>draggableWidget.evaluate(node=>parseFloat(node.style.left)/100)).toBeCloseTo(Math.round((freeDragStart+17/contentWidth)*1280)/1280,5);
     }finally{await page.mouse.up();await page.keyboard.up('Control');}
     await expect(panelEditor.getByRole('button',{name:'Snap to grid',exact:true})).toHaveAttribute('aria-pressed','true');
     const widgetClickBox=await draggableWidget.locator('.edit-hit').boundingBox();
@@ -772,10 +772,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const pixelHeight=Number(await panelLibrary.getByRole('spinbutton',{name:'Screen height',exact:true,includeHidden:true}).inputValue());
     const initialWidgetBounds=await panelEditor.locator('.widget').last().evaluate(node=>({X:parseFloat(node.style.left),Y:parseFloat(node.style.top),Width:parseFloat(node.style.width),Height:parseFloat(node.style.height)}));
     for(const [field,percent] of Object.entries(initialWidgetBounds)){
-      const pixels=Math.round(percent/100*(field==='X'||field==='Width'?1280:pixelHeight)*100)/100;
+      const pixels=Math.round(percent/100*(field==='X'||field==='Width'?1280:pixelHeight));
       await expect(panelProperties.getByRole('spinbutton',{name:`${field} (px)`,exact:true})).toHaveValue(String(pixels));
     }
     await widgetWidth.fill('256');await widgetWidth.press('Tab');await widgetX.fill('768');await widgetX.press('Tab');
+    await widgetWidth.fill('256.4');await widgetWidth.press('Tab');await expect(widgetWidth).toHaveValue('256');
+    await widgetX.fill('768.4');await widgetX.press('Tab');await expect(widgetX).toHaveValue('768');
     await expect.poll(()=>panelEditor.locator('.widget').last().evaluate(node=>node.style.width)).toBe('20%');
     await expect.poll(()=>panelEditor.locator('.widget').last().evaluate(node=>node.style.left)).toBe('60%');
     await widgetWidth.fill('9999');await widgetWidth.press('Tab');await expect(widgetWidth).toHaveValue('256');
