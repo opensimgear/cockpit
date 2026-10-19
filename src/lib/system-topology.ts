@@ -8,6 +8,7 @@ export interface TopologyNode {
   context: boolean;
   x: number;
   y: number;
+  height: number;
 }
 
 export interface TopologyEdge {
@@ -71,53 +72,69 @@ export function systemTopology(components: readonly SystemComponent[], context: 
     const level = depth.get(component.id)!;
     columns.set(level, [...(columns.get(level) ?? []), component]);
   }
-  const rowHeight = TOPOLOGY_NODE_HEIGHT + 46, columnWidth = TOPOLOGY_NODE_WIDTH + 100;
-  const rowsFor = (count: number) => count > 6 ? Math.min(6, Math.ceil(Math.sqrt(count * 1.2))) : count;
-  const largestColumn = Math.max(1, ...[...columns.values()].map(column => rowsFor(column.length)));
-  const height = largestColumn * rowHeight + 48;
+  const levels = [...columns.keys()].sort((a, b) => a - b);
+  const rank = new Map<string, number>();
+  for (const level of levels) {
+    const parentRank = (id: string) => Math.min(Infinity, ...shownEdges.filter(edge => edge.to === id && (depth.get(edge.from) ?? level) < level).map(edge => rank.get(edge.from) ?? Infinity));
+    columns.get(level)!.sort((a, b) => parentRank(a.id) - parentRank(b.id) || compare(a, b));
+    columns.get(level)!.forEach((component, index) => rank.set(component.id, index));
+  }
+  const incident = (id: string, outgoing: boolean) => shownEdges.filter(edge => outgoing ? edge.from === id : edge.to === id);
+  const nodeHeight = (id: string) => Math.max(TOPOLOGY_NODE_HEIGHT, 40 + Math.max(incident(id, true).length, incident(id, false).length) * 26);
+  const crossEdges = shownEdges.filter(edge => depth.get(edge.to)! !== depth.get(edge.from)! + 1);
+  const top = 48 + crossEdges.length * 32;
+  const height = top + Math.max(1, ...levels.map(level => columns.get(level)!.reduce((sum, component) => sum + nodeHeight(component.id) + 64, 0))) + 48;
   const nodes: TopologyNode[] = [];
-  let layerX = 40;
-  for (const [, column] of [...columns.entries()].sort(([a], [b]) => a - b)) {
-    const rows = rowsFor(column.length), subcolumns = Math.ceil(column.length / rows);
-    column.forEach((component, index) => nodes.push({
-      component,
-      context: !matches.has(component.id),
-      x: layerX + Math.floor(index / rows) * columnWidth,
-      y: 24 + (largestColumn - rows) * rowHeight / 2 + index % rows * rowHeight,
-    }));
-    layerX += subcolumns * columnWidth + 40;
+  const rootReturns = shownEdges.filter(edge => depth.get(edge.to) === levels[0]).length;
+  let layerX = rootReturns ? 300 + rootReturns * 22 : 40;
+  for (const level of levels) {
+    let y = top;
+    for (const component of columns.get(level)!) {
+      const h = nodeHeight(component.id);
+      nodes.push({ component, context: !matches.has(component.id), x: layerX, y, height: h });
+      y += h + 64;
+    }
+    const count = shownEdges.filter(edge => depth.get(edge.from) === level || depth.get(edge.to)! - 1 === level).length;
+    layerX += TOPOLOGY_NODE_WIDTH + 300 + count * 22;
   }
   const positions = new Map(nodes.map(node => [node.component.id, node]));
-  const pairs = new Map<string, SystemConnection[]>();
-  for (const connection of shownEdges) {
-    const pair = `${connection.from}\0${connection.to}`;
-    pairs.set(pair, [...(pairs.get(pair) ?? []), connection]);
-  }
-  const edges: TopologyEdge[] = [];
-  for (const pair of pairs.values()) pair.forEach((connection, index) => {
-    const from = positions.get(connection.from)!;
-    const to = positions.get(connection.to)!;
-    const offset = (index - (pair.length - 1) / 2) * 26;
-    const leftToRight = to.x > from.x;
-    const sameColumn = to.x === from.x;
-    const startX = from.x + (leftToRight || sameColumn ? TOPOLOGY_NODE_WIDTH : 0);
-    const endX = to.x + (leftToRight ? 0 : TOPOLOGY_NODE_WIDTH);
-    const startY = from.y + TOPOLOGY_NODE_HEIGHT / 2 + offset;
-    const endY = to.y + TOPOLOGY_NODE_HEIGHT / 2 + offset;
-    const middleX = sameColumn ? startX + 55 + Math.abs(offset) : (startX + endX) / 2;
-    // Long edges use the gaps between rows and columns instead of passing
-    // through intervening cards in a wrapped layer.
-    const long = Math.abs(to.x - from.x) > columnWidth + 40;
-    const direction = leftToRight ? 1 : -1, exitX = startX + direction * 28, approachX = endX - direction * 28;
-    const railY = to.y - 23 + offset;
-    edges.push({ connection,
-      path: long ? `M ${startX} ${startY} L ${exitX} ${startY} L ${exitX} ${railY} L ${approachX} ${railY} L ${approachX} ${endY} L ${endX} ${endY}` : `M ${startX} ${startY} C ${middleX} ${startY}, ${middleX} ${endY}, ${endX} ${endY}`,
-      x: long ? (exitX + approachX) / 2 : sameColumn ? middleX : (startX + endX) / 2,
-      y: long ? railY : (startY + endY) / 2,
-      label: topologyConnectionLabel(connection),
+  const ports = (node: TopologyNode, connection: SystemConnection, outgoing: boolean) => {
+    const list = incident(node.component.id, outgoing).sort((a, b) => {
+      const otherA = positions.get(outgoing ? a.to : a.from)!;
+      const otherB = positions.get(outgoing ? b.to : b.from)!;
+      return otherA.y - otherB.y || a.id.localeCompare(b.id);
     });
+    return node.y + node.height / 2 + (list.findIndex(edge => edge.id === connection.id) - (list.length - 1) / 2) * 26;
+  };
+  let returnLane = 0;
+  const laneCounts = new Map<number, number>();
+  const lane = (level: number) => {
+    const index = laneCounts.get(level) ?? 0;
+    laneCounts.set(level, index + 1);
+    const node = nodes.find(node => depth.get(node.component.id) === level)!;
+    return node.x + TOPOLOGY_NODE_WIDTH + 40 + index * 22;
+  };
+  // Route lower destinations first so a fan-out nests without crossings.
+  const routed = [...shownEdges].sort((a, b) => positions.get(b.to)!.y - positions.get(a.to)!.y || a.id.localeCompare(b.id));
+  const edges: TopologyEdge[] = routed.map(connection => {
+    const from = positions.get(connection.from)!, to = positions.get(connection.to)!;
+    const fromLevel = depth.get(connection.from)!, toLevel = depth.get(connection.to)!;
+    const startX = from.x + TOPOLOGY_NODE_WIDTH;
+    const startY = ports(from, connection, true), endY = ports(to, connection, false);
+    const exitX = lane(fromLevel);
+    let path: string;
+    if (toLevel === fromLevel + 1) {
+      path = `M ${startX} ${startY} L ${exitX} ${startY} L ${exitX} ${endY} L ${to.x} ${endY}`;
+    } else {
+      // Exclusive overhead rails keep cycles and skipped levels outside cards.
+      const railY = 32 + crossEdges.findIndex(edge => edge.id === connection.id) * 32;
+      const previousLevel = levels[levels.indexOf(toLevel) - 1];
+      const approachX = previousLevel === undefined ? 16 + returnLane++ * 22 : lane(previousLevel);
+      path = `M ${startX} ${startY} L ${exitX} ${startY} L ${exitX} ${railY} L ${approachX} ${railY} L ${approachX} ${endY} L ${to.x} ${endY}`;
+    }
+    return { connection, path, x: to.x - 140, y: endY, label: topologyConnectionLabel(connection) };
   });
-  return { nodes, edges, width: Math.max(TOPOLOGY_NODE_WIDTH + 80, ...nodes.map(node => node.x + TOPOLOGY_NODE_WIDTH + 110)), height };
+  return { nodes, edges, width: layerX + 40, height };
 }
 
 export function topologyFit(width: number, height: number, viewportWidth: number, viewportHeight: number): TopologyView {

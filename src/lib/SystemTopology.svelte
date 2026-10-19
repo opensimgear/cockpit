@@ -3,7 +3,7 @@
   import Icon from './Icon.svelte';
   import { systemDeviceIcon } from './system-device-icons';
   import { systemStateLabel, type SystemComponent } from './system-inventory';
-  import { systemTopology, topologyFit, topologyInitialView, topologyZoom, TOPOLOGY_NODE_HEIGHT, TOPOLOGY_NODE_WIDTH, type TopologyView } from './system-topology';
+  import { systemTopology, topologyFit, topologyInitialView, topologyZoom, TOPOLOGY_NODE_WIDTH, type TopologyView } from './system-topology';
 
   let { components, context = components, selectedId, onselect }: {
     components: readonly SystemComponent[];
@@ -57,8 +57,8 @@
     const node = graph.nodes.find(node => node.component.id === componentId);
     if (!node) return;
     const x = node.x * view.zoom + view.x, y = node.y * view.zoom + view.y;
-    if (x < 0 || y < 0 || x + TOPOLOGY_NODE_WIDTH * view.zoom > width || y + TOPOLOGY_NODE_HEIGHT * view.zoom > height)
-      view = { ...view, x: width / 2 - (node.x + TOPOLOGY_NODE_WIDTH / 2) * view.zoom, y: height / 2 - (node.y + TOPOLOGY_NODE_HEIGHT / 2) * view.zoom };
+    if (x < 0 || y < 0 || x + TOPOLOGY_NODE_WIDTH * view.zoom > width || y + node.height * view.zoom > height)
+      view = { ...view, x: width / 2 - (node.x + TOPOLOGY_NODE_WIDTH / 2) * view.zoom, y: height / 2 - (node.y + node.height / 2) * view.zoom };
   }
   function kind(type: SystemComponent['type']) {
     return type === 'osg' ? 'OSG device' : type === 'controller' ? 'Third-party controller' : type === 'host' ? 'System host' : type[0].toUpperCase() + type.slice(1);
@@ -97,6 +97,7 @@
       <svg width={graph.width} height={graph.height} aria-hidden="true" class="topology-edges">
         {#each graph.edges as edge (edge.connection.id)}
           <g class:software={edge.connection.transport === 'software'} class:remembered={!edge.connection.current} class:unknown={edge.connection.transport === 'unknown'}>
+            <path class="connection-clearance" d={edge.path} />
             <path d={edge.path} />
             <rect x={edge.x - Math.max(34, edge.label.length * 3.1)} y={edge.y - 10} width={Math.max(68, edge.label.length * 6.2)} height="20" rx="4" />
             <text x={edge.x} y={edge.y + 3}>{edge.label}</text>
@@ -106,7 +107,7 @@
       {#each graph.nodes as node (node.component.id)}
         {@const component = node.component}
         {@const state = systemStateLabel(component)}
-        <button type="button" class="topology-node" data-component-id={component.id} class:selected={selectedId === component.id} class:context={node.context} class:offline={component.presence !== 'connected'} style:left={`${node.x}px`} style:top={`${node.y}px`} style:width={`${TOPOLOGY_NODE_WIDTH}px`} style:height={`${TOPOLOGY_NODE_HEIGHT}px`} aria-pressed={selectedId === component.id} aria-label={`${component.name}, ${kind(component.type)}, ${state}${node.context ? ', connection context' : ''}`} onclick={() => onselect(component.id)} onfocus={() => reveal(component.id)} title={`${component.name}\n${component.role}\n${state}${component.diagnostics.length ? '\n' + component.diagnostics.join('\n') : ''}`}>
+        <button type="button" class="topology-node" data-component-id={component.id} class:selected={selectedId === component.id} class:context={node.context} class:offline={component.presence !== 'connected'} style:left={`${node.x}px`} style:top={`${node.y}px`} style:width={`${TOPOLOGY_NODE_WIDTH}px`} style:height={`${node.height}px`} aria-pressed={selectedId === component.id} aria-label={`${component.name}, ${kind(component.type)}, ${state}${node.context ? ', connection context' : ''}`} onclick={() => onselect(component.id)} onfocus={() => reveal(component.id)} title={`${component.name}\n${component.role}\n${state}${component.diagnostics.length ? '\n' + component.diagnostics.join('\n') : ''}`}>
           <span class="node-icon"><Icon name={component.type === 'companion' ? 'mobile' : systemDeviceIcon(component)} size={18} /></span>
           <span class="node-copy"><span class="node-kind">{kind(component.type)}{node.context ? ' · Context' : ''}</span><strong>{component.name}</strong><span class="node-status" title={state}><i class:connected={component.presence === 'connected'}></i><span>{state}</span></span></span>
           <span class="node-role">{component.role || 'Connection details unknown'}{component.diagnostics.length ? ` · ${component.diagnostics.length} diagnostic${component.diagnostics.length === 1 ? '' : 's'}` : ''}</span>
@@ -139,6 +140,7 @@
   .topology-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
   .topology-edges { position: absolute; overflow: visible; pointer-events: none; }
   .topology-edges path { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+  .topology-edges g path.connection-clearance { stroke: var(--bg); stroke-width: 7; stroke-dasharray: none; }
   .topology-edges rect { fill: var(--bg); stroke: var(--line); stroke-width: .6; }
   .topology-edges text { fill: var(--soft); font-size: 10px; text-anchor: middle; }
   .topology-edges .software path { stroke: #8fb6e9; stroke-dasharray: 3 4; }

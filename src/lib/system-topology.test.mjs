@@ -59,12 +59,12 @@ test('cyclic sightings do not loop and fitting includes every node with finite a
   assert.equal(topologyZoom(view, 1e-9, anchor).zoom, 0.08);
 });
 
-test('larger rigs wrap siblings into bounded-height layers with readable initial zoom and an explicit complete overview', () => {
+test('larger rigs keep one column per level and separate routing lanes at readable initial zoom', () => {
   const devices = Array.from({ length: 28 }, (_, index) => component('device-' + index, 'controller', [edge('edge-' + index, 'host', 'device-' + index)]));
   const inventory = [component('host', 'host'), ...devices], graph = systemTopology(inventory);
   assert.equal(graph.nodes.length, 29);
-  assert.ok(graph.height <= 6 * (TOPOLOGY_NODE_HEIGHT + 46) + 48);
-  assert.ok(new Set(graph.nodes.filter(node => node.component.id !== 'host').map(node => node.x)).size >= 4);
+  assert.ok(graph.height >= 28 * (TOPOLOGY_NODE_HEIGHT + 64));
+  assert.equal(new Set(graph.nodes.filter(node => node.component.id !== 'host').map(node => node.x)).size, 1);
   for (let index = 0; index < graph.nodes.length; index++) for (const other of graph.nodes.slice(index + 1)) {
     const node = graph.nodes[index];
     assert.ok(node.x + TOPOLOGY_NODE_WIDTH <= other.x || other.x + TOPOLOGY_NODE_WIDTH <= node.x || node.y + TOPOLOGY_NODE_HEIGHT <= other.y || other.y + TOPOLOGY_NODE_HEIGHT <= node.y, `${node.component.id} overlaps ${other.component.id}`);
@@ -73,9 +73,39 @@ test('larger rigs wrap siblings into bounded-height layers with readable initial
   assert.deepEqual(plain(systemTopology(inventory.map(item => ({ ...item, presence: 'offline', name: item.name }))).nodes.map(node => [node.component.id, node.x, node.y])), plain(graph.nodes.map(node => [node.component.id, node.x, node.y])));
   const initial = topologyInitialView(graph.width, graph.height, 1280, 640), fitted = topologyFit(graph.width, graph.height, 1280, 640);
   assert.equal(initial.zoom, 0.8);
-  assert.ok(fitted.zoom > 0.5, 'packing avoids the old 14% vertical-stack overview');
   assert.ok(fitted.zoom < initial.zoom);
-  assert.ok(graph.edges.some(edge => edge.path.includes(' L ')), 'long edges route through gaps between packed cards');
+  assert.ok(graph.edges.some(edge => edge.path.includes(' L ')), 'connections use orthogonal routing lanes');
   const small = topologyInitialView(500, 300, 1280, 640);
   assert.equal(small.zoom, 1); assert.ok(small.x > 0 && small.y > 0);
+});
+
+// Verify actual segment geometry, including cycles and skipped-level edges.
+test('routes avoid cards and keep vertical lanes and labels separate', () => {
+  const links = [edge('h-a', 'host', 'a'), edge('h-b', 'host', 'b'), edge('a-c', 'a', 'c', 'can'), edge('b-c', 'b', 'c'), edge('c-a', 'c', 'a'), edge('a-b', 'a', 'b'), edge('h-c', 'host', 'c'), edge('parallel', 'host', 'a', 'software'), edge('return-a', 'a', 'host'), edge('return-b', 'b', 'host')];
+  const graph = systemTopology([component('host', 'host', links), ...['a', 'b', 'c'].map(id => component(id))]);
+  const verticals = [];
+  for (const route of graph.edges) {
+    const values = route.path.match(/-?\d+(?:\.\d+)?/g).map(Number);
+    const points = [];
+    for (let i = 0; i < values.length; i += 2) points.push({ x: values[i], y: values[i + 1] });
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i];
+      assert.ok(a.x === b.x || a.y === b.y);
+      if (a.x === b.x && a.y !== b.y) verticals.push({ x: a.x, top: Math.min(a.y, b.y), bottom: Math.max(a.y, b.y) });
+      for (const node of graph.nodes) {
+        const intersects = a.x === b.x
+          ? a.x > node.x && a.x < node.x + TOPOLOGY_NODE_WIDTH && Math.max(a.y, b.y) > node.y && Math.min(a.y, b.y) < node.y + node.height
+          : a.y > node.y && a.y < node.y + node.height && Math.max(a.x, b.x) > node.x && Math.min(a.x, b.x) < node.x + TOPOLOGY_NODE_WIDTH;
+        assert.ok(!intersects, `${route.connection.id} passes through ${node.component.id}`);
+      }
+    }
+  }
+  for (let i = 0; i < verticals.length; i++) for (const b of verticals.slice(i + 1)) {
+    const a = verticals[i];
+    assert.ok(a.x !== b.x || a.bottom <= b.top || b.bottom <= a.top, 'vertical routes share a lane');
+  }
+  for (let i = 0; i < graph.edges.length; i++) for (const b of graph.edges.slice(i + 1)) {
+    const a = graph.edges[i];
+    assert.ok(Math.abs(a.y - b.y) >= 20 || Math.abs(a.x - b.x) > 280, 'connection labels overlap');
+  }
 });
