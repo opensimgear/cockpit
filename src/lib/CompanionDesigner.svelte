@@ -11,7 +11,7 @@
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import {
     newDocument, createDesignerHistory, applyDesignerCommand, undoDesigner, redoDesigner,
-    createLibrary, saveDraft, duplicateDraft, openDraft, deleteDraft,
+    createLibrary, saveDraft, duplicateDraft, openDraft,
     importAsset, validateAssets, exportBundle, importBundle, publishDocument,
     viewportRegions, widgetViewport, boundsContain,
     type DesignerHistory, type DesignerWidget, type AssetPayload,
@@ -22,6 +22,7 @@
   let { openSettings, initialCompanionId = '', onNavigate, active = true }: { openSettings: () => void; initialCompanionId?: string; onNavigate?: (page: CompanionNavigation) => void; active?: boolean } = $props();
 
   let importInput = $state<HTMLInputElement>();
+  let assetInput = $state<HTMLInputElement>();
   let connectionsPanel = $state.raw<{showMain:(recordNavigation?:boolean)=>boolean;getCompanionId:()=>string;showCompanion:(id:string)=>void;requestNavigation:(continueNavigation:()=>void,cancelNavigation?:()=>void)=>void}>();
   let editorOpen = $state(false);
   let companionDetailsOpen = $state(untrack(() => !!initialCompanionId));
@@ -185,13 +186,13 @@
     if (!store || !storageReady) throw new Error('Storage has not loaded; existing drafts have been preserved.');
     const saved = await store.save({ schemaVersion: 1, library: next, publications: revisions }); library = saved.library; publications = saved.publications;
   }
-  async function compactSnapshots(state: CompanionHostState, beforeUpload = false) {
+  async function compactSnapshots(state: CompanionHostState, beforeUpload = false, removedPanelIds: string[] = []) {
     let references;
     try { references = await new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {}).companionReferences(); }
     catch { return; } // Preserve every snapshot if the native saved library cannot prove its references.
     const pins=(state.host?.instances ?? []).flatMap(i => typeof i.publicationHash==='string'?[i.publicationHash]:[]);
     pins.push(...references.hashes);
-    const managedIds=[...new Set([...library.drafts.map(d => d.document.ui.id),...Object.values(publications).flat().map(p => p.document.ui.id)])];
+    const managedIds=[...new Set([...removedPanelIds,...library.drafts.map(d => d.document.ui.id),...Object.values(publications).flat().map(p => p.document.ui.id)])];
     if(!beforeUpload){const compacted=await store!.compact(pins);library=compacted.library;publications=compacted.publications;}
     const current=currentPublications.map(p => p.publicationHash);
     await send('companion_prune',{hashes:[...new Set([...pins,...current])],panelIds:managedIds});
@@ -216,11 +217,16 @@
   async function removeDraft(id: string) {
     if(!window.confirm('Delete this panel and disconnect it from its companions?'))return;
     await operation(async () => {
+      const removedPanelId = library.drafts.find(d => d.id === id)?.document.ui.id;
+      const references = await new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {}).companionReferences();
       await removePanelAssignments(panelHashes(id),send);
-      const nextPublications={...publications};delete nextPublications[id];
-      await persist(deleteDraft(library,id),nextPublications);
+      const state = await send('companion_status');
+      const pins = [...references.hashes,...(state.host?.instances ?? []).flatMap(instance=>typeof instance.publicationHash==='string'?[instance.publicationHash]:[])];
+      if (!store || !storageReady) throw new Error('Panel storage is not ready.');
+      const saved = await store.deletePanel(id,pins);library=saved.library;publications=saved.publications;
+      assets=[];history=createDesignerHistory(newDocument('New panel'));pageId=document.ui.pages[0].id;select([]);
       editorOpen=false;dirty=false;message='Panel deleted';onNavigate?.({kind:'main'});
-      await compactSnapshots(await send('companion_status'));
+      await compactSnapshots(await send('companion_status'),false,removedPanelId?[removedPanelId]:[]);
     });
   }
   async function importFile(file: File | undefined) {
@@ -251,6 +257,13 @@
       await validateAssets(result.document, nextAssets.filter(payload => result.document.ui.assets.some(asset => asset.id === payload.assetId)));
       command({ type: 'replace', document: result.document }); assets = nextAssets; message = `Image added (${result.width} × ${result.height})`;
     });
+  }
+  function removeAsset(id: string) {
+    const next = structuredClone(document);
+    next.ui.assets = next.ui.assets.filter(asset => asset.id !== id);
+    for (const viewport of next.presentation.viewports) if (viewport.backgroundAssetId === id) delete viewport.backgroundAssetId;
+    for (const widget of next.presentation.widgets) if ((widget.kind === 'button' || widget.kind === 'icon') && widget.config.iconAssetId === id) delete widget.config.iconAssetId;
+    if (command({ type: 'replace', document: next })) { select(selected); message='Image removed'; }
   }
   function updateControl(controlId: string, key: string, value: unknown) {
     const next = structuredClone(document);
@@ -365,7 +378,12 @@
       <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} onclick={() => { if (command({ type: 'add-widget', kind: preset.kind, pageId: page.id, viewportId: activeViewport.id })) select([document.presentation.widgets.at(-1)!.id]); }}>{preset.title}</button>{/each}</div>
       </div></details>
       <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content"><p class="hint">PNG, JPEG or WebP · 2 MiB each · 8 MiB total</p>
-      <input aria-label="Add panel image" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onchange={e => void addAsset(e.currentTarget.files?.[0])} />
+      <button class="action" disabled={busy} onclick={()=>assetInput?.click()}><Icon name="plus" size={14}/>Add asset</button>
+      <input class="asset-import" bind:this={assetInput} aria-label="Add panel image" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onchange={e => {void addAsset(e.currentTarget.files?.[0]);e.currentTarget.value='';}} />
+      <ul class="asset-list" aria-label="Panel assets">{#each document.ui.assets as asset,index (asset.id)}<li data-asset-id={asset.id}>
+        <img src={imageAssets[asset.id]} alt=""/><div><strong>Image {index+1}</strong><small>{asset.mime.split('/')[1].toUpperCase()} · {Math.max(1,Math.ceil(asset.sizeBytes/1024))} KB</small></div>
+        <button class="asset-delete" aria-label={`Delete image ${index+1}`} title="Delete asset" disabled={busy} onclick={()=>removeAsset(asset.id)}><Icon name="trash" size={15}/></button>
+      </li>{:else}<li class="assets-empty">No assets yet.</li>{/each}</ul>
       <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id}>{a.id}</option>{/each}</select></label>
       </div></details>
       <details class="editor-accordion"><summary>Screen size</summary><div class="accordion-content">
@@ -443,6 +461,7 @@
 </section>
 
 <style>
+  .asset-import{display:none}.asset-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.asset-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px;border:1px solid var(--line);border-radius:5px}.asset-list img{width:30px;height:30px;object-fit:contain;flex-shrink:0;background:var(--bg);border-radius:3px}.asset-list li > div{flex:1;min-width:0}.asset-list strong,.asset-list small{display:block;font-size:10px;overflow-wrap:anywhere}.asset-list small{font-size:9px;color:var(--muted);margin-top:4px}.asset-list .assets-empty{font-size:11px;color:var(--muted);border-style:dashed}.asset-delete{display:grid;place-items:center;flex-shrink:0;padding:5px;opacity:0;pointer-events:none;color:#e39b9b}.asset-list li:hover .asset-delete,.asset-list li:focus-within .asset-delete{opacity:1;pointer-events:auto}@media(hover:none){.asset-delete{opacity:1;pointer-events:auto}}
   .layout-tools button{display:grid;place-items:center;width:36px;height:36px;padding:0}.layout-tools button.active{color:var(--accent);background:var(--accent-bg);border-color:var(--accent)}
   .workspace > aside.panel-library{padding:0}.editor-accordion{margin:0;border-bottom:1px solid var(--line)}.editor-accordion:last-child{border-bottom:0}.editor-accordion > summary{padding:14px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}.accordion-content{padding:0 14px 14px;display:grid;gap:8px;min-width:0}.accordion-content .hint,.accordion-content label{margin:0}.accordion-content input,.accordion-content select{width:100%}.accordion-content button{max-width:100%}
   .editor-title{min-width:min(100%,240px);flex:1}.editor-title-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.editor-title .panel-title-button{display:inline-flex;align-items:center;gap:12px;max-width:100%;text-align:left;font:inherit;letter-spacing:inherit;background:transparent;border:0;padding:0;color:inherit}.panel-title-button span{overflow-wrap:anywhere}.panel-title-button :global(svg){flex-shrink:0;color:var(--muted)}.editor-title .panel-name-input{font:inherit;letter-spacing:inherit;width:100%;padding:0 6px;margin:0;line-height:inherit}.editor-title-actions .delete-panel{color:#e39b9b}

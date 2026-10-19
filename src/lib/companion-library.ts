@@ -1,5 +1,5 @@
 import {
-  publishDocument, validateLibrary,
+  publishDocument, validateLibrary, deleteDraft,
   type DesignerLibrary, type Publication,
 } from '../../packages/companion-designer/src/index.ts';
 
@@ -79,6 +79,18 @@ export class CompanionLibraryStore {
   private async read(): Promise<CompanionLibrarySnapshot> {
     const stored = await this.storage.read();
     return stored === undefined ? emptySnapshot() : validateSnapshot(capture(stored));
+  }
+
+  deletePanel(id: string, pinnedHashes: string[]): Promise<CompanionLibrarySnapshot> {
+    const pinned = new Set(pinnedHashes);
+    return this.ordered(async () => {
+      const snapshot = await this.read();
+      snapshot.library = deleteDraft(snapshot.library, id);
+      const retained = (snapshot.publications[id] ?? []).filter(revision => pinned.has(revision.publicationHash));
+      if (retained.length) snapshot.publications[id] = retained; else delete snapshot.publications[id];
+      await this.storage.write(structuredClone(snapshot));
+      return snapshot;
+    });
   }
 
   compact(pinnedHashes: string[]): Promise<CompanionLibrarySnapshot> {

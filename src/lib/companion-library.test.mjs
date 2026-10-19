@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { newDocument, publishDocument } from '../../packages/companion-designer/src/index.ts';
+import { newDocument, publishDocument, importAsset } from '../../packages/companion-designer/src/index.ts';
 import { CompanionLibraryStore, COMPANION_LIBRARY_LIMITS, indexedDbStorage } from './companion-library.ts';
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
@@ -26,6 +26,22 @@ test('an empty store loads an empty local library without writing or activating 
   const storage = memory();
   assert.deepEqual(await new CompanionLibraryStore(storage).load(), snapshot());
   assert.equal(storage.writes, 0);
+});
+
+test('deleting a panel removes its draft and published asset payloads from persisted storage', async () => {
+  const input=snapshot('With image','Keep panel'),entry=input.library.drafts[0];
+  const bytes=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),c=>c.charCodeAt(0));
+  const imported=await importAsset(entry.document,bytes,'image/png');entry.document=imported.document;entry.assets=[imported.asset];
+  input.publications[entry.id]=[await publishDocument(entry.document,entry.assets)];
+  const storage=memory(),store=new CompanionLibraryStore(storage);await store.save(input);
+  const pinned=await store.deletePanel(entry.id,[input.publications[entry.id][0].publicationHash]);
+  assert.equal(pinned.library.drafts.length,1);assert.deepEqual(pinned.publications[entry.id][0].assets,entry.assets,'Profile-pinned immutable snapshots remain usable.');
+  await store.save(input);
+  storage.fail=true;await assert.rejects(store.deletePanel(entry.id,[]),/Atomic write failed/);assert.equal(storage.value.library.drafts.length,2);
+  storage.fail=false;await store.deletePanel(entry.id,[]);
+  const saved=await store.load();assert.deepEqual(saved.library.drafts.map(d=>d.name),['Keep panel']);
+  assert.equal(JSON.stringify(storage.value).includes(imported.asset.assetId),false);
+  assert.equal(JSON.stringify(storage.value).includes(imported.asset.base64),false);
 });
 
 test('two distinct drafts save and reopen together; returned edits cannot mutate storage', async () => {
