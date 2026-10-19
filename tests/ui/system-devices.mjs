@@ -329,6 +329,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph).toBeVisible();
     const graphIds = await graph.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).filter(id => id !== 'host').sort());
     assert.deepEqual(graphIds, listIds);
+    await expect(graph.locator('.topology-edges text')).toHaveCount(0);
+    await expect(graph.locator('.topology-viewport')).toHaveCSS('background-image', /radial-gradient/);
+    await expect(graph.locator('.offline-zone')).toContainText('Disconnected');
+    await expect(graph.locator('.topology-edges g[data-to="controller:remembered-wheel"]')).toHaveCount(0);
+    const connector=graph.getByRole('img',{name:'USB connector',exact:true}).first();
+    await connector.hover();await expect(connector.locator('.port-tooltip')).toHaveText('USB');await expect(connector.locator('.port-tooltip')).toBeVisible();
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-pressed', 'true');
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-label', /busy.*Creation provenance unknown/);
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('title', /busy.*Creation provenance unknown/);

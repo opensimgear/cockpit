@@ -13,6 +13,10 @@
   } = $props();
 
   const graph = $derived(systemTopology(components, context));
+  const ports = $derived([...new Map(graph.edges.flatMap(edge => [edge.start, edge.end].map(point => [
+    `${point.x}:${point.y}:${edge.connection.transport}`, { ...point, label: edge.label, transport: edge.connection.transport },
+  ] as const))).values()]);
+  const protocolIcons = { usb: 'usb', can: 'chip', network: 'network', bluetooth: 'bluetooth', software: 'command', unknown: 'help' };
   const geometry = $derived(graph.nodes.map(node => `${node.component.id}:${node.x}:${node.y}`).join('|') + graph.edges.map(edge => edge.connection.id).join('|'));
   let viewport: HTMLDivElement;
   let width = $state(800), height = $state(560);
@@ -29,7 +33,7 @@
     zoom(Math.exp(-event.deltaY * 0.0015), { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
   }
   function pointerDown(event: PointerEvent) {
-    if (event.button !== 0 || (event.target instanceof Element && event.target.closest('button'))) return;
+    if (event.button !== 0 || (event.target instanceof Element && event.target.closest('button, .connection-port'))) return;
     viewport.focus({ preventScroll: true });
     viewport.setPointerCapture(event.pointerId);
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, view: { ...view } };
@@ -88,26 +92,25 @@
     </div>
   </div>
   <div class="topology-legend" aria-label="Connection legend">
-    <span><i class="physical"></i>USB / CAN / network</span><span><i class="software"></i>Software relationship</span><span><i class="remembered"></i>Last known connection</span><span><i class="unknown"></i>Unknown transport</span>
+    <span><i class="physical"></i>Current connection</span><span><i class="software"></i>Software relationship</span><span>Hover a connector to see its protocol</span>
   </div>
   <!-- A focusable region provides keyboard panning; its nodes remain native buttons. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div class="topology-viewport" class:dragging bind:this={viewport} role="region" aria-label="Connection graph. Drag background or use arrow keys to pan; scroll or plus and minus to zoom; Home to fit. Tab to select a component." tabindex="0" onwheel={wheel} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onlostpointercapture={pointerUp} onkeydown={keyboard}>
     <div class="topology-world" style:width={`${graph.width}px`} style:height={`${graph.height}px`} style:transform={`translate(${view.x}px, ${view.y}px) scale(${view.zoom})`}>
+      {#if graph.offline}<div class="offline-zone" style:left={`${graph.offline.x}px`} style:top={`${graph.offline.y}px`} style:width={`${graph.offline.width}px`} style:height={`${graph.offline.height}px`}><strong>Disconnected <span>{graph.offline.count}</span></strong></div>{/if}
       <svg width={graph.width} height={graph.height} aria-hidden="true" class="topology-edges">
         {#each graph.edges as edge (edge.connection.id)}
-          <g class:software={edge.connection.transport === 'software'} class:remembered={!edge.connection.current} class:unknown={edge.connection.transport === 'unknown'}>
-            <path class="connection-clearance" d={edge.path} />
+          <g data-from={edge.connection.from} data-to={edge.connection.to} class:software={edge.connection.transport === 'software'} class:unknown={edge.connection.transport === 'unknown'}>
             <path d={edge.path} />
-            <rect x={edge.x - Math.max(34, edge.label.length * 3.1)} y={edge.y - 10} width={Math.max(68, edge.label.length * 6.2)} height="20" rx="4" />
-            <text x={edge.x} y={edge.y + 3}>{edge.label}</text>
           </g>
         {/each}
       </svg>
+      {#each ports as port (`${port.x}:${port.y}:${port.transport}`)}<span class="connection-port" role="img" aria-label={`${port.label} connector`} title={port.label} style:left={`${port.x}px`} style:top={`${port.y}px`}><Icon name={protocolIcons[port.transport]} size={12} /><span class="port-tooltip" aria-hidden="true">{port.label}</span></span>{/each}
       {#each graph.nodes as node (node.component.id)}
         {@const component = node.component}
         {@const state = systemStateLabel(component)}
-        <button type="button" class="topology-node" data-component-id={component.id} class:selected={selectedId === component.id} class:context={node.context} class:offline={component.presence !== 'connected'} style:left={`${node.x}px`} style:top={`${node.y}px`} style:width={`${TOPOLOGY_NODE_WIDTH}px`} style:height={`${node.height}px`} aria-pressed={selectedId === component.id} aria-label={`${component.name}, ${kind(component.type)}, ${state}${node.context ? ', connection context' : ''}`} onclick={() => onselect(component.id)} onfocus={() => reveal(component.id)} title={`${component.name}\n${component.role}\n${state}${component.diagnostics.length ? '\n' + component.diagnostics.join('\n') : ''}`}>
+        <button type="button" class="topology-node" data-component-id={component.id} class:selected={selectedId === component.id} class:context={node.context} class:offline={component.presence !== 'connected'} style:left={`${node.x}px`} style:top={`${node.y}px`} style:width={`${TOPOLOGY_NODE_WIDTH}px`} style:height={`${node.height}px`} aria-pressed={selectedId === component.id} aria-label={`${component.name}, ${kind(component.type)}, ${state}${node.context ? ', connection context' : ''}`} onclick={() => onselect(component.id)} onfocus={event => { if (event.currentTarget.matches(':focus-visible')) reveal(component.id); }} title={`${component.name}\n${component.role}\n${state}${component.diagnostics.length ? '\n' + component.diagnostics.join('\n') : ''}`}>
           <span class="node-icon"><Icon name={component.type === 'companion' ? 'mobile' : systemDeviceIcon(component)} size={18} /></span>
           <span class="node-copy"><span class="node-kind">{kind(component.type)}{node.context ? ' · Context' : ''}</span><strong>{component.name}</strong><span class="node-status" title={state}><i class:connected={component.presence === 'connected'}></i><span>{state}</span></span></span>
           <span class="node-role">{component.role || 'Connection details unknown'}{component.diagnostics.length ? ` · ${component.diagnostics.length} diagnostic${component.diagnostics.length === 1 ? '' : 's'}` : ''}</span>
@@ -116,7 +119,7 @@
     </div>
     {#if components.length === 0}<p class="topology-empty">No components match the current filters.</p>{/if}
   </div>
-  <p class="topology-help">Select any component for details. Drag to pan · Scroll to zoom · Fit to show all. Components without observed connections remain visible.</p>
+  <p class="topology-help">Select a device for details. Drag to pan · Scroll to zoom · Fit to show all. Disconnected devices are grouped on the right without connection lines.</p>
 </section>
 
 <style>
@@ -132,26 +135,24 @@
   .topology-legend span { display: flex; align-items: center; gap: 6px; }
   .topology-legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid var(--accent); }
   .topology-legend .software { border-color: #8fb6e9; border-top-style: dotted; }
-  .topology-legend .remembered { border-color: var(--muted); border-top-style: dashed; }
-  .topology-legend .unknown { border-color: #d7ae77; border-top-style: dotted; }
-  .topology-viewport { position: relative; height: clamp(420px, 64vh, 760px); min-height: 420px; overflow: hidden; background: var(--bg); background-image: radial-gradient(var(--line) .7px, transparent .7px); background-size: 18px 18px; cursor: grab; touch-action: none; }
+  .topology-viewport { position: relative; height: clamp(420px, 64vh, 760px); min-height: 420px; overflow: hidden; background: var(--bg); background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
   .topology-viewport.dragging { cursor: grabbing; user-select: none; }
   .topology-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   .topology-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
   .topology-edges { position: absolute; overflow: visible; pointer-events: none; }
-  .topology-edges path { stroke: var(--accent); stroke-width: 1.5; fill: none; }
-  .topology-edges g path.connection-clearance { stroke: var(--bg); stroke-width: 7; stroke-dasharray: none; }
-  .topology-edges rect { fill: var(--bg); stroke: var(--line); stroke-width: .6; }
-  .topology-edges text { fill: var(--soft); font-size: 10px; text-anchor: middle; }
-  .topology-edges .software path { stroke: #8fb6e9; stroke-dasharray: 3 4; }
+  .topology-edges path { stroke: var(--muted); stroke-opacity: .55; stroke-width: 1.25; fill: none; stroke-linejoin: round; }
+  .topology-edges .software path { stroke-dasharray: 3 4; }
   .topology-edges .unknown path { stroke: #d7ae77; stroke-dasharray: 2 4; }
-  .topology-edges .remembered path { stroke: var(--muted); stroke-dasharray: 7 5; }
-  .topology-edges .remembered text { fill: var(--muted); }
+  .offline-zone {position:absolute;border:1px dashed var(--line);border-radius:12px;background:var(--subtle)}
+  .offline-zone > strong {display:flex;align-items:center;gap:8px;margin:16px;font-size:12px;font-weight:500;color:var(--soft)}.offline-zone > strong span {font-size:10px;color:var(--muted)}
+  .connection-port {position:absolute;z-index:3;display:grid;place-items:center;width:20px;height:20px;transform:translate(-50%,-50%);border:1px solid var(--line);border-radius:4px;background:var(--surface-raised);color:var(--soft);cursor:help}
+  .connection-port:hover {border-color:var(--accent);color:var(--accent);z-index:4}.port-tooltip {display:none;position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);white-space:nowrap;font-size:11px;pointer-events:none}.connection-port:hover .port-tooltip {display:block}
   .topology-node { position: absolute; display: flex; flex-wrap: wrap; align-content: center; align-items: start; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text); text-align: left; box-shadow: 0 3px 12px var(--shadow); }
   .topology-node:hover { border-color: var(--muted); }
   .topology-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .topology-node.context { border-style: dashed; }
   .topology-node.offline .node-icon { color: var(--muted); background: transparent; }
+  .topology-node.offline .node-role {display:none}
   .node-icon { display: grid; place-items: center; width: 30px; height: 32px; background: var(--accent-bg); color: var(--accent); border-radius: 5px; flex-shrink: 0; }
   .node-copy { min-width: 0; flex: 1; }
   .node-kind { display: block; font-size: 8px; color: var(--muted); margin-bottom: 5px; }

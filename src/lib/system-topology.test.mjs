@@ -35,8 +35,8 @@ test('layout and parallel transport labels are deterministic despite discovery o
   const graph = systemTopology(inventory);
   assert.deepEqual(plain(systemTopology([...inventory].reverse())), plain(graph));
   assert.equal(graph.nodes.filter(node => node.component.id === 'panel').length, 1);
-  assert.equal(graph.edges.length, 5);
-  assert.notEqual(graph.edges.find(item => item.connection.id === 'panel-usb').path, graph.edges.find(item => item.connection.id === 'old-route').path);
+  assert.equal(graph.edges.length, 4);
+  assert.equal(graph.edges.some(item => item.connection.id === 'old-route'),false);
   assert.equal(topologyConnectionLabel(remembered), 'NETWORK · Last known');
   assert.equal(topologyConnectionLabel(edge('unknown', 'host', 'panel', 'unknown')), 'Unknown transport');
   assert.equal(topologyConnectionLabel(edge('software', 'host', 'panel', 'software')), 'Software');
@@ -59,20 +59,26 @@ test('cyclic sightings do not loop and fitting includes every node with finite a
   assert.equal(topologyZoom(view, 1e-9, anchor).zoom, 0.08);
 });
 
-test('larger rigs keep one column per level and separate routing lanes at readable initial zoom', () => {
+test('larger rigs keep device levels in centred columns with a normal-sized host', () => {
   const devices = Array.from({ length: 28 }, (_, index) => component('device-' + index, 'controller', [edge('edge-' + index, 'host', 'device-' + index)]));
   const inventory = [component('host', 'host'), ...devices], graph = systemTopology(inventory);
   assert.equal(graph.nodes.length, 29);
-  assert.ok(graph.height >= 28 * (TOPOLOGY_NODE_HEIGHT + 64));
-  assert.equal(new Set(graph.nodes.filter(node => node.component.id !== 'host').map(node => node.x)).size, 1);
+  assert.ok(graph.height >= 28*TOPOLOGY_NODE_HEIGHT);
+  const connected=graph.nodes.filter(node=>node.component.id!=='host'),host=graph.nodes.find(node=>node.component.id==='host');
+  assert.equal(new Set(connected.map(node => node.x)).size, 1);
+  assert.equal(host.height,TOPOLOGY_NODE_HEIGHT);
+  assert.ok(host.x<connected[0].x);
+  assert.equal(host.y+host.height/2,(Math.min(...connected.map(n=>n.y))+Math.max(...connected.map(n=>n.y+n.height)))/2);
   for (let index = 0; index < graph.nodes.length; index++) for (const other of graph.nodes.slice(index + 1)) {
     const node = graph.nodes[index];
     assert.ok(node.x + TOPOLOGY_NODE_WIDTH <= other.x || other.x + TOPOLOGY_NODE_WIDTH <= node.x || node.y + TOPOLOGY_NODE_HEIGHT <= other.y || other.y + TOPOLOGY_NODE_HEIGHT <= node.y, `${node.component.id} overlaps ${other.component.id}`);
   }
   assert.deepEqual(plain(systemTopology([...inventory].reverse())), plain(graph));
-  assert.deepEqual(plain(systemTopology(inventory.map(item => ({ ...item, presence: 'offline', name: item.name }))).nodes.map(node => [node.component.id, node.x, node.y])), plain(graph.nodes.map(node => [node.component.id, node.x, node.y])));
+  const disconnected=systemTopology(inventory.map(item => ({ ...item, presence: 'offline' })));
+  assert.equal(disconnected.edges.length,0);assert.equal(disconnected.offline.count,28);
+  assert.ok(disconnected.nodes.filter(n=>n.component.id!=='host').every(n=>n.x>disconnected.nodes.find(n=>n.component.id==='host').x+TOPOLOGY_NODE_WIDTH));
   const initial = topologyInitialView(graph.width, graph.height, 1280, 640), fitted = topologyFit(graph.width, graph.height, 1280, 640);
-  assert.equal(initial.zoom, 0.8);
+  assert.equal(initial.zoom, 0.65);
   assert.ok(fitted.zoom < initial.zoom);
   assert.ok(graph.edges.some(edge => edge.path.includes(' L ')), 'connections use orthogonal routing lanes');
   const small = topologyInitialView(500, 300, 1280, 640);
@@ -80,7 +86,7 @@ test('larger rigs keep one column per level and separate routing lanes at readab
 });
 
 // Verify actual segment geometry, including cycles and skipped-level edges.
-test('routes avoid cards and keep vertical lanes and labels separate', () => {
+test('shared connection buses avoid cards and expose exact protocol endpoints', () => {
   const links = [edge('h-a', 'host', 'a'), edge('h-b', 'host', 'b'), edge('a-c', 'a', 'c', 'can'), edge('b-c', 'b', 'c'), edge('c-a', 'c', 'a'), edge('a-b', 'a', 'b'), edge('h-c', 'host', 'c'), edge('parallel', 'host', 'a', 'software'), edge('return-a', 'a', 'host'), edge('return-b', 'b', 'host')];
   const graph = systemTopology([component('host', 'host', links), ...['a', 'b', 'c'].map(id => component(id))]);
   const verticals = [];
@@ -100,12 +106,28 @@ test('routes avoid cards and keep vertical lanes and labels separate', () => {
       }
     }
   }
-  for (let i = 0; i < verticals.length; i++) for (const b of verticals.slice(i + 1)) {
-    const a = verticals[i];
-    assert.ok(a.x !== b.x || a.bottom <= b.top || b.bottom <= a.top, 'vertical routes share a lane');
+  for (const route of graph.edges) {
+    const from=graph.nodes.find(n=>n.component.id===route.connection.from),to=graph.nodes.find(n=>n.component.id===route.connection.to);
+    assert.equal(route.start.x,from.x+TOPOLOGY_NODE_WIDTH);assert.ok(route.start.y>from.y&&route.start.y<from.y+from.height);
+    assert.equal(route.end.x,to.x);
+    assert.ok(route.end.y>to.y&&route.end.y<to.y+to.height);
   }
-  for (let i = 0; i < graph.edges.length; i++) for (const b of graph.edges.slice(i + 1)) {
-    const a = graph.edges[i];
-    assert.ok(Math.abs(a.y - b.y) >= 20 || Math.abs(a.x - b.x) > 280, 'connection labels overlap');
-  }
+});
+
+test('offline, unavailable and unknown devices sit on the right with no current or remembered lines',()=>{
+ const items=[component('host','host'),component('live','controller',[edge('live','host','live')]),...['offline','unavailable','unknown'].map(state=>component(state,'controller',[edge(state,'host',state,'usb',false)],state))];
+ const graph=systemTopology(items),active=graph.nodes.filter(n=>n.component.presence==='connected');
+ assert.equal(graph.edges.length,1);assert.equal(graph.offline.count,3);
+ for(const n of graph.nodes.filter(n=>n.component.presence!=='connected'))assert.ok(n.x>Math.max(...active.map(n=>n.x+TOPOLOGY_NODE_WIDTH)));
+});
+
+test('devices and connector ports follow protocol order within each level, independently of names and discovery order',()=>{
+ const protocols=['unknown','software','bluetooth','network','can','usb'];
+ const devices=protocols.map((transport,index)=>component('device-'+index,'controller',[edge(transport,'host','device-'+index,transport)]));
+ const items=[component('host','host'),...devices],graph=systemTopology(items);
+ const column=graph.nodes.filter(node=>node.component.id!=='host').sort((a,b)=>a.y-b.y);
+ assert.deepEqual(plain(column.map(node=>node.component.connections[0].transport)),[...protocols].reverse());
+ const starts=graph.edges.slice().sort((a,b)=>a.start.y-b.start.y);
+ assert.deepEqual(plain(starts.map(route=>route.connection.transport)),[...protocols].reverse());
+ assert.deepEqual(plain(systemTopology([...items].reverse())),plain(graph));
 });
