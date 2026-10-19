@@ -1,6 +1,6 @@
 #ifndef OSG_FIRMWARE_H
 #define OSG_FIRMWARE_H
-#define OSG_FIRMWARE_VERSION "2026.10.19.3"
+#define OSG_FIRMWARE_VERSION "2026.10.19.5"
 #ifndef OSG_BOARD_PROFILE
 #define OSG_BOARD_PROFILE "headless"
 #endif

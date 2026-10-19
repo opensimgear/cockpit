@@ -976,3 +976,22 @@ fn panel_error_keeps_connection_alive_without_arming_inputs(){
     assert_eq!(status["clients"][0]["connected"],true);assert!(status["clients"][0]["panelError"].is_string());
     assert_eq!(baseline(&h,"connection",&opened,&p)["ok"],false);
 }
+
+#[test]
+fn device_images_are_external_sized_and_bound_to_the_authenticated_session(){
+    let bitmap=image::RgbaImage::from_pixel(4,4,image::Rgba([0,255,0,255]));let mut output=std::io::Cursor::new(Vec::new());bitmap.write_to(&mut output,image::ImageFormat::Png).unwrap();let bytes=output.into_inner();
+    let mut upload=mutated(|doc|{
+        doc["ui"]["assets"]=json!([{"id":"picture","mime":"image/png","sha256":hash(&bytes),"sizeBytes":bytes.len()}]);
+        let page=doc["ui"]["pages"][0]["id"].clone();
+        doc["presentation"]["widgets"].as_array_mut().unwrap().push(json!({"id":"picture-widget","kind":"image","pageId":page,"label":"Image","bounds":{"x":0,"y":0,"width":1,"height":1},"controlIds":[],"feedbackIds":[],"config":{"assetId":"picture"}}));
+    });
+    upload.assets=vec![AssetPayload{asset_id:"picture".into(),base64:base64::engine::general_purpose::STANDARD.encode(bytes)}];
+    let sink=Arc::new(Sink::default());let h=Hub::new("host".into(),sink);let token=paired(&h,"screen");let p=publish(&h,upload);assign(&h,"screen","instance",&p.publication_hash);
+    assert_eq!(wire(&h,"screen-link",json!({"type":"auth","token":token}))["ok"],true);
+    let open=wire(&h,"screen-link",json!({"type":"open","instanceId":"instance","externalImages":true}));assert_eq!(open["ok"],true,"{open}");assert_eq!(open["publication"]["assets"],json!([]));
+    let mut request=frame(&open,"image-chunk","0");request.as_object_mut().unwrap().remove("sequence");request["widgetId"]=json!("picture-widget");request["width"]=json!(2);request["height"]=json!(3);request["offset"]=json!(0);
+    let reply=wire(&h,"screen-link",request.clone());assert_eq!(reply["ok"],true,"{reply}");assert_eq!(reply["total"],18);
+    assert_eq!(base64::engine::general_purpose::STANDARD.decode(reply["base64"].as_str().unwrap()).unwrap(),vec![224,7,255].repeat(6));
+    assert_eq!(wire(&h,"other-link",request.clone())["ok"],false);
+    request["generation"]=json!("2");assert_eq!(wire(&h,"screen-link",request)["ok"],false);
+}

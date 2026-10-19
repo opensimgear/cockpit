@@ -30,6 +30,8 @@ pub struct PublicationUpload {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Publication {
+    #[serde(skip)]
+    raster_cache: std::sync::Arc<std::sync::Mutex<BTreeMap<String, std::sync::Arc<Vec<u8>>>>>,
     pub canonical_document: String,
     pub publication_hash: String,
     pub capability_fingerprint: String,
@@ -474,6 +476,7 @@ impl Publication {
                 "xy" => (&["axis", "axis"], None),
                 "encoder" => (&["button", "button"], None),
                 "hat" => (&["hat"], None),
+                "image" => (&[], None),
                 "text" => (&[], Some("text")),
                 "numeric" | "gauge" => (&[], Some("gauge")),
                 "icon" | "indicator" => (&[], Some("indicator")),
@@ -508,7 +511,7 @@ impl Publication {
             }
             validate_config(w, &controls, assets)?;
             let mut config = w["config"].clone();
-            for k in ["iconAssetId", "symbol", "prefix", "suffix", "orientation"] {
+            for k in ["assetId", "iconAssetId", "symbol", "prefix", "suffix", "orientation"] {
                 config.as_object_mut().unwrap().remove(k);
             }
             if kind == "selector" {
@@ -549,7 +552,7 @@ impl Publication {
                 "Logical and presentation pages differ.",
             )?;
         }
-        let targets = list(&doc["targets"], 1, 8)?;
+        let targets = list(&doc["targets"], 0, 8)?;
         for t in targets {
             object(t, &["id", "label", "axes", "buttons", "hats"], &[])?;
             unique(&t["id"])?;
@@ -614,6 +617,7 @@ impl Publication {
             )?;
         }
         Ok(Self {
+            raster_cache: Default::default(),
             canonical_document: upload.canonical_document,
             publication_hash: upload.publication_hash,
             capability_fingerprint,
@@ -714,6 +718,10 @@ fn validate_config(w: &Value, controls: &[SourceControl], assets: &[Value]) -> R
                     "Invalid XY configuration.",
                 )?;
             }
+        }
+        "image" => {
+            object(c, &[], &["assetId"])?;
+            if let Some(asset)=c.get("assetId"){ensure(assets.iter().any(|a|a["id"]==*asset),"Unknown image asset.")?;}
         }
         "hat" | "indicator" => {
             object(c, &[], &[])?;
@@ -1092,5 +1100,50 @@ mod viewport_tests {
         validate(document.clone()).unwrap();
         document["presentation"]["viewports"][1]["regions"][0]["id"] = json!("viewport-first");
         assert_eq!(validate(document).unwrap_err(), "Duplicate publication ID.");
+    }
+}
+
+impl Publication {
+    /// Device-sized RGB565 + alpha, streamed separately from the immutable document.
+    pub(crate) fn image_chunk(&self, widget_id:&str, width:u32, height:u32, offset:usize)->Result<Value,String>{
+        ensure(width>0 && height>0 && width<=800 && height<=800 && width as usize*height as usize<=800*480,"Image dimensions exceed the device budget.")?;
+        let key=format!("{widget_id}:{width}:{height}");
+        let mut cache=self.raster_cache.lock().map_err(|_|"Image cache unavailable.")?;
+        if !cache.contains_key(&key){
+            let doc:Value=serde_json::from_str(&self.canonical_document).map_err(|e|e.to_string())?;
+            let widget=doc["presentation"]["widgets"].as_array().and_then(|ws|ws.iter().find(|w|w["id"]==widget_id && w["kind"]=="image")).ok_or("Unknown image widget.")?;
+            let asset=self.assets.iter().find(|a|Some(a.asset_id.as_str())==widget["config"]["assetId"].as_str()).ok_or("Image widget has no asset.")?;
+            let bytes=STANDARD.decode(&asset.base64).map_err(|e|e.to_string())?;
+            let image=image::load_from_memory(&bytes).map_err(|_|"Image could not be decoded.")?.resize_exact(width,height,image::imageops::FilterType::Lanczos3).to_rgba8();
+            let mut pixels=Vec::with_capacity(width as usize*height as usize*3);
+            for p in image.pixels(){let rgb=((p[0] as u16>>3)<<11)|((p[1] as u16>>2)<<5)|(p[2] as u16>>3);pixels.extend_from_slice(&[rgb as u8,(rgb>>8)as u8,p[3]]);}
+            // One publication may have many widgets; bound decoded cache memory.
+            if cache.values().map(|v|v.len()).sum::<usize>()+pixels.len()>4*1024*1024{cache.clear();}
+            cache.insert(key.clone(),std::sync::Arc::new(pixels));
+        }
+        let pixels=&cache[&key];ensure(offset<pixels.len() && offset%3==0,"Invalid image offset.")?;
+        let end=(offset+6144).min(pixels.len());
+        Ok(json!({"ok":true,"type":"image-chunk","widgetId":widget_id,"width":width,"height":height,"offset":offset,"total":pixels.len(),"base64":STANDARD.encode(&pixels[offset..end]),"publicationHash":self.publication_hash}))
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    #[test]
+    fn image_widgets_publish_without_primitives_and_stream_effective_pixels(){
+        let mut doc:Value=serde_json::from_str(include_str!("../tests/fixtures/c1-flight-publication.json")).map(|p:Value|serde_json::from_str(p["canonicalDocument"].as_str().unwrap()).unwrap()).unwrap();
+        let page=doc["ui"]["pages"][0]["id"].clone();
+        doc["ui"]["pages"]=json!([{"id":page,"title":"Page 0","items":[]}]);doc["ui"]["controls"]=json!([]);doc["ui"]["feedbackWidgets"]=json!([]);doc["targets"]=json!([]);doc["bindings"]=json!([]);
+        doc["presentation"]["groups"]=json!([]);doc["presentation"]["viewports"]=json!([{"pageId":page,"width":480,"height":320}]);
+        doc["presentation"]["widgets"]=json!([{"id":"image-widget","pageId":page,"kind":"image","label":"Image","bounds":{"x":0,"y":0,"width":1,"height":1},"controlIds":[],"feedbackIds":[],"config":{"assetId":"picture"}}]);
+        let bitmap=image::RgbaImage::from_pixel(8,8,image::Rgba([255,0,0,128]));let mut png=std::io::Cursor::new(Vec::new());bitmap.write_to(&mut png,image::ImageFormat::Png).unwrap();let bytes=png.into_inner();
+        doc["ui"]["assets"]=json!([{"id":"picture","mime":"image/png","sha256":hash(&bytes),"sizeBytes":bytes.len()}]);
+        let canonical_document=serde_json_canonicalizer::to_string(&doc).unwrap();
+        let p=Publication::validate(PublicationUpload{publication_hash:format!("sha256:{}",hash(canonical_document.as_bytes())),canonical_document,capability_fingerprint:None,assets:vec![AssetPayload{asset_id:"picture".into(),base64:STANDARD.encode(bytes)}]}).unwrap();
+        let chunk=p.image_chunk("image-widget",2,3,0).unwrap();assert_eq!(chunk["total"],18);
+        let pixels=STANDARD.decode(chunk["base64"].as_str().unwrap()).unwrap();assert_eq!(pixels,vec![0,248,128].repeat(6));
+        assert_eq!(p.image_chunk("image-widget",1,1,0).unwrap()["total"],3);
+        assert!(p.image_chunk("image-widget",801,1,0).is_err());assert!(p.image_chunk("missing",1,1,0).is_err());assert!(p.image_chunk("image-widget",2,3,18).is_err());assert!(p.image_chunk("image-widget",2,3,1).is_err());
     }
 }

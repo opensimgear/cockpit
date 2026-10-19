@@ -33,21 +33,27 @@ fn screen_dimensions(profile:&str)->Option<(u64,u64)>{
 }
 fn validate_screen_document(document:&Value,size:(u64,u64))->Result<(),String>{
     let widgets=document["presentation"]["widgets"].as_array().ok_or("Panel has no widgets.")?;
-    if document["ui"]["assets"].as_array().is_some_and(|a|!a.is_empty()) || document["presentation"]["viewports"].as_array().is_some_and(|v|v.iter().any(|v|v.get("backgroundAssetId").is_some())) || widgets.iter().any(|w|w["config"].get("iconAssetId").is_some()){
-        return Err("ESP32 panels do not support images or backgrounds. Remove the background and image assets.".into());
+    if document["presentation"]["viewports"].as_array().is_some_and(|v|v.iter().any(|v|v.get("backgroundAssetId").is_some())) || widgets.iter().any(|w|w["config"].get("iconAssetId").is_some()){
+        return Err("Use image widgets instead of backgrounds or button icons.".into());
     }
     if document["presentation"]["groups"].as_array().is_some_and(|g|!g.is_empty()) || widgets.iter().any(|w|w.get("groupId").is_some()){
         return Err("ESP32 panels do not support groups. Ungroup widgets before assigning.".into());
     }
     if widgets.len()>32 || serde_json::to_vec(document).map_err(|e|e.to_string())?.len()>16384{return Err("ESP32 panel exceeds the 32 widget or 16 KB document limit.".into());}
+    let image_bytes:f64=widgets.iter().filter(|w|w["kind"]=="image").map(|w|{
+        let screen=document["presentation"]["viewports"].as_array().and_then(|v|v.iter().find(|v|v["pageId"]==w["pageId"]));
+        screen.map(|s|{let m=&s["safeInsets"];(w["bounds"]["width"].as_f64().unwrap_or(0.0)*size.0 as f64*(1.0-m["left"].as_f64().unwrap_or(0.0)-m["right"].as_f64().unwrap_or(0.0))).floor()*(w["bounds"]["height"].as_f64().unwrap_or(0.0)*size.1 as f64*(1.0-m["top"].as_f64().unwrap_or(0.0)-m["bottom"].as_f64().unwrap_or(0.0))).floor()*3.0}).unwrap_or(0.0)
+    }).sum();
+    if image_bytes>1200.0*1024.0{return Err("Image widgets exceed the 1200 KB device pixel budget.".into());}
     for w in widgets{
+        if w["kind"]=="image" && w["config"]["assetId"].as_str().is_none(){return Err("Choose an asset for every image widget.".into());}
         let text_ok=|v:&Value|v.as_str().is_some_and(|s|s.bytes().all(|c|c.is_ascii_alphanumeric()||b" .,:;-_+=|/%!()?".contains(&c)));
         if !text_ok(&w["label"]) || ["prefix","suffix","unit"].iter().any(|key|w["config"].get(*key).is_some_and(|v|!text_ok(v))){return Err("ESP32 labels and text must use the supported device font.".into());}
-        if !matches!(w["kind"].as_str(),Some("button"|"indicator"|"text"|"numeric"|"gauge")){return Err("This widget type is not supported on ESP32 screens.".into());}
+        if !matches!(w["kind"].as_str(),Some("button"|"indicator"|"text"|"numeric"|"gauge"|"image")){return Err("This widget type is not supported on ESP32 screens.".into());}
         if w["kind"]=="button" && (w["config"]["buttonMode"]!="momentary" || w["config"]["pulseMs"]!=0 || w["config"]["repeatMs"]!=0){return Err("ESP32 buttons must be momentary without pulse or repeat.".into());}
         if w["kind"]=="button"{if let Some(screen)=document["presentation"]["viewports"].as_array().and_then(|screens|screens.iter().find(|v|v["pageId"]==w["pageId"])){
             let width=screen["width"].as_f64().unwrap_or(1.0);let height=screen["height"].as_f64().unwrap_or(1.0);
-            let scale=(size.0 as f64/width).min((size.1 as f64-32.0)/height);
+            let scale=(size.0 as f64/width).min((size.1 as f64)/height);
             let insets=&screen["safeInsets"];
             if (w["bounds"]["width"].as_f64().unwrap_or(0.0)*(1.0-insets["left"].as_f64().unwrap_or(0.0)-insets["right"].as_f64().unwrap_or(0.0))*width*scale).floor()<44.0 || (w["bounds"]["height"].as_f64().unwrap_or(0.0)*(1.0-insets["top"].as_f64().unwrap_or(0.0)-insets["bottom"].as_f64().unwrap_or(0.0))*height*scale).floor()<44.0{return Err("ESP32 buttons must render at least 44 by 44 pixels. Enlarge the button.".into());}
         }}

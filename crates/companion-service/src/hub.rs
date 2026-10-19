@@ -1003,7 +1003,7 @@ impl Hub {
                     exact(
                         frame,
                         &["type", "instanceId"],
-                        &["version", "publicationHash", "takeover"],
+                        &["version", "publicationHash", "takeover", "externalImages"],
                     )?;
                     let instance = field(frame, "instanceId")?;
                     let assignment = inner
@@ -1069,9 +1069,20 @@ impl Hub {
                             feedback_cursor: Default::default(),
                         },
                     );
+                    let mut publication=serde_json::to_value(&p).map_err(|e|e.to_string())?;
+                    if frame["externalImages"]==true{publication["assets"]=json!([]);}
                     return Ok(
-                        json!({"ok":true,"type":"session-open","hostId":inner.record.host_id,"companionId":companion,"controllerInstanceId":instance,"clientId":client_id,"sessionId":session_id,"generation":"1","publicationHash":p.publication_hash,"publication":p}),
+                        json!({"ok":true,"type":"session-open","hostId":inner.record.host_id,"companionId":companion,"controllerInstanceId":instance,"clientId":client_id,"sessionId":session_id,"generation":"1","publicationHash":p.publication_hash,"publication":publication}),
                     );
+                }
+                if frame["type"]=="image-chunk" {
+                    exact(frame,&["type","sessionId","clientId","generation","publicationHash","widgetId","width","height","offset"],&["version"])?;
+                    let session=inner.sessions.get_mut(field(frame,"sessionId")?).ok_or("Unknown session.")?;
+                    ensure(session.connection==connection_id && session.companion_id==companion && frame["clientId"]==session.client_id && frame["generation"]==session.token.generation.to_string() && frame["publicationHash"]==session.token.publication_hash && !session.armed,"Image transfer requires the current disarmed session.")?;
+                    session.last_seen=now;
+                    let hash=session.token.publication_hash.clone();
+                    let p=inner.publications.get(&hash).ok_or("Publication unavailable.")?;
+                    return p.image_chunk(field(frame,"widgetId")?,frame["width"].as_u64().filter(|n|*n<=800).ok_or("Invalid width.")? as u32,frame["height"].as_u64().filter(|n|*n<=800).ok_or("Invalid height.")? as u32,frame["offset"].as_u64().filter(|n|*n<4*1024*1024).ok_or("Invalid offset.")? as usize);
                 }
                 let mut reply =
                     self.session_frame(&mut inner, frame, connection_id, &companion, now)?;

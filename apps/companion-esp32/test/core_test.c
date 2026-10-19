@@ -46,7 +46,7 @@ static void bridge_test(void) {
 static osg_runtime runtime;
 static osg_runtime *setup(spy *s, int width, int height) {
     *s = (spy){.width = width, .height = height};
-    assert(osg_init(&runtime, &osg_demo_panel, (osg_display){s, (uint16_t)width, (uint16_t)height, rect, label}, record, s));
+    assert(osg_init(&runtime, &osg_demo_panel, (osg_display){s, (uint16_t)width, (uint16_t)height, rect, label,NULL}, record, s));
     return &runtime;
 }
 static void validation(void) {
@@ -238,6 +238,21 @@ static void partial_render_test(void){
         osg_raster_render(&raster,&r,d,1015);compare_render(&r,&actual,1015);
     }
 }
+static void image_test(void){
+    static const unsigned char pixels[]={0,248,255,224,7,255,31,0,255,255,255,0};
+    osg_widget image={.id="image",.reference="",.output_id="",.label="Image",.prefix="",.suffix="",.unit="",.kind=OSG_IMAGE,.bounds={0,0,1,1},.pixels=pixels,.image_width=2,.image_height=2};
+    osg_panel panel=osg_demo_panel;panel.widgets=&image;panel.widget_count=1;panel.page_count=1;
+    osg_runtime runtime;osg_raster raster={.write=write_pixels};
+    assert(osg_init(&runtime,&panel,osg_raster_display(&raster,800,480),NULL,NULL));
+    int x,y,w,h;osg_widget_rect(&runtime,0,&x,&y,&w,&h);assert(x==0&&y==0&&w==800&&h==480);
+    // Clipped tile composition must sample the source at the correct display position.
+    raster.composing=true;raster.tile_x=0;raster.tile_y=0;raster.tile_width=2;raster.tile_height=2;
+    osg_render(&runtime,0);assert(raster.tile[0]==0xf800 && raster.tile[3]==0xf800);
+    raster.tile_x=799;raster.tile_y=479;raster.tile_width=1;raster.tile_height=1;
+    osg_render(&runtime,0);assert(raster.tile[0]==0x08c4); // transparent source preserves canvas
+    spy s={.width=800,.height=480};runtime.display=(osg_display){&s,800,480,rect,label,NULL};osg_render(&runtime,0);assert(s.draws>0&&s.texts==0);
+    image.pixels=NULL;osg_render(&runtime,0);
+}
 int main(int argc, char **argv) {
     for(int size=0;size<3;size++){
         spy status;osg_runtime *r=setup(&status,size==0?480:size==1?800:320,size==0?320:size==1?480:240);
@@ -254,7 +269,7 @@ int main(int argc, char **argv) {
         r->screen=OSG_SCREEN_PANEL;status.log[0]=0;osg_render(r,0);
         assert(!strstr(status.log,"LIVE INPUT")&&!strstr(status.log,"RECORDING ONLY"));
     }
-    partial_render_test();
+    image_test();partial_render_test();
     validation(); input(); feedback(); bridge_test();
     for (int i = 0; i < 3; i++) { spy s; osg_runtime *r = setup(&s, i == 0 ? 800 : i == 1 ? 320 : 480, i == 0 ? 480 : i == 1 ? 240 : 800); osg_render(r, 0); assert(s.draws && s.texts); }
     preview(argc > 1 ? argv[1] : NULL, 800, 480,OSG_SCREEN_PANEL); preview(NULL, 320, 240,OSG_SCREEN_PANEL); preview(NULL, 480, 800,OSG_SCREEN_PANEL);

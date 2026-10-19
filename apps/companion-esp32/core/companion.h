@@ -9,7 +9,7 @@
 #define OSG_TEXT_BYTES 121
 #define OSG_STALE_MS 1000
 
-typedef enum { OSG_BUTTON, OSG_INDICATOR, OSG_TEXT, OSG_NUMERIC, OSG_GAUGE } osg_kind;
+typedef enum { OSG_BUTTON, OSG_INDICATOR, OSG_TEXT, OSG_NUMERIC, OSG_GAUGE, OSG_IMAGE } osg_kind;
 typedef struct { double x, y, width, height; } osg_bounds;
 typedef struct { const char *id, *title; uint16_t width, height; } osg_page;
 typedef struct {
@@ -19,6 +19,8 @@ typedef struct {
     osg_bounds bounds;
     uint16_t foreground, background, accent;
     double min, max;
+    const unsigned char *pixels; /* RGB565 little endian + alpha, device-sized. */
+    uint16_t image_width, image_height;
 } osg_widget;
 typedef struct {
     const char *ui_id, *publication_hash;
@@ -33,6 +35,7 @@ typedef struct {
     uint16_t width, height;
     void (*fill)(void *, int x, int y, int width, int height, uint16_t rgb565);
     void (*text)(void *, int x, int y, int width, int height, const char *, uint16_t rgb565);
+    void (*image)(void *,int,int,int,int,const unsigned char *,int,int,uint16_t);
 } osg_display;
 typedef enum { OSG_REQUESTED, OSG_LOCAL, OSG_HOST_ACCEPTED, OSG_HOST_SUBMITTED, OSG_GAME_CONFIRMED } osg_provenance;
 typedef enum { OSG_BOOL, OSG_NUMBER, OSG_STRING } osg_value_kind;

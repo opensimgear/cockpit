@@ -39,7 +39,7 @@ export async function saveCompanionSettings(input: CompanionSettingsInput, send:
   const panel = publications.find(publication => publication.publicationHash === panelHash);
   if (panelChanged && panelHash && !panel) throw new Error('Choose a saved panel.');
   if(panelChanged&&panel&&client.kind==='esp32'){
-    const reason=panelScreenReason(panel,companionScreenSize(state,companionId));
+    const reason=panelScreenReason(panel,companionScreenSize(state,companionId),state.firmware?.[companionId]?.version??'unknown');
     if(reason)throw new Error(reason);
   }
 

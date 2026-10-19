@@ -91,6 +91,11 @@ static void publication_tests(cJSON *p){
     assert(image.panel.widget_count==4);
     for(size_t i=0;i<image.panel.widget_count;i++)assert(image.widgets[i].kind!=OSG_BUTTON);
     cJSON_Delete(display);cJSON_Delete(copy);
+    copy=cJSON_Duplicate(doc,true);ui=cJSON_GetObjectItemCaseSensitive(copy,"ui");pr=cJSON_GetObjectItemCaseSensitive(copy,"presentation");
+    cJSON *bitmap=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(pr,"widgets"),0);string(bitmap,"kind","image");cJSON_ReplaceItemInObjectCaseSensitive(bitmap,"config",json("{\"assetId\":\"picture\"}"));cJSON_ReplaceItemInObjectCaseSensitive(bitmap,"controlIds",json("[]"));cJSON_ReplaceItemInObjectCaseSensitive(ui,"controls",json("[]"));
+    cJSON_AddItemToArray(cJSON_GetObjectItemCaseSensitive(ui,"assets"),json("{\"id\":\"picture\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mime\":\"image/png\",\"sizeBytes\":100}"));
+    dump(copy,document,sizeof(document));sha(document,strlen(document),new_hash);display=cJSON_Duplicate(p,true);string(display,"canonicalDocument",document);string(display,"publicationHash",new_hash);
+    assert(osg_decode_publication(display,new_hash,crypto,&image,800,480));assert(image.widgets[0].kind==OSG_IMAGE&&!image.widgets[0].pixels);cJSON_Delete(display);cJSON_Delete(copy);
     cJSON_Delete(doc);assert(osg_decode_publication(p,hash,crypto,&image,800,480));
 }
 static void transfer_tests(cJSON *p){
@@ -120,7 +125,7 @@ static void ack_tests(void){
     cJSON *v=json(open);osg_live_session session;
     assert(osg_open_identity(v,"host","screen","instance",osg_demo_panel.publication_hash,&session));
     assert(!osg_open_identity(v,"wrong","screen","instance",osg_demo_panel.publication_hash,&session));cJSON_Delete(v);
-    osg_runtime r;assert(osg_init(&r,&osg_demo_panel,(osg_display){NULL,800,480,fill,text},NULL,NULL));osg_connected(&r,true);
+    osg_runtime r;assert(osg_init(&r,&osg_demo_panel,(osg_display){NULL,800,480,fill,text,NULL},NULL,NULL));osg_connected(&r,true);
     v=json("{\"ok\":true,\"type\":\"ack\",\"clientId\":\"client\",\"sessionId\":\"session\",\"generation\":\"1\",\"sequence\":\"1\",\"ackStage\":\"source-accepted\",\"submitted\":false,\"feedbackSequence\":\"1\",\"feedback\":[{\"channelId\":\"speed-channel\",\"value\":125.5,\"provenance\":\"game-confirmed\",\"sourceKind\":\"simulator\",\"sourceAgeMs\":20,\"unit\":\"kt\"}]}" );
     assert(osg_ack(v,&session,"1",&r,100));assert(r.samples[3].number==125.5&&!r.armed);assert(osg_ack(v,&session,"1",&r,500));assert(r.samples[3].received_ms==100);
     assert(!osg_ack(v,&session,"2",&r,500));string(v,"sessionId","old");assert(!osg_ack(v,&session,"1",&r,500));string(v,"sessionId","session");
@@ -148,7 +153,7 @@ static cJSON *modern_ack(void){
 }
 static void modern_feedback_tests(void){
     osg_live_session session={.client="client",.session="session",.generation="1",.instance="instance"};osg_copy(session.publication,sizeof(session.publication),osg_demo_panel.publication_hash);
-    osg_runtime r;assert(osg_init(&r,&osg_demo_panel,(osg_display){NULL,800,480,fill,text},NULL,NULL));osg_connected(&r,true);
+    osg_runtime r;assert(osg_init(&r,&osg_demo_panel,(osg_display){NULL,800,480,fill,text,NULL},NULL,NULL));osg_connected(&r,true);
     cJSON *base=modern_ack();assert(osg_ack(base,&session,"1",&r,100));assert(session.feedback_envelope&&r.samples[3].number==125.5);
     assert(osg_ack(base,&session,"1",&r,700));assert(r.samples[3].received_ms==100);
     for(int mutation=0;mutation<30;mutation++){

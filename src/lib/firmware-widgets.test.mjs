@@ -3,7 +3,7 @@ import test from 'node:test';
 import { newDocument, createDesignerHistory, applyDesignerCommand, validateDesignerDocument } from '../../packages/companion-designer/src/index.ts';
 import { firmwareWidgetPresets, simplifyFirmwareWidgets, firmwarePanelReason } from './firmware-widgets.ts';
 test('palette matches implemented ESP32 widget kinds',()=>{
- assert.deepEqual(firmwareWidgetPresets.map(p=>p.kind),['button','indicator','text','numeric','gauge']);
+ assert.deepEqual(firmwareWidgetPresets.map(p=>p.kind),['button','indicator','text','numeric','image','gauge']);
 });
 test('unsupported widgets and bindings are removed without mutating saved content',()=>{
  let history=createDesignerHistory(newDocument('Panel'));

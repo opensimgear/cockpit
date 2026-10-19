@@ -33,6 +33,7 @@ export function duplicateDraft(library: DesignerLibrary, id: string, name?: stri
     for (const region of viewport.regions ?? []) region.id = remap(region.id, "viewport");
   }
   for (const widget of doc.presentation.widgets) {
+    if(widget.kind === "image" && widget.config.assetId) widget.config.assetId = remap(widget.config.assetId, "asset");
     widget.id = newId("widget"); widget.pageId = remap(widget.pageId, "page"); if (widget.groupId) widget.groupId = remap(widget.groupId, "group");
     widget.controlIds = widget.controlIds.map(id => remap(id, "input")); widget.feedbackIds = widget.feedbackIds.map(id => remap(id, "output"));
     if ((widget.kind === "button" || widget.kind === "icon") && widget.config.iconAssetId) widget.config.iconAssetId = remap(widget.config.iconAssetId, "asset");

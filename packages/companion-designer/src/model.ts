@@ -77,6 +77,7 @@ function validateConfig(widget: DesignerWidget, controls: Control[], assetIds: s
       for (const value of array(c.options, 2, 16)) { const option = exact(value, ["label", "value"]); label(option.label); number(option.value, axis.axisMode === "unipolar" ? 0 : -1, 1); assert(!values.includes(option.value), "Duplicate selector value"); values.push(option.value); }
       assert(values.includes(axis.fallback), "Selector fallback must name an option"); break;
     }
+    case "image": exact(c, [], ["assetId"]); if(c.assetId !== undefined) assert(assetIds.includes(String(c.assetId)), "Missing image asset"); break;
     case "hat": case "indicator": exact(c, []); break;
     case "encoder":
       exact(c, ["pulseMs", "repeatMs"]); integer(c.pulseMs, 1, 1000); integer(c.repeatMs, 0, 5000);
@@ -143,7 +144,7 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
       if (widget.style !== undefined) colorStyle(widget.style);
       if (widget.groupId !== undefined) assert(groups.some(group => group.id === widget.groupId && group.pageId === widget.pageId), "Invalid group reference");
       const expected = inputKinds[widget.kind] ?? [], output = outputKinds[widget.kind];
-      assert(expected.length > 0 || output, "Unsupported widget");
+      assert(expected.length > 0 || output || widget.kind === "image", "Unsupported widget");
       assert(array(widget.controlIds, expected.length, expected.length).length === expected.length, "Invalid input arity");
       assert(array(widget.feedbackIds, output ? 1 : 0, output ? 1 : 0).length === (output ? 1 : 0), "Invalid feedback arity");
       const controls = widget.controlIds.map((id, index) => { const control = ui.controls.find(control => control.id === id); assert(control?.kind === expected[index] && !controlIds.includes(id), "Incompatible or duplicate input binding"); controlIds.push(id); return control; });

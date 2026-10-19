@@ -20,6 +20,8 @@ for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.
     with (OUT / (binary + ".log")).open("w") as log:
         subprocess.run([str(OUT / binary), str(APP / "test/live-publication.json")], check=True, cwd=ROOT, stdout=log)
     print(binary, "passed")
+subprocess.run([*flags, str(APP / "test/pixels_test.c"), "-o", str(OUT / "pixels-test")], check=True, cwd=ROOT)
+subprocess.run([str(OUT / "pixels-test")], check=True, cwd=ROOT)
 subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "input-test-input.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
 report = {}
 for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("input", "input-test-input")):

@@ -45,8 +45,12 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
     const cJSON *widgets = get(presentation, "widgets"), *viewports = get(presentation, "viewports");
     if (number(doc, "schemaVersion") != 2 || number(ui, "schemaVersion") != 1 || !osg_stable_id(osg_string(ui, "id")) ||
         !size(pages, 1, OSG_MAX_PAGES) || !size(widgets, 1, OSG_MAX_WIDGETS) || !size(controls, 0, OSG_MAX_WIDGETS) ||
-        !size(feedback, 0, OSG_MAX_WIDGETS) || !size(get(ui, "assets"), 0, 0) || !size(get(presentation, "groups"), 0, 0) ||
+        !size(feedback, 0, OSG_MAX_WIDGETS) || !size(get(ui, "assets"), 0, 64) || !size(get(presentation, "groups"), 0, 0) ||
         !size(viewports, (size_t)cJSON_GetArraySize(pages), (size_t)cJSON_GetArraySize(pages))) goto done;
+    for(const cJSON *asset=get(ui,"assets")->child;asset;asset=asset->next){
+        const char *digest=osg_string(asset,"sha256"),*mime=osg_string(asset,"mime");
+        if(!osg_stable_id(osg_string(asset,"id")) || !digest || strlen(digest)!=64 || !mime || (!same(mime,"image/png")&&!same(mime,"image/jpeg")&&!same(mime,"image/webp")) || !isfinite(number(asset,"sizeBytes")) || number(asset,"sizeBytes")<1 || number(asset,"sizeBytes")>2097152)goto done;
+    }
     image->panel = (osg_panel){save(image, osg_string(ui, "id")), save(image, hash), image->pages, image->widgets,
         (size_t)cJSON_GetArraySize(pages), (size_t)cJSON_GetArraySize(widgets)};
     size_t buttons = 0, outputs = 0;
@@ -69,15 +73,17 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
         else if (same(kind, "text")) w->kind = OSG_TEXT;
         else if (same(kind, "numeric")) w->kind = OSG_NUMERIC;
         else if (same(kind, "gauge")) w->kind = OSG_GAUGE;
+        else if (same(kind, "image")) w->kind = OSG_IMAGE;
         else goto done;
-        const bool button = w->kind == OSG_BUTTON;
+        const bool button = w->kind == OSG_BUTTON, bitmap = w->kind == OSG_IMAGE;
         if (get(v, "groupId") || !single_ref(get(v, "controlIds"), &control, button ? 1 : 0) ||
-            !single_ref(get(v, "feedbackIds"), &output, button ? 0 : 1)) goto done;
+            !single_ref(get(v, "feedbackIds"), &output, button || bitmap ? 0 : 1)) goto done;
         const cJSON *primitive = find_id(button ? controls : feedback, button ? control : output);
-        if (!primitive || !same(osg_string(primitive, "kind"), button ? "button" : w->kind == OSG_INDICATOR ? "indicator" : w->kind == OSG_TEXT ? "text" : "gauge")) goto done;
+        if (!bitmap && (!primitive || !same(osg_string(primitive, "kind"), button ? "button" : w->kind == OSG_INDICATOR ? "indicator" : w->kind == OSG_TEXT ? "text" : "gauge"))) goto done;
+        if(bitmap && !find_id(get(ui,"assets"),osg_string(config,"assetId")))goto done;
         if (button) { if (!same(osg_string(config, "buttonMode"), "momentary") || number(config, "pulseMs") != 0 || number(config, "repeatMs") != 0 || get(config, "iconAssetId")) goto done; buttons++; }
-        else outputs++;
-        w->id = save(image, osg_string(v, "id")); w->reference = save(image, button ? control : osg_string(primitive, "channelId"));
+        else if(!bitmap) outputs++;
+        w->id = save(image, osg_string(v, "id")); w->reference = save(image, bitmap ? "" : button ? control : osg_string(primitive, "channelId"));
         w->output_id = save(image, output); w->label = save(image, osg_string(v, "label"));
         w->prefix = save(image, w->kind == OSG_TEXT ? osg_string(config, "prefix") : "");
         w->suffix = save(image, w->kind == OSG_TEXT ? osg_string(config, "suffix") : "");
@@ -100,10 +106,10 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
         w->bounds = (osg_bounds){left + number(bounds, "x") * (1-left-right), top + number(bounds,"y") * (1-top-bottom), number(bounds,"width") * (1-left-right), number(bounds,"height") * (1-top-bottom)};
         if (!rgb(style,"foreground",0xdf3d,&w->foreground) || !rgb(style,"background",0x1126,&w->background) || !rgb(style,"accent",0x8718,&w->accent)) goto done;
         if (button) {
-            const double scale = fmin((double)width/image->pages[page].width,(double)(height-32)/image->pages[page].height);
+            const double scale = fmin((double)width/image->pages[page].width,(double)height/image->pages[page].height);
             if (floor(w->bounds.width*image->pages[page].width*scale) < 44 || floor(w->bounds.height*image->pages[page].height*scale) < 44) goto done;
         }
-        for (size_t j = 0; j < i; j++) if (!button && image->widgets[j].kind != OSG_BUTTON && same(w->output_id,image->widgets[j].output_id)) goto done;
+        for (size_t j = 0; j < i; j++) if (!button && !bitmap && image->widgets[j].kind != OSG_BUTTON && image->widgets[j].kind != OSG_IMAGE && same(w->output_id,image->widgets[j].output_id)) goto done;
     }
     if (buttons != (size_t)cJSON_GetArraySize(controls) || outputs != (size_t)cJSON_GetArraySize(feedback)) goto done;
     valid = osg_panel_valid(&image->panel);

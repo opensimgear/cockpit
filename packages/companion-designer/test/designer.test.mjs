@@ -448,3 +448,16 @@ test("canonical publication round-trip ignores object key order while preserving
     assert.equal(validate(altered).ok,false);
   }
 });
+
+test("image widgets have no primitives, fill viewports, survive undo and migrate backgrounds",async()=>{
+  let h=apply(history(),{type:'add-widget',kind:'image'});
+  let w=h.present.presentation.widgets.at(-1);assert.equal(w.kind,'image');assert.deepEqual(w.controlIds,[]);assert.deepEqual(w.feedbackIds,[]);
+  assert.equal(validate(h.present).ok,true);
+  const before=clone(h.present);h=apply(h,{type:'delete-widget',id:w.id});assert.deepEqual(undoDesigner(h).present,before);
+  const doc=clone(before);doc.ui.assets=[{id:'image-asset',mime:'image/png',sizeBytes:10,sha256:'a'.repeat(64)}];
+  doc.presentation.viewports[0].backgroundAssetId='image-asset';
+  const migrated=createDesignerHistory(doc).present;
+  assert.equal(migrated.presentation.viewports[0].backgroundAssetId,undefined);
+  assert.deepEqual(migrated.presentation.widgets[0].bounds,{x:0,y:0,width:1,height:1});assert.equal(migrated.presentation.widgets[0].config.assetId,'image-asset');
+  assert.equal(doc.presentation.viewports[0].backgroundAssetId,'image-asset');
+});

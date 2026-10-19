@@ -7,7 +7,7 @@ export const widgetPresets: readonly { kind: WidgetKind; title: string }[] = [
   { kind: "button", title: "Button" }, { kind: "selector", title: "Selector" }, { kind: "hat", title: "Hat" },
   { kind: "encoder", title: "Encoder" }, { kind: "slider", title: "Slider" }, { kind: "xy", title: "XY pad" },
   { kind: "indicator", title: "Indicator" }, { kind: "text", title: "Text" }, { kind: "numeric", title: "Numeric" },
-  { kind: "icon", title: "Icon" }, { kind: "gauge", title: "Gauge" },
+  { kind: "image", title: "Image" }, { kind: "icon", title: "Icon" }, { kind: "gauge", title: "Gauge" },
 ];
 export function defaultWidgetConfig(kind: WidgetKind): DesignerWidget["config"] {
   switch (kind) {
@@ -104,7 +104,7 @@ export function newDocument(title = "Untitled panel"): DesignerDocument {
   };
   addWidget(doc, "button", pageId); doc.ui = normalizeToPortableUi(doc); return checked(doc);
 }
-export function createDesignerHistory(document: DesignerDocument): DesignerHistory { return { past: [], present: checked(document), future: [] }; }
+export function createDesignerHistory(document: DesignerDocument): DesignerHistory { return { past: [], present: migrateBackgroundImages(document), future: [] }; }
 export type DesignerCommand =
   | { type: "replace"; document: DesignerDocument }
   | { type: "add-widget"; kind: WidgetKind; pageId?: string; viewportId?: string; bounds?: Bounds; axisMode?: "unipolar" | "bipolar" }
@@ -285,4 +285,15 @@ export function migratePortableUi(input: unknown): DesignerDocument {
     doc.presentation.widgets.push({ id: newId("widget"), pageId: page.id, label: output.label, bounds: item?.bounds ?? { x: 0.1, y: 0.1, width: 0.3, height: 0.2 }, kind: output.kind, controlIds: [], feedbackIds: [output.id], config: defaultWidgetConfig(output.kind), ...(output.style ? { style: clone(output.style) } : {}) } as DesignerWidget);
   }
   doc.ui = normalizeToPortableUi(doc); return checked(doc);
+}
+
+/** Preserve legacy backgrounds as ordinary editable image widgets. */
+export function migrateBackgroundImages(document:DesignerDocument):DesignerDocument {
+  const doc=checked(document);
+  for(const screen of doc.presentation.viewports){
+    if(!screen.backgroundAssetId)continue;
+    const images=viewportRegions(doc,screen.pageId).map(region=>({id:newId('widget'),pageId:screen.pageId,kind:'image' as const,label:'Image',bounds:{...region.bounds},controlIds:[],feedbackIds:[],config:{assetId:screen.backgroundAssetId}}));
+    doc.presentation.widgets.unshift(...images);delete screen.backgroundAssetId;
+  }
+  return checked(doc);
 }

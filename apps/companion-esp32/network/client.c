@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <time.h>
+#include <stdlib.h>
 
 typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT, PANEL_ERROR } phase;
 static osg_network_ui ui;
@@ -47,6 +48,34 @@ static cJSON *session_message(const char *type,const char *sequence){
     if(sequence)cJSON_AddStringToObject(v,"sequence",sequence);
     if(state==PANEL_ERROR&&!strcmp(type,"heartbeat"))cJSON_AddBoolToObject(v,"panelError",true);
     return v;
+}
+static bool load_images(osg_image *image,unsigned slot){
+    osg_runtime layout={.panel=&image->panel,.display=ui.runtime->display};size_t total=0,offsets[OSG_MAX_WIDGETS]={0};
+    for(size_t i=0;i<image->panel.widget_count;i++){
+        osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
+        layout.page=w->page;int x,y,width,height;osg_widget_rect(&layout,i,&x,&y,&width,&height);
+        if(width<1||height<1||width>800||height>800)return false;
+        offsets[i]=total;total+=(size_t)width*height*3;if(total>1200*1024)return false;
+        w->image_width=(uint16_t)width;w->image_height=(uint16_t)height;
+    }
+    if(!total)return true;
+    bool cached=false;if(!osg_pixels_begin(slot,session.publication,total,&cached))return false;
+    static unsigned char chunk[6144];
+    for(size_t i=0;!cached&&i<image->panel.widget_count;i++){
+        osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
+        const size_t bytes=(size_t)w->image_width*w->image_height*3;
+        for(size_t offset=0;offset<bytes;){
+            cJSON *v=session_message("image-chunk",NULL),*reply=NULL;
+            cJSON_AddStringToObject(v,"widgetId",w->id);cJSON_AddNumberToObject(v,"width",w->image_width);cJSON_AddNumberToObject(v,"height",w->image_height);cJSON_AddNumberToObject(v,"offset",(double)offset);
+            bool ok=request(v,&reply,3000)&&cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok"))&&equal(osg_string(reply,"type"),"image-chunk")&&equal(osg_string(reply,"widgetId"),w->id)&&equal(osg_string(reply,"publicationHash"),session.publication);
+            size_t count=0;const char *encoded=osg_string(reply,"base64");
+            ok=ok && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==(double)offset && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"total"))==(double)bytes && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"width"))==w->image_width && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"height"))==w->image_height && encoded && osg_platform_crypto.base64(encoded,chunk,sizeof(chunk),&count) && count && count<=bytes-offset && count%3==0;
+            cJSON_Delete(reply);if(!ok||!osg_pixels_write(slot,offsets[i]+offset,chunk,count))return false;offset+=count;
+        }
+    }
+    const unsigned char *pixels=osg_pixels_finish(slot,session.publication,total);if(!pixels)return false;
+    for(size_t i=0;i<image->panel.widget_count;i++)if(image->widgets[i].kind==OSG_IMAGE)image->widgets[i].pixels=pixels+offsets[i];
+    return true;
 }
 static void stop(void){
     const bool close=(state==LIVE||state==PANEL_ERROR)&&(connection.ws||connection.direct);
@@ -189,13 +218,15 @@ static void advance(void){
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
         bool busy=*ui.drawing_panel==&images[1-image_index].panel;
         xSemaphoreGive(ui.mutex);if(busy)return;
-        v=message("open");cJSON_AddStringToObject(v,"instanceId",assigned);cJSON_AddStringToObject(v,"publicationHash",publication);cJSON_AddBoolToObject(v,"takeover",false);
+        v=message("open");cJSON_AddStringToObject(v,"instanceId",assigned);cJSON_AddStringToObject(v,"publicationHash",publication);cJSON_AddBoolToObject(v,"takeover",false);cJSON_AddBoolToObject(v,"externalImages",true);
         ok=request(v,&reply,3000)&&osg_open_identity(reply,settings.host,settings.companion,assigned,publication,&session);
         if(ok){
             osg_image *candidate=&images[1-image_index];
             const cJSON *p=cJSON_GetObjectItemCaseSensitive(reply,"publication");
             ok=osg_decode_publication(p,publication,osg_platform_crypto,candidate,ui.runtime->display.width,ui.runtime->display.height);
-            if(!ok){cJSON_Delete(reply);disconnected();state=PANEL_ERROR;next_request=millis();report("panel-unsupported-corrupt-or-over-budget");return;}
+            cJSON_Delete(reply);reply=NULL;
+            if(ok)ok=load_images(candidate,1-image_index);
+            if(!ok){disconnected();state=PANEL_ERROR;next_request=millis();report("panel-unsupported-corrupt-or-over-budget");return;}
             if(ok){xSemaphoreTake(ui.mutex,portMAX_DELAY);
                 ok=osg_init(ui.runtime,&candidate->panel,ui.runtime->display,NULL,NULL);
                 if(ok){image_index=1-image_index;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;}

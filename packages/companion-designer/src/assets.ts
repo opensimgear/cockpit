@@ -101,7 +101,7 @@ function capabilityData(document: DesignerDocument): unknown {
     feedback: doc.ui.feedbackWidgets.map(({ id, kind, channelId }) => ({ id, kind, channelId })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     widgets: doc.presentation.widgets.map(widget => {
       const config = clone(widget.config) as Record<string, unknown>;
-      for (const key of ["iconAssetId", "symbol", "prefix", "suffix", "orientation"]) delete config[key];
+      for (const key of ["assetId", "iconAssetId", "symbol", "prefix", "suffix", "orientation"]) delete config[key];
       if (widget.kind === "selector") config.options = widget.config.options.map(option => ({ value: option.value }));
       return { id: widget.id, kind: widget.kind, controlIds: widget.controlIds, feedbackIds: widget.feedbackIds, config };
     }).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
@@ -121,7 +121,40 @@ function freeze<T>(value: T): T {
 export async function publishDocument(document: DesignerDocument, assets: AssetPayload[]): Promise<Publication> {
   const doc = checked(document); assert(doc.bindings.length === doc.ui.controls.length, "Every input requires a logical target binding before publication");
   assert(doc.ui.pages.every(page=>doc.presentation.widgets.some(widget=>widget.pageId===page.id)), "Every page must contain at least one widget before publication");
-  const payloads = await validateAssets(doc, assets), publicationHash = "sha256:" + await digest(new TextEncoder().encode(canonical(doc)));
+  const payloads = await optimizePublicationAssets(doc, await validateAssets(doc, assets)), publicationHash = "sha256:" + await digest(new TextEncoder().encode(canonical(doc)));
   const capabilityFingerprint = "sha256:" + await digest(new TextEncoder().encode(canonical(capabilityData(doc))));
   return freeze({ document: doc, assets: payloads, publicationHash, capabilityFingerprint });
+}
+
+/** Retain source assets in drafts; publish only the resolution the layout needs. */
+async function optimizePublicationAssets(doc:DesignerDocument, assets:AssetPayload[]):Promise<AssetPayload[]>{
+  if(typeof createImageBitmap!=='function' || typeof OffscreenCanvas==='undefined')return assets;
+  const result:AssetPayload[]=[];
+  for(const payload of assets){
+    const manifest=doc.ui.assets.find(a=>a.id===payload.assetId)!;
+    let width=0,height=0;
+    for(const widget of doc.presentation.widgets){
+      const config=widget.config as Record<string,unknown>;
+      if(config.assetId!==payload.assetId && config.iconAssetId!==payload.assetId)continue;
+      const screen=doc.presentation.viewports.find(v=>v.pageId===widget.pageId)!;
+      width=Math.max(width,Math.ceil(widget.bounds.width*screen.width*(1-(screen.safeInsets?.left??0)-(screen.safeInsets?.right??0))));
+      height=Math.max(height,Math.ceil(widget.bounds.height*screen.height*(1-(screen.safeInsets?.top??0)-(screen.safeInsets?.bottom??0))));
+    }
+    // Legacy background publications remain readable until opened in the editor.
+    for(const screen of doc.presentation.viewports)if(screen.backgroundAssetId===payload.assetId){width=Math.max(width,screen.width);height=Math.max(height,screen.height);}
+    if(!width||!height){result.push(payload);continue;}
+    const bytes=decodeBase64(payload.base64),bitmap=await createImageBitmap(new Blob([Uint8Array.from(bytes).buffer],{type:manifest.mime}),{imageOrientation:'none'});
+    try{
+      const scale=Math.min(1,Math.max(width/bitmap.width,height/bitmap.height));
+      const isImage=doc.presentation.widgets.some(w=>w.kind==='image' && w.config.assetId===payload.assetId);
+      const targetWidth=isImage?Math.min(width,bitmap.width):Math.max(1,Math.ceil(bitmap.width*scale)),targetHeight=isImage?Math.min(height,bitmap.height):Math.max(1,Math.ceil(bitmap.height*scale));
+      if(targetWidth===bitmap.width && targetHeight===bitmap.height){result.push(payload);continue;}
+      const canvas=new OffscreenCanvas(targetWidth,targetHeight),ctx=canvas.getContext('2d');assert(ctx,'Image resize unavailable');
+      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);
+      const blob=await canvas.convertToBlob({type:manifest.mime==='image/jpeg'?'image/jpeg':'image/png',quality:.92}),optimized=new Uint8Array(await blob.arrayBuffer());
+      manifest.mime=blob.type as typeof manifest.mime;manifest.sizeBytes=optimized.length;manifest.sha256=await digest(optimized);
+      result.push({assetId:payload.assetId,base64:encodeBase64(optimized)});
+    }finally{bitmap.close();}
+  }
+  return result;
 }

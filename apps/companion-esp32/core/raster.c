@@ -68,8 +68,20 @@ static void label(void *ctx, int x, int y, int width, int height, const char *s,
             if (glyph(s[i], row) & (4 >> col)) solid(ctx, x + dx + col * scale, y + row * scale, scale, scale, color);
     }
 }
+static void bitmap(void *ctx,int x,int y,int width,int height,const unsigned char *pixels,int iw,int ih,uint16_t background){
+    osg_raster *r=ctx;
+    int left=x,top=y,right=x+width,bottom=y+height;
+    if(r->composing){if(left<r->tile_x)left=r->tile_x;if(top<r->tile_y)top=r->tile_y;if(right>r->tile_x+r->tile_width)right=r->tile_x+r->tile_width;if(bottom>r->tile_y+r->tile_height)bottom=r->tile_y+r->tile_height;}
+    for(int row=top;row<bottom;row++)for(int col=left;col<right;col++){
+        const unsigned char *p=pixels+3*((size_t)((row-y)*ih/height)*iw+(col-x)*iw/width);
+        unsigned color=p[0]|p[1]<<8,alpha=p[2];if(!alpha)continue;
+        if(r->composing)background=r->tile[(row-r->tile_y)*r->tile_width+col-r->tile_x];
+        if(alpha<255){unsigned red=(((color>>11)&31)*alpha+((background>>11)&31)*(255-alpha))/255,green=(((color>>5)&63)*alpha+((background>>5)&63)*(255-alpha))/255,blue=((color&31)*alpha+(background&31)*(255-alpha))/255;color=red<<11|green<<5|blue;}
+        solid(ctx,col,row,1,1,(uint16_t)color);
+    }
+}
 osg_display osg_raster_display(osg_raster *r, uint16_t width, uint16_t height) {
-    return (osg_display){ .context = r, .width = width, .height = height, .fill = solid, .text = label };
+    return (osg_display){ .context = r, .width = width, .height = height, .fill = solid, .text = label, .image=bitmap };
 }
 /* Compose each damaged region in bounded RGB565 tiles before the board sees
  * any pixels. Replaying the scene under a clip preserves overlap/z-order. */

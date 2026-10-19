@@ -73,8 +73,8 @@
   const page = $derived(document.ui.pages.find(p => p.id === pageId) ?? document.ui.pages[0]);
   const emptyPageNumbers = $derived(document.ui.pages.flatMap((page,index)=>document.presentation.widgets.some(widget=>widget.pageId===page.id)?[]:[index]));
   const espAssigned=$derived(panelAssignments(draftId).some(i=>(hostState.host?.clients??[]).some(c=>c.companionId===i.companionId&&c.kind==='esp32')));
-  const espRestriction='This panel is assigned to an ESP32 screen. Images, backgrounds and groups are not supported by its firmware.';
-  const assignedEspError=$derived((hostState.host?.clients??[]).filter(c=>c.kind==='esp32'&&panelAssignments(draftId).some(i=>i.companionId===c.companionId)).map(c=>panelScreenReason({document} as Publication,companionScreenSize(hostState,String(c.companionId)))).find(Boolean)??'');
+  const espRestriction='This panel is assigned to an ESP32 screen. Image widgets are supported; groups and button icons are not supported by its firmware.';
+  const assignedEspError=$derived((hostState.host?.clients??[]).filter(c=>c.kind==='esp32'&&panelAssignments(draftId).some(i=>i.companionId===c.companionId)).map(c=>panelScreenReason({document} as Publication,companionScreenSize(hostState,String(c.companionId)),hostState.firmware?.[String(c.companionId)]?.version??'unknown')).find(Boolean)??'');
   const panelInvalidReason = $derived(emptyPageNumbers.length ? `Add at least one widget to ${emptyPageNumbers.length===1?'page':'pages'} ${emptyPageNumbers.join(', ')} before previewing, saving or exporting.` : espAssigned?assignedEspError:'');
   const widget = $derived(document.presentation.widgets.find(w => w.id === selected[0]));
   const viewport = $derived(document.presentation.viewports.find(v => v.pageId === page.id)!);
@@ -278,7 +278,7 @@
       if(checkLeave && !leaveEditor())return;
       const entry = openDraft(library, id); stop();editorOpen=true;dirty=false; draftId = entry.id; name = entry.name;
       const simplified=simplifyFirmwareWidgets(entry.document);
-      history = createDesignerHistory(simplified.document); assets = entry.assets; pageId = document.ui.pages[0].id; select([]); error = '';
+      history = createDesignerHistory(simplified.document); if(entry.document.presentation.viewports.some(v=>v.backgroundAssetId))dirty=true; assets = entry.assets; pageId = document.ui.pages[0].id; select([]); error = '';
       dirty=simplified.removed>0;
       message=simplified.removed?'Removed '+simplified.removed+' unsupported widget(s). Save to update the panel and its companions.':'';
       if (recordNavigation) onNavigate?.({kind:'panel',id:draftId});
@@ -370,10 +370,11 @@
   }
   async function removeAsset(id: string) {
     const index=document.ui.assets.findIndex(asset=>asset.id===id);
-    if(index<0 || !await confirmDelete(`Delete image ${index+1}? It will also be removed from widget icons and page backgrounds.`))return;
+    if(index<0 || !await confirmDelete(`Delete image ${index+1}? It will also be removed from image widgets.`))return;
     const next = structuredClone(document);
     next.ui.assets = next.ui.assets.filter(asset => asset.id !== id);
     for (const viewport of next.presentation.viewports) if (viewport.backgroundAssetId === id) delete viewport.backgroundAssetId;
+    for(const widget of next.presentation.widgets) if(widget.kind==='image' && widget.config.assetId===id) delete widget.config.assetId;
     for (const widget of next.presentation.widgets) if ((widget.kind === 'button' || widget.kind === 'icon') && widget.config.iconAssetId === id) delete widget.config.iconAssetId;
     if (command({ type: 'replace', document: next })) { select(selected); message='Image removed'; }
   }
@@ -514,8 +515,7 @@
         <img src={imageAssets[asset.id]} alt=""/><div><strong>Image {index+1}</strong><small>{asset.mime.split('/')[1].toUpperCase()} · {Math.max(1,Math.ceil(asset.sizeBytes/1024))} KB</small></div>
         <button class="asset-delete" aria-label={`Delete image ${index+1}`} title="Delete asset" disabled={busy} onclick={()=>removeAsset(asset.id)}><Icon name="trash" size={15}/></button>
       </li>{:else}<li class="assets-empty">No assets yet.</li>{/each}</ul>
-      <div class="accordion-add"><button class="action" title={espAssigned?espRestriction:'PNG, JPEG or WebP · 2 MiB each · 8 MiB total'} disabled={busy || espAssigned} onclick={()=>assetInput?.click()}><Icon name="plus" size={16}/>Add asset</button></div>
-      <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id} disabled={espAssigned}>{a.id}</option>{/each}</select></label>
+      <div class="accordion-add"><button class="action" title="PNG, JPEG or WebP · 2 MiB each · 8 MiB total" disabled={busy} onclick={()=>assetInput?.click()}><Icon name="plus" size={16}/>Add asset</button></div>
       </div></details>
       <details class="editor-accordion"><summary>Grid</summary><div class="accordion-content">
         <label>Columns<input type="number" min="1" max="128" step="1" disabled={preview} value={document.presentation.grid.columns} onchange={e => changeGrid('columns', e.currentTarget)} /></label>
@@ -566,8 +566,9 @@
           {:else if typeof value === 'number'}<label>{key}<input type="number" value={value} step={key === 'deadzone' ? .01 : 1} onchange={e => configPatch(key,e.currentTarget.valueAsNumber)} /></label>
           {:else if key === 'centering'}<label>Return behavior<select value={String(value)} onchange={e => configPatch(key,e.currentTarget.value)}><option value="spring">Spring to fallback</option><option value="latched">Keep last position</option></select></label>
           {:else if key === 'orientation'}<label>Orientation<select value={String(value)} onchange={e => configPatch(key,e.currentTarget.value)}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option></select></label>
-          {:else if typeof value === 'string' && key !== 'buttonMode' && key !== 'iconAssetId'}<label>{key}<input value={value} onchange={e => configPatch(key,e.currentTarget.value)} /></label>{/if}
+          {:else if typeof value === 'string' && key !== 'buttonMode' && key !== 'iconAssetId' && key !== 'assetId'}<label>{key}<input value={value} onchange={e => configPatch(key,e.currentTarget.value)} /></label>{/if}
         {/each}
+        {#if widget.kind === 'image'}<label>Image asset<select aria-label="Image asset" value={widget.config.assetId ?? ''} onchange={e=>configPatch('assetId',e.currentTarget.value || undefined)}><option value="">None</option>{#each document.ui.assets as asset,index}<option value={asset.id}>Image {index+1}</option>{/each}</select></label><button class="action" onclick={()=>patch({bounds:{...activeViewport.bounds}})}>Fill viewport</button>{/if}
         {#if widget.kind === 'button' || widget.kind === 'icon'}<label>Icon image<select value={widget.config.iconAssetId ?? ''} onchange={e => { const config = { ...widget!.config } as Record<string,unknown>; if(e.currentTarget.value) config.iconAssetId = e.currentTarget.value; else delete config.iconAssetId; patch({ config } as Partial<DesignerWidget>); }}><option value="">None</option>{#each document.ui.assets as asset}<option value={asset.id} disabled={espAssigned}>{asset.id}</option>{/each}</select></label>{/if}
         <details><summary>Advanced behavior</summary><label>Validated configuration<textarea rows="8" bind:value={configText}></textarea></label><button onclick={() => { try { patch({ config: JSON.parse(configText) }); } catch (e) { error = String(e); } }}>Apply behavior</button></details>
         <button onclick={() => { command({ type: 'duplicate-widget', id: widget!.id }); select([document.presentation.widgets.at(-1)!.id]); }}>Duplicate widget</button>

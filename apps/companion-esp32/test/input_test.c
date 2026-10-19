@@ -9,7 +9,7 @@ static void fill(void *p,int x,int y,int w,int h,uint16_t c){(void)p;(void)x;(vo
 static void text(void *p,int x,int y,int w,int h,const char *s,uint16_t c){(void)s;fill(p,x,y,w,h,c);}
 static void setup(void){
     memset(&input,0,sizeof(input));
-    assert(osg_init(&runtime,&osg_demo_panel,(osg_display){NULL,800,480,fill,text},NULL,NULL));
+    assert(osg_init(&runtime,&osg_demo_panel,(osg_display){NULL,800,480,fill,text,NULL},NULL,NULL));
     osg_connected(&runtime,true);osg_input_bind(&input,&runtime,true,100);
     osg_input_poll(&input,true,false,0,0,100);osg_input_render(&input,runtime.panel,false,true,100);osg_input_render(&input,runtime.panel,true,true,101);
 }

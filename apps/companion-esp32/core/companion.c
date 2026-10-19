@@ -43,12 +43,12 @@ bool osg_panel_valid(const osg_panel *p) {
     for (size_t i = 0; i < p->widget_count; i++) {
         const osg_widget *w = &p->widgets[i];
         const osg_bounds b = w->bounds;
-        if (!id_valid(w->id) || !id_valid(w->reference) || !text_valid(w->label, 120, false) ||
+        if (!id_valid(w->id) || (w->kind != OSG_IMAGE && !id_valid(w->reference)) || !text_valid(w->label, 120, false) ||
             !text_valid(w->prefix, 120, true) || !text_valid(w->suffix, 120, true) || !text_valid(w->unit, 32, true) ||
-            w->page >= p->page_count || w->kind < OSG_BUTTON || w->kind > OSG_GAUGE || w->precision > 4 ||
+            w->page >= p->page_count || w->kind < OSG_BUTTON || w->kind > OSG_IMAGE || w->precision > 4 ||
             !isfinite(b.x) || !isfinite(b.y) || !isfinite(b.width) || !isfinite(b.height) ||
             b.x < 0 || b.y < 0 || b.width <= 0 || b.height <= 0 || b.x + b.width > 1.000000001 || b.y + b.height > 1.000000001) return false;
-        if (w->kind != OSG_BUTTON && !id_valid(w->output_id)) return false;
+        if (w->kind != OSG_BUTTON && w->kind != OSG_IMAGE && !id_valid(w->output_id)) return false;
         if ((w->kind == OSG_GAUGE || w->kind == OSG_NUMERIC) &&
             (!isfinite(w->min) || !isfinite(w->max) || w->min >= w->max || w->min < -1e9 || w->max > 1e9)) return false;
         for (size_t j = 0; j < i; j++) {
@@ -56,7 +56,7 @@ bool osg_panel_valid(const osg_panel *p) {
             if (!strcmp(w->id, v->id) || (w->kind == OSG_BUTTON && v->kind == OSG_BUTTON && !strcmp(w->reference, v->reference))) return false;
             /* Initial single-pointer subset rejects overlapping touch targets. */
             const osg_bounds a = v->bounds;
-            if (w->page == v->page && (w->kind == OSG_BUTTON || v->kind == OSG_BUTTON) &&
+            if (w->page == v->page && w->kind != OSG_IMAGE && v->kind != OSG_IMAGE && (w->kind == OSG_BUTTON || v->kind == OSG_BUTTON) &&
                 b.x < a.x + a.width && a.x < b.x + b.width && b.y < a.y + a.height && a.y < b.y + b.height) return false;
         }
     }
@@ -96,10 +96,10 @@ bool osg_set_page(osg_runtime *r, size_t page) {
 }
 static void geometry(const osg_runtime *r, const osg_widget *w, int *x, int *y, int *width, int *height) {
     const osg_page *p = &r->panel->pages[r->page];
-    double scale = fmin((double)r->display.width / p->width, (double)(r->display.height - 32) / p->height);
+    double scale = fmin((double)r->display.width / p->width, (double)r->display.height / p->height);
     const double pw = p->width * scale, ph = p->height * scale;
     *x = (int)floor((r->display.width - pw) / 2 + w->bounds.x * pw);
-    *y = 24 + (int)floor((r->display.height - 32 - ph) / 2 + w->bounds.y * ph);
+    *y = (int)floor((r->display.height - ph) / 2 + w->bounds.y * ph);
     *width = (int)floor(w->bounds.width * pw); *height = (int)floor(w->bounds.height * ph);
 }
 void osg_touch(osg_runtime *r, bool down, int x, int y) {
@@ -239,9 +239,26 @@ void osg_render(osg_runtime *r, uint64_t now) {
         status_screen(r);
         return;
     }
-    for (size_t i = 0; i < r->panel->widget_count; i++) {
-        const osg_widget *w = &r->panel->widgets[i]; if (w->page != r->page) continue;
+    for(int layer=0;layer<2;layer++)for (size_t i = 0; i < r->panel->widget_count; i++) {
+        const osg_widget *w = &r->panel->widgets[i]; if (w->page != r->page || (w->kind==OSG_IMAGE)!=(layer==0)) continue;
         int x, y, width, height; geometry(r, w, &x, &y, &width, &height);
+        if(w->kind==OSG_IMAGE){
+            if(w->pixels && w->image_width && w->image_height){
+                if(r->display.image){r->display.image(r->display.context,x,y,width,height,w->pixels,w->image_width,w->image_height,w->background);continue;}
+                for(int iy=0;iy<height;iy++)for(int ix=0;ix<width;){
+                    const unsigned char *p=w->pixels+3*((size_t)(iy*w->image_height/height)*w->image_width+ix*w->image_width/width);
+                    uint16_t color=(uint16_t)(p[0]|p[1]<<8);const unsigned alpha=p[2];
+                    int run=1;
+                    while(ix+run<width){const unsigned char *q=w->pixels+3*((size_t)(iy*w->image_height/height)*w->image_width+(ix+run)*w->image_width/width);if(q[0]!=p[0]||q[1]!=p[1]||q[2]!=p[2])break;run++;}
+                    if(alpha){
+                        if(alpha<255){const unsigned bg=w->background;const unsigned red=(((color>>11)&31)*alpha+((bg>>11)&31)*(255-alpha))/255,green=(((color>>5)&63)*alpha+((bg>>5)&63)*(255-alpha))/255,blue=((color&31)*alpha+(bg&31)*(255-alpha))/255;color=(uint16_t)(red<<11|green<<5|blue);}
+                        fill(r,x+ix,y+iy,run,1,color);
+                    }
+                    ix+=run;
+                }
+            }
+            continue;
+        }
         fill(r, x, y, width, height, w->background);
         text(r, x + 4, y + 3, width - 8, height < 20 ? height - 6 : 17, w->label, w->foreground);
         if (w->kind == OSG_BUTTON) {

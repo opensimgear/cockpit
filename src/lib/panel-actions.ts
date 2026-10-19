@@ -16,7 +16,7 @@ export async function synchronizePanel(panel: Publication, previousHashes: strin
     if(!owned.some(i => i.companionId===companionId) && instances.filter(i => i.companionId===companionId).length>1) throw new Error('This companion has multiple controller assignments. Disconnect its extra assignments before assigning a panel.');
   }
   for(const id of desired)if(state.host?.clients?.some(c=>c.companionId===id&&c.kind==='esp32')){
-    const reason=panelScreenReason(panel,companionScreenSize(state,id));if(reason)throw new Error(reason);
+    const reason=panelScreenReason(panel,companionScreenSize(state,id),state.firmware?.[id]?.version??'unknown');if(reason)throw new Error(reason);
   }
   await sendPublication(panel,send);
   for(const instance of owned) {

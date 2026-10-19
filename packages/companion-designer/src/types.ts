@@ -1,12 +1,13 @@
 import type { Bounds, PortableUi, Style } from "../../companion-contracts/src/index.ts";
 export type { Bounds, PortableUi, Style };
 export const DESIGNER_LIMITS = Object.freeze({ history: 50, drafts: 20, widgets: 192, groups: 64, viewportRegions: 32, targets: 8, assetPixels: 16777216, totalAssetPixels: 33554432, assetDimension: 8192, bundleBytes: 13 * 1024 * 1024 });
-export type WidgetKind = "button" | "selector" | "hat" | "encoder" | "slider" | "xy" | "indicator" | "text" | "numeric" | "icon" | "gauge";
+export type WidgetKind = "button" | "selector" | "hat" | "encoder" | "slider" | "xy" | "indicator" | "text" | "numeric" | "icon" | "gauge" | "image";
 interface WidgetBase {
   id: string; pageId: string; label: string; bounds: Bounds; controlIds: string[];
   feedbackIds: string[]; groupId?: string; style?: Style;
 }
 export type DesignerWidget =
+  | (WidgetBase & { kind: "image"; config: { assetId?: string } })
   | (WidgetBase & { kind: "button"; config: { buttonMode: "momentary" | "toggle" | "pulse" | "repeat"; pulseMs: number; repeatMs: number; iconAssetId?: string } })
   | (WidgetBase & { kind: "selector"; config: { options: { label: string; value: number }[] } })
   | (WidgetBase & { kind: "hat"; config: Record<string, never> })

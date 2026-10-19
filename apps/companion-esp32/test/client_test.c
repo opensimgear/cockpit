@@ -1,4 +1,6 @@
 #define _DEFAULT_SOURCE
+#include "panel.h"
+#include <openssl/evp.h>
 #include <sys/time.h>
 #include <time.h>
 static int fake_settimeofday(const struct timeval *,const struct timezone *);
@@ -37,7 +39,9 @@ int xSemaphoreGive(SemaphoreHandle_t s){(void)s;return 1;}
 void esp_fill_random(void *p,size_t n){memset(p,42,n);}
 void mbedtls_platform_zeroize(void *p,size_t n){memset(p,0,n);}
 static bool sha(const void *p,size_t n,char out[72]){unsigned char d[32];SHA256(p,n,d);memcpy(out,"sha256:",7);for(size_t i=0;i<32;i++)snprintf(out+7+i*2,3,"%02x",d[i]);return true;}
-static bool base64_unused(const char *s,unsigned char *p,size_t n,size_t *out){(void)s;(void)p;(void)n;(void)out;return false;}
+static bool base64_unused(const char *s,unsigned char *p,size_t cap,size_t *out){
+    size_t len=strlen(s);if(!len||len%4||len>8192)return false;unsigned char decoded[8192];int count=EVP_DecodeBlock(decoded,(const unsigned char *)s,(int)len);if(count<0)return false;if(s[len-1]=='=')count--;if(s[len-2]=='=')count--;if((size_t)count>cap)return false;memcpy(p,decoded,(size_t)count);*out=(size_t)count;return true;
+}
 const osg_crypto osg_platform_crypto={sha,base64_unused};
 bool osg_trusted_ca(const osg_settings *s,unsigned char *p,size_t n,size_t *out){(void)s;(void)p;(void)n;(void)out;return true;}
 bool osg_socket_open(osg_socket *s,const osg_settings *value){(void)value;if(network_ok)s->ws=s;return network_ok;}
@@ -50,6 +54,10 @@ bool osg_store_save(const osg_settings *s){(void)s;return store_ok;}
 bool osg_store_load(osg_settings *s){if(load_ok)*s=saved_settings;return load_ok;}
 static unsigned forgets;
 bool osg_store_forget(void){forgets++;return store_ok;}
+static unsigned char *pixel_store[2];
+bool osg_pixels_begin(unsigned slot,const char *hash,size_t bytes,bool *cached){(void)hash;free(pixel_store[slot]);pixel_store[slot]=malloc(bytes);*cached=false;return pixel_store[slot]!=NULL;}
+bool osg_pixels_write(unsigned slot,size_t offset,const void *bytes,size_t count){memcpy(pixel_store[slot]+offset,bytes,count);return true;}
+const unsigned char *osg_pixels_finish(unsigned slot,const char *hash,size_t bytes){(void)hash;(void)bytes;return pixel_store[slot];}
 bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
     (void)s;(void)timeout;requests++;const char *type=osg_string(v,"type");assert(type);osg_copy(requested_type,sizeof(requested_type),type);
     if(!permit_inputs)assert(strcmp(type,"baseline")&&strcmp(type,"input"));
@@ -74,6 +82,10 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         cJSON_AddStringToObject(*out,"controllerInstanceId","instance");cJSON_AddStringToObject(*out,"clientId","client");snprintf(mock_session,sizeof(mock_session),"session-%u",++mock_session_number);mock_input_sequence=0;mock_host_armed=false;
         cJSON_AddStringToObject(*out,"sessionId",mock_session);cJSON_AddStringToObject(*out,"generation","1");
         cJSON_AddStringToObject(*out,"publicationHash",osg_string(fixture,"publicationHash"));cJSON_AddItemToObject(*out,"publication",cJSON_Duplicate(fixture,true));
+    }else if(!strcmp(type,"image-chunk")){
+        size_t width=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"width")),height=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"height")),offset=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"offset")),total=width*height*3,count=total-offset;if(count>6144)count=6144;
+        unsigned char pixels[6144];memset(pixels,255,count);unsigned char encoded[8193];EVP_EncodeBlock(encoded,pixels,(int)count);
+        cJSON_AddStringToObject(*out,"type","image-chunk");cJSON_AddStringToObject(*out,"widgetId",osg_string(v,"widgetId"));cJSON_AddStringToObject(*out,"publicationHash",session.publication);cJSON_AddNumberToObject(*out,"width",(double)width);cJSON_AddNumberToObject(*out,"height",(double)height);cJSON_AddNumberToObject(*out,"offset",(double)offset);cJSON_AddNumberToObject(*out,"total",(double)total);cJSON_AddStringToObject(*out,"base64",(char *)encoded);
     }else if(!strcmp(type,"heartbeat")||!strcmp(type,"baseline")||!strcmp(type,"input")||!strcmp(type,"close")){
         if(!strcmp(type,"baseline")){baseline_requests++;assert(!mock_host_armed);assert(!strcmp(osg_string(v,"sequence"),"0"));cJSON *values=cJSON_GetObjectItemCaseSensitive(v,"values");assert(cJSON_IsObject(values)&&cJSON_GetArraySize(values)==1&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(values,"master")));mock_host_armed=true;mock_button=false;if(touch_during_baseline){osg_network_touch(true,true,100,100);osg_network_touch(true,false,0,0);}}
         if(!strcmp(type,"input")){input_requests++;assert(mock_host_armed);uint64_t sequence;assert(osg_counter(osg_string(v,"sequence"),&sequence)&&sequence==mock_input_sequence+1);mock_input_sequence=sequence;cJSON *changes=cJSON_GetObjectItemCaseSensitive(v,"changes");assert(cJSON_IsArray(changes)&&cJSON_GetArraySize(changes)>0&&cJSON_GetArraySize(changes)<=OSG_INPUT_BATCH_EDGES);for(cJSON *change=changes->child;change;change=change->next){assert(!strcmp(osg_string(change,"controlId"),"master"));mock_button=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(change,"value"));}if(cancel_during_input)osg_network_touch(false,false,0,0);fake_ms+=input_ack_delay;}
@@ -133,7 +145,7 @@ static void live_input_tests(void){
 int main(int argc,char **argv){
     assert(argc==2);osg_json_init();char raw[OSG_REPLY_BYTES];FILE *f=fopen(argv[1],"rb");assert(f);size_t n=fread(raw,1,sizeof(raw),f);fclose(f);fixture=osg_json_parse(raw,n);assert(fixture);
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&images[0],800,480));
-    assert(osg_init(&test_runtime,&images[0].panel,(osg_display){NULL,800,480,fill,label},NULL,NULL));
+    assert(osg_init(&test_runtime,&images[0].panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
     setup();advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=false;advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=true;
     advance();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
@@ -245,5 +257,8 @@ int main(int argc,char **argv){
     osg_network_render(test_runtime.panel,true,true);osg_network_touch(true,false,0,0);
     arm_when_ready();assert(remote_armed&&test_runtime.armed);
     stop();
+    osg_image image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
+    assert(load_images(&image,0));assert(image.widgets[0].pixels && image.widgets[0].pixels[0]==255);assert(image.widgets[0].image_width>0);
+    image.widgets[0].bounds.width=0;assert(!load_images(&image,1));free(pixel_store[0]);free(pixel_store[1]);
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }
