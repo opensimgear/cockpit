@@ -1,3 +1,4 @@
+import { diagramLayout } from './profile-diagram';
 import { DEFAULT_PROFILE_ID, MAX_PROFILES, captureProfileSession, parseProfileDocument, profileAssignmentsError, profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileLocalAssignment, type ProfileResult, type ProfileSession, type ProfileSummary } from './profiles';
 import type { ProfileInventoryClient, ResourceSummary } from './profile-inventory';
 export const PROFILE_RESOURCE_CAPACITY = 64;
@@ -46,7 +47,8 @@ export function profileResourceKind(resource: Pick<ResourceSummary, 'resourceTyp
 export function profileCategory(resource: Pick<ResourceSummary, 'resourceType'>): string {
     return { 'host-controller': 'Physical controller', 'osg-module': 'OSG peripheral', companion: 'Companion', 'game-integration': 'Game integration' }[resource.resourceType];
 }
-export function profileAutoLayout(ids: string[]): ProfileDocument['editor']['positions'] {
+export function profileAutoLayout(ids: string[], bindings:readonly DeepReadonly<ProfileDocument['bindings'][number]>[]=[]): ProfileDocument['editor']['positions'] {
+    if(bindings.length)return diagramLayout(ids,bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT);
     const columns = Math.max(1, Math.ceil(Math.sqrt(ids.length)));
     return ids.map((nodeId, index) => ({ nodeId, x: 48 + index % columns * (PROFILE_BLOCK_WIDTH + 48), y: 48 + Math.floor(index / columns) * (PROFILE_BLOCK_HEIGHT + 48) }));
 }
