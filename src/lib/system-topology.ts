@@ -25,6 +25,7 @@ export interface TopologyEdge {
 export interface TopologyBusRow {
   id: string; parentId: string | null; transport: SystemConnection['transport']; label: string;
   x: number; y: number; busY: number; width: number; count: number; path: string; anchor: string;
+  source?: { x: number; y: number };
 }
 
 export interface TopologyView { x: number; y: number; zoom: number }
@@ -105,7 +106,10 @@ export function systemTopology(components: readonly SystemComponent[], context: 
     if (group.parentId) {
       const last = positions.get(members[members.length - 1].id)!;
       row.path = `M ${x} ${busY} L ${last.x + TOPOLOGY_NODE_WIDTH / 2} ${busY}`;
-      if (parent) row.anchor = `M ${x} ${parent.y + parent.height} L ${x} ${busY}`;
+      if (parent) {
+        row.source = { x, y: parent.y + parent.height };
+        row.anchor = `M ${x} ${row.source.y} L ${x} ${busY}`;
+      }
     }
     rows.push(row); top += TOPOLOGY_NODE_HEIGHT + 128;
     for (const component of members) for (const children of childGroups(component.id)) place(children);
@@ -119,7 +123,13 @@ export function systemTopology(components: readonly SystemComponent[], context: 
   if (host) {
     const center = rootRows.length ? (rootRows[0].busY + rootRows[rootRows.length - 1].busY) / 2 : 150;
     nodes.unshift({ component: host, context: !matches.has(host.id), x: 40, y: center - TOPOLOGY_NODE_HEIGHT / 2, height: TOPOLOGY_NODE_HEIGHT, alternateConnections: 0 });
-    if (rootRows.length) trunk = `M ${40 + TOPOLOGY_NODE_WIDTH} ${center} L 318 ${center} M 318 ${rootRows[0].busY} L 318 ${rootRows[rootRows.length - 1].busY}`;
+    rootRows.forEach((row, index) => {
+      const x = 40 + TOPOLOGY_NODE_WIDTH, y = center + (index - (rootRows.length - 1) / 2) * 20;
+      // Each protocol leaves its own computer port and follows a separate lane.
+      const lane = x + 8 + Math.min(index, rootRows.length - 1 - index) * 5;
+      row.source = { x, y };
+      row.anchor = `M ${x} ${y} L ${lane} ${y} L ${lane} ${row.busY} L ${row.x} ${row.busY}`;
+    });
   }
   const activeRight = Math.max(40 + TOPOLOGY_NODE_WIDTH, ...nodes.map(node => node.x + TOPOLOGY_NODE_WIDTH));
   const offlineX = activeRight + 96;

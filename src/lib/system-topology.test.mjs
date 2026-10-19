@@ -133,6 +133,14 @@ test('protocol bus rows follow connection type independently of names and discov
  assert.deepEqual(plain(column.map(node=>node.component.connections[0].transport)),[...protocols].reverse());
  const starts=graph.edges.slice().sort((a,b)=>a.start.y-b.start.y);
  assert.deepEqual(plain(starts.map(route=>route.connection.transport)),[...protocols].reverse());
+ const host=graph.nodes.find(node=>node.component.id==='host');
+ assert.equal(graph.trunk,'');
+ assert.equal(new Set(graph.rows.map(row=>row.source.y)).size,protocols.length);
+ for(const row of graph.rows){
+   assert.equal(row.source.x,host.x+TOPOLOGY_NODE_WIDTH);
+   assert.ok(row.source.y>host.y && row.source.y<host.y+host.height);
+   assert.ok(row.anchor.startsWith(`M ${row.source.x} ${row.source.y} `));
+ }
  assert.deepEqual(plain(systemTopology([...items].reverse())),plain(graph));
 });
 
@@ -144,6 +152,7 @@ test('each gateway gets its own attached-device row immediately beneath its pare
  assert.deepEqual(plain(graph.rows.map(row=>[row.parentId,row.transport,row.count])),[['host','usb',2],['gateway','can',1]]);
  const parent=graph.nodes.find(node=>node.component.id==='gateway'),node=graph.nodes.find(node=>node.component.id==='panel');
  assert.ok(node.y>parent.y+parent.height);assert.ok(graph.rows[1].anchor);
+ assert.deepEqual(plain(graph.rows[1].source),{x:parent.x+TOPOLOGY_NODE_WIDTH/2,y:parent.y+parent.height});
  assert.equal(graph.nodes.filter(node=>node.component.id==='panel').length,1);
  assert.equal(node.alternateConnections,1);
 });

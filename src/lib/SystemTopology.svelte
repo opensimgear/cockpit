@@ -13,10 +13,10 @@
   } = $props();
 
   const graph = $derived(systemTopology(components, context));
-  const ports = $derived([...new Map([...graph.edges.flatMap(edge => [edge.start, edge.end].map(point => [
-    `${point.x}:${point.y}:${edge.connection.transport}`, { ...point, label: edge.label, transport: edge.connection.transport },
-  ] as const)), ...graph.rows.filter(row => row.path).map(row => [
-    `${row.x}:${row.busY}:${row.transport}`, { x: row.x, y: row.busY, transport: row.transport, label: row.transport === 'software' ? 'Virtual' : row.transport === 'unknown' ? 'Unknown transport' : row.transport.toUpperCase() },
+  const ports = $derived([...new Map([...graph.edges.map(edge => [
+    `${edge.end.x}:${edge.end.y}:${edge.connection.transport}`, { ...edge.end, label: edge.label, transport: edge.connection.transport },
+  ] as const), ...graph.rows.filter(row => row.source).map(row => [
+    `${row.source!.x}:${row.source!.y}:${row.transport}`, { ...row.source!, transport: row.transport, label: row.transport === 'software' ? 'Virtual' : row.transport === 'unknown' ? 'Unknown transport' : row.transport.toUpperCase() },
   ] as const)]).values()]);
   const protocolIcons = { usb: 'usb', can: 'chip', network: 'network', bluetooth: 'bluetooth', software: 'command', unknown: 'help' };
   const geometry = $derived(graph.nodes.map(node => `${node.component.id}:${node.x}:${node.y}`).join('|') + graph.edges.map(edge => edge.connection.id).join('|'));
