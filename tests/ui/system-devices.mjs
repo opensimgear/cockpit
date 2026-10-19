@@ -575,8 +575,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.getByRole('button',{name:'Snap selection',exact:true})).toHaveCount(0);
     for(const name of ['Align left','Align center','Align right','Group','Ungroup'])await expect(layoutTools.getByRole('button',{name,exact:true})).toBeDisabled();
     const panelLibrary=panelEditor.getByRole('complementary',{name:'Panel library',exact:true});
-    for(const title of ['Viewports','Widgets','Assets','Screen size'])await expect(panelLibrary.locator('summary').filter({hasText:new RegExp(`^${title}$`)})).toBeVisible();
+    for(const title of ['Pages','Viewports','Widgets','Assets','Screen size'])await expect(panelLibrary.locator('summary').filter({hasText:new RegExp(`^${title}$`)})).toBeVisible();
+    await panelLibrary.getByText('Pages',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(1);
+    const pageChoice=panelLibrary.getByRole('combobox',{name:'Page',exact:true});
+    await panelLibrary.getByRole('button',{name:'Add page',exact:true}).click();await expect(pageChoice.locator('option')).toHaveCount(2);
+    await panelLibrary.getByRole('button',{name:'Remove page',exact:true}).click();await expect(pageChoice.locator('option')).toHaveCount(1);
+    await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(1);await expect(pageChoice).not.toBeVisible();
     await panelLibrary.getByText('Assets',{exact:true}).click();
+    await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(1);
     const pickerEvent=page.waitForEvent('filechooser');await panelLibrary.getByRole('button',{name:'Add asset',exact:true}).click();
     const imageBytes=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=2;canvas.height=2;canvas.getContext('2d').fillRect(0,0,2,2);return canvas.toDataURL('image/png').split(',')[1];});
     await (await pickerEvent).setFiles({name:'pixel.png',mimeType:'image/png',buffer:Buffer.from(imageBytes,'base64')});

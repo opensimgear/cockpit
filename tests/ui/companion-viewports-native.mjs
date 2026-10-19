@@ -36,6 +36,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     await change(editor.getByLabel('Panel name', { exact: true }), panelName);
     await editor.getByText('Screen size', { exact: true }).click();
     await editor.getByRole('combobox', { name: /^Companion screen/ }).selectOption('1920x1080');
+    await editor.getByText('Viewports', { exact: true }).click();
     await editor.getByRole('button', { name: 'Add viewport', exact: true }).click();
     await expect(outlines).toHaveCount(2);
     await expect(editor.getByLabel('Viewport x', { exact: true })).toHaveValue('960');
@@ -65,7 +66,9 @@ test('native companion editor authors, validates, previews and saves multiple vi
     await expect(outlines).toHaveCount(2);
     checks.push('New viewports fill gaps; viewport removal supports undo and redo');
 
+    if (!await viewportList.isVisible()) await editor.getByText('Viewports', { exact: true }).click();
     await viewportList.getByRole('button', { name: /Right instruments/ }).click();
+    await editor.getByText('Widgets', { exact: true }).click();
     await editor.locator('.palette').getByRole('button', { name: 'Button', exact: true }).click();
     await expect(editor.locator('.widget')).toHaveCount(2);
     const added = editor.locator('.widget').last();
@@ -78,6 +81,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     await expect(editor.locator('.layout-error')).toHaveCount(0);
     checks.push('Widgets are added to the selected viewport and cannot be placed across a gap');
 
+    if (!await viewportList.isVisible()) await editor.getByText('Viewports', { exact: true }).click();
     await viewportList.getByRole('button', { name: /Right instruments/ }).click();
     await expect(editor.getByRole('button', { name: 'Remove viewport', exact: true })).toBeDisabled();
     await editor.getByRole('button', { name: 'Preview locally', exact: true }).click();
