@@ -9,6 +9,7 @@
   let credential=$state<Credential|null>(null), error=$state(''), warning=$state(''), status=$state('Connecting…');
   let panel=$state<DesignerDocument|null>(null), pageId=$state(''), assets=$state<Record<string,string>>({});
   let assignments=$state<{instanceId:string;publicationHash:string;name:string}[]>([]), selected=$state('');
+  let panelError=$state(false);
   let active=$state(false), name=$state('Browser companion'), secret=$state(''), fullscreen=$state(false);
   let feedback=$state<FeedbackSamples>({}), feedbackNotice=$state('');
   const feedbackView=createBrowserFeedback();
@@ -29,7 +30,7 @@
     return {version:1,type,clientId:session.clientId,sessionId:session.sessionId,generation:session.generation,publicationHash:session.publicationHash,...rest};
   }
   function stop(reason:string) {
-    epoch++; active=false;queue.stop();controller.disarm(reason);session=null;
+    epoch++; active=false;panelError=false;queue.stop();controller.disarm(reason);session=null;
     feedbackView.disconnect();feedback=feedbackView.snapshot();
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
   }
@@ -52,13 +53,20 @@
     if(!assignment || !visible()){status=assignment?'Connected · panel paused while inactive':'Connected · assign a panel in Cockpit';return;}
     const opened=await socket.request({type:'open',instanceId:assignment.instanceId,publicationHash:assignment.publicationHash});
     const p=opened.publication;
-    const verified=await verifyPublishedPayload({...p,document:JSON.parse(p.canonicalDocument)});
+    let verified;
+    try{verified=await verifyPublishedPayload({...p,document:JSON.parse(p.canonicalDocument)});}
+    catch(e){
+      if(!current(socket,version))return;
+      session=opened;heartbeat=0;panel=null;assets={};panelError=true;active=false;
+      controller.disarm('Panel error');queue.stop();feedbackView.clear();feedback={};
+      status='Connected · panel error';error=String(e instanceof Error?e.message:e);return;
+    }
     if(!current(socket,version))return;
     if(opened.publicationHash!==assignment.publicationHash || verified.publicationHash!==assignment.publicationHash)throw new Error('Panel assignment changed during delivery');
     panel=verified.document;pageId=panel.ui.pages.some(p=>p.id===pageId)?pageId:panel.ui.pages[0].id;
     assets=Object.fromEntries(verified.assets.map(a=>[a.assetId,'data:'+panel!.ui.assets.find(m=>m.id===a.assetId)!.mime+';base64,'+a.base64]));
     controller.setDocument(panel);
-    session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};feedbackNotice='';
+    panelError=false;session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};feedbackNotice='';
     await tick();if(!current(socket,version))return;
     const values=Object.fromEntries(panel.ui.controls.map(c=>[c.id,fallbackValue(c)]));
     await socket.request(frame('baseline',{sequence:'0',values}));
@@ -120,7 +128,7 @@
       const presence=await socket.request({type:'presence'});
       if(version!==epoch)return;
       if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
-      if(session && active && visible())await socket.request(frame('heartbeat',{sequence:String(++heartbeat)}));
+      if(session && (active||panelError) && visible())await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
       else if(!session && visible() && assignments.length){stop('Resuming panel');nextAttempt=0;}
     }catch(e){if(version===epoch){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
     finally{polling=false;}
@@ -191,13 +199,13 @@
       {:else}<p>In Cockpit, choose Companions → Pair → Browser and open the pairing link.</p>{/if}
     </section>
   {:else}
-    <div class="toolbar"><span class:active>{status}</span>
+    <div class="toolbar"><span class:active={active||panelError}>{status}</span>
       {#if assignments.length>1}<label>Panel<select value={selected} onchange={e=>{stop('Switching panel');selected=e.currentTarget.value;nextAttempt=0;}}>{#each assignments as a}<option value={a.instanceId}>{a.name}</option>{/each}</select></label>{/if}
       {#if panel && panel.ui.pages.length>1}<label>Page<select value={pageId} onchange={e=>changedPage(e.currentTarget.value)}>{#each panel.ui.pages as page}<option value={page.id}>{page.title}</option>{/each}</select></label>{/if}
     </div>
     {#if panel}<main class:inactive={!active}><PanelCanvas document={panel} {pageId} {assets} {controller} {feedback} /></main>
       <div class="toolbar"><span>Visuals: requested, host accepted, host submitted and game confirmed are separate states.</span><button onclick={resetFeedback}>Clear visual state</button><button onclick={resyncFeedback} disabled={!active}>Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
-    {:else}<section class="empty"><h1>{status}</h1><p>Choose a panel for this companion in Cockpit. It will appear here automatically.</p></section>{/if}
+    {:else}<section class="empty"><h1>{status}</h1><p>{panelError?'Edit and save this panel in Cockpit to retry.':'Choose a panel for this companion in Cockpit. It will appear here automatically.'}</p></section>{/if}
   {/if}
   {#if warning && !error}<aside role="alert">{warning}<button aria-label="Dismiss notification" onclick={()=>warning=''}>×</button></aside>{/if}
   {#if error}<aside role="alert">{error}<button aria-label="Dismiss notification" onclick={()=>error=''}>×</button></aside>{/if}

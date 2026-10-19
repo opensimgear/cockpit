@@ -6,11 +6,11 @@ const values=outputs.map(output=>({channelId:output.channelId,outputId:output.id
 const reply={ok:true,type:'ack',feedback:{version:1,type:'feedback',...identity,sequence:'1',bindingGeneration:'1',mode:'snapshot',bindings:outputs.map(output=>({channelId:output.channelId,outputId:output.id})),values}};
 const appSource=await readFile(new URL('./App.svelte',import.meta.url),'utf8'),canvasSource=await readFile(new URL('../../../packages/companion-ui/src/PanelCanvas.svelte',import.meta.url),'utf8');
 function load(source,filename,imports,globals={}){const exports={};const{js}=compile(source,{filename,generate:'server'});vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,structuredClone,TextEncoder,performance:{now:()=>100},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name in imports)return imports[name];throw Error(name);},...globals});return exports.default;}
-function harness(action='',verified=panel){
+function harness(action='',verified=panel,seedAssets={}){
  let handlers,clock=100;const performance={now:()=>clock};
- const PanelCanvas=load(canvasSource,'PanelCanvas.svelte',{'./controller.ts':controls,'./presentation.ts':presentation},{performance});
- const injected=appSource.replace('</script>',`credential={token:'a'.repeat(43),hostId:'host',companionId:'browser'};panel=seedPanel;pageId=panel.ui.pages[0].id;session=seedIdentity;active=true;epoch=7;consume(seedReply,7);${action};capture({consume,stop,resetFeedback,loadAssigned,bind(socket){connection=socket;owner=true;},get controls(){return controller.snapshot();},get feedback(){return feedback;}});</script>`);
- const App=load(injected,'App.svelte',{'@opensimgear/companion-ui':{PanelCanvas,...controls},'@opensimgear/companion-designer':designer,'../../companion/src/lib/companion-cache':{verifyPublishedPayload:async()=>({document:verified,assets:[],publicationHash:identity.publicationHash})},'../../companion/src/lib/input-queue':{createOrderedInputQueue},'./transport':transport,'./feedback':feedbackApi},{performance,document:{visibilityState:'visible',hasFocus:()=>true},seedPanel:panel,seedIdentity:identity,seedReply:reply,capture:v=>handlers=v,setClock:v=>clock=v});
+ const PanelCanvas=load(canvasSource,'PanelCanvas.svelte',{'@opensimgear/companion-designer':designer,'./controller.ts':controls,'./presentation.ts':presentation},{performance});
+ const injected=appSource.replace('</script>',`credential={token:'a'.repeat(43),hostId:'host',companionId:'browser'};panel=seedPanel;assets=seedAssets;pageId=panel.ui.pages[0].id;session=seedIdentity;active=true;epoch=7;consume(seedReply,7);${action};capture({consume,stop,resetFeedback,loadAssigned,bind(socket){connection=socket;owner=true;},get controls(){return controller.snapshot();},get feedback(){return feedback;}});</script>`);
+ const App=load(injected,'App.svelte',{'@opensimgear/companion-ui':{PanelCanvas,...controls},'@opensimgear/companion-designer':designer,'../../companion/src/lib/companion-cache':{verifyPublishedPayload:async()=>({document:verified,assets:[],publicationHash:identity.publicationHash})},'../../companion/src/lib/input-queue':{createOrderedInputQueue},'./transport':transport,'./feedback':feedbackApi},{performance,document:{visibilityState:'visible',hasFocus:()=>true},seedPanel:verified,seedAssets,seedIdentity:identity,seedReply:reply,capture:v=>handlers=v,setClock:v=>clock=v});
  return{html:render(App).body,get handlers(){return handlers;}};
 }
 test('the actual browser App consumes accepted feedback into the actual shared renderer without creating control inputs',()=>{
@@ -28,4 +28,12 @@ test('the actual browser clears live presentation on disconnect and lets stale v
  const offline=harness("stop('Disconnected test')");assert.ok(!/indicator-value[^>]* on/.test(offline.html));assert.ok(offline.html.includes('Disconnected'));assert.ok(!offline.html.includes('Altitude 12000 ft'));
  const stale=harness('setClock(1500)');assert.ok(!/indicator-value[^>]* on/.test(stale.html));assert.ok(stale.html.includes('Stale · last Altitude 12000 ft'));assert.ok(stale.html.includes('requested (historical) · host'));
  const reset=harness('resetFeedback()');assert.ok(!/indicator-value[^>]* on/.test(reset.html));assert.ok(!reset.html.includes('Altitude 12000 ft'));
+});
+
+test('the actual browser renders image widgets without unsupported-widget errors or extra inputs',()=>{
+ const document=structuredClone(panel);document.ui.assets.push({id:'picture',mime:'image/png',sizeBytes:1,sha256:'a'.repeat(64)});
+ document.presentation.widgets.push({id:'image-widget',pageId:document.ui.pages[0].id,kind:'image',label:'Picture',bounds:{x:.1,y:.1,width:.2,height:.2},controlIds:[],feedbackIds:[],config:{assetId:'picture'}});
+ const h=harness('',document,{picture:'data:image/png;base64,aGVsbG8='});
+ assert.ok(h.html.includes('image-content'));assert.ok(h.html.includes('data:image/png;base64,aGVsbG8='));assert.ok(!h.html.includes('Unsupported widget'));
+ assert.equal(Object.keys(h.handlers.controls.values).length,panel.ui.controls.length);
 });

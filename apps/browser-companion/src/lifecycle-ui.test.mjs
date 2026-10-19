@@ -22,7 +22,7 @@ const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 
 /** Execute the actual App and its mounted browser listeners, with no DOM input,
  * network or native service. Controller/queue/credential/feedback code is real. */
-function harness({pair=false,hold=[]}={}){
+function harness({pair=false,hold=[],rejectPanel=false}={}){
   let handlers,mount,cleanup,focused=true,clock=100;
   const sockets=[],intervals=new Map(),storage=new Map();
   const window=new EventTarget(),document=new EventTarget();
@@ -56,7 +56,7 @@ function harness({pair=false,hold=[]}={}){
     release(type){const index=this.pending.findIndex(item=>item.frame.type===type);assert.ok(index>=0,'The intended operation is pending');const[item]=this.pending.splice(index,1);item.resolve(this.deliver(item.frame));}
     close(){this.closed=true;for(const item of this.pending.splice(0))item.reject(Error('Socket closed'));this.onclose?.();}
   }
-  const injected=appSource.replace('</script>',`capture({poll,connect,pair,controller,queue,get epoch(){return epoch;},get active(){return active;},get session(){return session;},get status(){return status;},get feedback(){return feedback;},get credential(){return credential;},get secret(){return secret;}});</script>`);
+  const injected=appSource.replace('</script>',`capture({poll,connect,pair,controller,queue,get epoch(){return epoch;},get active(){return active;},get panelError(){return panelError;},get session(){return session;},get status(){return status;},get feedback(){return feedback;},get credential(){return credential;},get secret(){return secret;}});</script>`);
   const{js}=compile(injected,{filename:'App.svelte',generate:'server'}),exports={};
   vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports,structuredClone,TextEncoder,URLSearchParams,performance:{now:()=>clock},crypto,
@@ -68,7 +68,7 @@ function harness({pair=false,hold=[]}={}){
       if(name==='svelte')return{...svelte,onMount:callback=>mount=callback};
       if(name==='@opensimgear/companion-ui')return{...controls,PanelCanvas(){}};
       if(name==='@opensimgear/companion-designer')return designer;
-      if(name==='../../companion/src/lib/companion-cache')return{verifyPublishedPayload:async()=>({document:panel,assets:[],publicationHash:hash})};
+      if(name==='../../companion/src/lib/companion-cache')return{verifyPublishedPayload:async()=>{if(rejectPanel)throw Error('Unsupported widget');return {document:panel,assets:[],publicationHash:hash};}};
       if(name==='../../companion/src/lib/input-queue')return{createOrderedInputQueue};
       if(name==='./transport')return{...credentials,BrowserTransport:Socket};
       if(name==='./feedback')return feedbackApi;
@@ -159,6 +159,17 @@ test('hiding during pairing approval cannot save or replay the consumed offer',a
     assert.equal(h.storage.has('osg-browser-credential-v2'),false);
     await h.visibility('visible');await h.tick();
     assert.equal(h.sockets.length,1);assert.equal(old.requests.filter(frame=>frame.type==='pair').length,1);
+    assert.equal(h.handlers.controller.snapshot().armed,false);
+  }finally{h.close();await flush();}
+});
+
+test('a rejected panel stays connected and disarmed with panel-error heartbeats',async()=>{
+  const h=harness({rejectPanel:true});await flush();
+  try{
+    assert.equal(h.handlers.panelError,true);assert.equal(h.handlers.active,false);assert.ok(h.handlers.session);
+    assert.equal(h.handlers.status,'Connected · panel error');assert.equal(h.sockets[0].closed,false);
+    assert.ok(!h.sockets[0].requests.some(r=>r.type==='baseline'||r.type==='input'));
+    await h.tick();assert.ok(h.sockets[0].requests.some(r=>r.type==='heartbeat'&&r.panelError===true));
     assert.equal(h.handlers.controller.snapshot().armed,false);
   }finally{h.close();await flush();}
 });
