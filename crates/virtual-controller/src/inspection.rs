@@ -69,9 +69,22 @@ fn validate_slot_ids(ids: &[u8]) -> Result<(), String> {
 }
 pub fn sample_with(program: &Path, args: &[String], ids: &[u8]) -> Result<Sample, String> {
     validate_slot_ids(ids)?;
-    let mut worker = Worker::spawn(program, args, "vjoy-inspect-ready", Duration::from_secs(3))?;
+    sample_transaction(
+        ids,
+        || Worker::spawn(program, args, "vjoy-inspect-ready", Duration::from_secs(3)),
+        Worker::inspect_once,
+        Instant::now,
+    )
+}
+fn sample_transaction<W>(
+    ids: &[u8],
+    ready: impl FnOnce() -> Result<W, String>,
+    query: impl FnOnce(&mut W, &str, &[u8], Instant) -> Result<Value, String>,
+    mut now: impl FnMut() -> Instant,
+) -> Result<Sample, String> {
+    let mut worker = ready()?;
     let nonce = uuid::Uuid::new_v4().to_string();
-    let observed = Instant::now();
+    let observed = now();
     let deadline = observed + Duration::from_micros(crate::feeder::LEASE_US);
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -79,7 +92,7 @@ pub fn sample_with(program: &Path, args: &[String], ids: &[u8]) -> Result<Sample
         nonce: String,
         result: Value,
     }
-    let reply: Reply = serde_json::from_value(worker.inspect_once(&nonce, ids, deadline)?)
+    let reply: Reply = serde_json::from_value(query(&mut worker, &nonce, ids, deadline)?)
         .map_err(|e| e.to_string())?;
     if reply.nonce != nonce {
         return Err("Stale read-only inspection acknowledgement.".into());
@@ -96,7 +109,7 @@ pub fn sample_with(program: &Path, args: &[String], ids: &[u8]) -> Result<Sample
     }
     // Include parsing and child teardown. A queued reply never renews freshness.
     drop(worker);
-    if Instant::now() >= deadline {
+    if now() >= deadline {
         return Err("The fresh virtual-slot inspection exceeded its response deadline.".into());
     }
     Ok(Sample { slots, observed })
@@ -216,39 +229,113 @@ mod tests {
         );
         inspect_with(Path::new(&python()), &["-c".into(), program])
     }
-    fn sampled(startup_ms: u32, query_ms: u32, result: &str) -> Result<Sample, String> {
+    fn sample_program(startup_ms: u32, query_ms: u32, result: &str) -> String {
         let slot=serde_json::to_string(&serde_json::to_string(&json!({"id":3,"status":"missing","ownerPid":null,"buttons":0,"axes":[],"continuousHats":0,"discreteHats":0,"forceFeedback":false})).unwrap()).unwrap();
-        let code=format!("import json,sys,time\nslot=json.loads({slot})\ntime.sleep({startup_ms}/1000)\nprint(json.dumps({{'ok':True,'protocol':1,'backend':'vjoy-inspect-ready','result':{{'ok':True,'slots':[{{'id':99}}]}}}}),flush=True)\nq=json.loads(sys.stdin.readline())\nassert q['slotIds']==[3]\ntime.sleep({query_ms}/1000)\n{result}\n");
+        format!("import json,sys,time\nslot=json.loads({slot})\ntime.sleep({startup_ms}/1000)\nprint(json.dumps({{'ok':True,'protocol':1,'backend':'vjoy-inspect-ready','result':{{'ok':True,'slots':[{{'id':99}}]}}}}),flush=True)\nq=json.loads(sys.stdin.readline())\nassert q['slotIds']==[3]\ntime.sleep({query_ms}/1000)\n{result}\n")
+    }
+    fn sampled(startup_ms: u32, query_ms: u32, result: &str) -> Result<Sample, String> {
         sample_with(
             Path::new(&python()),
-            &["-u".into(), "-c".into(), code],
+            &[
+                "-u".into(),
+                "-c".into(),
+                sample_program(startup_ms, query_ms, result),
+            ],
             &[3],
         )
     }
+    fn simulated_sample(
+        query: Duration,
+        teardown: Duration,
+    ) -> (Result<Sample, String>, Instant, Duration) {
+        use std::{cell::Cell, rc::Rc};
+        struct Ready {
+            elapsed: Rc<Cell<Duration>>,
+            drops: Rc<Cell<u32>>,
+            teardown: Duration,
+        }
+        impl Drop for Ready {
+            fn drop(&mut self) {
+                self.elapsed.set(self.elapsed.get() + self.teardown);
+                self.drops.set(self.drops.get() + 1);
+            }
+        }
+        let started = Instant::now();
+        let startup = Duration::from_millis(350);
+        let elapsed = Rc::new(Cell::new(Duration::ZERO));
+        let drops = Rc::new(Cell::new(0));
+        let result = sample_transaction(
+            &[3],
+            || {
+                elapsed.set(startup);
+                Ok(Ready {
+                    elapsed: elapsed.clone(),
+                    drops: drops.clone(),
+                    teardown,
+                })
+            },
+            |worker, nonce, ids, deadline| {
+                assert_eq!(ids, &[3]);
+                assert_eq!(uuid::Uuid::parse_str(nonce).unwrap().to_string(), nonce);
+                assert_eq!(worker.elapsed.get(), startup);
+                assert_eq!(
+                    deadline,
+                    started + startup + Duration::from_micros(crate::feeder::LEASE_US)
+                );
+                worker.elapsed.set(worker.elapsed.get() + query);
+                Ok(json!({"nonce":nonce,"result":{"ok":true,"slots":[{
+                    "id":3,"status":"missing","ownerPid":null,"buttons":0,"axes":[],
+                    "continuousHats":0,"discreteHats":0,"forceFeedback":false
+                }]}}))
+            },
+            || started + elapsed.get(),
+        );
+        assert_eq!(drops.get(), 1);
+        assert_eq!(elapsed.get(), startup + query + teardown);
+        (result, started, elapsed.get())
+    }
     #[test]
     fn slow_readiness_is_separate_from_the_unchanged_fresh_sample_deadline() {
-        let started = Instant::now();
-        let sample = sampled(
-            350,
-            0,
-            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[slot]}}),flush=True)",
-        )
-        .unwrap();
-        let (slots, observed) = sample.into_parts();
-        assert_eq!(slots.len(), 1); // Handshake's invalid cached slots were never used.
+        let (sample, started, elapsed) =
+            simulated_sample(Duration::from_millis(125), Duration::from_micros(124_999));
+        let (slots, observed) = sample.unwrap().into_parts();
+        assert_eq!(slots.len(), 1);
         assert_eq!(slots[0].id, 3);
         assert_eq!(slots[0].status, crate::vjoy::Status::Missing);
-        assert!(started.elapsed() >= Duration::from_millis(350));
-        assert!(observed.duration_since(started) >= Duration::from_millis(350));
-        assert!(observed.elapsed() < Duration::from_micros(crate::feeder::LEASE_US));
-        assert!(sampled(
-            0,
-            350,
-            "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[slot]}}),flush=True)"
+        assert_eq!(observed.duration_since(started), Duration::from_millis(350));
+        assert_eq!(elapsed, Duration::from_micros(599_999));
+    }
+    #[test]
+    fn freshness_includes_query_and_teardown_and_rejects_the_exact_deadline() {
+        assert_eq!(crate::feeder::LEASE_US, 250_000);
+        for (query, teardown) in [(350, 0), (0, 350), (250, 0), (0, 250), (125, 125)] {
+            let (result, _, _) = simulated_sample(
+                Duration::from_millis(query),
+                Duration::from_millis(teardown),
+            );
+            assert!(result.err().unwrap().contains("response deadline"));
+        }
+    }
+    #[test]
+    fn ready_python_worker_returns_the_queried_inventory_over_the_real_wire() {
+        let mut worker = Worker::spawn(
+            Path::new(&python()),
+            &["-u".into(), "-c".into(), sample_program(0, 0,
+                "print(json.dumps({'nonce':q['nonce'],'result':{'ok':True,'slots':[slot]}}),flush=True)")],
+            "vjoy-inspect-ready",
+            Duration::from_secs(3),
         )
-        .err()
-        .unwrap()
-        .contains("deadline"));
+        .unwrap();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        // This tests the wire protocol; the exact freshness budget is proved above.
+        let reply = worker
+            .inspect_once(&nonce, &[3], Instant::now() + Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(reply["nonce"], nonce);
+        let slots = slots(&reply["result"]).unwrap();
+        assert_eq!(slots.len(), 1); // Ignore the handshake's invalid cached slot 99.
+        assert_eq!(slots[0].id, 3);
+        assert_eq!(slots[0].status, crate::vjoy::Status::Missing);
     }
     #[test]
     fn sampled_replies_require_the_exact_query_and_bounded_inventory() {
