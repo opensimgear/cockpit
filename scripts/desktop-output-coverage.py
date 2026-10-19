@@ -18,6 +18,115 @@ def run(arguments, root, env=None):
     return result.stdout
 
 
+def _rust_code(source):
+    """Mask comments/literals while preserving offsets, newlines and delimiters."""
+    masked = list(source)
+    position = 0
+    while position < len(source):
+        end = position
+        if source.startswith("//", position):
+            end = source.find("\n", position)
+            end = len(source) if end < 0 else end
+        elif source.startswith("/*", position):
+            end, depth = position + 2, 1
+            while end < len(source) and depth:
+                if source.startswith("/*", end):
+                    depth, end = depth + 1, end + 2
+                elif source.startswith("*/", end):
+                    depth, end = depth - 1, end + 2
+                else:
+                    end += 1
+        elif raw := re.match(r'(?:br|r)(#{0,255})"', source[position:]):
+            closing = '"' + raw[1]
+            found = source.find(closing, position + raw.end())
+            end = len(source) if found < 0 else found + len(closing)
+        elif source[position] == '"':
+            end = position + 1
+            while end < len(source):
+                if source[end] == "\\":
+                    end += 2
+                elif source[end] == '"':
+                    end += 1
+                    break
+                else:
+                    end += 1
+        elif character := re.match(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^\\'\n])'", source[position:]):
+            end = position + character.end()
+        if end > position:
+            for index in range(position, min(end, len(source))):
+                if source[index] != "\n":
+                    masked[index] = " "
+            position = end
+        else:
+            position += 1
+    return "".join(masked)
+
+
+def _test_item_end(code, start):
+    """Find one attributed item, never the remainder of its enclosing scope."""
+    braced = code[start:start + 1] == "{" or re.match(
+        r"(?:pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const|default|extern)\s+)*"
+        r"(?:fn|mod|struct|enum|trait|impl|union)\b", code[start:])
+    stack = []
+    for position in range(start, len(code)):
+        token = code[position]
+        if token in "([{":
+            stack.append(token)
+        elif token in ")]}":
+            if not stack or stack.pop() != {")": "(", "]": "[", "}": "{"}[token]:
+                return None
+            if braced and token == "}" and not stack:
+                return position + 1
+        elif not stack and (token == ";" or (token == "," and not braced)):
+            return position + 1
+    return None
+
+
+def test_only_lines(source):
+    """Exclude complete cfg(test) items, including fields, blocks and modules.
+
+    An external test module may have intervening #[path] or other attributes.
+    No module boundary truncates later production. Mixed production/test lines
+    remain in the denominator; unfamiliar syntax is retained conservatively.
+    """
+    code = _rust_code(source)
+    spans = []
+    for attribute in re.finditer(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]", code):
+        position = attribute.end()
+        while True:
+            while position < len(code) and code[position].isspace():
+                position += 1
+            following = re.match(r"#\s*\[", code[position:])
+            if not following:
+                break
+            position += following.end()
+            depth = 1
+            while position < len(code) and depth:
+                depth += (code[position] == "[") - (code[position] == "]")
+                position += 1
+        end = _test_item_end(code, position)
+        if end is not None:
+            spans.append((attribute.start(), end))
+    remaining = list(code)
+    for start, end in spans:
+        for position in range(start, end):
+            if remaining[position] != "\n":
+                remaining[position] = " "
+    excluded, offset = set(), 0
+    for number, line in enumerate("".join(remaining).splitlines(keepends=True), 1):
+        if not line.strip() and any(start < offset + len(line) and end > offset for start, end in spans):
+            excluded.add(number)
+        offset += len(line)
+    return excluded
+
+
+def production_counts(source, annotated):
+    excluded = test_only_lines(source)
+    return {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotated.splitlines()
+            if (match := re.match(r"^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\|", line))
+            and int(match[1]) not in excluded}
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -53,10 +162,7 @@ def main():
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={profile}",
                          "-show-line-counts-or-regions", source], root)
         (output / f"{module}-lines.txt").write_text(annotated, encoding="utf-8")
-        lines = source.read_text(encoding="utf-8").splitlines()
-        end = next((index + 1 for index, line in enumerate(lines) if line.strip() == "#[cfg(test)]"), len(lines) + 1)
-        counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotated.splitlines()
-                  if (match := re.match(r"^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\|", line)) and int(match[1]) < end}
+        counts = production_counts(source.read_text(encoding="utf-8"), annotated)
         if not counts:
             raise RuntimeError(f"No instrumented production lines for {module}.")
         covered, total = sum(counts.values()), len(counts)
