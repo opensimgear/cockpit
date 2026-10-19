@@ -247,7 +247,7 @@
             {#if hostState.firmwareVersion}<p>Available: {hostState.firmwareVersion}</p>{/if}
           </div>
           {#if !updateOpen && (!hostState.firmwareVersion || firmwareInfo(selected)?.version!==hostState.firmwareVersion)}
-            <button class="firmware-update" disabled={busy || updating} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button>
+            <button class="firmware-update" disabled={busy || updating || selected.connected!==true} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button>
           {:else if updateOpen}
             <p>Pairing and Wi-Fi settings are preserved. Keep this companion connected by USB throughout the update.</p>
 
