@@ -599,7 +599,18 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.getByRole('button',{name:'Snap selection',exact:true})).toHaveCount(0);
     for(const name of ['Align left','Align vertical','Align right','Align top','Align horizontal','Align bottom','Group','Ungroup'])await expect(layoutTools.getByRole('button',{name,exact:true})).toBeDisabled();
     const panelLibrary=panelEditor.getByRole('complementary',{name:'Panel library',exact:true});
-    for(const title of ['Pages','Viewports','Widgets','Assets','Screen size'])await expect(panelLibrary.locator('summary').filter({hasText:new RegExp(`^${title}$`)})).toBeVisible();
+    for(const title of ['Pages','Viewports','Widgets','Assets','Grid','Screen size'])await expect(panelLibrary.locator('summary').filter({hasText:new RegExp(`^${title}$`)})).toBeVisible();
+    await panelLibrary.getByText('Grid',{exact:true}).click();
+    const gridColumns=panelLibrary.getByRole('spinbutton',{name:'Columns',exact:true}),gridRows=panelLibrary.getByRole('spinbutton',{name:'Rows',exact:true});
+    const originalGridColumns=await gridColumns.inputValue(),originalGridRows=await gridRows.inputValue();
+    await gridColumns.fill('32');await gridColumns.press('Tab');await gridRows.fill('20');await gridRows.press('Tab');
+    await expect.poll(()=>panelEditor.locator('.safe-area').evaluate(node=>node.style.getPropertyValue('--grid-x'))).toBe('3.125%');
+    await expect.poll(()=>panelEditor.locator('.safe-area').evaluate(node=>node.style.getPropertyValue('--grid-y'))).toBe('5%');
+    await gridColumns.fill('0');await gridColumns.press('Tab');await expect(gridColumns).toHaveValue('32');
+    await gridRows.fill('129');await gridRows.press('Tab');await expect(gridRows).toHaveValue('20');
+    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(gridRows).toHaveValue(originalGridRows);
+    await panelEditor.getByRole('button',{name:'Redo',exact:true}).click();await expect(gridRows).toHaveValue('20');
+    await gridColumns.fill(originalGridColumns);await gridColumns.press('Tab');await gridRows.fill(originalGridRows);await gridRows.press('Tab');
     const accordionMotion=await panelLibrary.locator('.editor-accordion').first().evaluate(async node=>{
       const samples=[];
       for(const open of [true,false]){

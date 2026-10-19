@@ -162,6 +162,13 @@
     input.value = String(Math.round(activeViewport.bounds[key] * scale * 100) / 100);
   }
   function patch(patch: Partial<DesignerWidget>) { if (widget) command({ type: 'update-widget', id: widget.id, patch }); }
+  function changeGrid(axis: 'columns' | 'rows', input: HTMLInputElement) {
+    const value = input.valueAsNumber;
+    if (Number.isInteger(value) && value >= 1 && value <= 128) {
+      command({ type: 'set-grid', ...document.presentation.grid, [axis]: value });
+    }
+    input.value = String(document.presentation.grid[axis]);
+  }
   function changeBounds(key: keyof Bounds, input: HTMLInputElement) {
     if (widget) {
       const scale = key === 'x' || key === 'width' ? usableWidth : usableHeight;
@@ -395,6 +402,11 @@
         <button class="asset-delete" aria-label={`Delete image ${index+1}`} title="Delete asset" disabled={busy} onclick={()=>removeAsset(asset.id)}><Icon name="trash" size={15}/></button>
       </li>{:else}<li class="assets-empty">No assets yet.</li>{/each}</ul>
       <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id}>{a.id}</option>{/each}</select></label>
+      </div></details>
+      <details class="editor-accordion" name="panel-editor-tools"><summary>Grid</summary><div class="accordion-content">
+        <label>Columns<input type="number" min="1" max="128" step="1" disabled={preview} value={document.presentation.grid.columns} onchange={e => changeGrid('columns', e.currentTarget)} /></label>
+        <label>Rows<input type="number" min="1" max="128" step="1" disabled={preview} value={document.presentation.grid.rows} onchange={e => changeGrid('rows', e.currentTarget)} /></label>
+        <p class="hint">Spacing: {Math.round(usableWidth / document.presentation.grid.columns * 100) / 100} × {Math.round(usableHeight / document.presentation.grid.rows * 100) / 100} px. More columns or rows make a finer grid.</p>
       </div></details>
       <details class="editor-accordion" name="panel-editor-tools"><summary>Screen size</summary><div class="accordion-content">
         <label>Companion screen<select value={`${viewport.width}x${viewport.height}`} onchange={e => { const [w,h] = e.currentTarget.value.split('x').map(Number); setViewport(w,h); }}><option value="390x844">Phone portrait</option><option value="844x390">Phone landscape</option><option value="768x1024">Tablet portrait</option><option value="1024x768">Tablet landscape</option><option value="800x480">ESP32 screen · 800 × 480</option><option value="1280x800">Large panel · 1280 × 800</option><option value="1280x720">Desktop · 1280 × 720</option><option value="1920x1080">Full HD · 1920 × 1080</option><option value="2560x1440">QHD · 2560 × 1440</option><option value="3840x2160">4K · 3840 × 2160</option>{#if !['390x844','844x390','768x1024','1024x768','800x480','1280x800','1280x720','1920x1080','2560x1440','3840x2160'].includes(`${viewport.width}x${viewport.height}`)}<option value={`${viewport.width}x${viewport.height}`}>Custom · {viewport.width} × {viewport.height}</option>{/if}</select></label>
