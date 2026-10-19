@@ -13,8 +13,8 @@
     newDocument, createDesignerHistory, applyDesignerCommand, undoDesigner, redoDesigner,
     createLibrary, saveDraft, duplicateDraft, openDraft, deleteDraft,
     importAsset, validateAssets, exportBundle, importBundle, publishDocument,
-    flightTemplate, racingTemplate, viewportRegions, widgetViewport, boundsContain,
-    type DesignerDocument, type DesignerHistory, type DesignerWidget, type AssetPayload,
+    viewportRegions, widgetViewport, boundsContain,
+    type DesignerHistory, type DesignerWidget, type AssetPayload,
     type Publication, type Bounds,
   } from '@opensimgear/companion-designer';
   import { PanelCanvas, type PreviewController, type PreviewSnapshot } from '@opensimgear/companion-ui';
@@ -31,6 +31,7 @@
   let history = $state.raw<DesignerHistory>(createDesignerHistory(newDocument('New panel')));
   let draftId = $state<string>(crypto.randomUUID());
   let name = $state('New panel');
+  let editingName = $state(false), nameDraft = $state('');
   let assets = $state.raw<AssetPayload[]>([]);
   let publications = $state.raw<Record<string, Publication[]>>({});
   let pageId = $state('');
@@ -135,6 +136,14 @@
     try { stop(); history = applyDesignerCommand(history, command); dirty=true; if (!document.ui.pages.some(p => p.id === pageId)) pageId = document.ui.pages[0].id; error = ''; return true; }
     catch (e) { error = e instanceof Error ? e.message : String(e); return false; }
   }
+  function editName() { nameDraft = name; editingName = true; }
+  function focusName(node: HTMLInputElement) { node.focus(); node.select(); }
+  function finishName() {
+    if (!editingName) return;
+    editingName = false;
+    const title = nameDraft.trim();
+    if (title && title !== name && command({ type: 'replace', document: { ...document, ui: { ...document.ui, title } } })) name = title;
+  }
   function addViewport() {
     if (command({ type: 'add-viewport', pageId: page.id, sourceId: activeViewport.id })) selectViewport(viewportRegions(document, page.id).at(-1)!.id);
   }
@@ -154,14 +163,6 @@
     if(!leaveEditor())return;editorOpen=true;dirty=true;
     stop(); name = `Panel ${library.drafts.length + 1}`; draftId = crypto.randomUUID();
     history = createDesignerHistory(newDocument(name)); pageId = document.ui.pages[0].id; selected = []; assets = []; message = '';error='';
-    onNavigate?.({kind:'panel',id:draftId});
-  }
-  function template(source: DesignerDocument) {
-    if(!leaveEditor())return;editorOpen=true;dirty=true;
-    const seed = { schemaVersion: 1 as const, drafts: [{ id: 'template', name: source.ui.title, document: simplifyFirmwareWidgets(source).document, assets: [] }] };
-    const entry = duplicateDraft(seed, 'template', source.ui.title).drafts[1];
-    stop(); draftId = entry.id; name = entry.name; history = createDesignerHistory(entry.document); assets = entry.assets;
-    pageId = document.ui.pages[0].id; select([]); message = 'Template copied into a new unsaved panel';
     onNavigate?.({kind:'panel',id:draftId});
   }
   function load(id: string, recordNavigation = true, checkLeave = true) {
@@ -208,16 +209,6 @@
         await compactSnapshots(state);
         message='Panel saved and assigned companions updated';
       } catch(e) { error='Panel saved locally. Companion update failed: '+String(e); }
-    });
-  }
-  async function duplicate() {
-    await operation(async () => {
-      const seed={schemaVersion:1 as const,drafts:[{id:'copy',name:document.ui.title,document,assets:activeAssets}]};
-      const entry=duplicateDraft(seed,'copy').drafts[1];
-      const copy=structuredClone(entry.document);copy.ui.title=entry.name;
-      const panel=await publishDocument(copy,entry.assets);
-      const next=await saveDraft(library,{...entry,document:copy});
-      await persist(next,{...publications,[entry.id]:[panel]});dirty=false;load(entry.id);message='Panel duplicated';
     });
   }
   async function removeDraft(id: string) {
@@ -334,15 +325,22 @@
   {:else if editorOpen}
   <section aria-label="Panel editor">
   <button class="text-button back-panels" use:focusEditor onclick={backToPanels} disabled={busy}><Icon name="back" size={16} />Back to Panels</button>
-  <div class="page-heading editor-heading"><div><div class="eyebrow">PANEL EDITOR</div><h1>{name || 'Untitled panel'}</h1><p>{dirty ? 'Unsaved changes' : 'Edit the panel layout.'}</p></div><button class="primary-button" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save panel'}</button></div>
+  <div class="page-heading editor-heading">
+    <div class="editor-title"><div class="eyebrow">PANEL EDITOR</div>
+      <h1 aria-label={name || 'Untitled panel'}>{#if editingName}<input class="panel-name-input" aria-label="Panel name" maxlength="120" bind:value={nameDraft} use:focusName onblur={finishName} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();finishName();}else if(event.key==='Escape'){event.preventDefault();editingName=false;}}}/>{:else}<button class="panel-title-button" aria-label="Edit panel name" title="Edit panel name" disabled={busy} onclick={editName}><span>{name || 'Untitled panel'}</span><Icon name="pencil" size={20}/></button>{/if}</h1>
+      <p>{dirty ? 'Unsaved changes' : 'Edit the panel layout.'}</p>
+    </div>
+    <div class="editor-title-actions">
+      <button class="action" onclick={download} disabled={busy}><Icon name="download" size={16} />Export panel</button>
+      {#if library.drafts.some(d => d.id===draftId)}<button class="action delete-panel" disabled={busy} onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete panel</button>{/if}
+      <button class="primary-button" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save panel'}</button>
+    </div>
+  </div>
   {#if error}<Notification message={String(error)} kind="error" />{/if}
   {#if message}<Notification message={String(message)} />{/if}
   <div inert={busy}>
   <div class="toolbar">
-    <button onclick={download} disabled={busy}><Icon name="download" size={16} />Export panel</button>
     <button onclick={togglePreview}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview locally'}</button>
-    <button onclick={() => template(flightTemplate)}><Icon name="monitor" size={16} />Flight template</button><button onclick={() => template(racingTemplate)}><Icon name="wheel" size={16} />Racing template</button>
-    {#if library.drafts.some(d => d.id===draftId)}<button onclick={duplicate}><Icon name="copy" size={16} />Duplicate panel</button><button onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete panel</button>{/if}
   </div>
   <div class="workspace">
     <aside aria-label="Panel library">
@@ -359,7 +357,7 @@
       <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id}>{a.id}</option>{/each}</select></label>
     </aside>
     <div class="panel-canvas-workspace">
-      <div class="toolbar"><label>Panel name<input bind:value={name} maxlength="120" onchange={() => command({ type: 'replace', document: { ...document, ui: { ...document.ui, title: name } } })} /></label>
+      <div class="toolbar">
         <button disabled={!history.past.length} onclick={() => { stop(); dirty=true;history = undoDesigner(history); name = document.ui.title; select([]); }}><Icon name="undo" size={16} />Undo</button><button disabled={!history.future.length} onclick={() => { stop(); dirty=true;history = redoDesigner(history); name = document.ui.title; select([]); }}><Icon name="redo" size={16} />Redo</button></div>
       <div class="toolbar"><label>Page<select value={page.id} onchange={e => { stop(); pageId = e.currentTarget.value; select([]); }}>{#each document.ui.pages as p}<option value={p.id}>{p.title}</option>{/each}</select></label>
         <button onclick={() => { command({ type: 'add-page', title: `Page ${document.ui.pages.length + 1}` }); pageId = document.ui.pages.at(-1)!.id; select([]); }}><Icon name="plus" size={16} />Add page</button>
@@ -428,6 +426,7 @@
 </section>
 
 <style>
+  .editor-title{min-width:min(100%,240px);flex:1}.editor-title-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.editor-title .panel-title-button{display:inline-flex;align-items:center;gap:12px;max-width:100%;text-align:left;font:inherit;letter-spacing:inherit;background:transparent;border:0;padding:0;color:inherit}.panel-title-button span{overflow-wrap:anywhere}.panel-title-button :global(svg){flex-shrink:0;color:var(--muted)}.editor-title .panel-name-input{font:inherit;letter-spacing:inherit;width:100%;padding:0 6px;margin:0;line-height:inherit}.editor-title-actions .delete-panel{color:#e39b9b}
   .designer{color:var(--text);min-width:0}.designer>[hidden]{display:none}
   .viewport-list{display:grid;gap:6px}.viewport-list button{text-align:left;overflow-wrap:anywhere}.viewport-list button.active{border-color:var(--accent);background:var(--accent-bg,var(--surface-raised))}.viewport-list small{display:block;color:var(--muted);font-size:10px;margin-top:4px}.add-viewport{display:flex;align-items:center;gap:5px;width:100%;margin-top:8px}.screen-dimension{width:92px}.canvas-caption{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted);margin-top:18px}.canvas-caption strong{color:var(--text);font-weight:500}.layout-error{border:1px solid #d9666c;background:#52262c44;color:#ffb9bd;border-radius:5px;padding:10px;font-size:12px}.viewport-properties .eyebrow{margin-top:0}
   .back-panels{display:inline-flex;align-items:center;gap:6px;background:transparent;border:0;color:var(--accent);font-size:10px;padding:6px 0;margin-bottom:18px}.back-panels:hover{background:transparent;text-decoration:underline}

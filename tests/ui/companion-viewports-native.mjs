@@ -32,6 +32,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     checks.push('New panels start with one full-screen viewport');
 
     const panelName = 'Multi viewport acceptance ' + new Date().toISOString().replace(/[:.]/g, '-');
+    await editor.getByRole('button', { name: 'Edit panel name', exact: true }).click();
     await change(editor.getByLabel('Panel name', { exact: true }), panelName);
     await editor.getByRole('combobox', { name: /^Companion screen/ }).selectOption('1920x1080');
     await editor.getByRole('button', { name: 'Add viewport', exact: true }).click();
