@@ -158,6 +158,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
   await page.addInitScript(() => { window.isTauri = true; window.__TAURI_INTERNALS__ = { invoke: (command, args) => window.__osgNativeInvoke(command, args) }; });
   try {
     await page.goto(endpoint);
+    // Seed only this browser context's local panel library. Opening an existing
+    // draft exercises editor navigation without saving or assigning native data.
+    await page.evaluate(async () => {
+      const { newDocument, createLibrary, saveDraft } = await import('/packages/companion-designer/src/index.ts');
+      const { CompanionLibraryStore } = await import('/src/lib/companion-library.ts');
+      const library = await saveDraft(createLibrary(), { id: 'fixture-panel', name: 'Fixture panel', document: newDocument('Fixture panel'), assets: [] });
+      await new CompanionLibraryStore().save({ schemaVersion: 1, library, publications: {} });
+    });
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
     const devicesNav = nav.getByRole('button', { name: /^Devices(?:\s|$)/ });
     await devicesNav.click();
@@ -382,17 +390,24 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // installations. Live status updates must preserve an unsaved settings draft.
     const companions = page.getByRole('region', { name: 'Companions', exact: true });
     const companionSettings = page.getByRole('region', { name: 'Companion settings', exact: true });
+    const panels = page.getByRole('region', { name: 'Panels', exact: true });
+    const panelEditor = page.getByRole('region', { name: 'Panel editor', exact: true });
     await details.getByRole('button', { name: 'Manage companion', exact: true }).click();
     await expect(companionSettings).toBeVisible();
+    await expect(companionSettings.getByRole('heading', { name: 'Browser companion', exact: true, level: 1 })).toBeVisible();
+    await expect(companions.getByRole('heading', { name: 'Companions', exact: true })).toHaveCount(0);
+    await expect(panels).toHaveCount(0);
+    await expect(panelEditor).toHaveCount(0);
     const companionName = companionSettings.getByLabel('Name', { exact: true });
     await expect(companionName).toHaveValue('Browser companion');
     await expect(companionSettings).toContainText('Offline');
     await expect(companionSettings.getByRole('combobox', { name: 'Assigned panel', exact: true })).toHaveValue(hash);
     await companionName.fill('Browser companion local draft');
     browserClient.name = 'Browser companion refreshed';
-    await expect(companionSettings.getByRole('heading', { name: 'Browser companion refreshed settings', exact: true })).toBeVisible();
+    await expect(companionSettings.getByRole('heading', { name: 'Browser companion refreshed', exact: true, level: 1 })).toBeVisible();
     await expect(companionName).toHaveValue('Browser companion local draft');
-    await companionSettings.getByRole('button', { name: 'Companions', exact: true }).click();
+    await page.screenshot({ path: resolve(artifacts, 'companion-full-page.png'), fullPage: true });
+    await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await expect(companionSettings).toHaveCount(0);
     browserClient.name = 'Browser companion';
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
@@ -416,6 +431,24 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(companions.getByRole('button', { name: 'Edit Known ESP32 companion', exact: true })).toBeVisible();
     await expect(companionSettings).toHaveCount(0);
+    // Tile edits have the same dedicated detail page as direct device links.
+    // Returning from either editor restores both inventories without a save.
+    await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
+    await companions.getByRole('button', { name: 'Edit Known ESP32 companion', exact: true }).click();
+    await expect(companionSettings.getByRole('heading', { name: 'Known ESP32 companion', exact: true, level: 1 })).toBeVisible();
+    await expect(companions.getByRole('heading', { name: 'Companions', exact: true })).toHaveCount(0);
+    await expect(panels).toHaveCount(0);
+    await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
+    await panels.getByRole('button', { name: /^Fixture panel/ }).click();
+    await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
+    await expect(companions).not.toBeVisible();
+    await expect(panels).toHaveCount(0);
+    await expect(companionSettings).toHaveCount(0);
+    await page.screenshot({ path: resolve(artifacts, 'panel-full-page.png'), fullPage: true });
+    await panelEditor.getByRole('button', { name: 'Back to Panels', exact: true }).click();
+    await expect(panelEditor).toHaveCount(0);
+    await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
+    await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
     await devicesNav.click();
     await expect(devices.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);
     assert.equal(requests.filter(request => request.command === 'companion_approve').length, 0);

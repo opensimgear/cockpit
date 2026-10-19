@@ -9,7 +9,7 @@
   import { notify } from './notifications';
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
   import type { Publication } from '@opensimgear/companion-designer';
-  let { publications = [], openSettings, initialCompanionId = '' }: { publications?: Publication[]; openSettings: () => void; initialCompanionId?: string } = $props();
+  let { publications = [], openSettings, initialCompanionId = '', onViewChange }: { publications?: Publication[]; openSettings: () => void; initialCompanionId?: string; onViewChange?: (detailsOpen: boolean) => void } = $props();
   let hostState = $state.raw<CompanionHostState>({});
   let pendingCompanionId = $state(untrack(() => initialCompanionId));
   let disposed = false;
@@ -45,6 +45,7 @@
   const clients = $derived(hostState.host?.clients ?? []);
   const text = (row: Record<string, unknown>, key: string) => typeof row[key] === 'string' ? String(row[key]) : '';
   const selected=$derived(clients.find(c=>text(c,'companionId')===selectedId));
+  $effect(() => { onViewChange?.(!!pendingCompanionId || !!selected || pairingOpen); });
   const selectedUsb=$derived(hostState.usb?.devices?.find(usb=>usb.device?.companionId===selectedId)??(hostState.usb?.device?.companionId===selectedId?hostState.usb:undefined));
   const detailPort=$derived(updateOpen?updatePort:selectedUsb?.connected?selectedUsb.port:undefined);
   const detailProfile=$derived(updateOpen?updateProfile:selectedUsb?.device?.boardProfile??(selected?firmwareInfo(selected)?.profile:undefined));
@@ -108,6 +109,8 @@
     updateOpen=false;selectedId=text(client,'companionId');editedName=text(client,'name');
     editedPanel=String((hostState.host?.instances??[]).find(i=>i.companionId===selectedId)?.publicationHash??'');
   }
+  function backToCompanions() { pendingCompanionId=''; selectedId=''; }
+  function focusDetails(node: HTMLButtonElement) { node.focus(); }
   async function saveSettings(){
     const instances=(hostState.host?.instances??[]).filter(i=>i.companionId===selectedId);
     if(instances.length>1)throw new Error('This companion has multiple assignments. Edit assignments in Panels.');
@@ -131,9 +134,11 @@
 </script>
 
 <section class="companions" aria-label="Companions">
-  <header><div><h2>Companions</h2><p>Your paired screens and their connection state.</p></div>
+  {#if !pendingCompanionId && !selected}
+  <header class="page-heading"><div><div class="eyebrow">YOUR PAIRED SCREENS</div><h1>Companions</h1><p>Your paired screens and their connection state.</p></div>
     {#if !pairingOpen}<button disabled={updateOpen || updating} onclick={() => openPair()}><Icon name="plus" size={16} />Pair</button>{/if}
   </header>
+  {/if}
   {#if pairingOpen}
     <section class="pair-form" aria-label="Pair companion">
       <div class="form-heading"><h3>Pair a companion</h3><button class="danger" disabled={busy} onclick={() => action(cancel)}><Icon name="close" size={16} />Cancel</button></div>
@@ -169,11 +174,12 @@
       {/if}
     </section>
   {:else if pendingCompanionId}
-    <section class="pair-form" aria-label="Companion settings"><p role="status">Loading companion details…</p></section>
+    <section aria-label="Companion settings"><button class="text-button back-companions" use:focusDetails onclick={backToCompanions}><Icon name="back" size={16} />Back to Companions</button><p role="status">Loading companion details…</p></section>
   {:else if selected}
-    <section class="pair-form" aria-label="Companion settings">
-      <div class="form-heading"><h3>{text(selected,'name')} settings</h3><button disabled={updateOpen || updating} onclick={()=>selectedId=''}><Icon name="back" size={16} />Companions</button></div>
-      <p>{selected.connected===true?'Connected':'Offline'}</p>
+    <section aria-label="Companion settings">
+      <button class="text-button back-companions" use:focusDetails disabled={busy || updateOpen || updating} onclick={backToCompanions}><Icon name="back" size={16} />Back to Companions</button>
+      <div class="page-heading"><div><div class="eyebrow">COMPANION SETTINGS</div><h1>{text(selected,'name') || 'Companion'}</h1><p>Connection and panel assignment.</p></div><span class:connected={selected.connected===true} class="connection-state"><span></span>{selected.connected===true?'Connected':'Offline'}</span></div>
+      <div class="settings-panel">
       {#if hostState.usb?.device?.companionId===selectedId && hostState.usb.device.status==='error' && hostState.usb.deviceStatus==='panel-unsupported-corrupt-or-over-budget'}
         <Notification message="The assigned panel contains unsupported content or exceeds this screen’s limits. Choose a compatible panel to reconnect." kind="error" />
       {/if}
@@ -214,6 +220,7 @@
         <button disabled={busy || updateOpen || updating || !editedName.trim()} onclick={()=>action(saveSettings)}><Icon name="save" size={16} />Save</button>
         <button class="danger" disabled={busy || updateOpen || updating} onclick={()=>action(()=>remove(selected!))}><Icon name="trash" size={15} />Remove</button>
       </div>
+      </div>
     </section>
   {:else if clients.length}
     <div class="companion-tiles">{#each clients as client (text(client,'companionId'))}
@@ -229,9 +236,10 @@
   {:else}<div class="empty"><Icon name="monitor" size={30} /><h3>No companions paired</h3><p>Pair a browser, mobile device or ESP32 screen to get started.</p></div>{/if}
 </section>
 <style>
+  .back-companions{background:transparent;border:0;color:var(--accent);padding:6px 0;margin-bottom:18px;font-size:10px}.back-companions:hover{background:transparent;text-decoration:underline}.settings-panel{padding:21px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.settings-panel .settings-columns{margin-top:0}.page-heading h1{overflow-wrap:anywhere}.page-heading .connection-state{flex-shrink:0}@media(max-width:650px){.page-heading{align-items:flex-start;flex-wrap:wrap}.settings-panel{padding:16px}}
   .firmware-versions{display:grid;gap:6px;margin-top:12px}.firmware-versions p{margin:0}
   .settings-columns{display:grid;gap:28px;margin-top:18px}.settings-columns.with-firmware{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.identity-settings{min-width:0}.identity-settings .setting:first-child{margin-top:0}.firmware-settings{min-width:0;border-left:1px solid var(--line,#344452);padding-left:28px}.firmware-settings h3{margin-top:0}@media(max-width:800px){.settings-columns.with-firmware{grid-template-columns:1fr}.firmware-settings{border-left:0;border-top:1px solid var(--line,#344452);padding-left:0;padding-top:20px}}.firmware-update{margin-top:16px}.firmware-warning{display:flex;align-items:center;gap:7px;color:var(--warning,#e9b75c)}
   .browser-link{width:100%;display:grid;gap:18px}.browser-link p{margin:0}.browser-link input{width:100%;font:inherit;padding:10px;background:var(--surface-raised);color:var(--text);border:1px solid var(--line,#344452);border-radius:6px}.browser-link .pair-actions{justify-content:flex-start;margin:0;gap:12px}
   .tile-open{display:block;width:100%;padding:0;border:0;background:transparent;text-align:left}.tile-open:hover{background:transparent}.tile-open:focus-visible{outline:2px solid var(--accent,#64caba);outline-offset:8px}.setting{display:grid;gap:7px;font-size:13px;margin:18px 0;max-width:480px}.setting input,.setting select{font:inherit;padding:10px;border:1px solid var(--line,#344452);border-radius:6px;color:var(--text);background:var(--surface-raised)}.settings-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-top:28px}.danger{background:#9b2430;border-color:#bc3441;color:#fff}.danger:hover{background:#b32b38;border-color:#e35d69}
-  header,.form-heading,.tile-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}h2{font-size:22px;margin:0}h3{font-size:16px;margin:15px 0 8px}p{font-size:13px;color:var(--muted,#9aafbf);line-height:1.6}button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font:inherit;font-size:12px;padding:9px 12px;border:1px solid var(--line,#344452);border-radius:6px;background:var(--surface-raised,#14212c);color:var(--text,#e1eaf0);cursor:pointer}button:hover{border-color:var(--accent,#64caba)}button:disabled{opacity:.45;cursor:default}.companion-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px;margin-top:22px}.companion-tile,.pair-form,.empty{border:1px solid var(--line,#344452);border-radius:9px;padding:20px;background:var(--surface,#14212c)}.companion-tile{min-width:0;position:relative}.tile-open::after{content:'';position:absolute;inset:0;border-radius:9px}.tile-heading{color:var(--accent,#64caba)}.connection-state{display:flex;align-items:center;gap:6px;color:var(--muted,#9aafbf);font-size:12px}.connection-state>span{width:7px;height:7px;border-radius:50%;background:currentColor}.connection-state.connected{color:var(--accent,#64caba)}.kind{text-transform:capitalize}.pair-form{margin-top:20px}.form-heading h3{margin:0}.types{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.types label{display:flex;flex-direction:column;gap:9px;border:1px solid var(--line,#344452);border-radius:8px;padding:18px;cursor:pointer;position:relative}.types input{position:absolute;right:12px;top:12px}.types span{font-size:12px;color:var(--muted,#9aafbf)}.types .chosen{border-color:var(--accent,#64caba);background:var(--accent-bg,#18372e)}fieldset{border:0;padding:0;margin:22px 0}legend{font-size:13px;margin-bottom:12px}.pair-offer{display:flex;gap:25px;align-items:center;flex-wrap:wrap;margin:20px 0}.pair-offer svg{width:240px;shape-rendering:crispEdges;flex-shrink:0}.pair-code{display:block;font:700 34px monospace;letter-spacing:6px;color:var(--text,#e1eaf0);padding:15px 0}.empty{text-align:center;margin-top:22px;padding:35px;color:var(--muted,#9aafbf)}.pair-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:24px}.pair-actions>button,.listener-actions>button{flex-shrink:0}.listener-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-left:auto;flex-wrap:wrap}.listener-warning{display:flex;align-items:center;gap:8px;color:var(--warning,#e9b75c);font-size:13px;line-height:1.5}.listener-warning :global(svg){flex-shrink:0}@media(max-width:650px){.types{grid-template-columns:1fr}.pair-code{font-size:25px;letter-spacing:3px}}
+  header,.form-heading,.tile-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}h3{font-size:16px;margin:15px 0 8px}p{font-size:13px;color:var(--muted,#9aafbf);line-height:1.6}button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font:inherit;font-size:12px;padding:9px 12px;border:1px solid var(--line,#344452);border-radius:6px;background:var(--surface-raised,#14212c);color:var(--text,#e1eaf0);cursor:pointer}button:hover{border-color:var(--accent,#64caba)}button:disabled{opacity:.45;cursor:default}.companion-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px;margin-top:22px}.companion-tile,.pair-form,.empty{border:1px solid var(--line,#344452);border-radius:9px;padding:20px;background:var(--surface,#14212c)}.companion-tile{min-width:0;position:relative}.tile-open::after{content:'';position:absolute;inset:0;border-radius:9px}.tile-heading{color:var(--accent,#64caba)}.connection-state{display:flex;align-items:center;gap:6px;color:var(--muted,#9aafbf);font-size:12px}.connection-state>span{width:7px;height:7px;border-radius:50%;background:currentColor}.connection-state.connected{color:var(--accent,#64caba)}.kind{text-transform:capitalize}.pair-form{margin-top:20px}.form-heading h3{margin:0}.types{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.types label{display:flex;flex-direction:column;gap:9px;border:1px solid var(--line,#344452);border-radius:8px;padding:18px;cursor:pointer;position:relative}.types input{position:absolute;right:12px;top:12px}.types span{font-size:12px;color:var(--muted,#9aafbf)}.types .chosen{border-color:var(--accent,#64caba);background:var(--accent-bg,#18372e)}fieldset{border:0;padding:0;margin:22px 0}legend{font-size:13px;margin-bottom:12px}.pair-offer{display:flex;gap:25px;align-items:center;flex-wrap:wrap;margin:20px 0}.pair-offer svg{width:240px;shape-rendering:crispEdges;flex-shrink:0}.pair-code{display:block;font:700 34px monospace;letter-spacing:6px;color:var(--text,#e1eaf0);padding:15px 0}.empty{text-align:center;margin-top:22px;padding:35px;color:var(--muted,#9aafbf)}.pair-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:24px}.pair-actions>button,.listener-actions>button{flex-shrink:0}.listener-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-left:auto;flex-wrap:wrap}.listener-warning{display:flex;align-items:center;gap:8px;color:var(--warning,#e9b75c);font-size:13px;line-height:1.5}.listener-warning :global(svg){flex-shrink:0}@media(max-width:650px){.types{grid-template-columns:1fr}.pair-code{font-size:25px;letter-spacing:3px}}
 </style>
