@@ -629,8 +629,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await marginInput.fill('0');await marginInput.press('Tab');
     await panelLibrary.getByText('Screen size',{exact:true}).click();
     await expect(panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true})).not.toBeVisible();
-    await expect(panelTitleActions.getByRole('button',{name:'Export panel',exact:true})).toBeVisible();
-    await expect(panelTitleActions.getByRole('button',{name:'Delete panel',exact:true})).toBeVisible();
+    await expect(panelTitleActions.getByRole('button',{name:'Export',exact:true})).toBeVisible();
+    await expect(panelTitleActions.getByRole('button',{name:'Delete',exact:true})).toBeVisible();
+    let deleteConfirmation='';page.once('dialog',async dialog=>{deleteConfirmation=dialog.message();await dialog.dismiss();});
+    await panelTitleActions.getByRole('button',{name:'Delete',exact:true}).click();
+    assert.match(deleteConfirmation,/Delete "Fixture panel" and its assets/);
+    await expect(panelEditor).toBeVisible();await expect(panelTitleActions.getByRole('button',{name:'Delete',exact:true})).toBeEnabled();
     await panelEditor.getByRole('button',{name:'Edit panel name',exact:true}).click();
     const panelName=panelEditor.getByRole('textbox',{name:'Panel name',exact:true});
     await expect(panelName).toBeFocused();await panelName.fill('Cancelled rename');await panelName.press('Escape');

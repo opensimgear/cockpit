@@ -221,7 +221,8 @@
     });
   }
   async function removeDraft(id: string) {
-    if(!window.confirm('Delete this panel and disconnect it from its companions?'))return;
+    const panelName = library.drafts.find(d => d.id === id)?.name ?? name;
+    if(!window.confirm(`Delete "${panelName}" and its assets? This also disconnects it from its companions.`))return;
     await operation(async () => {
       const removedPanelId = library.drafts.find(d => d.id === id)?.document.ui.id;
       const references = await new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {}).companionReferences();
@@ -360,8 +361,8 @@
       <p>{dirty ? 'Unsaved changes' : 'Edit the panel layout.'}</p>
     </div>
     <div class="editor-title-actions">
-      <button class="action" onclick={download} disabled={busy}><Icon name="download" size={16} />Export panel</button>
-      {#if library.drafts.some(d => d.id===draftId)}<button class="action delete-panel" disabled={busy} onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete panel</button>{/if}
+      <button class="action" onclick={download} disabled={busy}><Icon name="download" size={16} />Export</button>
+      {#if library.drafts.some(d => d.id===draftId)}<button class="action delete-panel" disabled={busy} onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete</button>{/if}
       <button class="action" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save'}</button>
     </div>
   </div>
