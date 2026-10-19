@@ -361,17 +361,15 @@
       <p>{dirty ? 'Unsaved changes' : 'Edit the panel layout.'}</p>
     </div>
     <div class="editor-title-actions">
+      <button class="action" onclick={togglePreview} disabled={busy}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview locally'}</button>
       <button class="action" onclick={download} disabled={busy}><Icon name="download" size={16} />Export</button>
-      {#if library.drafts.some(d => d.id===draftId)}<button class="action delete-panel" disabled={busy} onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete</button>{/if}
       <button class="action" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save'}</button>
+      {#if library.drafts.some(d => d.id===draftId)}<button class="action delete-panel" disabled={busy} onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete</button>{/if}
     </div>
   </div>
   {#if error}<Notification message={String(error)} kind="error" />{/if}
   {#if message}<Notification message={String(message)} />{/if}
   <div inert={busy}>
-  <div class="toolbar">
-    <button onclick={togglePreview}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview locally'}</button>
-  </div>
   <div class="workspace">
     <aside class="panel-library" aria-label="Panel library">
       <details class="editor-accordion" name="panel-editor-tools"><summary>Pages</summary><div class="accordion-content"><label>Page<select value={page.id} onchange={e => { stop(); pageId = e.currentTarget.value; select([]); }}>{#each document.ui.pages as p}<option value={p.id}>{p.title}</option>{/each}</select></label>
