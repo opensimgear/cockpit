@@ -10,14 +10,15 @@
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { createCompanionSettingsAutosave } from './companion-settings';
   import type { Publication } from '@opensimgear/companion-designer';
-  let { publications = [], openSettings, initialCompanionId = '', onViewChange }: { publications?: Publication[]; openSettings: () => void; initialCompanionId?: string; onViewChange?: (detailsOpen: boolean) => void } = $props();
+  let { publications = [], openSettings, initialCompanionId = '', onViewChange, onNavigate, active = true }: { publications?: Publication[]; openSettings: () => void; initialCompanionId?: string; onViewChange?: (detailsOpen: boolean) => void; onNavigate?: (companionId: string | null) => void; active?: boolean } = $props();
   let hostState = $state.raw<CompanionHostState>({});
   let pendingCompanionId = $state(untrack(() => initialCompanionId));
   let disposed = false;
+  let mounted = $state(false);
   let pairingOpen = $state(false);
   let browserOfferAttempted=$state(false);
   $effect(()=>{
-    if(pairingOpen && kind==='browser' && hostState.listener?.enabled && !pairing && !busy && !browserOfferAttempted){
+    if(active && pairingOpen && kind==='browser' && hostState.listener?.enabled && !pairing && !busy && !browserOfferAttempted){
       browserOfferAttempted=true;void action(offer);
     }
   });
@@ -86,14 +87,14 @@
     try { await work(); } catch (error) { notify(String(error),'error'); } finally { busy=false; }
   }
   async function refresh() {
-    if (polling || disposed || settingsSaving) return; polling=true;
+    if (!active || polling || disposed || settingsSaving) return; polling=true;
     try {
       await send('companion_status');
       if (disposed) return;
       if (pendingCompanionId && hostState.host?.clients) {
         const client = clients.find(client => text(client, 'companionId') === pendingCompanionId);
         pendingCompanionId = '';
-        if (client) edit(client);
+        if (client) edit(client, false);
         else notify('This companion is no longer paired with Cockpit.', 'error');
       }
       if(updating && hostState.usb?.flashError){updating=false;notify(hostState.usb.flashWarning??hostState.usb.flashError,hostState.usb.flashWarning?'warning':'error');}
@@ -107,6 +108,7 @@
       }
     } catch (error) { if (!disposed) notify(String(error),'error'); } finally { polling=false; }
   }
+  $effect(() => { if (active && mounted) untrack(() => { void refresh(); }); });
   function openPair(type: typeof kind = '') {
     void settingsAutosave.flush();
     pendingCompanionId = '';
@@ -127,27 +129,42 @@
     settingsAutosave.discard(text(client,'companionId'));
     settingsDrafts.delete(text(client,'companionId'));
     await send('companion_revoke',{companionId:text(client,'companionId')});
-    selectedId=''; notify('Companion removed. Pair it again to reconnect.');
+    selectedId=''; onNavigate?.(null); notify('Companion removed. Pair it again to reconnect.');
   }
-  function edit(client:Record<string,unknown>){
+  function edit(client:Record<string,unknown>, recordNavigation = true){
     void settingsAutosave.flush();
     pendingCompanionId = '';
     updateOpen=false;selectedId=text(client,'companionId');editedName=text(client,'name');
     editedPanel=String((hostState.host?.instances??[]).find(i=>i.companionId===selectedId)?.publicationHash??'');
     const draft=settingsDrafts.get(selectedId);
     if(draft){editedName=draft.name;editedPanel=draft.panelHash;}
+    if (recordNavigation) onNavigate?.(selectedId);
   }
-  export function showMain(): boolean {
+  export function getCompanionId(): string { return pendingCompanionId || selectedId; }
+  export function showCompanion(companionId: string): void {
+    void settingsAutosave.flush();
+    pairingOpen=false; pairing=undefined; kind='';
+    const client=clients.find(client => text(client, 'companionId')===companionId);
+    if (client) edit(client, false);
+    else { selectedId=''; pendingCompanionId=companionId; void refresh(); }
+  }
+  export function requestNavigation(continueNavigation: () => void, cancelNavigation?: () => void): void {
+    if (busy || updateOpen || updating) { cancelNavigation?.(); return; }
+    void settingsAutosave.flush();
+    continueNavigation();
+  }
+  export function showMain(recordNavigation = true): boolean {
     if (busy || updateOpen || updating) return false;
     void settingsAutosave.flush();
     pendingCompanionId=''; selectedId='';
     if (pairingOpen) void action(cancel);
+    if (recordNavigation) onNavigate?.(null);
     return true;
   }
   function backToCompanions() { showMain(); }
   function focusDetails(node: HTMLButtonElement) { node.focus(); }
   onMount(() => {
-    void refresh();
+    mounted=true;
     const timer=setInterval(() => {
       secondsLeft=Math.max(0,Math.ceil((expires-Date.now())/1000));
       if (!secondsLeft && pairing){pairing=undefined;if(kind==='browser')browserOfferAttempted=false;}

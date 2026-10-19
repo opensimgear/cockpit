@@ -10,7 +10,7 @@ import * as svelte from 'svelte';
 import * as designer from '../../packages/companion-designer/src/index.ts';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./games','./game-provider-settings','./game-settings-navigation','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
+const modules=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'a'.repeat(64)}`;
 const stopped=()=>({state:'stopped',paused:false,appliedSnapshot:null,owner:null,degradation:[],fault:null});
 const running=()=>({...stopped(),state:'running',appliedSnapshot:{profileId:id,revision:3,semanticHash:hash},owner:{session,generation:4,profileId:id,profileRevision:3,gameId:'dcs'}});
@@ -59,10 +59,10 @@ test('device manual actions use the real native ownership block, with no retired
 
 async function mountedApp(send){
  const filename=new URL('../App.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureApp({navigate,refreshProfileStatus,refreshProfileNames,get state(){return{profileState,profileSummaries,view};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),mounts=[],timers=new Map(),listeners=new Map();let handlers,nextTimer=0;
- const document={hidden:false},location=new URL('http://localhost/'),window={location,addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}},history={replaceState(){},pushState(){}};
+ const document={hidden:false},location=new URL('http://localhost/'),window={location,addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}},history={state:null,replaceState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},pushState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},go(){},back(){},forward(){}};window.history=history;
  const App=evaluate(js.code,filename.pathname,name=>{
   if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onMount(fn){mounts.push(fn);}};if(name.endsWith('.svelte'))return{default:()=>{}};
-  const key=name.replace('./lib/','./');if(modules.has(key))return modules.get(key);
+  const key=name.replace('./lib/','./');if(key==='./cockpit-history'){const actual=modules.get(key);return{...actual,createCockpitHistory:(initial,options)=>actual.createCockpitHistory(initial,{...options,host:window})};}if(modules.has(key))return modules.get(key);
   if(name.endsWith('/gateway'))return{gatewayRequest:send,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};if(name.endsWith('/gateway-workspace'))return{GatewayWorkspace:class{refresh(){}dispose(){}}};if(name.endsWith('/companion-startup'))return{restoreCompanionPanels:async()=>{}};if(name.endsWith('/notifications'))return{notify:noRequest};throw new Error(`Unexpected App dependency ${name}`);
  },{document,window,history,setInterval(fn){timers.set(++nextTimer,fn);return nextTimer;},clearInterval(id){timers.delete(id);},captureApp(value){handlers=value;}});
  render(App).body;return{handlers,document,timers,mount(){return mounts.map(fn=>fn());}};

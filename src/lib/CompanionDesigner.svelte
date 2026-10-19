@@ -19,10 +19,10 @@
   } from '@opensimgear/companion-designer';
   import { PanelCanvas, type PreviewController, type PreviewSnapshot } from '@opensimgear/companion-ui';
 
-  let { openSettings, initialCompanionId = '' }: { openSettings: () => void; initialCompanionId?: string } = $props();
+  let { openSettings, initialCompanionId = '', onNavigate, active = true }: { openSettings: () => void; initialCompanionId?: string; onNavigate?: (page: CompanionNavigation) => void; active?: boolean } = $props();
 
   let importInput = $state<HTMLInputElement>();
-  let connectionsPanel = $state.raw<{showMain:()=>boolean}>();
+  let connectionsPanel = $state.raw<{showMain:(recordNavigation?:boolean)=>boolean;getCompanionId:()=>string;showCompanion:(id:string)=>void;requestNavigation:(continueNavigation:()=>void,cancelNavigation?:()=>void)=>void}>();
   let editorOpen = $state(false);
   let companionDetailsOpen = $state(untrack(() => !!initialCompanionId));
   let dirty = $state(false);
@@ -47,6 +47,12 @@
   let configText = $state('');
   let targetText = $state('');
   let storageReady = $state(false);
+  let resolveStorageLoad: () => void = () => {};
+  const storageLoaded = new Promise<void>(resolve => { resolveStorageLoad = resolve; });
+  let navigationRevision = 0;
+  let disposed = false;
+  let mounted = $state(false);
+  let discardPanelOnRestore = false;
   let store: import('./companion-library').CompanionLibraryStore | undefined;
   const document = $derived(history.present);
   const page = $derived(document.ui.pages.find(p => p.id === pageId) ?? document.ui.pages[0]);
@@ -70,12 +76,43 @@
     assignmentSelection = checked ? [...new Set([...assignedCompanions,id])] : assignedCompanions.filter(i => i!==id); dirty=true;
   }
   function leaveEditor() { return !dirty || window.confirm('Discard unsaved panel changes?'); }
-  function backToPanels() { if(leaveEditor()){stop();editorOpen=false;dirty=false;} }
+  function backToPanels() { if(leaveEditor()){stop();editorOpen=false;dirty=false;discardPanelOnRestore=false;onNavigate?.({kind:'main'});} }
   export function showMain() {
     if (editorOpen && !leaveEditor()) return false;
-    if (connectionsPanel && !connectionsPanel.showMain()) return false;
-    stop(); editorOpen=false; companionDetailsOpen=false; dirty=false;
+    if (connectionsPanel && !connectionsPanel.showMain(false)) return false;
+    stop(); editorOpen=false; companionDetailsOpen=false; dirty=false; discardPanelOnRestore=false;
+    onNavigate?.({kind:'main'});
     return true;
+  }
+  export function getNavigation(): CompanionNavigation {
+    if (editorOpen) return {kind:'panel',id:draftId};
+    const companionId=connectionsPanel?.getCompanionId() ?? initialCompanionId;
+    return companionId ? {kind:'companion',id:companionId} : {kind:'main'};
+  }
+  export function requestNavigation(continueNavigation: () => void, cancelNavigation?: () => void): void {
+    if (busy || editorOpen && !leaveEditor()) { cancelNavigation?.(); return; }
+    const approve=() => { discardPanelOnRestore=editorOpen && dirty; stop(); continueNavigation(); };
+    if (connectionsPanel) connectionsPanel.requestNavigation(approve,cancelNavigation);
+    else approve();
+  }
+  export async function restoreNavigation(target: CompanionNavigation): Promise<void> {
+    const revision=++navigationRevision;
+    await tick();
+    if (target.kind==='panel') await storageLoaded;
+    if (disposed || revision!==navigationRevision) return;
+    if (target.kind==='panel' && editorOpen && draftId===target.id && !discardPanelOnRestore) return;
+    stop();
+    if (target.kind==='companion') {
+      editorOpen=false; dirty=false; discardPanelOnRestore=false; companionDetailsOpen=true;
+      connectionsPanel?.showCompanion(target.id);
+      return;
+    }
+    connectionsPanel?.showMain(false);
+    editorOpen=false; companionDetailsOpen=false; dirty=false; discardPanelOnRestore=false;
+    if (target.kind==='panel') {
+      if (storageReady && library.drafts.some(entry=>entry.id===target.id)) load(target.id,false,false);
+      else error='This panel is no longer available. Choose a saved panel from Companions.';
+    }
   }
   function focusEditor(node: HTMLButtonElement) { node.focus(); }
   async function send(command: CompanionCommand, companion: Record<string,unknown> = {}) {
@@ -83,7 +120,8 @@
     if(!result) throw new Error('Companion updates require the native Cockpit app.');
     hostState={...hostState,...result};return result;
   }
-  async function refreshCompanions() { try { await send('companion_status'); } catch { /* Local panels remain editable offline. */ } }
+  async function refreshCompanions() { if (!active || disposed) return; try { await send('companion_status'); } catch { /* Local panels remain editable offline. */ } }
+  $effect(() => { if (!active) untrack(stop); else if (mounted) untrack(() => { void refreshCompanions(); }); });
 
 
   function stop() { controller?.disarm('Designer changed'); preview = false; }
@@ -121,6 +159,7 @@
     if(!leaveEditor())return;editorOpen=true;dirty=true;assignmentSelection=null;
     stop(); name = `Panel ${library.drafts.length + 1}`; draftId = crypto.randomUUID();
     history = createDesignerHistory(newDocument(name)); pageId = document.ui.pages[0].id; selected = []; assets = []; message = '';error='';
+    onNavigate?.({kind:'panel',id:draftId});
   }
   function template(source: DesignerDocument) {
     if(!leaveEditor())return;editorOpen=true;dirty=true;assignmentSelection=null;
@@ -128,15 +167,17 @@
     const entry = duplicateDraft(seed, 'template', source.ui.title).drafts[1];
     stop(); draftId = entry.id; name = entry.name; history = createDesignerHistory(entry.document); assets = entry.assets;
     pageId = document.ui.pages[0].id; select([]); message = 'Template copied into a new unsaved panel';
+    onNavigate?.({kind:'panel',id:draftId});
   }
-  function load(id: string) {
+  function load(id: string, recordNavigation = true, checkLeave = true) {
     try {
-      if(!leaveEditor())return;
+      if(checkLeave && !leaveEditor())return;
       const entry = openDraft(library, id); stop();editorOpen=true;dirty=false;assignmentSelection=null; draftId = entry.id; name = entry.name;
       const simplified=simplifyFirmwareWidgets(entry.document);
       history = createDesignerHistory(simplified.document); assets = entry.assets; pageId = document.ui.pages[0].id; select([]); error = '';
       dirty=simplified.removed>0;
       message=simplified.removed?'Removed '+simplified.removed+' unsupported widget(s). Save to update the panel and its companions.':'';
+      if (recordNavigation) onNavigate?.({kind:'panel',id:draftId});
     } catch (e) { error = String(e); }
   }
   async function operation(action: () => Promise<void>) {
@@ -190,7 +231,7 @@
       await removePanelAssignments(panelHashes(id),send);
       const nextPublications={...publications};delete nextPublications[id];
       await persist(deleteDraft(library,id),nextPublications);
-      editorOpen=false;dirty=false;message='Panel deleted';
+      editorOpen=false;dirty=false;message='Panel deleted';onNavigate?.({kind:'main'});
       await compactSnapshots(await send('companion_status'));
     });
   }
@@ -204,6 +245,7 @@
       const entry=duplicateDraft(seed,'import',result.document.ui.title).drafts[1];
       editorOpen=true;dirty=true;assignmentSelection=null;history = createDesignerHistory(entry.document); assets = entry.assets; draftId = entry.id; name = entry.name;
       pageId = document.ui.pages[0].id; select([]); message = 'Panel imported. Save to add it to Panels.';
+      onNavigate?.({kind:'panel',id:draftId});
     });
   }
   async function download() {
@@ -248,23 +290,28 @@
     const [targetId, kind, index] = value.split(':'); command({ type: 'bind', controlId, targetId, kind: kind as 'axis' | 'button' | 'hat', index: Number(index) });
   }
   onMount(() => {
+    mounted=true;
     let alive = true;
     void import('./companion-library').then(async ({ CompanionLibraryStore, indexedDbStorage }) => {
       store = new CompanionLibraryStore(indexedDbStorage()); const snapshot = await store.load();
-      if (!alive) return; library = snapshot.library; publications = snapshot.publications; storageReady = true;
+      if (!alive) return; library = snapshot.library; publications = snapshot.publications; storageReady = true; resolveStorageLoad();
       await refreshCompanions();
       await restoreCompanionPanels();
       await refreshCompanions();
-    }).catch(e => { if (alive) error = `Cannot open local library: ${String(e)}`; });
-    const poll=setInterval(() => { if(!busy) void refreshCompanions(); },2500);
+    }).catch(e => { if (alive) error = `Cannot open local library: ${String(e)}`; }).finally(resolveStorageLoad);
+    const poll=setInterval(() => { if(active && !busy) void refreshCompanions(); },2500);
     const cancel = () => stop();
     window.addEventListener('blur', cancel); window.addEventListener('pagehide', cancel);
-    return () => { alive = false; clearInterval(poll); stop(); unsubscribe?.(); window.removeEventListener('blur', cancel); window.removeEventListener('pagehide', cancel); };
+    return () => { alive = false; disposed=true; resolveStorageLoad(); clearInterval(poll); stop(); unsubscribe?.(); window.removeEventListener('blur', cancel); window.removeEventListener('pagehide', cancel); };
   });
 </script>
 
+<script module lang="ts">
+  export type CompanionNavigation = { kind: 'main' } | { kind: 'companion'; id: string } | { kind: 'panel'; id: string };
+</script>
+
 <section class="designer" aria-label="Companion panel designer">
-  <div hidden={editorOpen}><CompanionConnections bind:this={connectionsPanel} publications={currentPublications} {openSettings} {initialCompanionId} onViewChange={open => companionDetailsOpen=open} /></div>
+  <div hidden={editorOpen}><CompanionConnections bind:this={connectionsPanel} publications={currentPublications} {openSettings} {initialCompanionId} {active} onViewChange={open => companionDetailsOpen=open} onNavigate={id => onNavigate?.(id ? {kind:'companion',id} : {kind:'main'})} /></div>
   {#if !editorOpen && !companionDetailsOpen}
   <section class="panels-section" aria-label="Panels">
     <h2>Panels</h2>

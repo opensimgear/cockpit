@@ -25,7 +25,7 @@
   import {ProfileLearningClient}from'./profile-learning';
   import type {DeepReadonly} from './profiles';
   import type { GameId } from './games';
-  let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, libraryClient:suppliedLibrary, openGameSettings, active=true }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient;libraryClient?:ProfileLibraryClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean } = $props();
+  let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, libraryClient:suppliedLibrary, openGameSettings, active=true, onNavigate }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient;libraryClient?:ProfileLibraryClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean; onNavigate?: (profileId:string|null)=>void } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
   const profiles = new ProfilesClient(async request => { const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Profiles are unavailable. Reconnect the native service.');return result; });
@@ -49,6 +49,7 @@
   const learningClient=new ProfileLearningClient(async request=>{const result=(await gatewayRequest(request)).profileLearning;if(!result)throw new Error('Native input learning is unavailable. Reconnect the service.');return result;});
   let routingSelection=$state(''),runtimeOpen=$state(false);
   const navigationGuard = new ProfileNavigationGuard(store);
+  let navigationCancelled:(()=>void)|undefined;
   let workspace = $state.raw(store.state);
   const history=new ProfileEditorUndo(store);
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
@@ -69,36 +70,47 @@
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next);if(workspace.view==='list')void store.refresh();if(!workspace.inventoryLoaded)void store.refreshInventory();return stop; });
-  onDestroy(() => { runtimeReplyEpoch++;runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
+  onDestroy(() => { navigationCancelled?.();runtimeReplyEpoch++;runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
-  function report(operation:()=>void) { notice='';try{operation();workspace=store.state;}catch(error){notice=error instanceof Error?error.message:String(error);} }
+  function report(operation:()=>void) { notice='';const previous=getNavigation();try{operation();workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());}catch(error){notice=error instanceof Error?error.message:String(error);} }
+  export function getNavigation():string|null { const current=store.state;return current.view==='editor'?current.editor?.document.id??null:null; }
+  export async function restoreNavigation(profileId:string|null):Promise<void> {
+    if(getNavigation()===profileId)return;
+    if(profileId===null){store.back(true);workspace=store.state;return;}
+    await store.open(profileId);
+    if(getNavigation()!==profileId)store.back(true);
+    workspace=store.state;
+  }
+  async function openProfile(profileId:string) { await store.open(profileId);workspace=store.state;if(getNavigation()===profileId)onNavigate?.(profileId); }
   async function add() { notice='';if(!workspace.inventoryLoaded){await store.refreshInventory();workspace=store.state;}if(workspace.inventory.length>64){creatingSelection=true;inventorySelection=[];return;}report(()=>store.beginBlank()); }
   function beginSelected() { report(()=>store.beginBlank(workspace.inventory.filter(resource=>inventorySelection.includes(resource.id))));if(!notice){creatingSelection=false;inventorySelection=[];} }
   function showConfirmation(node:HTMLDialogElement) { node.showModal();return()=>node.close(); }
   function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph') { report(()=>history.edit(document,assignments,label)); }
   function name(value:string) { if(!editor)return;const next=JSON.parse(JSON.stringify(editor.document)) as ProfileDocument;next.name=value;change(next,undefined,'Rename profile'); }
   function historyStep(direction:'undo'|'redo'){report(()=>{history.step(direction);});}
-  export function requestNavigation(continueNavigation:()=>void):void {
+  export function requestNavigation(continueNavigation:()=>void,cancelNavigation?:()=>void):void {
     notice='';
-    if(libraryBusy){notice='Wait for the current library operation before leaving.';return;}
-    const result=navigationGuard.request(continueNavigation);
+    navigationCancelled?.();navigationCancelled=undefined;navigationGuard.keepEditing();
+    if(libraryBusy){notice='Wait for the current library operation before leaving.';cancelNavigation?.();return;}
+    navigationCancelled=cancelNavigation;
+    const result=navigationGuard.request(()=>{navigationCancelled=undefined;continueNavigation();});
     leaveDialog=result==='confirm';
-    if(result==='busy')notice='Wait for the current profile operation to finish before leaving.';
+    if(result==='busy'){notice='Wait for the current profile operation to finish before leaving.';navigationCancelled=undefined;cancelNavigation?.();}
     if(result==='left')inventoryOpen=false;
     workspace=store.state;
   }
-  function back() { requestNavigation(()=>{}); }
-  function keepEditing() { navigationGuard.keepEditing();leaveDialog=false; }
+  function back() { requestNavigation(()=>onNavigate?.(null)); }
+  function keepEditing() { navigationGuard.keepEditing();leaveDialog=false;const cancelNavigation=navigationCancelled;navigationCancelled=undefined;cancelNavigation?.(); }
   async function save(backAfter=false) { notice='';if(backAfter){await navigationGuard.save();leaveDialog=navigationGuard.awaitingChoice;}else await store.save();workspace=store.state; }
-  function cancel() { if(!navigationGuard.discard())return;workspace=store.state;notice='';leaveDialog=false;inventoryOpen=false; }
+  function cancel() { const pending=navigationGuard.awaitingChoice;if(!navigationGuard.discard())return;workspace=store.state;notice='';leaveDialog=false;inventoryOpen=false;if(!pending)onNavigate?.(null); }
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
-  async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank());else{await store.beginCopy(id);workspace=store.state;} }
+  async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank());else{const previous=getNavigation();await store.beginCopy(id);workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());} }
   function toggleResource(id:string,checked:boolean) { inventorySelection=checked?[...inventorySelection,id]:inventorySelection.filter(value=>value!==id); }
   function addSelected() { if(!editor)return;report(()=>{const next=addProfileResources(JSON.parse(JSON.stringify(editor.document)),JSON.parse(JSON.stringify(editor.assignments)),available.filter(resource=>inventorySelection.includes(resource.id)));change(next.document,next.assignments,'Add resource blocks');});if(!notice){inventorySelection=[];inventoryOpen=false;} }
   function gameSettings(gameId:GameId,returnState?:unknown) { openGameSettings?.(gameId,{editorStore:store,profileId:editor?.document.id,selection:returnState}); }
-  function prepareLibrary(next:()=>void){requestNavigation(()=>{libraryContext=store.editorEpoch;next();});}
+  function prepareLibrary(next:()=>void){requestNavigation(()=>{onNavigate?.(null);libraryContext=store.editorEpoch;next();});}
   async function libraryDeleted(){if(store.editorEpoch!==libraryContext||store.state.view!=='list')return;await store.refresh();workspace=store.state;}
-  async function libraryImported(document:ProfileDocument){if(store.editorEpoch!==libraryContext||store.state.view!=='list')return;await store.refresh();workspace=store.state;await store.open(document.id);workspace=store.state;}
+  async function libraryImported(document:ProfileDocument){if(store.editorEpoch!==libraryContext||store.state.view!=='list')return;await store.refresh();workspace=store.state;await openProfile(document.id);}
   const savedEditor=$derived(editor?workspace.profiles.find(row=>row.id===editor.document.id):undefined);
 </script>
 
@@ -129,7 +141,7 @@
   {#if workspace.view==='list'}
     <div class="list-tools"><span>{rows.length} {rows.length===1?'profile':'profiles'} · {workspace.inventory.length} inventory resources</span><div><button class="text-button" disabled={workspace.busy||libraryBusy||workspace.readOnly||rows.length>=32} onclick={()=>libraryTools?.askImport()}>Import profile</button><button class="text-button" disabled={workspace.busy||libraryBusy} onclick={()=>store.refresh()}>Refresh profiles</button></div></div>
     {#if creatingSelection}<section class="inventory-picker panel" aria-label="Choose resources for new profile"><h2>Choose up to 64 resource blocks</h2><p class="inventory-help">The inventory has {workspace.inventory.length} resources. This exceeds the profile's 64-block capacity; select the resources for this draft explicitly. Nothing has been saved or omitted automatically.</p><div class="inventory-choices">{#each workspace.inventory as resource (resource.id)}<label><input type="checkbox" checked={inventorySelection.includes(resource.id)} onchange={event=>toggleResource(resource.id,event.currentTarget.checked)}/><span><strong>{resource.name}</strong><small>{profileCategory(resource)} · {resource.availability}</small></span></label>{/each}</div><button class="text-button" onclick={()=>creatingSelection=false}>Cancel creation</button><button class="secondary-button" disabled={!inventorySelection.length||inventorySelection.length>64} onclick={beginSelected}>Open draft with {inventorySelection.length} selected resources</button></section>{/if}
-    <ul class="profile-list" aria-label="Saved profiles">{#each rows as profile (profile.id)}<li><button class="profile-row" disabled={workspace.busy||libraryBusy} onclick={()=>store.open(profile.id)} aria-label={`Edit ${profile.name}`}><span class="profile-mark"><Icon name="network" size={22}/></span><span class="profile-copy"><strong>{profile.name}{#if profile.isDefault}<small>Built-in · editable</small>{/if}</strong><span>Saved revision {profile.revision}</span></span><span class="profile-badges">{#if selectedProfileId===profile.id}<span>Selected for runtime</span>{/if}{#if appliedSnapshot?.profileId===profile.id}<span>Applied revision {appliedSnapshot.revision}</span>{/if}</span><Icon name="chevron" size={16}/></button><div class="profile-row-actions"><button class="text-button" aria-label={`Export ${profile.name}`} disabled={workspace.busy||libraryBusy} onclick={()=>libraryTools?.askExport(profile)}>Export</button>{#if !profile.isDefault}<button class="text-button" aria-label={`Delete ${profile.name}`} disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={()=>libraryTools?.askDelete(profile)}>Delete</button>{/if}</div></li>{:else}<li class="empty-profiles">{workspace.busy?'Loading profiles…':'No profile list is available. Refresh profiles to load Default.'}</li>{/each}</ul>
+    <ul class="profile-list" aria-label="Saved profiles">{#each rows as profile (profile.id)}<li><button class="profile-row" disabled={workspace.busy||libraryBusy} onclick={()=>openProfile(profile.id)} aria-label={`Edit ${profile.name}`}><span class="profile-mark"><Icon name="network" size={22}/></span><span class="profile-copy"><strong>{profile.name}{#if profile.isDefault}<small>Built-in · editable</small>{/if}</strong><span>Saved revision {profile.revision}</span></span><span class="profile-badges">{#if selectedProfileId===profile.id}<span>Selected for runtime</span>{/if}{#if appliedSnapshot?.profileId===profile.id}<span>Applied revision {appliedSnapshot.revision}</span>{/if}</span><Icon name="chevron" size={16}/></button><div class="profile-row-actions"><button class="text-button" aria-label={`Export ${profile.name}`} disabled={workspace.busy||libraryBusy} onclick={()=>libraryTools?.askExport(profile)}>Export</button>{#if !profile.isDefault}<button class="text-button" aria-label={`Delete ${profile.name}`} disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={()=>libraryTools?.askDelete(profile)}>Delete</button>{/if}</div></li>{:else}<li class="empty-profiles">{workspace.busy?'Loading profiles…':'No profile list is available. Refresh profiles to load Default.'}</li>{/each}</ul>
     {#if workspace.inventoryError}<p class="workspace-error" role="status">{workspace.inventoryError}</p><button class="secondary-button" disabled={workspace.inventoryBusy} onclick={()=>store.refreshInventory()}>Refresh resource inventory</button>{/if}
     <ProfileAutomaticControls profiles={workspace.profiles} {active}/>
     {@render runtimeTools()}

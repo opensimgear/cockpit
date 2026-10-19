@@ -17,6 +17,7 @@
     "web:build": "pnpm browser:build && vite build",
     "notifications:test": "node --test src/lib/notifications.test.mjs",
     "companion-settings:test": "node --test src/lib/companion-settings.test.mjs",
+    "navigation:test": "node --test src/lib/cockpit-history.test.mjs src/lib/game-settings-navigation.test.mjs src/lib/app-game-entry-ui.test.mjs src/lib/profile-workspace-ui.test.mjs",
     "system-inventory:test": "node --test src/lib/system-inventory.test.mjs src/lib/system-inventory-providers.test.mjs src/lib/system-topology.test.mjs src/lib/system-topology-ui.test.mjs src/lib/system-usb-ui.test.mjs src/lib/host-controllers-ui.test.mjs",
     "system-inventory:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/system-inventory.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/system-inventory.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/system-inventory-providers.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/system-inventory-providers.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/system-topology.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/system-topology.test.mjs",
     "devices:ui": "node --test tests/ui/system-devices.mjs",

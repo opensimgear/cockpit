@@ -8,9 +8,10 @@
   import GameProfileLaunch from './GameProfileLaunch.svelte';
   import {gameContextLabel} from './game-provider-settings';
   import {gameExecutableName,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameCleanupLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
-  let {status,busy,request,profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>('')}: {
+  let {status,busy,request,profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),onNavigate}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
     profileBlockedReason?:string;selectedGameId?:GameId|'';returnLabel?:string;returnToEditor?:()=>void;
+    onNavigate?:(gameId:GameId|'')=>void;
   }=$props();
   let response=$state<GamesState>(),initializedGameId:GameId|''='';
   let showAll=$state(false),pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
@@ -27,14 +28,16 @@
   const folderError=$derived(selected?gameIntegrationTargetError(selected,integrationFolder):'');
   const setupDisabled=$derived(locked||!!setupBlocked||!!folderError);
   onMount(()=>{if(!status)void send({command:'game_get_state'});});
-  $effect(()=>{if(selected&&initializedGameId!==selected.id)chooseGame(selected);});
+  $effect(()=>{if(selected&&initializedGameId!==selected.id)initializeGame(selected);});
   async function send(command:GameRequest):Promise<GamesState|false>{
     pending=true;notice='';
     try{const result=await request(command);if(result){response=result;notice=result.error??'';}else notice='The request did not complete. Check the connection and try again.';return result;}
     catch(error){notice=error instanceof Error?error.message:String(error);return false;}
     finally{pending=false;}
   }
-  function chooseGame(game:Game){initializedGameId=game.id;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??'';notice='';}
+  function initializeGame(game:Game){initializedGameId=game.id;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??'';notice='';}
+  function chooseGame(game:Game){initializeGame(game);onNavigate?.(game.id);}
+  function allGames(){selectedGameId='';notice='';onNavigate?.('');}
   async function browseExecutable(){
     if(!selected||locked)return;const gameId=selected.id,currentPath=selected.executable;pending=true;notice='';
     try{const path=await pickGameExecutable(gameId,currentPath);if(path){const result=await send({command:'game_installation',gameId,executable:path});if(result&&!result.error&&selected?.id===gameId)executablePath=path;}}
@@ -64,7 +67,7 @@
 
   {#if returnToEditor}<button class="text-button back-link" onclick={returnToEditor}><span aria-hidden="true">←</span> {returnLabel ?? 'Return to profile'}</button>{/if}
   {#if selected}
-    <button class="text-button back-link" onclick={() => { selectedGameId = ''; notice = ''; }}><span aria-hidden="true">←</span> All games</button>
+    <button class="text-button back-link" onclick={allGames}><span aria-hidden="true">←</span> All games</button>
     <div class="game-details-heading">
       <div class={['game-detail-mark', { rally: selected.id === 'assetto-corsa-rally' }]}><Icon name={selected.provider !== 'assetto-corsa-rally' ? 'command' : 'wheel'} size={32} /></div>
       <div><p class="game-kicker">{selected.provider !== 'assetto-corsa-rally' ? 'Flight simulation' : 'Rally simulation'}</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selected.provider === 'dcs-bios' ? 'DCS-BIOS' : selected.provider === 'x-plane' ? 'X-Plane RREF telemetry' : 'Rally telemetry'}</p></div>

@@ -3,7 +3,8 @@
   import Notifications from './lib/Notifications.svelte';
   import { notify as showNotification } from './lib/notifications';
   import Notification from './lib/Notification.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { createCockpitHistory, type CockpitRoute, type CompanionPage } from './lib/cockpit-history';
   import SystemDevices from './lib/SystemDevices.svelte';
   import { isVisibleSystemComponent, type SystemSnapshot } from './lib/system-inventory';
   import ProfileRetiredRecovery from './lib/ProfileRetiredRecovery.svelte';
@@ -64,20 +65,28 @@
   let selectedGameId = $state<GameId | ''>('');
   let selectedCompanionId = $state('');
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
-  let devicesPanel = $state.raw<{showInventory:()=>void}>();
-  let companionsPanel = $state.raw<{showMain:()=>boolean}>();
-  let profilesPanel = $state.raw<{requestNavigation:(continueNavigation:()=>void)=>void}>();
+  let devicesPanel = $state.raw<{showInventory:()=>void;getNavigation:()=>string|null;restoreNavigation:(id:string|null)=>void}>();
+  let companionsPanel = $state.raw<{showMain:()=>boolean;getNavigation:()=>CompanionPage;restoreNavigation:(page:CompanionPage)=>Promise<void>;requestNavigation:(next:()=>void,cancel?:()=>void)=>void}>();
+  let profilesPanel = $state.raw<{getNavigation:()=>string|null;restoreNavigation:(id:string|null)=>Promise<void>;requestNavigation:(continueNavigation:()=>void,cancelNavigation?:()=>void)=>void}>();
+  let profilesMounted = $state(false), companionsMounted = $state(false);
+  let navigationHistory: ReturnType<typeof createCockpitHistory> | undefined;
+  let applyingHistory = false, activeSettingsKey = '';
+  const settingsOrigins = new Map<string, {visit:GameSettingsVisit<SettingsOrigin>;route:CockpitRoute}>();
   const selectedGameName = $derived((games?.catalogue ?? supportedGames).find(game => game.id === selectedGameId)?.name);
   const section = $derived(view === 'device' ? 'devices' : view);
   const sectionLabel = $derived(navigation.find(item => item.id === section)?.label ?? 'Settings');
   function navigate(section: View) {
     if (section === 'topology' || section === 'gateways') section = 'devices';
     if (settingsVisit?.origin.view === 'profiles') {
-      returnToSettingsOrigin();
-      if (section === 'profiles') return;
+      returnToSettingsOrigin(true,false);
+      if (section === 'profiles') { recordRoute(); return; }
     }
     if (view === 'profiles' && profilesPanel) {
       profilesPanel.requestNavigation(() => commitNavigation(section));
+      return;
+    }
+    if (view === 'companions' && section !== 'companions' && companionsPanel) {
+      companionsPanel.requestNavigation(() => commitNavigation(section));
       return;
     }
     commitNavigation(section);
@@ -87,35 +96,93 @@
     if (view === 'profiles' && section !== 'profiles') void refreshProfileNames();
     if (section === 'devices') devicesPanel?.showInventory();
     settingsVisit = null;
-    if (gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    if (!navigationHistory&&gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     selectedGameId = '';
     selectedCompanionId = '';
+    activeSettingsKey='';
     view = section;
+    if(section==='profiles')profilesMounted=true;
+    if(section==='companions')companionsMounted=true;
+    recordRoute();
   }
   function openCompanion(companionId: string) {
     navigate('companions');
     selectedCompanionId = companionId;
+    void tick().then(async () => { if(view==='companions'){applyingHistory=true;try{await companionsPanel?.restoreNavigation({kind:'companion',id:companionId});}finally{applyingHistory=false;}recordRoute(true);} });
   }
   function openGameSettings(gameId: GameId, returnState?: unknown) {
-    if (!settingsVisit) settingsVisit = visitGameSettings(gameId, { view, selectedGameId, hash: window.location.hash, ...(returnState === undefined ? {} : { returnState }) });
+    if (!settingsVisit) {
+      const originRoute=captureRoute();
+      settingsVisit = visitGameSettings(gameId, { view, selectedGameId, hash: window.location.hash, ...(returnState === undefined ? {} : { returnState }) });
+      activeSettingsKey=crypto.randomUUID();settingsOrigins.set(activeSettingsKey,{visit:settingsVisit,route:originRoute});
+    }
     selectedGameId = gameId; view = 'games';
-    if (window.location.hash !== gameSettingsHref(gameId)) history.pushState(null, '', gameSettingsHref(gameId));
+    if (!navigationHistory&&window.location.hash!==gameSettingsHref(gameId)) history.pushState(null,'',gameSettingsHref(gameId));
+    recordRoute();
   }
-  function returnToSettingsOrigin(updateHash = true) {
+  function returnToSettingsOrigin(updateHash = true, record = true) {
     if (!settingsVisit) return;
     const origin = returnFromGameSettings(settingsVisit);
-    settingsVisit = null; view = origin.view; selectedGameId = origin.selectedGameId;
-    if (updateHash) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${origin.hash}`);
+    settingsVisit = null; activeSettingsKey='';view = origin.view; selectedGameId = origin.selectedGameId;
+    if (updateHash && !navigationHistory) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${origin.hash}`);
     if ('returnState' in origin) window.dispatchEvent(new CustomEvent(RETURN_FROM_GAME_SETTINGS_EVENT, { detail: origin.returnState }));
+    if(record)recordRoute();
   }
   function readSettingsHash(event?: HashChangeEvent) {
+    if(applyingHistory || navigationHistory?.navigating || navigationHistory?.ownsLocation())return;
     const gameId = gameSettingsFromHash(window.location.hash);
     if (gameId) {
-      if (view === 'profiles' && !settingsVisit) settingsVisit = visitGameSettings(gameId, { view, selectedGameId, hash: event ? new URL(event.oldURL).hash : '' });
+      if (view === 'profiles' && !settingsVisit) {
+        const originRoute=captureRoute();
+        settingsVisit = visitGameSettings(gameId, { view, selectedGameId, hash: event ? new URL(event.oldURL).hash : '' });
+        activeSettingsKey=crypto.randomUUID();settingsOrigins.set(activeSettingsKey,{visit:settingsVisit,route:originRoute});
+      }
       selectedGameId = gameId; view = 'games';
     }
     else if (settingsVisit) returnToSettingsOrigin(false);
     else if (view === 'games') selectedGameId = '';
+    if(event)navigationHistory?.adopt(captureRoute());else recordRoute(true);
+  }
+  function captureRoute(): CockpitRoute {
+    const route:CockpitRoute={view:view==='gateways'||view==='topology'?'devices':view};
+    if(view==='devices'){const id=devicesPanel?.getNavigation();if(id)route.componentId=id;}
+    if(view==='device'&&selectedId)route.deviceId=selectedId;
+    if(view==='profiles'){const id=profilesPanel?.getNavigation();if(id)route.profileId=id;}
+    if(view==='companions')route.companion=companionsPanel?.getNavigation()??(selectedCompanionId?{kind:'companion',id:selectedCompanionId}:{kind:'main'});
+    if(view==='games'&&selectedGameId){route.gameId=selectedGameId;if(settingsVisit&&activeSettingsKey)route.settingsKey=activeSettingsKey;}
+    return route;
+  }
+  function recordRoute(replace=false) { if(!applyingHistory)navigationHistory?.record(captureRoute(),replace); }
+  function routeUrl(route:CockpitRoute) {
+    const gameId=supportedGames.find(game=>game.id===route.gameId)?.id;
+    return `${window.location.pathname}${window.location.search}${route.view==='games'&&gameId?gameSettingsHref(gameId):''}`;
+  }
+  async function restoreRoute(route:CockpitRoute):Promise<CockpitRoute|false> {
+    const settingsOrigin=route.settingsKey?settingsOrigins.get(route.settingsKey):undefined;
+    const keepingProfile=view==='profiles'&&settingsOrigin?.route.view==='profiles'&&settingsOrigin.route.profileId===profilesPanel?.getNavigation();
+    const approved=await new Promise<boolean>(resolve=>{
+      if(view==='profiles'&&profilesPanel&&!keepingProfile&&(route.view!=='profiles'||route.profileId!==profilesPanel.getNavigation()))profilesPanel.requestNavigation(()=>resolve(true),()=>resolve(false));
+      else if(view==='companions'&&companionsPanel)companionsPanel.requestNavigation(()=>resolve(true),()=>resolve(false));
+      else resolve(true);
+    });
+    if(!approved)return false;
+    applyingHistory=true;
+    try {
+      const returning=settingsVisit?.origin;
+      settingsVisit=settingsOrigin?.visit??null;activeSettingsKey=settingsOrigin?route.settingsKey!:'';
+      view=route.view;selectedGameId=supportedGames.find(game=>game.id===route.gameId)?.id??'';
+      selectedCompanionId=route.companion?.kind==='companion'?route.companion.id:'';
+      if(view==='profiles')profilesMounted=true;
+      if(view==='companions')companionsMounted=true;
+      await tick();
+      if(view==='devices')devicesPanel?.restoreNavigation(route.componentId??null);
+      if(view==='device') { selectedId=route.deviceId??'';if(!devices.some(device=>device.key===selectedId))view='devices'; }
+      if(view==='profiles')await profilesPanel?.restoreNavigation(route.profileId??null);
+      if(view==='companions')await companionsPanel?.restoreNavigation(route.companion??{kind:'main'});
+      if(returning&&view===returning.view&&'returnState' in returning)window.dispatchEvent(new CustomEvent(RETURN_FROM_GAME_SETTINGS_EVENT,{detail:returning.returnState}));
+      return captureRoute();
+    } catch(error){notify(String(error));return false;}
+    finally{applyingHistory=false;}
   }
   let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
@@ -318,10 +385,12 @@
       if (link) openGameSettings(link.gameId, link.returnState);
     };
     readSettingsHash();
+    navigationHistory=createCockpitHistory(captureRoute(),{restore:restoreRoute,urlFor:routeUrl,onError:error=>notify(String(error))});
+    void restoreRoute(navigationHistory.route);
     window.addEventListener('hashchange', readSettingsHash);
     window.addEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent);
     window.addEventListener('pagehide', release);
-    return () => { release(); disposed = true; clearInterval(timer); clearInterval(profileTimer); unsubscribeProfile(); profileRuntime.dispose(); profileNamesEpoch++; clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
+    return () => { navigationHistory?.dispose();release(); disposed = true; clearInterval(timer); clearInterval(profileTimer); unsubscribeProfile(); profileRuntime.dispose(); profileNamesEpoch++; clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
@@ -338,6 +407,7 @@
     const device = devices.find(item => item.key === key);
     if (!device) return;
     selectedId = key; tab = 'setup'; view = 'device';
+    recordRoute();
     const state = entries.find(entry => entry.id === device.gatewayId)?.state;
     if (supportsDeviceContracts(state) && state?.connected && device.online && state.modules.find(module => module.id === device.id)?.canConfigure) await sendGateway(device.gatewayId, { command: 'config_read', moduleId: device.id });
   }
@@ -429,9 +499,10 @@
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
         {#if view === 'devices' || view === 'device' || systemSnapshot}
-          <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={openCompanion} openIntegration={openGameSettings} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
+          <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={openCompanion} openIntegration={openGameSettings} onNavigate={() => {if(view==='devices')recordRoute();}} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
         {/if}
-        {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} active={view==='profiles'} /></div>{/if}
+        {#if profilesMounted || view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} onNavigate={() => {if(view==='profiles')recordRoute();}} active={view==='profiles'} /></div>{/if}
+        {#if companionsMounted || view === 'companions'}<div hidden={view !== 'companions'}><CompanionDesigner bind:this={companionsPanel} active={view==='companions'} initialCompanionId={selectedCompanionId} onNavigate={() => {if(view==='companions')recordRoute();}} openSettings={() => navigate('preferences')} /></div>{/if}
         {#if view === 'overview'}
           <ProfileRetiredRecovery active={view === 'overview'} /><OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
@@ -451,13 +522,13 @@
         {:else if view === 'profiles'}
           <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->
         {:else if view === 'companions'}
-          <CompanionDesigner bind:this={companionsPanel} initialCompanionId={selectedCompanionId} openSettings={() => navigate('preferences')} />
+          <!-- Companion editors stay mounted for history navigation. -->
         {:else if view === 'games'}
-          <GamesPanel bind:selectedGameId status={games} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
+          <GamesPanel bind:selectedGameId onNavigate={gameId=>{selectedGameId=gameId;recordRoute();}} status={games} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'devices'}
           <!-- Shared inventory stays mounted during configuration. -->
         {:else if view === 'device' && selected}
-          <button class="text-button device-back" onclick={() => { view = 'devices'; }}><Icon name="arrow" size={14} />Back to devices</button>
+          <button class="text-button device-back" onclick={() => { view = 'devices';recordRoute(); }}><Icon name="arrow" size={14} />Back to devices</button>
           <div class="page-heading"><div><div class="eyebrow">DEVICE WORKSPACE</div><h1>{selected.settings.label}</h1><p>Configuration, live controller inputs and manual device actions.</p></div></div>
           {#if lifecycle && gateway?.layoutPending}<div class="reconnect-notice" role="status"><Icon name="usb" size={19} /><div><strong>Updating USB controllers…</strong><p>The gateway saves this change and reconnects automatically.</p></div></div>
           {:else if needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>{physicalGateway ? 'Controller layout changes pending' : `${gatewayName} needs a reconnect`}</strong><p>Apply the pending controller layout to reconnect USB. Check your game bindings afterward.</p></div><button class="secondary-button" disabled={gatewayBusy || !gatewayConnected || gateway?.reconnecting || !!gateway?.claimedModules?.length} onclick={() => reconnectGateway(selected.gatewayId)}><Icon name="usb" size={15} />{physicalGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}

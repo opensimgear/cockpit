@@ -1,5 +1,6 @@
+import {webcrypto} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser']);
+const modules=await loadModules(['./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser']);
 const noRequest=()=>{throw new Error('Rendering/navigation must not send a native request.');};
 const componentCache=new Map();async function component(name){if(componentCache.has(name))return componentCache.get(name);const filename=new URL(name,import.meta.url);const{js}=compile(await readFile(filename,'utf8'),{filename:filename.pathname,generate:'server'});const dependencies=new Map();for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(dependencies.has(name))return dependencies.get(name);if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});componentCache.set(name,exports.default);return exports.default;}
 const ProfilesPanel=await component('./ProfilesPanel.svelte'),ProfileCanvas=await component('./ProfileCanvas.svelte');
@@ -52,17 +53,46 @@ test('game settings round-trip retains the same editor store, draft identity, la
   const edit=plain(h.store.state.editor.document);edit.name='Kept while settings are open';h.store.update(edit);
   const returned=returnFromGameSettings(visit);assert.equal(returned,origin);assert.equal(returned.returnState.editorStore,h.store);assert.equal(h.store.state.editor.document.id,id);assert.equal(h.store.state.editor.document.name,edit.name);assert.equal(h.store.state.session.appliedSnapshot,applied);assert.deepEqual(h.calls,before);assert.ok(html(h.store,h.client).includes(edit.name));
 });
+async function panelNavigation(store,client,onNavigate) {
+  const filename=new URL('./ProfilesPanel.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','capturePanelNavigation({requestNavigation,getNavigation,restoreNavigation,keepEditing,cancel,openProfile,back});</script>');
+  const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let navigation;
+  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,capturePanelNavigation(value){navigation=value;},require(name){
+    if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name.endsWith('.svelte'))return{default:()=>{}};
+    if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected Panel navigation dependency ${name}`);
+  }},{filename:filename.pathname});
+  render(exports.default,{props:{editorStore:store,resourceClient:client,onNavigate}}).body;return navigation;
+}
+test('profile navigation reports real page changes and Keep editing cancels history restoration without dropping the dirty editor',async()=>{
+  const h=harness();await h.store.refresh();const visits=[],decisions=[];
+  const panel=await panelNavigation(h.store,h.client,id=>visits.push(id));
+  await panel.openProfile(DEFAULT_PROFILE_ID);assert.deepEqual(visits,[DEFAULT_PROFILE_ID]);
+  const changed=plain(h.store.state.editor.document);changed.editor.viewport={x:99,y:22,zoom:.7};h.store.update(changed);const editor=h.store.state.editor;
+  panel.requestNavigation(()=>decisions.push('left'),()=>decisions.push('cancel'));
+  assert.equal(panel.getNavigation(),DEFAULT_PROFILE_ID);assert.deepEqual(decisions,[]);
+  panel.keepEditing();assert.deepEqual(decisions,['cancel']);assert.equal(h.store.state.editor,editor);
+  await panel.restoreNavigation(DEFAULT_PROFILE_ID);assert.equal(h.store.state.editor,editor);assert.deepEqual(h.calls,[['get',DEFAULT_PROFILE_ID]]);
+  panel.requestNavigation(()=>decisions.push('left'),()=>decisions.push('cancel'));panel.cancel();
+  assert.deepEqual(decisions,['cancel','left']);assert.equal(panel.getNavigation(),null);assert.deepEqual(visits,[DEFAULT_PROFILE_ID]);
+  await panel.restoreNavigation(DEFAULT_PROFILE_ID);panel.back();assert.deepEqual(visits,[DEFAULT_PROFILE_ID,null]);
+  assert.deepEqual(h.calls,[['get',DEFAULT_PROFILE_ID],['get',DEFAULT_PROFILE_ID]]);
+});
+test('restoring a discarded profile draft falls back to the list without saving or changing runtime selection',async()=>{
+  const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const discardedId=h.store.state.editor.document.id,session=plain(h.store.state.session);h.store.back(true);
+  const visits=[],panel=await panelNavigation(h.store,h.client,id=>visits.push(id));
+  await panel.restoreNavigation(discardedId);assert.equal(panel.getNavigation(),null);assert.deepEqual(visits,[]);
+  assert.equal(h.docs.size,1);assert.deepEqual(plain(h.store.state.session),session);assert.deepEqual(h.calls,[['get',discardedId]]);
+});
 // Expose the real App handlers inside the SSR closure; production has no test API.
 async function appHarness() {
   const filename=new URL('../App.svelte',import.meta.url);
   const source=(await readFile(filename,'utf8')).replace('</script>',`captureAppNavigation({navigate,openGameSettings,returnToSettingsOrigin,readSettingsHash,setPanel(panel){profilesPanel=panel;},get state(){return{view,selectedGameId,settingsVisit};}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'});
-  const helpers=await loadModules(['./profile-desktop-preview','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./gateway-capabilities','./controller-lifecycle','./devices',]);
+  const helpers=await loadModules(['./profile-desktop-preview','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices',]);
   const exports={},events=[];let navigation,location=new URL('http://localhost/#workspace');
   const window={get location(){return location;},dispatchEvent(event){events.push(event);}};
   const history={pushState(_state,_unused,url){location=new URL(url,location);},replaceState(_state,_unused,url){location=new URL(url,location);}};
   const Icon=await component('./Icon.svelte');
-  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,URL,window,history,CustomEvent:class{constructor(type,{detail}){this.type=type;this.detail=detail;}},captureAppNavigation(value){navigation=value;},require(name){
+  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,URL,window,history,crypto:webcrypto,CustomEvent:class{constructor(type,{detail}){this.type=type;this.detail=detail;}},captureAppNavigation(value){navigation=value;},require(name){
     if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;
     if(name.endsWith('/Icon.svelte'))return{default:Icon};
     if(name.endsWith('/ProfilesPanel.svelte'))return{default:()=>{throw new Error('Profiles mounted before its section was opened.');}};
@@ -82,7 +112,7 @@ test('actual App sidebar exposes Profiles without eagerly mounting its list/edit
 test('actual App game-settings handlers retain the original profile through game changes, return and guarded sidebar departure',async()=>{
   const app=await appHarness(),h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();
   const {ProfileNavigationGuard}=modules.get('./profile-editor');const guard=new ProfileNavigationGuard(h.store),nav=app.navigation;
-  nav.navigate('profiles');nav.setPanel({requestNavigation:next=>guard.request(next)});const original=h.store.state.editor,applied=h.store.state.session.appliedSnapshot;
+  nav.navigate('profiles');nav.setPanel({requestNavigation:next=>guard.request(next),getNavigation:()=>h.store.state.editor?.document.id??null});const original=h.store.state.editor,applied=h.store.state.session.appliedSnapshot;
   const returnState={editorStore:h.store,profileId:original.document.id,selection:{resourceId:original.document.resources[0].id}};
   nav.openGameSettings('dcs',returnState);const origin=nav.state.settingsVisit.origin;assert.equal(nav.state.view,'games');assert.equal(origin.view,'profiles');assert.equal(origin.returnState,returnState);assert.equal(h.store.state.editor,original);
   nav.openGameSettings('x-plane-12');assert.equal(nav.state.settingsVisit.origin,origin);assert.equal(nav.state.selectedGameId,'x-plane-12');

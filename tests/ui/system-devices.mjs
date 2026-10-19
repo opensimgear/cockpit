@@ -83,7 +83,7 @@ function fixtures() {
 
 test('running Devices shares complete inventory, topology, filtering, lifecycle and durable guarded cleanup', { timeout: 120_000 }, async () => {
   await mkdir(artifacts, { recursive: true });
-  const fixture = fixtures(), requests = [], unexpected = [], pageErrors = [], suppressedHmrMessages = [];
+  const fixture = fixtures(), requests = [], unexpected = [], pageErrors = [], suppressedHmrMessages = [], mouseNavigation = [];
   const browser = await chromium.launch({ headless: true, ...(process.env.OSG_BROWSER_CHANNEL ? { channel: process.env.OSG_BROWSER_CHANNEL } : {}) });
   const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } }), page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -108,6 +108,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
   const owner = { session: defaultId, generation: 1, profileId: defaultId, profileRevision: 1, gameId: 'dcs' };
   const appliedSnapshot = { profileId: defaultId, revision: 1, semanticHash: hash };
   const session = { state: 'running', paused: false, appliedSnapshot, owner, degradation: [], fault: null };
+  const profileDocument = { schemaVersion: 2, id: defaultId, name: 'Default', revision: 1,
+    eligibility: { gameIds: [] }, resources: ['retained-throttle-binding', 'retained-wheel-binding', 'retained-virtual-binding']
+      .map(id => ({ id, name: id, kind: 'device', required: false, ports: [] })),
+    bindings: [], processingNodes: [], virtualOutputs: [], visibility: [], overrides: [], companionAssignments: [],
+    editor: { positions: [], viewport: { x: 0, y: 0, zoom: 1 } } };
   const listing = { profiles: [{ id: defaultId, name: 'Default', revision: 1, isDefault: true, semanticHash: hash }],
     profileSession: session, session: { selectedProfileId: defaultId, state: 'idle', appliedSnapshot: null, fault: null },
     automatic: { schemaVersion: 1, mode: 'manual', manualProfileId: defaultId, rules: [], status: 'manual', message: 'Fixture idle.', conflicts: [], lastAttempt: null, target: null, readOnly: false }, readOnly: false, diagnostics: [] };
@@ -128,11 +133,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       return result({ profileTopology: { schemaVersion: 1, owner, appliedSnapshot, programHash: hash, capturedUs: '1',
         section: request.section, offset, total: items.length, items: items.slice(offset, offset + request.limit) } });
     }
-    if (request.command === 'profile_assignments_get') return result({ profiles: { ...listing, assignments: [
+    if (request.command === 'profile_assignments_get') return result({ profiles: { ...listing, document: profileDocument, assignments: [
       { resourceId: 'retained-throttle-binding', sourceId: 'remembered-throttle', ports: [] },
       { resourceId: 'retained-wheel-binding', sourceId: 'remembered-wheel', ports: [] },
       { resourceId: 'retained-virtual-binding', sourceId: 'vjoy:4', ports: [] },
     ] } });
+    if (request.command === 'profile_desktop_status') return result({ desktop: {
+      enabled: false, qualified: false, state: 'disabled', reason: 'Fixture observation only.', scope: { kind: 'application' },
+    } });
     if (request.command === 'profile_retired_recovery_status') return result({ retiredRecovery: { required: false, outputs: [], provisioning: [], job: null, diagnostics: [], outputQualified: false, provisioningQualified: false } });
     if (request.command === 'controller_list') {
       if (fixture.controllerDelayMs) await new Promise(resolve => setTimeout(resolve, fixture.controllerDelayMs));
@@ -517,6 +525,100 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor).toHaveCount(0);
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
+    // Chromium's trusted side-button input exercises the browser's native
+    // history path. Dispatching both press and release catches double handling
+    // that would otherwise skip a section or leave the app at a boundary.
+    const nativeMouse = await context.newCDPSession(page);
+    const browserHistory = () => nativeMouse.send('Page.getNavigationHistory');
+    const settleNavigation = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    async function sideButton(direction) {
+      const previous = await browserHistory();
+      const input = { x: 1200, y: 100, button: direction, clickCount: 1 };
+      await nativeMouse.send('Input.dispatchMouseEvent', { ...input, type: 'mousePressed', buttons: direction === 'back' ? 8 : 16 });
+      await nativeMouse.send('Input.dispatchMouseEvent', { ...input, type: 'mouseReleased', buttons: 0 });
+      return previous;
+    }
+    async function historyStep(direction) {
+      const previous = await sideButton(direction), expected = previous.currentIndex + (direction === 'back' ? -1 : 1);
+      await expect.poll(async () => (await browserHistory()).currentIndex).toBe(expected);
+      await settleNavigation();
+      const current = await browserHistory();
+      assert.equal(current.currentIndex, expected, 'One physical side-button click traverses exactly one history entry.');
+      mouseNavigation.push({ direction, before: previous.currentIndex, after: current.currentIndex });
+    }
+    const companionsMainHistory = await browserHistory();
+    await companionsNav.click(); await companionsNav.click();
+    await settleNavigation();
+    assert.deepEqual(await browserHistory(), companionsMainHistory, 'Clicking the current main section does not add duplicate history entries.');
+    await devicesNav.click();
+    await devices.locator('[data-component-id="companion:browser-fixture"]').click();
+    await expect(details.getByRole('heading', { name: 'Browser companion', exact: true, level: 1 })).toBeVisible();
+    await details.getByRole('button', { name: 'Manage companion', exact: true }).click();
+    await expect(companionName).toHaveValue('Browser companion');
+    await historyStep('back');
+    await expect(details.getByRole('heading', { name: 'Browser companion', exact: true, level: 1 })).toBeVisible();
+    await historyStep('forward');
+    await expect(companionName).toHaveValue('Browser companion');
+    await companionName.fill('Browser companion navigation');
+    await historyStep('back');
+    await expect.poll(() => browserClient.name).toBe('Browser companion navigation');
+    await expect(details.getByRole('heading', { name: 'Browser companion navigation', exact: true, level: 1 })).toBeVisible();
+    await historyStep('forward');
+    await expect(companionName).toHaveValue('Browser companion navigation');
+    await companionName.fill('Browser companion');
+    await expect.poll(() => browserClient.name).toBe('Browser companion');
+    await historyStep('back'); await expect(details).toBeVisible();
+    await historyStep('back'); await expect(search).toBeVisible(); await expect(details).toHaveCount(0);
+    await historyStep('forward'); await expect(details.getByRole('heading', { name: 'Browser companion', exact: true, level: 1 })).toBeVisible();
+    await historyStep('back'); await expect(search).toBeVisible();
+    await companionsNav.click();
+    const branchedHistory = await browserHistory();
+    assert.equal(branchedHistory.entries.length, branchedHistory.currentIndex + 1, 'A new sidebar navigation drops the obsolete forward branch.');
+    await sideButton('forward'); await settleNavigation();
+    assert.deepEqual(await browserHistory(), branchedHistory, 'Forward at the newest entry stays on the current app page.');
+    await companions.getByRole('button', { name: 'Edit Browser companion', exact: true }).click();
+    await expect(companionName).toHaveValue('Browser companion');
+    await historyStep('back'); await expect(panels).toBeVisible(); await expect(companionSettings).toHaveCount(0);
+    await historyStep('forward'); await expect(companionName).toHaveValue('Browser companion');
+    await companionsNav.click();
+    await panels.getByRole('button', { name: /^Fixture panel/ }).click();
+    await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
+    await historyStep('back'); await expect(panels).toBeVisible(); await expect(panelEditor).toHaveCount(0);
+    await historyStep('forward'); await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
+    const gamesNav = nav.getByRole('button', { name: /^Games(?:\s|$)/ });
+    await gamesNav.click();
+    await expect(page.getByRole('heading', { name: 'Games', exact: true, level: 1 })).toBeVisible();
+    await historyStep('back'); await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
+    await historyStep('forward'); await expect(page.getByRole('heading', { name: 'Games', exact: true, level: 1 })).toBeVisible();
+    await page.getByRole('button', { name: 'Open DCS World details', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Game integration setup', exact: true })).toBeVisible();
+    await historyStep('back'); await expect(page.getByRole('heading', { name: 'Games', exact: true, level: 1 })).toBeVisible();
+    await historyStep('forward'); await expect(page.getByRole('region', { name: 'Game integration setup', exact: true })).toBeVisible();
+    const profilesNav = nav.getByRole('button', { name: /^Profiles(?:\s|$)/ });
+    const profiles = page.getByRole('region', { name: 'Profiles', exact: true });
+    await profilesNav.click();
+    await profiles.getByRole('button', { name: 'Edit Default', exact: true }).click();
+    await expect(profiles.getByLabel('Profile name', { exact: true })).toHaveValue('Default');
+    await historyStep('back'); await expect(profiles.getByRole('button', { name: 'Edit Default', exact: true })).toBeVisible();
+    await historyStep('forward'); await expect(profiles.getByLabel('Profile name', { exact: true })).toHaveValue('Default');
+    await historyStep('back');
+    await profiles.getByRole('button', { name: 'Add profile', exact: true }).click();
+    await profiles.getByLabel('Profile name', { exact: true }).fill('Navigation draft');
+    const draftHistory = await browserHistory();
+    const leaveProfile = page.getByRole('alertdialog', { name: 'Keep your unsaved changes?', exact: true });
+    await sideButton('back');
+    await expect(leaveProfile).toBeVisible();
+    await leaveProfile.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect.poll(async () => (await browserHistory()).currentIndex).toBe(draftHistory.currentIndex);
+    await expect(profiles.getByLabel('Profile name', { exact: true })).toHaveValue('Navigation draft');
+    await sideButton('back'); await expect(leaveProfile).toBeVisible();
+    await leaveProfile.getByRole('button', { name: 'Discard and continue', exact: true }).click();
+    await expect(profiles.getByRole('button', { name: 'Edit Default', exact: true })).toBeVisible();
+    await expect.poll(async () => (await browserHistory()).currentIndex).toBe(draftHistory.currentIndex - 1);
+    await sideButton('forward');
+    await expect.poll(async () => (await browserHistory()).currentIndex).toBe(draftHistory.currentIndex);
+    await expect(profiles.getByRole('button', { name: 'Edit Default', exact: true })).toBeVisible();
+    await expect(profiles.getByLabel('Profile name', { exact: true })).toHaveCount(0);
     await devicesNav.click();
     await expect(devices.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);
     assert.equal(requests.filter(request => request.command === 'companion_approve').length, 0);
@@ -601,7 +703,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.deepEqual(unexpected, []); assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: resolve(artifacts, 'complete-system-topology.png'), fullPage: true });
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ observedAt: new Date().toISOString(), scope: 'Running dev Cockpit frontend with fixture IPC only', endpoint,
-      expectedNames, listIds, graphIds, commands: requests.map(request => request.command), suppressedHmrMessages, unexpected, pageErrors }, null, 2) + '\n');
+      expectedNames, listIds, graphIds, commands: requests.map(request => request.command), mouseNavigation, suppressedHmrMessages, unexpected, pageErrors }, null, 2) + '\n');
   } catch (error) {
     await page.screenshot({ path: resolve(artifacts, 'failure.png'), fullPage: true });
     await writeFile(resolve(artifacts, 'failure.json'), JSON.stringify({ message: String(error), requests, suppressedHmrMessages, unexpected, pageErrors }, null, 2) + '\n');

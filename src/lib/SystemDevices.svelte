@@ -11,11 +11,12 @@
   import type { GameId } from './games';
   import { SystemInventoryController, integrationGameId } from './system-inventory-providers';
   import { filterSystem, isVisibleSystemComponent, presenceLabels, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
-  let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory }: {
+  let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory, onNavigate }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
     gatewayError?: string;
     openCompanions: (companionId: string) => void; openIntegration: (gameId: GameId) => void;
     gatewayDetails: Snippet<[string]>; oninventory: (snapshot: SystemSnapshot) => void;
+    onNavigate?: (componentId: string | null) => void;
   } = $props();
   let snapshot = $state.raw<SystemSnapshot>({ components: [], diagnostics: [], observedAt: 0 });
   let mode = $state('list'), search = $state(''), filter = $state('all'), transport = $state('all'), selectedId = $state('');
@@ -32,8 +33,10 @@
   const eligible = $derived(visible.filter(c => c.forget.allowed));
   const captureLabels: Record<SystemComponent['capture'], string> = { ready: 'Ready', waiting: 'Waiting', unavailable: 'Unavailable', unknown: 'Unknown' };
   const date = (timestamp: number) => timestamp ? new Date(timestamp).toLocaleString() : 'Never observed connected';
-  function select(id: string) { selectedId = id; detailsOpen = true; }
-  export function showInventory() { detailsOpen = false; }
+  function select(id: string) { selectedId = id; detailsOpen = true; onNavigate?.(id); }
+  export function showInventory() { detailsOpen = false; onNavigate?.(null); }
+  export function getNavigation(): string | null { return detailsOpen ? selectedId || null : null; }
+  export function restoreNavigation(componentId: string | null): void { selectedId = componentId ?? selectedId; detailsOpen = componentId !== null; }
   async function backToDevices() {
     showInventory();
     await tick();
@@ -71,7 +74,7 @@
     busy = true; const failures: string[] = [];
     await refreshTask?.catch(() => undefined);
     for (const c of confirmation) {
-      try { await controller.forget(c.id); if (selectedId === c.id) { selectedId = ''; detailsOpen = false; } }
+      try { await controller.forget(c.id); if (selectedId === c.id) { selectedId = ''; detailsOpen = false; onNavigate?.(null); } }
       catch (e) { failures.push(`${c.name}: ${String(e)}`); }
     }
     confirmation = []; error = failures.join('\n'); busy = false;
