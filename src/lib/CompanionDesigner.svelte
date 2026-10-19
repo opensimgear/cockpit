@@ -223,7 +223,7 @@
     const preset=firmwareWidgetPresets.find(preset=>preset.kind===kind),region=regions.find(region=>region.id===viewportId);
     if(!preset||!region||preview)return;
     const bounds=point?paletteBounds(viewportId,point):undefined;
-    if(command({type:'add-widget',kind:preset.kind,pageId:page.id,viewportId,...(bounds?{bounds}:{})}))select([document.presentation.widgets.at(-1)!.id]);
+    if(command({type:'add-widget',kind:preset.kind,pageId:page.id,viewportId,...(bounds?{bounds}:{})}))select(point?[]:[document.presentation.widgets.at(-1)!.id]);
   }
   function editViewportName(id: string, label: string) {
     selectedViewportId=id;select([]);propertiesOpen=true;

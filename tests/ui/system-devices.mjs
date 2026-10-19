@@ -648,6 +648,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const expectedPlacement=await placementPreview.evaluate(node=>({left:node.style.left,top:node.style.top,width:node.style.width,height:node.style.height}));
     await page.mouse.up();await expect(panelEditor.locator('.widget')).toHaveCount(2);
     await expect(placementPreview).toHaveCount(0);
+    await expect(panelEditor.locator('.widget.selected')).toHaveCount(0);
+    await expect(panelProperties).toHaveCount(0);
     assert.deepEqual(await panelEditor.locator('.widget').last().evaluate(node=>({left:node.style.left,top:node.style.top,width:node.style.width,height:node.style.height})),expectedPlacement);
     const destinationBounds=await panelEditor.locator('.viewport-outline').last().evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));
     async function assertLastWidgetInDestination(){const bounds=await panelEditor.locator('.widget').last().evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));assert.ok(bounds.x>=destinationBounds.x-.001&&bounds.y>=destinationBounds.y-.001&&bounds.x+bounds.width<=destinationBounds.x+destinationBounds.width+.001&&bounds.y+bounds.height<=destinationBounds.y+destinationBounds.height+.001);}
