@@ -45,6 +45,7 @@ fn main() {
             "open_companion_browser",
             "export_companion_certificate",
             "optional_dependencies",
+            "open_hidhide",
             "optional_dependency_install",
             "pick_game_executable",
             "desktop_preferences",

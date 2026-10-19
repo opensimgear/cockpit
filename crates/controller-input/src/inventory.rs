@@ -29,6 +29,7 @@ pub struct Device {
 pub struct Inventory {
     pub hidden_devices: Vec<Device>,
     pub diagnostics: Vec<String>,
+    pub policy_inspected: bool,
 }
 
 /// Returns configured hidden devices even when Raw Input cannot see them. Failed
@@ -62,6 +63,7 @@ fn compose(
         }
     };
     let mut devices = BTreeMap::<String, Device>::new();
+    result.policy_inspected = policy.is_some();
     if let Some(state) = &policy {
         for instance in &state.hidden {
             devices.entry(policy::key(instance)).or_insert_with(|| inspect(instance));
@@ -236,6 +238,7 @@ mod tests {
         let policy=policy::State {active:true,inverse:true,applications:vec![],hidden:vec![r"HID\EXACT\A".into(),r"HID\EXACT\EXTERNAL".into()]};
         let result=compose(sources(),Ok(policy), |_|Ok(r"hid\exact\a".into()),inspect);
         assert_eq!(result.hidden_devices.len(),2);
+        assert!(result.policy_inspected);
         let controller=result.hidden_devices.iter().find(|d|d.controller_id.is_some()).unwrap();
         assert_eq!(controller.present,Some(true));
         assert_eq!(controller.hidden,Some(true));
@@ -247,6 +250,7 @@ mod tests {
     fn unavailable_policy_preserves_unknown_visibility_and_pnp_presence() {
         let result=compose(sources(),Err("driver unavailable".into()), |_|Ok(r"HID\EXACT\A".into()), |id|Device {name:id.into(),instance_id:id.into(),..Default::default()});
         assert_eq!(result.hidden_devices[0].hidden,None);
+        assert!(!result.policy_inspected);
         assert_eq!(result.hidden_devices[0].present,None);
         assert!(result.diagnostics[0].contains("unknown"));
     }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-hidhide"
+description = "Enables the open_hidhide command without any pre-configured scope."
+commands.allow = ["open_hidhide"]
+
+[[permission]]
+identifier = "deny-open-hidhide"
+description = "Denies the open_hidhide command without any pre-configured scope."
+commands.deny = ["open_hidhide"]

@@ -57,7 +57,7 @@ fn page(value:&Value,offset:usize,limit:usize)->Result<Value,String> {
         let hidden=selected.iter().filter(|(association,_)|!*association).map(|(_,value)|value).collect::<Vec<_>>();
         let related=selected.iter().filter(|(association,_)|*association).map(|(_,value)|value).collect::<Vec<_>>();
         let response=json!({"observedAt":value["observedAt"],"virtualDevices":value["virtualDevices"],
-            "diagnostics":value["diagnostics"],"hiddenDevices":hidden,"controllerAssociations":related,"offset":offset,"total":items.len(),
+            "diagnostics":value["diagnostics"],"visibilityInspected":value["visibilityInspected"],"hiddenDevices":hidden,"controllerAssociations":related,"offset":offset,"total":items.len(),
             "hiddenTotal":devices.len(),"associationTotal":associations.len(),"nextOffset":if next<items.len(){Some(next)}else{None}});
         if serde_json::to_vec(&response).map_err(|e|e.to_string())?.len()<=60_000 {return Ok(response);}
         if selected.len()<=1 {return Err("System inventory metadata exceeds the native reply budget.".into());}
@@ -118,7 +118,7 @@ fn compose(visibility: osg_controller_input::inventory::Inventory, slots: Result
         Err(error)=>diagnostics.push(format!("Configured virtual device inventory is unavailable: {error}")),
     }
     json!({"observedAt":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
-        "virtualDevices":virtual_devices,"hiddenDevices":visibility.hidden_devices,"diagnostics":diagnostics})
+        "virtualDevices":virtual_devices,"visibilityInspected":visibility.policy_inspected,"hiddenDevices":visibility.hidden_devices,"diagnostics":diagnostics})
 }
 
 #[cfg(test)]

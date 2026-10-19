@@ -69,6 +69,17 @@ test('native hidden fallback retains the known OSG physical identity/type when c
  assert.equal(h.component('controller:osg-panel').type,'osg');assert.equal(h.component('controller:osg-panel').name,'Controller osg-panel');assert.equal(h.component('controller:osg-panel').presence,'connected');
 });
 
+test('removed HidHide rules clear cached hidden flags only after successful policy inspection', async () => {
+ const h=harness({native:{virtualDevices:[],hiddenDevices:[{id:'old-hid',name:'Old HID',instanceId:'HID/OLD',present:false,configured:true,hidden:true,diagnostics:[]}],visibilityInspected:true,diagnostics:[]}});
+ await h.controller.refresh();assert.equal(h.component('visibility:old-hid').forget.allowed,false);
+ h.state.native.hiddenDevices=[];h.state.native.visibilityInspected=false;h.state.native.diagnostics=['HidHide visibility is unknown: driver unavailable'];
+ await h.controller.refresh();assert.equal(h.component('visibility:old-hid').hidden,null);assert.equal(h.component('visibility:old-hid').forget.allowed,false);
+ h.state.native.visibilityInspected=true;h.state.native.diagnostics=['Virtual device inventory is unavailable'];
+ await h.controller.refresh();assert.equal(h.component('visibility:old-hid').hidden,false);assert.equal(h.component('visibility:old-hid').forget.allowed,true);
+ await h.controller.forget('visibility:old-hid');assert.equal(h.component('visibility:old-hid'),undefined);
+ assert.equal(h.requests.some(r=>['controller_forget','forget','companion_revoke'].includes(r.command)),false);
+});
+
 test('nearest native parent bus proves USB or Bluetooth without guessing from HID names, including remembered edges', async () => {
  const h=harness({controllers:[source('usb'),source('bluetooth'),source('offline',{online:false})],native:{virtualDevices:[],diagnostics:[],hiddenDevices:[
   {id:'usb',name:'USB wheel',instanceId:'HID\\USB',controllerIds:['usb'],present:true,hidden:false,ancestors:['USB\\VID_1234','USB\\ROOT_HUB'],diagnostics:[]},

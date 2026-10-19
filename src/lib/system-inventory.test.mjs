@@ -27,6 +27,34 @@ test('durable tombstones suppress stale records and allow genuinely reconnected 
  reload.update([observation()],['controllers']);assert.equal(reload.snapshot.components.length,1);
  assert.throws(()=>reload.forget('wheel'));
 });
+
+test('cached HidHide flags require fresh policy evidence and clear when rules disappear',()=>{
+ const r=new SystemInventoryRegistry(storage());
+ const hidden=observation('old-hid',{provider:'native',hidden:true,targets:[{kind:'visibility',id:'HID/OLD'}],status:'Configured visibility rule'});
+ r.update([hidden],['native','visibility']);
+ r.update([],['native']);
+ assert.equal(r.snapshot.components[0].hidden,null);
+ assert.equal(r.snapshot.components[0].forget.allowed,false);
+ assert.match(r.snapshot.components[0].forget.reason,/Refresh HidHide/);
+ assert.throws(()=>r.forget('old-hid'));
+ // Unrelated native failures do not invalidate a separately verified policy read.
+ r.update([],['visibility']);
+ assert.equal(r.snapshot.components[0].hidden,false);
+ assert.equal(r.snapshot.components[0].presence,'offline');
+ assert.equal(r.snapshot.components[0].forget.allowed,true);
+ assert.equal(r.snapshot.components[0].status,'No configured HidHide rule');
+ r.forget('old-hid');assert.equal(r.snapshot.components.length,0);
+});
+
+test('a controller response alone cannot clear a previously observed HidHide rule',()=>{
+ const r=new SystemInventoryRegistry(storage());
+ r.update([observation('wheel',{hidden:true,targets:[{kind:'visibility',id:'HID/WHEEL'}]})],['controllers','visibility']);
+ r.update([observation('wheel',{presence:'offline',forget:{allowed:true,reason:'',effect:'local'}})],['controllers']);
+ assert.equal(r.snapshot.components[0].hidden,null);assert.equal(r.snapshot.components[0].forget.allowed,false);
+ assert.throws(()=>r.forget('wheel'));
+ r.update([observation('wheel',{presence:'offline',forget:{allowed:true,reason:'',effect:'local'}})],['controllers','visibility']);
+ assert.equal(r.snapshot.components[0].forget.allowed,true);
+});
 test('duplicates are rejected; all known types remain searchable without connection evidence',()=>{
  const r=new SystemInventoryRegistry();assert.throws(()=>r.update([observation(),observation()],['controllers']),/duplicate/);
  const components=r.update(['integration','virtual','gateway','osg','companion'].map(type=>observation(type,{type,connections:[],presence:'unknown'})),[]).components;

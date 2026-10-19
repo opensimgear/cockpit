@@ -126,6 +126,11 @@ fn optional_dependencies() -> Value {
 }
 
 #[tauri::command]
+async fn open_hidhide() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(optional_dependencies::open_hidhide).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn optional_dependency_install(app: tauri::AppHandle, id: String) -> Result<String, String> {
     let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -200,6 +205,7 @@ pub fn run() {
             open_companion_browser,
             export_companion_certificate,
             optional_dependencies,
+            open_hidhide,
             optional_dependency_install,
             pick_game_executable,
             desktop::desktop_preferences,

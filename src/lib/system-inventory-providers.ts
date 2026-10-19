@@ -10,6 +10,7 @@ import { SystemInventoryRegistry, type InventoryStorage, type SystemObservation,
 
 export type NativeSystemInventory = {
   observedAt?: number;
+  visibilityInspected?: boolean;
   offset?: number; total?: number; nextOffset?: number | null;
   controllerAssociations?: { controllerId: string; gatewayId?: string; moduleId?: string; usbKey?: string; evidence: string[] }[];
   virtualDevices: { id: string; name: string; available: boolean | null; status: string; createdByCockpit: boolean | null; owner?: string | null; ownerPid?: number | null; diagnostics: string[] }[];
@@ -17,7 +18,7 @@ export type NativeSystemInventory = {
   diagnostics: string[];
 };
 type Send = (request: GatewayRequest) => Promise<GatewayState>;
-type Capture = { provider: string; observations: SystemObservation[]; complete?: boolean; diagnostics?: string[]; associations?: NativeSystemInventory['controllerAssociations'] };
+type Capture = { provider: string; observations: SystemObservation[]; complete?: boolean; visibilityInspected?: boolean; diagnostics?: string[]; associations?: NativeSystemInventory['controllerAssociations'] };
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const string = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback;
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -126,6 +127,7 @@ export class SystemInventoryController {
       else { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: ${message(result.reason)}`); }
     });
     const native = this.captures.get('native');
+    if (native?.visibilityInspected) complete.push('visibility');
     if (native?.associations) this.associations = native.associations;
     // The common resource facade already proves USB/CAN/host HID equivalence.
     try {
@@ -153,7 +155,9 @@ export class SystemInventoryController {
       source.diagnostics.push(...h.diagnostics); source.evidence.push(...h.evidence); source.targets.push(...h.targets.filter(t => t.kind === 'visibility'));
       if (h.connections.length) source.connections = h.connections.map(c => link(source.id, c.from, c.transport, c.current, c.endpoint));
       if (h.presence !== 'unknown') { source.presence = h.presence; source.stale = false; }
-      if (h.hidden || h.presence === 'connected') source.forget.allowed = false;
+      if (h.hidden !== false || h.status === 'Configured visibility rule' || h.presence === 'connected') {
+        source.forget = { ...source.forget, allowed: false, reason: h.hidden || h.status === 'Configured visibility rule' ? 'Manage visibility rules explicitly. Inventory cleanup cannot remove HidHide configuration.' : h.presence === 'connected' ? 'Device is connected.' : 'Refresh HidHide visibility before cleaning up this device.' };
+      }
       consumed.add(h.id);
       }
       if (sources.length > 1) {
@@ -314,7 +318,7 @@ export class SystemInventoryController {
       if (!page || page.observedAt !== state.observedAt || page.total !== state.total || page.offset !== nextOffset || !count || nextOffset + count > page.total!) throw Error('Native system inventory changed during inspection. Refresh again.');
       hiddenDevices.push(...page.hiddenDevices); associations.push(...(page.controllerAssociations ?? [])); nextOffset = page.nextOffset;
     }
-    return { provider: 'native', diagnostics: state.diagnostics, associations, observations: [
+    return { provider: 'native', diagnostics: state.diagnostics, visibilityInspected: state.visibilityInspected === true || (state.visibilityInspected === undefined && !state.diagnostics.length), associations, observations: [
       ...state.virtualDevices.map(v => {
         const id = `virtual:${v.id}`, owned = v.owner ?? (v.ownerPid ? `PID ${v.ownerPid}` : null);
         return observation(id, v.name, 'virtual', 'native', now, { role: 'vJoy', presence: v.available === true ? 'connected' : v.available === false ? 'unavailable' : 'unknown', owner: owned, status: `${v.status}${v.createdByCockpit === true ? ' · Created by Cockpit' : ' · Creation provenance unknown'}`, diagnostics: v.diagnostics, evidence: [v.id], targets: [target('virtual', v.id)], connections: [link(id, 'host', 'software', v.available === true)], forget: { allowed: v.available === false && !owned, reason: 'Available or owned virtual devices cannot be forgotten.', effect: 'Forget only local virtual-device inventory metadata. The OS device, vJoy layout, driver and bindings are retained.' } });
@@ -331,7 +335,7 @@ export class SystemInventoryController {
           status: h.configured ? 'Configured visibility rule' : '', diagnostics: [...h.diagnostics, ...(childControllers.length ? ['Visibility evidence includes the exact physical USB parent; application exceptions may limit its scope.'] : []), ...(h.inverse ? ['HidHide inverse application policy is active.'] : [])],
           evidence: [h.instanceId, ...[...new Set([...ownControllers, ...childControllers])].map(id => `controller:${id}`)], targets: [target('visibility', h.instanceId)],
           connections: [link(id, 'host', transport, h.present === true, h.interfacePaths?.[0] ?? h.instanceId)],
-          forget: { allowed: false, reason: 'Manage visibility rules explicitly. Inventory cleanup cannot remove HidHide configuration.', effect: '' } });
+          forget: { allowed: h.present === false && h.configured === false && h.hidden === false, reason: h.configured || h.hidden ? 'Manage visibility rules explicitly. Inventory cleanup cannot remove HidHide configuration.' : 'Refresh device presence and HidHide visibility before cleanup.', effect: localEffect } });
       }),
     ] };
   }

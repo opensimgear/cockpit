@@ -84,6 +84,7 @@ function fixtures() {
 test('running Devices shares complete inventory, topology, filtering, lifecycle and durable guarded cleanup', { timeout: 120_000 }, async () => {
   await mkdir(artifacts, { recursive: true });
   const fixture = fixtures(), requests = [], unexpected = [], pageErrors = [], suppressedHmrMessages = [], mouseNavigation = [];
+  let hidHideOpens = 0;
   const browser = await chromium.launch({ headless: true, ...(process.env.OSG_BROWSER_CHANNEL ? { channel: process.env.OSG_BROWSER_CHANNEL } : {}) });
   const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } }), page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -122,6 +123,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
   await page.route('**/api/gateway/**', async route => { unexpected.push('HTTP fallback bypassed fixture IPC'); await route.abort(); });
   await page.exposeFunction('__osgNativeInvoke', async (command, args) => {
     if (command === 'optional_dependencies') return { supported: false, dependencies: [] };
+    if (command === 'open_hidhide') { hidHideOpens++; return; }
     if (command !== 'gateway_request') throw Error(`Unexpected invocation: ${command}`);
     const request = clone(args.request); requests.push(request);
     const offset = request.offset ?? 0;
@@ -210,6 +212,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devicesNav.locator('.nav-count')).toHaveText('14');
     await expect(nav.getByRole('button', { name: 'Overview', exact: true })).toHaveClass(/\bcurrent\b/);
     await devicesNav.click();
+    await page.getByRole('button', { name: 'Manage HidHide', exact: true }).click();
+    assert.equal(hidHideOpens,1);
     await expect(nav.getByRole('button', { name: 'Gateways', exact: true })).toHaveCount(0);
     await expect(nav.getByRole('button', { name: 'Topology', exact: true })).toHaveCount(0);
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
@@ -329,6 +333,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('aria-label', /busy.*Creation provenance unknown/);
     await expect(graph.locator('[data-component-id="virtual:vjoy:3"]')).toHaveAttribute('title', /busy.*Creation provenance unknown/);
     await expect(details).not.toBeVisible();
+    // Keyboard focus reveals an offscreen node before pointer activation.
+    await graph.locator('[data-component-id="virtual:vjoy:3"]').focus();
     await graph.locator('[data-component-id="virtual:vjoy:3"]').click();
     await expect(details).toBeVisible();
     await devicesNav.focus();
@@ -749,6 +755,21 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await waitForInventoryRefresh();
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
     await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
+    // Clearing external HidHide rules must retire stale hidden flags and permit local cleanup.
+    fixture.native.visibilityInspected = true;
+    fixture.native.hiddenDevices.push({ id: 'stale-hide', name: 'Stale HidHide device', instanceId: 'HID\\STALE', present: false, configured: true, hidden: true, diagnostics: [] });
+    await waitForInventoryRefresh(); await list.click(); await search.fill('Stale HidHide');
+    await devices.locator('[data-component-id="visibility:stale-hide"]').click();
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await details.getByRole('button', { name: 'Manage HidHide', exact: true }).click(); assert.equal(hidHideOpens,2);
+    fixture.native.hiddenDevices = fixture.native.hiddenDevices.filter(device => device.id !== 'stale-hide');
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeEnabled({ timeout: 10_000 });
+    await expect(details).toContainText('No configured HidHide rule');
+    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
+    await dialog.getByRole('checkbox', { name: 'Select Stale HidHide device', exact: true }).check();
+    await confirmCleanup.click();
+    await expect(devices.locator('[data-component-id="visibility:stale-hide"]')).toHaveCount(0);
+    await search.fill(''); await topology.click();
     const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_approve|companion_revoke|claim|register|apply|save|configure)$/;
     assert.deepEqual(requests.filter(request => prohibited.test(request.command)), []);
     assert.deepEqual(unexpected, []); assert.deepEqual(pageErrors, []);

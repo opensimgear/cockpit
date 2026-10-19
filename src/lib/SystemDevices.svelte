@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, type Snippet } from 'svelte';
+  import { invoke, isTauri } from '@tauri-apps/api/core';
   import Icon from './Icon.svelte';
   import { systemDeviceIcon } from './system-device-icons';
   import Notification from './Notification.svelte';
@@ -31,7 +32,7 @@
   const components = $derived(snapshot.components.filter(isVisibleSystemComponent));
   const selected = $derived(components.find(c => c.id === selectedId));
   const showingDetails = $derived(detailsOpen && !!selected && active);
-  const eligible = $derived(visible.filter(c => c.forget.allowed));
+  const eligible = $derived(visible.filter(canCleanup));
   const cleanupAvailable = $derived(confirmation.filter(canCleanup));
   const cleanupSelected = $derived(cleanupAvailable.filter(c => cleanupSelection.includes(c.id)));
   const cleanupAllSelected = $derived(cleanupAvailable.length > 0 && cleanupSelected.length === cleanupAvailable.length);
@@ -68,6 +69,10 @@
   }
   function selectCleanup(id: string, checked: boolean) {
     cleanupSelection = checked ? [...new Set([...cleanupSelection, id])] : cleanupSelection.filter(item => item !== id);
+  }
+  async function manageHidHide() {
+    try { await invoke('open_hidhide'); error = ''; }
+    catch (e) { error = String(e); }
   }
   function closeCleanup() {
     if (cleanupRunning) return;
@@ -123,6 +128,7 @@
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
   <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="bluetooth">Bluetooth</option><option value="software">Software</option><option value="unknown">Unknown connection</option></select>
+  {#if isTauri()}<button class="secondary-button hidhide-button" onclick={manageHidHide}><Icon name="sliders" size={16} />Manage HidHide</button>{/if}
   <div class="mode-switch" role="group" aria-label="Devices presentation"><button aria-label="List" title="List" class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}><Icon name="grid" size={18} /></button><button aria-label="Topology" title="Topology" class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}><Icon name="network" size={18} /></button></div>
 </div>
 <div class="type-counts" aria-label="Component counts"><span aria-live="polite">{visible.length} / {components.length} components</span>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
@@ -154,6 +160,7 @@
       {#if selected.type === 'companion' && companionId}<button class="secondary-button" onclick={() => openCompanions(companionId)}>Manage companion</button>{/if}
       {#if integrationGameId(selected)}<button class="secondary-button" onclick={() => openIntegration(integrationGameId(selected)!)}>Integration settings</button>{/if}
       <button class="secondary-button" disabled={busy || !selected.forget.allowed} title={selected.forget.reason} onclick={() => reviewForget([selected])}>Forget device</button>
+      {#if isTauri() && selected.targets.some(target => target.kind === 'visibility')}<button class="secondary-button" onclick={manageHidHide}><Icon name="sliders" size={16} />Manage HidHide</button>{/if}
     </div>
     <div class="detail-summary">
       <section class="panel" aria-label="Device status">
@@ -232,6 +239,7 @@
   .type-counts {display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--soft);margin-bottom:18px}
   .mode-switch button {display:grid;place-items:center;width:38px;height:100%;padding:0;background:var(--surface);color:var(--soft);border:0;cursor:pointer}.mode-switch .chosen {background:var(--accent-bg);color:var(--accent)}
   .system-toolbar .search-field,.system-toolbar select {height:38px}
+  .hidhide-button {height:38px;flex-shrink:0}
   select {background:var(--input-bg);color:inherit;border:1px solid var(--line);padding:10px;border-radius:6px}.search-field {flex:1;min-width:180px}
   .system-list {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,248px),1fr));gap:14px;align-items:stretch}
   .system-card {display:flex;flex-direction:column;align-items:stretch;gap:18px;min-width:0;min-height:184px;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:12px;text-align:left;cursor:pointer;transition:background .15s,border-color .15s}

@@ -129,16 +129,31 @@ export class SystemInventoryRegistry {
     for (const observation of pruned.components) {
       if (hasTombstone(candidate, observation.id)) continue;
       const old = previous.get(observation.id);
-      next.push({ ...observation, evidence: [...new Set([...(old?.evidence.filter(e => e.startsWith('binding-source:')) ?? []), ...observation.evidence])], firstSeen: old?.firstSeen ?? now, lastSeen: observation.presence === 'connected' ? now : old?.lastSeen ?? 0 });
+      const current = { ...observation, evidence: [...new Set([...(old?.evidence.filter(e => e.startsWith('binding-source:')) ?? []), ...observation.evidence])], firstSeen: old?.firstSeen ?? now, lastSeen: observation.presence === 'connected' ? now : old?.lastSeen ?? 0 };
+      if (old?.targets.some(target => target.kind === 'visibility') && !observation.targets.some(target => target.kind === 'visibility') && !completeProviders.includes('visibility')) {
+        current.hidden = null;
+        current.targets = [...current.targets, ...old.targets.filter(target => target.kind === 'visibility')];
+        current.forget = { ...current.forget, allowed: false, reason: 'Refresh HidHide visibility before cleaning up this device.' };
+      }
+      next.push(current);
     }
     for (const c of previous.values()) if (!seen.has(c.id) && !hasTombstone(candidate, c.id)) {
       // A complete companion response lists all paired installations, including offline ones.
       if (c.provider === 'companions' && completeProviders.includes('companions')) continue;
-      const complete = completeProviders.includes(c.provider);
+      const visibilityRecord = c.targets.some(target => target.kind === 'visibility');
+      const complete = completeProviders.includes(c.provider) || (c.provider === 'native' && visibilityRecord && completeProviders.includes('visibility'));
       const remembered = this.remembered(c);
+      if (c.targets.some(target => target.kind === 'visibility')) {
+        // Only a fresh, successful policy inspection can retire cached HidHide evidence.
+        remembered.hidden = completeProviders.includes('visibility') ? false : null;
+        remembered.status = completeProviders.includes('visibility') ? 'No configured HidHide rule' : 'HidHide visibility unknown';
+      }
       if (complete) {
         remembered.presence = 'offline'; remembered.stale = false; remembered.observedAt = now;
         remembered.forget = { allowed: true, reason: '', effect: 'Forget this local remembered record. Remote storage and user bindings are retained. It can reappear when observed again.' };
+        if (c.targets.some(target => target.kind === 'visibility') && !completeProviders.includes('visibility')) {
+          remembered.forget = { ...remembered.forget, allowed: false, reason: 'Refresh HidHide visibility before cleaning up this device.' };
+        }
       }
       next.push(remembered);
     }
