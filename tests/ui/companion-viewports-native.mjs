@@ -108,8 +108,8 @@ test('native companion editor authors, validates, previews and saves multiple vi
     checks.push('Dragging the viewport resize handle updates its bounds and scales its widgets');
     await editor.locator('.panel-canvas').screenshot({ path: resolve(artifacts, 'multi-viewport-canvas.png') });
 
-    await editor.getByRole('button', { name: 'Save panel', exact: true }).click();
-    await expect(editor.getByRole('button', { name: 'Save panel', exact: true })).toBeEnabled({ timeout: 30_000 });
+    await editor.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(editor.getByRole('button', { name: 'Save', exact: true })).toBeEnabled({ timeout: 30_000 });
     await expect(editor.locator('.layout-error')).toHaveCount(0);
     await expect(editor.getByText('Edit the panel layout.', { exact: true })).toBeVisible();
     await editor.getByRole('button', { name: 'Back to Panels', exact: true }).click();
