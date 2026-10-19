@@ -268,7 +268,11 @@ def main():
         evidence.update(actualProcess=identity, appliedOwner=run["owner"], appliedSnapshot=run["appliedSnapshot"])
         evidence["checks"].append("Manual saved profile launches the installed Steam game and binds its exact PID/executable/creation identity into the owned desktop journal")
         evidence["gameFocus"] = mapping.wait_for(lambda: windows.focus(identity), "Verified game did not expose a focusable main window", seconds=90)
-        mapping.wait_for(lambda: desktop(service)["runtime"]["state"] == "active", "Actual game foreground did not activate application scope")
+        def focused():
+            runtime = desktop(service)["runtime"]
+            expected = "waiting" if runtime["waitingNeutral"] else "active"
+            return runtime["state"] == expected
+        mapping.wait_for(focused, "Actual game foreground did not establish an eligible application scope")
         peer.input([dict(controlId="flight-input-0", value=False)])
         mapping.wait_for(lambda: "route-key" not in desktop(service)["runtime"]["waitingNeutral"], "Fresh game baseline did not arm the route")
         initial_presses = len(press_outcomes(desktop(service)))
@@ -294,13 +298,13 @@ def main():
         assert not native.native_press(native.injected_events(args.receiver)[first_event:]), "Out-of-scope receiver observed a new native press"
         assert windows.foreground()["identity"]["pid"] == receiver_identity["pid"]
         returned_focus = mapping.wait_for(lambda: windows.focus(identity, evidence["gameFocus"]["window"]), "Could not restore the exact game window", seconds=15)
-        returned = mapping.wait_for(lambda: (value if value["runtime"]["state"] == "active" and "route-key" in value["runtime"]["waitingNeutral"] else None) if (value := desktop(service)) else None,
+        returned = mapping.wait_for(lambda: (value if value["runtime"]["state"] == "waiting" and "route-key" in value["runtime"]["waitingNeutral"] else None) if (value := desktop(service)) else None,
             "Returning to the game did not require a fresh neutral baseline")
         press_count = len(press_outcomes(returned))
         peer.input([dict(controlId="flight-input-0", value=True)])
         time.sleep(.2)
         repeated = desktop(service)
-        assert clean(repeated, "active") and "route-key" in repeated["runtime"]["waitingNeutral"] and len(press_outcomes(repeated)) == press_count, repeated
+        assert clean(repeated, "waiting") and "route-key" in repeated["runtime"]["waitingNeutral"] and len(press_outcomes(repeated)) == press_count, repeated
         peer.input([dict(controlId="flight-input-0", value=False)])
         mapping.wait_for(lambda: "route-key" not in desktop(service)["runtime"]["waitingNeutral"], "Fresh neutral in returned game did not rearm")
         peer.input([dict(controlId="flight-input-0", value=True)])

@@ -46,7 +46,9 @@ backend's independent readiness checks. A failed live activation never silently
 turns into recording preview.
 
 Focus loss cancels pending actions and releases this profile's holds. Returning
-requires a fresh released/neutral control before rearming. Stop is available in
+requires a fresh released/neutral control before rearming. **Waiting** means
+some controls still need to be released or centered; actions already armed can
+continue. Stop is available in
 Profiles and from the tray as **Stop keyboard and mouse output**. It pauses the
 shared profile session and suppresses automatic rearming. Resume and Apply stay
 explicit.

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import time
 import urllib.request
@@ -54,12 +55,26 @@ def injected_events(path):
     return [event for event in receiver(path)["observations"] if event.get("injectedMarker") is True]
 
 
-def complete_edges(events, down):
+def complete_key_edges(events, down):
     key_message = 256 if down else 257
-    mouse_message = 513 if down else 514
-    return (all(any(event["message"] == key_message and event["scanCode"] == scan and event["extended"] == extended
+    return all(any(event["message"] == key_message and event["scanCode"] == scan and event["extended"] == extended
         for event in events) for scan, extended in [(77, 1), (29, 0), (42, 0), (75, 1)])
-        and any(event["message"] == mouse_message for event in events))
+
+
+def complete_edges(events, down):
+    mouse_message = 513 if down else 514
+    return complete_key_edges(events, down) and any(event["message"] == mouse_message for event in events)
+
+
+def mouse_state_after(snapshot, identity, down, sequence, at_us, focus_requests=None):
+    """Require new eligible-foreground OS state; never infer a client mouse event."""
+    state = snapshot.get("mouseButtonState") or {}
+    if (snapshot.get("identity") == identity and state.get("available") is True
+        and state.get("swapButtons") is False and state.get("leftButtonDown") is down
+        and int(state.get("sequence", "0")) > sequence and int(state.get("atUs", "0")) > at_us
+        and (focus_requests is None or snapshot.get("focusRequests", 0) > focus_requests)):
+        return state
+    return None
 
 
 def key_edge(events, scan, down, extended=0):
@@ -73,6 +88,34 @@ def native_press(events):
 
 def desktop_status(service):
     return mapping.state(service, "profile_desktop_status", "desktop")
+
+
+def native_input_workers():
+    """Read-only fail-closed worker absence check; never kill matching processes."""
+    assert os.name == "nt", "Native ownership proof requires Windows process inspection"
+    script = "$ErrorActionPreference='Stop'; $workers=@(Get-CimInstance Win32_Process -Filter \"Name = 'osg-cockpit.exe' OR Name = 'cockpit.exe'\" | Where-Object {$_.CommandLine -like '*--osg-desktop-input-worker*'} | ForEach-Object {[pscustomobject]@{pid=$_.ProcessId;name=$_.Name}}); ConvertTo-Json -InputObject $workers -Compress"
+    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, timeout=15, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    workers = json.loads(result.stdout)
+    assert isinstance(workers, list), "Native worker inspection returned no bounded process list"
+    return workers
+
+
+def stopped_ownership(service, apply_attempted):
+    """Require native session, ledger and process proof before destroying context."""
+    profile, desktop = service.profiles("profile_status")["profileSession"], desktop_status(service)
+    assert profile["state"] == "stopped" and profile["owner"] is None, profile
+    runtime = desktop.get("runtime")
+    if runtime is None:
+        assert not apply_attempted, "No native ledger proves cleanup after attempted Apply"
+    else:
+        backend = runtime["backend"]
+        assert runtime["state"] == "stopped", runtime
+        assert backend["held"] == backend["possibleHeld"] == backend["owners"] == backend["runs"] == [], backend
+        assert backend["cleanupComplete"] is True and backend["uncertain"] is False and backend["inFlight"] is None, backend
+    workers = native_input_workers()
+    assert workers == [], "A native input worker still owns the session"
+    return dict(profileSession=profile, desktop=compact_desktop(desktop), nativeInputWorkers=workers)
 
 
 def compact_desktop(status):
@@ -89,9 +132,22 @@ def focus_return(service, peer, first, second, evidence):
     first_identity = receiver(first)["identity"]
     assert first_identity["pid"] != second_identity["pid"]
     assert first_identity["executable"] == second_identity["executable"]
+    first_baseline = mapping.wait_for(lambda: receiver(first).get("mouseButtonState"), "Receiver has no bounded OS mouse-state observer")
+    assert first_baseline["swapButtons"] is False, "OS mouse-state acceptance requires unswapped physical/logical buttons"
     first_start, second_start = len(injected_events(first)), len(injected_events(second))
     peer.input([dict(controlId="flight-input-0", value=True)])
     mapping.wait_for(lambda: complete_edges(injected_events(first)[first_start:], True), "Focus test hold did not reach scoped receiver")
+    held_snapshot = mapping.wait_for(lambda: value if (value := receiver(first)).get("mouseButtonState") else None,
+        "Scoped receiver did not publish a complete OS mouse-state snapshot")
+    held_baseline = held_snapshot["mouseButtonState"]
+    mouse_down_at = max(int(event["atUs"]) for event in held_snapshot["observations"]
+        if event.get("injectedMarker") is True and event["message"] == 513)
+    held_mouse_state = mapping.wait_for(lambda: mouse_state_after(receiver(first), first_identity, True,
+        int(held_baseline["sequence"]), max(int(held_baseline["atUs"]), mouse_down_at)),
+        "Scoped receiver did not freshly observe the OS left mouse button held")
+    second_baseline = mapping.wait_for(lambda: value if (value := receiver(second)).get("mouseButtonState") else None,
+        "Second receiver did not publish a complete OS mouse-state snapshot")
+    second_mouse_baseline = second_baseline["mouseButtonState"]
     second.with_suffix(".focus").write_text("focus")
 
     def scope_paused():
@@ -99,8 +155,13 @@ def focus_return(service, peer, first, second, evidence):
         runtime, backend = status["runtime"], status["runtime"]["backend"]
         return status if runtime["state"] == "paused" and backend["held"] == [] and backend["possibleHeld"] == [] and backend["cleanupComplete"] and not backend["uncertain"] else None
     paused = mapping.wait_for(scope_paused, "Application focus loss did not pause output and clear native ownership")
-    mapping.wait_for(lambda: complete_edges(injected_events(second)[second_start:], False), "Second foreground receiver did not observe focus-loss key/chord/mouse cleanup")
-    assert not native_press(injected_events(second)[second_start:]), "Out-of-scope receiver observed a new native press"
+    mapping.wait_for(lambda: complete_key_edges(injected_events(second)[second_start:], False), "Second foreground receiver did not observe all four focus-loss key releases")
+    released_mouse_state = mapping.wait_for(lambda: mouse_state_after(receiver(second), second_identity, False,
+        int(second_mouse_baseline["sequence"]), int(second_mouse_baseline["atUs"]), second_baseline["focusRequests"]),
+        "Second eligible foreground receiver did not freshly observe the OS left mouse button released")
+    second_cleanup_events = injected_events(second)[second_start:]
+    second_observed_mouse_up = any(event["message"] == 514 for event in second_cleanup_events)
+    assert not native_press(second_cleanup_events), "Out-of-scope receiver observed a new native press"
     first_return = len(injected_events(first))
     first.with_suffix(".focus").write_text("focus")
     routes = {"route-key", "route-chord", "route-mouse"}
@@ -108,7 +169,7 @@ def focus_return(service, peer, first, second, evidence):
     def waiting_after_return():
         status = desktop_status(service)
         runtime = status["runtime"]
-        return status if runtime["state"] == "active" and runtime["focusBoundaryUs"] is not None and routes.issubset(runtime["waitingNeutral"]) else None
+        return status if runtime["state"] == "waiting" and runtime["focusBoundaryUs"] is not None and routes.issubset(runtime["waitingNeutral"]) else None
     returned = mapping.wait_for(waiting_after_return, "Returning application scope did not require fresh neutral evidence")
     time.sleep(.15)
     assert not native_press(injected_events(first)[first_return:]), "Focus return replayed the held input"
@@ -132,9 +193,12 @@ def focus_return(service, peer, first, second, evidence):
     assert not native_press(injected_events(second)[second_start:]), "Second receiver observed an out-of-scope native press"
     evidence["focusReturn"] = dict(firstIdentity=first_identity, secondIdentity=second_identity,
         beforeFirstEvent=first_start, beforeSecondEvent=second_start, firstReturnEvent=first_return, rearmedFirstEvent=rearmed_start,
+        heldMouseButtonState=held_mouse_state, releasedMouseButtonState=released_mouse_state,
+        secondReceiverObservedMouseUp=second_observed_mouse_up,
+        mouseCleanupBoundary="Fresh eligible-foreground OS VK_LBUTTON high-bit state changed from down to up with unswapped buttons; no focus-loss client mouse-up recipient claim",
         paused=compact_desktop(paused), returnedHeld=compact_desktop(returned), repeatedTrue=compact_desktop(repeated), freshNeutral=compact_desktop(neutral),
         firstObservations=injected_events(first)[first_start:], secondObservations=injected_events(second)[second_start:])
-    evidence["checks"].append("Actual application focus loss clears native held ownership and the second receive-only process observes cleanup; focus return and repeated true stay disarmed until fresh false then true")
+    evidence["checks"].append("Actual application focus loss clears native ownership and OS left-button state; the second eligible foreground receiver observes all four keyboard releases, without claiming a mouse-up recipient; focus return and repeated true stay disarmed until fresh false then true")
 
 
 def macro_focus_return(service, peer, owner, first, second, evidence):
@@ -170,7 +234,8 @@ def macro_focus_return(service, peer, owner, first, second, evidence):
 
     def no_native_hold(status, state):
         runtime, backend = status["runtime"], status["runtime"]["backend"]
-        return (runtime["state"] == state and backend["held"] == [] and backend["possibleHeld"] == []
+        eligible = runtime["state"] in ("active", "waiting") if state == "focused" else runtime["state"] == state
+        return (eligible and backend["held"] == [] and backend["possibleHeld"] == []
             and backend["cleanupComplete"] and not backend["uncertain"])
 
     def cancelled_edges():
@@ -214,12 +279,12 @@ def macro_focus_return(service, peer, owner, first, second, evidence):
     assert known_false(intermediate["output"]), "The original native macro did not reach its intermediate release while out of scope"
     assert int(intermediate["capturedUs"]) < start_us + MACRO_STEPS[2]["afterUs"] - 1_000_000, "Focus-return setup exceeded the macro's generous pending-step window"
     first.with_suffix(".focus").write_text("focus")
-    returned = mapping.wait_for(lambda: (status if status["runtime"]["state"] == "active" and "route-macro" in status["runtime"]["waitingNeutral"] else None)
+    returned = mapping.wait_for(lambda: (status if status["runtime"]["state"] == "waiting" and "route-macro" in status["runtime"]["waitingNeutral"] else None)
         if (status := desktop_status(service)) else None, "Macro focus return did not require fresh source neutral")
     send(False)
     def fresh_neutral():
         status, sample = desktop_status(service), inspection()
-        return (sample, status) if known_false(sample["input"]) and "route-macro" not in status["runtime"]["waitingNeutral"] and no_native_hold(status, "active") else None
+        return (sample, status) if known_false(sample["input"]) and "route-macro" not in status["runtime"]["waitingNeutral"] and no_native_hold(status, "focused") else None
     neutral, neutral_status = mapping.wait_for(fresh_neutral, "Fresh macro root neutral did not rearm without resuming its pending timer")
     cancelled_edges()
     time.sleep(.05)
@@ -232,7 +297,7 @@ def macro_focus_return(service, peer, owner, first, second, evidence):
     saw_original_later_press = False
     def check_cancelled(sample, status):
         nonlocal saw_original_later_press
-        assert no_native_hold(status, "active") and "route-macro" not in status["runtime"]["waitingNeutral"], "Fresh neutral allowed an old macro timer to regain native ownership"
+        assert no_native_hold(status, "focused") and "route-macro" not in status["runtime"]["waitingNeutral"], "Fresh neutral allowed an old macro timer to regain native ownership"
         cancelled_edges()
         saw_original_later_press |= known_true(sample["output"])
     past_old_deadline, cancelled_status = advance_to(start_us + MACRO_STEPS[-1]["afterUs"] + 500_000, False, check_cancelled)
@@ -251,14 +316,14 @@ def macro_focus_return(service, peer, owner, first, second, evidence):
     rearmed, new_outcome = mapping.wait_for(new_hold, "Fresh neutral then true did not start a new native desktop macro")
     new_start_us = int(new_outcome["delivery"]["atUs"])
     def check_new_macro(_sample, status):
-        assert status["runtime"]["state"] == "active", "Fresh macro lost verified application focus"
+        assert status["runtime"]["state"] in ("active", "waiting") and "route-macro" not in status["runtime"]["waitingNeutral"], "Fresh macro lost verified application focus or neutral arming"
         assert not native_press(injected_events(second)[second_start:]), "Fresh macro pressed outside application scope"
         messages = [event["message"] for event in edges(first, rearmed_start)]
         assert messages == [256, 257, 256, 257][:len(messages)], "Fresh macro produced duplicate or reordered KeyB edges"
     completed, completed_status = advance_to(new_start_us + MACRO_STEPS[-1]["afterUs"] + 500_000, True, check_new_macro)
     send(False)
     mapping.wait_for(lambda: [event["message"] for event in edges(first, rearmed_start)] == [256, 257, 256, 257], "Fresh desktop macro did not complete its two KeyB press/release pairs")
-    assert no_native_hold(desktop_status(service), "active")
+    assert no_native_hold(desktop_status(service), "focused")
     evidence["macroFocusReturn"] = dict(controlId=MACRO_CONTROL, key=MACRO_KEY, steps=MACRO_STEPS,
         initialNativeOutcome=first_outcome, paused=compact_desktop(paused), intermediate=intermediate,
         returned=compact_desktop(returned), freshNeutral=neutral, freshNeutralStatus=compact_desktop(neutral_status),
@@ -343,12 +408,16 @@ def main():
     instance = "desktop-acceptance-" + uuid.uuid4().hex[:12]
     before = service.profiles("profile_status")["profileSession"]
     desktop_before = mapping.state(service, "profile_desktop_status", "desktop")
+    if args.inject:
+        assert before["state"] == "stopped" and before["owner"] is None, "Another native profile owns the session"
+        assert native_input_workers() == [], "Another native input worker is active"
     settings_existed = args.desktop_settings_file is not None and args.desktop_settings_file.exists()
     settings_before = args.desktop_settings_file.read_bytes() if settings_existed else None
     evidence = dict(actualNativeCockpit=True, source="Authenticated pinned-CA loopback WSS peer", injected=False,
         virtualControllers=0, productionQualified=False, checks=[], inputsSent=[],
         timing="Python monotonic input-send timestamps and receiver-local microseconds are separate uncorrelated clocks; no latency claim.")
     peer = None
+    apply_attempted = False
     listener_enabled = False
     try:
         status = companion.operator(service, "companion_status")
@@ -379,6 +448,7 @@ def main():
             assert selected["application"]["pid"] == identity["pid"], selected
             mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
             service.profiles("profile_pause", paused=False)
+            apply_attempted = True
             owner = mapping.apply(service, saved)
             time.sleep(.2)
             initial_count = len(injected_events(args.receiver))
@@ -437,6 +507,15 @@ def main():
                 dict(controlId="flight-input-5", value=False), dict(controlId=MACRO_CONTROL, value=False), dict(controlId="flight-input-2", value=0)])
             mapping.wait_for(lambda: not desktop_status(service)["runtime"]["waitingNeutral"], "Fresh neutral controls did not rearm every route after the macro focus check")
 
+            # Mouse messages go to the cursor location, independently of the
+            # keyboard foreground scope. Re-center this owned receive-only
+            # client before another mouse hold, avoiding title-bar move loops.
+            focus_requests = receiver(args.receiver).get("focusRequests", 0)
+            args.receiver.with_suffix(".focus").write_text("focus-and-center")
+            positioned = mapping.wait_for(lambda: (value if value.get("focusRequests", 0) > focus_requests
+                and value.get("clientCursor", {}).get("inside") is True else None)
+                if (value := receiver(args.receiver)) else None, "Receive-only client cursor was not positioned for the lease check")
+            evidence["receiverClientBeforeLease"] = positioned["clientCursor"]
             loss_count = len(injected_events(args.receiver))
             evidence["inputsSent"].append(dict(controlId="flight-input-0", value=True, monotonicNs=str(time.perf_counter_ns())))
             peer.input([dict(controlId="flight-input-0", value=True), dict(controlId="flight-input-2", value=.5)])
@@ -476,11 +555,23 @@ def main():
         cleanup_errors = []
         def cleanup(label, operation):
             try:
-                operation()
+                return operation()
             except Exception as error:
                 cleanup_errors.append(label + ": " + str(error))
+        ownership_clear = not args.inject
         if args.inject:
-            cleanup("Stop native profile", lambda: service.profiles("profile_stop"))
+            stop_confirmed = cleanup("Stop native profile", lambda: service.profiles("profile_stop")) is not None
+        if peer:
+            cleanup("Close WSS peer", peer.close)
+        if args.inject:
+            def prove_cleanup():
+                assert stop_confirmed, "Native Stop did not succeed; preserve recovery settings and receivers"
+                evidence["ownershipCleanupProof"] = stopped_ownership(service, apply_attempted)
+                return True
+            ownership_clear = cleanup("Prove stopped native ownership before restoring preferences", prove_cleanup) is True
+            evidence["ownershipCleanupConfirmed"] = ownership_clear
+            evidence["needsRootCleanup"] = not ownership_clear
+        if args.inject and ownership_clear:
             cleanup("Restore local desktop enablement/scope", lambda: mapping.state(service, "profile_desktop_configure", "desktop", enabled=desktop_before["enabled"], scope=desktop_before["scope"]))
             if args.desktop_settings_file:
                 def restore_settings():
@@ -489,10 +580,9 @@ def main():
                     else:
                         args.desktop_settings_file.unlink(missing_ok=True)
                 cleanup("Restore exact local desktop preferences", restore_settings)
-        if peer:
-            cleanup("Close WSS peer", peer.close)
+        if peer and ownership_clear:
             cleanup("Revoke test WSS identity", lambda: companion.operator(service, "companion_revoke", companionId=instance))
-        if not listener_enabled:
+        if ownership_clear and not listener_enabled:
             cleanup("Restore disabled companion listener", lambda: companion.operator(service, "companion_disable"))
         def verify_cleanup():
             profile = service.profiles("profile_status")["profileSession"]
@@ -506,12 +596,9 @@ def main():
                 assert args.desktop_settings_file.exists() == settings_existed
                 assert not settings_existed or args.desktop_settings_file.read_bytes() == settings_before, "Desktop preference bytes were not restored"
                 evidence["exactDesktopPreferencesRestored"] = True
-            runtime = desktop.get("runtime") or {}
-            backend = runtime.get("backend") or {}
-            assert runtime.get("state") == "stopped" and backend.get("held") == [] and backend.get("possibleHeld") == [] and backend.get("runs") == [], runtime
-            assert backend.get("cleanupComplete") and not backend.get("uncertain"), backend
+            evidence["finalOwnershipProof"] = stopped_ownership(service, apply_attempted)
             assert listener.get("enabled", False) == listener_enabled, listener
-        if args.inject:
+        if args.inject and ownership_clear:
             cleanup("Verify stopped native session and restored preferences/listener", verify_cleanup)
         evidence["cleanupErrors"] = cleanup_errors
         args.output.parent.mkdir(parents=True, exist_ok=True)
