@@ -136,7 +136,12 @@
       if (region) selectedViewportId = region.id;
     }
   }
-  function selectViewport(id: string) { selectedViewportId = id; select([]); propertiesOpen = true; }
+  function selectViewport(id: string) {
+    const deselect = propertiesOpen && !selected.length && selectedViewportId === id;
+    selectedViewportId = id;
+    select([]);
+    propertiesOpen = !deselect;
+  }
   function slideProperties(_node: HTMLElement) {
     return { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
       css: (t: number) => `transform:translateX(${(1-t)*100}%)` };
@@ -389,7 +394,7 @@
       </div></details>
       <details class="editor-accordion" name="panel-editor-tools" open><summary>Viewports</summary><div class="accordion-content">
       <p class="hint">Divide one companion screen into areas for your widgets.</p>
-      <div class="viewport-list">{#each regions as region}<button class:active={region.id === activeViewport.id} aria-pressed={region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}>{region.label}<small>{Math.round(region.bounds.width * usableWidth)} × {Math.round(region.bounds.height * usableHeight)}</small></button>{/each}</div>
+      <div class="viewport-list">{#each regions as region}<button class:active={propertiesOpen && !selected.length && region.id === activeViewport.id} aria-pressed={propertiesOpen && !selected.length && region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}>{region.label}<small>{Math.round(region.bounds.width * usableWidth)} × {Math.round(region.bounds.height * usableHeight)}</small></button>{/each}</div>
       <button class="add-viewport" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={14} />Add viewport</button>
       <p class="hint">Uses free space, or splits the selected viewport.</p>
       </div></details>
@@ -444,7 +449,7 @@
       {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
       <p class="hint">{preview ? 'Local requested values only. Press controls to preview; no network or virtual device is started.' : 'Drag viewport labels to move areas; drag a corner to resize. Widgets must stay inside a viewport. Shift-click selects several widgets.'}</p>
       <div class="panel-properties-layout">
-      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={activeViewport.id} onselectviewport={selectViewport} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
+      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={propertiesOpen && !selected.length ? activeViewport.id : ''} onselectviewport={selectViewport} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
       {#if propertiesOpen}
     <aside class="properties-overlay" aria-label="Widget properties" transition:slideProperties><button class="properties-close" aria-label="Close properties" title="Close properties" onclick={()=>select([])}><Icon name="close" size={18}/></button><h3>Properties</h3>
       {#if widget}
@@ -498,7 +503,7 @@
 <style>
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
-  .panel-properties-layout{position:relative;overflow:hidden;min-width:0}.properties-overlay{position:absolute;inset:0 0 0 auto;width:30%;box-sizing:border-box;padding:20px;overflow:auto;background:var(--surface);border-left:1px solid var(--line);box-shadow:-12px 0 32px #0003;z-index:20}.properties-overlay > h3{margin-top:0}.properties-close{float:right;display:grid;place-items:center;padding:6px;margin:-6px -6px 8px 12px;background:transparent;border:0;color:var(--muted)}
+  .panel-properties-layout{position:relative;overflow:hidden;min-width:0}.properties-overlay{position:absolute;inset:0 0 0 auto;width:50%;box-sizing:border-box;padding:20px;overflow:auto;background:var(--surface);border-left:1px solid var(--line);box-shadow:-12px 0 32px #0003;z-index:20}.properties-overlay > h3{margin-top:0}.properties-close{float:right;display:grid;place-items:center;padding:6px;margin:-6px -6px 8px 12px;background:transparent;border:0;color:var(--muted)}
   .asset-import{display:none}.asset-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.asset-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px;border:1px solid var(--line);border-radius:5px}.asset-list img{width:30px;height:30px;object-fit:contain;flex-shrink:0;background:var(--bg);border-radius:3px}.asset-list li > div{flex:1;min-width:0}.asset-list strong,.asset-list small{display:block;font-size:10px;overflow-wrap:anywhere}.asset-list small{font-size:9px;color:var(--muted);margin-top:4px}.asset-list .assets-empty{font-size:11px;color:var(--muted);border-style:dashed}.asset-delete{display:grid;place-items:center;flex-shrink:0;padding:5px;opacity:0;pointer-events:none;color:#e39b9b}.asset-list li:hover .asset-delete,.asset-list li:focus-within .asset-delete{opacity:1;pointer-events:auto}@media(hover:none){.asset-delete{opacity:1;pointer-events:auto}}
   .layout-tools button{display:grid;place-items:center;width:36px;height:36px;padding:0}.layout-tools button.active{color:var(--accent);background:var(--accent-bg);border-color:var(--accent)}
   .workspace > aside.panel-library{padding:0}.editor-accordion{margin:0;border-bottom:1px solid var(--line);interpolate-size:allow-keywords}.editor-accordion:last-child{border-bottom:0}.editor-accordion > summary{padding:14px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}.accordion-content{padding:0 14px 14px;display:grid;gap:8px;min-width:0}.accordion-content .hint,.accordion-content label{margin:0}.accordion-content input,.accordion-content select{width:100%}.accordion-content button{max-width:100%}

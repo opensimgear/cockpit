@@ -29,7 +29,7 @@
   let contentWidth = $state(0);
   let contentHeight = $state(0);
   let drag = $state<{ pointerId: number; id: string; x: number; y: number; bounds: Bounds; preview: Bounds; resize: boolean; moved: boolean; shift: boolean } | null>(null);
-  let viewportDrag = $state<{ pointerId: number; id: string; x: number; y: number; bounds: Bounds; preview: Bounds; resize: boolean } | null>(null);
+  let viewportDrag = $state<{ pointerId: number; id: string; x: number; y: number; bounds: Bounds; preview: Bounds; resize: boolean; moved: boolean } | null>(null);
   const shownRegions = $derived(regions.map(region => ({ ...region, bounds: viewportDrag?.id === region.id ? viewportDrag.preview : region.bounds })));
   const viewportError = $derived(viewportDrag ? viewportLayoutError(viewportDrag.id, viewportDrag.preview) : '');
   const directions = [{ label: 'Up left', icon: '↖', value: 7 }, { label: 'Up', icon: '↑', value: 0 }, { label: 'Up right', icon: '↗', value: 1 }, { label: 'Left', icon: '←', value: 6 }, { label: 'Neutral', icon: '•', value: -1 }, { label: 'Right', icon: '→', value: 2 }, { label: 'Down left', icon: '↙', value: 5 }, { label: 'Down', icon: '↓', value: 4 }, { label: 'Down right', icon: '↘', value: 3 }];
@@ -127,7 +127,14 @@
     if (!widgetFits(bounds)) { onerror?.('Widgets must stay fully inside a viewport. Move or resize the widget to fit within one viewport.'); return; }
     onlayout?.(id, { ...bounds });
   }
-  function selectViewport(id: string) { onselect?.([]); onselectviewport?.(id); }
+  function selectViewport(id: string) {
+    if (selectedIds.length) onselect?.([]);
+    else onselectviewport?.(id);
+  }
+  function canvasRelease(event: PointerEvent) {
+    if (mode !== 'edit' || event.button !== 0 || (event.target as HTMLElement).closest('.widget,.viewport-hit,.viewport-outline')) return;
+    onselect?.([]);
+  }
   function viewportLayoutError(id: string, bounds: Bounds) {
     if (regions.some(region => region.id !== id && boundsOverlap(region.bounds, bounds))) return 'Viewports must not overlap. Move or resize this viewport into an empty area.';
     return '';
@@ -139,20 +146,24 @@
   }
   function viewportStart(event: PointerEvent, id: string, bounds: Bounds, resize = false) {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
-    event.preventDefault(); event.stopPropagation(); selectViewport(id);
-    if (!onviewportbounds) return;
-    viewportDrag = { pointerId: event.pointerId, id, x: event.clientX, y: event.clientY, bounds: { ...bounds }, preview: { ...bounds }, resize };
+    event.preventDefault(); event.stopPropagation();
+    viewportDrag = { pointerId: event.pointerId, id, x: event.clientX, y: event.clientY, bounds: { ...bounds }, preview: { ...bounds }, resize, moved: false };
     try { (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); } catch { viewportDrag = null; }
   }
   function viewportMove(event: PointerEvent) {
     if (!viewportDrag || event.pointerId !== viewportDrag.pointerId || !content) return;
+    if (!viewportDrag.moved && Math.hypot(event.clientX - viewportDrag.x, event.clientY - viewportDrag.y) < 4) return;
+    viewportDrag.moved = true;
+    if (!onviewportbounds) return;
     const rect = content.getBoundingClientRect();
     viewportDrag.preview = (viewportDrag.resize ? resizedBounds : movedBounds)(viewportDrag.bounds, (event.clientX - viewportDrag.x) / rect.width, (event.clientY - viewportDrag.y) / rect.height, document.presentation.grid);
   }
   function viewportFinish(event: PointerEvent) {
     if (!viewportDrag || event.pointerId !== viewportDrag.pointerId) return;
     const completed = viewportDrag; viewportDrag = null;
-    if (boundsChanged(completed.bounds, completed.preview)) applyViewportLayout(completed.id, completed.preview);
+    if (completed.moved) {
+      if (boundsChanged(completed.bounds, completed.preview)) applyViewportLayout(completed.id, completed.preview);
+    } else if (!completed.resize) selectViewport(completed.id);
   }
   function viewportKey(event: KeyboardEvent, id: string, bounds: Bounds, resize = false) {
     if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); selectViewport(id); return; }
@@ -200,7 +211,7 @@
 
 <svelte:window onblur={() => stop('Window lost focus')} onpagehide={() => stop('Page unloading')} />
 <svelte:document onvisibilitychange={visibility} />
-<div class="panel-canvas" class:editing={mode === 'edit'} class:disarmed={!previewState.armed && mode === 'preview'} style:aspect-ratio={`${viewport?.width ?? 1280}/${viewport?.height ?? 800}`} style:background-image={background ? `url("${background}")` : undefined} aria-label={`${document.ui.title} panel`}>
+<div class="panel-canvas" role="region" onpointerup={canvasRelease} class:editing={mode === 'edit'} class:disarmed={!previewState.armed && mode === 'preview'} style:aspect-ratio={`${viewport?.width ?? 1280}/${viewport?.height ?? 800}`} style:background-image={background ? `url("${background}")` : undefined} aria-label={`${document.ui.title} panel`}>
   <div class="safe-area" style:top={`${insets.top * 100}%`} style:right={`${insets.right * 100}%`} style:bottom={`${insets.bottom * 100}%`} style:left={`${insets.left * 100}%`} bind:this={content} style:--grid-x={`${100 / document.presentation.grid.columns}%`} style:--grid-y={`${100 / document.presentation.grid.rows}%`}>{#if mode === 'edit'}<span class="safe-label">CONTENT AREA · {viewport?.width ?? 1280} × {viewport?.height ?? 800}</span>{/if}
     {#if mode === 'edit'}
       {#each shownRegions as region (region.id)}
