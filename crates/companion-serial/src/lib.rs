@@ -35,8 +35,19 @@ fn panel_retry_allowed(blocked:Option<&str>,current:Option<&str>)->bool{
 }
 fn clear_recovered_error(state:&mut Value,status:Option<&str>){
     if matches!(status,Some("live-armed"|"live-disarmed"|"awaiting-assignment")){
-        if let Some(state)=state.as_object_mut(){state.remove("lastHostError");}
+        if let Some(state)=state.as_object_mut(){state.remove("lastHostError");state.remove("deviceStatus");}
     }
+}
+fn refresh_panel_recovery(state:&mut Value,device:&Value,blocked:&mut Option<String>){
+    // A rejection applies only until this panel succeeds or its decoder changes.
+    // Keeping it after recovery would suppress reconnects on a later USB fault.
+    let recovered=matches!(device["status"].as_str(),Some("live-armed"|"live-disarmed"|"awaiting-assignment"));
+    let updated=state["device"]["firmwareVersion"].as_str().zip(device["firmwareVersion"].as_str()).is_some_and(|(previous,current)|previous!=current);
+    if recovered||updated{
+        *blocked=None;
+        if let Some(state)=state.as_object_mut(){state.remove("deviceStatus");}
+    }
+    clear_recovered_error(state,device["status"].as_str());
 }
 fn same_usb_candidate(candidate: &Value, current: &Value) -> bool {
     ["port", "vid", "pid", "serial"].iter().all(|key| candidate[key] == current[key])
@@ -651,6 +662,7 @@ fn worker(
                                             let host=hub.command(&json!({"command":"companion_status"}))?;
                                             let paired = host["clients"].as_array().is_some_and(|rows| rows.iter().any(|c|c["companionId"]==v["companionId"]));
                                             let assigned=assignment_hash(&host,v["companionId"].as_str().unwrap_or(""));
+                                            refresh_panel_recovery(&mut public.lock().unwrap_or_else(|p|p.into_inner()),&v,&mut blocked_panel);
                                             let retry_allowed=panel_retry_allowed(blocked_panel.as_deref(),assigned.as_deref());
                                             if v["setupSaved"] == true && (!ready || (paired && retry_allowed && v["connectionMode"]=="serial" && matches!(v["status"].as_str(),Some("offline"|"error")) && last_connect.is_none_or(|at|at.elapsed()>Duration::from_secs(3)))) {
                                                 last_connect=Some(Instant::now());
@@ -664,7 +676,6 @@ fn worker(
                                                     &json!({"command":"connect","unixMs":unix}),
                                                 )?;
                                             }
-                                            clear_recovered_error(&mut public.lock().unwrap_or_else(|p|p.into_inner()),v["status"].as_str());
                                             ready = true;
                                             last_status = Some(Instant::now());
                                             set(public, "ready", json!(true));
@@ -764,6 +775,24 @@ fn worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovered_panel_and_updated_firmware_release_stale_rejection(){
+        for status in ["live-armed","live-disarmed","awaiting-assignment"]{
+            let mut state=json!({"device":{"firmwareVersion":"old"},"deviceStatus":"panel-unsupported-corrupt-or-over-budget","lastHostError":"Old error"});
+            let mut blocked=Some("panel-a".to_owned());
+            refresh_panel_recovery(&mut state,&json!({"status":status,"firmwareVersion":"old"}),&mut blocked);
+            assert!(panel_retry_allowed(blocked.as_deref(),Some("panel-a")));
+            assert!(state.get("deviceStatus").is_none());
+            assert!(state.get("lastHostError").is_none());
+        }
+        let mut state=json!({"device":{"firmwareVersion":"old"},"deviceStatus":"panel-unsupported-corrupt-or-over-budget"});
+        let mut blocked=Some("panel-a".to_owned());
+        refresh_panel_recovery(&mut state,&json!({"status":"error","firmwareVersion":"old"}),&mut blocked);
+        assert!(!panel_retry_allowed(blocked.as_deref(),Some("panel-a")));
+        refresh_panel_recovery(&mut state,&json!({"status":"error","firmwareVersion":"new"}),&mut blocked);
+        assert!(panel_retry_allowed(blocked.as_deref(),Some("panel-a")));
+        assert!(state.get("deviceStatus").is_none());
+    }
     #[test]
     fn unsupported_panel_waits_for_an_assignment_change_before_retry(){
         assert!(panel_retry_allowed(None,Some("panel-a")));
