@@ -62,6 +62,7 @@
   let games = $state<GamesState>();
   let gamesStale = $state(true);
   let selectedGameId = $state<GameId | ''>('');
+  let selectedCompanionId = $state('');
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
   let devicesPanel = $state.raw<{showInventory:()=>void}>();
   let profilesPanel = $state.raw<{requestNavigation:(continueNavigation:()=>void)=>void}>();
@@ -86,7 +87,12 @@
     settingsVisit = null;
     if (gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     selectedGameId = '';
+    selectedCompanionId = '';
     view = section;
+  }
+  function openCompanion(companionId: string) {
+    navigate('companions');
+    selectedCompanionId = companionId;
   }
   function openGameSettings(gameId: GameId, returnState?: unknown) {
     if (!settingsVisit) settingsVisit = visitGameSettings(gameId, { view, selectedGameId, hash: window.location.hash, ...(returnState === undefined ? {} : { returnState }) });
@@ -421,7 +427,7 @@
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
         {#if view === 'devices' || view === 'device' || systemSnapshot}
-          <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={() => navigate('companions')} openIntegration={openGameSettings} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
+          <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={openCompanion} openIntegration={openGameSettings} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
         {/if}
         {#if view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} active={view==='profiles'} /></div>{/if}
         {#if view === 'overview'}
@@ -443,7 +449,7 @@
         {:else if view === 'profiles'}
           <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->
         {:else if view === 'companions'}
-          <CompanionDesigner openSettings={() => navigate('preferences')} />
+          <CompanionDesigner initialCompanionId={selectedCompanionId} openSettings={() => navigate('preferences')} />
         {:else if view === 'games'}
           <GamesPanel bind:selectedGameId status={games} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'devices'}

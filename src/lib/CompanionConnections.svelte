@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import Notification from './Notification.svelte';
   import { newPairingConnected } from './companion-pairing';
@@ -9,8 +9,10 @@
   import { notify } from './notifications';
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
   import type { Publication } from '@opensimgear/companion-designer';
-  let { publications = [], openSettings }: { publications?: Publication[]; openSettings: () => void } = $props();
+  let { publications = [], openSettings, initialCompanionId = '' }: { publications?: Publication[]; openSettings: () => void; initialCompanionId?: string } = $props();
   let hostState = $state.raw<CompanionHostState>({});
+  let pendingCompanionId = $state(untrack(() => initialCompanionId));
+  let disposed = false;
   let pairingOpen = $state(false);
   let browserOfferAttempted=$state(false);
   $effect(()=>{
@@ -61,9 +63,16 @@
     try { await work(); } catch (error) { notify(String(error),'error'); } finally { busy=false; }
   }
   async function refresh() {
-    if (polling) return; polling=true;
+    if (polling || disposed) return; polling=true;
     try {
       await send('companion_status');
+      if (disposed) return;
+      if (pendingCompanionId && hostState.host?.clients) {
+        const client = clients.find(client => text(client, 'companionId') === pendingCompanionId);
+        pendingCompanionId = '';
+        if (client) edit(client);
+        else notify('This companion is no longer paired with Cockpit.', 'error');
+      }
       if(updating && hostState.usb?.flashError){updating=false;notify(hostState.usb.flashWarning??hostState.usb.flashError,hostState.usb.flashWarning?'warning':'error');}
       if(updating && hostState.usb?.flashFinished){
         updating=false;await new Promise(resolve=>setTimeout(resolve,1500));
@@ -73,9 +82,10 @@
       if (pairingOpen && newPairingConnected(kind,baseline,hostState)) {
         pairingOpen=false; pairing=undefined; kind=''; notify('Companion paired and saved.');
       }
-    } catch (error) { notify(String(error),'error'); } finally { polling=false; }
+    } catch (error) { if (!disposed) notify(String(error),'error'); } finally { polling=false; }
   }
   function openPair(type: typeof kind = '') {
+    pendingCompanionId = '';
     selectedId='';
     baseline=new Set(clients.map(c=>text(c,'companionId')));
     kind=type; pairing=undefined;browserOfferAttempted=false;pairingOpen=true;
@@ -94,6 +104,7 @@
     selectedId=''; notify('Companion removed. Pair it again to reconnect.');
   }
   function edit(client:Record<string,unknown>){
+    pendingCompanionId = '';
     updateOpen=false;selectedId=text(client,'companionId');editedName=text(client,'name');
     editedPanel=String((hostState.host?.instances??[]).find(i=>i.companionId===selectedId)?.publicationHash??'');
   }
@@ -115,7 +126,7 @@
       if (!secondsLeft && pairing){pairing=undefined;if(kind==='browser')browserOfferAttempted=false;}
       void refresh();
     },1000);
-    return () => {clearInterval(timer);if(updateOpen && !updating && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
+    return () => {disposed=true;clearInterval(timer);if(updateOpen && !updating && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
   });
 </script>
 
@@ -157,6 +168,8 @@
         {/if}
       {/if}
     </section>
+  {:else if pendingCompanionId}
+    <section class="pair-form" aria-label="Companion settings"><p role="status">Loading companion details…</p></section>
   {:else if selected}
     <section class="pair-form" aria-label="Companion settings">
       <div class="form-heading"><h3>{text(selected,'name')} settings</h3><button disabled={updateOpen || updating} onclick={()=>selectedId=''}><Icon name="back" size={16} />Companions</button></div>

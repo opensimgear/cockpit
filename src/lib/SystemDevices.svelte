@@ -14,7 +14,7 @@
   let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
     gatewayError?: string;
-    openCompanions: () => void; openIntegration: (gameId: GameId) => void;
+    openCompanions: (companionId: string) => void; openIntegration: (gameId: GameId) => void;
     gatewayDetails: Snippet<[string]>; oninventory: (snapshot: SystemSnapshot) => void;
   } = $props();
   let snapshot = $state.raw<SystemSnapshot>({ components: [], diagnostics: [], observedAt: 0 });
@@ -119,6 +119,7 @@
 {/if}
 </div>
 {#if selected && showingDetails}
+  {@const companionId = selected.targets.find(target => target.kind === 'companion')?.id}
   <div class="details-toolbar"><button class="text-button" use:focusDetails onclick={backToDevices}><Icon name="back" size={16} />Back to Devices</button></div>
   <section class="component-details" aria-label="Component details">
     <div class="page-heading detail-heading">
@@ -127,7 +128,7 @@
     </div>
     <div class="component-actions">
       {#each selected.targets.filter(t => t.kind === 'module') as t}<button class="primary-button" onclick={() => openModule(t.gatewayId!, t.id)}>Configure device</button>{/each}
-      {#if selected.type === 'companion'}<button class="secondary-button" onclick={openCompanions}>Manage companion</button>{/if}
+      {#if selected.type === 'companion' && companionId}<button class="secondary-button" onclick={() => openCompanions(companionId)}>Manage companion</button>{/if}
       {#if integrationGameId(selected)}<button class="secondary-button" onclick={() => openIntegration(integrationGameId(selected)!)}>Integration settings</button>{/if}
       <button class="secondary-button" disabled={busy || !selected.forget.allowed} title={selected.forget.reason} onclick={() => reviewForget([selected])}>Forget device</button>
     </div>

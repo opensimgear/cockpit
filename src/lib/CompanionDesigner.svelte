@@ -19,7 +19,7 @@
   } from '@opensimgear/companion-designer';
   import { PanelCanvas, type PreviewController, type PreviewSnapshot } from '@opensimgear/companion-ui';
 
-  let { openSettings }: { openSettings: () => void } = $props();
+  let { openSettings, initialCompanionId = '' }: { openSettings: () => void; initialCompanionId?: string } = $props();
 
   let importInput = $state<HTMLInputElement>();
   let editorOpen = $state(false);
@@ -229,7 +229,7 @@
 </script>
 
 <section class="designer" aria-label="Companion panel designer">
-  <CompanionConnections publications={currentPublications} {openSettings} />
+  <CompanionConnections publications={currentPublications} {openSettings} {initialCompanionId} />
   <section class="panels-section" aria-label="Panels">
     <h2>Panels</h2>
     {#if error}<Notification message={String(error)} kind="error" />{/if}

@@ -378,7 +378,26 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(deviceConnections).toContainText('Your computer');
     await expect(deviceConnections).toContainText('192.0.2.10');
     await expect(deviceConnections).toContainText('Last-known connection');
-    await backToDevices.click();
+    // Managing a device opens that exact paired companion, including offline
+    // installations. Live status updates must preserve an unsaved settings draft.
+    const companions = page.getByRole('region', { name: 'Companions', exact: true });
+    const companionSettings = page.getByRole('region', { name: 'Companion settings', exact: true });
+    await details.getByRole('button', { name: 'Manage companion', exact: true }).click();
+    await expect(companionSettings).toBeVisible();
+    const companionName = companionSettings.getByLabel('Name', { exact: true });
+    await expect(companionName).toHaveValue('Browser companion');
+    await expect(companionSettings).toContainText('Offline');
+    await expect(companionSettings.getByRole('combobox', { name: 'Assigned panel', exact: true })).toHaveValue(hash);
+    await companionName.fill('Browser companion local draft');
+    browserClient.name = 'Browser companion refreshed';
+    await expect(companionSettings.getByRole('heading', { name: 'Browser companion refreshed settings', exact: true })).toBeVisible();
+    await expect(companionName).toHaveValue('Browser companion local draft');
+    await companionSettings.getByRole('button', { name: 'Companions', exact: true }).click();
+    await expect(companionSettings).toHaveCount(0);
+    browserClient.name = 'Browser companion';
+    await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
+    await expect(companionSettings).toHaveCount(0);
+    await devicesNav.click();
     await devices.locator('[data-component-id="companion:esp32-fixture"]').click();
     await expect(deviceConnections).toContainText('USB');
     await expect(deviceConnections).toContainText('Your computer');
@@ -386,7 +405,18 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(deviceConnections).toContainText('Current connection');
     await expect(deviceConnections).not.toContainText('NETWORK');
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
-    await backToDevices.click();
+    await details.getByRole('button', { name: 'Manage companion', exact: true }).click();
+    await expect(companionName).toHaveValue('Known ESP32 companion');
+    await expect(companionSettings.getByRole('combobox', { name: 'Assigned panel', exact: true })).toHaveValue('');
+    await expect(companionSettings.getByLabel('USB port', { exact: true })).toHaveValue('COM-fixture-companion');
+    // Ordinary sidebar navigation returns to the companion tiles rather than
+    // retaining a direct-details request from a previous device visit.
+    await nav.getByRole('button', { name: 'Overview', exact: true }).click();
+    await nav.getByRole('button', { name: /^Companions(?:\s|$)/ }).click();
+    await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
+    await expect(companions.getByRole('button', { name: 'Edit Known ESP32 companion', exact: true })).toBeVisible();
+    await expect(companionSettings).toHaveCount(0);
+    await devicesNav.click();
     await expect(devices.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);
     assert.equal(requests.filter(request => request.command === 'companion_approve').length, 0);
     await topology.click();
