@@ -81,7 +81,10 @@ test('larger rigs share one horizontal protocol bus with a normal-sized host', (
   assert.deepEqual(plain(systemTopology([...inventory].reverse())), plain(graph));
   const disconnected=systemTopology(inventory.map(item => ({ ...item, presence: 'offline' })));
   assert.equal(disconnected.edges.length,0);assert.equal(disconnected.offline.count,28);
-  assert.ok(disconnected.nodes.filter(n=>n.component.id!=='host').every(n=>n.x>disconnected.nodes.find(n=>n.component.id==='host').x+TOPOLOGY_NODE_WIDTH));
+  const disconnectedHost=disconnected.nodes.find(n=>n.component.id==='host'),offlineNodes=disconnected.nodes.filter(n=>n.component.id!=='host');
+  assert.equal(Math.min(...offlineNodes.map(n=>n.x)),disconnectedHost.x);
+  assert.ok(offlineNodes.every(n=>n.y>disconnectedHost.y+disconnectedHost.height));
+  assert.ok(new Set(offlineNodes.filter(n=>n.y===offlineNodes[0].y).map(n=>n.x)).size>1);
   const initial = topologyInitialView(graph.width, graph.height, 1280, 640), fitted = topologyFit(graph.width, graph.height, 1280, 640);
   assert.equal(initial.zoom, 0.8);
   assert.ok(fitted.zoom < initial.zoom);
@@ -118,11 +121,17 @@ test('shared connection buses avoid cards and expose exact protocol endpoints', 
   }
 });
 
-test('offline, unavailable and unknown devices sit on the right with no current or remembered lines',()=>{
+test('disconnected devices form a horizontal group below the topology, aligned with the computer and without lines',()=>{
  const items=[component('host','host'),component('live','controller',[edge('live','host','live')]),...['offline','unavailable','unknown'].map(state=>component(state,'controller',[edge(state,'host',state,'usb',false)],state))];
  const graph=systemTopology(items),active=graph.nodes.filter(n=>n.component.presence==='connected');
  assert.equal(graph.edges.length,1);assert.equal(graph.offline.count,3);
- for(const n of graph.nodes.filter(n=>n.component.presence!=='connected'))assert.ok(n.x>Math.max(...active.map(n=>n.x+TOPOLOGY_NODE_WIDTH)));
+ const disconnected=graph.nodes.filter(n=>n.component.presence!=='connected').sort((a,b)=>a.x-b.x);
+ for(const n of disconnected)assert.ok(n.y>Math.max(...active.map(n=>n.y+n.height)));
+ assert.equal(disconnected[0].x,graph.nodes.find(n=>n.component.id==='host').x);
+ assert.equal(new Set(disconnected.map(n=>n.y)).size,1);
+ assert.ok(graph.offline.y>Math.max(...active.map(n=>n.y+n.height)));
+ assert.ok(graph.height>=graph.offline.y+graph.offline.height);
+ assert.ok(graph.width>=graph.offline.x+graph.offline.width);
 });
 
 test('protocol bus rows follow connection type independently of names and discovery order',()=>{

@@ -132,17 +132,21 @@ export function systemTopology(components: readonly SystemComponent[], context: 
     });
   }
   const activeRight = Math.max(40 + TOPOLOGY_NODE_WIDTH, ...nodes.map(node => node.x + TOPOLOGY_NODE_WIDTH));
-  const offlineX = activeRight + 96;
+  const activeBottom = Math.max(0,...nodes.map(node=>node.y+node.height));
+  const offlineX = 40, offlineY = Math.max(top,activeBottom+64);
+  const offlineColumns = Math.min(offline.length,Math.max(4,Math.floor((activeRight-offlineX+24)/(TOPOLOGY_NODE_WIDTH+24))));
+  const offlineRows = offline.length ? Math.ceil(offline.length/offlineColumns) : 0;
   offline.sort((a, b) => Math.min(6, ...a.connections.map(connection => transportOrder[connection.transport])) - Math.min(6, ...b.connections.map(connection => transportOrder[connection.transport])) || compare(a, b));
-  offline.forEach((component, index) => nodes.push({ component, context: !matches.has(component.id), x: offlineX, y: 96 + index * 120, height: 100, alternateConnections: 0 }));
+  offline.forEach((component, index) => nodes.push({ component, context: !matches.has(component.id), x: offlineX + index%offlineColumns*(TOPOLOGY_NODE_WIDTH+24), y: offlineY+52+Math.floor(index/offlineColumns)*124, height: 100, alternateConnections: 0 }));
   const edges: TopologyEdge[] = [...attachments.values()].map(connection => {
     const node = positions.get(connection.to)!, row = rowForComponent.get(connection.to)!;
     const start = { x: node.x + TOPOLOGY_NODE_WIDTH / 2, y: row.busY }, end = { x: start.x, y: node.y };
     return { connection, start, end, x: end.x, y: end.y, path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, label: topologyConnectionLabel(connection) };
   });
   return { nodes, edges, rows, trunk, connectionCount: connections.length,
-    offline: offline.length ? { x: offlineX - 16, y: 44, width: TOPOLOGY_NODE_WIDTH + 32, height: offline.length * 120 + 60, count: offline.length } : null,
-    width: (offline.length ? offlineX + TOPOLOGY_NODE_WIDTH : activeRight) + 40, height: Math.max(top + 24, offline.length * 120 + 120, 300) };
+    offline: offline.length ? { x: offlineX - 16, y: offlineY, width: offlineColumns*(TOPOLOGY_NODE_WIDTH+24)+8, height: offlineRows*124+44, count: offline.length } : null,
+    width: Math.max(activeRight,offline.length ? offlineX+offlineColumns*(TOPOLOGY_NODE_WIDTH+24)-8 : 0)+40,
+    height: Math.max(top+24,activeBottom+40,offline.length ? offlineY+offlineRows*124+84 : 0,300) };
 }
 
 export function topologyFit(width: number, height: number, viewportWidth: number, viewportHeight: number): TopologyView {

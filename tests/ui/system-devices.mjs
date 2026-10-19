@@ -355,6 +355,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('.topology-edges text')).toHaveCount(0);
     await expect(graph.locator('.topology-viewport')).toHaveCSS('background-image', /radial-gradient/);
     await expect(graph.locator('.offline-zone')).toContainText('Disconnected');
+    const disconnectedLayout=await graph.evaluate(root=>{
+      const nodes=[...root.querySelectorAll('.topology-node')],host=nodes.find(node=>node.dataset.componentId==='host');
+      const offline=nodes.filter(node=>node!==host&&node.classList.contains('offline')),active=nodes.filter(node=>!node.classList.contains('offline'));
+      return {hostX:parseFloat(host.style.left),offline:offline.map(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top)})),activeBottom:Math.max(...active.map(node=>parseFloat(node.style.top)+parseFloat(node.style.height)))};
+    });
+    assert.equal(Math.min(...disconnectedLayout.offline.map(node=>node.x)),disconnectedLayout.hostX);
+    assert.ok(disconnectedLayout.offline.every(node=>node.y>disconnectedLayout.activeBottom));
+    assert.ok(disconnectedLayout.offline.filter(node=>node.y===disconnectedLayout.offline[0].y).length>1);
     await expect(graph.locator('[data-bus-id="host:usb"]')).toContainText('USB');
     await expect(graph.locator(`[data-bus-id="gateway:${firstGateway}:can"]`)).toContainText('CAN');
     await expect(graph.locator('.topology-edges g[data-to="controller:remembered-wheel"]')).toHaveCount(0);
