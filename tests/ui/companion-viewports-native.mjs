@@ -68,7 +68,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     checks.push('New viewports fill gaps; viewport removal supports undo and redo');
 
     if (!await viewportList.isVisible()) await editor.getByText('Viewports', { exact: true }).click();
-    await viewportList.getByRole('button', { name: /Right instruments/ }).click();
+    await viewportList.getByRole('button', { name: /^Right instruments/ }).click();
     await editor.getByText('Widgets', { exact: true }).click();
     await editor.locator('.palette').getByRole('button', { name: 'Button', exact: true }).click();
     await expect(editor.locator('.widget')).toHaveCount(2);
@@ -83,7 +83,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     checks.push('Widgets are added to the selected viewport and cannot be placed across a gap');
 
     if (!await viewportList.isVisible()) await editor.getByText('Viewports', { exact: true }).click();
-    await viewportList.getByRole('button', { name: /Right instruments/ }).click();
+    await viewportList.getByRole('button', { name: /^Right instruments/ }).click();
     await expect(editor.getByRole('button', { name: 'Remove viewport', exact: true })).toBeDisabled();
     await editor.getByRole('button', { name: 'Preview', exact: true }).click();
     await expect(outlines).toHaveCount(0);
@@ -115,7 +115,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     await editor.getByRole('button', { name: 'Back to Panels', exact: true }).click();
     await page.getByRole('button', { name: new RegExp('^' + panelName) }).click();
     await expect(outlines).toHaveCount(2);
-    await expect(viewportList.getByRole('button', { name: /Right instruments/ })).toBeVisible();
+    await expect(viewportList.getByRole('button', { name: /^Right instruments/ })).toBeVisible();
     await expect(editor.getByLabel('Screen width', { exact: true })).toHaveValue('1920');
     await expect(editor.locator('.widget')).toHaveCount(2);
     const native = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('gateway_request', { request: { command: 'companion_status', clientId: 'viewport-native-acceptance' } }));
