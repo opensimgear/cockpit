@@ -327,6 +327,26 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await topology.click();
     const graph = page.getByRole('region', { name: 'System topology', exact: true });
     await expect(graph).toBeVisible();
+    const graphViewport = graph.locator('.topology-viewport');
+    const graphTransform = () => graph.locator('.topology-world').evaluate(node => {
+      const matrix = new DOMMatrix(getComputedStyle(node).transform);
+      return { x: matrix.e, y: matrix.f, zoom: matrix.a };
+    });
+    const beforeScroll = await graphTransform();
+    await graphViewport.hover();
+    await page.mouse.wheel(0, 120);
+    await expect.poll(async () => (await graphTransform()).y).toBe(beforeScroll.y - 120);
+    assert.equal((await graphTransform()).zoom, beforeScroll.zoom, 'Normal wheel scrolling pans without zooming.');
+    await page.mouse.wheel(0, -120);
+    await expect.poll(async () => (await graphTransform()).y).toBe(beforeScroll.y);
+    for (const modifier of ['Control', 'Meta']) {
+      const beforeZoom = await graphTransform();
+      await page.keyboard.down(modifier);
+      try { await page.mouse.wheel(0, -120); }
+      finally { await page.keyboard.up(modifier); }
+      await expect.poll(async () => (await graphTransform()).zoom).toBeGreaterThan(beforeZoom.zoom);
+    }
+    await graph.getByRole('button', { name: 'Fit all components', exact: true }).click();
     const graphIds = await graph.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).filter(id => id !== 'host').sort());
     assert.deepEqual(graphIds, listIds);
     await expect(graph.locator('.topology-edges text')).toHaveCount(0);

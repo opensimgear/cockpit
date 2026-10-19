@@ -31,8 +31,13 @@
   function zoom(multiplier: number, point = { x: width / 2, y: height / 2 }) { view = topologyZoom(view, multiplier, point); }
   function wheel(event: WheelEvent) {
     event.preventDefault();
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1;
+    if (!event.ctrlKey && !event.metaKey) {
+      view = { ...view, x: view.x - event.deltaX * unit, y: view.y - event.deltaY * unit };
+      return;
+    }
     const bounds = viewport.getBoundingClientRect();
-    zoom(Math.exp(-event.deltaY * 0.0015), { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+    zoom(Math.exp(-event.deltaY * unit * 0.0015), { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
   }
   function pointerDown(event: PointerEvent) {
     if (event.button !== 0 || (event.target instanceof Element && event.target.closest('button, .connection-port'))) return;
@@ -98,7 +103,7 @@
   </div>
   <!-- A focusable region provides keyboard panning; its nodes remain native buttons. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="topology-viewport" class:dragging bind:this={viewport} role="region" aria-label="Connection graph. Drag background or use arrow keys to pan; scroll or plus and minus to zoom; Home to fit. Tab to select a component." tabindex="0" onwheel={wheel} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onlostpointercapture={pointerUp} onkeydown={keyboard}>
+  <div class="topology-viewport" class:dragging bind:this={viewport} role="region" aria-label="Connection graph. Scroll, drag background or use arrow keys to pan; Ctrl or Cmd plus scroll, or plus and minus keys to zoom; Home to fit. Tab to select a component." tabindex="0" onwheel={wheel} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onlostpointercapture={pointerUp} onkeydown={keyboard}>
     <div class="topology-world" style:width={`${graph.width}px`} style:height={`${graph.height}px`} style:transform={`translate(${view.x}px, ${view.y}px) scale(${view.zoom})`}>
       {#if graph.offline}<div class="offline-zone" style:left={`${graph.offline.x}px`} style:top={`${graph.offline.y}px`} style:width={`${graph.offline.width}px`} style:height={`${graph.offline.height}px`}><strong>Disconnected <span>{graph.offline.count}</span></strong></div>{/if}
       {#each graph.rows as row (row.id)}<div class="bus-label" data-bus-id={row.id} title={row.label} style:left={`${row.x + 48}px`} style:top={`${row.y}px`} style:width={`${row.width - 48}px`}><Icon name={protocolIcons[row.transport]} size={14} /><strong>{row.label}</strong><span>{row.count} {row.count === 1 ? 'device' : 'devices'}</span></div>{/each}
@@ -124,7 +129,7 @@
     </div>
     {#if components.length === 0}<p class="topology-empty">No components match the current filters.</p>{/if}
   </div>
-  <p class="topology-help">One row per protocol; gateways have their own device rows. Select a device to inspect all routes. Drag to pan · Scroll to zoom · Fit to show all. Disconnected devices remain unwired on the right.</p>
+  <p class="topology-help">One row per protocol; gateways have their own device rows. Select a device to inspect all routes. Scroll or drag to pan · Ctrl/Cmd + scroll to zoom · Fit to show all. Disconnected devices remain unwired on the right.</p>
 </section>
 
 <style>
