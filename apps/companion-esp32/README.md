@@ -126,3 +126,5 @@ Detailed local evidence: [live-input checkpoint](../../docs/verification/2026-10
 ## Sunton 3.5-inch screen
 
 The ESP32-3248S035R resistive-touch board has a dedicated [display/touch profile](boards/sunton-3248s035r/README.md) and Cockpit firmware installation option. It uses the original ESP32 target, not ESP32-S3.
+
+Firmware 2026.10.19.8 preserves Cockpit rejection reasons and reports the failing operation (authentication, panel open, image download, heartbeat or input). USB and Wi-Fi failures distinguish timeouts, malformed replies and connection errors. Long messages wrap beneath the centered status icon and are also reported to Cockpit.

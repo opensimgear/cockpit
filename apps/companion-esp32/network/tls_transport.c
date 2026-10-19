@@ -47,48 +47,49 @@ void osg_socket_close(osg_socket *s){
     mbedtls_platform_zeroize(s,sizeof(*s));
 }
 char osg_transport_frame[OSG_FRAME_BYTES+1], osg_transport_reply[OSG_REPLY_BYTES];
+static bool transport_failure(osg_socket *s,const char *reason){s->request_error=reason;return false;}
 static bool receive_frame(osg_socket *s,size_t *length,int64_t deadline){
     size_t used=0,frame_used=0;int payload=0;bool fragmented=false;
     for(;;){
-        int64_t remaining=(deadline-esp_timer_get_time())/1000;if(remaining<=0)return false;
+        int64_t remaining=(deadline-esp_timer_get_time())/1000;if(remaining<=0)return transport_failure(s,"Cockpit reply timed out");
         const int n=esp_transport_read(s->ws,osg_transport_frame+used,(int)(OSG_FRAME_BYTES-used),(int)remaining);
-        if(n<0)return false;
+        if(n<0)return transport_failure(s,"Wi-Fi reply read failed");
         const int opcode=esp_transport_ws_get_read_opcode(s->ws);
         if(!n&&opcode==WS_TRANSPORT_OPCODES_NONE)continue;
         const int current=esp_transport_ws_get_read_payload_len(s->ws);
-        if(!frame_used){payload=current;if(payload<0||payload>(int)(OSG_FRAME_BYTES-used))return false;}
-        if(opcode==WS_TRANSPORT_OPCODES_CLOSE)return false;
+        if(!frame_used){payload=current;if(payload<0||payload>(int)(OSG_FRAME_BYTES-used))return transport_failure(s,"WebSocket reply exceeds buffer");}
+        if(opcode==WS_TRANSPORT_OPCODES_CLOSE)return transport_failure(s,"Cockpit closed the connection");
         if(opcode==WS_TRANSPORT_OPCODES_PING||opcode==WS_TRANSPORT_OPCODES_PONG){
-            if(current>125||n!=current)return false;
-            if(opcode==WS_TRANSPORT_OPCODES_PING&&esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_PONG|WS_TRANSPORT_OPCODES_FIN,osg_transport_frame+used,n,200)!=n)return false;
+            if(current>125||n!=current)return transport_failure(s,"Invalid WebSocket control frame");
+            if(opcode==WS_TRANSPORT_OPCODES_PING&&esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_PONG|WS_TRANSPORT_OPCODES_FIN,osg_transport_frame+used,n,200)!=n)return transport_failure(s,"WebSocket pong write failed");
             frame_used=0;continue;
         }
-        if(opcode!=WS_TRANSPORT_OPCODES_TEXT&&opcode!=WS_TRANSPORT_OPCODES_CONT)return false;
-        if(!frame_used&&((fragmented&&opcode!=WS_TRANSPORT_OPCODES_CONT)||(!fragmented&&opcode!=WS_TRANSPORT_OPCODES_TEXT)))return false;
+        if(opcode!=WS_TRANSPORT_OPCODES_TEXT&&opcode!=WS_TRANSPORT_OPCODES_CONT)return transport_failure(s,"Unexpected WebSocket reply type");
+        if(!frame_used&&((fragmented&&opcode!=WS_TRANSPORT_OPCODES_CONT)||(!fragmented&&opcode!=WS_TRANSPORT_OPCODES_TEXT)))return transport_failure(s,"Invalid WebSocket fragment order");
         used+=(size_t)n;frame_used+=(size_t)n;
-        if(frame_used>(size_t)payload||used>OSG_FRAME_BYTES)return false;
+        if(frame_used>(size_t)payload||used>OSG_FRAME_BYTES)return transport_failure(s,"Invalid WebSocket reply size");
         if(frame_used==(size_t)payload){
-            if(esp_transport_ws_get_fin_flag(s->ws)){osg_transport_frame[used]=0;*length=used;return used>0;}
+            if(esp_transport_ws_get_fin_flag(s->ws)){osg_transport_frame[used]=0;*length=used;return used>0?true:transport_failure(s,"Empty WebSocket reply");}
             fragmented=true;frame_used=0;
         }
-        if(used==OSG_FRAME_BYTES)return false;
+        if(used==OSG_FRAME_BYTES)return transport_failure(s,"WebSocket reply exceeds buffer");
     }
 }
 bool osg_socket_request(osg_socket *s,cJSON *request,cJSON **response,unsigned timeout){
     if(s->direct)return osg_serial_request(s,request,response,timeout);
-    char outbound[4096];*response=NULL;
+    char outbound[4096];*response=NULL;s->request_error=NULL;
     const bool encoded=request&&cJSON_PrintPreallocated(request,outbound,sizeof(outbound),false);cJSON_Delete(request);
-    if(!encoded){mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
+    if(!encoded){mbedtls_platform_zeroize(outbound,sizeof(outbound));return transport_failure(s,"Request exceeds WebSocket buffer");}
     const size_t bytes=strlen(outbound);
     const int sent=esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_TEXT|WS_TRANSPORT_OPCODES_FIN,outbound,(int)bytes,500);
-    mbedtls_platform_zeroize(outbound,sizeof(outbound));if(sent!=(int)bytes)return false;
+    mbedtls_platform_zeroize(outbound,sizeof(outbound));if(sent!=(int)bytes)return transport_failure(s,"Wi-Fi request write failed");
     mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
     osg_transfer transfer={.bytes=osg_transport_reply,.capacity=sizeof(osg_transport_reply)};
     for(;;){size_t n=0;if(!receive_frame(s,&n,deadline)){mbedtls_platform_zeroize(osg_transport_frame,sizeof(osg_transport_frame));mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return false;}
         const int result=osg_reply_feed(&transfer,osg_transport_frame,n,osg_platform_crypto,response);
         mbedtls_platform_zeroize(osg_transport_frame,n);
-        if(result<0){mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return false;}
+        if(result<0){mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return transport_failure(s,"Invalid Cockpit reply data or checksum");}
         if(result==1){mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));}
     }
 }

@@ -17,6 +17,7 @@ bool osg_serial_start(void){return true;}
 static uint64_t fake_ms;
 static bool network_ok=true,store_ok=true,storage_available,assigned_now=true,approved_now=true;
 static bool request_ok=true,wrong_identity,wrong_session;
+static const char *host_rejection,*transport_error;
 static bool clock_ok=true,load_ok,obsolete_session;
 static osg_settings saved_settings;
 static int requests, baseline_requests, input_requests, close_requests, loss_requests;
@@ -67,6 +68,8 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         cJSON_AddStringToObject(*out,"error","Session is obsolete; explicitly reconnect.");
         cJSON_Delete(v);return false;
     }
+    if(transport_error){s->request_error=transport_error;cJSON_Delete(*out);*out=NULL;cJSON_Delete(v);return false;}
+    if(host_rejection){cJSON_AddBoolToObject(*out,"ok",false);cJSON_AddStringToObject(*out,"type","error");cJSON_AddStringToObject(*out,"error",host_rejection);cJSON_Delete(v);return false;}
     cJSON_AddBoolToObject(*out,"ok",true);
     if(!strcmp(type,"pair")||(!strcmp(type,"pair-status")&&!approved_now)){
         cJSON_AddStringToObject(*out,"type","pair-pending");cJSON_AddStringToObject(*out,"requestId","request");
@@ -102,6 +105,7 @@ static void cmd(const char *json){cJSON *v=osg_json_parse(json,strlen(json));ass
 static void setup(void){
     stop();memset(&settings,0,sizeof(settings));osg_copy(settings.host,sizeof(settings.host),"host");osg_copy(settings.companion,sizeof(settings.companion),"screen");
     osg_copy(settings.name,sizeof(settings.name),"Screen");osg_copy(settings.secret,sizeof(settings.secret),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");settings.expires_ms=60000;pair_deadline=fake_ms+60000;
+    host_rejection=transport_error=NULL;
     network_ok=request_ok=store_ok=assigned_now=approved_now=true;wrong_identity=wrong_session=false;storage_available=true;next_request=fake_ms;state=PAIR_BEGIN;
 }
 static void live_ready(void){
@@ -229,10 +233,10 @@ int main(int argc,char **argv){
     state=WAIT_ASSIGNMENT;update_screen();assert(test_runtime.screen==OSG_SCREEN_NO_PANEL);
     state=LIVE;update_screen();assert(test_runtime.screen==OSG_SCREEN_PANEL);
     state=FAULT;detail="Cockpit response timed out";update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&!strcmp(test_runtime.screen_message,detail));
-    state=AUTH;update_screen();assert(test_runtime.screen==OSG_SCREEN_CONNECTING&&!test_runtime.screen_message);
+    state=AUTH;update_screen();assert(test_runtime.screen==OSG_SCREEN_CONNECTING&&!test_runtime.screen_message[0]);
     state=OPEN;detail=NULL;update_screen();assert(test_runtime.screen==OSG_SCREEN_LOADING);
     detail="Downloading panel images";update_screen();assert(!strcmp(test_runtime.screen_message,detail));
-    state=OFF;update_screen();assert(test_runtime.screen==OSG_SCREEN_DISCONNECTED&&!test_runtime.screen_message);
+    state=OFF;update_screen();assert(test_runtime.screen==OSG_SCREEN_DISCONNECTED&&!test_runtime.screen_message[0]);
     live_input_tests();
     permit_inputs=true;live_ready();live_arm();
     osg_network_touch(true,true,100,100);fake_ms+=20;advance();
@@ -266,11 +270,25 @@ int main(int argc,char **argv){
     osg_network_render(test_runtime.panel,true,false);advance();update_screen();
     assert(state==PANEL_ERROR&&test_runtime.screen==OSG_SCREEN_PANEL_ERROR&&!test_runtime.armed);
     assert(!strcmp(test_runtime.screen_message,"Panel could not render correctly"));
+    setup();state=AUTH;host_rejection="Credential has been revoked.";advance();update_screen();
+    assert(state==FAULT&&!strcmp(test_runtime.screen_message,"Authentication: Credential has been revoked."));
+    osg_runtime snapshot=test_runtime;
+    strcpy(request_detail,"This diagnostic buffer is reused after the reply is freed");
+    assert(!strcmp(snapshot.screen_message,"Authentication: Credential has been revoked."));
+    setup();state=AUTH;host_rejection="Credential revoked.\nPair this device again.";advance();update_screen();
+    assert(!strcmp(test_runtime.screen_message,"Authentication: Credential revoked. Pair this device again."));
+    setup();state=AUTH;transport_error="USB response timed out";advance();update_screen();
+    assert(state==FAULT&&!strcmp(test_runtime.screen_message,"Authentication: USB response timed out"));
+    setup();state=AUTH;wrong_identity=true;advance();update_screen();
+    assert(state==FAULT&&!strcmp(test_runtime.screen_message,"Authentication: Reply belongs to another host"));
+    live_ready();host_rejection="Binding is unavailable.";next_request=fake_ms;advance();update_screen();
+    assert(state==FAULT&&!strcmp(test_runtime.screen_message,"Heartbeat: Binding is unavailable."));
+    host_rejection=NULL;
     const char *reasons[]={"wifi-connection-failed","host-tls-or-connection-failed","pairing-offer-expired","pairing-approval-expired","baseline-not-confirmed-or-touch-changed-reconnect-required","input-cancelled-or-lease-expired-reconnect-required","input-backlog-or-counter-invalid-reconnect-required","session-counter-exhausted","trusted-clock-invalid","setup-storage-unavailable","setup-save-failed-repair-required","setup-delete-failed","invalid-installation-id","host-rejected-or-invalid-reply-stop-and-reconnect"};
-    for(size_t i=0;i<sizeof(reasons)/sizeof(*reasons);i++){fail(reasons[i]);update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&test_runtime.screen_message);}
+    for(size_t i=0;i<sizeof(reasons)/sizeof(*reasons);i++){fail(reasons[i]);update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&test_runtime.screen_message[0]);}
     osg_image image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
     assert(load_images(&image,0));assert(image.widgets[0].pixels && image.widgets[0].pixels[0]==255);assert(image.widgets[0].image_width>0);
-    request_ok=false;assert(!load_images(&image,1));assert(!strcmp(detail,"Panel image download failed"));request_ok=true;
+    request_ok=false;assert(!load_images(&image,1));assert(!strcmp(detail,"Image download: No valid response received"));request_ok=true;
     image.widgets[0].bounds.width=0;assert(!load_images(&image,1));assert(!strcmp(detail,"Invalid image dimensions"));free(pixel_store[0]);free(pixel_store[1]);
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

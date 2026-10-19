@@ -27,6 +27,8 @@ static bool remote_armed, installation_saved, panel_render_failed;
 static uint64_t input_sequence, next_input_request;
 static phase state;
 static const char *detail;
+static char request_detail[192],fault_detail[192];
+static const char *request_label="Request";
 static void update_screen(void);
 static char pending[65], assigned[65], publication[72];
 static uint64_t next_request, pair_deadline;
@@ -50,13 +52,46 @@ static const char *failure_message(const char *reason){
     if(!strcmp(reason,"setup-save-failed-repair-required"))return "Could not save setup";
     if(!strcmp(reason,"setup-delete-failed"))return "Could not delete setup";
     if(!strcmp(reason,"invalid-installation-id"))return "Invalid companion identity";
-    return "Cockpit request failed";
+    return "Unrecognized device failure";
 }
 static void fail(const char *reason){abort_connection();state=FAULT;detail=failure_message(reason);mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));report(reason);}
 static cJSON *message(const char *type){cJSON *v=cJSON_CreateObject();if(v)cJSON_AddStringToObject(v,"type",type);return v;}
-static bool request(cJSON *v,cJSON **reply,unsigned timeout){return osg_socket_request(&connection,v,reply,timeout);}
+static const char *request_operation(const char *type){
+    if(!type)return "Request";
+    if(!strcmp(type,"auth"))return "Authentication";
+    if(!strcmp(type,"open"))return "Open panel";
+    if(!strcmp(type,"image-chunk"))return "Image download";
+    if(!strcmp(type,"heartbeat"))return "Heartbeat";
+    if(!strcmp(type,"baseline"))return "Activate inputs";
+    if(!strcmp(type,"input"))return "Send input";
+    if(!strcmp(type,"pair-status"))return "Pairing approval";
+    if(!strcmp(type,"pair"))return "Pairing";
+    return "Close panel";
+}
+static bool request(cJSON *v,cJSON **reply,unsigned timeout){
+    request_label=request_operation(osg_string(v,"type"));
+    connection.request_error=NULL;
+    const bool ok=osg_socket_request(&connection,v,reply,timeout);
+    const char *reason=osg_string(*reply,"error");
+    if(!reason||!*reason)reason=connection.request_error;
+    if(!reason)reason=ok?"Invalid reply":"No valid response received";
+    snprintf(request_detail,sizeof(request_detail),"%s: %s",request_label,reason);
+    /* Keep diagnostics bounded and printable; never copy the request or credentials. */
+    for(char *p=request_detail;*p;p++)if((unsigned char)*p<32||(unsigned char)*p>126)*p=' ';
+    return ok;
+}
+static void fail_request(void){
+    osg_copy(fault_detail,sizeof(fault_detail),request_detail);
+    abort_connection();state=FAULT;detail=fault_detail;report("cockpit-request-failed");
+}
+static bool request_problem(const char *reason){snprintf(request_detail,sizeof(request_detail),"%s: %s",request_label,reason);return false;}
 static bool equal(const char *a,const char *b){return a&&b&&!strcmp(a,b);}
-static bool identity(const cJSON *reply,const char *type){return equal(osg_string(reply,"type"),type)&&equal(osg_string(reply,"hostId"),settings.host)&&equal(osg_string(reply,"companionId"),settings.companion);}
+static bool identity(const cJSON *reply,const char *type){
+    if(!equal(osg_string(reply,"type"),type))return request_problem("Unexpected reply type");
+    if(!equal(osg_string(reply,"hostId"),settings.host))return request_problem("Reply belongs to another host");
+    if(!equal(osg_string(reply,"companionId"),settings.companion))return request_problem("Reply belongs to another companion");
+    return true;
+}
 static cJSON *session_message(const char *type,const char *sequence){
     cJSON *v=message(type);
     cJSON_AddNumberToObject(v,"version",1);cJSON_AddStringToObject(v,"clientId",session.client);
@@ -66,7 +101,7 @@ static cJSON *session_message(const char *type,const char *sequence){
     if(state==PANEL_ERROR&&!strcmp(type,"heartbeat"))cJSON_AddBoolToObject(v,"panelError",true);
     return v;
 }
-static bool image_failure(const char *reason){detail=reason;return false;}
+static bool image_failure(const char *reason){osg_copy(fault_detail,sizeof(fault_detail),reason);detail=fault_detail;return false;}
 static bool load_images(osg_image *image,unsigned slot){
     detail="Downloading panel images";update_screen();
     osg_runtime layout={.panel=&image->panel,.display=ui.runtime->display};size_t total=0,offsets[OSG_MAX_WIDGETS]={0};
@@ -86,10 +121,11 @@ static bool load_images(osg_image *image,unsigned slot){
         for(size_t offset=0;offset<bytes;){
             cJSON *v=session_message("image-chunk",NULL),*reply=NULL;
             cJSON_AddStringToObject(v,"widgetId",w->id);cJSON_AddNumberToObject(v,"width",w->image_width);cJSON_AddNumberToObject(v,"height",w->image_height);cJSON_AddNumberToObject(v,"offset",(double)offset);
-            bool ok=request(v,&reply,3000)&&cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok"))&&equal(osg_string(reply,"type"),"image-chunk")&&equal(osg_string(reply,"widgetId"),w->id)&&equal(osg_string(reply,"publicationHash"),session.publication);
+            bool received=request(v,&reply,3000);
+            bool ok=received&&cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok"))&&equal(osg_string(reply,"type"),"image-chunk")&&equal(osg_string(reply,"widgetId"),w->id)&&equal(osg_string(reply,"publicationHash"),session.publication);
             size_t count=0;const char *encoded=osg_string(reply,"base64");
             ok=ok && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==(double)offset && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"total"))==(double)bytes && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"width"))==w->image_width && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"height"))==w->image_height && encoded && osg_platform_crypto.base64(encoded,chunk,sizeof(chunk),&count) && count && count<=bytes-offset && count%3==0;
-            cJSON_Delete(reply);if(!ok)return image_failure("Panel image download failed");
+            cJSON_Delete(reply);if(!ok)return image_failure(received?"Image download: Invalid image data":request_detail);
             if(!osg_pixels_write(slot,offsets[i]+offset,chunk,count))return image_failure("Could not save panel images");
             offset+=count;
         }
@@ -111,11 +147,15 @@ static bool panel_error_ack(const cJSON *v,const char *sequence){
         equal(osg_string(v,"sequence"),sequence)&&equal(osg_string(v,"ackStage"),"source-accepted")&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(v,"submitted"));
 }
 static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
+    if(!equal(osg_string(reply,"type"),"ack"))return request_problem("Unexpected acknowledgement type");
+    if(!equal(osg_string(reply,"clientId"),session.client)||!equal(osg_string(reply,"sessionId"),session.session))return request_problem("Reply belongs to another session");
+    if(!equal(osg_string(reply,"generation"),session.generation)||!equal(osg_string(reply,"publicationHash"),session.publication))return request_problem("Reply uses another panel revision");
+    if(!equal(osg_string(reply,"sequence"),sequence))return request_problem("Reply sequence does not match request");
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const uint64_t before=session.feedback_sequence,before_generation=session.binding_generation;const bool seen=session.feedback_seen;
     bool ok=osg_input_monitor(&input,millis())&&osg_ack(reply,&session,sequence,ui.runtime,millis());
     if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)*ui.dirty=true;}
-    xSemaphoreGive(ui.mutex);return ok;
+    xSemaphoreGive(ui.mutex);return ok?true:request_problem("Input lease or acknowledgement invalid");
 }
 void osg_network_status(const char *request_id){
     cJSON *v=cJSON_CreateObject();char encoded[1024],epoch[21];
@@ -164,12 +204,13 @@ static void arm(const cJSON *command){
     /* The host may accept even if the ACK is lost. Every failure below closes
      * this connection; this baseline is never retried or silently replayed. */
     const uint64_t started=millis();remote_armed=true;
-    bool ok=request(v,&reply,700)&&acknowledgement(reply,"0",started);
+    bool received=request(v,&reply,700);
+    bool ok=received&&acknowledgement(reply,"0",started);
     cJSON_Delete(reply);
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(ok)ok=osg_input_commit(&input,epoch,started,millis());
     *ui.dirty=true;xSemaphoreGive(ui.mutex);
-    if(!ok){fail("baseline-not-confirmed-or-touch-changed-reconnect-required");return;}
+    if(!ok){if(!received)fail_request();else fail("baseline-not-confirmed-or-touch-changed-reconnect-required");return;}
     input_sequence=0;next_input_request=next_request=millis();report("live-armed");
 }
 /* Connection alone is insufficient until the rendered panel and released touch
@@ -251,7 +292,10 @@ static void advance(void){
         bool busy=*ui.drawing_panel==&images[1-image_index].panel;
         xSemaphoreGive(ui.mutex);if(busy)return;
         v=message("open");cJSON_AddStringToObject(v,"instanceId",assigned);cJSON_AddStringToObject(v,"publicationHash",publication);cJSON_AddBoolToObject(v,"takeover",false);cJSON_AddBoolToObject(v,"externalImages",true);
-        ok=request(v,&reply,3000)&&osg_open_identity(reply,settings.host,settings.companion,assigned,publication,&session);
+        ok=request(v,&reply,3000)&&identity(reply,"session-open");
+        if(ok&&!equal(osg_string(reply,"controllerInstanceId"),assigned))ok=request_problem("Reply belongs to another panel");
+        if(ok&&!equal(osg_string(reply,"publicationHash"),publication))ok=request_problem("Reply uses another panel revision");
+        if(ok&&!osg_open_identity(reply,settings.host,settings.companion,assigned,publication,&session))ok=request_problem("Invalid session identifiers");
         if(ok){
             osg_image *candidate=&images[1-image_index];
             const cJSON *p=cJSON_GetObjectItemCaseSensitive(reply,"publication");
@@ -299,7 +343,7 @@ static void advance(void){
         equal(osg_string(reply,"error"),"Session is obsolete; explicitly reconnect.");
     cJSON_Delete(reply);
     if(assignment_refresh){abort_connection();state=AUTH;next_request=millis()+500;report("refreshing-cockpit-assignment-disarmed");}
-    else if(!ok)fail("host-rejected-or-invalid-reply-stop-and-reconnect");
+    else if(!ok)fail_request();
 }
 static bool clock_from(const cJSON *command){
     const cJSON *value=cJSON_GetObjectItemCaseSensitive(command,"unixMs");
@@ -401,7 +445,10 @@ static void update_screen(void){
         state==LIVE ? OSG_SCREEN_PANEL : state==PANEL_ERROR ? OSG_SCREEN_PANEL_ERROR : state==WAIT_ASSIGNMENT ? OSG_SCREEN_NO_PANEL : OSG_SCREEN_DISCONNECTED;
     const char *message=state==PAIR_BEGIN||state==PAIR_POLL ? "Approve pairing in Cockpit" : (state==FAULT||state==PANEL_ERROR||state==OPEN) ? detail : NULL;
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
-    if(ui.runtime->screen!=screen||ui.runtime->screen_message!=message){ui.runtime->screen=screen;ui.runtime->screen_message=message;*ui.dirty=true;}
+    if(!message)message="";
+    if(ui.runtime->screen!=screen||strcmp(ui.runtime->screen_message,message)){
+        ui.runtime->screen=screen;osg_copy(ui.runtime->screen_message,sizeof(ui.runtime->screen_message),message);*ui.dirty=true;
+    }
     xSemaphoreGive(ui.mutex);
 }
 static void network_task(void *arg){

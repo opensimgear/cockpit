@@ -50,7 +50,19 @@ int main(void){
     /* Status replies must not extend the request deadline indefinitely. */
     incoming="{\"command\":\"status\",\"requestId\":\"probe-5\"}\n";
     assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
-    assert(probes==5&&!reply&&now==10000);
+    assert(probes==5&&!reply&&now==10000&&!strcmp(socket.request_error,"USB response timed out"));
+    incoming="bad json\n";
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(!strcmp(socket.request_error,"Invalid USB reply JSON"));
+    incoming="{\"command\":\"serial-reply\",\"linkId\":\"wrong-link\",\"requestId\":\"5\",\"frame\":{\"ok\":true}}\n";
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(!strcmp(socket.request_error,"USB reply identity or frame mismatch"));
+    incoming="{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"6\",\"frame\":{\"ok\":false,\"type\":\"error\",\"error\":\"Credential revoked.\"}}\n";
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(!socket.request_error&&!strcmp(osg_string(reply,"error"),"Credential revoked."));cJSON_Delete(reply);
+    incoming="{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"7\",\"frame\":{\"type\":\"transfer-end\",\"id\":\"missing-start\"}}\n";
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(!strcmp(socket.request_error,"Invalid USB reply data or checksum"));
     osg_serial_close(&socket);
     puts("Serial status probes remain responsive across image requests; commands stay deferred");
 }

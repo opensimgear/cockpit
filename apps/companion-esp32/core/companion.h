@@ -56,7 +56,7 @@ typedef bool (*osg_input_sink)(void *, const char *control_id, bool down, uint64
 typedef enum { OSG_SCREEN_PANEL, OSG_SCREEN_UNPAIRED, OSG_SCREEN_NO_PANEL, OSG_SCREEN_DISCONNECTED, OSG_SCREEN_PANEL_ERROR, OSG_SCREEN_CONNECTING, OSG_SCREEN_LOADING, OSG_SCREEN_ERROR } osg_screen_state;
 typedef struct {
     osg_screen_state screen;
-    const char *screen_message; /* Static, non-secret diagnostic text; NULL uses the default. */
+    char screen_message[192]; /* Owned by each render snapshot; empty uses the default. */
     const osg_panel *panel;
     osg_display display;
     osg_sample samples[OSG_MAX_WIDGETS];

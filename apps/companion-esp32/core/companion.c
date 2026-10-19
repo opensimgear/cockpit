@@ -180,17 +180,30 @@ static void status_line(osg_runtime *r,int x,int y,int unit,int x0,int y0,int x1
         const int twice=2*error;if(twice>=dy){error+=dy;x0+=sx;}if(twice<=dx){error+=dx;y0+=sy;}
     }
 }
+static const char *status_next_line(const char *message,size_t columns,size_t *length){
+    size_t count=strlen(message);if(count>columns)count=columns;
+    if(message[count]&&message[count]!=' '){
+        size_t word=count;while(word&&message[word]!=' ')word--;
+        if(word)count=word;
+    }
+    *length=count;message+=count;while(*message==' ')message++;
+    return message;
+}
 static void status_screen(osg_runtime *r){
-    const char *message=r->screen_message?r->screen_message:r->screen==OSG_SCREEN_UNPAIRED?"Pair with OSG Cockpit":
+    const char *message=r->screen_message[0]?r->screen_message:r->screen==OSG_SCREEN_UNPAIRED?"Pair with OSG Cockpit":
         r->screen==OSG_SCREEN_NO_PANEL?"No panel assigned":
         r->screen==OSG_SCREEN_PANEL_ERROR?"Panel could not render correctly":
         r->screen==OSG_SCREEN_CONNECTING?"Connecting to OSG Cockpit":
         r->screen==OSG_SCREEN_LOADING?"Loading panel":
-        r->screen==OSG_SCREEN_ERROR?"Cockpit request failed":"No connection to OSG Cockpit";
+        r->screen==OSG_SCREEN_ERROR?"Missing failure diagnostics":"No connection to OSG Cockpit";
     int unit=r->display.height/100;if(unit<1)unit=1;if(unit>4)unit=4;
     int font=3;const int length=(int)strlen(message);
-    while(font>1&&length*4*font>r->display.width-32)font--;
-    const int icon=24*unit,gap=5*unit,height=icon+gap+5*font;
+    while(font>2&&length*4*font>r->display.width-32)font--;
+    const size_t columns=(size_t)((r->display.width-32)/(4*font)>0?(r->display.width-32)/(4*font):1);
+    size_t lines=0,count;const char *part=message;
+    do{part=status_next_line(part,columns,&count);lines++;}while(*part);
+    const int line_height=5*font+2*unit;
+    const int icon=24*unit,gap=5*unit,height=icon+gap+(int)lines*line_height-2*unit;
     const int x=(r->display.width-25*unit)/2,y=(r->display.height-height)/2;
     const uint16_t color=(r->screen==OSG_SCREEN_PANEL_ERROR||r->screen==OSG_SCREEN_ERROR)?0xfbaa:0x8d18;
 #define LINE(a,b,c,d) status_line(r,x,y,unit,a,b,c,d,color)
@@ -214,8 +227,15 @@ static void status_screen(osg_runtime *r){
         else{LINE(12,10,12,18);LINE(8,14,16,14);}
     }
 #undef LINE
-    const int width=length*4*font,ink=width-font;
-    text(r,(r->display.width-ink)/2,y+icon+gap,width,5*font,message,0xdedc);
+    part=message;
+    for(size_t row=0;row<lines;row++){
+        char line[192];const char *next=status_next_line(part,columns,&count);
+        if(count>=sizeof(line))count=sizeof(line)-1;
+        memcpy(line,part,count);line[count]=0;
+        const int width=(int)count*4*font,ink=width-font;
+        text(r,(r->display.width-ink)/2,y+icon+gap+(int)row*line_height,width,5*font,line,0xdedc);
+        part=next;
+    }
 }
 static bool render_stale(const osg_sample *s,uint64_t now){
     return s->source_status==OSG_FEEDBACK_STALE || (s->available &&
@@ -226,7 +246,7 @@ osg_damage osg_render_damage(const osg_runtime *r,const osg_runtime *old,uint64_
     osg_damage d={0};
     if(!old || !old->panel || r->panel!=old->panel || r->page!=old->page ||
        r->display.width!=old->display.width || r->display.height!=old->display.height ||
-       r->screen!=old->screen || r->screen_message!=old->screen_message || r->connected!=old->connected || r->armed!=old->armed ||
+       r->screen!=old->screen || strcmp(r->screen_message,old->screen_message) || r->connected!=old->connected || r->armed!=old->armed ||
        r->arming!=old->arming || r->live_input!=old->live_input){d.full=true;return d;}
     for(size_t i=0;i<r->panel->widget_count;i++){
         const osg_widget *w=&r->panel->widgets[i];

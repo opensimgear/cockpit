@@ -706,7 +706,7 @@ fn worker(
                                             set(
                                                 public,
                                                 "stage",
-                                                json!(v["statusMessage"].as_str().filter(|s| !s.is_empty() && s.len()<=120 && !s.chars().any(char::is_control)).unwrap_or(match v["status"].as_str() {
+                                                json!(v["statusMessage"].as_str().filter(|s| !s.is_empty() && s.len()<=191 && !s.chars().any(char::is_control)).unwrap_or(match v["status"].as_str() {
                                                     Some("live-armed") =>
                                                         "Panel connected · touch ready",
                                                     Some("live-disarmed") =>

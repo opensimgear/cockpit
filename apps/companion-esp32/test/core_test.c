@@ -166,7 +166,9 @@ static void preview(const char *path, int width, int height, osg_screen_state sc
     osg_sample sample = {.available = true, .kind = OSG_STRING, .provenance = OSG_LOCAL}; strcpy(sample.text, "123.450");
     assert(osg_feedback(&runtime, "radio-channel", &sample, 0)); sample.kind = OSG_NUMBER; sample.number = 125.5;
     assert(osg_feedback(&runtime, "speed-channel", &sample, 0)); sample.kind = OSG_BOOL; sample.boolean = true;
-    assert(osg_feedback(&runtime, "caution-channel", &sample, 0));runtime.screen=screen;osg_render(&runtime, 100); assert(!raster.failed);
+    assert(osg_feedback(&runtime, "caution-channel", &sample, 0));runtime.screen=screen;
+    if(screen==OSG_SCREEN_ERROR)strcpy(runtime.screen_message,"Open panel: Instance already has a writer; an operator must disconnect/take over first.");
+    osg_render(&runtime, 100); assert(!raster.failed);
     if (path) {
         FILE *f = fopen(path, "wb"); assert(f); fprintf(f, "P6\n%d %d\n255\n", width, height);
         for (int i = 0; i < width * height; i++) {
@@ -256,7 +258,7 @@ static void image_test(void){
 int main(int argc, char **argv) {
     for(int size=0;size<3;size++){
         spy status;osg_runtime *r=setup(&status,size==0?480:size==1?800:320,size==0?320:size==1?480:240);
-        const char *messages[]={"Pair with OSG Cockpit","No panel assigned","No connection to OSG Cockpit","Panel could not render correctly","Connecting to OSG Cockpit","Loading panel","Cockpit request failed"};
+        const char *messages[]={"Pair with OSG Cockpit","No panel assigned","No connection to OSG Cockpit","Panel could not render correctly","Connecting to OSG Cockpit","Loading panel","Missing failure diagnostics"};
         for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_ERROR;screen++){
             osg_runtime previous=*r;r->screen=(osg_screen_state)screen;
             assert(osg_render_damage(r,&previous,0,0).full);
@@ -266,10 +268,14 @@ int main(int argc, char **argv) {
             assert(abs(2*status.text_x+status.text_width-font-status.width)<=1);
             assert(status.text_y>status.height/2 && status.draws>20);
         }
-        osg_runtime previous=*r;r->screen_message="Panel image download failed";
+        osg_runtime previous=*r;strcpy(r->screen_message,"Panel image download failed");
         assert(osg_render_damage(r,&previous,0,0).full);
         status.log[0]=0;osg_render(r,0);assert(strstr(status.log,"Panel image download failed"));
-        r->screen_message=NULL;
+        previous=*r;strcpy(r->screen_message,"Open panel: Instance already has a writer; an operator must disconnect/take over first. Stop the active writer before reconnecting this companion.");
+        assert(osg_render_damage(r,&previous,0,0).full);
+        status.log[0]=0;status.texts=0;osg_render(r,0);assert(status.texts>1);
+        assert(strstr(status.log,"Open panel:")&&strstr(status.log,"first."));
+        r->screen_message[0]=0;
         r->screen=OSG_SCREEN_PANEL;status.log[0]=0;osg_render(r,0);
         assert(!strstr(status.log,"LIVE INPUT")&&!strstr(status.log,"RECORDING ONLY"));
     }

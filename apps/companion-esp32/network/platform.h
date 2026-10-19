@@ -4,7 +4,7 @@
 #include "esp_transport.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-typedef struct { esp_transport_handle_t tls, ws; unsigned char ca_der[1536]; size_t ca_bytes; bool direct; uint64_t serial_sequence; char link[32]; } osg_socket;
+typedef struct { esp_transport_handle_t tls, ws; unsigned char ca_der[1536]; size_t ca_bytes; bool direct; uint64_t serial_sequence; char link[32]; const char *request_error; } osg_socket;
 extern const osg_crypto osg_platform_crypto;
 bool osg_pixels_begin(unsigned slot,const char *hash,size_t bytes,bool *cached);
 bool osg_pixels_write(unsigned slot,size_t offset,const void *bytes,size_t count);
