@@ -26,6 +26,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     const outlines = editor.locator('.viewport-outline');
     const viewportList = editor.locator('.viewport-list');
     const change = async (input, value) => { await input.fill(String(value)); await input.press('Tab'); };
+    await viewportList.getByRole('button').first().click();
     await expect(outlines).toHaveCount(1);
     await expect(editor.getByLabel('Viewport width', { exact: true })).toHaveValue('1280');
     await expect(editor.getByLabel('Viewport height', { exact: true })).toHaveValue('800');
@@ -94,6 +95,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     // Real pointer gesture: shrink the right viewport vertically, preserving its widgets.
     while (await page.getByRole('button', { name: 'Dismiss notification', exact: true }).count()) await page.getByRole('button', { name: 'Dismiss notification', exact: true }).first().click();
     const handle = editor.getByRole('button', { name: 'Resize viewport Right instruments', exact: true });
+    if (await editor.getByRole('button',{name:'Close properties',exact:true}).isVisible()) await editor.getByRole('button',{name:'Close properties',exact:true}).click();
     await handle.scrollIntoViewIfNeeded();
     const handleBox = await handle.boundingBox();
     assert.ok(handleBox);

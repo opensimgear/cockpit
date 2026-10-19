@@ -37,6 +37,7 @@
   let publications = $state.raw<Record<string, Publication[]>>({});
   let pageId = $state('');
   let selected = $state<string[]>([]);
+  let propertiesOpen = $state(false);
   let selectedViewportId = $state('');
   let preview = $state(false);
   let controller: PreviewController | undefined;
@@ -124,9 +125,10 @@
 
 
   function stop() { controller?.disarm('Designer changed'); preview = false; }
-  async function togglePreview() { if (preview) stop(); else { preview = true; await tick(); controller?.arm(); } }
+  async function togglePreview() { if (preview) stop(); else { select([]); preview = true; await tick(); controller?.arm(); } }
   function select(ids: string[]) {
     selected = ids;
+    propertiesOpen = ids.length > 0;
     const next = document.presentation.widgets.find(w => w.id === ids[0]);
     configText = next ? JSON.stringify(next.config, null, 2) : '';
     if (next) {
@@ -134,7 +136,11 @@
       if (region) selectedViewportId = region.id;
     }
   }
-  function selectViewport(id: string) { selectedViewportId = id; select([]); }
+  function selectViewport(id: string) { selectedViewportId = id; select([]); propertiesOpen = true; }
+  function slideProperties(_node: HTMLElement) {
+    return { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
+      css: (t: number) => `transform:translateX(${(1-t)*100}%)` };
+  }
   function command(command: Parameters<typeof applyDesignerCommand>[1]) {
     try { stop(); history = applyDesignerCommand(history, command); dirty=true; if (!document.ui.pages.some(p => p.id === pageId)) pageId = document.ui.pages[0].id; error = ''; return true; }
     catch (e) { error = e instanceof Error ? e.message : String(e); return false; }
@@ -163,7 +169,7 @@
     }
   }
   function create() {
-    if(!leaveEditor())return;editorOpen=true;dirty=true;
+    if(!leaveEditor())return;editorOpen=true;dirty=true;propertiesOpen=false;
     stop(); name = `Panel ${library.drafts.length + 1}`; draftId = crypto.randomUUID();
     history = createDesignerHistory(newDocument(name)); pageId = document.ui.pages[0].id; selected = []; assets = []; message = '';error='';
     onNavigate?.({kind:'panel',id:draftId});
@@ -414,10 +420,10 @@
       <div class="canvas-caption"><strong>{viewport.width} × {viewport.height} px</strong><span>{regions.length} {regions.length === 1 ? 'viewport' : 'viewports'}</span></div>
       {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
       <p class="hint">{preview ? 'Local requested values only. Press controls to preview; no network or virtual device is started.' : 'Drag viewport labels to move areas; drag a corner to resize. Widgets must stay inside a viewport. Shift-click selects several widgets.'}</p>
+      <div class="panel-properties-layout">
       <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={activeViewport.id} onselectviewport={selectViewport} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
-      {#if preview && previewSnapshot}<p role="status" class="hint">Preview {previewSnapshot.armed ? 'armed' : 'disarmed'} · {previewSnapshot.activePointers} active pointers · {previewSnapshot.events.length} recorded transitions · {previewSnapshot.reason}</p><details><summary>Local requested values</summary>{#each document.ui.controls as control}<p class="hint">{control.label}: {String(previewSnapshot.values[control.id])}</p>{/each}</details>{/if}
-    </div>
-    <aside aria-label="Widget properties"><h3>Properties</h3>
+      {#if propertiesOpen}
+    <aside class="properties-overlay" aria-label="Widget properties" transition:slideProperties><button class="properties-close" aria-label="Close properties" title="Close properties" onclick={()=>select([])}><Icon name="close" size={18}/></button><h3>Properties</h3>
       {#if widget}
         <p class="hint">{widget.kind} · <code>{widget.id}</code></p>
         <label>Label<input value={widget.label} onchange={e => patch({ label: e.currentTarget.value })} /></label>
@@ -455,6 +461,11 @@
       {/if}
       <details><summary>Logical target layouts</summary><p class="hint">Portable descriptors and mappings. Machine slots and credentials are stored separately.</p><button onclick={() => { targetText = JSON.stringify(document.targets, null, 2); }}><Icon name="sliders" size={16} />Edit layouts</button><textarea aria-label="Logical target layouts JSON" rows="8" bind:value={targetText}></textarea><button onclick={() => { try { command({ type: 'replace', document: { ...document, targets: JSON.parse(targetText) } }); } catch (e) { error = String(e); } }}><Icon name="check" size={16} />Apply layouts</button></details>
     </aside>
+      {/if}
+      </div>
+      {#if preview && previewSnapshot}<p role="status" class="hint">Preview {previewSnapshot.armed ? 'armed' : 'disarmed'} · {previewSnapshot.activePointers} active pointers · {previewSnapshot.events.length} recorded transitions · {previewSnapshot.reason}</p><details><summary>Local requested values</summary>{#each document.ui.controls as control}<p class="hint">{control.label}: {String(previewSnapshot.values[control.id])}</p>{/each}</details>{/if}
+    </div>
+
   </div>
   </div>
   </section>
@@ -462,6 +473,7 @@
 </section>
 
 <style>
+  .panel-properties-layout{position:relative;overflow:hidden;min-width:0}.properties-overlay{position:absolute;inset:0 0 0 auto;width:75%;box-sizing:border-box;padding:20px;overflow:auto;background:var(--surface);border-left:1px solid var(--line);box-shadow:-12px 0 32px #0003;z-index:20}.properties-overlay > h3{margin-top:0}.properties-close{float:right;display:grid;place-items:center;padding:6px;margin:-6px -6px 8px 12px;background:transparent;border:0;color:var(--muted)}
   .asset-import{display:none}.asset-list{list-style:none;padding:0;margin:0;display:grid;gap:6px}.asset-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px;border:1px solid var(--line);border-radius:5px}.asset-list img{width:30px;height:30px;object-fit:contain;flex-shrink:0;background:var(--bg);border-radius:3px}.asset-list li > div{flex:1;min-width:0}.asset-list strong,.asset-list small{display:block;font-size:10px;overflow-wrap:anywhere}.asset-list small{font-size:9px;color:var(--muted);margin-top:4px}.asset-list .assets-empty{font-size:11px;color:var(--muted);border-style:dashed}.asset-delete{display:grid;place-items:center;flex-shrink:0;padding:5px;opacity:0;pointer-events:none;color:#e39b9b}.asset-list li:hover .asset-delete,.asset-list li:focus-within .asset-delete{opacity:1;pointer-events:auto}@media(hover:none){.asset-delete{opacity:1;pointer-events:auto}}
   .layout-tools button{display:grid;place-items:center;width:36px;height:36px;padding:0}.layout-tools button.active{color:var(--accent);background:var(--accent-bg);border-color:var(--accent)}
   .workspace > aside.panel-library{padding:0}.editor-accordion{margin:0;border-bottom:1px solid var(--line)}.editor-accordion:last-child{border-bottom:0}.editor-accordion > summary{padding:14px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}.accordion-content{padding:0 14px 14px;display:grid;gap:8px;min-width:0}.accordion-content .hint,.accordion-content label{margin:0}.accordion-content input,.accordion-content select{width:100%}.accordion-content button{max-width:100%}
@@ -472,7 +484,7 @@
   .editor-heading{flex-wrap:wrap}.editor-heading h1{overflow-wrap:anywhere}.editor-heading .primary-button{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:var(--accent-text);border-color:transparent;padding:11px 14px;font-size:11px;font-weight:600}
   .panel-list-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}.panel-import{display:none}.action,.toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px}.panels-section{margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}.panel-list-heading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:20px 0}
   .panel-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:18px;margin:20px 0}.panel-tile{padding:0;text-align:left;overflow:hidden;border-radius:10px;background:var(--surface)}.panel-thumbnail{display:block;width:100%;aspect-ratio:16/9}.tile-copy{padding:16px}.tile-copy h3{font-size:17px;margin:0 0 8px}.tile-copy p{margin:0 0 10px}.tile-copy span{font-size:12px;color:var(--accent)}.empty-panels{padding:60px 24px;text-align:center;border:1px dashed var(--line);border-radius:10px;margin:20px 0}
-  h2{font-size:22px;margin:0}h3{font-size:13px;margin:18px 0 10px}p{font-size:13px;color:var(--muted);line-height:1.6}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:12px 0}.workspace{display:grid;grid-template-columns:180px minmax(0,1fr) 250px;gap:18px}.workspace>aside,.panel-canvas-workspace{min-width:0}.workspace>aside{padding:16px;background:var(--surface);border:1px solid var(--line);border-radius:7px;align-self:start}.workspace>aside>h3:first-child{margin-top:0}.palette{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+  h2{font-size:22px;margin:0}h3{font-size:13px;margin:18px 0 10px}p{font-size:13px;color:var(--muted);line-height:1.6}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:12px 0}.workspace{display:grid;grid-template-columns:180px minmax(0,1fr);gap:18px}.workspace>aside,.panel-canvas-workspace{min-width:0}.workspace>aside{padding:16px;background:var(--surface);border:1px solid var(--line);border-radius:7px;align-self:start}.palette{display:grid;grid-template-columns:1fr 1fr;gap:5px}
   button,select,input,textarea{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);padding:8px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}label{display:flex;flex-direction:column;gap:5px;font-size:12px;margin:7px 0}input,select,textarea{max-width:100%;min-width:0;box-sizing:border-box}input[type=checkbox]{width:auto;accent-color:var(--accent)}.bounds{display:grid;grid-template-columns:1fr 1fr;gap:6px}.hint{font-size:11px;line-height:1.5;overflow-wrap:anywhere}code{font-size:10px;overflow-wrap:anywhere}details{margin-top:20px}textarea{width:100%;font-family:monospace}
-  @media(max-width:1050px){.workspace{grid-template-columns:180px minmax(0,1fr)}.workspace>aside:last-child{grid-column:1/-1}}@media(max-width:650px){.workspace{grid-template-columns:1fr}.workspace>aside:last-child{grid-column:auto}.panel-list-actions{flex-wrap:wrap}.editor-heading{align-items:flex-start}}
+  @media(max-width:1050px){.workspace{grid-template-columns:180px minmax(0,1fr)}}@media(max-width:650px){.workspace{grid-template-columns:1fr}.panel-list-actions{flex-wrap:wrap}.editor-heading{align-items:flex-start}}
 </style>

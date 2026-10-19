@@ -565,6 +565,17 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await panels.getByRole('button', { name: /^Fixture panel/ }).click();
     await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
+    const panelProperties=panelEditor.getByRole('complementary',{name:'Widget properties',exact:true});
+    await expect(panelProperties).toHaveCount(0);
+    const panelCanvasWidth=await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth);
+    await panelEditor.locator('.viewport-list button').first().click();await expect(panelProperties).toBeVisible();
+    await expect.poll(()=>panelProperties.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(panelCanvasWidth*.75));
+    assert.equal(await panelEditor.locator('.panel-properties-layout').evaluate(node=>node.clientWidth),panelCanvasWidth,'Properties overlay does not resize the panel canvas.');
+    await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
+    await panelEditor.locator('.widget').first().click();
+    await expect(panelProperties.getByRole('textbox',{name:'Label',exact:true})).toBeVisible();
+    await panelEditor.locator('.panel-properties-layout').screenshot({path:resolve(artifacts,'panel-properties-overlay.png'),animations:'disabled'});
+    await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
     await expect(panelEditor.getByRole('button', { name: 'Duplicate panel', exact: true })).toHaveCount(0);
     await expect(panelEditor.getByRole('button', { name: /^(Flight|Racing) template$/ })).toHaveCount(0);
     const panelTitleActions=panelEditor.locator('.editor-title-actions');
