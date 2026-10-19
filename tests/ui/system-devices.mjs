@@ -675,10 +675,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(selectWheel).not.toBeChecked(); await expect(selectThrottle).not.toBeChecked();
     await expect(confirmCleanup).toBeDisabled();
     await expect(dialog).toContainText('0 of 2 selected');
-    await selectWheel.check();
+    const wheelCleanupRow = cleanupTable.getByRole('row').filter({ has: page.getByRole('checkbox', { name: 'Select Remembered wheel', exact: true }) });
+    await wheelCleanupRow.getByRole('rowheader', { name: 'Remembered wheel', exact: true }).click();
+    await expect(selectWheel).toBeChecked();
     await expect(selectAll).toBeChecked({ indeterminate: true });
     await expect(confirmCleanup).toBeEnabled();
-    await selectWheel.uncheck();
+    await wheelCleanupRow.getByRole('cell').last().getByText('Forget this local remembered record.', { exact: false }).click();
+    await expect(selectWheel).not.toBeChecked();
     await expect(confirmCleanup).toBeDisabled();
     await selectAll.check();
     await expect(selectWheel).toBeChecked(); await expect(selectThrottle).toBeChecked();
