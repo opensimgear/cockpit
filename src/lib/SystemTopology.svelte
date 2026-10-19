@@ -149,8 +149,8 @@
   .topology-node:hover { border-color: var(--muted); }
   .topology-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .topology-node.context { border-style: dashed; }
-  .topology-node.offline .node-icon { color: var(--muted); }
-  .node-icon { display: grid; place-items: center; width: 30px; height: 32px; background: var(--subtle); color: var(--accent); border-radius: 5px; flex-shrink: 0; }
+  .topology-node.offline .node-icon { color: var(--muted); background: transparent; }
+  .node-icon { display: grid; place-items: center; width: 30px; height: 32px; background: var(--accent-bg); color: var(--accent); border-radius: 5px; flex-shrink: 0; }
   .node-copy { min-width: 0; flex: 1; }
   .node-kind { display: block; font-size: 8px; color: var(--muted); margin-bottom: 5px; }
   .node-copy strong { font-size: 12px; font-weight: 550; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
