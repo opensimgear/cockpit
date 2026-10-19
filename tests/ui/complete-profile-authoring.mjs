@@ -77,6 +77,10 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, and inspect a
  await page.exposeFunction('__osgCompleteRigFixture',async(command,args)=>{
   if(command!=='gateway_request'){unexpected.push(command);throw Error('Unexpected IPC '+command);}
   const request=copy(args.request);requests.push(request);const offset=request.offset??0,limit=request.limit??32;
+  if(request.command==='controller_list')return{ok:true,state:{controllers:{session:'complete-rig-controllers',backendStatus:'ready',offset,total:0,limit,sources:[]}}};
+  if(request.command==='module_usb_list')return{ok:true,state:{moduleUsb:{offset,total:0,modules:[]}}};
+  if(request.command==='system_inventory')return{ok:true,state:{systemInventory:{offset,total:0,nextOffset:null,virtualDevices:[],hiddenDevices:[],controllerAssociations:[],diagnostics:[],visibilityInspected:true}}};
+  if(request.command==='profile_desktop_status')return{ok:true,state:{desktop:{enabled:false,qualified:false,state:'disabled',reason:'Fixture observation only.',scope:{kind:'application'}}}};
   if(['profile_list','profile_status','profile_automatic_status'].includes(request.command))return{ok:true,state:{profiles:listing()}};
   if(['profile_get','profile_assignments_get'].includes(request.command))return{ok:true,state:{profiles:{...listing(),document:copy(documents.get(request.id)),assignments:copy(assignments.get(request.id))}}};
   if(request.command==='profile_resources_list')return{ok:true,state:{profileResources:{session:'complete-rig-inventory',revision:String(inventoryRevision),offset,total:resources.length,resources:copy(resources.slice(offset,offset+limit)),inventoryDiagnostics:[],readOnly:false}}};
@@ -133,6 +137,29 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, and inspect a
  try{
   await page.goto(endpoint);await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Profiles',exact:true}).click();await expect(page.getByRole('button',{name:'Edit Default',exact:true})).toBeVisible();await page.getByRole('button',{name:'Add profile',exact:true}).click();await page.getByLabel('Profile name',{exact:true}).fill('Complete browser rig');
   await expect(page.locator('.resource-block')).toHaveCount(9);await expect(page.locator('path.signal-edge')).toHaveCount(0);
+  await expect(inspector).toHaveCount(0);
+  const canvas=page.getByRole('application',{name:'Profile canvas'});
+  const fullCanvasWidth=await canvas.evaluate(node=>node.clientWidth);
+  await chooseBlock('OSG direct USB device');
+  await expect.poll(async()=>inspector.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(fullCanvasWidth*.75));
+  assert.equal(await canvas.evaluate(node=>node.clientWidth),fullCanvasWidth,'Opening details overlays the canvas without resizing it.');
+  await page.locator('.canvas-layout').screenshot({path:resolve(artifacts,'node-details-overlay.png'),animations:'disabled'});
+  await page.setViewportSize({width:700,height:900});
+  await expect.poll(async()=>inspector.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round((await canvas.evaluate(node=>node.clientWidth))*.75));
+  await page.setViewportSize({width:1600,height:1100});
+  await canvas.scrollIntoViewIfNeeded();
+  const emptyPoint=await canvas.evaluate(node=>{
+   const box=node.getBoundingClientRect();
+   for(let y=12;y<Math.min(box.height,window.innerHeight-box.top)-12;y+=24)for(let x=12;x<box.width*.24;x+=24){
+    const target=document.elementFromPoint(box.left+x,box.top+y);
+    if(target&&node.contains(target)&&!target.closest('.resource-block,button'))return{x:box.left+x,y:box.top+y};
+   }
+   throw Error('No exposed empty canvas point found.');
+  });
+  await page.mouse.click(emptyPoint.x,emptyPoint.y);
+  await expect(inspector).toHaveCount(0);await expect(page.locator('.resource-block.selected')).toHaveCount(0);
+  await chooseBlock('OSG direct USB device');
+  await inspector.getByRole('button',{name:'Close node details',exact:true}).click();await expect(inspector).toHaveCount(0);
   await chooseBlock('OSG direct USB device');await inspector.getByText('Connection metadata (2)',{exact:true}).click();await expect(inspector.locator('.connection-row').getByText('USB',{exact:true})).toBeVisible();await expect(inspector.locator('.connection-row').getByText('CAN',{exact:true})).toBeVisible();await expect(inspector.getByText('COM-fixture',{exact:true})).toBeVisible();await expect(inspector.getByText('OSG gateway',{exact:true})).toBeVisible();await expect(page.locator('path.signal-edge')).toHaveCount(0);
   for(const resource of blueprint.resources.filter(resource=>resource.kind!=='companion'&&resource.ports.length))await selectProvider(resource.name,resource.ports.map(port=>port.name));
   await chooseBlock('Hidden third party C');await inspector.getByText('Resource assignment and policy',{exact:true}).click();await inspector.getByLabel('Game visibility intent').selectOption('hidden-while-active');
