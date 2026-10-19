@@ -659,7 +659,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // confirmation. A returning wheel cannot be removed; one failed throttle
     // mutation is reported without replay, and the other records stay visible.
     await filter.selectOption('offline'); await search.fill('Remembered'); await topology.click();
-    await page.getByRole('button', { name: 'Forget eligible (2)', exact: true }).click();
+    await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
     await expect(dialog).toContainText('Remembered wheel'); await expect(dialog).toContainText('Remembered throttle');
     await expect(dialog).toContainText('retained-throttle-binding');
     fixture.controllers.find(source => source.id === 'remembered-wheel').online = true;
@@ -669,7 +669,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-wheel').length, 0);
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-throttle').length, 1);
     fixture.failForget = null; fixture.keepForgotten = true;
-    await page.getByRole('button', { name: 'Forget eligible (1)', exact: true }).click();
+    await page.getByRole('button', { name: 'Cleanup (1)', exact: true }).click();
     await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
     await expect(graph.locator('[data-component-id="controller:remembered-throttle"]')).toHaveCount(0);
     await filter.selectOption('all'); await search.fill(''); await list.click();

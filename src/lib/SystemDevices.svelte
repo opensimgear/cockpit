@@ -97,13 +97,12 @@
 <section aria-label="System devices">
 {#if error}<Notification message={error} kind="error" />{/if}
 <div class="system-inventory" bind:this={inventoryElement} hidden={showingDetails}>
-<div class="page-heading"><div><div class="eyebrow">YOUR CONNECTED SYSTEM</div><h1>Devices</h1><p>Every known component, its current state, and how it connects.</p></div></div>
+<div class="page-heading inventory-heading"><div><div class="eyebrow">YOUR CONNECTED SYSTEM</div><h1>Devices</h1><p>Every known component, its current state, and how it connects.</p></div><button class="secondary-button cleanup-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}>Cleanup ({eligible.length})</button></div>
 <div class="system-toolbar">
   <div class="mode-switch" role="group" aria-label="Devices presentation"><button class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}>List</button><button class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}>Topology</button></div>
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
   <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="bluetooth">Bluetooth</option><option value="software">Software</option><option value="unknown">Unknown connection</option></select>
-  <button class="text-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}>Forget eligible ({eligible.length})</button>
 </div>
 <div class="type-counts" aria-label="Component counts"><span aria-live="polite">{visible.length} / {components.length} components</span>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
 {#if snapshot.diagnostics.length}<details class="provider-diagnostics"><summary>Inventory diagnostics ({snapshot.diagnostics.length})</summary>{#each snapshot.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}
@@ -189,6 +188,7 @@
 
 <style>
   .system-inventory[hidden] {display:none}
+  .inventory-heading {align-items:center}.inventory-heading > div {min-width:0}.cleanup-button {flex-shrink:0}
   .details-toolbar {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
   .system-toolbar,.component-actions { display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px; }
   .mode-switch {display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
