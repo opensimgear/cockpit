@@ -60,6 +60,8 @@
   let store: import('./companion-library').CompanionLibraryStore | undefined;
   const document = $derived(history.present);
   const page = $derived(document.ui.pages.find(p => p.id === pageId) ?? document.ui.pages[0]);
+  const emptyPageNumbers = $derived(document.ui.pages.flatMap((page,index)=>document.presentation.widgets.some(widget=>widget.pageId===page.id)?[]:[index]));
+  const panelInvalidReason = $derived(emptyPageNumbers.length ? `Add at least one widget to ${emptyPageNumbers.length===1?'page':'pages'} ${emptyPageNumbers.join(', ')} before previewing, saving or exporting.` : !document.ui.controls.length ? 'Add at least one input before previewing, saving or exporting.' : '');
   const widget = $derived(document.presentation.widgets.find(w => w.id === selected[0]));
   const viewport = $derived(document.presentation.viewports.find(v => v.pageId === page.id)!);
   const regions = $derived(viewportRegions(document, page.id));
@@ -141,7 +143,7 @@
 
 
   function stop() { controller?.disarm('Designer changed'); preview = false; }
-  async function togglePreview() { if (preview) stop(); else { select([]); preview = true; await tick(); controller?.arm(); } }
+  async function togglePreview() { if (preview) stop(); else if (!panelInvalidReason) { select([]); preview = true; await tick(); controller?.arm(); } }
   function select(ids: string[]) {
     selected = ids;
     propertiesOpen = ids.length > 0;
@@ -244,16 +246,11 @@
     await send('companion_prune',{hashes:[...new Set([...pins,...current])],panelIds:managedIds});
   }
   async function save() {
+    if (panelInvalidReason) { error=panelInvalidReason;return; }
     await operation(async () => {
       const previousHashes=panelHashes(draftId);
       const simplified=simplifyFirmwareWidgets(document);
       if(simplified.removed)history=createDesignerHistory(simplified.document);
-      if (!document.ui.controls.length) {
-        const next=await saveDraft(library,{id:draftId,name:document.ui.title,document,assets:activeAssets});
-        await persist(next,publications);dirty=false;
-        message='Draft saved. Add an input to update companions.';
-        return;
-      }
       const panel=await publishDocument(document,activeAssets);
       const next=await saveDraft(library,{id:draftId,name:document.ui.title,document,assets:activeAssets});
       await persist(next,{...publications,[draftId]:[panel]});dirty=false;
@@ -296,6 +293,7 @@
     });
   }
   async function download() {
+    if (panelInvalidReason) { error=panelInvalidReason;return; }
     await operation(async () => {
       const text = await exportBundle(document, activeAssets); const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
       const link = window.document.createElement('a'); link.href = url; link.download = `${name.replace(/[^a-z0-9_-]/gi, '-')}.osg-panel.json`; link.click(); URL.revokeObjectURL(url); message = 'Portable bundle exported';
@@ -410,9 +408,9 @@
       <p>{dirty ? 'Unsaved changes' : 'Edit the panel layout.'}</p>
     </div>
     <div class="editor-title-actions">
-      <button class="action" onclick={togglePreview} disabled={busy}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview'}</button>
-      <button class="action" onclick={download} disabled={busy}><Icon name="download" size={16} />Export</button>
-      <button class="action" onclick={save} disabled={busy || !storageReady}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save'}</button>
+      <span class="action-tooltip" title={!preview && panelInvalidReason || undefined}><button class="action" title={!preview && panelInvalidReason || undefined} onclick={togglePreview} disabled={busy || !preview && !!panelInvalidReason}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview'}</button></span>
+      <span class="action-tooltip" title={panelInvalidReason || undefined}><button class="action" title={panelInvalidReason || undefined} onclick={download} disabled={busy || !!panelInvalidReason}><Icon name="download" size={16} />Export</button></span>
+      <span class="action-tooltip" title={panelInvalidReason || undefined}><button class="action" title={panelInvalidReason || undefined} onclick={save} disabled={busy || !storageReady || !!panelInvalidReason}><Icon name="save" size={16} />{busy ? 'Saving…' : 'Save'}</button></span>
       {#if library.drafts.some(d => d.id===draftId)}<button class="action delete-panel" disabled={busy} onclick={() => removeDraft(draftId)}><Icon name="trash" size={16} />Delete</button>{/if}
     </div>
   </div>
@@ -544,13 +542,14 @@
   {#if pendingLeave}<dialog class="leave-panel-dialog" role="alertdialog" aria-modal="true" aria-labelledby="leave-panel-title" use:showLeaveDialog oncancel={event=>{event.preventDefault();keepEditing();}}>
     <h2 id="leave-panel-title">Keep your unsaved changes?</h2><p>Save this panel before leaving, or discard this draft.</p>
     {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
-    <div><button class="secondary-button" disabled={busy} onclick={keepEditing}>Keep editing</button><button class="secondary-button" disabled={busy} onclick={()=>continueLeaving(true)}>Discard and continue</button><button class="primary-button" disabled={busy || !storageReady} onclick={saveAndContinue}>{busy?'Saving…':'Save and continue'}</button></div>
+    <div><button class="secondary-button" disabled={busy} onclick={keepEditing}>Keep editing</button><button class="secondary-button" disabled={busy} onclick={()=>continueLeaving(true)}>Discard and continue</button><span class="action-tooltip" title={panelInvalidReason || undefined}><button class="primary-button" title={panelInvalidReason || undefined} disabled={busy || !storageReady || !!panelInvalidReason} onclick={saveAndContinue}>{busy?'Saving…':'Save and continue'}</button></span></div>
   </dialog>{/if}
 </section>
 
 <style>
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
+  .action-tooltip{display:inline-flex}
   .leave-panel-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);max-width:460px;width:calc(100% - 40px);box-sizing:border-box;padding:26px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005;color:var(--text);margin:0}.leave-panel-dialog::backdrop{background:#0009}.leave-panel-dialog h2{font-size:14px}.leave-panel-dialog p{font-size:11px;color:var(--muted);line-height:1.8;margin:15px 0 23px}.leave-panel-dialog>div{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.leave-panel-dialog button{font-size:10px}
   .viewport-row .viewport-select{display:flex;align-items:center;gap:8px}.viewport-select > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewport-pencil{display:flex;opacity:0;color:var(--muted)}.viewport-row:hover .viewport-pencil,.viewport-row:focus-within .viewport-pencil{opacity:1}.viewport-name-input{width:100%;padding-right:36px}
   @media(hover:none){.viewport-pencil{opacity:1}}

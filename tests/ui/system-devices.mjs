@@ -687,6 +687,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toHaveAttribute('aria-pressed','true');
     await expect(pageChoice.getByRole('button',{name:/^Delete page/})).toHaveCount(0);
     await panelLibrary.getByRole('button',{name:'Add page',exact:true}).click();await expect(pageChoice.locator('li')).toHaveCount(2);
+    for(const name of ['Preview','Save','Export']){const action=panelEditor.getByRole('button',{name,exact:true});await expect(action).toBeDisabled();await expect(action).toHaveAttribute('title',/widget to page 1/);}
     await expect(pageChoice.getByRole('button',{name:'Page 1',exact:true})).toHaveAttribute('aria-pressed','true');
     await pageChoice.locator('li').first().hover();await pageChoice.getByRole('button',{name:'Delete page 0',exact:true}).click();
     await expect(pageChoice.locator('li')).toHaveCount(1);await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toBeVisible();
@@ -697,6 +698,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const secondPage=pageChoice.locator('li').last(),deletePage=secondPage.getByRole('button',{name:'Delete page 1',exact:true});
     await page.mouse.move(0,0);await expect(deletePage).toHaveCSS('opacity','0');await secondPage.hover();await expect(deletePage).toHaveCSS('opacity','1');
     await deletePage.click();await expect(pageChoice.locator('li')).toHaveCount(1);await expect(pageChoice.getByRole('button',{name:/^Delete page/})).toHaveCount(0);
+    for(const name of ['Preview','Save','Export'])await expect(panelEditor.getByRole('button',{name,exact:true})).toBeEnabled();
     await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(4);await expect(pageChoice).toBeVisible();
     await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(pageChoice).toBeVisible();
     await panelLibrary.getByText('Assets',{exact:true}).click();
@@ -1026,12 +1028,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await confirmCleanup.click();
     await expect(devices.locator('[data-component-id="visibility:stale-hide"]')).toHaveCount(0);
     await companionsNav.click();await panels.getByRole('button',{name:'New panel',exact:true}).click();
-    const savedBlankName=await panelEditor.getByRole('heading',{level:1}).innerText();
     await panelEditor.locator('.widget').first().click();await panelEditor.getByRole('button',{name:'Delete widget',exact:true}).click();
+    for(const name of ['Preview','Save','Export']){const action=panelEditor.getByRole('button',{name,exact:true});await expect(action).toBeDisabled();await expect(action).toHaveAttribute('title',/widget to page 0/);}
     await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(leavePanelDialog).toBeVisible();
-    await leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(panelEditor).toHaveCount(0);
-    await panels.locator('.panel-tile').filter({hasText:savedBlankName}).click();await expect(panelEditor.locator('.widget')).toHaveCount(0);
-    await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(panelEditor).toHaveCount(0);await expect(leavePanelDialog).toHaveCount(0);
+    await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();
+    await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toHaveAttribute('title',/widget to page 0/);
+    await leavePanelDialog.getByRole('button',{name:'Discard and continue',exact:true}).click();await expect(panelEditor).toHaveCount(0);
     await devicesNav.click();await search.fill(''); await topology.click();
     const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_approve|companion_revoke|claim|register|apply|save|configure)$/;
     assert.deepEqual(requests.filter(request => prohibited.test(request.command)), []);

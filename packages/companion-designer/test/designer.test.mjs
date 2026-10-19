@@ -150,6 +150,13 @@ test('blank drafts round-trip through storage and export but cannot be published
   await assert.rejects(()=>publishDocument(h.present,[]),/Add at least one input/);
 });
 
+test('publication rejects an empty page even when another page has inputs',async()=>{
+  let h=apply(history(),{type:'add-page',title:'Page 1'});
+  await assert.rejects(()=>publishDocument(h.present,[]),/Every page must contain at least one widget/);
+  h=apply(h,{type:'add-widget',kind:'button',pageId:h.present.ui.pages[1].id});
+  await assert.doesNotReject(()=>publishDocument(h.present,[]));
+});
+
 test("logical targets enforce range/index compatibility independently of machine assignments", () => {
   let h = apply(history(), { type: "add-widget", kind: "slider" }); const axis = h.present.ui.controls.find(c => c.kind === "axis"), target = h.present.targets[0];
   h = apply(h, { type: "unbind", controlId: axis.id });
