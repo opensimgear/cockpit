@@ -118,10 +118,11 @@ function freeze<T>(value: T): T {
   if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); }
   return value;
 }
-export async function publishDocument(document: DesignerDocument, assets: AssetPayload[]): Promise<Publication> {
+export async function publishDocument(document: DesignerDocument, assets: AssetPayload[], options: { optimizeAssets?: boolean } = {}): Promise<Publication> {
   const doc = checked(document); assert(doc.bindings.length === doc.ui.controls.length, "Every input requires a logical target binding before publication");
   assert(doc.ui.pages.every(page=>doc.presentation.widgets.some(widget=>widget.pageId===page.id)), "Every page must contain at least one widget before publication");
-  const payloads = await optimizePublicationAssets(doc, await validateAssets(doc, assets)), publicationHash = "sha256:" + await digest(new TextEncoder().encode(canonical(doc)));
+  const validated = await validateAssets(doc, assets);
+  const payloads = options.optimizeAssets === false ? validated : await optimizePublicationAssets(doc, validated), publicationHash = "sha256:" + await digest(new TextEncoder().encode(canonical(doc)));
   const capabilityFingerprint = "sha256:" + await digest(new TextEncoder().encode(canonical(capabilityData(doc))));
   return freeze({ document: doc, assets: payloads, publicationHash, capabilityFingerprint });
 }

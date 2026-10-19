@@ -52,7 +52,7 @@ async function validateSnapshot(input: unknown): Promise<CompanionLibrarySnapsho
     const seen = new Set<string>();
     for (const input of revisions as unknown[]) {
       const revision = exact(input, ['document', 'assets', 'publicationHash', 'capabilityFingerprint'], 'published revision');
-      const recomputed = await publishDocument(revision.document as Publication['document'], revision.assets as Publication['assets']);
+      const recomputed = await publishDocument(revision.document as Publication['document'], revision.assets as Publication['assets'], { optimizeAssets: false });
       if (revision.publicationHash !== recomputed.publicationHash || revision.capabilityFingerprint !== recomputed.capabilityFingerprint) throw new Error('Published companion revision failed its content or capability hash check.');
       if (!seen.has(recomputed.publicationHash)) { seen.add(recomputed.publicationHash); validated.push(recomputed); }
     }

@@ -16,7 +16,7 @@ export async function verifyPublishedPayload(payload: PublishedPayload): Promise
   const parsed: unknown = JSON.parse(payload.canonicalDocument);
   // Both representations must be exactly the same immutable document, including canonical bytes.
   if (canonical(parsed) !== payload.canonicalDocument || canonical(payload.document) !== payload.canonicalDocument) throw new Error('Publication document differs from its canonical bytes');
-  const verified = await publishDocument(parsed as DesignerDocument, payload.assets);
+  const verified = await publishDocument(parsed as DesignerDocument, payload.assets, { optimizeAssets: false });
   if (verified.publicationHash !== payload.publicationHash) throw new Error('Published layout hash differs from the verified transfer');
   return verified;
 }
@@ -39,7 +39,7 @@ export function createPublicationCache(store: CacheStore, options: { clock?: () 
       const entry = object(value), owner = { hostId: text(entry.hostId, 64), instanceId: text(entry.instanceId, 64), name: text(entry.name, 80) }, key = cacheKey(owner);
       if (Object.keys(entry).some(field => !['hostId','instanceId','name','key','publication','savedAtMs','pageId'].includes(field)) || entry.key !== key || keys.has(key) || !Number.isSafeInteger(entry.savedAtMs) || Number(entry.savedAtMs) < 0 || size(JSON.stringify(entry)) > CACHE_LIMITS.entryBytes) throw new Error('Invalid cached publication metadata');
       const saved = object(entry.publication);
-      const publication = await publishDocument(saved.document as DesignerDocument, saved.assets as AssetPayload[]);
+      const publication = await publishDocument(saved.document as DesignerDocument, saved.assets as AssetPayload[], { optimizeAssets: false });
       if (publication.publicationHash !== saved.publicationHash || publication.capabilityFingerprint !== saved.capabilityFingerprint) throw new Error('Cached publication digest changed');
       const pageId = text(entry.pageId, 64);
       if (!publication.document.ui.pages.some(page => page.id === pageId)) throw new Error('Cached page is absent from publication');
@@ -53,7 +53,7 @@ export function createPublicationCache(store: CacheStore, options: { clock?: () 
     list: () => queued(async () => { await load(); return entries!.map(summary); }),
     open: (key: string) => queued(async () => { await load(); const entry = entries!.find(value => value.key === key); if (!entry) throw new Error('Cached panel is unavailable'); return clone(entry); }),
     save: (owner: CacheOwner, publication: Publication, pageId?: string) => queued(async () => {
-      await load(); const key = cacheKey(owner), verified = await publishDocument(publication.document, publication.assets);
+      await load(); const key = cacheKey(owner), verified = await publishDocument(publication.document, publication.assets, { optimizeAssets: false });
       if (verified.publicationHash !== publication.publicationHash || verified.capabilityFingerprint !== publication.capabilityFingerprint) throw new Error('Only verified publications can be cached');
       const old = entries!.find(entry => entry.key === key), nextPage = pageId ?? (old?.publication.publicationHash === verified.publicationHash ? old.pageId : verified.document.ui.pages[0].id);
       if (!verified.document.ui.pages.some(page => page.id === nextPage)) throw new Error('Unknown panel page');

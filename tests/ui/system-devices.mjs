@@ -748,6 +748,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       const blob=await canvas.convertToBlob({type:'image/png'}),source=await m.importAsset(m.newDocument('Image resize'),new Uint8Array(await blob.arrayBuffer()),'image/png');
       let h=m.applyDesignerCommand(m.createDesignerHistory(source.document),{type:'add-widget',kind:'image',bounds:{x:0,y:0,width:.1,height:.1}});
       const widget=h.present.presentation.widgets.at(-1);h=m.applyDesignerCommand(h,{type:'update-widget',id:widget.id,patch:{config:{assetId:source.asset.assetId}}});
+      const original=await m.publishDocument(h.present,[source.asset],{optimizeAssets:false});
+      const {verifyPublishedPayload}=await import('/apps/companion/src/lib/companion-cache.ts');
+      const checked=await verifyPublishedPayload({...original,canonicalDocument:m.canonical(original.document)});
+      if(checked.publicationHash!==original.publicationHash || checked.assets[0].base64!==source.asset.base64)throw Error('Browser verification changed original image content');
       const p=await m.publishDocument(h.present,[source.asset]);
       return {source:m.imageDimensions(m.decodeBase64(source.asset.base64),'image/png'),published:m.imageDimensions(m.decodeBase64(p.assets[0].base64),p.document.ui.assets[0].mime),size:p.document.presentation.viewports[0],bytes:p.document.ui.assets[0].sizeBytes,sourceBytes:source.document.ui.assets[0].sizeBytes};
     });
