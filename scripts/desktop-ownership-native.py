@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import threading
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,70 @@ spec.loader.exec_module(native)
 companion, mapping = native.companion, native.mapping
 LEFT = dict(kind="mouse-button", button="left")
 CONTROL = "flight-input-0"
+
+
+class TransportPeer(companion.Peer):
+    """The shared peer protocol with an in-memory credential for reconnect proof.
+
+    The generic acceptance peer does not retain its credential. Keep this local
+    rather than changing shared pairing or heartbeat helpers for one native case.
+    Credentials and pairing secrets are never included in acceptance evidence.
+    """
+    def __init__(self, service, name):
+        self.name = name
+        self._pairing = json.loads(companion.operator(service, "companion_pair_offer")["pairing"]["manualPayload"])
+        self.socket = companion.Socket(self._pairing)
+        reply = self.socket.request(dict(type="pair", secret=self._pairing["secret"], companionId=name, name=name))
+        assert reply["ok"], reply
+        companion.operator(service, "companion_approve", requestId=reply["requestId"], companionId=name)
+        paired = self.socket.request(dict(type="pair-status", requestId=reply["requestId"], secret=self._pairing["secret"]))
+        assert paired["ok"] and paired["hostId"] == self._pairing["hostId"] and paired["companionId"] == name
+        self._credential = paired["token"]
+        authenticated = self.socket.request(dict(type="auth", token=self._credential))
+        assert authenticated["ok"] and authenticated["hostId"] == self._pairing["hostId"] and authenticated["companionId"] == name
+        self.lock = threading.Lock()
+        self.stopped, self.paused = threading.Event(), threading.Event()
+        self.failure = self.opened = self.baseline_session = None
+        self.sequence = self.heartbeat = 0
+        self.thread = threading.Thread(target=self.renew, daemon=True)
+        self.thread.start()
+
+    def abort_transport(self):
+        """Shutdown TCP beneath TLS/WSS without any application close message."""
+        self.paused.set()
+        with self.lock:
+            assert self.failure is None and self.opened is not None, self.failure
+            transport = self.socket.socket
+            result = dict(mode="SSLSocket.shutdown(SHUT_RDWR) followed by socket close",
+                protocolSessionCloseSent=False, webSocketCloseFrameSent=False, tlsUnwrapCalled=False,
+                localEndpoint=list(transport.getsockname()), remoteEndpoint=list(transport.getpeername()),
+                oldSession={key: self.opened[key] for key in ("clientId", "sessionId", "generation", "controllerInstanceId", "publicationHash")})
+            self.stopped.set()
+            self.opened = self.baseline_session = None
+            try:
+                transport.shutdown(socket.SHUT_RDWR)
+            finally:
+                transport.close()
+        self.thread.join(timeout=4)
+        assert not self.thread.is_alive(), "A's old heartbeat thread survived transport shutdown"
+        return result
+
+    def reconnect_transport(self, previous):
+        """Authenticate a new pinned-CA WSS connection with the same credential."""
+        assert self.stopped.is_set() and not self.thread.is_alive() and self.opened is None
+        self.socket = companion.Socket(self._pairing)
+        authenticated = self.socket.request(dict(type="auth", token=self._credential))
+        assert authenticated["ok"] and authenticated["hostId"] == self._pairing["hostId"] and authenticated["companionId"] == self.name
+        transport = self.socket.socket
+        local, remote = list(transport.getsockname()), list(transport.getpeername())
+        assert local != previous["localEndpoint"] and remote == previous["remoteEndpoint"], "Reconnect did not establish a distinct TCP connection to the same host"
+        self.failure = None
+        self.stopped.clear()
+        self.paused.set()  # The caller must prove the real full-neutral baseline.
+        self.thread = threading.Thread(target=self.renew, daemon=True)
+        self.thread.start()
+        return dict(credentialReused=True, newPairingApproval=False, hostId=authenticated["hostId"],
+            companionId=authenticated["companionId"], authenticated=True, localEndpoint=local, remoteEndpoint=remote)
 
 
 def replacement(publication):
@@ -241,7 +306,7 @@ def main():
         companion.publish(service, original)
         companion.publish(service, changed)
         for instance in instances:
-            peer = companion.Peer(service, instance)
+            peer = TransportPeer(service, instance)
             peers.append(peer)
             companion.operator(service, "companion_assign", companionId=instance, instanceId=instance, publicationHash=original["publicationHash"])
             assigned.add(instance)
@@ -305,6 +370,8 @@ def main():
         wait({"route-b"}, "B did not remain usable after A loss")
         baseline_proof = reopen_with_baseline_proof(peers[0], instances[0], original)
         assert baseline_proof["session"]["sessionId"] != evidence["initialSources"][instances[0]]["session"]["sessionId"]
+        companion.wait_native_companions(service, configurations[:1], peers[:1],
+            previous={instances[0]: evidence["initialSources"][instances[0]]})
         companion.wait_native_companions(service, configurations, peers)
         refreshed = checkpoint(service, peers, configurations)
         assert refreshed[instances[0]]["generation"] > evidence["initialSources"][instances[0]]["generation"], refreshed
@@ -322,6 +389,53 @@ def main():
         evidence["stages"]["sessionReplacement"] = dict(protocol=baseline_proof, refreshedSources=refreshed, rejoined=rejoined,
             heldBProducerBefore=pins["stable"]["route-b"], heldBProducerAfter=held_producers(rejoined, pins)["route-b"])
         evidence["checks"].append("A new WSS/native provider generation rejects true before baseline and a held baseline, accepts a complete neutral baseline, then can share B without replacing B's session or native generation")
+
+        # A real transport failure is distinct from the acknowledged protocol
+        # close above. B remains held throughout A's new authenticated connection
+        # and baseline admission, so any accidental release is receiver-visible.
+        transport_sources = checkpoint(service, peers, configurations)
+        send(peers[0], True)
+        pattern.append(513)
+        wait({"route-a"}, "A did not establish the transport-loss MouseLeft hold")
+        send(peers[1], True)
+        transport_both = wait({"route-a", "route-b"}, "A and B did not share MouseLeft before abrupt transport loss")
+        transport_b_producer = held_producers(transport_both, pins)["route-b"]
+        transport_stage = dict(beforeSources=transport_sources, both=transport_both, heldBProducerBefore=transport_b_producer)
+        evidence["stages"]["abruptTransportLoss"] = transport_stage
+        aborted = peers[0].abort_transport()
+        transport_stage["shutdown"] = aborted
+        transport_lost = wait({"route-b"}, "Abrupt A TCP shutdown did not revoke only A's native contribution")
+        transport_stage["afterLoss"] = transport_lost
+        assert held_producers(transport_lost, pins)["route-b"] == transport_b_producer
+        authenticated = peers[0].reconnect_transport(aborted)
+        transport_stage["reconnect"] = authenticated
+        transport_baseline = reopen_with_baseline_proof(peers[0], instances[0], original)
+        transport_stage["protocol"] = transport_baseline
+        assert transport_baseline["session"]["sessionId"] != aborted["oldSession"]["sessionId"]
+        # Source-accepted WSS ACKs precede the asynchronous native resource
+        # inventory publication. Wait for A's actual newer route generation;
+        # waiting for both peers to replace would wrongly force B to reconnect.
+        transport_stage["firstNativeCheckpointAfterBaseline"] = checkpoint(service, peers, configurations)
+        companion.wait_native_companions(service, configurations[:1], peers[:1],
+            previous={instances[0]: transport_sources[instances[0]]})
+        companion.wait_native_companions(service, configurations, peers)
+        transport_refreshed = checkpoint(service, peers, configurations)
+        transport_stage["afterSources"] = transport_refreshed
+        assert transport_refreshed[instances[0]]["generation"] > transport_sources[instances[0]]["generation"]
+        assert transport_refreshed[instances[1]] == transport_sources[instances[1]], "A's new transport replaced B's exact native source/session generation"
+        pins["generations"]["route-a"] = str(transport_refreshed[instances[0]]["generation"])
+        after_transport_neutral = wait({"route-b"}, "A transport authentication or neutral baseline disturbed B's native hold")
+        send(peers[0], True)
+        transport_rejoined = wait({"route-a", "route-b"}, "Neutral-gated A could not rejoin B over its new authenticated transport")
+        send(peers[0], False)
+        after_transport_release = wait({"route-b"}, "Reconnected A release revoked B's original producer")
+        send(peers[1], False)
+        pattern.append(514)
+        transport_final = wait(set(), "Final B release after abrupt A transport loss did not produce exactly one MouseUp")
+        transport_stage.update(afterNeutral=after_transport_neutral, rejoined=transport_rejoined,
+            afterARelease=after_transport_release, finalBRelease=transport_final,
+            heldBProducerAfter=held_producers(after_transport_release, pins)["route-b"])
+        evidence["checks"].append("A's underlying TCP shutdown sends no protocol/WebSocket close; only A revokes while B's exact held producer persists without an extra native edge; a new transport reuses A's credential, requires full neutral, rejoins B, and final B release produces one up")
 
         # Publication assignment is an explicit stopped-state operation. Keep
         # that admission boundary visible; it is not live publication mutation.

@@ -136,12 +136,29 @@ test('two actual WSS sources independently own one native MouseLeft', {skip: !en
   const evidence = JSON.parse(await readFile(resolve(artifacts, 'evidence.json'), 'utf8'));
   assert.equal(evidence.actualNativeCockpit, true); assert.equal(evidence.actualWssPeers, 2); assert.equal(evidence.injected, true);
   assert.equal(evidence.virtualControllers, 0); assert.equal(evidence.productionQualified, false);
-  assert.deepEqual(evidence.mouseMessages, [513, 514, 513, 514, 513, 514]);
-  assert.equal(evidence.checks.length, 4); assert.deepEqual(evidence.cleanupErrors, []);
+  assert.deepEqual(evidence.mouseMessages, [513, 514, 513, 514, 513, 514, 513, 514]);
+  assert.equal(evidence.checks.length, 5); assert.deepEqual(evidence.cleanupErrors, []);
   assert.equal(evidence.stages.independentLoss.blockedPublicationWrite.ok, false);
   assert.equal(evidence.stages.sessionReplacement.protocol.inputBeforeBaseline.ok, false);
   assert.equal(evidence.stages.sessionReplacement.protocol.heldBaseline.ok, false);
   assert.equal(evidence.stages.sessionReplacement.protocol.neutralBaseline.ok, true);
+  const abrupt = evidence.stages.abruptTransportLoss;
+  assert.equal(abrupt.shutdown.mode, 'SSLSocket.shutdown(SHUT_RDWR) followed by socket close');
+  assert.equal(abrupt.shutdown.protocolSessionCloseSent, false);
+  assert.equal(abrupt.shutdown.webSocketCloseFrameSent, false); assert.equal(abrupt.shutdown.tlsUnwrapCalled, false);
+  assert.equal(abrupt.reconnect.authenticated, true); assert.equal(abrupt.reconnect.credentialReused, true);
+  assert.equal(abrupt.reconnect.newPairingApproval, false);
+  assert.notDeepEqual(abrupt.shutdown.localEndpoint, abrupt.reconnect.localEndpoint);
+  assert.deepEqual(abrupt.shutdown.remoteEndpoint, abrupt.reconnect.remoteEndpoint);
+  assert.equal(abrupt.protocol.inputBeforeBaseline.ok, false); assert.equal(abrupt.protocol.heldBaseline.ok, false);
+  assert.equal(abrupt.protocol.neutralBaseline.ok, true);
+  assert.notEqual(abrupt.shutdown.oldSession.sessionId, abrupt.protocol.session.sessionId);
+  const a = abrupt.reconnect.companionId;
+  const b = Object.keys(abrupt.beforeSources).find(instance => instance !== a);
+  assert.ok(b && abrupt.beforeSources[a]);
+  assert.ok(abrupt.afterSources[a].generation > abrupt.beforeSources[a].generation);
+  assert.deepEqual(abrupt.afterSources[b], abrupt.beforeSources[b]);
+  assert.deepEqual(abrupt.heldBProducerAfter, abrupt.heldBProducerBefore);
  } finally {
   // A terminated Python process cannot prevent the independent wrapper from
   // revoking native ownership and restoring its exact local preference bytes.
