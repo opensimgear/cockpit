@@ -2,7 +2,7 @@
   import { firmwareWidgetPresets, simplifyFirmwareWidgets } from './firmware-widgets';
   import { restoreCompanionPanels } from './companion-startup';
   import Notification from './Notification.svelte';
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import CompanionConnections from './CompanionConnections.svelte';
   import { gatewayRequest } from './gateway';
@@ -47,6 +47,14 @@
   let previewSnapshot = $state.raw<PreviewSnapshot>();
   let busy = $state(false);
   let pendingLeave = $state.raw<{ proceed:()=>void; cancel?:()=>void } | null>(null);
+  let pendingDelete = $state.raw<{ message:string; resolve:(confirmed:boolean)=>void } | null>(null);
+  onDestroy(()=>{pendingDelete?.resolve(false);});
+  function confirmDelete(message:string):Promise<boolean> {
+    pendingDelete?.resolve(false);
+    return new Promise(resolve=>pendingDelete={message,resolve});
+  }
+  function finishDelete(confirmed:boolean) { const pending=pendingDelete;pendingDelete=null;pending?.resolve(confirmed); }
+  function showDeleteDialog(node:HTMLDialogElement) { node.showModal();node.querySelector<HTMLButtonElement>('[data-cancel]')?.focus();return {destroy:()=>node.close()}; }
   let message = $state('');
   let error = $state('');
   let configText = $state('');
@@ -180,8 +188,17 @@
   function addViewport() {
     if (command({ type: 'add-viewport', pageId: page.id, sourceId: activeViewport.id })) selectViewport(viewportRegions(document, page.id).at(-1)!.id);
   }
-  function removeViewport(id: string) {
+  async function removeViewport(id: string) {
+    const region=regions.find(region=>region.id===id);
+    if(!region || !await confirmDelete(`Delete viewport "${region.label}"?`))return;
     if (command({ type:'remove-viewport',pageId:page.id,id })) { selectedViewportId='';select([]); }
+  }
+  async function removePage(id:string,index:number) {
+    if(await confirmDelete(`Delete page ${index} and all its widgets?`)){command({type:'delete-page',id});select([]);}
+  }
+  async function removeSelectedWidget() {
+    const selectedWidget=widget;
+    if(selectedWidget && await confirmDelete(`Delete widget "${selectedWidget.label}"?`)){command({type:'delete-widget',id:selectedWidget.id});select([]);}
   }
   function addPaletteWidget(kind:string,viewportId=activeViewport.id,point?:{x:number;y:number}) {
     const preset=firmwareWidgetPresets.find(preset=>preset.kind===kind),region=regions.find(region=>region.id===viewportId);
@@ -278,7 +295,7 @@
   }
   async function removeDraft(id: string) {
     const panelName = library.drafts.find(d => d.id === id)?.name ?? name;
-    if(!window.confirm(`Delete "${panelName}" and its assets? This also disconnects it from its companions.`))return;
+    if(!await confirmDelete(`Delete "${panelName}" and its assets? This also disconnects it from its companions.`))return;
     await operation(async () => {
       const removedPanelId = library.drafts.find(d => d.id === id)?.document.ui.id;
       const references = await new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {}).companionReferences();
@@ -322,7 +339,9 @@
       command({ type: 'replace', document: result.document }); assets = nextAssets; message = `Image added (${result.width} × ${result.height})`;
     });
   }
-  function removeAsset(id: string) {
+  async function removeAsset(id: string) {
+    const index=document.ui.assets.findIndex(asset=>asset.id===id);
+    if(index<0 || !await confirmDelete(`Delete image ${index+1}? It will also be removed from widget icons and page backgrounds.`))return;
     const next = structuredClone(document);
     next.ui.assets = next.ui.assets.filter(asset => asset.id !== id);
     for (const viewport of next.presentation.viewports) if (viewport.backgroundAssetId === id) delete viewport.backgroundAssetId;
@@ -435,7 +454,7 @@
       <details class="editor-accordion"><summary>Pages<button class="accordion-info" aria-label="About pages" title="Adding pages is a work in progress and is currently unavailable." onclick={e=>e.stopPropagation()}><Icon name="info" size={16}/></button></summary><div class="accordion-content">
         <ul class="page-list" aria-label="Panel pages">{#each document.ui.pages as p,index (p.id)}<li>
           <button class="page-select" class:active={p.id === page.id} aria-pressed={p.id === page.id} onclick={() => { stop(); pageId=p.id;select([]); }}>Page {index}{#if !/^Page \d+$/.test(p.title)}<small>{p.title}</small>{/if}</button>
-          {#if document.ui.pages.length > 1}<button class="page-delete" aria-label={`Delete page ${index}`} title="Delete page" onclick={() => { command({ type:'delete-page',id:p.id });select([]); }}><Icon name="trash" size={15}/></button>{/if}
+          {#if document.ui.pages.length > 1}<button class="page-delete" aria-label={`Delete page ${index}`} title="Delete page" onclick={() => removePage(p.id,index)}><Icon name="trash" size={15}/></button>{/if}
         </li>{/each}</ul>
         <div class="accordion-add" title="Adding pages is a work in progress and is currently unavailable."><button class="action" disabled><Icon name="plus" size={16} />Add page</button></div>
       </div></details>
@@ -522,7 +541,7 @@
         {#if widget.kind === 'button' || widget.kind === 'icon'}<label>Icon image<select value={widget.config.iconAssetId ?? ''} onchange={e => { const config = { ...widget!.config } as Record<string,unknown>; if(e.currentTarget.value) config.iconAssetId = e.currentTarget.value; else delete config.iconAssetId; patch({ config } as Partial<DesignerWidget>); }}><option value="">None</option>{#each document.ui.assets as asset}<option value={asset.id}>{asset.id}</option>{/each}</select></label>{/if}
         <details><summary>Advanced behavior</summary><label>Validated configuration<textarea rows="8" bind:value={configText}></textarea></label><button onclick={() => { try { patch({ config: JSON.parse(configText) }); } catch (e) { error = String(e); } }}>Apply behavior</button></details>
         <button onclick={() => { command({ type: 'duplicate-widget', id: widget!.id }); select([document.presentation.widgets.at(-1)!.id]); }}>Duplicate widget</button>
-        <button onclick={() => { command({ type: 'delete-widget', id: widget!.id }); select([]); }}>Delete widget</button>
+        <button onclick={removeSelectedWidget}>Delete widget</button>
         {#each widget.controlIds as controlId}
           {@const control = document.ui.controls.find(c => c.id === controlId)!}
           {@const binding = document.bindings.find(b => b.controlId === controlId)}
@@ -538,7 +557,7 @@
           <label>Viewport name<input value={activeViewport.label} disabled={preview} maxlength="120" onchange={e => { command({ type: 'update-viewport', pageId: page.id, id: activeViewport.id, patch: { label: e.currentTarget.value } }); e.currentTarget.value=activeViewport.label; }} /></label>
           <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field === 'x' ? 'Left' : field === 'y' ? 'Top' : field === 'width' ? 'Width' : 'Height'} (px)<input aria-label={`Viewport ${field}`} type="number" min={field === 'width' || field === 'height' ? 1 : 0} max={field === 'x' || field === 'width' ? usableWidth : usableHeight} step="1" disabled={preview} value={Math.round(activeViewport.bounds[field as keyof Bounds] * (field === 'x' || field === 'width' ? usableWidth : usableHeight) * 100) / 100} onchange={e => changeViewportBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
           <p class="hint">Widgets move and scale with this viewport. Viewports may touch but cannot overlap.</p>
-          <button disabled={preview || regions.length <= 1 || activeViewportOccupied} onclick={() => { if (command({ type: 'remove-viewport', pageId: page.id, id: activeViewport.id })) selectedViewportId=''; }}>Remove viewport</button>
+          <button disabled={preview || regions.length <= 1 || activeViewportOccupied} onclick={() => removeViewport(activeViewport.id)}>Remove viewport</button>
           <p class="hint">Move or delete its widgets before removing a viewport.</p>
         </div>
       {/if}
@@ -558,12 +577,17 @@
     {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
     <div><button class="secondary-button" disabled={busy} onclick={keepEditing}>Keep editing</button><button class="secondary-button" disabled={busy} onclick={()=>continueLeaving(true)}>Discard and continue</button><span class="action-tooltip" title={panelInvalidReason || undefined}><button class="primary-button" title={panelInvalidReason || undefined} disabled={busy || !storageReady || !!panelInvalidReason} onclick={saveAndContinue}>{busy?'Saving…':'Save and continue'}</button></span></div>
   </dialog>{/if}
+  {#if pendingDelete}<dialog class="leave-panel-dialog delete-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="delete-panel-item-title" use:showDeleteDialog oncancel={event=>{event.preventDefault();finishDelete(false);}}>
+    <h2 id="delete-panel-item-title">Confirm deletion</h2><p>{pendingDelete.message}</p>
+    <div><button class="destructive-button" onclick={()=>finishDelete(true)}>Delete</button><button class="secondary-button" data-cancel onclick={()=>finishDelete(false)}>Cancel</button></div>
+  </dialog>{/if}
 </section>
 
 <style>
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
   .action-tooltip{display:inline-flex}
+  .delete-confirmation .destructive-button{background:var(--danger,#c94f5c);border-color:var(--danger,#c94f5c);color:#fff}
   .palette-dragging .properties-overlay{pointer-events:none}.palette button[draggable=true]{cursor:grab}.palette button[draggable=true]:active{cursor:grabbing}
   .leave-panel-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);max-width:460px;width:calc(100% - 40px);box-sizing:border-box;padding:26px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005;color:var(--text);margin:0}.leave-panel-dialog::backdrop{background:#0009}.leave-panel-dialog h2{font-size:14px}.leave-panel-dialog p{font-size:11px;color:var(--muted);line-height:1.8;margin:15px 0 23px}.leave-panel-dialog>div{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.leave-panel-dialog button{font-size:10px}
   .viewport-name-space{visibility:hidden}.viewport-row .viewport-name-button{position:absolute;left:9px;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 48px);padding:0;border:0;background:transparent}.viewport-name-button > span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewport-row.active .viewport-name-button{color:var(--accent)}.viewport-pencil{display:flex;opacity:0;color:var(--muted)}.viewport-row:hover .viewport-pencil,.viewport-row:focus-within .viewport-pencil{opacity:1}.viewport-name-input{width:100%;padding-right:36px}

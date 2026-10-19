@@ -480,6 +480,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const companionSettings = page.getByRole('region', { name: 'Companion settings', exact: true });
     const panels = page.getByRole('region', { name: 'Panels', exact: true });
     const panelEditor = page.getByRole('region', { name: 'Panel editor', exact: true });
+    const deleteItemDialog=page.getByRole('alertdialog',{name:'Confirm deletion',exact:true});
     await details.getByRole('button', { name: 'Manage companion', exact: true }).click();
     await expect(companionSettings).toBeVisible();
     await expect(companionSettings.getByRole('heading', { name: 'Browser companion', exact: true, level: 1 })).toBeVisible();
@@ -567,8 +568,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const listDelete=panelTile.getByRole('button',{name:'Delete Fixture panel',exact:true});
     await page.mouse.move(0,0);await expect(listDelete).toHaveCSS('opacity','0');
     await panelTile.hover();await expect(listDelete).toHaveCSS('opacity','1');
-    let listDeleteConfirmation='';page.once('dialog',async dialog=>{listDeleteConfirmation=dialog.message();await dialog.dismiss();});
-    await listDelete.click();assert.match(listDeleteConfirmation,/Delete "Fixture panel" and its assets/);
+    await listDelete.click();await expect(deleteItemDialog).toContainText('Delete "Fixture panel" and its assets');await deleteItemDialog.getByRole('button',{name:'Cancel',exact:true}).click();
     await expect(panels.getByRole('button',{name:/^Fixture panel/})).toBeVisible();
     await expect(panelEditor).toHaveCount(0);
     await panels.getByRole('button', { name: /^Fixture panel/ }).click();
@@ -641,6 +641,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const emptyViewportDelete=viewportRows.last().locator('.viewport-delete');
     await page.mouse.move(0,0);await expect(emptyViewportDelete).toHaveCSS('opacity','0');
     await viewportRows.last().hover();await expect(emptyViewportDelete).toHaveCSS('opacity','1');await emptyViewportDelete.click();
+    await expect(deleteItemDialog).toContainText('Delete viewport');await deleteItemDialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(viewportRows).toHaveCount(2);
+    await viewportRows.last().hover();await emptyViewportDelete.click();await deleteItemDialog.getByRole('button',{name:'Delete',exact:true}).click();
     await expect(viewportRows).toHaveCount(1);await expect(viewportRows.locator('.viewport-delete')).toHaveCount(0);
     await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(viewportRows).toHaveCount(2);
     await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(viewportRows).toHaveCount(1);
@@ -717,7 +719,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const assetRow=assetList.locator('[data-asset-id]'),assetId=await assetRow.getAttribute('data-asset-id');
     await panelLibrary.getByRole('combobox',{name:'Page background',exact:true}).selectOption(assetId);
     await assetRow.hover();await expect(assetRow.getByRole('button',{name:'Delete image 1',exact:true})).toHaveCSS('opacity','1');
-    await assetRow.getByRole('button',{name:'Delete image 1',exact:true}).click();await expect(assetList.locator('[data-asset-id]')).toHaveCount(0);
+    await assetRow.getByRole('button',{name:'Delete image 1',exact:true}).click();await expect(deleteItemDialog).toContainText('Delete image 1');await page.keyboard.press('Escape');await expect(assetList.locator('[data-asset-id]')).toHaveCount(1);
+    await assetRow.hover();await assetRow.getByRole('button',{name:'Delete image 1',exact:true}).click();await deleteItemDialog.getByRole('button',{name:'Delete',exact:true}).click();await expect(assetList.locator('[data-asset-id]')).toHaveCount(0);
     await expect(panelLibrary.getByRole('combobox',{name:'Page background',exact:true})).toHaveValue('');
     await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(assetList.locator('[data-asset-id]')).toHaveCount(1);
     await expect(panelLibrary.getByRole('combobox',{name:'Page background',exact:true})).toHaveValue(assetId);
@@ -749,9 +752,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true})).not.toBeVisible();
     await expect(panelTitleActions.getByRole('button',{name:'Export',exact:true})).toBeVisible();
     await expect(panelTitleActions.getByRole('button',{name:'Delete',exact:true})).toBeVisible();
-    let deleteConfirmation='';page.once('dialog',async dialog=>{deleteConfirmation=dialog.message();await dialog.dismiss();});
     await panelTitleActions.getByRole('button',{name:'Delete',exact:true}).click();
-    assert.match(deleteConfirmation,/Delete "Fixture panel" and its assets/);
+    await expect(deleteItemDialog).toContainText('Delete "Fixture panel" and its assets');await deleteItemDialog.getByRole('button',{name:'Cancel',exact:true}).click();
     await expect(panelEditor).toBeVisible();await expect(panelTitleActions.getByRole('button',{name:'Delete',exact:true})).toBeEnabled();
     await panelEditor.getByRole('button',{name:'Edit panel name',exact:true}).click();
     const panelName=panelEditor.getByRole('textbox',{name:'Panel name',exact:true});
@@ -1035,6 +1037,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.locator('[data-component-id="visibility:stale-hide"]')).toHaveCount(0);
     await companionsNav.click();await panels.getByRole('button',{name:'New panel',exact:true}).click();
     await panelEditor.locator('.widget').first().click();await panelEditor.getByRole('button',{name:'Delete widget',exact:true}).click();
+    await expect(deleteItemDialog).toContainText('Delete widget');await deleteItemDialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(1);
+    await panelEditor.getByRole('button',{name:'Delete widget',exact:true}).click();await deleteItemDialog.getByRole('button',{name:'Delete',exact:true}).click();
     for(const name of ['Preview','Save','Export']){const action=panelEditor.getByRole('button',{name,exact:true});await expect(action).toBeDisabled();await expect(action).toHaveAttribute('title',/widget to page 0/);}
     await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(leavePanelDialog).toBeVisible();
     await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();

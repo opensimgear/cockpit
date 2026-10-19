@@ -60,6 +60,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     await expect(editor.getByLabel('Viewport x', { exact: true })).toHaveValue('960');
     await expect(editor.getByLabel('Viewport width', { exact: true })).toHaveValue('160');
     await editor.getByRole('button', { name: 'Remove viewport', exact: true }).click();
+    await page.getByRole('alertdialog',{name:'Confirm deletion',exact:true}).getByRole('button',{name:'Delete',exact:true}).click();
     await expect(outlines).toHaveCount(2);
     await editor.getByRole('button', { name: 'Undo', exact: true }).click();
     await expect(outlines).toHaveCount(3);
