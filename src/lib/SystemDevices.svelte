@@ -76,7 +76,7 @@
   async function reviewForget(items: SystemComponent[]) {
     if (busy) return;
     const epoch = ++reviewEpoch;
-    busy = true; confirmation = items; cleanupSelection = items.map(item => item.id);
+    busy = true; confirmation = items; cleanupSelection = [];
     try {
       await refreshTask?.catch(() => undefined);
       if (epoch !== reviewEpoch) return;

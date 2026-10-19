@@ -650,9 +650,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await devices.locator('[data-component-id="virtual:vjoy:4"]').click();
     await details.getByRole('button', { name: 'Forget device', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Cleanup devices', exact: true });
+    const confirmCleanup = dialog.getByRole('button', { name: 'Confirm', exact: true });
     await expect(dialog).toContainText('OS device, vJoy layout, driver and bindings are retained');
     await expect(dialog).toContainText('retained-virtual-binding');
-    await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(confirmCleanup).toBeDisabled();
+    await dialog.getByRole('checkbox', { name: 'Select Missing remembered virtual joystick', exact: true }).check();
+    await expect(confirmCleanup).toBeEnabled();
+    await confirmCleanup.click();
     await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
     await waitForInventoryRefresh(); await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
     // Bulk cleanup offers a selectable table. Cancel and unchecked rows never
@@ -667,9 +671,18 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const selectAll = dialog.getByRole('checkbox', { name: 'Select all', exact: true });
     const selectWheel = dialog.getByRole('checkbox', { name: 'Select Remembered wheel', exact: true });
     const selectThrottle = dialog.getByRole('checkbox', { name: 'Select Remembered throttle', exact: true });
-    const confirmCleanup = dialog.getByRole('button', { name: 'Confirm', exact: true });
-    await expect(selectAll).toBeChecked();
+    await expect(selectAll).not.toBeChecked();
+    await expect(selectWheel).not.toBeChecked(); await expect(selectThrottle).not.toBeChecked();
+    await expect(confirmCleanup).toBeDisabled();
+    await expect(dialog).toContainText('0 of 2 selected');
+    await selectWheel.check();
+    await expect(selectAll).toBeChecked({ indeterminate: true });
+    await expect(confirmCleanup).toBeEnabled();
+    await selectWheel.uncheck();
+    await expect(confirmCleanup).toBeDisabled();
+    await selectAll.check();
     await expect(selectWheel).toBeChecked(); await expect(selectThrottle).toBeChecked();
+    await expect(confirmCleanup).toBeEnabled();
     await selectAll.uncheck();
     await expect(selectWheel).not.toBeChecked(); await expect(selectThrottle).not.toBeChecked();
     await expect(confirmCleanup).toBeDisabled();
@@ -681,8 +694,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(dialog).toHaveCount(0);
     assert.equal(requests.filter(request => request.command === 'controller_forget').length, beforeCancel);
     await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
-    await expect(selectAll).toBeChecked();
-    await selectWheel.uncheck();
+    await expect(selectAll).not.toBeChecked();
+    await expect(selectWheel).not.toBeChecked(); await expect(selectThrottle).not.toBeChecked();
+    await expect(confirmCleanup).toBeDisabled();
+    await selectThrottle.check();
     fixture.failForget = 'remembered-throttle';
     await confirmCleanup.click();
     await expect(page.getByText(/Remembered throttle: Error: Fixture removal failed once/)).toBeVisible();
@@ -692,6 +707,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // be removed, and an unchanged remembered throttle stays suppressed.
     fixture.failForget = null; fixture.keepForgotten = true;
     await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
+    await expect(confirmCleanup).toBeDisabled();
+    await selectAll.check();
     await expect(selectWheel).toBeChecked(); await expect(selectThrottle).toBeChecked();
     fixture.controllers.find(source => source.id === 'remembered-wheel').online = true;
     await confirmCleanup.click();
@@ -717,7 +734,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await graph.locator(`[data-component-id="gateway:${firstGateway}"]`).click();
     await details.getByRole('button', { name: 'Forget device', exact: true }).click();
     await expect(dialog).toContainText('unavailable gateway cannot confirm');
-    await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(confirmCleanup).toBeDisabled();
+    await dialog.getByRole('checkbox', { name: 'Select all', exact: true }).check();
+    await confirmCleanup.click();
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
     await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
     await expect(graph.locator('[data-component-id="resource:verified-dual"]')).toBeVisible();
