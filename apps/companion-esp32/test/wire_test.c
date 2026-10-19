@@ -79,6 +79,18 @@ static void publication_tests(cJSON *p){
         if(mutation>=4){dump(copy,document,sizeof(document));sha(document,strlen(document),new_hash);string(bad,"canonicalDocument",document);string(bad,"publicationHash",new_hash);}
         bool ok=osg_decode_publication(bad,osg_string(bad,"publicationHash"),crypto,&image,800,480);assert(ok==(mutation==6));cJSON_Delete(copy);cJSON_Delete(bad);
     }
+    /* Display-only panels retain feedback widgets without requiring a button. */
+    cJSON *copy=cJSON_Duplicate(doc,true),*ui=cJSON_GetObjectItemCaseSensitive(copy,"ui"),*pr=cJSON_GetObjectItemCaseSensitive(copy,"presentation");
+    cJSON_ReplaceItemInObjectCaseSensitive(ui,"controls",json("[]"));
+    cJSON_ReplaceItemInObjectCaseSensitive(copy,"bindings",json("[]"));
+    cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(pr,"widgets"),0);
+    cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(ui,"pages"),0),"items"),0);
+    dump(copy,document,sizeof(document));sha(document,strlen(document),new_hash);
+    cJSON *display=cJSON_Duplicate(p,true);string(display,"canonicalDocument",document);string(display,"publicationHash",new_hash);
+    assert(osg_decode_publication(display,new_hash,crypto,&image,800,480));
+    assert(image.panel.widget_count==4);
+    for(size_t i=0;i<image.panel.widget_count;i++)assert(image.widgets[i].kind!=OSG_BUTTON);
+    cJSON_Delete(display);cJSON_Delete(copy);
     cJSON_Delete(doc);assert(osg_decode_publication(p,hash,crypto,&image,800,480));
 }
 static void transfer_tests(cJSON *p){

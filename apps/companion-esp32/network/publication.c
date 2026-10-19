@@ -44,7 +44,7 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
     const cJSON *pages = get(ui, "pages"), *controls = get(ui, "controls"), *feedback = get(ui, "feedbackWidgets");
     const cJSON *widgets = get(presentation, "widgets"), *viewports = get(presentation, "viewports");
     if (number(doc, "schemaVersion") != 2 || number(ui, "schemaVersion") != 1 || !osg_stable_id(osg_string(ui, "id")) ||
-        !size(pages, 1, OSG_MAX_PAGES) || !size(widgets, 1, OSG_MAX_WIDGETS) || !size(controls, 1, OSG_MAX_WIDGETS) ||
+        !size(pages, 1, OSG_MAX_PAGES) || !size(widgets, 1, OSG_MAX_WIDGETS) || !size(controls, 0, OSG_MAX_WIDGETS) ||
         !size(feedback, 0, OSG_MAX_WIDGETS) || !size(get(ui, "assets"), 0, 0) || !size(get(presentation, "groups"), 0, 0) ||
         !size(viewports, (size_t)cJSON_GetArraySize(pages), (size_t)cJSON_GetArraySize(pages))) goto done;
     image->panel = (osg_panel){save(image, osg_string(ui, "id")), save(image, hash), image->pages, image->widgets,
