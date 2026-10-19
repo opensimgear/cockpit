@@ -89,7 +89,7 @@ mod security_tests {
         assert!(!esp32_security_configured(1, 1));
     }
 }
-fn writes_segment(preserve:bool,offset:u32)->bool{!preserve || offset==0x10000}
+fn writes_segment(preserve:bool,offset:u32)->bool{!preserve || matches!(offset,0x8000|0x10000)}
 pub fn flash_firmware(
     port: &str,
     firmware: &[FirmwareSegment],
@@ -166,9 +166,9 @@ pub fn flash_firmware(
 mod tests {
     use super::*;
     #[test]
-    fn updates_write_only_application_and_preserve_pairing_storage() {
+    fn updates_write_partition_table_and_application_but_preserve_pairing_storage() {
         for offset in [0,0x1000,0x8000,0x9000,0xe000,0x10000]{
-            assert_eq!(writes_segment(true,offset),offset==0x10000);
+            assert_eq!(writes_segment(true,offset),matches!(offset,0x8000|0x10000));
             assert!(writes_segment(false,offset));
         }
     }
