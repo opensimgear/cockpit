@@ -782,8 +782,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.ok((await widgets.evaluateAll(nodes=>nodes.map(node=>parseFloat(node.style.left)+parseFloat(node.style.width)))).every(right=>Math.abs(right-rightEdge)<.001));
     await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
     await page.screenshot({ path: resolve(artifacts, 'panel-full-page.png'), fullPage: true });
-    page.once('dialog',dialog=>dialog.accept());
+    await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();
+    const leavePanelDialog=page.getByRole('alertdialog',{name:'Keep your unsaved changes?',exact:true});
+    await expect(leavePanelDialog).toBeVisible();await leavePanelDialog.getByRole('button',{name:'Keep editing',exact:true}).click();await expect(panelEditor).toBeVisible();
     await companionsNav.click();
+    await expect(leavePanelDialog).toBeVisible();await leavePanelDialog.getByRole('button',{name:'Discard and continue',exact:true}).click();
     await expect(panelEditor).toHaveCount(0);
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
@@ -1022,7 +1025,14 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await dialog.getByRole('checkbox', { name: 'Select Stale HidHide device', exact: true }).check();
     await confirmCleanup.click();
     await expect(devices.locator('[data-component-id="visibility:stale-hide"]')).toHaveCount(0);
-    await search.fill(''); await topology.click();
+    await companionsNav.click();await panels.getByRole('button',{name:'New panel',exact:true}).click();
+    const savedBlankName=await panelEditor.getByRole('heading',{level:1}).innerText();
+    await panelEditor.locator('.widget').first().click();await panelEditor.getByRole('button',{name:'Delete widget',exact:true}).click();
+    await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(leavePanelDialog).toBeVisible();
+    await leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(panelEditor).toHaveCount(0);
+    await panels.locator('.panel-tile').filter({hasText:savedBlankName}).click();await expect(panelEditor.locator('.widget')).toHaveCount(0);
+    await panelEditor.getByRole('button',{name:'Back to Panels',exact:true}).click();await expect(panelEditor).toHaveCount(0);await expect(leavePanelDialog).toHaveCount(0);
+    await devicesNav.click();await search.fill(''); await topology.click();
     const prohibited = /^(?:profile_apply|profile_game_launch|profile_editor_save|module_usb_connect|module_usb_claim|module_usb_config_apply|controller_visibility_apply|companion_usb_arm|companion_assign|companion_approve|companion_revoke|claim|register|apply|save|configure)$/;
     assert.deepEqual(requests.filter(request => prohibited.test(request.command)), []);
     assert.deepEqual(unexpected, []); assert.deepEqual(pageErrors, []);

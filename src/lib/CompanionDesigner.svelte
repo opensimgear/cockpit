@@ -45,6 +45,7 @@
   let unsubscribe: (() => void) | undefined;
   let previewSnapshot = $state.raw<PreviewSnapshot>();
   let busy = $state(false);
+  let pendingLeave = $state.raw<{ proceed:()=>void; cancel?:()=>void } | null>(null);
   let message = $state('');
   let error = $state('');
   let configText = $state('');
@@ -77,9 +78,22 @@
     return (hostState.host?.instances ?? []).filter(i => typeof i.publicationHash==='string' && hashes.has(i.publicationHash));
   }
   function leaveEditor() { return !dirty || window.confirm('Discard unsaved panel changes?'); }
-  function backToPanels() { if(leaveEditor()){stop();editorOpen=false;dirty=false;discardPanelOnRestore=false;onNavigate?.({kind:'main'});} }
+  function askLeave(proceed:()=>void,cancel?:()=>void) {
+    if (busy) { cancel?.();return; }
+    if (!editorOpen || !dirty) { proceed();return; }
+    pendingLeave?.cancel?.();pendingLeave={proceed,cancel};
+  }
+  function keepEditing() { if(busy)return;const pending=pendingLeave;pendingLeave=null;pending?.cancel?.(); }
+  function continueLeaving(discard=false) {
+    const pending=pendingLeave;pendingLeave=null;
+    if(discard){discardPanelOnRestore=editorOpen;dirty=false;}
+    pending?.proceed();
+  }
+  async function saveAndContinue() { await save();if(!dirty&&!busy)continueLeaving(); }
+  function showLeaveDialog(node:HTMLDialogElement) { node.showModal();return {destroy:()=>node.close()}; }
+  function backToPanels() { askLeave(()=>{stop();editorOpen=false;dirty=false;discardPanelOnRestore=false;onNavigate?.({kind:'main'});}); }
   export function showMain() {
-    if (editorOpen && !leaveEditor()) return false;
+    if (editorOpen && dirty) { askLeave(()=>{dirty=false;showMain();});return false; }
     if (connectionsPanel && !connectionsPanel.showMain(false)) return false;
     stop(); editorOpen=false; companionDetailsOpen=false; dirty=false; discardPanelOnRestore=false;
     onNavigate?.({kind:'main'});
@@ -91,10 +105,11 @@
     return companionId ? {kind:'companion',id:companionId} : {kind:'main'};
   }
   export function requestNavigation(continueNavigation: () => void, cancelNavigation?: () => void): void {
-    if (busy || editorOpen && !leaveEditor()) { cancelNavigation?.(); return; }
-    const approve=() => { discardPanelOnRestore=editorOpen && dirty; stop(); continueNavigation(); };
-    if (connectionsPanel) connectionsPanel.requestNavigation(approve,cancelNavigation);
-    else approve();
+    askLeave(()=>{
+      const approve=() => { discardPanelOnRestore=discardPanelOnRestore || editorOpen && dirty; dirty=false;stop();continueNavigation(); };
+      if (connectionsPanel) connectionsPanel.requestNavigation(approve,cancelNavigation);
+      else approve();
+    },cancelNavigation);
   }
   export async function restoreNavigation(target: CompanionNavigation): Promise<void> {
     const revision=++navigationRevision;
@@ -526,11 +541,17 @@
   </div>
   </section>
   {/if}
+  {#if pendingLeave}<dialog class="leave-panel-dialog" role="alertdialog" aria-modal="true" aria-labelledby="leave-panel-title" use:showLeaveDialog oncancel={event=>{event.preventDefault();keepEditing();}}>
+    <h2 id="leave-panel-title">Keep your unsaved changes?</h2><p>Save this panel before leaving, or discard this draft.</p>
+    {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
+    <div><button class="secondary-button" disabled={busy} onclick={keepEditing}>Keep editing</button><button class="secondary-button" disabled={busy} onclick={()=>continueLeaving(true)}>Discard and continue</button><button class="primary-button" disabled={busy || !storageReady} onclick={saveAndContinue}>{busy?'Saving…':'Save and continue'}</button></div>
+  </dialog>{/if}
 </section>
 
 <style>
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
+  .leave-panel-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);max-width:460px;width:calc(100% - 40px);box-sizing:border-box;padding:26px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005;color:var(--text);margin:0}.leave-panel-dialog::backdrop{background:#0009}.leave-panel-dialog h2{font-size:14px}.leave-panel-dialog p{font-size:11px;color:var(--muted);line-height:1.8;margin:15px 0 23px}.leave-panel-dialog>div{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.leave-panel-dialog button{font-size:10px}
   .viewport-row .viewport-select{display:flex;align-items:center;gap:8px}.viewport-select > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewport-pencil{display:flex;opacity:0;color:var(--muted)}.viewport-row:hover .viewport-pencil,.viewport-row:focus-within .viewport-pencil{opacity:1}.viewport-name-input{width:100%;padding-right:36px}
   @media(hover:none){.viewport-pencil{opacity:1}}
   .accordion-info{float:right;display:inline-flex;align-items:center;justify-content:center;padding:3px;margin:-3px 0;background:transparent;border:0;color:var(--muted)}.viewport-help{width:min(360px,calc(100vw - 32px));box-sizing:border-box;max-height:80vh;overflow:auto;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px #0005}.viewport-help h3{margin:0 28px 12px 0;font-size:16px}.viewport-help p:last-child{margin-bottom:0}.help-close{float:right;display:grid;place-items:center;padding:3px;background:transparent;border:0;color:var(--muted)}
