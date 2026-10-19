@@ -34,6 +34,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     const panelName = 'Multi viewport acceptance ' + new Date().toISOString().replace(/[:.]/g, '-');
     await editor.getByRole('button', { name: 'Edit panel name', exact: true }).click();
     await change(editor.getByLabel('Panel name', { exact: true }), panelName);
+    await editor.getByText('Screen size', { exact: true }).click();
     await editor.getByRole('combobox', { name: /^Companion screen/ }).selectOption('1920x1080');
     await editor.getByRole('button', { name: 'Add viewport', exact: true }).click();
     await expect(outlines).toHaveCount(2);
@@ -104,7 +105,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     await editor.getByRole('button', { name: 'Save panel', exact: true }).click();
     await expect(editor.getByRole('button', { name: 'Save panel', exact: true })).toBeEnabled({ timeout: 30_000 });
     await expect(editor.locator('.layout-error')).toHaveCount(0);
-    await expect(editor.getByText('Edit the layout and companion assignments.', { exact: true })).toBeVisible();
+    await expect(editor.getByText('Edit the panel layout.', { exact: true })).toBeVisible();
     await editor.getByRole('button', { name: 'Back to Panels', exact: true }).click();
     await page.getByRole('button', { name: new RegExp('^' + panelName) }).click();
     await expect(outlines).toHaveCount(2);

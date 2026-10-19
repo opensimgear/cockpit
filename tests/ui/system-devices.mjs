@@ -568,6 +568,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.getByRole('button', { name: 'Duplicate panel', exact: true })).toHaveCount(0);
     await expect(panelEditor.getByRole('button', { name: /^(Flight|Racing) template$/ })).toHaveCount(0);
     const panelTitleActions=panelEditor.locator('.editor-title-actions');
+    const panelLibrary=panelEditor.getByRole('complementary',{name:'Panel library',exact:true});
+    for(const title of ['Viewports','Widgets','Assets','Screen size'])await expect(panelLibrary.locator('summary').filter({hasText:new RegExp(`^${title}$`)})).toBeVisible();
+    await panelLibrary.getByText('Screen size',{exact:true}).click();
+    await expect(panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true})).toBeVisible();
+    await expect(panelLibrary.getByRole('combobox',{name:'Companion screen',exact:true})).toBeVisible();
+    await panelLibrary.getByText('Screen size',{exact:true}).click();
+    await expect(panelLibrary.getByRole('spinbutton',{name:'Screen width',exact:true})).not.toBeVisible();
     await expect(panelTitleActions.getByRole('button',{name:'Export panel',exact:true})).toBeVisible();
     await expect(panelTitleActions.getByRole('button',{name:'Delete panel',exact:true})).toBeVisible();
     await panelEditor.getByRole('button',{name:'Edit panel name',exact:true}).click();

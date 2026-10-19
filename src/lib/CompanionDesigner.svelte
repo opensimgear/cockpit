@@ -343,18 +343,28 @@
     <button onclick={togglePreview}><Icon name={preview ? 'stop' : 'play'} size={16} />{preview ? 'Stop preview' : 'Preview locally'}</button>
   </div>
   <div class="workspace">
-    <aside aria-label="Panel library">
-      <h3>Viewports</h3>
+    <aside class="panel-library" aria-label="Panel library">
+      <details class="editor-accordion" open><summary>Viewports</summary><div class="accordion-content">
       <p class="hint">Divide one companion screen into areas for your widgets.</p>
       <div class="viewport-list">{#each regions as region}<button class:active={region.id === activeViewport.id} aria-pressed={region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}>{region.label}<small>{Math.round(region.bounds.width * usableWidth)} × {Math.round(region.bounds.height * usableHeight)}</small></button>{/each}</div>
       <button class="add-viewport" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={14} />Add viewport</button>
       <p class="hint">Uses free space, or splits the selected viewport.</p>
-      <h3>Widgets</h3>
+      </div></details>
+      <details class="editor-accordion" open><summary>Widgets</summary><div class="accordion-content">
       <p class="hint">Add to {activeViewport.label}</p>
       <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} onclick={() => { if (command({ type: 'add-widget', kind: preset.kind, pageId: page.id, viewportId: activeViewport.id })) select([document.presentation.widgets.at(-1)!.id]); }}>{preset.title}</button>{/each}</div>
-      <h3>Assets</h3><p class="hint">PNG, JPEG or WebP · 2 MiB each · 8 MiB total</p>
+      </div></details>
+      <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content"><p class="hint">PNG, JPEG or WebP · 2 MiB each · 8 MiB total</p>
       <input aria-label="Add panel image" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onchange={e => void addAsset(e.currentTarget.files?.[0])} />
       <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id}>{a.id}</option>{/each}</select></label>
+      </div></details>
+      <details class="editor-accordion"><summary>Screen size</summary><div class="accordion-content">
+        <label>Companion screen<select value={`${viewport.width}x${viewport.height}`} onchange={e => { const [w,h] = e.currentTarget.value.split('x').map(Number); setViewport(w,h); }}><option value="390x844">Phone portrait</option><option value="844x390">Phone landscape</option><option value="768x1024">Tablet portrait</option><option value="1024x768">Tablet landscape</option><option value="800x480">ESP32 screen · 800 × 480</option><option value="1280x800">Large panel · 1280 × 800</option><option value="1280x720">Desktop · 1280 × 720</option><option value="1920x1080">Full HD · 1920 × 1080</option><option value="2560x1440">QHD · 2560 × 1440</option><option value="3840x2160">4K · 3840 × 2160</option>{#if !['390x844','844x390','768x1024','1024x768','800x480','1280x800','1280x720','1920x1080','2560x1440','3840x2160'].includes(`${viewport.width}x${viewport.height}`)}<option value={`${viewport.width}x${viewport.height}`}>Custom · {viewport.width} × {viewport.height}</option>{/if}</select></label>
+        <label>Screen width<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.width} onchange={e => { setViewport(e.currentTarget.valueAsNumber, viewport.height); e.currentTarget.value=String(viewport.width); }} /></label>
+        <label>Screen height<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.height} onchange={e => { setViewport(viewport.width, e.currentTarget.valueAsNumber); e.currentTarget.value=String(viewport.height); }} /></label>
+        <button onclick={() => setViewport(viewport.height, viewport.width)}><Icon name="refresh" size={16} />Rotate</button>
+        <label>Safe area<select value={viewport.safeInsets?.top ? 'inset' : 'none'} onchange={e => command({ type: 'set-viewport', ...viewport, safeInsets: e.currentTarget.value === 'inset' ? { top: .04, right: .02, bottom: .04, left: .02 } : { top: 0, right: 0, bottom: 0, left: 0 } })}><option value="none">Full screen</option><option value="inset">Phone inset</option></select></label>
+      </div></details>
     </aside>
     <div class="panel-canvas-workspace">
       <div class="toolbar">
@@ -362,11 +372,6 @@
       <div class="toolbar"><label>Page<select value={page.id} onchange={e => { stop(); pageId = e.currentTarget.value; select([]); }}>{#each document.ui.pages as p}<option value={p.id}>{p.title}</option>{/each}</select></label>
         <button onclick={() => { command({ type: 'add-page', title: `Page ${document.ui.pages.length + 1}` }); pageId = document.ui.pages.at(-1)!.id; select([]); }}><Icon name="plus" size={16} />Add page</button>
         <button disabled={document.ui.pages.length <= 1} onclick={() => { command({ type: 'delete-page', id: page.id }); select([]); }}><Icon name="trash" size={16} />Remove page</button>
-        <label>Companion screen<select value={`${viewport.width}x${viewport.height}`} onchange={e => { const [w,h] = e.currentTarget.value.split('x').map(Number); setViewport(w,h); }}><option value="390x844">Phone portrait</option><option value="844x390">Phone landscape</option><option value="768x1024">Tablet portrait</option><option value="1024x768">Tablet landscape</option><option value="800x480">ESP32 screen · 800 × 480</option><option value="1280x800">Large panel · 1280 × 800</option><option value="1280x720">Desktop · 1280 × 720</option><option value="1920x1080">Full HD · 1920 × 1080</option><option value="2560x1440">QHD · 2560 × 1440</option><option value="3840x2160">4K · 3840 × 2160</option>{#if !['390x844','844x390','768x1024','1024x768','800x480','1280x800','1280x720','1920x1080','2560x1440','3840x2160'].includes(`${viewport.width}x${viewport.height}`)}<option value={`${viewport.width}x${viewport.height}`}>Custom · {viewport.width} × {viewport.height}</option>{/if}</select></label>
-        <label>Screen width<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.width} onchange={e => { setViewport(e.currentTarget.valueAsNumber, viewport.height); e.currentTarget.value=String(viewport.width); }} /></label>
-        <label>Screen height<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.height} onchange={e => { setViewport(viewport.width, e.currentTarget.valueAsNumber); e.currentTarget.value=String(viewport.height); }} /></label>
-        <button onclick={() => setViewport(viewport.height, viewport.width)}><Icon name="refresh" size={16} />Rotate</button>
-        <label>Safe area<select value={viewport.safeInsets?.top ? 'inset' : 'none'} onchange={e => command({ type: 'set-viewport', ...viewport, safeInsets: e.currentTarget.value === 'inset' ? { top: .04, right: .02, bottom: .04, left: .02 } : { top: 0, right: 0, bottom: 0, left: 0 } })}><option value="none">Full screen</option><option value="inset">Phone inset</option></select></label>
       </div>
       <div class="toolbar"><label><input type="checkbox" checked={document.presentation.grid.snap} onchange={e => command({ type: 'set-grid', ...document.presentation.grid, snap: e.currentTarget.checked })} />Snap to grid</label>
         <button disabled={!selected.length} onclick={() => command({ type: 'snap', ids: selected })}>Snap selection</button>
@@ -426,6 +431,7 @@
 </section>
 
 <style>
+  .workspace > aside.panel-library{padding:0}.editor-accordion{margin:0;border-bottom:1px solid var(--line)}.editor-accordion:last-child{border-bottom:0}.editor-accordion > summary{padding:14px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}.accordion-content{padding:0 14px 14px;display:grid;gap:8px;min-width:0}.accordion-content .hint,.accordion-content label{margin:0}.accordion-content input,.accordion-content select{width:100%}.accordion-content button{max-width:100%}
   .editor-title{min-width:min(100%,240px);flex:1}.editor-title-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.editor-title .panel-title-button{display:inline-flex;align-items:center;gap:12px;max-width:100%;text-align:left;font:inherit;letter-spacing:inherit;background:transparent;border:0;padding:0;color:inherit}.panel-title-button span{overflow-wrap:anywhere}.panel-title-button :global(svg){flex-shrink:0;color:var(--muted)}.editor-title .panel-name-input{font:inherit;letter-spacing:inherit;width:100%;padding:0 6px;margin:0;line-height:inherit}.editor-title-actions .delete-panel{color:#e39b9b}
   .designer{color:var(--text);min-width:0}.designer>[hidden]{display:none}
   .viewport-list{display:grid;gap:6px}.viewport-list button{text-align:left;overflow-wrap:anywhere}.viewport-list button.active{border-color:var(--accent);background:var(--accent-bg,var(--surface-raised))}.viewport-list small{display:block;color:var(--muted);font-size:10px;margin-top:4px}.add-viewport{display:flex;align-items:center;gap:5px;width:100%;margin-top:8px}.screen-dimension{width:92px}.canvas-caption{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted);margin-top:18px}.canvas-caption strong{color:var(--text);font-weight:500}.layout-error{border:1px solid #d9666c;background:#52262c44;color:#ffb9bd;border-radius:5px;padding:10px;font-size:12px}.viewport-properties .eyebrow{margin-top:0}
