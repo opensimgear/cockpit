@@ -164,8 +164,9 @@
   function patch(patch: Partial<DesignerWidget>) { if (widget) command({ type: 'update-widget', id: widget.id, patch }); }
   function changeBounds(key: keyof Bounds, input: HTMLInputElement) {
     if (widget) {
-      command({ type: 'move-widget', id: widget.id, bounds: { ...widget.bounds, [key]: input.valueAsNumber } });
-      input.value = String(widget.bounds[key]);
+      const scale = key === 'x' || key === 'width' ? usableWidth : usableHeight;
+      command({ type: 'move-widget', id: widget.id, bounds: { ...widget.bounds, [key]: input.valueAsNumber / scale } });
+      input.value = String(Math.round(widget.bounds[key] * scale * 100) / 100);
     }
   }
   function create() {
@@ -434,7 +435,7 @@
       {#if widget}
         <p class="hint">{widget.kind} · <code>{widget.id}</code></p>
         <label>Label<input value={widget.label} onchange={e => patch({ label: e.currentTarget.value })} /></label>
-        <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field}<input type="number" min="0" max="1" step="0.01" value={widget.bounds[field as keyof Bounds]} onchange={e => changeBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
+        <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field === 'x' ? 'X' : field === 'y' ? 'Y' : field === 'width' ? 'Width' : 'Height'} (px)<input type="number" min={field === 'width' || field === 'height' ? 1 : 0} max={field === 'x' || field === 'width' ? usableWidth : usableHeight} step="1" value={Math.round(widget.bounds[field as keyof Bounds] * (field === 'x' || field === 'width' ? usableWidth : usableHeight) * 100) / 100} onchange={e => changeBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
         {#each ['foreground','background','accent'] as color}<label>{color}<input type="color" value={widget.style?.[color as keyof NonNullable<DesignerWidget['style']>] ?? (color === 'background' ? '#12232e' : '#55ddc7')} onchange={e => patch({ style: { ...widget.style, [color]: e.currentTarget.value } })} /></label>{/each}
         {#each Object.entries(widget.config).filter(([key])=>!['buttonMode','pulseMs','repeatMs'].includes(key)) as [key,value]}
           {#if typeof value === 'boolean'}<label><input type="checkbox" checked={value} onchange={e => configPatch(key,e.currentTarget.checked)} />{key}</label>

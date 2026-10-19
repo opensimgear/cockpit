@@ -673,8 +673,17 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(companionSettings).toHaveCount(0);
     await panelLibrary.getByText('Widgets',{exact:true}).click();
     await panelLibrary.locator('.palette').getByRole('button',{name:'Button',exact:true}).click();
-    const widgetWidth=panelProperties.getByRole('spinbutton',{name:'width',exact:true}),widgetX=panelProperties.getByRole('spinbutton',{name:'x',exact:true});
-    await widgetWidth.fill('0.2');await widgetWidth.press('Tab');await widgetX.fill('0.6');await widgetX.press('Tab');
+    const widgetWidth=panelProperties.getByRole('spinbutton',{name:'Width (px)',exact:true}),widgetX=panelProperties.getByRole('spinbutton',{name:'X (px)',exact:true});
+    const pixelHeight=Number(await panelLibrary.getByRole('spinbutton',{name:'Screen height',exact:true,includeHidden:true}).inputValue());
+    const initialWidgetBounds=await panelEditor.locator('.widget').last().evaluate(node=>({X:parseFloat(node.style.left),Y:parseFloat(node.style.top),Width:parseFloat(node.style.width),Height:parseFloat(node.style.height)}));
+    for(const [field,percent] of Object.entries(initialWidgetBounds)){
+      const pixels=Math.round(percent/100*(field==='X'||field==='Width'?1280:pixelHeight)*100)/100;
+      await expect(panelProperties.getByRole('spinbutton',{name:`${field} (px)`,exact:true})).toHaveValue(String(pixels));
+    }
+    await widgetWidth.fill('256');await widgetWidth.press('Tab');await widgetX.fill('768');await widgetX.press('Tab');
+    await expect.poll(()=>panelEditor.locator('.widget').last().evaluate(node=>node.style.width)).toBe('20%');
+    await expect.poll(()=>panelEditor.locator('.widget').last().evaluate(node=>node.style.left)).toBe('60%');
+    await widgetWidth.fill('9999');await widgetWidth.press('Tab');await expect(widgetWidth).toHaveValue('256');
     await panelProperties.getByRole('button',{name:'Close properties',exact:true}).click();await expect(panelProperties).toHaveCount(0);
     const widgets=panelEditor.locator('.widget');
     const originalBounds=await widgets.evaluateAll(nodes=>nodes.map(node=>({left:parseFloat(node.style.left),width:parseFloat(node.style.width)})));

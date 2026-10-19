@@ -74,11 +74,11 @@ test('native companion editor authors, validates, previews and saves multiple vi
     await expect(editor.locator('.widget')).toHaveCount(2);
     const added = editor.locator('.widget').last();
     const before = await added.getAttribute('style');
-    await change(editor.getByLabel('x', { exact: true }), 0.5);
+    await change(editor.getByLabel('X (px)', { exact: true }), 960);
     await expect(editor.locator('.layout-error')).toContainText(/inside.*viewport/);
     assert.equal(await added.getAttribute('style'), before);
-    assert.ok(Number(await editor.getByLabel('x', { exact: true }).inputValue()) > 1120 / 1920);
-    await change(editor.getByLabel('x', { exact: true }), 0.7);
+    assert.ok(Number(await editor.getByLabel('X (px)', { exact: true }).inputValue()) > 1120);
+    await change(editor.getByLabel('X (px)', { exact: true }), 1344);
     await expect(editor.locator('.layout-error')).toHaveCount(0);
     checks.push('Widgets are added to the selected viewport and cannot be placed across a gap');
 
