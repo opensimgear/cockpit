@@ -1122,7 +1122,9 @@ impl Publication {
             cache.insert(key.clone(),std::sync::Arc::new(pixels));
         }
         let pixels=&cache[&key];ensure(offset<pixels.len() && offset%3==0,"Invalid image offset.")?;
-        let end=(offset+6144).min(pixels.len());
+        // Keep the encoded image reply inside one bounded USB record. Larger
+        // chunks require another base64 transfer layer and larger device allocations.
+        let end=(offset+1536).min(pixels.len());
         Ok(json!({"ok":true,"type":"image-chunk","widgetId":widget_id,"width":width,"height":height,"offset":offset,"total":pixels.len(),"base64":STANDARD.encode(&pixels[offset..end]),"publicationHash":self.publication_hash}))
     }
 }
@@ -1144,6 +1146,16 @@ mod image_tests {
         let chunk=p.image_chunk("image-widget",2,3,0).unwrap();assert_eq!(chunk["total"],18);
         let pixels=STANDARD.decode(chunk["base64"].as_str().unwrap()).unwrap();assert_eq!(pixels,vec![0,248,128].repeat(6));
         assert_eq!(p.image_chunk("image-widget",1,1,0).unwrap()["total"],3);
+        let mut delivered=Vec::new();
+        while delivered.len()<144*80*3{
+            let chunk=p.image_chunk("image-widget",144,80,delivered.len()).unwrap();
+            let frame=json!({"command":"serial-reply","linkId":"usb-0000000000000000","requestId":"18446744073709551614","frame":chunk});
+            assert!(serde_json::to_vec(&frame).unwrap().len()<=4096,"An image reply must fit one USB frame");
+            let bytes=STANDARD.decode(frame["frame"]["base64"].as_str().unwrap()).unwrap();
+            assert!(!bytes.is_empty()&&bytes.len()%3==0);
+            delivered.extend_from_slice(&bytes);
+        }
+        assert_eq!(delivered,vec![0,248,128].repeat(144*80));
         assert!(p.image_chunk("image-widget",801,1,0).is_err());assert!(p.image_chunk("missing",1,1,0).is_err());assert!(p.image_chunk("image-widget",2,3,18).is_err());assert!(p.image_chunk("image-widget",2,3,1).is_err());
     }
 }
