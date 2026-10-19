@@ -83,3 +83,12 @@ passed all 14 jobs in [CI run 39165938582](https://github.com/opensimgear/cockpi
 and the [ESP32 build](https://github.com/opensimgear/cockpit/actions/runs/39165938634).
 The [Windows package run](https://github.com/opensimgear/cockpit/actions/runs/39165707490)
 also passed at source `8169da1`. These results precede the fixes in this record.
+
+The subsequent [native admission latency measurement](2026-10-19-desktop-latency.md)
+uses QPC across the actual source, profile and worker paths. Three completed
+two-source workloads pass exact native delivery and cleanup checks. The final
+run delivered all 388 measured key edges without loss or faults, but p95 remains
+about 21 ms and p99 about 25–29 ms, above the unchanged 5/10 ms targets. Wake and
+redundant-write changes are verified; latency qualification remains open.
+Physical capture is outside this measurement and physical testing is deferred
+at the user's request.

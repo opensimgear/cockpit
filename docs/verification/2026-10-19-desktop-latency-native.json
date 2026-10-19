@@ -1,0 +1,602 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "feature": "97 desktop output; 104 latency qualification",
+  "result": "valid native trace; strict latency target failed",
+  "workflowPassed": true,
+  "traceValid": true,
+  "latencyTargetPassed": false,
+  "actualNativeCockpit": true,
+  "actualAuthenticatedWssPeers": 2,
+  "injected": true,
+  "virtualControllers": 0,
+  "physicalCaptureMeasured": false,
+  "applicationConsumptionMeasured": false,
+  "productionQualified": false,
+  "nativeExecutableSha256": "59426782dd543be864d1c5a3df8d0bfd29d6d37cb2e49c31449074872b63725c",
+  "nativeSourceRevision": "4c2bf483de82c611c1fcf0b65072187aeda69d3e",
+  "testHarnessRevision": "4c2bf483de82c611c1fcf0b65072187aeda69d3e",
+  "sourceProvenance": {
+    "originalBaseRevision": "9f779d89eb5ff8a79d3684d5e7504f4b21c5b6a0",
+    "originalSourceRecordedAtBuild": "9f779d89eb5ff8a79d3684d5e7504f4b21c5b6a0+owner-elision-working-tree",
+    "committedSourceEquivalentToBuild": true,
+    "comparedNativeSourceFiles": 413,
+    "mismatches": [],
+    "nativeExecutableHashMatchesManifest": true,
+    "nativeSourceHashManifestSha256": "4c5c535fd9f586bcb5af632a3909b5548715aab57286ccbfccce8251b535a2ac"
+  },
+  "test": {
+    "command": "OSG_DESKTOP_LATENCY_NATIVE=1 OSG_DESKTOP_NATIVE_INJECT=1 node --test tests/ui/desktop-latency-native.mjs",
+    "tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "elapsedSecondsApprox": 27.7
+  },
+  "measurement": {
+    "boundary": "Native authenticated WSS SourceSink admission to successful SendInput return",
+    "clock": "Same-host QueryPerformanceCounter in exact parent and spawned workers",
+    "qpcFrequency": "10000000",
+    "percentileMethod": "Integer nearest rank over successful immediate KeyHold edges between native begin/end markers",
+    "configuredDelayUs": "0",
+    "strictP95BelowUs": 5000,
+    "strictP99BelowUs": 10000,
+    "excluded": [
+      "Physical controller capture",
+      "Network/framing/decoding before native SourceSink admission",
+      "Application or game consumption",
+      "Scheduled pointer/tap/repeat/cleanup from KeyHold percentiles"
+    ],
+    "pythonClockBoundary": "Python elapsed time describes achieved workload rate only; it is not subtracted from QPC or receiver-local timestamps."
+  },
+  "workload": {
+    "targetSecondsPerPhase": 6,
+    "independentWssPeers": 2,
+    "requestedFramesPerSecondPerPeer": 80,
+    "immediateKeys": [
+      {
+        "source": "panel-a",
+        "key": "KeyA",
+        "hid": 4,
+        "scanCode": 30
+      },
+      {
+        "source": "panel-b",
+        "key": "KeyB",
+        "hid": 5,
+        "scanCode": 48
+      }
+    ],
+    "axes": {
+      "wireRange": [
+        -1,
+        1
+      ],
+      "wireAmplitude": 0.65,
+      "nativeSchema": "integer",
+      "nativeRange": [
+        -32768,
+        32767
+      ],
+      "explicitScaleFactor": 3.0517578125e-05,
+      "providerConversion": "Normalized WSS decimals are quantized to signed native integer counts before graph normalization.",
+      "pointerAxes": [
+        "x",
+        "y"
+      ],
+      "speed": 40,
+      "curve": 1
+    }
+  },
+  "phases": [
+    {
+      "name": "idle",
+      "freshReceiverAndExplicitApply": true,
+      "scope": {
+        "kind": "application",
+        "receiverExecutable": "native_receiver.exe",
+        "receiverIdentity": "<redacted-phase-receiver-identity>",
+        "exactNativeExecutablePidAndCreationIdentityMatched": true
+      },
+      "markers": {
+        "beginPhase": 1,
+        "endPhase": 2,
+        "windowDurationTicks": "66283524"
+      },
+      "sources": [
+        {
+          "source": "panel-a",
+          "acceptedFrames": 385,
+          "acceptedAxisSamples": 385,
+          "requestedFramesPerSecond": 80,
+          "observedAcceptedFramesPerSecond": 64.01536847706981,
+          "workloadElapsedSeconds": 6.014180800004397,
+          "senderLateIntervals": 84,
+          "expectedChangedKeyEdges": 97,
+          "observedChangedKeyEdges": 97,
+          "downs": 49,
+          "ups": 48,
+          "warmupEdgesExcluded": 2,
+          "postMarkerNeutralCleanupKeyEdges": 1,
+          "receiverKeyEdgesAfterStop": 100
+        },
+        {
+          "source": "panel-b",
+          "acceptedFrames": 385,
+          "acceptedAxisSamples": 385,
+          "requestedFramesPerSecond": 80,
+          "observedAcceptedFramesPerSecond": 64.015786791578,
+          "workloadElapsedSeconds": 6.014141500025289,
+          "senderLateIntervals": 84,
+          "expectedChangedKeyEdges": 97,
+          "observedChangedKeyEdges": 97,
+          "downs": 49,
+          "ups": 48,
+          "warmupEdgesExcluded": 2,
+          "postMarkerNeutralCleanupKeyEdges": 1,
+          "receiverKeyEdgesAfterStop": 100
+        }
+      ],
+      "nativeAnalysis": {
+        "expectedKeyEdges": 194,
+        "admittedBatches": 770,
+        "admittedChanges": 964,
+        "selectedKeyChanges": 194,
+        "successfulKeyEdges": 194,
+        "keySources": 2,
+        "excluded": {
+          "synthetic": 776,
+          "noop": 0,
+          "collision": 0,
+          "skipped": 0,
+          "cleanup": 0,
+          "unacked": 0,
+          "fault": 0,
+          "unresolved": 0
+        },
+        "droppedDeliveries": 0,
+        "nativeGaps": 0,
+        "queueFaults": 0,
+        "queues": {
+          "nativeQueuedFramesMax": 3,
+          "parentOutstandingReservationsMax": 1,
+          "workerOutstandingReservationsMax": 1
+        },
+        "latency": {
+          "samples": 194,
+          "p95Ticks": "209529",
+          "p99Ticks": "287808",
+          "p95UsCeil": 20953,
+          "p99UsCeil": 28781,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        },
+        "errors": [],
+        "expectedCountsMatch": true,
+        "passed": false
+      },
+      "warmup": {
+        "realDownUpSettledForBothKeys": true,
+        "exactImmutableReceiverPrefixExcluded": true,
+        "keyEdgesExcluded": 4
+      },
+      "pointer": {
+        "markedReceiverMouseMoves": 198,
+        "bothAxesHaveActualSuccessfulNativeReceipts": true,
+        "recentNativeCounts": {
+          "pointer-a": {
+            "successfulSubmissions": 68,
+            "nativeEventsAttempted": 68,
+            "nativeEventsConfirmed": 68
+          },
+          "pointer-b": {
+            "successfulSubmissions": 68,
+            "nativeEventsAttempted": 68,
+            "nativeEventsConfirmed": 68
+          }
+        },
+        "countBoundary": "Native counts cover only the bounded recent outcome buffer after warmup, not whole-phase totals; WM_MOUSEMOVE can be coalesced."
+      },
+      "ui": {
+        "mode": "idle",
+        "refreshClicks": 0,
+        "busyTransitions": 0,
+        "domMutations": 0,
+        "elapsedMs": 0,
+        "configuredRefreshHz": 0,
+        "observedRefreshClicksPerSecond": 0
+      },
+      "receiver": {
+        "settledObservations": 510,
+        "afterStopObservations": 527,
+        "capacity": 4096
+      },
+      "stop": {
+        "state": "stopped",
+        "owner": null,
+        "held": [],
+        "possibleHeld": [],
+        "runs": [],
+        "cleanupComplete": true,
+        "uncertain": false,
+        "nativeInputWorkers": []
+      }
+    },
+    {
+      "name": "ui-load",
+      "freshReceiverAndExplicitApply": true,
+      "scope": {
+        "kind": "application",
+        "receiverExecutable": "native_receiver.exe",
+        "receiverIdentity": "<redacted-phase-receiver-identity>",
+        "exactNativeExecutablePidAndCreationIdentityMatched": true
+      },
+      "markers": {
+        "beginPhase": 3,
+        "endPhase": 4,
+        "windowDurationTicks": "65746709"
+      },
+      "sources": [
+        {
+          "source": "panel-a",
+          "acceptedFrames": 385,
+          "acceptedAxisSamples": 385,
+          "requestedFramesPerSecond": 80,
+          "observedAcceptedFramesPerSecond": 64.08620003389453,
+          "workloadElapsedSeconds": 6.007533600000897,
+          "senderLateIntervals": 83,
+          "expectedChangedKeyEdges": 97,
+          "observedChangedKeyEdges": 97,
+          "downs": 49,
+          "ups": 48,
+          "warmupEdgesExcluded": 2,
+          "postMarkerNeutralCleanupKeyEdges": 1,
+          "receiverKeyEdgesAfterStop": 100
+        },
+        {
+          "source": "panel-b",
+          "acceptedFrames": 385,
+          "acceptedAxisSamples": 385,
+          "requestedFramesPerSecond": 80,
+          "observedAcceptedFramesPerSecond": 64.08443138834501,
+          "workloadElapsedSeconds": 6.007699399982812,
+          "senderLateIntervals": 84,
+          "expectedChangedKeyEdges": 97,
+          "observedChangedKeyEdges": 97,
+          "downs": 49,
+          "ups": 48,
+          "warmupEdgesExcluded": 2,
+          "postMarkerNeutralCleanupKeyEdges": 1,
+          "receiverKeyEdgesAfterStop": 100
+        }
+      ],
+      "nativeAnalysis": {
+        "expectedKeyEdges": 194,
+        "admittedBatches": 770,
+        "admittedChanges": 964,
+        "selectedKeyChanges": 194,
+        "successfulKeyEdges": 194,
+        "keySources": 2,
+        "excluded": {
+          "synthetic": 774,
+          "noop": 0,
+          "collision": 0,
+          "skipped": 0,
+          "cleanup": 0,
+          "unacked": 0,
+          "fault": 0,
+          "unresolved": 0
+        },
+        "droppedDeliveries": 0,
+        "nativeGaps": 0,
+        "queueFaults": 0,
+        "queues": {
+          "nativeQueuedFramesMax": 3,
+          "parentOutstandingReservationsMax": 1,
+          "workerOutstandingReservationsMax": 1
+        },
+        "latency": {
+          "samples": 194,
+          "p95Ticks": "214010",
+          "p99Ticks": "251629",
+          "p95UsCeil": 21401,
+          "p99UsCeil": 25163,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        },
+        "errors": [],
+        "expectedCountsMatch": true,
+        "passed": false
+      },
+      "warmup": {
+        "realDownUpSettledForBothKeys": true,
+        "exactImmutableReceiverPrefixExcluded": true,
+        "keyEdgesExcluded": 4
+      },
+      "pointer": {
+        "markedReceiverMouseMoves": 197,
+        "bothAxesHaveActualSuccessfulNativeReceipts": true,
+        "recentNativeCounts": {
+          "pointer-a": {
+            "successfulSubmissions": 68,
+            "nativeEventsAttempted": 68,
+            "nativeEventsConfirmed": 68
+          },
+          "pointer-b": {
+            "successfulSubmissions": 68,
+            "nativeEventsAttempted": 68,
+            "nativeEventsConfirmed": 68
+          }
+        },
+        "countBoundary": "Native counts cover only the bounded recent outcome buffer after warmup, not whole-phase totals; WM_MOUSEMOVE can be coalesced."
+      },
+      "ui": {
+        "mode": "real-svelte-profiles-refresh",
+        "refreshClicks": 114,
+        "busyTransitions": 228,
+        "domMutations": 21079,
+        "elapsedMs": 6591.4000000059605,
+        "configuredRefreshHz": 25,
+        "observedRefreshClicksPerSecond": 17.295263525183863,
+        "actualSvelteProfilesViewConfirmed": true
+      },
+      "receiver": {
+        "settledObservations": 498,
+        "afterStopObservations": 515,
+        "capacity": 4096
+      },
+      "stop": {
+        "state": "stopped",
+        "owner": null,
+        "held": [],
+        "possibleHeld": [],
+        "runs": [],
+        "cleanupComplete": true,
+        "uncertain": false,
+        "nativeInputWorkers": []
+      }
+    }
+  ],
+  "totals": {
+    "acceptedWorkloadFrames": 1540,
+    "expectedMeasuredKeyEdges": 388,
+    "successfulMeasuredKeyEdges": 388,
+    "warmupKeyEdgesExcluded": 8,
+    "postMarkerNeutralCleanupKeyEdges": 4,
+    "receiverKeyEdgesAfterStop": 400,
+    "markedReceiverMouseMoves": 395
+  },
+  "collector": {
+    "qpcFrequency": "10000000",
+    "sameRunAndFrequencyMatched": true,
+    "runNonce": "<redacted-run-nonce>",
+    "parentIdentity": "<redacted-parent-identity>",
+    "exactHashedAppProcessMatchedParentHeader": true,
+    "headerVersion": "1",
+    "limits": {
+      "queueLimit": "4096",
+      "recordLimit": "65536",
+      "byteLimit": "33554432",
+      "aliasLimit": "4096",
+      "aliasKeyLimit": "1024",
+      "fieldLimit": "16"
+    },
+    "latestRawStoppedCheckpointMatchesExternalReturnedReport": true,
+    "wrapperCheckpointMatches": true,
+    "parentReport": {
+      "complete": true,
+      "configured": true,
+      "counters": {
+        "afterFinish": "0",
+        "aliasFailures": "0",
+        "attempted": "28635",
+        "capDrops": "0",
+        "enqueued": "28635",
+        "evidenceFaults": "0",
+        "flushTimeouts": "0",
+        "invalidFields": "0",
+        "ioErrors": "0",
+        "lastEnqueuedSequence": "28635",
+        "lastWrittenSequence": "28635",
+        "qpcFailures": "0",
+        "queueDrops": "0",
+        "queueHighWater": "9",
+        "serializationErrors": "0",
+        "written": "28635"
+      },
+      "enabled": true,
+      "finished": false,
+      "throughSequence": "28635",
+      "valid": true
+    },
+    "workers": [
+      {
+        "phase": "idle",
+        "exactParentPidInstanceAndRunMatched": true,
+        "exactChannelAndWorkerPidMatchedExit": true,
+        "processIdentity": "<redacted-worker-identity>",
+        "exitCode": 0,
+        "gracefulExit": true,
+        "normalWaitCompletion": true,
+        "footerReason": "normal",
+        "footerReport": {
+          "complete": true,
+          "configured": true,
+          "counters": {
+            "afterFinish": "0",
+            "aliasFailures": "0",
+            "attempted": "4114",
+            "capDrops": "0",
+            "enqueued": "4114",
+            "evidenceFaults": "0",
+            "flushTimeouts": "0",
+            "invalidFields": "0",
+            "ioErrors": "0",
+            "lastEnqueuedSequence": "4114",
+            "lastWrittenSequence": "4114",
+            "qpcFailures": "0",
+            "queueDrops": "0",
+            "queueHighWater": "2",
+            "serializationErrors": "0",
+            "written": "4114"
+          },
+          "enabled": true,
+          "finished": true,
+          "throughSequence": "4114",
+          "valid": true
+        }
+      },
+      {
+        "phase": "ui-load",
+        "exactParentPidInstanceAndRunMatched": true,
+        "exactChannelAndWorkerPidMatchedExit": true,
+        "processIdentity": "<redacted-worker-identity>",
+        "exitCode": 0,
+        "gracefulExit": true,
+        "normalWaitCompletion": true,
+        "footerReason": "normal",
+        "footerReport": {
+          "complete": true,
+          "configured": true,
+          "counters": {
+            "afterFinish": "0",
+            "aliasFailures": "0",
+            "attempted": "4070",
+            "capDrops": "0",
+            "enqueued": "4070",
+            "evidenceFaults": "0",
+            "flushTimeouts": "0",
+            "invalidFields": "0",
+            "ioErrors": "0",
+            "lastEnqueuedSequence": "4070",
+            "lastWrittenSequence": "4070",
+            "qpcFailures": "0",
+            "queueDrops": "0",
+            "queueHighWater": "3",
+            "serializationErrors": "0",
+            "written": "4070"
+          },
+          "enabled": true,
+          "finished": true,
+          "throughSequence": "4070",
+          "valid": true
+        }
+      }
+    ],
+    "parentIgnoredTailEvents": 0,
+    "stopCancelledDeliveryRecordsOutsideMeasuredWindows": 8
+  },
+  "comparisons": [
+    {
+      "label": "baseline",
+      "nativeExecutableSha256": "4835eec35a3d17ebf6ea1d59c66e9b062280b503b86fec1117d2b74f38d9d3bf",
+      "sourceRecordedAtBuild": "9f779d89eb5ff8a79d3684d5e7504f4b21c5b6a0+audit-working-tree",
+      "traceValid": true,
+      "strictTargetPassed": false,
+      "phases": [
+        {
+          "name": "idle",
+          "samples": 194,
+          "p95Ticks": "256031",
+          "p99Ticks": "325284",
+          "p95Ms": 25.6031,
+          "p99Ms": 32.5284,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        },
+        {
+          "name": "ui-load",
+          "samples": 194,
+          "p95Ticks": "244899",
+          "p99Ticks": "274190",
+          "p95Ms": 24.4899,
+          "p99Ms": 27.419,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        }
+      ]
+    },
+    {
+      "label": "source-wake",
+      "nativeExecutableSha256": "e330146e1b3d5cbb2dcc6164534c9b28efaa135ec49294e4ccd1078ffc699f8d",
+      "sourceRecordedAtBuild": "9f779d89eb5ff8a79d3684d5e7504f4b21c5b6a0+wake-audit-working-tree",
+      "traceValid": true,
+      "strictTargetPassed": false,
+      "phases": [
+        {
+          "name": "idle",
+          "samples": 194,
+          "p95Ticks": "247263",
+          "p99Ticks": "296341",
+          "p95Ms": 24.7263,
+          "p99Ms": 29.6341,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        },
+        {
+          "name": "ui-load",
+          "samples": 194,
+          "p95Ticks": "158776",
+          "p99Ticks": "204242",
+          "p95Ms": 15.8776,
+          "p99Ms": 20.4242,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        }
+      ]
+    },
+    {
+      "label": "source-wake-and-local-owner-write-elision",
+      "nativeExecutableSha256": "59426782dd543be864d1c5a3df8d0bfd29d6d37cb2e49c31449074872b63725c",
+      "sourceRecordedAtBuild": "9f779d89eb5ff8a79d3684d5e7504f4b21c5b6a0+owner-elision-working-tree",
+      "traceValid": true,
+      "strictTargetPassed": false,
+      "phases": [
+        {
+          "name": "idle",
+          "samples": 194,
+          "p95Ticks": "209529",
+          "p99Ticks": "287808",
+          "p95Ms": 20.9529,
+          "p99Ms": 28.7808,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        },
+        {
+          "name": "ui-load",
+          "samples": 194,
+          "p95Ticks": "214010",
+          "p99Ticks": "251629",
+          "p95Ms": 21.401,
+          "p99Ms": 25.1629,
+          "strictP95Below5ms": false,
+          "strictP99Below10ms": false
+        }
+      ]
+    }
+  ],
+  "cleanup": {
+    "confirmed": true,
+    "errors": [],
+    "state": "stopped",
+    "owner": null,
+    "held": [],
+    "possibleHeld": [],
+    "owners": [],
+    "runs": [],
+    "inFlight": null,
+    "cleanupComplete": true,
+    "uncertain": false,
+    "nativeInputWorkers": [],
+    "receiveOnlyHelpersClosed": 2,
+    "receiveOnlyHelperExitCodes": [
+      0,
+      0
+    ],
+    "localPreferencesRestorationVerified": true
+  },
+  "limitations": [
+    "All three separate valid runs failed the unchanged strict latency target. Single-run percentile differences do not establish statistical significance or causal improvement.",
+    "Requested and observed workload rates differ. This does not qualify physical capture, scheduled action latency, installed deployment or game consumption."
+  ],
+  "redaction": "Credentials, endpoints, nonces, UUIDs, personal paths, PIDs and process creation identities are omitted or replaced; exact identity-equality checks remain explicit."
+}
