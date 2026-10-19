@@ -498,6 +498,7 @@
     <div class="main-shell">
       <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
+        <div class="main-content">
         <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={openCompanion} openIntegration={openGameSettings} onNavigate={() => {if(view==='devices')recordRoute();}} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
         {#if profilesMounted || view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} onNavigate={() => {if(view==='profiles')recordRoute();}} active={view==='profiles'} /></div>{/if}
         {#if companionsMounted || view === 'companions'}<div hidden={view !== 'companions'}><CompanionDesigner bind:this={companionsPanel} active={view==='companions'} initialCompanionId={selectedCompanionId} onNavigate={() => {if(view==='companions')recordRoute();}} openSettings={() => navigate('preferences')} /></div>{/if}
@@ -572,6 +573,7 @@
             </section>
           </div>
         {/if}
+        </div>
       </main>
     </div>
   </div>

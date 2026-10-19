@@ -137,6 +137,19 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, and inspect a
  try{
   await page.goto(endpoint);await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Profiles',exact:true}).click();await expect(page.getByRole('button',{name:'Edit Default',exact:true})).toBeVisible();await page.getByRole('button',{name:'Add profile',exact:true}).click();await page.getByLabel('Profile name',{exact:true}).fill('Complete browser rig');
   await expect(page.locator('.resource-block')).toHaveCount(9);await expect(page.locator('path.signal-edge')).toHaveCount(0);
+  await page.setViewportSize({width:2400,height:1100});
+  const scrollArea=page.locator('main');
+  const wideLayout=await scrollArea.evaluate(node=>{
+   const outer=node.getBoundingClientRect(),inner=node.querySelector('.main-content').getBoundingClientRect();
+   return{left:outer.left,right:outer.right,top:outer.top,width:outer.width,contentLeft:inner.left,contentRight:inner.right,contentWidth:inner.width};
+  });
+  assert.equal(wideLayout.contentWidth,1680,'Wide windows retain the centered content width limit.');
+  assert.ok(wideLayout.contentLeft>wideLayout.left&&wideLayout.contentRight<wideLayout.right);
+  for(const x of [(wideLayout.left+wideLayout.contentLeft)/2,(wideLayout.contentRight+wideLayout.right)/2]){
+   await scrollArea.evaluate(node=>node.scrollTop=0);await page.mouse.move(x,wideLayout.top+120);await page.mouse.wheel(0,200);
+   await expect.poll(()=>scrollArea.evaluate(node=>node.scrollTop)).toBeGreaterThan(0);
+  }
+  await scrollArea.evaluate(node=>node.scrollTop=0);await page.setViewportSize({width:1600,height:1100});
   await expect(inspector).toHaveCount(0);
   await page.getByRole('button',{name:'Fit all',exact:true}).click();
   await page.getByRole('application',{name:'Profile canvas'}).scrollIntoViewIfNeeded();
