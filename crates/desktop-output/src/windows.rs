@@ -354,12 +354,29 @@ impl Adapter for Native {
         if inputs.is_empty() {
             return Ok(0);
         }
-        Ok(unsafe {
+        let confirmed = unsafe {
             SendInput(
                 inputs.len() as u32,
                 inputs.as_ptr(),
                 size_of::<INPUT>() as i32,
             )
-        } as usize)
+        } as usize;
+        // Capture the end boundary immediately after the actual native call;
+        // formatting, queueing and ACK handling occur after this timestamp.
+        if let Some(returned) = crate::audit::stamp() {
+            let context = crate::worker::submission_context();
+            if context.is_none() {
+                crate::audit::fault(crate::audit::Fault::Context);
+            }
+            crate::audit::record_at(returned, crate::audit::Kind::SubmitReturned, &[
+                crate::audit::channel().unwrap_or(0),
+                context.map_or(0, |value| value.request),
+                context.map_or(0, |value| value.operation),
+                context.map_or(0, |value| value.category),
+                inputs.len() as u64,
+                confirmed as u64,
+            ]);
+        }
+        Ok(confirmed)
     }
 }

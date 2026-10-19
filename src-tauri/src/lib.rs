@@ -172,6 +172,9 @@ async fn gateway_request(
 }
 
 pub fn run() {
+    // Helper entry points exit in main before the parent collector exists.
+    // Initialize before GatewayManager constructs any native source providers.
+    osg_desktop_output::audit::initialize(osg_desktop_output::audit::Role::Parent);
     let builder = tauri::Builder::default();
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {

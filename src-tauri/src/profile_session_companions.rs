@@ -5,6 +5,7 @@ use osg_companion_service::{
     FeedbackBinding, FeedbackDescriptor, FeedbackKind, FeedbackMode, FeedbackProvenance,
     FeedbackSample, FeedbackSource, FeedbackStatus, FeedbackValue, Hub,
 };
+use osg_desktop_output::audit::{self, AliasKind, Kind as AuditKind};
 use osg_mapping::{
     engine::{
         typed::{Change, Frame, Phase},
@@ -14,7 +15,7 @@ use osg_mapping::{
     signal::PortValue,
 };
 use osg_mapping_host::companions::{
-    native_definition, CompanionProvider, Definition, NativeFeed, NativeSelection,
+    native_definition, CompanionProvider, Definition, NativeFeed, NativeFrame, NativeSelection,
 };
 use osg_profiles::{
     compiler_models::{ExecutionPlan, PlanReadiness, SinkAdapter},
@@ -48,6 +49,7 @@ struct Output {
     token: Option<ResourceToken>,
 }
 struct Instance {
+    audit_instance: u64,
     logical: String,
     proof: Preparation,
     provider_session: Option<String>,
@@ -75,7 +77,7 @@ pub(crate) struct CompanionSources {
 pub(crate) struct CompanionPoll {
     pub frames: Vec<Frame>,
     pub diagnostics: Vec<String>,
-    pub liveness: Vec<(String,Counter)>,
+    pub liveness: Vec<(String, Counter)>,
 }
 
 fn selected_port(
@@ -208,6 +210,7 @@ impl CompanionSources {
                 });
             }
             result.push(Instance {
+                audit_instance: audit::next_id().unwrap_or(0),
                 logical: binding.resource_id.clone(),
                 transport: plan
                     .sources
@@ -323,6 +326,43 @@ impl CompanionSources {
                 "Bind exact companion delivery tokens and capture fresh baselines before Start."
                     .into(),
             );
+        }
+        if audit::enabled() {
+            let run_alias = audit::alias(AliasKind::Run, run.session.as_bytes()).unwrap_or(0);
+            for instance in &self.instances {
+                if let Some(feed) = &instance.feed {
+                    let (provider, subscription) = feed.diagnostic_identity();
+                    let logical =
+                        audit::alias(AliasKind::LogicalSource, instance.logical.as_bytes())
+                            .unwrap_or(0);
+                    let physical = audit::alias(
+                        AliasKind::NativeSource,
+                        instance.proof.instance_id().as_bytes(),
+                    )
+                    .unwrap_or(0);
+                    let session = instance
+                        .provider_session
+                        .as_ref()
+                        .and_then(|session| audit::alias(AliasKind::Provider, session.as_bytes()))
+                        .unwrap_or(0);
+                    if instance.audit_instance == 0 || provider == 0 {
+                        audit::fault(audit::Fault::Provenance);
+                    }
+                    audit::record(
+                        AuditKind::SourceBound,
+                        &[
+                            instance.audit_instance,
+                            run_alias,
+                            run.generation.0,
+                            logical,
+                            provider,
+                            subscription,
+                            physical,
+                            session,
+                        ],
+                    );
+                }
+            }
         }
         self.run = Some(run);
         Ok(())
@@ -507,7 +547,7 @@ impl CompanionSources {
                     .feed
                     .as_mut()
                     .ok_or("The companion subscription is unavailable.")?
-                    .baseline()?;
+                    .baseline_audited()?;
                 let mut result = vec![];
                 for frame in frames {
                     if let Some(frame) = instance.convert(frame, now)? {
@@ -594,7 +634,7 @@ impl CompanionSources {
         }
         let mut baselines = vec![];
         for instance in &mut self.instances {
-            baselines.push(instance.feed.as_mut().unwrap().baseline()?);
+            baselines.push(instance.feed.as_mut().unwrap().baseline_audited()?);
         }
         if self.run.is_none() {
             // A genuine peer can reconnect after inventory capture but before
@@ -653,7 +693,7 @@ impl CompanionSources {
                     .feed
                     .as_mut()
                     .ok_or("The companion subscription is unavailable.")?
-                    .poll()?;
+                    .poll_audited()?;
                 let mut converted = vec![];
                 for frame in frames {
                     if let Some(frame) = instance.convert(frame, now_us)? {
@@ -669,9 +709,11 @@ impl CompanionSources {
                     // loss before this marker. Retained state is latched while
                     // this exact acquired generation remains ready.
                     if instance.ready && !instance.inputs.is_empty() {
-                        result.liveness.push((instance.logical.clone(),Counter(instance.generation)));
+                        result
+                            .liveness
+                            .push((instance.logical.clone(), Counter(instance.generation)));
                     }
-                },
+                }
                 Err(error) => {
                     // A discarded batch may already have converted a Gap and
                     // cleared ready before a later frame failed. Preserve its
@@ -999,9 +1041,10 @@ impl Instance {
     }
     fn convert(
         &mut self,
-        frame: osg_mapping::engine::Frame,
+        incoming: impl Into<NativeFrame>,
         now_us: u64,
     ) -> Result<Option<Frame>, String> {
+        let NativeFrame { frame, diagnostic } = incoming.into();
         if frame.source.id != self.proof.instance_id() {
             return Err("The companion frame came from another physical instance.".into());
         }
@@ -1055,7 +1098,7 @@ impl Instance {
         if self.inputs.is_empty() || (!baseline && changes.is_empty()) {
             return Ok(None);
         }
-        Ok(Some(Frame {
+        let converted = Frame {
             source: self.logical.clone(),
             generation: Counter(self.generation),
             sequence: Counter(self.next()?),
@@ -1066,7 +1109,47 @@ impl Instance {
                 Reason::Change
             },
             changes,
-        }))
+        };
+        if let Some(d) = diagnostic {
+            if self.audit_instance == 0 {
+                audit::fault(audit::Fault::Provenance);
+            }
+            if let Some(typed_frame) = audit::next_id() {
+                let logical_source =
+                    audit::alias(AliasKind::LogicalSource, self.logical.as_bytes()).unwrap_or(0);
+                for change in &converted.changes {
+                    let logical_port =
+                        audit::alias(AliasKind::Port, change.port_id.as_bytes()).unwrap_or(0);
+                    let physical_port = self
+                        .inputs
+                        .iter()
+                        .find(|input| input.logical == change.port_id)
+                        .and_then(|input| audit::alias(AliasKind::Port, input.observed.as_bytes()))
+                        .unwrap_or(0);
+                    audit::record(
+                        AuditKind::TypedAlias,
+                        &[
+                            self.audit_instance,
+                            d.provider,
+                            d.subscription,
+                            d.queue_domain,
+                            d.physical_source,
+                            frame.generation.0,
+                            frame.sequence.0,
+                            typed_frame,
+                            logical_source,
+                            converted.generation.0,
+                            converted.sequence.0,
+                            logical_port,
+                            physical_port,
+                            converted.captured_us.0,
+                            d.kind,
+                        ],
+                    );
+                }
+            }
+        }
+        Ok(Some(converted))
     }
 }
 fn feedback_sample(

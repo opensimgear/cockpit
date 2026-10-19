@@ -475,6 +475,15 @@ impl Scheduler {
     pub fn at_us(&self) -> Counter {
         Counter(self.now)
     }
+    /// Inspect queued identities without draining, advancing time or recording a
+    /// replay command. Native diagnostics can bind immediate emissions to the
+    /// exact accepted effect while leaving dispatch order unchanged.
+    pub fn pending_deliveries(&self) -> impl Iterator<Item = &Delivery> {
+        self.deliveries.iter()
+    }
+    pub fn action(&self, id: &str) -> Option<&Action> {
+        self.definitions.get(id)
+    }
     pub fn drain(&mut self) -> Vec<Delivery> {
         let _ = self.capture(Command::Drain);
         self.deliveries.drain(..).collect()

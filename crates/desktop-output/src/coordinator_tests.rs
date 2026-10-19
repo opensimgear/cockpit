@@ -250,6 +250,172 @@ fn journal_write_failure_never_dispatches() {
     assert!(c.activate(run(), Scope::DesktopWide).is_err());
     assert!(c.snapshot().in_flight.is_some());
 }
+
+#[test]
+fn submit_keeps_both_dispatch_writes_and_elides_only_unchanged_owner_projection() {
+    let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+    let path = dir.path().join("journal.json");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut c = Coordinator::with_channel(Box::new(Fixture {
+        worker: crate::worker::Worker::new(Recording),
+        fault: Fault::None,
+        inspect: Some(path.clone()),
+        seen: seen.clone(),
+    }), clock);
+    c.journal = Some(path.clone());
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+
+    let before = c.persist_attempts.get();
+    c.submit(delivery(), 0).unwrap();
+    assert_eq!(c.persist_attempts.get() - before, 3);
+    let owners = vec![OwnerSnapshot { producer: token(), action_id: "action".into(), controls: vec![key()] }];
+    assert_eq!(Coordinator::inspect_journal(&path).unwrap().owners, owners);
+
+    for (operation, intent) in [
+        (2, Intent::Pointer { dx: 1, dy: -1 }),
+        (3, Intent::Repeat { key: Key(4) }),
+        (4, Intent::Wheel { horizontal: 1, vertical: 0 }),
+    ] {
+        let mut value = delivery();
+        value.operation_id = Counter(operation);
+        value.sequence = Counter(operation);
+        value.intent = intent;
+        let before = c.persist_attempts.get();
+        let ack = c.submit(value.clone(), 0).unwrap();
+        assert!(ack.ok && !ack.skipped && !ack.uncertain);
+        assert_eq!(ack.attempted, 1);
+        assert_eq!(c.persist_attempts.get() - before, 2, "Pre-dispatch and post-ACK writes remain mandatory");
+        let dispatched = seen.lock().unwrap().last().unwrap().clone();
+        assert!(matches!(&dispatched.in_flight.unwrap().command, Command::Deliver { delivery } if delivery == &value));
+        assert!(dispatched.possible_held.contains(&key()));
+        let persisted = Coordinator::inspect_journal(&path).unwrap();
+        assert_eq!(persisted.owners, owners);
+        assert_eq!(persisted.held, vec![key()]);
+        assert_eq!(persisted.possible_held, persisted.held);
+        assert!(persisted.in_flight.is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
+        // Eliding serialized owners must not discard the reducer's new replay fence.
+        assert!(c.submit(value, 0).unwrap_err().contains("Stale"));
+        assert_eq!(c.persist_attempts.get() - before, 2);
+    }
+
+    let mut release = delivery();
+    release.operation_id = Counter(5);
+    release.sequence = Counter(5);
+    release.intent = Intent::Held { controls: vec![] };
+    let before = c.persist_attempts.get();
+    c.submit(release, 0).unwrap();
+    assert_eq!(c.persist_attempts.get() - before, 3);
+    let persisted = Coordinator::inspect_journal(&path).unwrap();
+    assert!(persisted.held.is_empty() && persisted.owners[0].controls.is_empty());
+    assert!(persisted.in_flight.is_none());
+    assert_eq!(std::fs::read(&path).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
+}
+
+#[test]
+fn shared_native_hold_changes_still_persist_each_full_owner_and_collision_count() {
+    let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+    let path = dir.path().join("journal.json");
+    let mut c = fixture(Fault::None);
+    c.journal = Some(path.clone());
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+    let other = Token { node_id: "other".into(), ..token() };
+    c.arm(other.clone(), "other-action".into()).unwrap();
+    c.submit(delivery(), 0).unwrap();
+    let mut value = delivery();
+    value.producer = other.clone();
+    value.action_id = "other-action".into();
+    let before = c.persist_attempts.get();
+    let ack = c.submit(value, 0).unwrap();
+    assert_eq!(ack.attempted, 0, "The second owner must not duplicate the native key edge");
+    assert_eq!(c.persist_attempts.get() - before, 3);
+    let shared = Coordinator::inspect_journal(&path).unwrap();
+    assert_eq!(shared.held, vec![key()]);
+    assert_eq!(shared.shared_controls, 1);
+    assert!(shared.owners.contains(&OwnerSnapshot { producer: other, action_id: "other-action".into(), controls: vec![key()] }));
+
+    let mut release = delivery();
+    release.operation_id = Counter(2);
+    release.sequence = Counter(2);
+    release.intent = Intent::Held { controls: vec![] };
+    let before = c.persist_attempts.get();
+    assert_eq!(c.submit(release, 0).unwrap().attempted, 0);
+    assert_eq!(c.persist_attempts.get() - before, 3);
+    let remaining = Coordinator::inspect_journal(&path).unwrap();
+    assert_eq!(remaining.held, vec![key()]);
+    assert_eq!(remaining.shared_controls, 0);
+    assert!(remaining.owners.contains(&OwnerSnapshot { producer: token(), action_id: "action".into(), controls: vec![] }));
+    assert_eq!(std::fs::read(&path).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
+}
+
+#[test]
+fn lifecycle_final_writes_remain_even_when_owners_are_unchanged() {
+    let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+    let mut c = fixture(Fault::None);
+    c.journal = Some(dir.path().join("journal.json"));
+    let operations: [fn(&mut Coordinator) -> Result<(), String>; 6] = [
+        |c| c.activate(run(), Scope::DesktopWide),
+        |c| c.arm(token(), "action".into()),
+        |c| c.arm(token(), "action".into()),
+        |c| c.pause(run()),
+        |c| c.pause(run()),
+        |c| c.stop_all(),
+    ];
+    for operation in operations {
+        let before = c.persist_attempts.get();
+        operation(&mut c).unwrap();
+        assert_eq!(c.persist_attempts.get() - before, 3);
+        assert_eq!(std::fs::read(c.journal.as_ref().unwrap()).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
+    }
+    let mut recovery = fixture(Fault::None);
+    recovery.journal = c.journal.clone();
+    recovery.snapshot = c.snapshot();
+    recovery.recover(vec![]).unwrap();
+    assert_eq!(recovery.persist_attempts.get(), 3);
+    assert_eq!(std::fs::read(recovery.journal.as_ref().unwrap()).unwrap(), serde_json::to_vec(&recovery.snapshot()).unwrap());
+}
+
+#[test]
+fn post_valid_ack_write_failure_preserves_pre_dispatch_journal_and_requires_recovery() {
+    for intent in [Intent::Held { controls: vec![key()] }, Intent::Pointer { dx: 1, dy: 0 }] {
+        let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+        let path = dir.path().join("journal.json");
+        let mut c = fixture(Fault::None);
+        c.journal = Some(path.clone());
+        c.activate(run(), Scope::DesktopWide).unwrap();
+        c.arm(token(), "action".into()).unwrap();
+        let before = c.persist_attempts.get();
+        c.fail_persist_at.set(Some(before + 2));
+        let mut value = delivery();
+        value.intent = intent;
+        assert!(c.submit(value.clone(), 0).unwrap_err().contains("Injected"));
+        assert_eq!(c.persist_attempts.get() - before, 2);
+        assert!(c.snapshot().uncertain && !c.snapshot().cleanup_complete);
+        let recorded = Coordinator::inspect_journal(&path).unwrap();
+        let pending = recorded.in_flight.as_ref().unwrap();
+        assert!(matches!(&pending.command, Command::Deliver { delivery } if delivery == &value));
+        assert!(recorded.held.is_empty());
+        let controls = if matches!(value.intent, Intent::Held { .. }) { vec![key()] } else { vec![] };
+        assert_eq!(recorded.possible_held, controls);
+        let durable = std::fs::read(&path).unwrap();
+        value.operation_id = Counter(2);
+        assert!(c.submit(value, 0).unwrap_err().contains("uncertain"));
+        assert_eq!(c.persist_attempts.get() - before, 2);
+        assert_eq!(std::fs::read(&path).unwrap(), durable);
+        drop(c);
+
+        let mut fresh = fixture(Fault::None);
+        fresh.snapshot = recorded;
+        fresh.journal = Some(path.clone());
+        fresh.recover(controls).unwrap();
+        fresh.stop_all().unwrap();
+        let recovered = Coordinator::inspect_journal(&path).unwrap();
+        assert!(!recovered.uncertain && recovered.cleanup_complete && recovered.in_flight.is_none());
+        assert!(recovered.held.is_empty() && recovered.possible_held.is_empty() && recovered.owners.is_empty() && recovered.runs.is_empty());
+    }
+}
 #[test]
 fn sequence_exhaustion_and_invalid_owner_are_refused_before_dispatch() {
     let mut c = fixture(Fault::None);

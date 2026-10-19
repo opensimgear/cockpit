@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex, RwLock,
+        Arc, Mutex, OnceLock, RwLock,
     },
 };
 
@@ -141,7 +141,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 /// catalogue and editor reads must not keep cancelling the native learner.
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
-    if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview");}
+    if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker");}
     if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
     if command.starts_with("mapping_") || command=="companion_feedback_routes" { return false; }
     if command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
@@ -154,6 +154,28 @@ fn learning_interrupt(request:&Value)->bool{
 }
 struct PendingProfileApply<'a>(&'a AtomicUsize);
 impl Drop for PendingProfileApply<'_>{fn drop(&mut self){self.0.fetch_sub(1,Ordering::AcqRel);}}
+
+#[derive(Default)]
+struct ProfileWake {
+    thread: OnceLock<std::thread::Thread>,
+    epoch: AtomicU64,
+}
+impl ProfileWake {
+    fn notify(&self) {
+        self.epoch.fetch_add(1, Ordering::Release);
+        if let Some(worker) = self.thread.get() { worker.unpark(); }
+    }
+    fn observed(&self) -> u64 { self.epoch.load(Ordering::Acquire) }
+    fn wait(&self, observed: u64, timeout: std::time::Duration) -> bool {
+        // An IPC wait inside poll may consume an unpark token. The epoch still
+        // requires another drain before the worker may return to its fallback.
+        if self.observed() != observed { return false; }
+        std::thread::park_timeout(timeout);
+        true
+    }
+}
+struct WakeProfileOnDrop<'a>(&'a ProfileWake);
+impl Drop for WakeProfileOnDrop<'_> { fn drop(&mut self) { self.0.notify(); } }
 
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
@@ -170,6 +192,7 @@ pub struct GatewayManager {
     profile_learning: crate::profile_input_learning::Runtime,
     retired_output_until:Mutex<Option<std::time::Instant>>,
     profile_closed: Arc<AtomicBool>,
+    profile_wake: Arc<ProfileWake>,
     profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     profile_automatic: automatic::Runtime,
     profile_automatic_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -218,8 +241,11 @@ impl GatewayManager {
         let root = native.then(|| crate::config_paths::config_path().with_file_name("mappings"));
         let retired_recovery = Arc::new(crate::profile_retired_recovery::Recovery::new(root.clone(), native));
         let companion_clock = controllers.clone();
-        let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::new(
+        let profile_wake = Arc::new(ProfileWake::default());
+        let companion_wake = profile_wake.clone();
+        let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::with_wake(
             Arc::new(move || companion_clock.stream_page("", 0).captured_us),
+            Arc::new(move || companion_wake.notify()),
         ));
         let companion_host = Arc::new(crate::companion_host::Runtime::new(
             native.then(|| crate::config_paths::config_path().with_file_name("companions")),
@@ -287,17 +313,21 @@ impl GatewayManager {
         let profile_worker = native.then(|| {
             let runtime = profile_session.clone();
             let closed = profile_closed.clone();
-            std::thread::spawn(move || {
+            let wake = profile_wake.clone();
+            let worker = std::thread::spawn(move || {
                 while !closed.load(Ordering::Acquire) {
+                    let observed = wake.observed();
                     crate::profile_session_desktop::observe_foreground();
                     let active = {
                         let mut runtime = runtime.lock().unwrap_or_else(|p| p.into_inner());
                         let _ = runtime.poll();
                         runtime.status().owner.is_some()
                     };
-                    std::thread::sleep(std::time::Duration::from_millis(if active { 5 } else { 100 }));
+                    wake.wait(observed, std::time::Duration::from_millis(if active { 5 } else { 100 }));
                 }
-            })
+            });
+            let _ = profile_wake.thread.set(worker.thread().clone());
+            worker
         });
         let manager = Self {
             module_usb,
@@ -312,6 +342,7 @@ impl GatewayManager {
             retired_output_until:Mutex::new(None),
             profile_learning,
             profile_closed,
+            profile_wake,
             profile_worker: Mutex::new(profile_worker),
             profile_automatic: automatic::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("profiles-activation-v1.json"))),
             profile_automatic_worker: Mutex::new(None),
@@ -512,7 +543,10 @@ impl GatewayManager {
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
-        let profile_mutation = request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        // Created before admission guards so notification follows their release,
+        // including staged Apply's early-return paths.
+        let _wake = profile_mutation.then(|| WakeProfileOnDrop(&self.profile_wake));
         let automatic_control = match request["command"].as_str().unwrap_or("") {
             "profile_desktop_stop" => "profile_stop",
             "profile_desktop_configure" | "profile_desktop_capture_application" => "profile_pause",
@@ -928,6 +962,7 @@ impl GatewayManager {
         self.closed.store(true, Ordering::Release);
         self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
         self.profile_closed.store(true,Ordering::Release);
+        self.profile_wake.notify();
         if let Some(worker)=self.profile_automatic_worker.lock().unwrap_or_else(|p|p.into_inner()).take(){if worker.thread().id()!=std::thread::current().id(){let _=worker.join();}}
         self.profile_learning.shutdown();
         self.profile_closed.store(true, Ordering::Release);
@@ -961,6 +996,153 @@ mod tests {
     use super::*;
     use std::{path::PathBuf, sync::mpsc, time::Duration};
     const CLIENT: &str = "cockpit-fleet-test-client";
+    fn wake_source(wake: Arc<ProfileWake>) -> (osg_mapping_host::companions::CompanionProvider,
+        osg_mapping_host::companions::NativeFeed, osg_companion_service::SourceToken, Arc<AtomicU64>) {
+        use osg_mapping_host::companions::{CompanionProvider, Definition, ControlDefinition, NativeSelection};
+        use osg_companion_service::{InputValue, SourceChange, SourceSink, SourceToken};
+        let clock = Arc::new(AtomicU64::new(100));
+        let captured = clock.clone();
+        let provider = CompanionProvider::with_wake(Arc::new(move || captured.load(Ordering::Acquire)),
+            Arc::new(move || wake.notify()));
+        let definition = Definition { source_id: "wake-panel".into(), name: "Wake test".into(),
+            publication_hash: format!("sha256:{}", "a".repeat(64)), controls: vec![ControlDefinition {
+                id: "button".into(), kind: osg_mapping::profile::Kind::Button,
+                fallback: osg_mapping::profile::Value::Button(false),
+            }] };
+        provider.register_definition(definition.clone()).unwrap();
+        let token = SourceToken { source_id: definition.source_id.clone(), session_id: "wake-session".into(),
+            generation: 1, publication_hash: definition.publication_hash.clone() };
+        provider.baseline(&token, 0, &[SourceChange { control_id: "button".into(), value: InputValue::Button(false) }]).unwrap();
+        let mut feed = provider.subscribe_native(&[NativeSelection { definition, controls: vec!["button".into()] }]).unwrap();
+        feed.baseline().unwrap();
+        (provider, feed, token, clock)
+    }
+    fn wake_change(provider: &osg_mapping_host::companions::CompanionProvider,
+        token: &osg_companion_service::SourceToken, sequence: u64, pressed: bool) {
+        use osg_companion_service::{InputValue, SourceChange, SourceSink};
+        provider.changes(token, sequence, &[SourceChange { control_id: "button".into(),
+            value: InputValue::Button(pressed) }]).unwrap();
+    }
+    fn wake_values(feed: &mut osg_mapping_host::companions::NativeFeed) -> Vec<bool> {
+        feed.poll().unwrap().into_iter().flat_map(|frame| frame.changes).map(|change| {
+            let osg_mapping::profile::Value::Button(value) = change.value else { panic!("expected button"); };
+            value
+        }).collect()
+    }
+    #[test]
+    fn profile_wake_preserves_committed_frames_before_park_during_poll_and_coalesced_bursts() {
+        let wake = Arc::new(ProfileWake::default());
+        let (provider, mut feed, token, _) = wake_source(wake.clone());
+        let (step, steps) = mpsc::sync_channel(1);
+        let (resume, resumed) = mpsc::sync_channel(1);
+        let worker_wake = wake.clone();
+        let worker = std::thread::spawn(move || {
+            for (label, expected) in [("before-park", vec![true, false]), ("during-poll", vec![true]),
+                ("burst", vec![false, true, false])] {
+                let observed = worker_wake.observed();
+                assert!(wake_values(&mut feed).is_empty());
+                step.send(label).unwrap();
+                resumed.recv_timeout(Duration::from_secs(5)).unwrap();
+                // Model an IPC wait consuming the thread's park token after the
+                // source drain. Its committed admission epoch must still win.
+                std::thread::park_timeout(Duration::ZERO);
+                assert!(!worker_wake.wait(observed, Duration::from_secs(30)), "{label} lost its committed wake");
+                assert_eq!(wake_values(&mut feed), expected, "{label}");
+            }
+        });
+        wake.thread.set(worker.thread().clone()).unwrap();
+        assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "before-park");
+        wake_change(&provider, &token, 1, true);
+        wake_change(&provider, &token, 2, false);
+        resume.send(()).unwrap();
+        assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "during-poll");
+        wake_change(&provider, &token, 3, true);
+        resume.send(()).unwrap();
+        assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "burst");
+        for (sequence, value) in [(4, false), (5, true), (6, false)] { wake_change(&provider, &token, sequence, value); }
+        resume.send(()).unwrap();
+        worker.join().unwrap();
+    }
+    #[test]
+    fn profile_wake_parked_consumer_drains_real_admissions_and_shutdown_cannot_miss_wake() {
+        let wake = Arc::new(ProfileWake::default());
+        let (provider, mut feed, token, _) = wake_source(wake.clone());
+        let closed = Arc::new(AtomicBool::new(false));
+        let worker_closed = closed.clone();
+        let worker_wake = wake.clone();
+        let (step, steps) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            step.send("waiting-for-input").unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut values = vec![];
+            while values.len() < 2 {
+                let observed = worker_wake.observed();
+                values.extend(wake_values(&mut feed));
+                if values.len() < 2 { worker_wake.wait(observed, Duration::from_secs(30)); }
+                assert!(std::time::Instant::now() < deadline, "admitted transitions did not wake the consumer");
+            }
+            assert_eq!(values, [true, false]);
+            step.send("waiting-for-close").unwrap();
+            loop {
+                let observed = worker_wake.observed();
+                if worker_closed.load(Ordering::Acquire) { break; }
+                worker_wake.wait(observed, Duration::from_secs(30));
+            }
+            step.send("closed").unwrap();
+        });
+        wake.thread.set(worker.thread().clone()).unwrap();
+        assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "waiting-for-input");
+        // One admission contains both ordered transitions, independent of wake coalescing.
+        use osg_companion_service::{InputValue, SourceChange, SourceSink};
+        provider.changes(&token, 1, &[SourceChange { control_id: "button".into(), value: InputValue::Button(true) },
+            SourceChange { control_id: "button".into(), value: InputValue::Button(false) }]).unwrap();
+        assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "waiting-for-close");
+        closed.store(true, Ordering::Release);
+        wake.notify();
+        assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "closed");
+        worker.join().unwrap();
+    }
+    #[test]
+    fn profile_wake_fallback_still_expires_native_sources_without_admission_notifications() {
+        let wake = Arc::new(ProfileWake::default());
+        let (_, mut feed, _, clock) = wake_source(wake.clone());
+        let worker_wake = wake.clone();
+        let (ready, waiting) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let initial = worker_wake.observed();
+            ready.send(()).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                assert!(worker_wake.wait(initial, Duration::from_millis(5)));
+                let frames = feed.poll().unwrap();
+                if frames.iter().any(|frame| frame.reason == osg_mapping::engine::Reason::Disconnect) { break; }
+                assert!(std::time::Instant::now() < deadline, "fallback did not expire the silent source");
+            }
+            assert_eq!(worker_wake.observed(), initial, "no admission notification was needed for expiry");
+        });
+        wake.thread.set(worker.thread().clone()).unwrap();
+        waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+        clock.store(100 + osg_mapping_host::companions::LEASE_US, Ordering::Release);
+        worker.join().unwrap();
+    }
+    #[test]
+    fn profile_wake_apply_notification_observes_the_completed_ownership_change() {
+        let (manager, _) = setup();
+        let runtime = manager.clone();
+        let (ready, waiting) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let observed = runtime.profile_wake.observed();
+            ready.send(()).unwrap();
+            runtime.profile_wake.wait(observed, Duration::from_secs(30));
+            let coordinator = runtime.profile_session.lock().unwrap();
+            assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
+            assert!(coordinator.status().owner.is_some());
+        });
+        manager.profile_wake.thread.set(worker.thread().clone()).unwrap();
+        waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}))["ok"],true);
+        worker.join().unwrap();
+    }
     #[test]
     fn desktop_controls_cannot_inject_or_accept_browser_process_identity() {
         let (manager, _) = setup();
@@ -981,6 +1163,53 @@ mod tests {
         assert_eq!(paused["state"]["profiles"]["profileSession"]["paused"],true);
         assert!(paused["state"]["profiles"]["profileSession"]["owner"].is_null());
         assert_eq!(request(&manager,"profile_desktop_status",None,json!({}))["state"]["desktop"]["enabled"],false);
+    }
+    #[test]
+    fn desktop_audit_rejection_preserves_learning_and_active_profile_ownership() {
+        let (manager, source) = learning_manager(None);
+        let started = request(&manager,"profile_input_learn_start",None,source);
+        assert_eq!(started["ok"],true,"{started}");
+        let learn_id = &started["state"]["profileLearning"]["learnId"];
+        let epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+        let automatic = manager.profile_automatic.view();
+        for (command, fields) in [
+            ("profile_desktop_audit_checkpoint",json!({})),
+            ("profile_desktop_audit_marker",json!({"phase":0})),
+            ("profile_desktop_audit_marker",json!({"phase":8})),
+        ] {
+            let response = request(&manager,command,None,fields);
+            assert_eq!(response["ok"],false,"{response}");
+            assert!(response["error"].as_str().unwrap().contains("qualified native development"));
+            assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+            assert_eq!(manager.profile_automatic.view(),automatic);
+            assert_eq!(request(&manager,"profile_input_learn_status",None,json!({"learnId":learn_id}))["state"]["profileLearning"]["phase"],"listening");
+        }
+        for phase in [json!(-1),json!(9),json!(0.5),json!("1"),Value::Null] {
+            let response = request(&manager,"profile_desktop_audit_marker",None,json!({"phase":phase}));
+            assert_eq!(response["ok"],false,"{response}");
+            assert!(response["error"].as_str().unwrap().contains("integer from 0 through 8"));
+        }
+        for command in ["profile_desktop_audit_checkpoint","profile_desktop_audit_marker"] {
+            let response = request(&manager,command,None,json!({"phase":0,"enabled":true}));
+            assert_eq!(response["ok"],false,"{response}");
+            assert!(response["error"].as_str().unwrap().contains("Unknown desktop output request field"));
+        }
+        let applied = request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+        assert_eq!(applied["ok"],true,"{applied}");
+        let owner = applied["state"]["profiles"]["profileSession"]["owner"].clone();
+        let epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+        let automatic = manager.profile_automatic.view();
+        for (command, fields) in [
+            ("profile_desktop_audit_checkpoint",json!({})),
+            ("profile_desktop_audit_marker",json!({"phase":1})),
+        ] {
+            assert_eq!(request(&manager,command,None,fields)["ok"],false);
+            assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+            assert_eq!(manager.profile_automatic.view(),automatic);
+            let status = request(&manager,"profile_status",None,json!({}));
+            assert_eq!(status["state"]["profiles"]["profileSession"]["owner"],owner);
+            assert_eq!(status["state"]["profiles"]["profileSession"]["state"],"running");
+        }
     }
     const FIRST: &str = "stm32:00112233445566778899aabb";
     const SECOND: &str = "stm32:112233445566778899aabbcc";

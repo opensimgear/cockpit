@@ -1,5 +1,6 @@
 //! Retained companion source definitions and bounded, isolated native mapping feeds.
 //! No socket, client timestamp, HID discovery or UI polling participates in this clock.
+use osg_desktop_output::audit::{self, AliasKind, Kind as AuditKind};
 use osg_mapping::{
     engine::{Assignment, Change, Counter, Frame, Source},
     profile::{self, Kind, Origin, Profile, Value},
@@ -59,8 +60,9 @@ struct Queue {
     publication_hash: String,
     explicit_restart: bool,
     restart_required: bool,
-    frames: VecDeque<Frame>,
-    loss: Option<Frame>,
+    frames: VecDeque<NativeFrame>,
+    loss: Option<NativeFrame>,
+    audit_domain: u64,
     started: bool,
     generation: u64,
     sequence: u64,
@@ -75,11 +77,131 @@ struct State {
     instances: BTreeMap<String, Instance>,
     subscriptions: BTreeMap<u64, Subscription>,
     serial: u64,
+    audit_provider: u64,
 }
 #[derive(Clone)]
 pub struct CompanionProvider {
     state: Arc<Mutex<State>>,
     clock: Clock,
+    audit_provider: u64,
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+/// In-process diagnostics only; the portable source frame and its clock stay intact.
+#[derive(Clone, Debug)]
+pub struct NativeFrame {
+    pub frame: Frame,
+    pub diagnostic: Option<NativeFrameDiagnostic>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct NativeFrameDiagnostic {
+    pub frame_id: u64,
+    pub provider: u64,
+    pub subscription: u64,
+    pub queue_domain: u64,
+    pub physical_source: u64,
+    /// 1 baseline, 2 current-state renewal, 3 loss, 4 non-WSS change, 0 capture.
+    pub kind: u64,
+}
+impl From<Frame> for NativeFrame {
+    fn from(frame: Frame) -> Self {
+        Self {
+            frame,
+            diagnostic: None,
+        }
+    }
+}
+impl std::ops::Deref for NativeFrame {
+    type Target = Frame;
+    fn deref(&self) -> &Frame {
+        &self.frame
+    }
+}
+fn audit_native_frame(
+    provider: u64,
+    subscription: u64,
+    queue: &Queue,
+    id: &str,
+    frame: Frame,
+    capture: Option<(u64, usize)>,
+    kind: u64,
+) -> NativeFrame {
+    if audit::enabled() && (provider == 0 || queue.audit_domain == 0) {
+        audit::fault(audit::Fault::Provenance);
+    }
+    let diagnostic = if audit::enabled() && provider != 0 && queue.audit_domain != 0 {
+        audit::next_id()
+            .zip(audit::alias(AliasKind::NativeSource, id.as_bytes()))
+            .map(|(frame_id, physical_source)| NativeFrameDiagnostic {
+                frame_id,
+                provider,
+                subscription,
+                queue_domain: queue.audit_domain,
+                physical_source,
+                kind,
+            })
+    } else {
+        None
+    };
+    if let Some(d) = diagnostic {
+        if let Some((capture, change_index)) = capture {
+            let port = frame
+                .changes
+                .first()
+                .and_then(|change| audit::alias(AliasKind::Port, change.control.as_bytes()))
+                .unwrap_or(0);
+            audit::record(
+                AuditKind::NativeEnqueue,
+                &[
+                    capture,
+                    change_index as u64,
+                    d.frame_id,
+                    d.provider,
+                    d.subscription,
+                    d.queue_domain,
+                    d.physical_source,
+                    frame.generation.0,
+                    frame.sequence.0,
+                    port,
+                    frame.captured_us.0,
+                    queue.frames.len() as u64 + 1,
+                ],
+            );
+        } else {
+            audit::record(
+                AuditKind::SyntheticFrame,
+                &[
+                    d.frame_id,
+                    d.provider,
+                    d.subscription,
+                    d.queue_domain,
+                    d.physical_source,
+                    frame.generation.0,
+                    frame.sequence.0,
+                    kind,
+                    frame.captured_us.0,
+                ],
+            );
+        }
+    }
+    NativeFrame { frame, diagnostic }
+}
+fn audit_dequeue(frame: &NativeFrame, remaining: usize) {
+    if let Some(d) = frame.diagnostic {
+        audit::record(
+            AuditKind::NativeDequeue,
+            &[
+                d.frame_id,
+                d.provider,
+                d.subscription,
+                d.queue_domain,
+                d.physical_source,
+                frame.generation.0,
+                frame.sequence.0,
+                remaining as u64,
+            ],
+        );
+    }
 }
 pub(crate) struct Prepared {
     pub controls: BTreeMap<Source, BTreeMap<String, Kind>>,
@@ -131,7 +253,7 @@ fn token_valid(token: &InputToken) -> bool {
         && token.generation > 0
         && valid_hash(&token.publication_hash)
 }
-fn loss_queue(queue: &mut Queue, id: &str, now: u64) {
+fn loss_queue(queue: &mut Queue, id: &str, now: u64, provider: u64, subscription: u64) {
     queue.frames.clear();
     if queue.started && queue.generation > 0 && queue.explicit_restart {
         queue.restart_required = true;
@@ -139,14 +261,23 @@ fn loss_queue(queue: &mut Queue, id: &str, now: u64) {
     if queue.started && queue.generation > 0 && queue.loss.is_none() {
         if let Some(sequence) = queue.sequence.checked_add(1) {
             queue.sequence = sequence;
-            queue.loss = Some(Frame {
+            let frame = Frame {
                 source: source(id),
                 generation: Counter(queue.generation),
                 sequence: Counter(sequence),
                 captured_us: Counter(now),
                 reason: osg_mapping::engine::Reason::Disconnect,
                 changes: vec![],
-            });
+            };
+            queue.loss = Some(audit_native_frame(
+                provider,
+                subscription,
+                queue,
+                id,
+                frame,
+                None,
+                3,
+            ));
         }
     }
 }
@@ -156,9 +287,25 @@ fn lose(state: &mut State, id: &str, now: u64, reason: &str) {
         instance.values.clear();
         instance.fault = Some(reason.into());
     }
-    for subscription in state.subscriptions.values_mut() {
+    for (subscription_id, subscription) in &mut state.subscriptions {
         if let Some(queue) = subscription.sources.get_mut(id) {
-            loss_queue(queue, id, now);
+            loss_queue(queue, id, now, state.audit_provider, *subscription_id);
+            if state.audit_provider != 0 {
+                let source = audit::alias(AliasKind::NativeSource, id.as_bytes()).unwrap_or(0);
+                let code = if reason.contains("overflow") {
+                    3
+                } else if reason.contains("expired") {
+                    1
+                } else if reason.contains("gap") || reason.contains("invalid") {
+                    2
+                } else {
+                    0
+                };
+                audit::record(
+                    AuditKind::NativeGap,
+                    &[source, state.audit_provider, *subscription_id, code],
+                );
+            }
         }
     }
 }
@@ -186,20 +333,41 @@ impl CompanionProvider {
     pub fn resource_inventory(&self) -> Vec<ResourceDescriptor> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         expire(&mut state, (self.clock)());
-        state.instances.values().map(|instance| ResourceDescriptor {
-            definition: instance.definition.clone(),
-            online: instance.owner.is_some(),
-            baseline_ready: instance.owner.is_some() && instance.values.len() == instance.definition.controls.len(),
-            generation: instance.generation,
-            fault: instance.fault.clone(),
-        }).collect()
+        state
+            .instances
+            .values()
+            .map(|instance| ResourceDescriptor {
+                definition: instance.definition.clone(),
+                online: instance.owner.is_some(),
+                baseline_ready: instance.owner.is_some()
+                    && instance.values.len() == instance.definition.controls.len(),
+                generation: instance.generation,
+                fault: instance.fault.clone(),
+            })
+            .collect()
     }
 
     pub fn new(clock: Clock) -> Self {
+        let audit_provider = audit::next_id().unwrap_or(0);
         Self {
-            state: Arc::new(Mutex::new(State::default())),
+            state: Arc::new(Mutex::new(State {
+                audit_provider,
+                ..State::default()
+            })),
             clock,
+            audit_provider,
+            wake: None,
         }
+    }
+    /// Wake the native consumer after source admission has committed and its
+    /// provider lock has been released. This callback grants no source authority.
+    pub fn with_wake(clock: Clock, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        let mut provider = Self::new(clock);
+        provider.wake = Some(wake);
+        provider
+    }
+    fn notify_consumer(&self) {
+        if let Some(wake) = &self.wake { wake(); }
     }
     fn now(&self) -> u64 {
         (self.clock)().max(1)
@@ -321,14 +489,15 @@ impl CompanionProvider {
         instance.generation = generation;
         instance.values = values.clone();
         instance.fault = None;
-        for subscription in state.subscriptions.values_mut() {
+        for (subscription_id, subscription) in &mut state.subscriptions {
             if let Some(queue) = subscription.sources.get_mut(&token.source_id).filter(|q| {
                 q.started && !q.restart_required && q.publication_hash == token.publication_hash
             }) {
                 queue.frames.clear();
                 queue.generation = generation;
                 queue.sequence = 1;
-                queue.frames.push_back(Frame {
+                queue.audit_domain = audit::next_id().unwrap_or(0);
+                let frame = Frame {
                     source: source(&token.source_id),
                     generation: Counter(generation),
                     sequence: Counter(1),
@@ -342,7 +511,16 @@ impl CompanionProvider {
                             value: *value,
                         })
                         .collect(),
-                });
+                };
+                queue.frames.push_back(audit_native_frame(
+                    self.audit_provider,
+                    *subscription_id,
+                    queue,
+                    &token.source_id,
+                    frame,
+                    None,
+                    1,
+                ));
             }
         }
         Ok(())
@@ -352,6 +530,15 @@ impl CompanionProvider {
         token: &InputToken,
         sequence: u64,
         changes: &[Change],
+    ) -> Result<(), String> {
+        self.changes_native_audited(token, sequence, changes, None)
+    }
+    fn changes_native_audited(
+        &self,
+        token: &InputToken,
+        sequence: u64,
+        changes: &[Change],
+        capture: Option<u64>,
     ) -> Result<(), String> {
         let now = self.now();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -415,23 +602,34 @@ impl CompanionProvider {
         }
         instance.wire_sequence = sequence;
         instance.last_seen_us = now;
-        for subscription in state.subscriptions.values_mut() {
+        for (subscription_id, subscription) in &mut state.subscriptions {
             if let Some(queue) = subscription.sources.get_mut(&token.source_id).filter(|q| {
                 q.started && !q.restart_required && q.publication_hash == token.publication_hash
             }) {
-                for change in changes
+                for (change_index, change) in changes
                     .iter()
-                    .filter(|c| queue.controls.contains(&c.control))
+                    .enumerate()
+                    .filter(|(_, c)| queue.controls.contains(&c.control))
                 {
                     queue.sequence += 1;
-                    queue.frames.push_back(Frame {
+                    let frame = Frame {
                         source: source(&token.source_id),
                         generation: Counter(queue.generation),
                         sequence: Counter(queue.sequence),
                         captured_us: Counter(now),
                         reason: osg_mapping::engine::Reason::Change,
                         changes: vec![change.clone()],
-                    });
+                    };
+                    let origin = capture.map(|capture| (capture, change_index));
+                    queue.frames.push_back(audit_native_frame(
+                        self.audit_provider,
+                        *subscription_id,
+                        queue,
+                        &token.source_id,
+                        frame,
+                        origin,
+                        if origin.is_some() { 0 } else { 4 },
+                    ));
                 }
             }
         }
@@ -662,6 +860,13 @@ impl Feed {
         Ok(())
     }
     pub(crate) fn initial(&mut self) -> Result<Vec<Frame>, String> {
+        Ok(self
+            .initial_audited()?
+            .into_iter()
+            .map(|frame| frame.frame)
+            .collect())
+    }
+    fn initial_audited(&mut self) -> Result<Vec<NativeFrame>, String> {
         let now = self.provider.now();
         let mut state = self
             .provider
@@ -695,9 +900,10 @@ impl Feed {
             queue.loss = None;
             queue.generation = generation;
             queue.sequence = 0;
+            queue.audit_domain = audit::next_id().unwrap_or(0);
             if let Some(values) = values.filter(|_| queue.publication_hash == publication_hash) {
                 queue.sequence = 1;
-                frames.push(Frame {
+                let frame = Frame {
                     source: source(&id),
                     generation: Counter(generation),
                     sequence: Counter(1),
@@ -708,7 +914,16 @@ impl Feed {
                         .filter(|(id, _)| queue.controls.contains(id))
                         .map(|(control, value)| Change { control, value })
                         .collect(),
-                });
+                };
+                frames.push(audit_native_frame(
+                    self.provider.audit_provider,
+                    self.subscription,
+                    queue,
+                    &id,
+                    frame,
+                    None,
+                    1,
+                ));
             }
         }
         Ok(frames)
@@ -717,6 +932,12 @@ impl Feed {
         let _ = self.provider.release(source_id);
     }
     pub(crate) fn drain(&mut self) -> Vec<Frame> {
+        self.drain_audited()
+            .into_iter()
+            .map(|frame| frame.frame)
+            .collect()
+    }
+    fn drain_audited(&mut self) -> Vec<NativeFrame> {
         let now = self.provider.now();
         let mut state = self
             .provider
@@ -736,10 +957,12 @@ impl Feed {
             let id = &ids[(subscription.next + offset) % ids.len()];
             let queue = subscription.sources.get_mut(id).unwrap();
             if let Some(loss) = queue.loss.take() {
+                audit_dequeue(&loss, queue.frames.len());
                 frames.push(loss);
             }
             for _ in 0..64 {
                 if let Some(frame) = queue.frames.pop_front() {
+                    audit_dequeue(&frame, queue.frames.len());
                     frames.push(frame);
                 } else {
                     break;
@@ -834,7 +1057,9 @@ fn native_token(token: &osg_companion_service::SourceToken) -> InputToken {
 }
 impl osg_companion_service::SourceSink for CompanionProvider {
     fn register(&self, definition: osg_companion_service::SourceDefinition) -> Result<(), String> {
-        self.register_definition(native_definition(definition)?)
+        let result = native_definition(definition).and_then(|definition| self.register_definition(definition));
+        self.notify_consumer();
+        result
     }
     fn baseline(
         &self,
@@ -843,7 +1068,10 @@ impl osg_companion_service::SourceSink for CompanionProvider {
         changes: &[osg_companion_service::SourceChange],
     ) -> Result<(), String> {
         let token = native_token(token);
-        self.baseline_native(&token, sequence, &self.convert_changes(&token, changes)?)
+        let result = self.convert_changes(&token, changes)
+            .and_then(|changes| self.baseline_native(&token, sequence, &changes));
+        self.notify_consumer();
+        result
     }
     fn changes(
         &self,
@@ -851,21 +1079,68 @@ impl osg_companion_service::SourceSink for CompanionProvider {
         sequence: u64,
         changes: &[osg_companion_service::SourceChange],
     ) -> Result<(), String> {
+        let capture = audit::stamp().and_then(|at| audit::next_id().map(|id| (at, id)));
+        if let Some((at, id)) = capture {
+            if self.audit_provider == 0 {
+                audit::fault(audit::Fault::Provenance);
+            }
+            let source =
+                audit::alias(AliasKind::NativeSource, token.source_id.as_bytes()).unwrap_or(0);
+            let session =
+                audit::alias(AliasKind::Subscription, token.session_id.as_bytes()).unwrap_or(0);
+            let publication =
+                audit::alias(AliasKind::Provider, token.publication_hash.as_bytes()).unwrap_or(0);
+            audit::record_at(
+                at,
+                AuditKind::SourceCapture,
+                &[
+                    id,
+                    self.audit_provider,
+                    source,
+                    session,
+                    token.generation,
+                    publication,
+                    sequence,
+                    changes.len() as u64,
+                ],
+            );
+        }
         let token = native_token(token);
         let changes = match self.convert_changes(&token, changes) {
             Ok(changes) => changes,
             Err(error) => {
                 let _ = self.loss_native(&token);
+                if let Some((_, id)) = capture {
+                    audit::record(AuditKind::SourceResult, &[id, 0, 1]);
+                }
+                self.notify_consumer();
                 return Err(error);
             }
         };
-        self.changes_native(&token, sequence, &changes)
+        let result =
+            self.changes_native_audited(&token, sequence, &changes, capture.map(|(_, id)| id));
+        if let Some((_, id)) = capture {
+            audit::record(
+                AuditKind::SourceResult,
+                &[
+                    id,
+                    u64::from(result.is_ok()),
+                    if result.is_ok() { 0 } else { 2 },
+                ],
+            );
+        }
+        self.notify_consumer();
+        result
     }
     fn heartbeat(&self, token: &osg_companion_service::SourceToken) -> Result<(), String> {
-        self.heartbeat_native(&native_token(token))
+        let result = self.heartbeat_native(&native_token(token));
+        self.notify_consumer();
+        result
     }
     fn loss(&self, token: &osg_companion_service::SourceToken) -> Result<(), String> {
-        self.loss_native(&native_token(token))
+        let result = self.loss_native(&native_token(token));
+        self.notify_consumer();
+        result
     }
 }
 

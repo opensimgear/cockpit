@@ -48,6 +48,7 @@ pub struct Desktop {
     waiting_neutral: BTreeSet<String>,
     rearm_evidence: BTreeMap<String, (Token, Vec<Observation>)>,
     shadow: Option<Phase>,
+    audit_shadow: u64,
 }
 impl Desktop {
     pub fn acquire(
@@ -84,10 +85,41 @@ impl Desktop {
             waiting_neutral: BTreeSet::new(),
             rearm_evidence: BTreeMap::new(),
             shadow: None,
+            audit_shadow: 0,
         })
     }
     pub fn scope(&self) -> Option<&Scope> {
         self.scope.as_ref()
+    }
+    fn audit_effect(&self, effect: &Effect) -> Option<u64> {
+        use osg_desktop_output::audit::{self, AliasKind, Fault, Kind};
+        if !audit::enabled() { return None; }
+        let producer = effect.producer.as_ref()?;
+        let id = audit::next_id()?;
+        let run = audit::alias(AliasKind::Run, effect.run.session.as_bytes())?;
+        let mut roots = Vec::with_capacity(effect.observations.len());
+        for observation in &effect.observations {
+            let mut dependencies = producer.dependencies.iter().filter(|dependency| dependency.endpoint == observation.endpoint);
+            let Some(dependency) = dependencies.next() else { audit::fault(Fault::Provenance); return None; };
+            if dependencies.next().is_some() { audit::fault(Fault::Provenance); return None; }
+            roots.push([
+                id,
+                audit::alias(AliasKind::LogicalSource, observation.endpoint.node_id.as_bytes())?,
+                audit::alias(AliasKind::Port, observation.endpoint.port_id.as_bytes())?,
+                dependency.generation.0, dependency.epoch.0,
+                observation.sequence.0, observation.at_us.0,
+            ]);
+        }
+        audit::record(Kind::Effect, &[id, self.audit_shadow, run, effect.run.generation.0, effect.sequence.0, roots.len() as u64]);
+        for root in roots { audit::record(Kind::EffectRoot, &root); }
+        Some(id)
+    }
+    fn audit_drop(&self, delivery: &osg_mapping::desktop::Delivery, reason: u64) {
+        use osg_desktop_output::audit::{self, AliasKind, Kind};
+        if !audit::enabled() { return; }
+        if let Some(run) = audit::alias(AliasKind::Run, delivery.producer.run.session.as_bytes()) {
+            audit::record(Kind::DeliveryDropped, &[self.audit_shadow, run, delivery.producer.run.generation.0, delivery.operation_id.0, reason]);
+        }
     }
     pub fn bind_scope_before_start(&mut self, scope: Scope) -> Result<(), String> {
         if self.started || self.registered {
@@ -107,9 +139,11 @@ impl Desktop {
             if cleanup && self.armed.get(&delivery.action_id) != Some(&delivery.producer) {
                 // A neutral baseline can precede this generation's first Arm.
                 // Only a token which acquired an owner may release that owner.
+                self.audit_drop(&delivery, 1);
                 continue;
             }
             if !cleanup && cancelled.contains(&delivery.action_id) {
+                self.audit_drop(&delivery, 2);
                 continue;
             }
             if !cleanup && self.armed.get(&delivery.action_id) != Some(&delivery.producer) {
@@ -185,6 +219,7 @@ impl Desktop {
         self.started = true;
         self.focused = focused;
         self.baseline(&shadow)?;
+        self.audit_shadow = osg_desktop_output::audit::next_id().unwrap_or(0);
         self.shadow = Some(shadow);
         self.flush(reducer.at_us().0)?;
         Ok(())
@@ -249,6 +284,7 @@ impl Desktop {
             self.rearm_evidence.clear();
             let mut shadow = reducer.fork_desktop()?;
             shadow.require_desktop_neutral_after(reducer.at_us())?;
+            self.audit_shadow = osg_desktop_output::audit::next_id().unwrap_or(0);
             self.shadow = Some(shadow);
             self.flush(reducer.at_us().0)?;
             // Effects captured before the new scope baseline are never replayed.
@@ -331,7 +367,29 @@ impl Desktop {
                     }
                 }
             }
+            // Only direct KeyHold changes have an immediate one-effect delivery
+            // boundary here. Timer, pointer, tap and cleanup work stays outside
+            // this latency population rather than borrowing a later root.
+            let audit_effect = if matches!(effect.reason, osg_mapping::engine::ReportReason::Change)
+                && matches!(self.scheduler.action(&effect.sink_id), Some(osg_mapping::desktop::Action::KeyHold { .. }))
+            { self.audit_effect(effect) } else { None };
+            let previous = audit_effect.map(|_| self.scheduler.pending_deliveries().map(|delivery| delivery.operation_id.0).max().unwrap_or(0));
             self.scheduler.accept_effect(effect)?;
+            if let (Some(id), Some(previous)) = (audit_effect, previous) {
+                use osg_desktop_output::audit::{self, AliasKind, Kind};
+                let run = audit::alias(AliasKind::Run, effect.run.session.as_bytes());
+                let action = audit::alias(AliasKind::Action, effect.sink_id.as_bytes());
+                if let (Some(run), Some(action)) = (run, action) {
+                    for delivery in self.scheduler.pending_deliveries().filter(|delivery|
+                        delivery.operation_id.0 > previous && delivery.action_id == effect.sink_id
+                        && effect.producer.as_ref() == Some(&delivery.producer)
+                        && delivery.at_us == effect.at_us
+                        && matches!(delivery.intent, osg_mapping::desktop::Intent::Held { .. }))
+                    {
+                        audit::record(Kind::DeliveryBound, &[id, self.audit_shadow, run, effect.run.generation.0, delivery.operation_id.0, action]);
+                    }
+                }
+            }
         }
         if let Some(boundary) = self.focus_boundary {
             for sink in &reducer.program().sinks {
@@ -374,7 +432,7 @@ impl Desktop {
     }
     pub fn stop(&mut self) -> Result<(), String> {
         self.scheduler.stop();
-        self.scheduler.drain();
+        for delivery in self.scheduler.drain() { self.audit_drop(&delivery, 3); }
         self.armed.clear();
         self.shadow = None;
         self.started = false;

@@ -27,6 +27,38 @@ fn token(id: &str, generation: u64) -> InputToken {
         publication_hash: definition(id).publication_hash,
     }
 }
+
+#[test]
+fn source_admission_wakes_only_after_committed_state_and_provider_unlock() {
+    use osg_companion_service::{InputValue, SourceChange, SourceSink, SourceToken};
+    use std::sync::{OnceLock, Weak};
+    let state = Arc::new(OnceLock::<Weak<Mutex<State>>>::new());
+    let observed = Arc::new(Mutex::new(vec![]));
+    let callback_state = state.clone();
+    let callback_observed = observed.clone();
+    let provider = CompanionProvider::with_wake(Arc::new(|| 100), Arc::new(move || {
+        let state = callback_state.get().unwrap().upgrade().unwrap();
+        let state = state.try_lock().expect("wake must never run while the provider mutex is held");
+        let instance = &state.instances["left"];
+        let queue = state.subscriptions.values().next().unwrap().sources.get("left").unwrap();
+        callback_observed.lock().unwrap().push((instance.wire_sequence, instance.owner.is_some(),
+            queue.frames.len(), queue.loss.is_some()));
+    }));
+    state.set(Arc::downgrade(&provider.state)).unwrap();
+    provider.register_definition(definition("left")).unwrap();
+    let mut feed = provider.subscribe_native(&[selection("left")]).unwrap();
+    let native = token("left", 1);
+    let token = SourceToken { source_id: native.source_id, session_id: native.session_id,
+        generation: native.generation, publication_hash: native.publication_hash };
+    provider.baseline(&token, 0, &[SourceChange { control_id: "button".into(), value: InputValue::Button(false) }]).unwrap();
+    feed.baseline().unwrap();
+    provider.changes(&token, 1, &[SourceChange { control_id: "button".into(), value: InputValue::Button(true) }]).unwrap();
+    provider.heartbeat(&token).unwrap();
+    provider.loss(&token).unwrap();
+    assert_eq!(*observed.lock().unwrap(), [(0, true, 0, false), (1, true, 1, false),
+        (1, true, 1, false), (1, false, 0, true)]);
+    assert_eq!(feed.poll().unwrap()[0].reason, Reason::Disconnect);
+}
 fn baseline(provider: &CompanionProvider, id: &str, generation: u64) {
     provider
         .baseline_native(
@@ -113,6 +145,84 @@ fn loss_and_reconnect_are_native_generation_fenced_and_peer_isolated() {
         )
         .is_err());
     assert!(right.validate_baseline().is_ok());
+}
+
+#[test]
+fn diagnostic_envelopes_keep_their_exact_subscription_domain_after_queue_changes() {
+    let provider = CompanionProvider::new(Arc::new(|| 100));
+    provider.register_definition(definition("left")).unwrap();
+    baseline(&provider, "left", 1);
+    let mut left = provider.subscribe_native(&[selection("left")]).unwrap();
+    let mut right = provider.subscribe_native(&[selection("left")]).unwrap();
+    left.baseline().unwrap();
+    right.baseline().unwrap();
+    provider
+        .changes_native(
+            &token("left", 1),
+            1,
+            &[Change {
+                control: "button".into(),
+                value: Value::Button(true),
+            }],
+        )
+        .unwrap();
+    let left_subscription = left.diagnostic_identity().1;
+    let right_subscription = right.diagnostic_identity().1;
+    assert_ne!(left_subscription, right_subscription);
+    // Inject only diagnostic metadata into real queued frames. Source authority,
+    // sequencing and values still come from the actual provider path.
+    {
+        let mut state = provider.state.lock().unwrap();
+        for (subscription, domain, frame_id) in [
+            (left_subscription, 101, 501),
+            (right_subscription, 202, 502),
+        ] {
+            let queue = state
+                .subscriptions
+                .get_mut(&subscription)
+                .unwrap()
+                .sources
+                .get_mut("left")
+                .unwrap();
+            queue.frames.front_mut().unwrap().diagnostic = Some(NativeFrameDiagnostic {
+                frame_id,
+                provider: 7,
+                subscription,
+                queue_domain: domain,
+                physical_source: 13,
+                kind: 0,
+            });
+            // A current queue-domain lookup would now produce the wrong join.
+            queue.audit_domain = 999;
+        }
+    }
+    let a = left.poll_audited().unwrap();
+    let b = right.poll_audited().unwrap();
+    assert_eq!(a[0].frame.sequence, b[0].frame.sequence);
+    assert_eq!(a[0].frame.generation, b[0].frame.generation);
+    assert_eq!(a[0].diagnostic.unwrap().queue_domain, 101);
+    assert_eq!(b[0].diagnostic.unwrap().queue_domain, 202);
+    assert_eq!(a[0].diagnostic.unwrap().subscription, left_subscription);
+    assert_eq!(b[0].diagnostic.unwrap().subscription, right_subscription);
+    assert_eq!(a[0].diagnostic.unwrap().frame_id, 501);
+    assert_eq!(b[0].diagnostic.unwrap().frame_id, 502);
+    assert_eq!(a[0].frame.changes[0].value, Value::Button(true));
+    assert_eq!(b[0].frame.changes[0].value, Value::Button(true));
+}
+
+#[test]
+fn diagnostic_frames_preserve_the_existing_portable_source_serialization() {
+    let provider = CompanionProvider::new(Arc::new(|| 100));
+    provider.register_definition(definition("left")).unwrap();
+    baseline(&provider, "left", 1);
+    let mut feed = provider.subscribe_native(&[selection("left")]).unwrap();
+    let envelope = feed.baseline_audited().unwrap().remove(0);
+    let serialized = serde_json::to_value(&envelope.frame).unwrap();
+    let plain: Vec<Frame> = feed.baseline().unwrap();
+    assert_eq!(serialized, serde_json::to_value(&plain[0]).unwrap());
+    assert!(serialized.get("diagnostic").is_none());
+    assert_eq!(plain[0].sequence, Counter(1));
+    assert_eq!(plain[0].captured_us, Counter(100));
 }
 
 #[test]

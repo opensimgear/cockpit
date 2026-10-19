@@ -1,4 +1,5 @@
 //! Independent desktop output. Construction and recording never inject input.
+pub mod audit;
 pub mod coordinator;
 pub mod entry;
 pub mod keys;

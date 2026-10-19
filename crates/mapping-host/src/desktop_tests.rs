@@ -186,6 +186,7 @@ fn prepared_program_fixture(
         waiting_neutral: BTreeSet::new(),
         rearm_evidence: BTreeMap::new(),
         shadow: None,
+        audit_shadow: 0,
     };
     (desktop, phase, focused, events)
 }

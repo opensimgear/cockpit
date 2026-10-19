@@ -9,14 +9,53 @@ use osg_mapping::{
     engine::RunToken,
 };
 use std::{
+    cell::Cell,
     io::{BufRead, Write},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc,
     },
     thread,
     time::Duration,
 };
+/// Diagnostic context is scoped to one actual adapter submission. Watchdog and
+/// error cleanup must never inherit the incoming request's operation identity.
+#[derive(Clone, Copy)]
+pub(crate) struct SubmissionContext {
+    pub request: u64,
+    pub operation: u64,
+    pub category: u64,
+}
+thread_local! {
+    static SUBMISSION_CONTEXT: Cell<Option<SubmissionContext>> = const { Cell::new(None) };
+}
+struct SubmissionGuard { previous: Option<SubmissionContext>, entered: bool }
+impl SubmissionGuard {
+    fn enter(request: u64, operation: u64, category: u64) -> Self {
+        // Unit adapters inspect the actual submission scope without starting a
+        // global collector or enabling a native input capability.
+        let entered = crate::audit::enabled() || cfg!(test);
+        let previous = if entered {
+            SUBMISSION_CONTEXT.with(|slot| slot.replace(Some(SubmissionContext { request, operation, category })))
+        } else { None };
+        Self { previous, entered }
+    }
+}
+impl Drop for SubmissionGuard {
+    fn drop(&mut self) {
+        if self.entered { SUBMISSION_CONTEXT.with(|slot| slot.set(self.previous)); }
+    }
+}
+#[cfg(any(windows, test))]
+pub(crate) fn submission_context() -> Option<SubmissionContext> {
+    SUBMISSION_CONTEXT.with(Cell::get)
+}
+/// ok, uncertain, cleanup-complete, skipped, shared-control collision.
+pub(crate) fn audit_ack_flags(ack: &Ack) -> u64 {
+    u64::from(ack.ok) | (u64::from(ack.uncertain) << 1)
+        | (u64::from(ack.cleanup_complete) << 2) | (u64::from(ack.skipped) << 3)
+        | (u64::from(ack.collision) << 4)
+}
 struct Run {
     token: RunToken,
     scope: Scope,
@@ -59,6 +98,7 @@ impl<A: Adapter> Worker<A> {
             if events.is_empty() {
                 return Ok(());
             }
+            let _context = SubmissionGuard::enter(0, 0, 5);
             let n = self.adapter.submit(&events)?;
             if n != native_count(&events) {
                 Err("Cleanup SendInput returned a short count.".into())
@@ -83,6 +123,7 @@ impl<A: Adapter> Worker<A> {
         if attempted > MAX_BATCH {
             return Err("Native input batch exceeds 64 records.".into());
         }
+        let _context = SubmissionGuard::enter(0, 0, 4);
         let confirmed = self.adapter.submit(events)?;
         if attempted != confirmed {
             return Err(format!(
@@ -116,6 +157,13 @@ impl<A: Adapter> Worker<A> {
         Ok(())
     }
     pub fn receive(&mut self, request: Request, now: u64) -> Ack {
+        let audit_request = request.sequence.0;
+        let (audit_operation, audit_category) = match &request.command {
+            Command::Deliver { delivery } => (delivery.operation_id.0,
+                if matches!(delivery.intent, Intent::Cleanup) { 6 } else { 1 }),
+            Command::Recover { .. } => (0, 3),
+            _ => (0, 2),
+        };
         let mut ack = Ack {
             sequence: request.sequence,
             operation_id: None,
@@ -248,6 +296,7 @@ impl<A: Adapter> Worker<A> {
             } else if ack.attempted > MAX_BATCH {
                 Err("Native input batch exceeds 64 records.".into())
             } else {
+                let _context = SubmissionGuard::enter(audit_request, audit_operation, audit_category);
                 self.adapter.submit(&events)
             };
             let error = match submitted {
@@ -312,6 +361,9 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
     clock: fn() -> u64,
 ) -> Result<(), String> {
     let (send, recv) = mpsc::sync_channel(32);
+    let audit_channel = crate::audit::channel();
+    let incoming_depth = Arc::new(AtomicUsize::new(0));
+    let reader_depth = incoming_depth.clone();
     let failure = Arc::new(AtomicBool::new(false));
     let reader_failure = failure.clone();
     thread::spawn(move || loop {
@@ -320,9 +372,26 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
                 .transpose()
         });
         let done = !matches!(message, Ok(Some(_)));
+        let request_sequence = message.as_ref().ok().and_then(|request| request.as_ref()).map(|request| request.sequence.0);
+        let queued_at = crate::audit::stamp();
+        let tracked = audit_channel.is_some() && request_sequence.is_some();
+        if message.is_err() && audit_channel.is_some() {
+            crate::audit::record(crate::audit::Kind::QueueFault, &[2, 3, reader_depth.load(Ordering::Acquire) as u64]);
+        }
+        let queued_depth = if tracked { reader_depth.fetch_add(1, Ordering::AcqRel) + 1 } else { 0 };
         if send.try_send(message).is_err() {
+            if tracked {
+                reader_depth.fetch_sub(1, Ordering::AcqRel);
+            }
+            if audit_channel.is_some() {
+                crate::audit::record(crate::audit::Kind::QueueFault, &[2, 1, queued_depth as u64]);
+            }
             reader_failure.store(true, Ordering::Release);
             break;
+        }
+        if let (Some(at), Some(channel), Some(sequence)) = (queued_at, audit_channel, request_sequence) {
+            crate::audit::record_at(at, crate::audit::Kind::RequestQueued,
+                &[channel, sequence, queued_depth as u64]);
         }
         if done {
             break;
@@ -354,9 +423,19 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
         worker.tick(clock())?;
         match recv.recv_timeout(Duration::from_millis(5)) {
             Ok(Ok(Some(request))) => {
+                if let Some(channel) = audit_channel {
+                    let depth = incoming_depth.fetch_sub(1, Ordering::AcqRel).saturating_sub(1);
+                    crate::audit::record(crate::audit::Kind::RequestDequeued, &[channel, request.sequence.0, depth as u64]);
+                }
                 let stop = matches!(request.command, Command::Stop);
                 let delivery = matches!(request.command, Command::Deliver { .. });
                 let ack = worker.receive(request, clock());
+                if let Some(channel) = audit_channel {
+                    crate::audit::record(crate::audit::Kind::WorkerOutcome, &[
+                        channel, ack.sequence.0, ack.operation_id.map(|value| value.0).unwrap_or(0),
+                        audit_ack_flags(&ack), ack.attempted as u64, ack.confirmed as u64,
+                    ]);
+                }
                 // Explicit debug acceptance hook: prove the actual submission/
                 // acknowledgement gap. No retries or production hook is enabled.
                 #[cfg(debug_assertions)]
@@ -397,4 +476,53 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
         return Err("Desktop worker transport failed during shutdown.".into());
     }
     result
+}
+
+#[cfg(test)]
+mod audit_context_tests {
+    use super::*;
+    use osg_mapping::{desktop::{Control, Delivery, Key}, engine::{typed::Token, Counter}};
+    use std::sync::Mutex;
+
+    struct ShortThenCleanup {
+        contexts: Arc<Mutex<Vec<(u64, u64, u64)>>>,
+        calls: usize,
+    }
+    impl Adapter for ShortThenCleanup {
+        fn eligible(&mut self, _: &Scope) -> Result<bool, String> { Ok(true) }
+        fn submit(&mut self, events: &[NativeEvent]) -> Result<usize, String> {
+            let context = submission_context().expect("each adapter submission has its own context");
+            self.contexts.lock().unwrap().push((context.request, context.operation, context.category));
+            self.calls += 1;
+            Ok(if self.calls == 1 { 0 } else { native_count(events) })
+        }
+    }
+
+    #[test]
+    fn short_direct_submission_cleanup_has_no_inherited_request_or_operation() {
+        assert!(submission_context().is_none());
+        let contexts = Arc::new(Mutex::new(vec![]));
+        let mut worker = Worker::new(ShortThenCleanup { contexts: contexts.clone(), calls: 0 });
+        let run = RunToken { session: "context-test-run".into(), generation: Counter(1) };
+        let producer = Token { run: run.clone(), node_id: "key-source".into(), dependencies: vec![] };
+        for (sequence, command) in [
+            (1, Command::Activate { run, scope: Scope::DesktopWide }),
+            (2, Command::Arm { producer: producer.clone(), action_id: "hold".into() }),
+        ] {
+            assert!(worker.receive(Request { sequence: Counter(sequence), deadline_us: None, command }, 0).ok);
+        }
+        let ack = worker.receive(Request {
+            sequence: Counter(3), deadline_us: None,
+            command: Command::Deliver { delivery: Delivery {
+                producer, action_id: "hold".into(), operation_id: Counter(1), sequence: Counter(1),
+                at_us: Counter(1), deadline_us: None,
+                intent: Intent::Held { controls: vec![Control::Key { key: Key(4) }] },
+            } },
+        }, 1);
+        assert!(!ack.ok && ack.uncertain && ack.cleanup_complete);
+        assert_eq!((ack.attempted, ack.confirmed), (1, 0));
+        assert!(ack.held.is_empty() && worker.held().is_empty());
+        assert_eq!(*contexts.lock().unwrap(), [(3, 1, 1), (0, 0, 5)]);
+        assert!(submission_context().is_none(), "request scope must be restored after error cleanup");
+    }
 }

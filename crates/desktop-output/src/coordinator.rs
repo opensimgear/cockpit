@@ -15,6 +15,10 @@ pub const MAX_JOURNAL_BYTES: usize = 131_072;
 
 pub trait Channel: Send {
     fn request(&mut self, request: &Request) -> Result<Ack, String>;
+    /// Sidecar identity only; recording channels provide no native correlation.
+    fn audit_id(&self) -> Option<crate::audit::Id> {
+        None
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +47,7 @@ pub struct RunScope {
     pub run: RunToken,
     pub scope: Scope,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OwnerSnapshot {
     pub producer: Token,
@@ -58,8 +62,25 @@ pub struct Coordinator {
     clock: fn() -> u64,
     journal: Option<PathBuf>,
     terminal_stopped: bool,
+    #[cfg(test)]
+    persist_attempts: std::cell::Cell<usize>,
+    #[cfg(test)]
+    fail_persist_at: std::cell::Cell<Option<usize>>,
 }
 impl Coordinator {
+    fn audit_outcome(&self, request: &Request, ack: Option<&Ack>, error: u64) {
+        let Some(channel) = self.channel.audit_id() else { return; };
+        let operation = match &request.command {
+            Command::Deliver { delivery } => delivery.operation_id.0,
+            _ => 0,
+        };
+        crate::audit::record(crate::audit::Kind::ParentOutcome, &[
+            channel, request.sequence.0, operation,
+            ack.map(crate::worker::audit_ack_flags).unwrap_or(0),
+            ack.map(|value| value.attempted as u64).unwrap_or(0),
+            ack.map(|value| value.confirmed as u64).unwrap_or(0), error,
+        ]);
+    }
     pub fn spawn(enabled: bool, qualified: bool) -> Result<Self, String> {
         if !enabled {
             return Err("Enable keyboard and mouse output explicitly in local settings.".into());
@@ -195,8 +216,31 @@ impl Coordinator {
         coordinator.stop_all()
     }
     fn persist(&self) -> Result<(), String> {
+        let result = self.persist_inner();
+        if result.is_err() && self.channel.audit_id().is_some() {
+            crate::audit::fault(crate::audit::Fault::Io);
+        }
+        result
+    }
+    fn persist_inner(&self) -> Result<(), String> {
         if let Some(path) = &self.journal {
+            #[cfg(test)]
+            {
+                let attempt = self.persist_attempts.get() + 1;
+                self.persist_attempts.set(attempt);
+                if self.fail_persist_at.get() == Some(attempt) {
+                    return Err("Injected desktop journal write failure.".into());
+                }
+            }
+            let mut audit_times = self.channel.audit_id().map(|channel| (channel, Vec::with_capacity(7)));
+            let mark = |times: &mut Option<(u64, Vec<u64>)>| {
+                if let Some((_, values)) = times {
+                    values.push(crate::audit::stamp().map_or(0, |at| at.qpc));
+                }
+            };
+            mark(&mut audit_times);
             let bytes = serde_json::to_vec(&self.snapshot).map_err(|e| e.to_string())?;
+            mark(&mut audit_times);
             if bytes.len() > MAX_JOURNAL_BYTES {
                 return Err(
                     "Desktop recovery journal exceeds its 128 KiB bound; output was refused."
@@ -207,13 +251,27 @@ impl Coordinator {
                 .parent()
                 .ok_or("Desktop journal requires a parent directory.")?;
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            mark(&mut audit_times);
             let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+            mark(&mut audit_times);
             use std::io::Write;
             file.as_file_mut()
                 .write_all(&bytes)
                 .map_err(|e| e.to_string())?;
+            mark(&mut audit_times);
             file.as_file_mut().sync_all().map_err(|e| e.to_string())?;
+            mark(&mut audit_times);
             file.persist(path).map_err(|e| e.to_string())?;
+            mark(&mut audit_times);
+            if let Some((channel, times)) = audit_times {
+                if times.iter().any(|time| *time == 0) || times.windows(2).any(|pair| pair[0] > pair[1]) {
+                    crate::audit::fault(crate::audit::Fault::Clock);
+                } else {
+                    let mut fields = vec![channel, self.sequence];
+                    fields.extend_from_slice(&times);
+                    crate::audit::record_at(crate::audit::Stamp { qpc: times[6] }, crate::audit::Kind::JournalPersist, &fields);
+                }
+            }
         }
         Ok(())
     }
@@ -226,6 +284,10 @@ impl Coordinator {
             clock,
             journal: None,
             terminal_stopped: false,
+            #[cfg(test)]
+            persist_attempts: std::cell::Cell::new(0),
+            #[cfg(test)]
+            fail_persist_at: std::cell::Cell::new(None),
             snapshot: Snapshot {
                 phase: "stopped".into(),
                 enabled: true,
@@ -252,9 +314,9 @@ impl Coordinator {
         if self.snapshot.journal_scope.as_ref().is_some_and(|expected|expected!=scope){return Err("The captured desktop application scope is immutable.".into())}
         self.snapshot.journal_owner=Some(owner.clone());self.snapshot.journal_scope=Some(scope.clone());self.persist()
     }
-    fn sync_owners(&mut self) -> Result<(), String> {
-        self.snapshot.shared_controls = self.reducer.collisions();
-        self.snapshot.owners = self
+    fn update_owners(&mut self) -> bool {
+        let shared_controls = self.reducer.collisions();
+        let owners = self
             .reducer
             .owners()
             .into_iter()
@@ -263,7 +325,14 @@ impl Coordinator {
                 action_id,
                 controls,
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let changed = self.snapshot.shared_controls != shared_controls || self.snapshot.owners != owners;
+        self.snapshot.shared_controls = shared_controls;
+        self.snapshot.owners = owners;
+        changed
+    }
+    fn sync_owners(&mut self) -> Result<(), String> {
+        self.update_owners();
         self.persist()
     }
     fn send(
@@ -291,13 +360,30 @@ impl Coordinator {
             deadline_us,
             command,
         };
+        if let Some(channel) = self.channel.audit_id() {
+            let (operation, command, run) = match &request.command {
+                Command::Activate { run, .. } => (0, 1, Some(run)),
+                Command::Arm { producer, .. } => (0, 2, Some(&producer.run)),
+                Command::Deliver { delivery } => (delivery.operation_id.0, 3, Some(&delivery.producer.run)),
+                Command::Renew { run } => (0, 4, Some(run)),
+                Command::Pause { run } => (0, 5, Some(run)),
+                Command::Recover { .. } => (0, 6, None),
+                Command::Stop => (0, 7, None),
+            };
+            let run_alias = run.and_then(|run| crate::audit::alias(crate::audit::AliasKind::Run, run.session.as_bytes())).unwrap_or(0);
+            crate::audit::record(crate::audit::Kind::RequestIssued,
+                &[channel, request.sequence.0, operation, command, run_alias, run.map_or(0, |run| run.generation.0)]);
+        }
         if changes_ledger {
             if !self.snapshot.uncertain {
                 self.snapshot.possible_held = self.snapshot.held.clone();
             }
             self.snapshot.possible_held.extend(possible);
             self.snapshot.in_flight = Some(request.clone());
-            self.persist()?;
+            if let Err(error) = self.persist() {
+                self.audit_outcome(&request, None, 1);
+                return Err(error);
+            }
         }
         let result = self.channel.request(&request).and_then(|ack| {
             if ack.sequence != request.sequence {
@@ -333,6 +419,7 @@ impl Coordinator {
                     self.snapshot.uncertain = true;
                     self.snapshot.phase = "faulted".into();
                     let _ = self.persist();
+                    self.audit_outcome(&request, Some(&ack), 2);
                     return Err(ack.error.unwrap_or("Uncertain native submission.".into()));
                 }
                 self.snapshot.in_flight = None;
@@ -342,13 +429,16 @@ impl Coordinator {
                         if let Err(error) = self.persist() {
                             self.snapshot.uncertain = true;
                             self.snapshot.cleanup_complete = false;
+                            self.audit_outcome(&request, Some(&ack), 3);
                             return Err(error);
                         }
                     }
+                    self.audit_outcome(&request, Some(&ack), 0);
                     Ok(ack)
                 } else {
                     self.snapshot.phase = "paused".into();
                     let _ = self.persist();
+                    self.audit_outcome(&request, Some(&ack), 4);
                     Err(ack
                         .error
                         .unwrap_or("Desktop worker rejected output.".into()))
@@ -360,6 +450,7 @@ impl Coordinator {
                 self.snapshot.phase = "faulted".into();
                 self.snapshot.error = Some(error.clone());
                 let _ = self.persist();
+                self.audit_outcome(&request, None, 5);
                 Err(error)
             }
         }
@@ -419,7 +510,12 @@ impl Coordinator {
             next.delivery(&delivery, true)?;
         }
         self.reducer = next;
-        self.sync_owners()?;
+        // send() already durably committed the validated ACK. Only submit can
+        // omit this third write: no phase/run state changes here, and owner
+        // operation counters are intentionally absent from the journal format.
+        if self.update_owners() {
+            self.persist()?;
+        }
         Ok(ack)
     }
     pub fn renew(&mut self, run: RunToken) -> Result<(), String> {

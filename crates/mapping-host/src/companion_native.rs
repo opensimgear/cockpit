@@ -130,10 +130,21 @@ impl CompanionProvider {
     }
 }
 impl NativeFeed {
+    /// Diagnostic aliases only; no writer or output authority is exposed.
+    pub fn diagnostic_identity(&self) -> (u64, u64) {
+        (self.feed.provider.audit_provider, self.feed.subscription)
+    }
     /// Discards accumulated transitions and captures the actual current neutral
     /// state. Missing/held/stale inputs are errors, never invented fallbacks.
     pub fn baseline(&mut self) -> Result<Vec<Frame>, String> {
-        let frames = self.feed.initial()?;
+        Ok(self
+            .baseline_audited()?
+            .into_iter()
+            .map(|frame| frame.frame)
+            .collect())
+    }
+    pub fn baseline_audited(&mut self) -> Result<Vec<NativeFrame>, String> {
+        let frames = self.feed.initial_audited()?;
         self.feed.require_live_ready()?;
         let state = self
             .feed
@@ -151,7 +162,14 @@ impl NativeFeed {
         Ok(frames)
     }
     pub fn poll(&mut self) -> Result<Vec<Frame>, String> {
-        let mut frames = self.feed.drain();
+        Ok(self
+            .poll_audited()?
+            .into_iter()
+            .map(|frame| frame.frame)
+            .collect())
+    }
+    pub fn poll_audited(&mut self) -> Result<Vec<NativeFrame>, String> {
+        let mut frames = self.feed.drain_audited();
         let mut state = self
             .feed
             .provider
@@ -218,14 +236,23 @@ impl NativeFeed {
                 })
                 .collect::<Option<Vec<_>>>()
                 .ok_or("The native companion state is incomplete.")?;
-            frames.push(Frame {
+            let frame = Frame {
                 source: source(&id),
                 generation: osg_mapping::engine::Counter(generation),
                 sequence: osg_mapping::engine::Counter(sequence),
                 captured_us: osg_mapping::engine::Counter(at),
                 reason: osg_mapping::engine::Reason::Change,
                 changes,
-            });
+            };
+            frames.push(audit_native_frame(
+                self.feed.provider.audit_provider,
+                self.feed.subscription,
+                queue,
+                &id,
+                frame,
+                None,
+                2,
+            ));
             self.refreshed.insert(id, marker);
         }
         Ok(frames)
