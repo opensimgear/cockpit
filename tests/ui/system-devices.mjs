@@ -593,6 +593,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.getByRole('button', { name: /^(Flight|Racing) template$/ })).toHaveCount(0);
     const panelTitleActions=panelEditor.locator('.editor-title-actions');
     const layoutTools=panelEditor.getByRole('group',{name:'Widget layout tools',exact:true});
+    const toolbarBounds=await layoutTools.boundingBox(),undoBounds=await layoutTools.getByRole('button',{name:'Undo',exact:true}).boundingBox(),redoBounds=await layoutTools.getByRole('button',{name:'Redo',exact:true}).boundingBox();
+    assert.ok(Math.abs(undoBounds.x-toolbarBounds.x)<1,'Undo starts at the left edge of the action row.');
+    assert.ok(redoBounds.x>undoBounds.x&&Math.abs(undoBounds.y-redoBounds.y)<1,'Redo follows Undo on the same row.');
     const snapGrid=layoutTools.getByRole('button',{name:'Snap to grid',exact:true});
     await expect(snapGrid).toHaveAttribute('aria-pressed','true');await snapGrid.click();await expect(snapGrid).toHaveAttribute('aria-pressed','false');
     await snapGrid.click();await expect(snapGrid).toHaveAttribute('aria-pressed','true');
