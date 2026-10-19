@@ -232,6 +232,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       'DCS World · dcs-bios', 'Browser companion', 'Known ESP32 companion'];
     for (const name of expectedNames) await expect(devices.getByText(name, { exact: true }).first()).toBeVisible();
     await expect(devices.getByText('Panel: Assigned panel instance', { exact: true })).toBeVisible();
+    await expect(devices.locator('[data-component-id="controller:pedals"] .component-subtext')).toHaveText('4 inputs');
     await expect(devices.locator('[data-component-id="companion-instance:assigned-fixture"]')).toHaveCount(0);
     await expect(devices.locator('[data-component-id="integration:x-plane-12"]')).toHaveCount(0);
     await expect(devices.getByText('Gateway HID collection', { exact: true })).toHaveCount(0);
@@ -327,6 +328,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await topology.click();
     const graph = page.getByRole('region', { name: 'System topology', exact: true });
     await expect(graph).toBeVisible();
+    await expect(graph.locator('[data-component-id="controller:pedals"] .node-status')).toHaveText('4 inputs');
+    await expect(graph.locator('[data-component-id="companion:browser-fixture"] .node-status')).toHaveText('Panel: Assigned panel instance');
     const graphViewport = graph.locator('.topology-viewport');
     const graphTransform = () => graph.locator('.topology-world').evaluate(node => {
       const matrix = new DOMMatrix(getComputedStyle(node).transform);
@@ -668,7 +671,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);
     assert.equal(requests.filter(request => request.command === 'companion_approve').length, 0);
     await topology.click();
-    await expect(graph.locator('[data-component-id="companion:browser-fixture"]')).toContainText('Offline');
+    await expect(graph.locator('[data-component-id="companion:browser-fixture"]')).toHaveAttribute('aria-label', /Offline/);
     await expect(graph.locator('[data-component-id="companion-pending:pairing-fixture"]')).toHaveCount(0);
     await list.click();
     // Gateway management and existing module configuration remain reachable
@@ -778,7 +781,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // Independently verified USB attachment remains; remote flash is untouched.
     fixture.ports = fixture.ports.filter(port => port.serialNumber !== serial);
     fixture.states.get(firstGateway).connected = false;
-    await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toContainText('Offline', { timeout: 10_000 });
+    await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveAttribute('aria-label', /Offline/, { timeout: 10_000 });
     await graph.locator(`[data-component-id="gateway:${firstGateway}"]`).click();
     await details.getByRole('button', { name: 'Forget device', exact: true }).click();
     await expect(dialog).toContainText('unavailable gateway cannot confirm');

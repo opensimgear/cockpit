@@ -24,12 +24,14 @@ vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.M
 }, { filename: file.pathname });
 const component = (id, type, extra = {}) => ({ id, name: id, type, role: type, presence: 'connected', hidden: null, enabled: null, owner: null, capture: 'unknown', status: '', diagnostics: [], connections: [], targets: [], evidence: [], references: [], firstSeen: 1, lastSeen: 1, observedAt: 1, provider: 'fixture', stale: false, forget: { allowed: false, reason: 'Connected', effect: '' }, ...extra });
 
-test('actual graph summaries expose the same busy, hidden, disabled, stale and integration health text as List', () => {
+test('graph subtext shows panels and inputs while complete health remains accessible', () => {
   const components = [
     component('Busy virtual', 'virtual', { status: 'busy · Creation provenance unknown', owner: 'External feeder' }),
     component('Hidden pedals', 'controller', { hidden: true, enabled: false }),
     component('Stale gateway', 'gateway', { presence: 'unknown', stale: true, status: 'Service unavailable', diagnostics: ['Last provider request failed'] }),
     component('Integration', 'integration', { presence: 'unavailable', status: 'Integration needs attention' }),
+    component('Controller', 'controller', { status: '24 controls' }),
+    component('Companion', 'companion', { presence: 'offline', status: 'Paired installation · Panel: Dashboard' }),
   ];
   const html = render(exports.default, { props: { components, selectedId: 'Busy virtual', onselect() {} } }).body;
   for (const component of components) {
@@ -40,7 +42,8 @@ test('actual graph summaries expose the same busy, hidden, disabled, stale and i
     assert.ok(node.includes(label), label);
     assert.ok(node.includes(`title="${label}"`), 'bounded visible state has a complete tooltip');
     assert.ok(node.includes(`, ${label}"`), 'accessible name includes the complete shared state');
-    assert.ok(new RegExp(`<span[^>]*>${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/span>`).test(node), 'health is rendered as visible text rather than a color or tooltip alone');
+    const subtext = node.replace(/<!--[^]*?-->/g, '').match(/class="node-status[^]*?<span[^>]*>([^<]*)<\/span>/)?.[1];
+    assert.equal(subtext, component.id === 'Controller' ? '24 inputs' : component.id === 'Companion' ? 'Panel: Dashboard' : '');
   }
   assert.ok(html.includes('Last provider request failed'));
 });

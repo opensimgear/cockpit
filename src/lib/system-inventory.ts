@@ -25,6 +25,10 @@ export const presenceLabels: Record<SystemPresence, string> = { connected: 'Conn
 export function systemStateLabel(component: SystemComponent): string {
   return [presenceLabels[component.presence], component.hidden === true ? 'Hidden via HidHide' : '', component.enabled === false ? 'Disabled' : '', component.stale ? 'Stale observation' : '', component.status].filter(Boolean).join(' · ');
 }
+export function systemDeviceSubtext(component: SystemComponent): string {
+  return component.status.split(' · ').filter(part => part.startsWith('Panel: ') || /^\d+ (controls|inputs)$/.test(part))
+    .map(part => part.replace(/^(\d+) controls$/, '$1 inputs')).join(' · ');
+}
 export function filterSystem(components: readonly SystemComponent[], search: string, filter: string, transport = 'all'): SystemComponent[] {
   const query = search.trim().toLocaleLowerCase();
   return components.filter(c => isVisibleSystemComponent(c) && `${c.name} ${c.role} ${c.id} ${systemTypeLabels[c.type]} ${c.status} ${c.connections.map(x => `${x.transport} ${x.endpoint ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(query)

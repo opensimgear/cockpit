@@ -213,7 +213,7 @@ export class SystemInventoryController {
     return { provider: 'controllers', complete: healthy && !accessUncertain, diagnostics: [...(diagnostic || !healthy ? [`Controller capture ${backend}${diagnostic ? `: ${diagnostic}` : ''}`] : []), ...accessDiagnostics], observations: sources.map(s => {
       const id = `controller:${s.id}`, uncertain = !healthy || (!s.online && accessUncertain);
       return observation(id, s.name, s.osgHid ? 'osg' : 'controller', 'controllers', now, { role: s.role, presence: uncertain ? 'unknown' : s.online ? 'connected' : 'offline', stale: uncertain, capture: healthy && s.online ? s.baselineReady ? 'ready' : 'waiting' : 'unavailable',
-        status: `${s.controlCount} controls`, diagnostics: [...accessDiagnostics], evidence: [`controller:${s.id}`, `identity:${s.identityConfidence}`], targets: [target('controller', s.id)],
+        status: `${s.controlCount} inputs`, diagnostics: [...accessDiagnostics], evidence: [`controller:${s.id}`, `identity:${s.identityConfidence}`], targets: [target('controller', s.id)],
         connections: [link(id, 'host', 'unknown', healthy && s.online)],
         forget: { allowed: !uncertain && !s.online, reason: uncertain ? 'Current capture availability cannot confirm this device is offline.' : 'Disconnect this controller before forgetting it.', effect: localEffect } });
     }) };
