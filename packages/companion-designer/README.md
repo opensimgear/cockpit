@@ -18,6 +18,12 @@ newDocument(title) seeds one button because C0 requires at least one logical inp
 
 Commands cover widgets, pages, viewports/backgrounds, groups, grid snapping, alignment, multi-widget translation, logical targets/bindings and validated document replacement. Alignment uses the first selected widget as its anchor. Selections remain on one page; normalized geometry is checked transactionally.
 
+Each page's `Viewport` describes the companion screen's pixel size and may include up to 32 `regions: { id, label, bounds }[]`. A region is an editor viewport, using the same normalized usable-screen coordinates as widgets. Regions must have positive dimensions, stay inside the screen, and may touch edges but must not overlap. Every widget must fit entirely inside one region. Optional safe insets retain their existing meaning for both widgets and regions.
+
+`viewportRegions(document, pageId)` returns detached regions, or one implicit full-screen region with ID `viewport-${pageId.slice(0, 55)}` when a legacy document has no regions. Existing ID collisions use a deterministic available suffix, keeping IDs within 64 characters. Validation leaves legacy documents unchanged so their publication hashes stay valid. `widgetViewport`, `boundsContain` and `boundsOverlap` support editor selection and geometry checks.
+
+`add-viewport { pageId, sourceId? }` fills the largest free screen rectangle; if no space is free, it splits the selected source (or the last viewport) along its longest physical dimension. `update-viewport { pageId, id, patch }` moves/resizes/renames a viewport. Splitting or changing its bounds scales its enclosed widgets proportionally in the same atomic history entry. `remove-viewport { pageId, id }` rejects removing the final viewport or one that still contains widgets. `add-widget` accepts an optional `viewportId` and places the preset inside that area; widgets otherwise start in the first viewport. Screen dimensions remain editable with `set-viewport`, which preserves existing regions.
+
 createLibrary, saveDraft, openDraft, duplicateDraft, deleteDraft and async validateLibrary implement a bounded 20-draft library. Drafts are an array of {id,name,document,assets}. The app persists the returned library atomically; storage and UI selection are outside this package. User edits, published revisions, and machine assignments remain distinct records.
 
 ## Portable image bundles

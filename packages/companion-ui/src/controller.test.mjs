@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { axisPosition, axisValue, createPreviewController, fallbackValue } from './controller.ts';
-import { feedbackPresentation, movedBounds, resizedBounds, safeAssetUrl } from './presentation.ts';
+import { feedbackPresentation, movedBounds, resizedBounds, safeAssetUrl, viewportWidgetBounds } from './presentation.ts';
 const base = { pageId:'page',label:'Widget',bounds:{x:0,y:0,width:.2,height:.2},feedbackIds:[] };
 function doc(widgets, controls) {
   return {schemaVersion:2,ui:{schemaVersion:1,id:'test',title:'Test',controls,pages:[{id:'page',title:'Page',items:[]}],feedbackWidgets:[],assets:[]},presentation:{widgets:widgets.map(widget=>({...base,...widget})),groups:[],viewports:[{pageId:'page',width:1000,height:800}],grid:{columns:24,rows:16,snap:true}},targets:[],bindings:[]};
@@ -125,6 +125,17 @@ test('resize gestures honor snap, minimum grid size, content boundaries and pres
   assert.deepEqual(resizedBounds(bounds,-2,2,{columns:10,rows:10,snap:true}),{x:.2,y:.2,width:.1,height:.8});
   assert.deepEqual(bounds,{x:.2,y:.2,width:.3,height:.3});
   const edge=resizedBounds({x:.99,y:.99,width:.01,height:.01},2,2,{columns:10,rows:10,snap:true});assert.ok(edge.x+edge.width<=1);assert.ok(edge.y+edge.height<=1);
+});
+
+test('moving and resizing a viewport previews proportional widget bounds inside the new viewport',()=>{
+  const from={x:.25,y:.2,width:.5,height:.4},to={x:.5,y:.4,width:.25,height:.6};
+  const widget={x:.25,y:.2,width:.5,height:.4};
+  assert.deepEqual(viewportWidgetBounds(widget,from,to),to);
+  const inner=viewportWidgetBounds({x:.375,y:.3,width:.25,height:.2},from,to);
+  assert.equal(inner.x,.5625);assert.ok(Math.abs(inner.y-.55)<1e-9);assert.equal(inner.width,.125);assert.ok(Math.abs(inner.height-.3)<1e-9);
+  assert.deepEqual(widget,{x:.25,y:.2,width:.5,height:.4});
+  const edge=viewportWidgetBounds({x:.5,y:.5,width:.5,height:.5},{x:0,y:0,width:1,height:1},{x:.6,y:.3,width:.4,height:.7});
+  assert.ok(edge.x+edge.width<=1);assert.ok(edge.y+edge.height<=1);
 });
 test('repeat configurations with no off interval are rejected rather than emitting collapsed edges',()=>{
   const bad=bWidget('repeat');bad.config.repeatMs=bad.config.pulseMs;const{preview:p}=engine(doc([bad],[button()]));p.arm();assert.equal(p.begin(1,'button'),false);assert.equal(p.snapshot().events.length,0);

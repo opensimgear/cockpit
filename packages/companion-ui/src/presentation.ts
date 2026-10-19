@@ -1,4 +1,4 @@
-import type { FeedbackValue, PortableUi } from '@opensimgear/companion-contracts';
+import type { Bounds, FeedbackValue, PortableUi } from '@opensimgear/companion-contracts';
 import type { DesignerWidget } from '@opensimgear/companion-designer';
 export type FeedbackSamples = Record<string, FeedbackValue & { receivedAtMs: number }>;
 export function safeAssetUrl(value: unknown): string | null {
@@ -36,4 +36,11 @@ export function movedBounds(bounds: {x:number;y:number;width:number;height:numbe
 export function resizedBounds(bounds: {x:number;y:number;width:number;height:number}, dx:number, dy:number, grid: {columns:number;rows:number;snap:boolean}) {
   const width = bounds.width + dx, height = bounds.height + dy;
   return { ...bounds, width: Math.max(Math.min(1 / grid.columns, 1 - bounds.x), Math.min(1 - bounds.x, grid.snap ? Math.round(width * grid.columns) / grid.columns : width)), height: Math.max(Math.min(1 / grid.rows, 1 - bounds.y), Math.min(1 - bounds.y, grid.snap ? Math.round(height * grid.rows) / grid.rows : height)) };
+}
+
+/** Preview the same proportional widget layout applied when its viewport moves or resizes. */
+export function viewportWidgetBounds(bounds: Bounds, from: Bounds, to: Bounds): Bounds {
+  const x = to.x + (bounds.x - from.x) / from.width * to.width;
+  const y = to.y + (bounds.y - from.y) / from.height * to.height;
+  return { x, y, width: Math.min(bounds.width / from.width * to.width, to.x + to.width - x, 1 - x), height: Math.min(bounds.height / from.height * to.height, to.y + to.height - y, 1 - y) };
 }

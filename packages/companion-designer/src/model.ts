@@ -1,7 +1,7 @@
 import { validatePortableUi } from "../../companion-contracts/src/index.ts";
 import type { Control, FeedbackWidget, Validation } from "../../companion-contracts/src/index.ts";
 import { DESIGNER_LIMITS } from "./types.ts";
-import type { DesignerDocument, DesignerWidget, LogicalTarget } from "./types.ts";
+import type { Bounds, DesignerDocument, DesignerWidget, LogicalTarget, ViewportRegion } from "./types.ts";
 export const clone = <T>(value: T): T => structuredClone(value);
 export function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 export function object(value: unknown): Record<string, unknown> {
@@ -26,6 +26,39 @@ function bounds(value: unknown): void {
   const b = exact(value, ["x", "y", "width", "height"]);
   for (const v of Object.values(b)) number(v, 0, 1);
   assert(Number(b.width) > 0 && Number(b.height) > 0 && Number(b.x) + Number(b.width) <= 1 && Number(b.y) + Number(b.height) <= 1, "Bounds outside page");
+}
+const geometryTolerance = 1e-9;
+export function boundsContain(container: Bounds, child: Bounds): boolean {
+  return child.x >= container.x - geometryTolerance && child.y >= container.y - geometryTolerance
+    && child.x + child.width <= container.x + container.width + geometryTolerance
+    && child.y + child.height <= container.y + container.height + geometryTolerance;
+}
+export function boundsOverlap(a: Bounds, b: Bounds): boolean {
+  return Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x) > geometryTolerance
+    && Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) > geometryTolerance;
+}
+/** Regions share widget coordinates: normalized within the screen's optional safe insets. */
+export function viewportRegions(document: DesignerDocument, pageId: string): ViewportRegion[] {
+  const viewport = document.presentation.viewports.find(viewport => viewport.pageId === pageId);
+  assert(viewport, "Unknown companion screen page");
+  if (viewport.regions !== undefined) return clone(viewport.regions);
+  const usedIds = new Set([
+    document.ui.id,
+    ...document.ui.pages.map(page => page.id), ...document.ui.controls.map(control => control.id),
+    ...document.ui.feedbackWidgets.map(widget => widget.id), ...document.ui.assets.map(asset => asset.id),
+    ...document.presentation.widgets.map(widget => widget.id), ...document.presentation.groups.map(group => group.id),
+    ...document.targets.map(target => target.id),
+    ...document.presentation.viewports.flatMap(viewport => viewport.regions?.map(region => region.id) ?? []),
+  ]);
+  const base = "viewport-" + pageId.slice(0, 55);
+  let id = base;
+  for (let suffix = 2; usedIds.has(id); suffix++) {
+    const ending = "-" + suffix; id = base.slice(0, 64 - ending.length) + ending;
+  }
+  return [{ id, label: "Viewport 1", bounds: { x: 0, y: 0, width: 1, height: 1 } }];
+}
+export function widgetViewport(document: DesignerDocument, widget: Pick<DesignerWidget, "pageId" | "bounds">): ViewportRegion | undefined {
+  return viewportRegions(document, widget.pageId).find(region => boundsContain(region.bounds, widget.bounds));
 }
 const inputKinds: Record<string, string[]> = { button: ["button"], selector: ["axis"], hat: ["hat"], encoder: ["button", "button"], slider: ["axis"], xy: ["axis", "axis"] };
 const outputKinds: Record<string, string> = { indicator: "indicator", text: "text", numeric: "gauge", icon: "indicator", gauge: "gauge" };
@@ -77,10 +110,23 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
     const grid = exact(p.grid, ["columns", "rows", "snap"]); integer(grid.columns, 1, 128); integer(grid.rows, 1, 128); assert(typeof grid.snap === "boolean", "Invalid snap");
     const viewportPages: string[] = [];
     for (const value of array(p.viewports, ui.pages.length, ui.pages.length)) {
-      const viewport = exact(value, ["pageId", "width", "height"], ["safeInsets", "backgroundAssetId"]);
+      const viewport = exact(value, ["pageId", "width", "height"], ["safeInsets", "backgroundAssetId", "regions"]);
       assert(pageIds.includes(String(viewport.pageId)) && !viewportPages.includes(String(viewport.pageId)), "Invalid viewport page"); viewportPages.push(String(viewport.pageId));
       if (viewport.backgroundAssetId !== undefined) assert(ui.assets.some(asset => asset.id === viewport.backgroundAssetId), "Missing page background asset");
       integer(viewport.width, 320, 8192); integer(viewport.height, 320, 8192);
+      if (viewport.regions !== undefined) {
+        assert(Array.isArray(viewport.regions) && viewport.regions.length > 0 && viewport.regions.length <= DESIGNER_LIMITS.viewportRegions, "A companion screen needs between 1 and 32 viewports");
+        const regions: ViewportRegion[] = [];
+        for (const value of viewport.regions) {
+          const region = object(value);
+          assert(["id", "label", "bounds"].every(key => Object.hasOwn(region, key)), "A viewport needs an ID, label and bounds");
+          exact(region, ["id", "label", "bounds"]); newId(region.id); label(region.label);
+          try { bounds(region.bounds); } catch { throw new Error(`Viewport "${region.label}" must stay inside the companion screen with a positive width and height`); }
+          const typedRegion = region as unknown as ViewportRegion;
+          assert(!regions.some(other => boundsOverlap(other.bounds, typedRegion.bounds)), `Viewport "${region.label}" overlaps another viewport. Move or resize it so the viewports do not overlap`);
+          regions.push(typedRegion);
+        }
+      }
       if (viewport.safeInsets !== undefined) {
         const insets = exact(viewport.safeInsets, ["top", "right", "bottom", "left"]);
         for (const value of Object.values(insets)) number(value, 0, 0.25);
@@ -92,6 +138,8 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
     for (const widget of widgets) {
       exact(widget, ["id", "pageId", "kind", "label", "bounds", "controlIds", "feedbackIds", "config"], ["groupId", "style"]);
       newId(widget.id); label(widget.label); bounds(widget.bounds); assert(pageIds.includes(widget.pageId), "Unknown widget page");
+      const regions = viewportRegions(doc as unknown as DesignerDocument, widget.pageId);
+      assert(regions.some(region => boundsContain(region.bounds, widget.bounds)), `Widget "${widget.label}" must fit entirely inside one viewport`);
       if (widget.style !== undefined) colorStyle(widget.style);
       if (widget.groupId !== undefined) assert(groups.some(group => group.id === widget.groupId && group.pageId === widget.pageId), "Invalid group reference");
       const expected = inputKinds[widget.kind] ?? [], output = outputKinds[widget.kind];

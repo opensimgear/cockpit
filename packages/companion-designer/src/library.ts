@@ -28,7 +28,10 @@ export function duplicateDraft(library: DesignerLibrary, id: string, name?: stri
   for (const asset of doc.ui.assets) asset.id = remap(asset.id, "asset");
   for (const target of doc.targets) target.id = remap(target.id, "target");
   for (const group of doc.presentation.groups) { group.id = remap(group.id, "group"); group.pageId = remap(group.pageId, "page"); }
-  for (const viewport of doc.presentation.viewports) { viewport.pageId = remap(viewport.pageId, "page"); if (viewport.backgroundAssetId) viewport.backgroundAssetId = remap(viewport.backgroundAssetId, "asset"); }
+  for (const viewport of doc.presentation.viewports) {
+    viewport.pageId = remap(viewport.pageId, "page"); if (viewport.backgroundAssetId) viewport.backgroundAssetId = remap(viewport.backgroundAssetId, "asset");
+    for (const region of viewport.regions ?? []) region.id = remap(region.id, "viewport");
+  }
   for (const widget of doc.presentation.widgets) {
     widget.id = newId("widget"); widget.pageId = remap(widget.pageId, "page"); if (widget.groupId) widget.groupId = remap(widget.groupId, "group");
     widget.controlIds = widget.controlIds.map(id => remap(id, "input")); widget.feedbackIds = widget.feedbackIds.map(id => remap(id, "output"));

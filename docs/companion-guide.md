@@ -35,6 +35,14 @@ Momentary buttons release with the pointer. Toggles retain requested state until
 
 Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A saved profile retains its exact captured revision; saving a newer panel does not rewrite that profile or its running graph. Active ownership may block an assignment change. Stop/recover the owner and explicitly reconcile the profile's instance and ports before applying a replacement revision.
 
+### Multiple viewports on one screen
+
+Set **Companion screen** to the display's resolution, or enter its pixel width and height. The whole canvas represents that screen. Each page starts with one full-screen viewport; existing panels keep their layout.
+
+Select **Add viewport** to use free space or split the selected viewport. Select an area from the **Viewports** list or its canvas label. Drag the label to move it, drag its corner to resize it, or enter pixel bounds in **Properties**. Its widgets move and scale with the area. Viewports can touch edges; overlapping or out-of-screen edits show an error and preserve the previous layout.
+
+Select a viewport before adding widgets. A widget must fit entirely inside one viewport; dragging or editing it across an edge or gap is rejected. Move or delete an area's widgets before removing the viewport. Undo and redo cover viewport edits. **Preview locally** hides the editing guides; **Save panel** retains all areas as one panel for the assigned companion screen.
+
 ## Pair and assign a companion
 
 For a desktop browser, follow [browser pairing](browser-companion.md): configure **Settings → Companion listener**, verify and trust its public certificate, then use **Companions → Pair → Browser**. Open the one-use pairing link in the intended browser. It expires after 60 seconds; keep it private. Cockpit does not change system trust or firewall rules. Loopback works only on the same computer.

@@ -13,7 +13,7 @@
     newDocument, createDesignerHistory, applyDesignerCommand, undoDesigner, redoDesigner,
     createLibrary, saveDraft, duplicateDraft, openDraft, deleteDraft,
     importAsset, validateAssets, exportBundle, importBundle, publishDocument,
-    flightTemplate, racingTemplate,
+    flightTemplate, racingTemplate, viewportRegions, widgetViewport, boundsContain,
     type DesignerDocument, type DesignerHistory, type DesignerWidget, type AssetPayload,
     type Publication, type Bounds,
   } from '@opensimgear/companion-designer';
@@ -36,6 +36,7 @@
   let publications = $state.raw<Record<string, Publication[]>>({});
   let pageId = $state('');
   let selected = $state<string[]>([]);
+  let selectedViewportId = $state('');
   let preview = $state(false);
   let controller: PreviewController | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -51,6 +52,11 @@
   const page = $derived(document.ui.pages.find(p => p.id === pageId) ?? document.ui.pages[0]);
   const widget = $derived(document.presentation.widgets.find(w => w.id === selected[0]));
   const viewport = $derived(document.presentation.viewports.find(v => v.pageId === page.id)!);
+  const regions = $derived(viewportRegions(document, page.id));
+  const activeViewport = $derived(regions.find(region => region.id === selectedViewportId) ?? regions[0]);
+  const activeViewportOccupied = $derived(document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(activeViewport.bounds, w.bounds)));
+  const usableWidth = $derived(viewport.width * (1 - (viewport.safeInsets?.left ?? 0) - (viewport.safeInsets?.right ?? 0)));
+  const usableHeight = $derived(viewport.height * (1 - (viewport.safeInsets?.top ?? 0) - (viewport.safeInsets?.bottom ?? 0)));
   const activeAssets = $derived(assets.filter(payload => document.ui.assets.some(a => a.id === payload.assetId)));
   const imageAssets = $derived(Object.fromEntries(activeAssets.map(payload => [payload.assetId, `data:${document.ui.assets.find(a => a.id === payload.assetId)?.mime};base64,${payload.base64}`])));
   const currentPublications = $derived(library.drafts.flatMap(d => publications[d.id]?.slice(-1) ?? []));
@@ -82,14 +88,34 @@
 
   function stop() { controller?.disarm('Designer changed'); preview = false; }
   async function togglePreview() { if (preview) stop(); else { preview = true; await tick(); controller?.arm(); } }
-  function select(ids: string[]) { selected = ids; const next = document.presentation.widgets.find(w => w.id === ids[0]); configText = next ? JSON.stringify(next.config, null, 2) : ''; }
+  function select(ids: string[]) {
+    selected = ids;
+    const next = document.presentation.widgets.find(w => w.id === ids[0]);
+    configText = next ? JSON.stringify(next.config, null, 2) : '';
+    if (next) {
+      const region = widgetViewport(document, next);
+      if (region) selectedViewportId = region.id;
+    }
+  }
+  function selectViewport(id: string) { selectedViewportId = id; select([]); }
   function command(command: Parameters<typeof applyDesignerCommand>[1]) {
-    try { stop(); dirty=true; history = applyDesignerCommand(history, command); if (!document.ui.pages.some(p => p.id === pageId)) pageId = document.ui.pages[0].id; error = ''; }
-    catch (e) { error = String(e); }
+    try { stop(); history = applyDesignerCommand(history, command); dirty=true; if (!document.ui.pages.some(p => p.id === pageId)) pageId = document.ui.pages[0].id; error = ''; return true; }
+    catch (e) { error = e instanceof Error ? e.message : String(e); return false; }
+  }
+  function addViewport() {
+    if (command({ type: 'add-viewport', pageId: page.id, sourceId: activeViewport.id })) selectViewport(viewportRegions(document, page.id).at(-1)!.id);
+  }
+  function changeViewportBounds(key: keyof Bounds, input: HTMLInputElement) {
+    const scale = key === 'x' || key === 'width' ? usableWidth : usableHeight;
+    command({ type: 'update-viewport', pageId: page.id, id: activeViewport.id, patch: { bounds: { ...activeViewport.bounds, [key]: input.valueAsNumber / scale } } });
+    input.value = String(Math.round(activeViewport.bounds[key] * scale * 100) / 100);
   }
   function patch(patch: Partial<DesignerWidget>) { if (widget) command({ type: 'update-widget', id: widget.id, patch }); }
-  function changeBounds(key: keyof Bounds, value: number) {
-    if (widget) command({ type: 'move-widget', id: widget.id, bounds: { ...widget.bounds, [key]: value } });
+  function changeBounds(key: keyof Bounds, input: HTMLInputElement) {
+    if (widget) {
+      command({ type: 'move-widget', id: widget.id, bounds: { ...widget.bounds, [key]: input.valueAsNumber } });
+      input.value = String(widget.bounds[key]);
+    }
   }
   function create() {
     if(!leaveEditor())return;editorOpen=true;dirty=true;assignmentSelection=null;
@@ -215,7 +241,7 @@
     patch({ config } as Partial<DesignerWidget>); select(selected);
   }
   function setViewport(width: number, height: number) {
-    command({ type: 'set-viewport', pageId: page.id, width, height, safeInsets: viewport.safeInsets ?? { top: .04, right: .02, bottom: .04, left: .02 }, ...(viewport.backgroundAssetId ? { backgroundAssetId: viewport.backgroundAssetId } : {}) });
+    command({ type: 'set-viewport', ...viewport, width, height });
   }
   function bindControl(controlId: string, value: string) {
     if (!value) { command({ type: 'unbind', controlId }); return; }
@@ -285,8 +311,14 @@
   </details>
   <div class="workspace">
     <aside aria-label="Panel library">
+      <h3>Viewports</h3>
+      <p class="hint">Divide one companion screen into areas for your widgets.</p>
+      <div class="viewport-list">{#each regions as region}<button class:active={region.id === activeViewport.id} aria-pressed={region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}>{region.label}<small>{Math.round(region.bounds.width * usableWidth)} × {Math.round(region.bounds.height * usableHeight)}</small></button>{/each}</div>
+      <button class="add-viewport" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={14} />Add viewport</button>
+      <p class="hint">Uses free space, or splits the selected viewport.</p>
       <h3>Widgets</h3>
-      <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} onclick={() => { command({ type: 'add-widget', kind: preset.kind, pageId: page.id }); select([document.presentation.widgets.at(-1)!.id]); }}>{preset.title}</button>{/each}</div>
+      <p class="hint">Add to {activeViewport.label}</p>
+      <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} onclick={() => { if (command({ type: 'add-widget', kind: preset.kind, pageId: page.id, viewportId: activeViewport.id })) select([document.presentation.widgets.at(-1)!.id]); }}>{preset.title}</button>{/each}</div>
       <h3>Assets</h3><p class="hint">PNG, JPEG or WebP · 2 MiB each · 8 MiB total</p>
       <input aria-label="Add panel image" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onchange={e => void addAsset(e.currentTarget.files?.[0])} />
       <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id}>{a.id}</option>{/each}</select></label>
@@ -297,7 +329,9 @@
       <div class="toolbar"><label>Page<select value={page.id} onchange={e => { stop(); pageId = e.currentTarget.value; select([]); }}>{#each document.ui.pages as p}<option value={p.id}>{p.title}</option>{/each}</select></label>
         <button onclick={() => { command({ type: 'add-page', title: `Page ${document.ui.pages.length + 1}` }); pageId = document.ui.pages.at(-1)!.id; select([]); }}><Icon name="plus" size={16} />Add page</button>
         <button disabled={document.ui.pages.length <= 1} onclick={() => { command({ type: 'delete-page', id: page.id }); select([]); }}><Icon name="trash" size={16} />Remove page</button>
-        <label>Viewport<select value={`${viewport.width}x${viewport.height}`} onchange={e => { const [w,h] = e.currentTarget.value.split('x').map(Number); setViewport(w,h); }}><option value="390x844">Phone portrait</option><option value="844x390">Phone landscape</option><option value="768x1024">Tablet portrait</option><option value="1024x768">Tablet landscape</option><option value="800x480">ESP32 screen · 800 × 480</option><option value="1280x800">Large panel · 1280 × 800</option><option value="1280x720">Desktop panel</option></select></label>
+        <label>Companion screen<select value={`${viewport.width}x${viewport.height}`} onchange={e => { const [w,h] = e.currentTarget.value.split('x').map(Number); setViewport(w,h); }}><option value="390x844">Phone portrait</option><option value="844x390">Phone landscape</option><option value="768x1024">Tablet portrait</option><option value="1024x768">Tablet landscape</option><option value="800x480">ESP32 screen · 800 × 480</option><option value="1280x800">Large panel · 1280 × 800</option><option value="1280x720">Desktop · 1280 × 720</option><option value="1920x1080">Full HD · 1920 × 1080</option><option value="2560x1440">QHD · 2560 × 1440</option><option value="3840x2160">4K · 3840 × 2160</option>{#if !['390x844','844x390','768x1024','1024x768','800x480','1280x800','1280x720','1920x1080','2560x1440','3840x2160'].includes(`${viewport.width}x${viewport.height}`)}<option value={`${viewport.width}x${viewport.height}`}>Custom · {viewport.width} × {viewport.height}</option>{/if}</select></label>
+        <label>Screen width<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.width} onchange={e => { setViewport(e.currentTarget.valueAsNumber, viewport.height); e.currentTarget.value=String(viewport.width); }} /></label>
+        <label>Screen height<input class="screen-dimension" type="number" min="320" max="8192" step="1" value={viewport.height} onchange={e => { setViewport(viewport.width, e.currentTarget.valueAsNumber); e.currentTarget.value=String(viewport.height); }} /></label>
         <button onclick={() => setViewport(viewport.height, viewport.width)}><Icon name="refresh" size={16} />Rotate</button>
         <label>Safe area<select value={viewport.safeInsets?.top ? 'inset' : 'none'} onchange={e => command({ type: 'set-viewport', ...viewport, safeInsets: e.currentTarget.value === 'inset' ? { top: .04, right: .02, bottom: .04, left: .02 } : { top: 0, right: 0, bottom: 0, left: 0 } })}><option value="none">Full screen</option><option value="inset">Phone inset</option></select></label>
       </div>
@@ -308,15 +342,17 @@
         <button disabled={selected.length < 2} onclick={() => command({ type: 'add-group', pageId: page.id, label: 'Group', widgetIds: selected })}>Group</button>
         <button disabled={!widget?.groupId} onclick={() => widget?.groupId && command({ type: 'ungroup', id: widget.groupId })}>Ungroup</button>
       </div>
-      <p class="hint">{preview ? 'Local requested values only. Press controls to preview; no network or virtual device is started.' : 'Drag to move. Arrow keys nudge. Shift-click selects several widgets. Resize using the bounds inspector.'}</p>
-      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
+      <div class="canvas-caption"><strong>{viewport.width} × {viewport.height} px</strong><span>{regions.length} {regions.length === 1 ? 'viewport' : 'viewports'}</span></div>
+      {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
+      <p class="hint">{preview ? 'Local requested values only. Press controls to preview; no network or virtual device is started.' : 'Drag viewport labels to move areas; drag a corner to resize. Widgets must stay inside a viewport. Shift-click selects several widgets.'}</p>
+      <PanelCanvas {document} pageId={page.id} assets={imageAssets} mode={preview ? 'preview' : 'edit'} selectedIds={selected} selectedViewportId={activeViewport.id} onselectviewport={selectViewport} onviewportbounds={(id,bounds) => command({ type: 'update-viewport', pageId: page.id, id, patch: { bounds } })} onerror={value => error=value} onselect={select} oncontroller={value => { unsubscribe?.(); controller = value; unsubscribe = value.subscribe(snapshot => previewSnapshot = snapshot); }} onlayout={(id,bounds) => command({ type: 'move-widget', id, bounds })} />
       {#if preview && previewSnapshot}<p role="status" class="hint">Preview {previewSnapshot.armed ? 'armed' : 'disarmed'} · {previewSnapshot.activePointers} active pointers · {previewSnapshot.events.length} recorded transitions · {previewSnapshot.reason}</p><details><summary>Local requested values</summary>{#each document.ui.controls as control}<p class="hint">{control.label}: {String(previewSnapshot.values[control.id])}</p>{/each}</details>{/if}
     </div>
     <aside aria-label="Widget properties"><h3>Properties</h3>
       {#if widget}
         <p class="hint">{widget.kind} · <code>{widget.id}</code></p>
         <label>Label<input value={widget.label} onchange={e => patch({ label: e.currentTarget.value })} /></label>
-        <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field}<input type="number" min="0" max="1" step="0.01" value={widget.bounds[field as keyof Bounds]} onchange={e => changeBounds(field as keyof Bounds, e.currentTarget.valueAsNumber)} /></label>{/each}</div>
+        <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field}<input type="number" min="0" max="1" step="0.01" value={widget.bounds[field as keyof Bounds]} onchange={e => changeBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
         {#each ['foreground','background','accent'] as color}<label>{color}<input type="color" value={widget.style?.[color as keyof NonNullable<DesignerWidget['style']>] ?? (color === 'background' ? '#12232e' : '#55ddc7')} onchange={e => patch({ style: { ...widget.style, [color]: e.currentTarget.value } })} /></label>{/each}
         {#each Object.entries(widget.config).filter(([key])=>!['buttonMode','pulseMs','repeatMs'].includes(key)) as [key,value]}
           {#if typeof value === 'boolean'}<label><input type="checkbox" checked={value} onchange={e => configPatch(key,e.currentTarget.checked)} />{key}</label>
@@ -339,7 +375,15 @@
         {/each}
         {#each widget.feedbackIds as feedbackId}{@const output = document.ui.feedbackWidgets.find(f => f.id === feedbackId)!}<label>Typed feedback channel<input value={output.channelId} onchange={e => updateFeedback(feedbackId,e.currentTarget.value)} /></label>{/each}
         {#if widget.feedbackIds.length}<p class="hint">Output widgets show typed host/simulator feedback with source and freshness when connected.</p>{/if}
-      {:else}<p>Select a widget to edit. Shift-click to select a group.</p>{/if}
+      {:else}
+        <div class="viewport-properties"><p class="eyebrow">VIEWPORT</p>
+          <label>Viewport name<input value={activeViewport.label} disabled={preview} maxlength="120" onchange={e => { command({ type: 'update-viewport', pageId: page.id, id: activeViewport.id, patch: { label: e.currentTarget.value } }); e.currentTarget.value=activeViewport.label; }} /></label>
+          <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field === 'x' ? 'Left' : field === 'y' ? 'Top' : field === 'width' ? 'Width' : 'Height'} (px)<input aria-label={`Viewport ${field}`} type="number" min={field === 'width' || field === 'height' ? 1 : 0} max={field === 'x' || field === 'width' ? usableWidth : usableHeight} step="1" disabled={preview} value={Math.round(activeViewport.bounds[field as keyof Bounds] * (field === 'x' || field === 'width' ? usableWidth : usableHeight) * 100) / 100} onchange={e => changeViewportBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
+          <p class="hint">Widgets move and scale with this viewport. Viewports may touch but cannot overlap.</p>
+          <button disabled={preview || regions.length <= 1 || activeViewportOccupied} onclick={() => { if (command({ type: 'remove-viewport', pageId: page.id, id: activeViewport.id })) selectedViewportId=''; }}>Remove viewport</button>
+          <p class="hint">Move or delete its widgets before removing a viewport.</p>
+        </div>
+      {/if}
       <details><summary>Logical target layouts</summary><p class="hint">Portable descriptors and mappings. Machine slots and credentials are stored separately.</p><button onclick={() => { targetText = JSON.stringify(document.targets, null, 2); }}><Icon name="sliders" size={16} />Edit layouts</button><textarea aria-label="Logical target layouts JSON" rows="8" bind:value={targetText}></textarea><button onclick={() => { try { command({ type: 'replace', document: { ...document, targets: JSON.parse(targetText) } }); } catch (e) { error = String(e); } }}><Icon name="check" size={16} />Apply layouts</button></details>
     </aside>
   </div>
@@ -350,6 +394,7 @@
 
 <style>
   .designer{color:var(--text);min-width:0}.designer>[hidden]{display:none}
+  .viewport-list{display:grid;gap:6px}.viewport-list button{text-align:left;overflow-wrap:anywhere}.viewport-list button.active{border-color:var(--accent);background:var(--accent-bg,var(--surface-raised))}.viewport-list small{display:block;color:var(--muted);font-size:10px;margin-top:4px}.add-viewport{display:flex;align-items:center;gap:5px;width:100%;margin-top:8px}.screen-dimension{width:92px}.canvas-caption{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted);margin-top:18px}.canvas-caption strong{color:var(--text);font-weight:500}.layout-error{border:1px solid #d9666c;background:#52262c44;color:#ffb9bd;border-radius:5px;padding:10px;font-size:12px}.viewport-properties .eyebrow{margin-top:0}
   .back-panels{display:inline-flex;align-items:center;gap:6px;background:transparent;border:0;color:var(--accent);font-size:10px;padding:6px 0;margin-bottom:18px}.back-panels:hover{background:transparent;text-decoration:underline}
   .editor-heading{flex-wrap:wrap}.editor-heading h1{overflow-wrap:anywhere}.editor-heading .primary-button{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:var(--accent-text);border-color:transparent;padding:11px 14px;font-size:11px;font-weight:600}
   .panel-list-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}.panel-import{display:none}.action,.toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px}.panels-section{margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}.panel-list-heading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:20px 0}

@@ -1,6 +1,6 @@
 import type { Bounds, PortableUi, Style } from "../../companion-contracts/src/index.ts";
 export type { Bounds, PortableUi, Style };
-export const DESIGNER_LIMITS = Object.freeze({ history: 50, drafts: 20, widgets: 192, groups: 64, targets: 8, assetPixels: 16777216, totalAssetPixels: 33554432, assetDimension: 8192, bundleBytes: 13 * 1024 * 1024 });
+export const DESIGNER_LIMITS = Object.freeze({ history: 50, drafts: 20, widgets: 192, groups: 64, viewportRegions: 32, targets: 8, assetPixels: 16777216, totalAssetPixels: 33554432, assetDimension: 8192, bundleBytes: 13 * 1024 * 1024 });
 export type WidgetKind = "button" | "selector" | "hat" | "encoder" | "slider" | "xy" | "indicator" | "text" | "numeric" | "icon" | "gauge";
 interface WidgetBase {
   id: string; pageId: string; label: string; bounds: Bounds; controlIds: string[];
@@ -18,7 +18,8 @@ export type DesignerWidget =
   | (WidgetBase & { kind: "numeric" | "gauge"; config: { min: number; max: number; unit: string; precision: number } })
   | (WidgetBase & { kind: "icon"; config: { symbol: "power" | "warning" | "gear" | "check"; iconAssetId?: string } });
 export interface DesignerGroup { id: string; pageId: string; label: string }
-export interface Viewport { pageId: string; width: number; height: number; safeInsets?: { top: number; right: number; bottom: number; left: number }; backgroundAssetId?: string }
+export interface ViewportRegion { id: string; label: string; bounds: Bounds }
+export interface Viewport { pageId: string; width: number; height: number; safeInsets?: { top: number; right: number; bottom: number; left: number }; backgroundAssetId?: string; regions?: ViewportRegion[] }
 export interface LogicalTarget { id: string; label: string; axes: ("unipolar" | "bipolar")[]; buttons: number; hats: number }
 export interface LogicalBinding { controlId: string; targetId: string; kind: "axis" | "button" | "hat"; index: number }
 export interface DesignerDocument {

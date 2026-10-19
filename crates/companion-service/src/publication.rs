@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const DOCUMENT_BYTES: usize = 1024 * 1024;
 pub const ASSET_BYTES: usize = 2 * 1024 * 1024;
@@ -133,16 +133,40 @@ fn style(v: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn bounds(v: &Value) -> Result<(), String> {
+#[derive(Clone, Copy)]
+struct Bounds {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+impl Bounds {
+    fn contains(self, other: Self) -> bool {
+        const EPSILON: f64 = 1e-9;
+        other.x >= self.x - EPSILON
+            && other.y >= self.y - EPSILON
+            && other.x + other.width <= self.x + self.width + EPSILON
+            && other.y + other.height <= self.y + self.height + EPSILON
+    }
+    fn overlaps(self, other: Self) -> bool {
+        const EPSILON: f64 = 1e-9;
+        (self.x + self.width).min(other.x + other.width) - self.x.max(other.x) > EPSILON
+            && (self.y + self.height).min(other.y + other.height) - self.y.max(other.y) > EPSILON
+    }
+}
+fn bounds(v: &Value, message: &str) -> Result<Bounds, String> {
     object(v, &["x", "y", "width", "height"], &[])?;
     let x = number(&v["x"], 0., 1.)?;
     let y = number(&v["y"], 0., 1.)?;
     let w = number(&v["width"], 0., 1.)?;
     let h = number(&v["height"], 0., 1.)?;
-    ensure(
-        w > 0. && h > 0. && x + w <= 1. && y + h <= 1.,
-        "Widget lies outside its page.",
-    )
+    ensure(w > 0. && h > 0. && x + w <= 1. && y + h <= 1., message)?;
+    Ok(Bounds {
+        x,
+        y,
+        width: w,
+        height: h,
+    })
 }
 fn sorted(mut values: Vec<Value>, key: &str) -> Vec<Value> {
     values.sort_by(|a, b| a[key].as_str().cmp(&b[key].as_str()));
@@ -280,7 +304,7 @@ impl Publication {
             for item in list(&page["items"], 0, 192)? {
                 object(item, &["kind", "refId", "bounds"], &[])?;
                 stable(&item["refId"])?;
-                bounds(&item["bounds"])?;
+                bounds(&item["bounds"], "Widget lies outside its page.")?;
             }
         }
         let assets = list(&ui["assets"], 0, 64)?;
@@ -350,11 +374,12 @@ impl Publication {
             )?;
         }
         let mut viewport_pages = BTreeSet::new();
+        let mut viewport_regions = BTreeMap::new();
         for v in list(&p["viewports"], pages.len(), pages.len())? {
             object(
                 v,
                 &["pageId", "width", "height"],
-                &["safeInsets", "backgroundAssetId"],
+                &["safeInsets", "backgroundAssetId", "regions"],
             )?;
             let page = stable(&v["pageId"])?;
             ensure(
@@ -363,6 +388,24 @@ impl Publication {
             )?;
             integer(&v["width"], 320, 8192)?;
             integer(&v["height"], 320, 8192)?;
+            if let Some(regions) = v.get("regions") {
+                let mut areas: Vec<Bounds> = Vec::new();
+                for region in list(regions, 1, 32)? {
+                    object(region, &["id", "label", "bounds"], &[])?;
+                    unique(&region["id"])?;
+                    text(&region["label"])?;
+                    let area = bounds(
+                        &region["bounds"],
+                        "Viewport lies outside its companion screen.",
+                    )?;
+                    ensure(
+                        areas.iter().all(|other| !area.overlaps(*other)),
+                        "Companion viewports must not overlap.",
+                    )?;
+                    areas.push(area);
+                }
+                viewport_regions.insert(page, areas);
+            }
             if let Some(i) = v.get("safeInsets") {
                 object(i, &["top", "right", "bottom", "left"], &[])?;
                 for n in i.as_object().unwrap().values() {
@@ -402,11 +445,17 @@ impl Publication {
             )?;
             unique(&w["id"])?;
             text(&w["label"])?;
-            bounds(&w["bounds"])?;
+            let widget_bounds = bounds(&w["bounds"], "Widget lies outside its page.")?;
             ensure(
                 pages.iter().any(|p| p["id"] == w["pageId"]),
                 "Unknown widget page.",
             )?;
+            if let Some(regions) = viewport_regions.get(w["pageId"].as_str().unwrap()) {
+                ensure(
+                    regions.iter().any(|area| area.contains(widget_bounds)),
+                    "Widget must be entirely inside one companion viewport.",
+                )?;
+            }
             if let Some(s) = w.get("style") {
                 style(s)?;
             }
@@ -840,4 +889,196 @@ fn validate_raster(bytes: &[u8], mime: &str) -> Result<u64, String> {
         "Decoded asset dimensions exceed budget.",
     )?;
     Ok((w as u64) * (h as u64))
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::*;
+
+    fn document() -> Value {
+        let left = json!({"x":0.1,"y":0.1,"width":0.2,"height":0.2});
+        let right = json!({"x":0.6,"y":0.1,"width":0.2,"height":0.2});
+        json!({
+            "schemaVersion":2,
+            "ui":{
+                "schemaVersion":1,"id":"panel","title":"Panel",
+                "controls":[
+                    {"id":"input-left","label":"Left","kind":"button"},
+                    {"id":"input-right","label":"Right","kind":"button"}
+                ],
+                "pages":[{"id":"page","title":"Page","items":[
+                    {"kind":"control","refId":"input-left","bounds":left},
+                    {"kind":"control","refId":"input-right","bounds":right}
+                ]}],
+                "feedbackWidgets":[],"assets":[]
+            },
+            "presentation":{
+                "widgets":[
+                    {"id":"widget-left","pageId":"page","kind":"button","label":"Left",
+                     "bounds":left,"controlIds":["input-left"],"feedbackIds":[],
+                     "config":{"buttonMode":"momentary","pulseMs":0,"repeatMs":0}},
+                    {"id":"widget-right","pageId":"page","kind":"button","label":"Right",
+                     "bounds":right,"controlIds":["input-right"],"feedbackIds":[],
+                     "config":{"buttonMode":"momentary","pulseMs":0,"repeatMs":0}}
+                ],
+                "groups":[],"viewports":[{"pageId":"page","width":1920,"height":1080}],
+                "grid":{"columns":24,"rows":16,"snap":true}
+            },
+            "targets":[{"id":"target","label":"Controller","axes":[],"buttons":2,"hats":0}],
+            "bindings":[
+                {"controlId":"input-left","targetId":"target","kind":"button","index":0},
+                {"controlId":"input-right","targetId":"target","kind":"button","index":1}
+            ]
+        })
+    }
+
+    fn region(id: &str, x: f64, y: f64, width: f64, height: f64) -> Value {
+        json!({"id":id,"label":id,"bounds":{"x":x,"y":y,"width":width,"height":height}})
+    }
+
+    fn adjacent_regions() -> Value {
+        json!([
+            region("viewport-left", 0., 0., 0.5, 1.),
+            region("viewport-right", 0.5, 0., 0.5, 1.)
+        ])
+    }
+
+    fn validate(document: Value) -> Result<Publication, String> {
+        let canonical_document = serde_json_canonicalizer::to_string(&document).unwrap();
+        let publication_hash = format!("sha256:{}", hash(canonical_document.as_bytes()));
+        Publication::validate(PublicationUpload {
+            canonical_document,
+            publication_hash,
+            capability_fingerprint: None,
+            assets: vec![],
+        })
+    }
+
+    #[test]
+    fn legacy_screen_and_adjacent_viewports_preserve_capabilities() {
+        let mut document = document();
+        let legacy = validate(document.clone()).unwrap();
+        document["presentation"]["viewports"][0]["regions"] = adjacent_regions();
+        let multiple = validate(document).unwrap();
+        assert_ne!(legacy.publication_hash, multiple.publication_hash);
+        assert_eq!(
+            legacy.capability_fingerprint,
+            multiple.capability_fingerprint
+        );
+    }
+
+    #[test]
+    fn viewport_overlap_is_rejected_including_nested_areas() {
+        for right in [
+            region("viewport-right", 0.4, 0., 0.6, 1.),
+            region("viewport-right", 0.1, 0.1, 0.2, 0.2),
+        ] {
+            let mut document = document();
+            document["presentation"]["viewports"][0]["regions"] =
+                json!([region("viewport-left", 0., 0., 0.5, 1.), right]);
+            assert_eq!(
+                validate(document).unwrap_err(),
+                "Companion viewports must not overlap."
+            );
+        }
+    }
+
+    #[test]
+    fn viewport_overlap_tolerance_matches_intersection_depth() {
+        let outer = bounds(
+            &json!({"x":0.,"y":0.,"width":0.5,"height":1.}),
+            "Invalid test bounds.",
+        )
+        .unwrap();
+        for (width, overlaps) in [(1e-10, false), (1e-8, true)] {
+            let inner = bounds(
+                &json!({"x":0.25,"y":0.,"width":width,"height":1.}),
+                "Invalid test bounds.",
+            )
+            .unwrap();
+            assert_eq!(outer.overlaps(inner), overlaps);
+            assert_eq!(inner.overlaps(outer), overlaps);
+        }
+    }
+
+    #[test]
+    fn widgets_must_fit_one_viewport_including_at_shared_edges() {
+        let mut document = document();
+        document["presentation"]["viewports"][0]["regions"] = adjacent_regions();
+        let edge = json!({"x":0.,"y":0.,"width":0.5,"height":1.});
+        document["presentation"]["widgets"][0]["bounds"] = edge.clone();
+        document["ui"]["pages"][0]["items"][0]["bounds"] = edge;
+        validate(document.clone()).unwrap();
+        // Crossing adjacent areas is invalid even when their union covers the widget.
+        document["presentation"]["widgets"][0]["bounds"]["x"] = json!(0.1);
+        assert_eq!(
+            validate(document).unwrap_err(),
+            "Widget must be entirely inside one companion viewport."
+        );
+
+        let mut document = self::document();
+        document["presentation"]["viewports"][0]["regions"] = json!([
+            region("viewport-left", 0., 0., 0.4, 1.),
+            region("viewport-right", 0.8, 0., 0.2, 1.)
+        ]);
+        assert_eq!(
+            validate(document).unwrap_err(),
+            "Widget must be entirely inside one companion viewport."
+        );
+    }
+
+    #[test]
+    fn viewport_bounds_and_region_budget_are_validated() {
+        for regions in [
+            json!([]),
+            json!((0..33)
+                .map(|i| region(&format!("viewport-{i}"), 0., 0., 1., 1.))
+                .collect::<Vec<_>>()),
+            json!([region("viewport", 0.75, 0., 0.5, 1.)]),
+            json!([region("viewport", 0., 0.75, 1., 0.5)]),
+            json!([region("viewport", -0.1, 0., 1., 1.)]),
+            json!([region("viewport", 0., 0., 0., 1.)]),
+            json!([region("viewport", 0., 0., 1., 0.)]),
+        ] {
+            let mut document = document();
+            document["presentation"]["viewports"][0]["regions"] = regions;
+            assert!(validate(document).is_err());
+        }
+    }
+
+    #[test]
+    fn viewport_ids_are_document_unique_and_labels_are_validated() {
+        for (id, label) in [
+            ("input-left", "Viewport"),
+            ("bad id", "Viewport"),
+            ("viewport", " "),
+        ] {
+            let mut document = document();
+            document["presentation"]["viewports"][0]["regions"] = json!([
+                {"id":id,"label":label,"bounds":{"x":0.,"y":0.,"width":1.,"height":1.}}
+            ]);
+            assert!(validate(document).is_err());
+        }
+    }
+
+    #[test]
+    fn viewport_geometry_is_per_page_but_region_ids_are_document_unique() {
+        let mut document = document();
+        document["presentation"]["viewports"][0]["regions"] =
+            json!([region("viewport-first", 0., 0., 1., 1.)]);
+        document["ui"]["pages"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"second-page","title":"Second page","items":[]}));
+        document["presentation"]["viewports"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "pageId":"second-page","width":1920,"height":1080,
+                "regions":[region("viewport-second", 0., 0., 1., 1.)]
+            }));
+        validate(document.clone()).unwrap();
+        document["presentation"]["viewports"][1]["regions"][0]["id"] = json!("viewport-first");
+        assert_eq!(validate(document).unwrap_err(), "Duplicate publication ID.");
+    }
 }
