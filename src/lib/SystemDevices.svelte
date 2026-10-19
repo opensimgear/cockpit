@@ -23,6 +23,7 @@
   let detailsOpen = $state(false);
   let inventoryElement: HTMLDivElement | undefined;
   let busy = $state(false), error = $state(''), confirmation = $state<SystemComponent[]>([]);
+  let cleanupSelection = $state<string[]>([]), cleanupRunning = $state(false);
   let refreshTask: Promise<SystemSnapshot> | undefined;
   let controller: SystemInventoryController;
   let reviewEpoch = 0;
@@ -31,6 +32,10 @@
   const selected = $derived(components.find(c => c.id === selectedId));
   const showingDetails = $derived(detailsOpen && !!selected && active);
   const eligible = $derived(visible.filter(c => c.forget.allowed));
+  const cleanupAvailable = $derived(confirmation.filter(canCleanup));
+  const cleanupSelected = $derived(cleanupAvailable.filter(c => cleanupSelection.includes(c.id)));
+  const cleanupAllSelected = $derived(cleanupAvailable.length > 0 && cleanupSelected.length === cleanupAvailable.length);
+  const cleanupPartSelected = $derived(cleanupSelected.length > 0 && !cleanupAllSelected);
   const captureLabels: Record<SystemComponent['capture'], string> = { ready: 'Ready', waiting: 'Waiting', unavailable: 'Unavailable', unknown: 'Unknown' };
   const date = (timestamp: number) => timestamp ? new Date(timestamp).toLocaleString() : 'Never observed connected';
   function select(id: string) { selectedId = id; detailsOpen = true; onNavigate?.(id); }
@@ -57,31 +62,47 @@
     }
   }
   function setMode(value: string) { mode = value; try { localStorage.setItem('osg-devices-mode', value); } catch { /* mode remains usable */ } }
+  function canCleanup(component: SystemComponent) {
+    const current = snapshot.components.find(item => item.id === component.id);
+    return !!current?.forget.allowed && current.presence !== 'connected' && !current.owner && !current.hidden;
+  }
+  function selectCleanup(id: string, checked: boolean) {
+    cleanupSelection = checked ? [...new Set([...cleanupSelection, id])] : cleanupSelection.filter(item => item !== id);
+  }
+  function closeCleanup() {
+    if (cleanupRunning) return;
+    reviewEpoch++; confirmation = []; cleanupSelection = [];
+  }
   async function reviewForget(items: SystemComponent[]) {
     if (busy) return;
     const epoch = ++reviewEpoch;
-    busy = true; confirmation = items;
+    busy = true; confirmation = items; cleanupSelection = items.map(item => item.id);
     try {
       await refreshTask?.catch(() => undefined);
       if (epoch !== reviewEpoch) return;
       const reviewed = await controller.reviewForget(items.map(c => c.id));
-      if (epoch === reviewEpoch) confirmation = reviewed;
+      if (epoch === reviewEpoch) {
+        confirmation = reviewed;
+        cleanupSelection = cleanupSelection.filter(id => reviewed.some(item => item.id === id));
+      }
     }
+    catch (e) { if (epoch === reviewEpoch) { error = String(e); closeCleanup(); } }
     finally { busy = false; }
   }
   async function forget() {
-    if (busy) return;
-    busy = true; const failures: string[] = [];
+    const items = [...cleanupSelected];
+    if (busy || !items.length) return;
+    busy = true; cleanupRunning = true; const failures: string[] = [];
     await refreshTask?.catch(() => undefined);
-    for (const c of confirmation) {
+    for (const c of items) {
       try { await controller.forget(c.id); if (selectedId === c.id) { selectedId = ''; detailsOpen = false; onNavigate?.(null); } }
       catch (e) { failures.push(`${c.name}: ${String(e)}`); }
     }
-    confirmation = []; error = failures.join('\n'); busy = false;
+    confirmation = []; cleanupSelection = []; cleanupRunning = false; error = failures.join('\n'); busy = false;
     await refresh();
     if (failures.length) error = failures.join('\n');
   }
-  function dialog(node: HTMLDialogElement) { node.showModal(); return { destroy: () => node.close() }; }
+  function dialog(node: HTMLDialogElement) { node.showModal(); node.querySelector<HTMLButtonElement>('[data-cleanup-cancel]')?.focus(); return { destroy: () => node.close() }; }
   onMount(() => {
     let storage: InventoryStorage;
     try { storage = localStorage; mode = storage.getItem('osg-devices-mode') === 'topology' ? 'topology' : 'list'; }
@@ -177,10 +198,25 @@
   </section>
 {/if}
 {#if confirmation.length}
-  <dialog use:dialog oncancel={() => { reviewEpoch++; confirmation = []; }} aria-labelledby="forget-title">
-    <h2 id="forget-title">Forget {confirmation.length === 1 ? confirmation[0].name : `${confirmation.length} components`}?</h2>
-    {#each confirmation as c}<div><h3>{c.name}</h3><p>{c.forget.effect}</p>{#each c.diagnostics.filter(d => d.startsWith('Affected stored references')) as diagnostic}<p>{diagnostic}</p>{/each}{#if c.references.length}<p>Affected references (retained as unresolved): {c.references.map(r => r.name).join(', ')}</p>{/if}</div>{/each}
-    <div class="component-actions"><button class="secondary-button" disabled={busy} onclick={() => { reviewEpoch++; confirmation = []; }}>Cancel</button><button class="primary-button" disabled={busy} onclick={forget}>Confirm forget</button></div>
+  <dialog class="cleanup-dialog" use:dialog oncancel={event => { if (cleanupRunning) event.preventDefault(); else closeCleanup(); }} aria-labelledby="cleanup-title" aria-describedby="cleanup-help">
+    <header class="cleanup-heading"><h2 id="cleanup-title">Cleanup devices</h2><p id="cleanup-help">Select the devices to forget. Review what will be removed before confirming.</p></header>
+    <div class="cleanup-body">
+      <p class="cleanup-summary" role="status">{cleanupRunning ? 'Cleaning up selected devices…' : busy ? 'Checking stored references…' : `${cleanupSelected.length} of ${confirmation.length} selected`}</p>
+      <div class="cleanup-table-wrap">
+        <table class="cleanup-table" aria-label="Devices to clean up">
+          <colgroup><col class="cleanup-select-column" /><col class="cleanup-name-column" /><col /></colgroup>
+          <thead><tr><th scope="col" class="cleanup-checkbox"><label><input type="checkbox" aria-label="Select all" checked={cleanupAllSelected} indeterminate={cleanupPartSelected} disabled={busy || !cleanupAvailable.length} onchange={event => cleanupSelection = event.currentTarget.checked ? cleanupAvailable.map(item => item.id) : []} /><span>Select all</span></label></th><th scope="col">Name</th><th scope="col">Description</th></tr></thead>
+          <tbody>{#each confirmation as c (c.id)}
+            <tr class:cleanup-unavailable={!canCleanup(c)}>
+              <td class="cleanup-checkbox"><input type="checkbox" aria-label={`Select ${c.name}`} checked={cleanupSelected.some(item => item.id === c.id)} disabled={busy || !canCleanup(c)} onchange={event => selectCleanup(c.id, event.currentTarget.checked)} /></td>
+              <th scope="row">{c.name}</th>
+              <td><p>{c.forget.effect}</p>{#each c.diagnostics.filter(d => d.startsWith('Affected stored references')) as diagnostic}<p class="cleanup-reference">{diagnostic}</p>{/each}{#if c.references.length}<p class="cleanup-reference"><strong>Affected references (retained as unresolved):</strong> {c.references.map(r => r.name).join(', ')}</p>{/if}{#if !canCleanup(c)}<p class="cleanup-reference">{snapshot.components.find(item => item.id === c.id)?.forget.reason || 'This device is no longer eligible for cleanup.'}</p>{/if}</td>
+            </tr>
+          {/each}</tbody>
+        </table>
+      </div>
+    </div>
+    <footer class="cleanup-actions"><button class="secondary-button destructive-button" disabled={busy || !cleanupSelected.length} onclick={forget}>Confirm</button><button class="secondary-button" data-cleanup-cancel disabled={cleanupRunning} onclick={closeCleanup}>Cancel</button></footer>
   </dialog>
 {/if}
 
@@ -238,7 +274,15 @@
   .identity-details[open] > summary { border-bottom: 1px solid var(--line); }
   .identity-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   .evidence-list { margin: 18px 0 0; padding-left: 16px; }
-  .provider-diagnostics {margin:16px 0}.provider-diagnostics p {font-size:12px}dialog {max-width:650px;max-height:80vh;overflow:auto;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:14px;padding:28px}dialog::backdrop {background:#0009}
+  .provider-diagnostics {margin:16px 0}.provider-diagnostics p {font-size:12px}
+  .cleanup-dialog {width:min(920px,calc(100vw - 48px));max-width:none;max-height:80dvh;margin:auto;padding:0;overflow:hidden;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:12px;box-shadow:0 24px 80px #0006}
+  .cleanup-dialog[open] {display:flex;flex-direction:column}.cleanup-dialog::backdrop {background:#0009}
+  .cleanup-heading {padding:24px;flex-shrink:0}.cleanup-heading h2 {font-size:20px;font-weight:600;letter-spacing:-.35px;line-height:1.35}.cleanup-heading p {margin-top:8px;font-size:12px;line-height:1.65;color:var(--muted)}
+  .cleanup-body {display:flex;flex-direction:column;gap:12px;min-height:0;padding:0 24px 24px}.cleanup-summary {flex-shrink:0;font-size:11px;line-height:1.5;color:var(--soft)}.cleanup-table-wrap {min-height:0;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .cleanup-table {width:100%;min-width:560px;table-layout:fixed;border-collapse:collapse;text-align:left}.cleanup-select-column {width:108px}.cleanup-name-column {width:24%}.cleanup-table th,.cleanup-table td {padding:16px 12px;vertical-align:top;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.cleanup-table thead th {position:sticky;top:0;background:var(--surface-raised);font-size:11px;font-weight:600;color:var(--soft);z-index:1}.cleanup-table tbody th {font-size:13px;font-weight:600;line-height:1.65;color:var(--text)}.cleanup-table tbody tr:last-child>* {border-bottom:0}
+  .cleanup-table .cleanup-checkbox {text-align:left}.cleanup-checkbox label {display:inline-flex;align-items:center;gap:8px;white-space:nowrap;cursor:pointer}.cleanup-checkbox input {width:16px;height:16px;margin:0;vertical-align:middle;accent-color:var(--accent);cursor:pointer}.cleanup-checkbox input:disabled {cursor:not-allowed;opacity:.45}.cleanup-table td>p {font-size:12px;line-height:1.65;color:var(--soft);margin:0}.cleanup-table td>p+p {margin-top:10px}.cleanup-table td>.cleanup-reference {font-size:11px;color:var(--muted)}.cleanup-reference strong {font-weight:600}.cleanup-table .cleanup-unavailable th,.cleanup-table .cleanup-unavailable td {color:var(--muted)}
+  .cleanup-actions {display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:24px;border-top:1px solid var(--line);flex-shrink:0}.cleanup-actions button {min-width:86px}.cleanup-actions .destructive-button {background:#b32b38;border-color:#cd4552;color:#fff}.cleanup-actions .destructive-button:hover:enabled {background:#98232e;border-color:#e35d69;color:#fff}
+  @media(max-width:700px){.cleanup-dialog {width:calc(100vw - 32px)}.cleanup-heading {padding:20px}.cleanup-body {padding:0 20px 20px}.cleanup-actions {padding:20px}}
   @media(max-width:1000px){.detail-summary {grid-template-columns:minmax(0,1fr)}}
   @media(max-width:700px){.system-list {gap:12px}.system-card {padding:16px;min-height:172px}}
   @media(max-width:520px){.detail-heading {flex-wrap:wrap;gap:14px}.detail-title {gap:10px}.detail-icon {width:40px;height:40px}.detail-body {padding:17px 15px}.connection-list li {padding:17px 15px}.detail-metadata > div {grid-template-columns:1fr;gap:3px}.identity-details > summary {padding:17px 15px}}

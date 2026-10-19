@@ -649,29 +649,55 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // remembered snapshots remain suppressed after reload; reconnect may return.
     await devices.locator('[data-component-id="virtual:vjoy:4"]').click();
     await details.getByRole('button', { name: 'Forget device', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: /^Forget / });
+    const dialog = page.getByRole('dialog', { name: 'Cleanup devices', exact: true });
     await expect(dialog).toContainText('OS device, vJoy layout, driver and bindings are retained');
     await expect(dialog).toContainText('retained-virtual-binding');
-    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
     await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
     await waitForInventoryRefresh(); await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
-    // Both renderer modes use the same bulk eligibility and revalidate after
-    // confirmation. A returning wheel cannot be removed; one failed throttle
-    // mutation is reported without replay, and the other records stay visible.
+    // Bulk cleanup offers a selectable table. Cancel and unchecked rows never
+    // mutate devices, while each checked row is revalidated before removal.
     await filter.selectOption('offline'); await search.fill('Remembered'); await topology.click();
     await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
     await expect(dialog).toContainText('Remembered wheel'); await expect(dialog).toContainText('Remembered throttle');
     await expect(dialog).toContainText('retained-throttle-binding');
-    fixture.controllers.find(source => source.id === 'remembered-wheel').online = true;
+    const cleanupTable = dialog.getByRole('table', { name: 'Devices to clean up', exact: true });
+    await expect(cleanupTable.getByRole('columnheader', { name: 'Name', exact: true })).toBeVisible();
+    await expect(cleanupTable.getByRole('columnheader', { name: 'Description', exact: true })).toBeVisible();
+    const selectAll = dialog.getByRole('checkbox', { name: 'Select all', exact: true });
+    const selectWheel = dialog.getByRole('checkbox', { name: 'Select Remembered wheel', exact: true });
+    const selectThrottle = dialog.getByRole('checkbox', { name: 'Select Remembered throttle', exact: true });
+    const confirmCleanup = dialog.getByRole('button', { name: 'Confirm', exact: true });
+    await expect(selectAll).toBeChecked();
+    await expect(selectWheel).toBeChecked(); await expect(selectThrottle).toBeChecked();
+    await selectAll.uncheck();
+    await expect(selectWheel).not.toBeChecked(); await expect(selectThrottle).not.toBeChecked();
+    await expect(confirmCleanup).toBeDisabled();
+    await selectAll.check(); await selectWheel.uncheck();
+    await expect(selectAll).toBeChecked({ indeterminate: true });
+    await expect(selectThrottle).toBeChecked(); await expect(confirmCleanup).toBeEnabled();
+    const beforeCancel = requests.filter(request => request.command === 'controller_forget').length;
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    assert.equal(requests.filter(request => request.command === 'controller_forget').length, beforeCancel);
+    await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
+    await expect(selectAll).toBeChecked();
+    await selectWheel.uncheck();
     fixture.failForget = 'remembered-throttle';
-    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await confirmCleanup.click();
     await expect(page.getByText(/Remembered throttle: Error: Fixture removal failed once/)).toBeVisible();
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-wheel').length, 0);
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-throttle').length, 1);
+    // Failure is reported without replay. On retry a returning wheel cannot
+    // be removed, and an unchanged remembered throttle stays suppressed.
     fixture.failForget = null; fixture.keepForgotten = true;
-    await page.getByRole('button', { name: 'Cleanup (1)', exact: true }).click();
-    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
+    await expect(selectWheel).toBeChecked(); await expect(selectThrottle).toBeChecked();
+    fixture.controllers.find(source => source.id === 'remembered-wheel').online = true;
+    await confirmCleanup.click();
     await expect(graph.locator('[data-component-id="controller:remembered-throttle"]')).toHaveCount(0);
+    assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-wheel').length, 0);
+    assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-throttle').length, 2);
     await filter.selectOption('all'); await search.fill(''); await list.click();
     // Mode survives remount and page reload; no inspection acquired ownership.
     await topology.click(); await page.reload(); await nav.getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
@@ -691,7 +717,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await graph.locator(`[data-component-id="gateway:${firstGateway}"]`).click();
     await details.getByRole('button', { name: 'Forget device', exact: true }).click();
     await expect(dialog).toContainText('unavailable gateway cannot confirm');
-    await dialog.getByRole('button', { name: 'Confirm forget', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
     await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
     await expect(graph.locator('[data-component-id="resource:verified-dual"]')).toBeVisible();
