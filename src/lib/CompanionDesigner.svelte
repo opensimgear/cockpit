@@ -419,12 +419,12 @@
   <div inert={busy}>
   <div class="workspace">
     <aside class="panel-library" aria-label="Panel library">
-      <details class="editor-accordion"><summary>Pages</summary><div class="accordion-content">
+      <details class="editor-accordion"><summary>Pages<button class="accordion-info" aria-label="About pages" title="Adding pages is a work in progress and is currently unavailable." onclick={e=>e.stopPropagation()}><Icon name="info" size={16}/></button></summary><div class="accordion-content">
         <ul class="page-list" aria-label="Panel pages">{#each document.ui.pages as p,index (p.id)}<li>
           <button class="page-select" class:active={p.id === page.id} aria-pressed={p.id === page.id} onclick={() => { stop(); pageId=p.id;select([]); }}>Page {index}{#if !/^Page \d+$/.test(p.title)}<small>{p.title}</small>{/if}</button>
           {#if document.ui.pages.length > 1}<button class="page-delete" aria-label={`Delete page ${index}`} title="Delete page" onclick={() => { command({ type:'delete-page',id:p.id });select([]); }}><Icon name="trash" size={15}/></button>{/if}
         </li>{/each}</ul>
-        <div class="accordion-add"><button class="action" onclick={() => { if(command({ type: 'add-page', title: `Page ${document.ui.pages.length}` })){ pageId = document.ui.pages.at(-1)!.id; select([]); } }}><Icon name="plus" size={16} />Add page</button></div>
+        <div class="accordion-add" title="Adding pages is a work in progress and is currently unavailable."><button class="action" disabled><Icon name="plus" size={16} />Add page</button></div>
       </div></details>
       <details class="editor-accordion" open><summary>Viewports<button class="accordion-info" aria-label="About viewports" title="About viewports" popovertarget="viewport-help" onclick={e => e.stopPropagation()}><Icon name="info" size={16}/></button></summary><div class="accordion-content">
       <div id="viewport-help" class="viewport-help" popover role="dialog" aria-label="Viewport help">
@@ -434,9 +434,9 @@
         <p>Click a viewport to edit its properties; click it again to deselect. Drag its label to move it, or its corner to resize it. Hold Ctrl while dragging to bypass grid snapping.</p>
         <p>Widgets must stay inside a viewport, and viewports cannot overlap. Move or delete a viewport’s widgets before deleting it. Every page must keep at least one viewport.</p>
       </div>
-      <div class="viewport-list">{#each regions as region}<div class="viewport-row">
+      <div class="viewport-list">{#each regions as region}<div class="viewport-row" class:active={propertiesOpen && !selected.length && region.id === activeViewport.id}>
         {#if editingViewportId===region.id}<input class="viewport-name-input" aria-label="Viewport name" maxlength="120" bind:value={viewportNameDraft} use:focusName onblur={finishViewportName} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();finishViewportName();}else if(event.key==='Escape'){event.preventDefault();editingViewportId='';}}}/>
-        {:else}<button class="viewport-select" class:active={propertiesOpen && !selected.length && region.id === activeViewport.id} aria-pressed={propertiesOpen && !selected.length && region.id === activeViewport.id} title="Edit viewport name" disabled={preview} onclick={() => editViewportName(region.id,region.label)}><span>{region.label}</span><span class="viewport-pencil"><Icon name="pencil" size={14}/></span></button>{/if}
+        {:else}<button class="viewport-select" aria-label={`Select viewport ${region.label}`} class:active={propertiesOpen && !selected.length && region.id === activeViewport.id} aria-pressed={propertiesOpen && !selected.length && region.id === activeViewport.id} disabled={preview} onclick={() => selectViewport(region.id)}><span class="viewport-name-space" aria-hidden="true">{region.label}</span></button><button class="viewport-name-button" aria-label={`Edit viewport name ${region.label}`} title="Edit viewport name" disabled={preview} onclick={() => editViewportName(region.id,region.label)}><span>{region.label}</span><span class="viewport-pencil"><Icon name="pencil" size={14}/></span></button>{/if}
         {#if regions.length > 1}<button class="viewport-delete" aria-label={`Delete viewport ${region.label}`} title={document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(region.bounds,w.bounds)) ? 'Move or delete its widgets before removing this viewport' : 'Delete viewport'} disabled={preview || document.presentation.widgets.some(w => w.pageId === page.id && boundsContain(region.bounds,w.bounds))} onclick={() => removeViewport(region.id)}><Icon name="trash" size={15}/></button>{/if}
       </div>{/each}</div>
       <div class="accordion-add"><button class="action" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={16} />Add viewport</button></div>
@@ -445,13 +445,14 @@
       <p class="hint">Add to {activeViewport.label}</p>
       <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} onclick={() => { if (command({ type: 'add-widget', kind: preset.kind, pageId: page.id, viewportId: activeViewport.id })) select([document.presentation.widgets.at(-1)!.id]); }}>{preset.title}</button>{/each}</div>
       </div></details>
-      <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content"><p class="hint">PNG, JPEG or WebP · 2 MiB each · 8 MiB total</p>
-      <button class="action" disabled={busy} onclick={()=>assetInput?.click()}><Icon name="plus" size={14}/>Add asset</button>
+      <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content">
+
       <input class="asset-import" bind:this={assetInput} aria-label="Add panel image" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onchange={e => {void addAsset(e.currentTarget.files?.[0]);e.currentTarget.value='';}} />
       <ul class="asset-list" aria-label="Panel assets">{#each document.ui.assets as asset,index (asset.id)}<li data-asset-id={asset.id}>
         <img src={imageAssets[asset.id]} alt=""/><div><strong>Image {index+1}</strong><small>{asset.mime.split('/')[1].toUpperCase()} · {Math.max(1,Math.ceil(asset.sizeBytes/1024))} KB</small></div>
         <button class="asset-delete" aria-label={`Delete image ${index+1}`} title="Delete asset" disabled={busy} onclick={()=>removeAsset(asset.id)}><Icon name="trash" size={15}/></button>
       </li>{:else}<li class="assets-empty">No assets yet.</li>{/each}</ul>
+      <div class="accordion-add"><button class="action" title="PNG, JPEG or WebP · 2 MiB each · 8 MiB total" disabled={busy} onclick={()=>assetInput?.click()}><Icon name="plus" size={16}/>Add asset</button></div>
       <label>Page background<select value={viewport.backgroundAssetId ?? ''} onchange={e => command({ type: 'set-viewport', ...viewport, backgroundAssetId: e.currentTarget.value || undefined })}><option value="">None</option>{#each document.ui.assets as a}<option value={a.id}>{a.id}</option>{/each}</select></label>
       </div></details>
       <details class="editor-accordion"><summary>Grid</summary><div class="accordion-content">
@@ -551,7 +552,7 @@
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
   .action-tooltip{display:inline-flex}
   .leave-panel-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);max-width:460px;width:calc(100% - 40px);box-sizing:border-box;padding:26px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005;color:var(--text);margin:0}.leave-panel-dialog::backdrop{background:#0009}.leave-panel-dialog h2{font-size:14px}.leave-panel-dialog p{font-size:11px;color:var(--muted);line-height:1.8;margin:15px 0 23px}.leave-panel-dialog>div{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.leave-panel-dialog button{font-size:10px}
-  .viewport-row .viewport-select{display:flex;align-items:center;gap:8px}.viewport-select > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewport-pencil{display:flex;opacity:0;color:var(--muted)}.viewport-row:hover .viewport-pencil,.viewport-row:focus-within .viewport-pencil{opacity:1}.viewport-name-input{width:100%;padding-right:36px}
+  .viewport-name-space{visibility:hidden}.viewport-row .viewport-name-button{position:absolute;left:9px;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 48px);padding:0;border:0;background:transparent}.viewport-name-button > span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewport-row.active .viewport-name-button{color:var(--accent)}.viewport-pencil{display:flex;opacity:0;color:var(--muted)}.viewport-row:hover .viewport-pencil,.viewport-row:focus-within .viewport-pencil{opacity:1}.viewport-name-input{width:100%;padding-right:36px}
   @media(hover:none){.viewport-pencil{opacity:1}}
   .accordion-info{float:right;display:inline-flex;align-items:center;justify-content:center;padding:3px;margin:-3px 0;background:transparent;border:0;color:var(--muted)}.viewport-help{width:min(360px,calc(100vw - 32px));box-sizing:border-box;max-height:80vh;overflow:auto;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px #0005}.viewport-help h3{margin:0 28px 12px 0;font-size:16px}.viewport-help p:last-child{margin-bottom:0}.help-close{float:right;display:grid;place-items:center;padding:3px;background:transparent;border:0;color:var(--muted)}
   .viewport-row{position:relative;min-width:0}.viewport-select{width:100%;padding-right:36px}.viewport-row .viewport-delete{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;padding:5px;color:#e39b9b;opacity:0;pointer-events:none}.viewport-row:hover .viewport-delete,.viewport-row:focus-within .viewport-delete{opacity:1;pointer-events:auto}

@@ -609,13 +609,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(panelEditor.locator('.viewport-list')).toBeVisible();
     await page.keyboard.press('Escape');await expect(viewportHelp).not.toBeVisible();
     const viewportRows=panelEditor.locator('.viewport-row');
-    const originalViewportName=await viewportRows.first().locator('.viewport-select').innerText();
+    const originalViewportName=await viewportRows.first().locator('.viewport-select').textContent();
     await expect(viewportRows.locator('small')).toHaveCount(0);
-    await viewportRows.first().locator('.viewport-select').click();
+    await viewportRows.first().locator('.viewport-name-button').click();
     const inlineViewportName=viewportRows.getByRole('textbox',{name:'Viewport name',exact:true});
     await expect(inlineViewportName).toBeFocused();await inlineViewportName.fill('Cancelled viewport name');await inlineViewportName.press('Escape');
     await expect(viewportRows.first().locator('.viewport-select')).toHaveText(originalViewportName);
-    await viewportRows.first().locator('.viewport-select').click();await inlineViewportName.fill('Renamed viewport');await inlineViewportName.press('Enter');
+    await viewportRows.first().locator('.viewport-name-button').click();await inlineViewportName.fill('Renamed viewport');await inlineViewportName.press('Enter');
     await expect(viewportRows.first().locator('.viewport-select')).toHaveText('Renamed viewport');
     await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(viewportRows.first().locator('.viewport-select')).toHaveText(originalViewportName);
     await expect(viewportRows).toHaveCount(1);await expect(viewportRows.locator('.viewport-delete')).toHaveCount(0);
@@ -686,19 +686,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const pageChoice=panelLibrary.getByRole('list',{name:'Panel pages',exact:true});
     await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toHaveAttribute('aria-pressed','true');
     await expect(pageChoice.getByRole('button',{name:/^Delete page/})).toHaveCount(0);
-    await panelLibrary.getByRole('button',{name:'Add page',exact:true}).click();await expect(pageChoice.locator('li')).toHaveCount(2);
-    for(const name of ['Preview','Save','Export']){const action=panelEditor.getByRole('button',{name,exact:true});await expect(action).toBeDisabled();await expect(action).toHaveAttribute('title',/widget to page 1/);}
-    await expect(pageChoice.getByRole('button',{name:'Page 1',exact:true})).toHaveAttribute('aria-pressed','true');
-    await pageChoice.locator('li').first().hover();await pageChoice.getByRole('button',{name:'Delete page 0',exact:true}).click();
-    await expect(pageChoice.locator('li')).toHaveCount(1);await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toBeVisible();
-    await expect(panelEditor.locator('.widget')).toHaveCount(0);await expect(panelEditor.locator('.layout-error')).toHaveCount(0);
-    await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(pageChoice.locator('li')).toHaveCount(2);
-    await pageChoice.getByRole('button',{name:'Page 0',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(1);
-    await pageChoice.getByRole('button',{name:'Page 0',exact:true}).click();await expect(pageChoice.getByRole('button',{name:'Page 0',exact:true})).toHaveAttribute('aria-pressed','true');
-    const secondPage=pageChoice.locator('li').last(),deletePage=secondPage.getByRole('button',{name:'Delete page 1',exact:true});
-    await page.mouse.move(0,0);await expect(deletePage).toHaveCSS('opacity','0');await secondPage.hover();await expect(deletePage).toHaveCSS('opacity','1');
-    await deletePage.click();await expect(pageChoice.locator('li')).toHaveCount(1);await expect(pageChoice.getByRole('button',{name:/^Delete page/})).toHaveCount(0);
-    for(const name of ['Preview','Save','Export'])await expect(panelEditor.getByRole('button',{name,exact:true})).toBeEnabled();
+    await expect(panelLibrary.getByRole('button',{name:'Add page',exact:true})).toBeDisabled();
+    await expect(panelLibrary.getByRole('button',{name:'About pages',exact:true})).toHaveAttribute('title',/work in progress/);
     await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(panelLibrary.locator('.editor-accordion[open]')).toHaveCount(4);await expect(pageChoice).toBeVisible();
     await panelLibrary.getByText('Widgets',{exact:true}).click();await expect(pageChoice).toBeVisible();
     await panelLibrary.getByText('Assets',{exact:true}).click();
