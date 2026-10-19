@@ -206,6 +206,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     });
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
     const devicesNav = nav.getByRole('button', { name: /^Devices(?:\s|$)/ });
+    // Startup refresh populates the shared sidebar count before Devices opens.
+    await expect(devicesNav.locator('.nav-count')).toHaveText('14');
+    await expect(nav.getByRole('button', { name: 'Overview', exact: true })).toHaveClass(/\bcurrent\b/);
     await devicesNav.click();
     await expect(nav.getByRole('button', { name: 'Gateways', exact: true })).toHaveCount(0);
     await expect(nav.getByRole('button', { name: 'Topology', exact: true })).toHaveCount(0);
