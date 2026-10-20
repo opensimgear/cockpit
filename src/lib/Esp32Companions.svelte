@@ -6,6 +6,7 @@
   import CompanionMessage from './CompanionMessage.svelte';
   import { selectedUsbIsPaired } from './companion-pairing';
   import { onMount } from 'svelte';
+  import { firmwareMeetsAvailable } from './companion-firmware';
   import { gatewayRequest } from './gateway';
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
   import type { Publication } from '@opensimgear/companion-designer';
@@ -49,7 +50,7 @@
   const selectedDevice=$derived(!!port && usb?.connected && usb.ready && (companionId ? device?.companionId===companionId : !pairedHere) && usb.port===port);
   const identifiedBoard=$derived(selectedDevice && hostState.firmwareProfiles?.some(p=>p.id===device?.boardProfile)?device?.boardProfile:undefined);
   const installedVersion=$derived(selectedDevice?device?.firmwareVersion:undefined);
-  const firmwareCurrent=$derived(!detecting && !!hostState.firmwareVersion && installedVersion===hostState.firmwareVersion && device?.boardProfile===profile);
+  const firmwareCurrent=$derived(!detecting && !!hostState.firmwareVersion && firmwareMeetsAvailable(installedVersion,hostState.firmwareVersion) && device?.boardProfile===profile);
   const pairDisabledReason=$derived(!port?'Choose a USB device first.':detecting?'Wait for firmware detection to finish.':installing?'Wait for the firmware installation to finish.':installOpen?'Finish or cancel the firmware installation first.':busy?'Wait for the current operation to finish.':!profile?'Choose the Board / Screen model first.':!selectedDevice?'Install the current firmware and wait for the device to respond.':!firmwareCurrent?'Update the device firmware before pairing.':!name.trim()?'Enter a screen name.':mode==='wifi' && !ssid.trim()?'Choose or enter a Wi-Fi network.':selectedHash?(publications.find(panel=>panel.publicationHash===selectedHash)?panelScreenReason(publications.find(panel=>panel.publicationHash===selectedHash)!,screenSize):'Choose an available panel.'):'');
   const firmwareProgress=$derived(Math.max(0,Math.min(100,Math.round(transport?.progress??0))));
   async function selectPort(value:string){
@@ -115,6 +116,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
   }
   onMount(() => {
     name=initialName;
+    void send('companion_firmware_check').catch(e => error = String(e));
     void send('companion_usb_ports',{...(companionId?{companionId}:{})}).then(async()=>{await send('companion_status');if(companionId && device?.companionId===companionId){port=usb?.port??'';mode=device?.connectionMode==='serial'?'serial':'wifi';}}).catch(e => error = String(e));
     const timer = setInterval(refresh,1000);
     return () => { clearInterval(timer);password = ''; };
@@ -133,10 +135,13 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
         <button disabled={busy || installing || installOpen} onclick={() => action(async () => { await send('companion_usb_ports',{...(companionId?{companionId}:{})}); })}><Icon name="refresh" size={16} />Refresh</button>
       </div>
       {#if !pairingPorts.length}<CompanionMessage message={companionId?'Connect this companion by USB to change its connection settings.':'No unpaired USB devices detected. Connect another screen, or remove an existing companion before pairing it again.'}/>{/if}
-      <label>Board / Screen<select bind:value={profile} disabled={busy || installing || installOpen || !!identifiedBoard} required><option value="" disabled>Choose Board / Screen</option>{#each hostState.firmwareProfiles ?? [] as board}<option value={board.id}>{board.name}{board.available?'':' · firmware not bundled'}</option>{/each}</select></label>
+      <label>Board / Screen<select bind:value={profile} disabled={busy || installing || installOpen || !!identifiedBoard} required><option value="" disabled>Choose Board / Screen</option>{#each hostState.firmwareProfiles ?? [] as board}<option value={board.id}>{board.name}{board.available?'':' · firmware unavailable'}</option>{/each}</select></label>
     </div>
     <section class="firmware-controls" aria-label="Firmware">
       <h4>Firmware</h4>
+      <p>{hostState.firmwareSource==='development'?'Development firmware from this Cockpit build':'Firmware from published ESP32 companion releases'}</p>
+      {#if hostState.firmwareError}<CompanionMessage kind="warning" message={hostState.firmwareError}/>{/if}
+      <button disabled={busy || installing || installOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for firmware updates</button>
       {#if !port}
         <CompanionMessage message="Select a port to detect firmware"/>
       {:else if detecting}

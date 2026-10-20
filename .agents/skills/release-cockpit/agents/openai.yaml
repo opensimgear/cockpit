@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Cockpit"
+  short_description: "Release desktop, firmware, or mobile components"
+  default_prompt: "Use $release-cockpit to release all components with independent versions and diff-based changelogs."

@@ -4,6 +4,7 @@ mod config_paths;
 mod acr_setup;
 mod acr_windows;
 mod companion_host;
+mod firmware_releases;
 mod companion_panels;
 mod actions;
 pub mod dcs_bios;

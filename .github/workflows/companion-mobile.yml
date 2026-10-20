@@ -1,4 +1,4 @@
-name: Mobile checks, builds and releases
+name: Mobile checks and build artifacts
 on:
   push:
     branches: [main]
@@ -42,11 +42,6 @@ on:
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
-    inputs:
-      publish:
-        description: Publish a development prerelease (main only)
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -110,20 +105,6 @@ jobs:
         run: pnpm --filter @opensimgear/companion tauri android build --debug --apk --target aarch64 --ci -- --locked
       - name: Collect development APK
         run: python3 scripts/companion-mobile.py android-debug
-      - name: Build and sign release APK when a persistent key is configured
-        if: (github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish))
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            pnpm --filter @opensimgear/companion tauri android build --apk --target aarch64 --ci -- --locked
-            python3 scripts/companion-mobile.py android-sign
-          else
-            echo 'Persistent Android signing key absent; publishing a clearly labeled debug test APK.' >> "$GITHUB_STEP_SUMMARY"
-          fi
       - uses: actions/upload-artifact@v4
         with:
           name: mobile-android
@@ -154,7 +135,7 @@ jobs:
           path: .research/mobile-release/*.tar.gz
           if-no-files-found: error
   ios-device:
-    if: (github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)) && vars.IOS_SIGNING_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.IOS_SIGNING_ENABLED == 'true'
     needs: checks
     runs-on: macos-15
     timeout-minutes: 60
@@ -188,27 +169,3 @@ jobs:
           name: mobile-ios-device
           path: .research/mobile-release/*.ipa
           if-no-files-found: error
-  release:
-    if: always() && (github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)) && needs.checks.result == 'success' && needs.android.result == 'success' && needs.ios-simulator.result == 'success' && (needs.ios-device.result == 'success' || needs.ios-device.result == 'skipped')
-    needs: [checks, android, ios-simulator, ios-device]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/download-artifact@v4
-        with:
-          path: .research/mobile-release
-          merge-multiple: true
-          pattern: mobile-*
-      - run: python3 scripts/companion-mobile.py checksums
-      - name: Publish development prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="mobile-build-${GITHUB_RUN_NUMBER}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" .research/mobile-release/* --clobber
-          else
-            gh release create "$tag" .research/mobile-release/* --target "$GITHUB_SHA" --prerelease --latest=false --title "Mobile Companion build ${GITHUB_RUN_NUMBER}" --notes-file docs/companion-mobile-release-notes.md
-          fi

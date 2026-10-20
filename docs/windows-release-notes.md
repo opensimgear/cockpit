@@ -14,8 +14,11 @@ heavily under development. Existing live-output, provisioning, visibility and
 script qualification gates remain in place. A downloadable package does not
 establish physical hardware or game qualification.
 
-ESP32 firmware images are not included in this release workflow. USB firmware
-installation requires a Cockpit build with the corresponding embedded images.
+Production builds obtain the latest published `esp32-companion` firmware release
+when you check for updates or install a board. Cockpit validates the selected
+board, image layout and checksums before flashing. An internet connection and a
+published firmware release are required. Development Cockpit builds instead use
+locally staged firmware images.
 
 `SHA256SUMS` covers the installer and portable archive. Each release is pinned to
 the source revision shown by GitHub. The portable archive includes

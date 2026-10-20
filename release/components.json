@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "components": {
+    "cockpit": {
+      "name": "Cockpit",
+      "version": "0.1.0",
+      "tagPrefix": "cockpit-v",
+      "changelog": "changelogs/cockpit.md",
+      "sourcePaths": [
+        "src",
+        "src-tauri",
+        "apps/browser-companion"
+      ],
+      "sharedPaths": [
+        "crates",
+        "packages",
+        "apps/companion-esp32",
+        "scripts",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "rust-toolchain.toml",
+        ".cargo",
+        ".npmrc",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        ".github/workflows"
+      ],
+      "versionFiles": [
+        {
+          "path": "package.json",
+          "kind": "json"
+        },
+        {
+          "path": "src-tauri/tauri.conf.json",
+          "kind": "json"
+        },
+        {
+          "path": "src-tauri/Cargo.toml",
+          "kind": "cargo-package",
+          "package": "osg-cockpit"
+        },
+        {
+          "path": "src-tauri/Cargo.lock",
+          "kind": "cargo-lock",
+          "package": "osg-cockpit"
+        }
+      ]
+    },
+    "esp32-companion": {
+      "name": "ESP32 Companion",
+      "version": "0.1.0",
+      "tagPrefix": "esp32-companion-v",
+      "changelog": "changelogs/esp32-companion.md",
+      "sourcePaths": [
+        "apps/companion-esp32"
+      ],
+      "sharedPaths": [
+        "crates/companion-service",
+        "crates/companion-serial",
+        "packages/companion-contracts",
+        "packages/companion-designer",
+        "scripts/package-companion-firmware.py",
+        "scripts/companion-release-check.py",
+        "docs/companion-release-matrix.json",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        ".github/workflows"
+      ],
+      "versionFiles": [
+        {
+          "path": "apps/companion-esp32/network/firmware.h",
+          "kind": "c-macro",
+          "macro": "OSG_FIRMWARE_VERSION"
+        }
+      ]
+    },
+    "mobile-companion": {
+      "name": "Mobile Companion",
+      "version": "0.1.0",
+      "tagPrefix": "mobile-companion-v",
+      "changelog": "changelogs/mobile-companion.md",
+      "sourcePaths": [
+        "apps/companion"
+      ],
+      "sharedPaths": [
+        "crates/companion-service",
+        "crates/companion-platform",
+        "packages/companion-contracts",
+        "packages/companion-designer",
+        "packages/companion-ui",
+        "scripts/companion-mobile.py",
+        "scripts/companion-mobile-build.py",
+        "docs/companion-release-matrix.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "rust-toolchain.toml",
+        ".cargo",
+        ".npmrc",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        ".github/workflows"
+      ],
+      "versionFiles": [
+        {
+          "path": "apps/companion/package.json",
+          "kind": "json"
+        },
+        {
+          "path": "apps/companion/src-tauri/tauri.conf.json",
+          "kind": "json"
+        },
+        {
+          "path": "apps/companion/src-tauri/Cargo.toml",
+          "kind": "cargo-package",
+          "package": "osg-companion"
+        },
+        {
+          "path": "apps/companion/src-tauri/Cargo.lock",
+          "kind": "cargo-lock",
+          "package": "osg-companion"
+        }
+      ]
+    }
+  }
+}

@@ -405,6 +405,25 @@ test('host controller reads bypass a blocked gateway and inventory queue', async
   assert.equal(controllers.controllers.total, 0);
   blocked.resolve(); await inventory;
 });
+
+test('firmware lookup and download stay ordered while companion status and USB reads remain responsive', async () => {
+  const lookup=deferred(),download=deferred();
+  const api=transport({invokeResults:async(_command,request)=>{
+    if(request.command==='companion_firmware_check')await lookup.promise;
+    if(request.command==='companion_usb_flash')await download.promise;
+    return {ok:true,state:{companions:{firmwareChecked:true}}};
+  }});
+  const checking=api.gatewayRequest({command:'companion_firmware_check'});
+  const flashing=api.gatewayRequest({command:'companion_usb_flash',companion:{profile:'sunton-3248s035r',port:'COM5'}});
+  await tick();
+  await api.gatewayRequest({command:'companion_status'});
+  await api.gatewayRequest({command:'companion_usb_ports'});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['companion_firmware_check','companion_status','companion_usb_ports']);
+  lookup.resolve();await checking;await tick();
+  await api.gatewayRequest({command:'companion_usb_status'});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['companion_firmware_check','companion_status','companion_usb_ports','companion_usb_flash','companion_usb_status']);
+  download.resolve();await flashing;
+});
 test('passive companion panel metadata bypasses blocked profile saves without delaying emergency controls', async () => {
   const saving=deferred(),metadata=deferred();
   const api=transport({invokeResults:async(_command,request)=>{

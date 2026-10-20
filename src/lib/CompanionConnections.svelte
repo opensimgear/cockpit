@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import CompanionMessage from './CompanionMessage.svelte';
+  import { firmwareUpdateAvailable, compareFirmwareVersions } from './companion-firmware';
   import { companionMessages } from './companion-messages';
   import { newPairingConnected } from './companion-pairing';
   import { invoke } from '@tauri-apps/api/core';
@@ -39,7 +40,7 @@
   let polling = false;
   let updateOpen=$state(false), updatePort=$state(''), updateProfile=$state(''), updating=$state(false);
   const firmwareInfo=(client:Record<string,unknown>)=>hostState.firmware?.[text(client,'companionId')];
-  const outdated=(client:Record<string,unknown>)=>deviceKind(client)==='esp32' && !!firmwareInfo(client) && firmwareInfo(client)?.version!==hostState.firmwareVersion;
+  const outdated=(client:Record<string,unknown>)=>deviceKind(client)==='esp32' && firmwareUpdateAvailable(firmwareInfo(client)?.version,hostState.firmwareVersion);
   async function prepareUpdate(){
     await send('companion_usb_ports',{companionId:selectedId});
     updateProfile=firmwareInfo(selected!)?.profile ?? '';
@@ -245,12 +246,14 @@
       </div>
       {#if deviceKind(selected)==='esp32'}
         <section class="firmware-settings" aria-label="Firmware">
-          <div class="firmware-heading"><h3>Firmware</h3><CompanionMessage kind={outdated(selected)?'warning':'info'} message={outdated(selected)?'Firmware update available':firmwareInfo(selected)?.version===hostState.firmwareVersion?'Firmware is up to date':'Connect this companion by USB to check its firmware.'}/></div>
+          <div class="firmware-heading"><h3>Firmware</h3><CompanionMessage kind={outdated(selected)?'warning':'info'} message={outdated(selected)?'Firmware update available':hostState.firmwareVersion && firmwareInfo(selected)?.version && (compareFirmwareVersions(firmwareInfo(selected)!.version,hostState.firmwareVersion)??-1)>0?'Installed firmware is newer than the available release':hostState.firmwareVersion && firmwareInfo(selected)?.version===hostState.firmwareVersion?'Firmware is up to date':hostState.firmwareError||'Check for available firmware, then connect this companion by USB to update.'}/></div>
           <div class="firmware-versions">
             <p>Current: {firmwareInfo(selected)?.version??'Unknown'}</p>
             {#if hostState.firmwareVersion}<p>Available: {hostState.firmwareVersion}</p>{/if}
           </div>
-          {#if !updateOpen && (!hostState.firmwareVersion || firmwareInfo(selected)?.version!==hostState.firmwareVersion)}
+          <p>{hostState.firmwareSource==='development'?'Development firmware from this Cockpit build':'Firmware from published ESP32 companion releases'}</p>
+          {#if !updateOpen}<button disabled={busy || updating} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for firmware updates</button>{/if}
+          {#if !updateOpen && outdated(selected)}
             <span class="firmware-update" title={firmwareUpdateDisabledReason || undefined} aria-label={firmwareUpdateDisabledReason || undefined}><button disabled={!!firmwareUpdateDisabledReason} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button></span>
           {:else if updateOpen}
             <CompanionMessage message="Pairing and Wi-Fi settings are preserved. Keep this companion connected by USB throughout the update."/>

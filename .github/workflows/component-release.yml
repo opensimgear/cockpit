@@ -1,0 +1,408 @@
+name: Tagged component releases
+
+on:
+  push:
+    tags:
+      - 'cockpit-v*'
+      - 'esp32-companion-v*'
+      - 'mobile-companion-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: component-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+
+jobs:
+  validate:
+    name: Validate committed version and release notes
+    runs-on: ubuntu-24.04
+    outputs:
+      component: ${{ steps.release.outputs.component }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate release tag against the checked-out commit
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python scripts/release.py validate "$RELEASE_TAG" --notes-output .research/release-notes.md --github-output "$GITHUB_OUTPUT"
+      - name: Test release preparation, packaging and publishing rules
+        run: python -m unittest discover -s scripts -p 'test_*release*.py' -v
+
+  desktop:
+    name: Cockpit ${{ matrix.platform }}
+    if: needs.validate.outputs.component == 'cockpit'
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-2022
+            target: ''
+            bundles: nsis
+          - platform: linux-x64
+            os: ubuntu-24.04
+            target: ''
+            bundles: deb,appimage
+          - platform: macos-arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - platform: macos-x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Linux desktop and protected-store dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev \
+            dbus-x11 gnome-keyring libfuse2t64 patchelf file xdg-utils
+      - name: Install pinned Rust toolchain and macOS target
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          rustup show active-toolchain
+          if [ -n "$RUST_TARGET" ]; then rustup target add "$RUST_TARGET"; fi
+      - run: pnpm install --frozen-lockfile
+      - name: Frontend and shared companion checks
+        run: |
+          pnpm check
+          pnpm browser:test
+          pnpm notifications:test
+          pnpm transport:test
+          pnpm companion:check
+          pnpm companion:test
+          pnpm browser:build
+      - name: Isolated macOS native-test Keychain
+        if: runner.os == 'macOS'
+        run: python scripts/macos-native-test-keychain.py setup
+      - name: Native desktop regression tests
+        if: runner.os != 'Linux'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Linux native tests using the real protected store
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            cargo test --locked --manifest-path src-tauri/Cargo.toml
+          '
+      - name: Build native distribution packages
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+          BUNDLE_TYPES: ${{ matrix.bundles }}
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          if [ "$RUNNER_OS" = 'macOS' ]; then
+            export APPLE_SIGNING_IDENTITY='-'
+            echo 'macOS bundles use ad-hoc signatures and are not notarized.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$RUST_TARGET" ]; then
+            pnpm tauri build --target "$RUST_TARGET" --bundles "$BUNDLE_TYPES" -- --locked
+          else
+            pnpm tauri build --bundles "$BUNDLE_TYPES" -- --locked
+          fi
+      - name: Stage Windows installer and portable package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-windows-release.ps1
+      - name: Collect versioned desktop release assets
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+        run: python scripts/package-release.py desktop --platform "$RELEASE_PLATFORM" --version "$RELEASE_VERSION" --output .research/release-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-cockpit-${{ matrix.platform }}
+          path: .research/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Restore macOS native-test Keychain
+        if: always() && runner.os == 'macOS'
+        run: python scripts/macos-native-test-keychain.py cleanup
+
+  mobile-checks:
+    name: Companion mobile regression checks
+    if: needs.validate.outputs.component == 'mobile-companion'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm companion:check
+      - run: pnpm --filter @opensimgear/companion check
+      - run: pnpm --filter '@opensimgear/companion-*' test
+      - run: pnpm --filter @opensimgear/companion test
+      - run: pnpm companion:ui:build
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config dbus-x11 gnome-keyring
+      - run: python -m unittest discover -s scripts -p 'test_companion_mobile*.py' -v
+      - name: Native protocol and client tests
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            cargo test --locked --manifest-path crates/companion-service/Cargo.toml
+          '
+
+  android:
+    name: Companion Android arm64
+    if: needs.validate.outputs.component == 'mobile-companion'
+    needs: [validate, mobile-checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK and Rust target
+        run: |
+          rustup target add aarch64-linux-android
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platform-tools" "build-tools;36.0.0" "ndk;28.2.13676358"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @opensimgear/companion tauri android init --ci
+      - name: Install the platform requested by the generated Tauri project
+        run: |
+          platform="$(python scripts/companion-mobile-build.py android-platform)"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$platform" "platforms;android-36"
+          test -f "$ANDROID_HOME/platforms/${platform#*;}/android.jar"
+      - name: Build signed APK or clearly labeled debug fallback
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            test -n "$ANDROID_KEYSTORE_PASSWORD"
+            test -n "$ANDROID_KEY_ALIAS"
+            test -n "$ANDROID_KEY_PASSWORD"
+            pnpm --filter @opensimgear/companion tauri android build --apk --target aarch64 --ci -- --locked
+            python scripts/companion-mobile.py android-sign
+          else
+            pnpm --filter @opensimgear/companion tauri android build --debug --apk --target aarch64 --ci -- --locked
+            python scripts/companion-mobile.py android-debug
+            echo 'Persistent Android signing key absent. This release includes an explicitly named debug APK; upgrades between CI builds may require uninstalling the prior debug APK.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Collect versioned Android asset
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: python scripts/package-release.py mobile --version "$RELEASE_VERSION" --source .research/mobile-release --output .research/release-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mobile-companion-android
+          path: .research/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-simulator:
+    name: Companion iOS arm64 simulator
+    if: needs.validate.outputs.component == 'mobile-companion'
+    needs: [validate, mobile-checks]
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: rustup target add aarch64-apple-ios-sim
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @opensimgear/companion tauri ios init --ci
+      - run: python scripts/companion-mobile-build.py ios-rust-hook
+      - run: pnpm --filter @opensimgear/companion tauri ios build --debug --target aarch64-sim --no-sign --ci -- --locked
+      - run: python scripts/companion-mobile.py ios-simulator
+      - name: Collect versioned simulator asset
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: python scripts/package-release.py mobile --version "$RELEASE_VERSION" --source .research/mobile-release --output .research/release-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mobile-companion-ios-simulator
+          path: .research/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  firmware-checks:
+    name: Companion firmware regression checks
+    if: needs.validate.outputs.component == 'esp32-companion'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libssl-dev
+      - name: Native board, protocol and storage tests
+        run: |
+          node --test apps/companion-esp32/test/export.test.mjs
+          python apps/companion-esp32/test/network.py
+          python apps/companion-esp32/test/storage.py
+          python apps/companion-esp32/test/serial.py
+          python -m unittest discover -s apps/companion-esp32/test -p 'provision_test.py' -v
+          python apps/companion-esp32/test/sunton.py
+          python apps/companion-esp32/test/waveshare.py
+          python apps/companion-esp32/test/run.py
+
+  firmware:
+    name: Firmware ${{ matrix.board }}
+    if: needs.validate.outputs.component == 'esp32-companion'
+    needs: [validate, firmware-checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: waveshare-lcd7-s3
+            target: esp32s3
+          - board: sunton-3248s035r
+            target: esp32
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Cross-build board firmware with pinned ESP-IDF
+        env:
+          BOARD_PROFILE: ${{ matrix.board }}
+          IDF_TARGET: ${{ matrix.target }}
+        run: |
+          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 \
+            espressif/idf:v5.5.2 idf.py -B "build-$BOARD_PROFILE" \
+            -DIDF_TARGET="$IDF_TARGET" -DSDKCONFIG="build-$BOARD_PROFILE/sdkconfig" \
+            -DOSG_BOARD_PROFILE="$BOARD_PROFILE" build
+      - name: Stage board flashing payload and checksum manifest
+        env:
+          BOARD_PROFILE: ${{ matrix.board }}
+        run: python scripts/package-companion-firmware.py "apps/companion-esp32/build-$BOARD_PROFILE"
+      - name: Package versioned board ZIP
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          BOARD_PROFILE: ${{ matrix.board }}
+        run: python scripts/package-release.py firmware --version "$RELEASE_VERSION" --board "$BOARD_PROFILE" --source "src-tauri/resources/firmware/$BOARD_PROFILE" --output .research/release-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-esp32-companion-${{ matrix.board }}
+          path: .research/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish complete component release
+    needs: [validate, desktop, android, ios-simulator, firmware]
+    if: >-
+      always() && needs.validate.result == 'success' &&
+      ((needs.validate.outputs.component == 'cockpit' && needs.desktop.result == 'success') ||
+       (needs.validate.outputs.component == 'mobile-companion' && needs.android.result == 'success' && needs.ios-simulator.result == 'success') ||
+       (needs.validate.outputs.component == 'esp32-companion' && needs.firmware.result == 'success'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
+      url: ${{ steps.publish.outputs.url }}
+      name: ${{ steps.publish.outputs.name }}
+      body: ${{ steps.publish.outputs.body }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Recover exact committed release notes
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: python scripts/release.py validate "$RELEASE_TAG" --notes-output .research/release-notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-${{ needs.validate.outputs.component }}-*
+          merge-multiple: true
+          path: .research/release-assets
+      - name: Validate all required platforms and produce aggregate checksums
+        env:
+          RELEASE_COMPONENT: ${{ needs.validate.outputs.component }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: python scripts/package-release.py finalize --component "$RELEASE_COMPONENT" --version "$RELEASE_VERSION" --source .research/release-assets --output .research/publish-assets
+      - name: Publish verified draft or verify an existing published release
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMPONENT: ${{ needs.validate.outputs.component }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: python scripts/publish-component-release.py --tag "$RELEASE_TAG" --component "$RELEASE_COMPONENT" --version "$RELEASE_VERSION" --notes .research/release-notes.md --assets .research/publish-assets --github-output "$GITHUB_OUTPUT"
+
+  notify-discord:
+    name: Announce published component release
+    needs: publish
+    if: needs.publish.outputs.published == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check Discord webhook configuration
+        id: discord-webhook
+        env:
+          DISCORD_DEPLOYMENT_CHANGELOG_WEBHOOK: ${{ secrets.DISCORD_DEPLOYMENT_CHANGELOG_WEBHOOK }}
+        run: |
+          if [ -n "$DISCORD_DEPLOYMENT_CHANGELOG_WEBHOOK" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo 'Discord webhook secret `DISCORD_DEPLOYMENT_CHANGELOG_WEBHOOK` not configured. Skipping Discord notification.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Announce published release to Discord
+        if: steps.discord-webhook.outputs.configured == 'true'
+        uses: SethCohen/github-releases-to-discord@v1.20.0
+        with:
+          webhook_url: ${{ secrets.DISCORD_DEPLOYMENT_CHANGELOG_WEBHOOK }}
+          username: OpenSimGear Releases
+          footer_title: Deployment changelog
+          reduce_headings: true
+          release_name: ${{ needs.publish.outputs.name }}
+          release_body: ${{ needs.publish.outputs.body }}
+          release_html_url: ${{ needs.publish.outputs.url }}

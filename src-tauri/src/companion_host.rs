@@ -11,7 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-include!(concat!(env!("OUT_DIR"), "/companion_firmware.rs"));
 
 include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
 
@@ -94,6 +93,7 @@ struct Services {
     server: ServerRuntime,
     usb: osg_companion_serial::Manager,
     usb_setup: Mutex<()>,
+    firmware_releases: crate::firmware_releases::Resolver,
     directory: PathBuf,
     saved_listener: Mutex<Option<ServerConfig>>,
     panel_cache: Mutex<()>,
@@ -196,6 +196,7 @@ impl Runtime {
                     panel_cache:Mutex::new(()),
                     usb: osg_companion_serial::Manager::default(),
                     usb_setup: Mutex::new(()),
+                    firmware_releases: crate::firmware_releases::Resolver::default(),
                 };
                 Self::start_saved_listener(&services);
                 Ok(services)
@@ -239,9 +240,9 @@ impl Runtime {
         let config=services.saved_listener.lock().unwrap_or_else(|p|p.into_inner()).clone();
         listener["configuredEnabled"]=json!(config.is_some());
         listener["config"]=json!(config);
-        Ok(
-            json!({"firmware":firmware,"firmwareVersion":ESP32_FIRMWARE_VERSION,"host":host, "listener":listener,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()}),
-        )
+        let mut status=json!({"firmware":firmware,"host":host, "listener":listener,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()});
+        status.as_object_mut().unwrap().extend(services.firmware_releases.metadata().as_object().unwrap().clone());
+        Ok(status)
     }
     pub(crate) fn hub(&self) -> Result<Hub, String> {
         Ok(self.services()?.hub.clone())
@@ -392,15 +393,24 @@ impl Runtime {
         }
         let services = self.services()?;
         match command {
-            "companion_usb_ports" => Ok(
-                json!({"usbPorts":services.usb.pairing_ports(&services.hub,payload["companionId"].as_str())?,"usb":services.usb.status(),"firmwareProfiles":[{"id":"waveshare-lcd7-s3","name":"Waveshare ESP32-S3 Touch LCD 7 · Rev 1.2 · 800×480","available":!WAVESHARE_FIRMWARE.is_empty()},{"id":"sunton-3248s035r","name":"Sunton/GUITION ESP32-3248S035R · resistive · 480×320","available":!SUNTON_FIRMWARE.is_empty()}]}),
-            ),
+            "companion_firmware_check" => {
+                services.firmware_releases.check();
+                self.status(services)
+            }
+            "companion_usb_ports" => {
+                let mut status=services.firmware_releases.metadata();
+                status["usbPorts"]=services.usb.pairing_ports(&services.hub,payload["companionId"].as_str())?;
+                services.firmware_releases.observe_ports(&status["usbPorts"],&services.usb.statuses());
+                status["usb"]=services.usb.status();
+                Ok(status)
+            }
             "companion_usb_update_prepare" => {
                 let _setup=services.usb_setup.lock().unwrap_or_else(|p|p.into_inner());
                 let id=payload["companionId"].as_str().ok_or("Choose a paired companion.")?;
                 let clients=services.hub.command(&json!({"command":"companion_status"}))?;
                 if !clients["clients"].as_array().is_some_and(|rows|rows.iter().any(|c|c["companionId"]==id && c["kind"]=="esp32")){return Err("Choose a paired ESP32 companion.".into());}
                 let ports=services.usb.pairing_ports(&services.hub,Some(id))?;
+                services.firmware_releases.observe_ports(&ports,&services.usb.statuses());
                 if ports.as_array().is_none_or(|rows|rows.len()!=1){return Err("Connect only this paired companion by USB, then try again.".into());}
                 let metadata=std::fs::read(services.directory.join("companion-firmware.json")).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok()).unwrap_or(json!({}));
                 if !matches!(metadata[id]["profile"].as_str(),Some("sunton-3248s035r"|"waveshare-lcd7-s3")){return Err("This legacy companion has no saved board profile. Identify its board before updating firmware.".into());}
@@ -409,9 +419,9 @@ impl Runtime {
             }
             "companion_usb_flash" => {
                 let _setup = services.usb_setup.lock().unwrap_or_else(|p| p.into_inner());
-                let (firmware,target)=match payload["profile"].as_str() {
-                    Some("waveshare-lcd7-s3")=>(WAVESHARE_FIRMWARE,osg_companion_serial::FirmwareTarget::Esp32s3),
-                    Some("sunton-3248s035r")=>(SUNTON_FIRMWARE,osg_companion_serial::FirmwareTarget::Esp32),
+                let (profile,target)=match payload["profile"].as_str() {
+                    Some("waveshare-lcd7-s3")=>("waveshare-lcd7-s3",osg_companion_serial::FirmwareTarget::Esp32s3),
+                    Some("sunton-3248s035r")=>("sunton-3248s035r",osg_companion_serial::FirmwareTarget::Esp32),
                     _=>return Err("Choose a supported board profile.".into()),
                 };
                 let port = payload["port"].as_str().ok_or("Choose a USB device.")?;
@@ -424,7 +434,18 @@ impl Runtime {
                 {
                     return Err("The USB selection changed or firmware detection is still in progress. Refresh devices and select this USB port again.".into());
                 }
-                services.usb.flash_options_preserving(
+                let mut installed=Vec::new();
+                if let Some(version)=services.firmware_releases.observed_version(port,profile){installed.push(version);}
+                if let Some(id)=update {
+                    let metadata=std::fs::read(services.directory.join("companion-firmware.json")).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok()).unwrap_or(json!({}));
+                    if let Some(version)=metadata[id]["version"].as_str(){installed.push(version.to_owned());}
+                }
+                let firmware=services.firmware_releases.load(&services.directory,profile,&installed)?;
+                // Downloading must not bypass the serial manager's fresh device identity check.
+                if !match update {Some(id)=>services.usb.update_candidate_available(port,id)?,None=>services.usb.flash_candidate_available(port)?} {
+                    return Err("The USB selection changed while downloading firmware. Refresh devices and select this USB port again.".into());
+                }
+                services.usb.flash_owned_options_preserving(
                     payload["port"].as_str().ok_or("Choose a USB device.")?,
                     firmware, target, true, update.is_some(),
                 )?;

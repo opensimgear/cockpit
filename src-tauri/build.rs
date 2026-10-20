@@ -3,16 +3,18 @@ fn main() {
     let files = ["bootloader.bin", "partition-table.bin", "application.bin"];
     let header=root.join("../apps/companion-esp32/network/firmware.h");
     println!("cargo:rerun-if-changed={}",header.display());
+    // The final target's cfg controls embedding, including custom Cargo profiles.
+    // Build-script process flags and caller environment cannot enable release blobs.
     let source=std::fs::read_to_string(header).unwrap();
     let version=source.lines().find_map(|line|line.strip_prefix("#define OSG_FIRMWARE_VERSION ")).unwrap();
-    let mut generated=format!("pub const ESP32_FIRMWARE_VERSION: &str = {version};\n");
+    let mut generated=format!("#[cfg(debug_assertions)]\npub const LOCAL_FIRMWARE_VERSION: Option<&str> = Some({version});\n#[cfg(not(debug_assertions))]\npub const LOCAL_FIRMWARE_VERSION: Option<&str> = None;\n");
     for (profile,symbol,boot) in [("waveshare-lcd7-s3","WAVESHARE_FIRMWARE",0),("sunton-3248s035r","SUNTON_FIRMWARE",0x1000)] {
         let board=root.join("resources/firmware").join(profile);
         println!("cargo:rerun-if-changed={}",board.display());
         let entries=if files.iter().all(|f|board.join(f).is_file()) {
             files.iter().zip([boot,0x8000,0x10000]).map(|(file,offset)|format!("osg_companion_serial::FirmwareSegment{{offset:{offset},bytes:include_bytes!({:?})}}",board.join(file))).collect::<Vec<_>>().join(",")
         }else{String::new()};
-        generated.push_str(&format!("pub static {symbol}: &[osg_companion_serial::FirmwareSegment] = &[{entries}];\n"));
+        generated.push_str(&format!("#[cfg(debug_assertions)]\npub static {symbol}: &[osg_companion_serial::FirmwareSegment<'static>] = &[{entries}];\n#[cfg(not(debug_assertions))]\npub static {symbol}: &[osg_companion_serial::FirmwareSegment<'static>] = &[];\n"));
     }
     std::fs::write(std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("companion_firmware.rs"),generated).unwrap();
 

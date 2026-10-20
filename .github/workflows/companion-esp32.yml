@@ -65,7 +65,7 @@ jobs:
       - name: Cross-build Waveshare V1.2 display and touch firmware
         run: |
           docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-waveshare-lcd7 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-waveshare-lcd7/sdkconfig -DOSG_BOARD_PROFILE=waveshare-lcd7-s3 build
-      - name: Stage Cockpit embedded flashing package
+      - name: Stage firmware artifact for board verification
         run: python3 scripts/package-companion-firmware.py apps/companion-esp32/build-waveshare-lcd7
       - uses: actions/upload-artifact@v4
         with:
@@ -86,7 +86,7 @@ jobs:
       - name: Cross-build Sunton 3.5-inch display and resistive touch firmware
         run: |
           docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-sunton-3248s035r -DIDF_TARGET=esp32 -DSDKCONFIG=build-sunton-3248s035r/sdkconfig -DOSG_BOARD_PROFILE=sunton-3248s035r build
-      - name: Stage Cockpit embedded flashing package
+      - name: Stage firmware artifact for board verification
         run: python3 scripts/package-companion-firmware.py apps/companion-esp32/build-sunton-3248s035r
       - uses: actions/upload-artifact@v4
         with:

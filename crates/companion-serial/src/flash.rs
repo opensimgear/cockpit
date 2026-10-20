@@ -17,9 +17,15 @@ impl FirmwareTarget {
     fn flash_end(self) -> u32 { match self { Self::Esp32=>0x400000, Self::Esp32s3=>0x800000 } }
     fn chip(self) -> Chip { match self { Self::Esp32=>Chip::Esp32, Self::Esp32s3=>Chip::Esp32s3 } }
 }
-pub struct FirmwareSegment {
+pub struct FirmwareSegment<'a> {
     pub offset: u32,
-    pub bytes: &'static [u8],
+    pub bytes: &'a [u8],
+}
+/// The flashing worker owns downloaded firmware until serial verification ends.
+#[derive(Debug)]
+pub struct OwnedFirmwareSegment {
+    pub offset: u32,
+    pub bytes: Vec<u8>,
 }
 struct Progress {
     state: Arc<Mutex<Value>>,

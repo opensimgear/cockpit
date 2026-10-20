@@ -65,9 +65,10 @@ jobs:
         run: |
           pnpm companion:check
           pnpm companion:test
-      - name: Companion release-readiness validation
+      - name: Component release tooling and companion release-readiness validation
         run: |
-          python3 -m unittest discover -s scripts -p test_companion_release_check.py -v
+          python3 -m unittest discover -s scripts -p 'test_*release*.py' -v
+          node --test src/lib/firmware-release.test.mjs
           python3 scripts/companion-release-check.py --output .research/companion-c6/release-readiness.json
       - name: Upload companion release readiness
         if: always()

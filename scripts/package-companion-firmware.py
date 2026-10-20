@@ -1,6 +1,6 @@
-"""Stage a verified IDF board build for embedding in the native Cockpit binary."""
+"""Stage a verified IDF board build for development embedding and release packaging."""
 from pathlib import Path
-import argparse, hashlib, json, shutil
+import argparse, hashlib, json, re, shutil, subprocess
 parser=argparse.ArgumentParser()
 parser.add_argument("build",type=Path)
 args=parser.parse_args()
@@ -19,5 +19,9 @@ for address,name in [(boot,"bootloader.bin"),("0x8000","partition-table.bin"),("
     if not source.is_relative_to(args.build.resolve()): raise SystemExit("Firmware file escapes its build directory")
     shutil.copyfile(source,root/name)
     records.append({"offset":address,"file":name,"sha256":hashlib.sha256(source.read_bytes()).hexdigest()})
-(root/"manifest.json").write_text(json.dumps({"board":profile,"segments":records},indent=2)+"\n")
-print("Staged "+profile+" firmware for the next native build.")
+repository=Path(__file__).resolve().parents[1]
+header=(repository/"apps/companion-esp32/network/firmware.h").read_text()
+version=re.search(r'^#define OSG_FIRMWARE_VERSION "([^"\r\n]+)"$',header,re.MULTILINE).group(1)
+commit=subprocess.check_output(["git","rev-parse","HEAD"],cwd=repository,text=True).strip()
+(root/"manifest.json").write_text(json.dumps({"schemaVersion":1,"component":"esp32-companion","version":version,"board":profile,"chip":chip,"sourceCommit":commit,"segments":records},indent=2)+"\n",encoding="utf-8")
+print("Staged "+profile+" firmware for development and release packaging.")

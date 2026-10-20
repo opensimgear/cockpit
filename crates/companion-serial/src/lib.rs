@@ -164,7 +164,13 @@ impl Manager {
         self.flash_options_preserving(port,firmware,target,manual_boot,false)
     }
     pub fn flash_options_preserving(&self,port:&str,firmware:&'static [FirmwareSegment],target:FirmwareTarget,manual_boot:bool,preserve:bool)->Result<(),String>{
-        validate_firmware_for(target, firmware)?;
+        self.flash_owned_options_preserving(port,firmware.iter().map(|segment|OwnedFirmwareSegment{
+            offset:segment.offset,bytes:segment.bytes.to_vec(),
+        }).collect(),target,manual_boot,preserve)
+    }
+    pub fn flash_owned_options_preserving(&self,port:&str,firmware:Vec<OwnedFirmwareSegment>,target:FirmwareTarget,manual_boot:bool,preserve:bool)->Result<(),String>{
+        let borrowed:Vec<_>=firmware.iter().map(|segment|FirmwareSegment{offset:segment.offset,bytes:segment.bytes.as_slice()}).collect();
+        validate_firmware_for(target, &borrowed)?;
         let _operation = self.operation.lock().unwrap_or_else(|p| p.into_inner());
         let mut state = self.flash_state.lock().unwrap_or_else(|p| p.into_inner());
         if state["flashing"] == true {
@@ -179,7 +185,8 @@ impl Manager {
         let progress = self.flash_state.clone();
         let port = port.to_owned();
         thread::spawn(move || {
-            let result = flash_firmware(&port, firmware, target, manual_boot, &progress);
+            let borrowed:Vec<_>=firmware.iter().map(|segment|FirmwareSegment{offset:segment.offset,bytes:segment.bytes.as_slice()}).collect();
+            let result = flash_firmware(&port, &borrowed, target, manual_boot, &progress);
             let mut state = progress.lock().unwrap_or_else(|p| p.into_inner());
             state["flashing"] = json!(false);
             match result {
