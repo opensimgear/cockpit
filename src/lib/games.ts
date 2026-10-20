@@ -34,6 +34,12 @@ export function gameExecutableName(gameId: GameId): string {
   return gameId.startsWith('x-plane-') ? 'X-Plane.exe' : gameId === 'dcs' ? 'DCS.exe' : 'acr.exe';
 }
 
+export function gameDisplayPath(path?: string | null): string {
+  if (!path?.startsWith('\\\\?\\')) return path ?? '';
+  if (path.slice(4, 8).toUpperCase() === 'UNC\\') return '\\\\' + path.slice(8);
+  return /^[a-z]:[\\/]/i.test(path.slice(4)) ? path.slice(4) : path;
+}
+
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
   return catalogue.filter(game => showAll || game.installed);
 }
