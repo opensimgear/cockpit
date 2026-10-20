@@ -1,6 +1,7 @@
 //! USB companion transport. Operator messages stay on the local side of Hub.
 mod flash;
 mod reconnect;
+mod recovery;
 mod serial_write;
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub use flash::*;
@@ -66,7 +67,14 @@ fn block_failed_panel(host: &Value, device: &Value, blocked: &mut Option<String>
     if host["instances"].as_array().is_some_and(|rows| rows.iter().any(|row|
         row["companionId"] == device["companionId"] && row["instanceId"] == operation["instanceId"]
             && row["publicationHash"] == operation["publicationHash"])) {
-        *blocked = operation["publicationHash"].as_str().map(str::to_owned);
+        if recovery::transport_failure(device) {
+            // A generic panel-load event can precede the full verified status
+            // for an interrupted image download. Only that exact transport
+            // failure may release its assignment's earlier generic rejection.
+            if blocked.as_deref()==operation["publicationHash"].as_str() { *blocked=None; }
+        } else {
+            *blocked = operation["publicationHash"].as_str().map(str::to_owned);
+        }
     }
 }
 fn status_clock_ms() -> u64 {
@@ -153,19 +161,32 @@ impl Manager {
         }
         let port_name = port.to_owned();
         let state = Arc::new(Mutex::new(
-            json!({"connected":true,"stage":"Connecting to device","port":port}),
+            json!({"connected":true,"ready":false,"stage":"Connecting to device","port":port}),
         ));
+        // The detector already verified this paired identity. Retain it only
+        // for diagnostics if opening fails before a fresh status arrives; no
+        // session, readiness or input authority is inferred from this hint.
+        if let Some(companion)=expected.as_deref() {
+            state.lock().unwrap_or_else(|p|p.into_inner())["device"]=json!({"companionId":companion});
+        }
         let (tx, rx) = mpsc::sync_channel(8);
         let public = state.clone();
         let path = port.to_owned();
         let join = thread::spawn(move || {
             let result = worker(&path, &hub, &rx, &public, expected.as_deref());
-            if result.is_err() {
-                set(
-                    &public,
-                    "stage",
-                    json!("USB connection failed. Reconnect the device and try again."),
-                );
+            if let Err(error) = result {
+                let paired=hub.command(&json!({"command":"companion_status"})).ok();
+                let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
+                state["lastHostError"]=json!(error);
+                let can_reconnect=expected.is_some() || paired.as_ref().is_some_and(|host|
+                    host["clients"].as_array().is_some_and(|clients|clients.iter().any(|client|
+                        client["companionId"].is_string() && client["companionId"]==state["device"]["companionId"])));
+                if can_reconnect {
+                    state["stage"]=json!("USB connection interrupted; reconnecting automatically");
+                    state["recovery"]=json!({"phase":"waiting-for-device","attempt":0,"nextRetryMs":0,"message":"USB connection interrupted; reconnecting automatically"});
+                } else {
+                    state["stage"]=json!("USB connection failed. Reconnect the device and try again.");
+                }
             }
             set(&public, "connected", json!(false));
             set(&public, "provisioning", json!(false));
@@ -519,7 +540,7 @@ fn worker(
         let mut last_probe = Instant::now() - Duration::from_secs(1);
         let mut last_status = None;
         let mut scan_started:Option<Instant>=None;
-        let mut last_connect: Option<Instant> = None;
+        let mut recovery = recovery::Retry::default();
         let mut blocked_panel:Option<String>=None;
         let mut stopped_panel:Option<String>=None;
         let mut ready = false;
@@ -578,12 +599,12 @@ fn worker(
                     match action {
                         Action::Record(v) => {
                             if v["command"] == "connect" {
-                                // One explicit retry; a later terminal report blocks further retries.
-                                blocked_panel = None; stopped_panel = None; last_connect = Some(Instant::now());
+                                blocked_panel = None; stopped_panel = None; recovery.reset();
                             } else if matches!(v["command"].as_str(), Some("stop" | "disarm")) {
                                 let host = hub.command(&json!({"command":"companion_status"}))?;
                                 let device = public.lock().unwrap_or_else(|p|p.into_inner())["device"].clone();
                                 stopped_panel = assignment_hash(&host,device["companionId"].as_str().unwrap_or(""));
+                                recovery.reset();
                             }
                             if v["command"]=="scan-wifi"{
                                 scan_started=Some(Instant::now());set(public,"scanning",json!(true));set(public,"scanError",Value::Null);set(public,"networks",json!([]));
@@ -707,14 +728,27 @@ fn worker(
                                             let paired = host["clients"].as_array().is_some_and(|rows| rows.iter().any(|c|c["companionId"]==v["companionId"]));
                                             let assigned=assignment_hash(&host,v["companionId"].as_str().unwrap_or(""));
                                             refresh_panel_recovery(&mut public.lock().unwrap_or_else(|p|p.into_inner()),&v,&mut blocked_panel);
-                                            // A newly attached device may retain the previous
-                                            // host's shutdown error. Allow one initial connect;
-                                            // failures observed by this ready link block retries.
+                                            // A newly attached device may retain a shutdown
+                                            // error. Later retries require fresh verified status,
+                                            // the current assignment and transport-only failures.
                                             if ready { block_failed_panel(&host,&v,&mut blocked_panel); }
                                             let retry_allowed=panel_retry_allowed(blocked_panel.as_deref(),assigned.as_deref())
                                                 && panel_retry_allowed(stopped_panel.as_deref(),assigned.as_deref());
-                                            if v["setupSaved"] == true && retry_allowed && (!ready || (paired && v["connectionMode"]=="serial" && matches!(v["status"].as_str(),Some("offline"|"error")) && last_connect.is_none_or(|at|at.elapsed()>Duration::from_secs(3)))) {
-                                                last_connect=Some(Instant::now());
+                                            let now=Instant::now();
+                                            let healthy=matches!(v["status"].as_str(),Some("live-armed"|"live-disarmed"|"awaiting-assignment"));
+                                            if !retry_allowed || !paired || v["setupSaved"]!=true || v["connectionMode"]!="serial" || assigned.is_none() { recovery.reset(); }
+                                            let recoverable=paired && v["setupSaved"]==true && v["connectionMode"]=="serial"
+                                                && assigned.is_some() && retry_allowed
+                                                && (v["status"]=="offline" || recovery::transport_failure(&v));
+                                            recovery.observe(now,assigned.as_deref(),recoverable,healthy);
+                                            let auto_retry=ready && recoverable && recovery.due(now);
+                                            if v["setupSaved"] == true && retry_allowed && (!ready || auto_retry) {
+                                                if auto_retry {
+                                                    // Retire the old native source before asking
+                                                    // firmware for a new session and neutral baseline.
+                                                    wire.reset(hub,"");
+                                                    recovery.attempted(now);
+                                                }
                                                 let unix = std::time::SystemTime::now()
                                                     .duration_since(std::time::UNIX_EPOCH)
                                                     .map_err(|_| "Invalid PC clock.")?
@@ -788,6 +822,13 @@ fn worker(
                                                     _ => "Device ready",
                                                 })),
                                             );
+                                            {
+                                                let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
+                                                if let Some(report)=recovery.view(now) {
+                                                    if !healthy { state["stage"]=report["message"].clone(); }
+                                                    state["recovery"]=report;
+                                                } else if let Some(state)=state.as_object_mut() { state.remove("recovery"); }
+                                            }
                                             if (v["setupSaved"] == true || v["status"] == "error")
                                                 && provision.as_ref().is_some_and(|p| {
                                                     v["companionId"].as_str() == Some(&p.0)
@@ -860,6 +901,29 @@ mod tests {
         }
         let mut other=device;other["companionId"]=json!("another-screen");
         let mut untouched=None;block_failed_panel(&host,&other,&mut untouched);assert!(untouched.is_none());
+    }
+    #[test]
+    fn usb_request_failure_retries_without_rejecting_the_assigned_panel() {
+        let hash=format!("sha256:{}","a".repeat(64));
+        let host=json!({"instances":[{"companionId":"screen","instanceId":"panel","publicationHash":hash}]});
+        let mut device=json!({"companionId":"screen","sessionId":"session","generation":"1","operation":{
+            "instanceId":"panel","publicationHash":hash,"sessionId":"session","generation":"1",
+            "phase":"failed","errorCode":"request-failed","retryable":true,"attemptId":1}});
+        let mut blocked=None;
+        block_failed_panel(&host,&device,&mut blocked);
+        assert!(panel_retry_allowed(blocked.as_deref(),Some(&hash)));
+        blocked=Some(hash.clone());
+        block_failed_panel(&host,&device,&mut blocked);
+        assert!(blocked.is_none(),"Verified USB failure must release an earlier generic panel-load rejection.");
+        // A persistent failure of the same panel still needs repair. Generic
+        // firmware retry flags never turn content or input faults into USB retries.
+        for (code,retryable) in [("request-failed",false),("invalid-panel",false),("render-failed",true),("baseline-failed",true)] {
+            device["operation"]["errorCode"]=json!(code);
+            device["operation"]["retryable"]=json!(retryable);
+            let mut blocked=None;
+            block_failed_panel(&host,&device,&mut blocked);
+            assert!(!panel_retry_allowed(blocked.as_deref(),Some(&hash)),"{code}");
+        }
     }
     #[test]
     fn recovered_panel_and_updated_firmware_release_stale_rejection(){

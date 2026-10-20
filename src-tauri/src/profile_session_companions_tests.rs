@@ -824,6 +824,48 @@ fn reconnect_discards_buffered_edges_requires_current_tokens_and_never_changes_p
 }
 
 #[test]
+fn active_usb_rebind_reports_automatic_baseline_recovery_without_hiding_other_faults() {
+    for (transport,active) in [(Transport::Usb,true),(Transport::Usb,false),(Transport::Network,true)] {
+        let mut fixture=Fixture::new();
+        let route=osg_profiles::resources::Route {
+            id:"companion:instance".into(),transport,provider_generation:"1".into(),
+            attributes:BTreeMap::new(),baseline_ready:true,writable:true,priority:0,
+        };
+        fixture.plan.sources[0].route=Some(route.clone());
+        fixture.plan.sinks[0].route=Some(route);
+        let mut adapter=fixture.prepared();
+        let receipts=fixture.acquire(&mut adapter,&[]);
+        fixture.connect();
+        let delivery=fixture.delivery();adapter.bind_delivery_plan(&delivery).unwrap();
+        let frames=adapter.baseline(&fixture.hub,|_|Ok(()),100).unwrap().unwrap();
+        let mut phase=Phase::new(delivery.program.clone(),Counter(1),uuid::Uuid::new_v4().to_string()).unwrap();
+        for frame in frames {phase.accept(frame).unwrap();}
+        if active {adapter.arm(phase.run_token()).unwrap();}
+        fixture.hub.disconnect_connection("connection",fixture.hub.now_ms());
+        let lost=adapter.poll(&fixture.hub,|_|Ok(()),200);
+        let pending=adapter.rebind(&fixture.hub,&fixture.delivery(),|_|true,|_|Ok(()),200);
+        assert_eq!(pending.diagnostics.len(),1);
+        assert_eq!(pending.diagnostics[0].contains("recovery is automatic"),active&&transport==Transport::Usb,"{:?}",pending.diagnostics);
+        assert_eq!(pending.diagnostics[0].contains("Start again explicitly"),!active||transport!=Transport::Usb);
+        if active&&transport==Transport::Usb {
+            assert!(lost.diagnostics.iter().chain(&pending.diagnostics).all(|message|!message.contains("Start again explicitly")));
+        }
+        let rejected=adapter.rebind(&fixture.hub,&fixture.delivery(),|_|true,|_|Err("Native write capability revoked".into()),201);
+        assert_eq!(rejected.diagnostics,vec!["companion: Native write capability revoked"]);
+        fixture.clock.store(300,Ordering::Release);fixture.connect();
+        let recovered=adapter.rebind(&fixture.hub,&fixture.delivery(),|_|true,|_|Ok(()),300);
+        assert!(recovered.diagnostics.is_empty(),"{:?}",recovered.diagnostics);
+        assert!(adapter.instances[0].ready);
+        let successor=fixture.prepared().capture(&fixture.hub,&receipts).unwrap();
+        fixture.hub.acquire_profile_assignment(&successor[0]).unwrap();
+        adapter.poll(&fixture.hub,|_|Ok(()),400);
+        let ownership=adapter.rebind(&fixture.hub,&fixture.delivery(),|_|true,|_|Ok(()),400);
+        assert!(!ownership.diagnostics.is_empty());
+        assert!(ownership.diagnostics.iter().all(|message|!message.contains("recovery is automatic")));
+    }
+}
+
+#[test]
 fn one_offline_peer_cannot_block_another_companions_fresh_reconnect_baseline() {
     let fixture = Fixture::new();
     let offer = fixture

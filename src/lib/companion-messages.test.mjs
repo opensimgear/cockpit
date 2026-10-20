@@ -108,3 +108,22 @@ test('structured panel failures preserve action and error code without duplicati
   client.operation={phase:'failed',message:'Panel image download timed out',errorCode:'image-download-timeout',retryable:true};
   assert.deepEqual(companionMessages({},client),[{source:'connection',kind:'error',message:'Panel image download timed out (image-download-timeout). Check the connection and retry.'}]);
 });
+
+test('automatic USB recovery replaces retained failures with one actionable status tooltip', () => {
+  const client={companionId:'screen',connectionStatus:'Heartbeat failed',panelError:'Old error',operation:{phase:'failed',errorCode:'request-failed',retryable:true,message:'Invalid USB reply'}};
+  for(const phase of ['waiting','connecting','waiting-for-device']){
+    const device={connected:phase!=='waiting-for-device',ready:phase!=='waiting-for-device',device:{companionId:'screen',status:'error'},recovery:{phase,attempt:2,nextRetryMs:3000,message:'USB connection interrupted; reconnecting automatically'}};
+    for(const state of [{usb:device},{usb:{connected:false,devices:[device]}}]){
+      assert.deepEqual(companionMessages(state,client),[{source:'connection',kind:'warning',message:device.recovery.message}]);
+      assert.deepEqual(companionMessages(state,{companionId:'other',connectionStatus:'Another companion'}),[{source:'connection',kind:'info',message:'Another companion'}]);
+    }
+  }
+});
+
+test('a recovered live USB port replaces stale recovery history with normal panel feedback', () => {
+  const old={connected:false,ready:false,device:{companionId:'screen',status:'error'},recovery:{phase:'waiting-for-device',message:'Reconnecting automatically'}};
+  const live={connected:true,ready:true,device:{companionId:'screen',status:'live-armed'},recovery:{phase:'recovered',message:'Recovered old connection'}};
+  const client={companionId:'screen',connectionStatus:'Panel connected',operation:{phase:'ready'}};
+  assert.deepEqual(companionMessages({usb:{connected:false,devices:[old,live]}},client),[{source:'connection',kind:'info',message:'Panel connected'}]);
+  assert.deepEqual(companionMessages({usb:live},client),[{source:'connection',kind:'info',message:'Panel connected'}]);
+});

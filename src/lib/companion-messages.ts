@@ -20,11 +20,14 @@ function operationMessage(value:unknown):CompanionMessage|undefined {
 export function companionMessages(state:CompanionHostState,client:Record<string,unknown>):CompanionMessage[] {
   const messages:CompanionMessage[]=[];
   const id=text(client,'companionId'),panelError=text(client,'panelError'),connection=text(client,'connectionStatus');
-  const usb=state.usb?.devices?.find(device=>device.device?.companionId===id)??(state.usb?.device?.companionId===id?state.usb:undefined);
+  const matches=id?[...(state.usb?.devices??[]),...(state.usb?.device?.companionId===id?[state.usb]:[])].filter(device=>device.device?.companionId===id):[];
+  const usb=matches.find(device=>device.connected&&device.ready)??matches[0];
+  const recovery=usb?.recovery&&['waiting','connecting','waiting-for-device'].includes(usb.recovery.phase)?usb.recovery.message:undefined;
   const assigned=(state.host?.instances??[]).filter(instance=>instance.companionId===id);
   const operation=client.operation??(usb?.connected&&usb.device?.operation&&assigned.some(instance=>instance.instanceId===usb.device?.operation?.instanceId&&instance.publicationHash===usb.device?.operation?.publicationHash)?usb.device.operation:undefined);
   const progress=operationMessage(operation);
-  if(progress)messages.push(progress);
+  if(recovery)messages.push({source:'connection',kind:'warning',message:recovery});
+  else if(progress)messages.push(progress);
   else if(panelError)messages.push({source:'connection',kind:'error',message:`Panel error. ${panelError}`});
   else if(connection&&connection!=='No panel assigned')messages.push({source:'connection',kind:usb?.device?.status==='error'?'error':usb?.device?.status==='offline'?'warning':'info',message:connection});
   if(client.kind==='esp32'){

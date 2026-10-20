@@ -507,6 +507,7 @@ impl CompanionSources {
         if !self.acquired || self.stopped {
             return poll;
         }
+        let active_run = self.run.is_some();
         for instance in &mut self.instances {
             if !allowed(&instance.logical) {
                 continue;
@@ -560,7 +561,7 @@ impl CompanionSources {
                 Ok(frames) => poll.frames.extend(frames),
                 Err(error) => poll
                     .diagnostics
-                    .push(format!("{}: {error}", instance.logical)),
+                    .push(format!("{}: {}", instance.logical, instance.rebind_error(hub, active_run, error))),
             }
         }
         poll
@@ -685,6 +686,7 @@ impl CompanionSources {
         if !self.acquired || self.stopped {
             return result;
         }
+        let active_run = self.run.is_some();
         for instance in &mut self.instances {
             let was_ready = instance.ready;
             let outcome = (|| {
@@ -726,7 +728,7 @@ impl CompanionSources {
                     }
                     result
                         .diagnostics
-                        .push(format!("{}: {error}", instance.logical));
+                        .push(format!("{}: {}", instance.logical, instance.rebind_error(hub, active_run, error)));
                     if clear {
                         if let Some(receipt) = &instance.receipt {
                             let _ = hub.clear_profile_feedback(receipt, hub.now_ms());
@@ -834,6 +836,17 @@ impl CompanionSources {
     }
 }
 impl Instance {
+    fn rebind_error(&self, hub: &Hub, active_run: bool, error: String) -> String {
+        // Legacy mapping activation requires an explicit Start. A live profile
+        // already owns this exact USB assignment and retries its fresh baseline.
+        // Keep ownership, content, transport and token failures unchanged.
+        if active_run && self.transport == Some(Transport::Usb)
+            && error == "Companion source identity, revision or baseline changed before output activation; Start again explicitly."
+            && self.validate_owner_bindings(hub).is_ok()
+        {
+            "Waiting for the companion USB connection and a fresh neutral input baseline; recovery is automatic.".into()
+        } else { error }
+    }
     fn delivery_bindings(
         &self,
         delivery: &ExecutionPlan,

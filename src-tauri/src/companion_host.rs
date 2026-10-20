@@ -42,19 +42,28 @@ fn usb_panel_operation(assignment: &Value, devices: &[Value]) -> Option<ProfileP
 fn describe_usb_presence(host:&mut Value,devices:&[Value]){
     let assignments=host["instances"].as_array().cloned().unwrap_or_default();
     if let Some(clients)=host["clients"].as_array_mut(){for client in clients{
-        let Some(usb)=devices.iter().find(|usb|usb["connected"]==true && usb["ready"]==true && usb["device"]["companionId"]==client["companionId"])else{continue};
+        let Some(companion)=client["companionId"].as_str().filter(|id|!id.is_empty()) else{continue};
+        let matching=|usb:&&Value|usb["device"]["companionId"]==companion;
+        // A recovered device can return on a different port while the old link
+        // still holds diagnostic history. Prefer its current live observation.
+        let Some(usb)=devices.iter().filter(matching).find(|usb|usb["connected"]==true && usb["ready"]==true)
+            .or_else(||devices.iter().filter(matching).find(|usb|usb_recovery_message(usb).is_some())) else{continue};
         client["sessionConnected"]=client["connected"].clone();
+        if let Some(message)=usb_recovery_message(usb){
+            client["connectionStatus"]=json!(message);
+            if usb["connected"]!=true || usb["ready"]!=true {continue;}
+        }
         client["connected"]=json!(true);
         if let Some(transports)=client["transports"].as_array_mut(){if !transports.contains(&json!("usb")){transports.push(json!("usb"));}}
         else{client["transports"]=json!(["usb"]);}
-        client["connectionStatus"]=json!(usb["device"]["statusMessage"].as_str().unwrap_or_else(||match usb["device"]["status"].as_str(){
+        client["connectionStatus"]=json!(usb_recovery_message(usb).unwrap_or_else(||usb["device"]["statusMessage"].as_str().unwrap_or_else(||match usb["device"]["status"].as_str(){
             Some("authenticating")=>"Connecting to Cockpit",
             Some("opening-panel")=>"Loading panel",
             Some("error")=>"Cockpit connection or session failed",
             Some("offline")=>"USB connected; panel session stopped",
             Some("awaiting-assignment")=>"No panel assigned",
             _=>"",
-        }));
+        })));
         if client["operation"].is_null() && usb["device"]["operation"].is_object()
             && assignments.iter().any(|assignment|assignment["companionId"]==client["companionId"]
                 && assignment["instanceId"]==usb["device"]["operation"]["instanceId"]
@@ -65,6 +74,10 @@ fn describe_usb_presence(host:&mut Value,devices:&[Value]){
             client["panelError"]=json!(usb["device"]["statusMessage"].as_str().unwrap_or("The screen could not load or render this panel."));
         }
     }}
+}
+fn usb_recovery_message(usb:&Value)->Option<&str>{
+    if !matches!(usb["recovery"]["phase"].as_str(),Some("waiting"|"connecting"|"waiting-for-device")){return None;}
+    usb["recovery"]["message"].as_str().filter(|message|!message.is_empty()&&message.len()<=191&&!message.chars().any(char::is_control))
 }
 fn screen_dimensions(profile:&str)->Option<(u64,u64)>{
     match profile {"sunton-3248s035r"=>Some((480,320)),"waveshare-lcd7-s3"=>Some((800,480)),_=>None}
@@ -865,6 +878,32 @@ mod tests {
             assert_eq!(client["connectionStatus"],message);
             assert_eq!(client["panelError"].as_str(),if panel_error{Some(message)}else{None});
         }
+    }
+    #[test]
+    fn usb_recovery_describes_only_the_exact_paired_companion_without_claiming_a_session(){
+        for (phase,connected) in [("waiting",true),("connecting",true),("waiting-for-device",false)]{
+            let message="USB connection interrupted; reconnecting automatically";
+            let mut host=json!({"clients":[{"companionId":"screen","connected":false},{"companionId":"other","connected":false}]});
+            describe_usb_presence(&mut host,&[json!({"connected":connected,"ready":connected,"recovery":{"phase":phase,"message":message},"device":{"companionId":"screen","status":"error","statusMessage":"Heartbeat: invalid USB reply"}})]);
+            assert_eq!(host["clients"][0]["connectionStatus"],message);
+            assert_eq!(host["clients"][0]["connected"],connected);
+            assert_eq!(host["clients"][0]["sessionConnected"],false);
+            assert!(host["clients"][1]["connectionStatus"].is_null());
+            assert_eq!(host["clients"][1]["connected"],false);
+        }
+    }
+    #[test]
+    fn recovered_usb_presence_prefers_the_live_port_and_restores_normal_status(){
+        let mut host=json!({"clients":[{"companionId":"screen","connected":true}]});
+        let old=json!({"connected":false,"ready":false,"recovery":{"phase":"waiting-for-device","message":"Reconnecting automatically"},"device":{"companionId":"screen","status":"error"}});
+        let recovered=json!({"connected":true,"ready":true,"recovery":{"phase":"recovered","message":"Recovered old connection"},"device":{"companionId":"screen","status":"live-armed","statusMessage":"Panel connected"}});
+        describe_usb_presence(&mut host,&[old,recovered]);
+        assert_eq!(host["clients"][0]["connected"],true);
+        assert_eq!(host["clients"][0]["connectionStatus"],"Panel connected");
+        for message in ["","Bad\nmessage"]{
+            assert!(usb_recovery_message(&json!({"recovery":{"phase":"waiting","message":message}})).is_none());
+        }
+        assert!(usb_recovery_message(&json!({"recovery":{"phase":"waiting","message":"x".repeat(192)}})).is_none());
     }
     #[test]
     fn esp_panels_match_screen_dimensions_on_every_page() {
