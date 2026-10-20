@@ -15,7 +15,7 @@ use std::{
 const MAX_EXECUTABLE: u64 = 512 * 1024 * 1024;
 const PROBE_MS: u64 = 2500;
 const FRESHNESS_MS: u64 = 1500;
-pub(crate) const LAYOUT_REVISION: &str = "acr-prefix-2";
+pub(crate) const LAYOUT_REVISION: &str = "acr-prefix-3";
 fn paths_match(left: &str, right: &str) -> bool {
     left.replace('/', "\\")
         .trim_start_matches("\\\\?\\")

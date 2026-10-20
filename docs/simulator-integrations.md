@@ -39,9 +39,9 @@ installs a plugin or changes game files.
 
 The native source is **Windows shared memory**, selected with the Rally process ID. It opens existing `Local\acpmf_physics`, `Local\acpmf_graphics` and `Local\acpmf_static` mappings read-only. The researched executable basename is `acr.exe`; the implementation verifies the selected process identity/creation epoch and checks its lifetime. Shared mapping names are reused by other Assetto games and alone do not establish the producer. Run only the selected game when using these mappings. The source closes old mapping handles on exit/reset and uses bounded stable-copy retries.
 
-The adapter decodes explicit little-endian prefixes: physics packet ID at 0, raw gear at 16, RPM at 20 and speed km/h at 28; graphics status at 4; static maximum RPM at 412 and bounded UTF-16 context. Normalized channels are `rpm`, `gear` (reverse -1, neutral 0, forward 1+), `speed_kmh`, optional `max_rpm`, and derived `rev_ratio`. Live status and an advancing original physics packet ID establish freshness. Initial attachment, process/car/track changes and counter resets require a new baseline. Duplicate/frozen snapshots do not refresh the source; off, replay, pause, invalid or stale data falls back. Counter wrap is handled as unsigned progression.
+The adapter decodes explicit little-endian prefixes: physics packet ID at 0, raw gear at 16, RPM at 20 and speed km/h at 28; graphics status at 4; legacy static maximum RPM at 412 and bounded UTF-16 context. The optional 592-byte physics prefix adds current maximum RPM as int32 at 588. A valid current maximum takes precedence, with valid static maximum as fallback. Normalized channels are `rpm`, `gear` (reverse -1, neutral 0, forward 1+), `speed_kmh`, optional `max_rpm`, and derived `rev_ratio`. Live status and an advancing original physics packet ID establish freshness. Initial attachment, process/car/track changes and counter resets require a new baseline. Duplicate/frozen snapshots do not refresh the source; off, replay, pause, invalid or stale data falls back. Counter wrap is handled as unsigned progression.
 
-This layout is developer-derived, not an officially guaranteed ACR binary interface. Sources: [ACR-specific MIT reader](https://github.com/LuizZak/AssettoCorsaRallyTelemetryReader/tree/8bb26990def38ffd0e4afe71e04e85e5ddeb3670), [independent graphics/status parser](https://github.com/decnet100/acr_telemetry/tree/eaef0f29c6712a2e0dbc3bfd8246b84dcdbb9586), and [Microsoft mapping lifetime documentation](https://learn.microsoft.com/en-us/windows/win32/memory/sharing-files-and-memory). No code was copied from the noncommercial recorder. Later conflicting fields are deliberately excluded. Static maximum RPM must be valid; an observed peak is not treated as a redline.
+This layout is developer-derived, not an officially guaranteed ACR binary interface. Sources: [ACR-specific MIT reader](https://github.com/LuizZak/AssettoCorsaRallyTelemetryReader/tree/8bb26990def38ffd0e4afe71e04e85e5ddeb3670), [independent graphics/status parser](https://github.com/decnet100/acr_telemetry/tree/eaef0f29c6712a2e0dbc3bfd8246b84dcdbb9586), and [Microsoft mapping lifetime documentation](https://learn.microsoft.com/en-us/windows/win32/memory/sharing-files-and-memory). No code was copied from the noncommercial recorder. The current maximum extension was confirmed against the [captured live build](verification/2026-10-21-acr-current-max-rpm.md); other unqualified fields remain excluded. If neither published maximum is valid, `max_rpm` and `rev_ratio` remain unknown; an observed peak is not treated as a redline.
 
 Portable tests feed bounded authored physics/graphics/static byte pages through the same parser, including RPM, gear, speed, maximum RPM, progression and live/pause/replay/off states. These synthetic fixtures are OpenSimGear test input, not Rally native UDP or a second desktop integration editor. Original Assetto Corsa has a separate [Kunos UDP interface](https://docs.google.com/document/d/1KfkZiIluXZ6mMhLWfDX1qAGbvhGRC3ZUzjVIt5FQpp4/pub) and remains a future independent provider.
 
@@ -51,14 +51,16 @@ Software checks and authored samples do not qualify live Rally versions, real DC
 
 A live Windows driving session exposed a sparse variant: graphics packet IDs
 advance but status stays 0; both static version strings and maximum RPM are zero,
-while car/track, RPM, gear and speed are populated. `acr-prefix-2` accepts this
-variant only with both version strings empty, nonempty car/track and valid required
+while car/track, RPM, gear and speed are populated. Current layout revision
+`acr-prefix-3` retains the sparse-variant support introduced by `acr-prefix-2`:
+it accepts this variant only with both version strings empty, nonempty car/track and valid required
 channels, then requires the usual baseline and advancing physics packets. Other
 status-0 frames remain inactive; explicit replay/pause values still disarm.
 Native setup records the executable fingerprint instead of demanding missing
 version strings for this variant. Diagnostics explicitly report that menu/pause/
 replay discrimination is unavailable if the game continues publishing packets
-without a state flag. Missing max RPM still disables rev-ratio. This supersedes
+without a state flag. Missing both current physics and legacy static maximum
+still disables rev-ratio. This supersedes
 the earlier universal assumption that live Rally always reports ACC status 2.
 
 The actual Windows acquisition and complete native setup probe passed against
@@ -66,3 +68,8 @@ executable SHA-256 `42c359b0cd24774a86441710fdc7d7db3bc06b57b3ff30cb9ea5d56fb714
 Observed live values included 5156 RPM, first gear and 34.6244 km/h, Lancia Stratos
 HF at Wales Afon Bidno. This verifies reception on that executable; pause/replay
 transitions and dashboard calibration have not been qualified.
+
+The [2026-10-21 maximum RPM correction](verification/2026-10-21-acr-current-max-rpm.md)
+extends native acquisition to the current physics maximum and records layout
+revision `acr-prefix-3`. On the same executable fingerprint, ten advancing
+samples reported 8500 at physics offset 588 while static maximum remained zero.

@@ -144,6 +144,26 @@ fn optional_maximum_does_not_block_rpm_gear_or_speed_and_never_infers_redline() 
     assert!(assessment["diagnostics"].to_string().contains("No redline"));
 }
 #[test]
+fn current_physics_maximum_enables_ratio_when_acr_omits_the_static_maximum() {
+    let mut verifier = Verifier::new(&identity()).unwrap();
+    let mut s = sample(10, 2);
+    s.statics[412..416].copy_from_slice(&0i32.to_le_bytes());
+    s.physics.resize(game_telemetry::PHYSICS_EXTENDED_SIZE, 0);
+    s.physics[game_telemetry::PHYSICS_CURRENT_MAX_RPM_OFFSET..game_telemetry::PHYSICS_EXTENDED_SIZE]
+        .copy_from_slice(&8500i32.to_le_bytes());
+    verifier.observe(&s, 0).unwrap();
+    s.physics[..4].copy_from_slice(&11u32.to_le_bytes());
+    verifier.observe(&s, 100).unwrap();
+    let assessment = verifier.assessment(100);
+    assert_eq!(assessment["compatible"], true);
+    assert_eq!(assessment["maxRpmAvailable"], true);
+    assert_eq!(assessment["revRatioAvailable"], true);
+    assert_eq!(assessment["channels"]["max_rpm"]["value"], 8500);
+    assert_eq!(assessment["channels"]["rev_ratio"]["status"], "ready");
+    assert_eq!(assessment["layoutRevision"], "acr-prefix-3");
+    assert!(!assessment["diagnostics"].to_string().contains("Maximum RPM is unavailable"));
+}
+#[test]
 fn frozen_pause_replay_off_and_stale_samples_do_not_validate_native_readiness() {
     for (status, label) in [(0, "waiting"), (1, "replay"), (3, "paused")] {
         let mut verifier = Verifier::new(&identity()).unwrap();

@@ -14,13 +14,20 @@ and [static declaration](https://github.com/LuizZak/AssettoCorsaRallyTelemetryRe
 They use explicit little-endian 32-bit numbers, Windows UTF-16 and Pack=4.
 `manifest.json` records sizes, offsets and expected values. Prefixes require
 32 physics bytes, 8 graphics bytes and 416 static bytes; these are not full-page
-size assertions. Maximum RPM is the integer at static offset412. The graphics
-status enum comes from the independent ACR recorder's ACC-compatible reader;
-live ACR compatibility remains to be qualified.
+size assertions. These legacy fixture lengths and manifest remain intentional.
+The parser also accepts an optional 592-byte physics prefix, reading
+`currentMaxRpm` as little-endian int32 at offset 588. A valid current maximum
+takes precedence over the legacy integer at static offset 412; a missing,
+truncated, zero or invalid extension falls back to a valid static maximum.
+Neither source is carried over from a previous sample or car. See the
+[live correction](../../../docs/verification/2026-10-21-acr-current-max-rpm.md).
+The graphics status enum comes from the independent ACR recorder's ACC-compatible
+reader; pause/replay behavior remains to be qualified on each live build.
 
 Fixtures cover source progression, duplicate/frozen updates, reset,
 reverse/neutral, invalid speed/RPM, short data, paused/replay/off/unknown status
-and absent maximum RPM. Production tests additionally cover torn copies,
+and absent maximum RPM. Production tests additionally cover the optional current
+maximum, its static fallback and both-source absence, plus torn copies,
 malformed UTF-16, source/context replacement, u32 wrap and stale duplicates.
 Gear normalization `raw-1` is developer-derived; original AC UDP telemetry is a
 separate protocol and is not used here. A missing maximum yields unknown

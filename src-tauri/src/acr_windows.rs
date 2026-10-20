@@ -1,7 +1,8 @@
 //! Read existing ACR named pages without creating or writing game mappings.
 //! Shared names are not a game identity; the caller explicitly selects a PID.
 use crate::game_telemetry::{
-    parse, RawSample, Source, SourceIdentity, GRAPHICS_SIZE, PHYSICS_SIZE, STATIC_SIZE,
+    parse, RawSample, Source, SourceIdentity, GRAPHICS_SIZE, PHYSICS_CURRENT_MAX_RPM_OFFSET,
+    PHYSICS_EXTENDED_SIZE, PHYSICS_SIZE, STATIC_SIZE,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -52,6 +53,8 @@ fn consistent_copy(
         parse(&first)?;
         parse(&second)?;
         if first.physics[..PHYSICS_SIZE] == second.physics[..PHYSICS_SIZE]
+            && first.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE)
+                == second.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE)
             && first.graphics[..GRAPHICS_SIZE] == second.graphics[..GRAPHICS_SIZE]
             && first.statics[..STATIC_SIZE] == second.statics[..STATIC_SIZE]
         {
@@ -222,7 +225,11 @@ mod platform {
     impl Pages {
         fn open() -> Result<Self, String> {
             Ok(Self {
-                physics: Mapping::open("Local\\acpmf_physics", PHYSICS_SIZE)?,
+                // Older producers can expose only the original prefix. ACR's
+                // current RPM limit lives later in physics; acquire it when the
+                // existing mapping supports the extended read.
+                physics: Mapping::open("Local\\acpmf_physics", PHYSICS_EXTENDED_SIZE)
+                    .or_else(|_| Mapping::open("Local\\acpmf_physics", PHYSICS_SIZE))?,
                 graphics: Mapping::open("Local\\acpmf_graphics", GRAPHICS_SIZE)?,
                 statics: Mapping::open("Local\\acpmf_static", STATIC_SIZE)?,
             })
@@ -428,6 +435,42 @@ mod tests {
         assert_eq!(physics_reads, 6);
         assert!(consistent_copy(identity(), &mut |_| Err("mapping unavailable".into())).is_err());
         assert!(consistent_copy(identity(), &mut |_| Ok(vec![0])).is_err());
+    }
+    #[test]
+    fn current_rpm_limit_is_part_of_the_stable_copy_even_when_the_packet_is_unchanged() {
+        let mut physics_reads = 0;
+        let sample = consistent_copy(identity(), &mut |page| {
+            let mut data = bytes(page);
+            if matches!(page, Page::Physics) {
+                physics_reads += 1;
+                data.resize(PHYSICS_EXTENDED_SIZE, 0);
+                let maximum: i32 = if physics_reads == 1 { 8500 } else { 9000 };
+                data[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE]
+                    .copy_from_slice(&maximum.to_le_bytes());
+            }
+            Ok(data)
+        })
+        .unwrap();
+        assert_eq!(physics_reads, 4);
+        assert_eq!(
+            parse(&sample).unwrap().channels["max_rpm"].value,
+            Some(serde_json::json!(9000))
+        );
+
+        physics_reads = 0;
+        assert!(consistent_copy(identity(), &mut |page| {
+            let mut data = bytes(page);
+            if matches!(page, Page::Physics) {
+                physics_reads += 1;
+                data.resize(PHYSICS_EXTENDED_SIZE, 0);
+                let maximum: i32 = 8500 + physics_reads;
+                data[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE]
+                    .copy_from_slice(&maximum.to_le_bytes());
+            }
+            Ok(data)
+        })
+        .is_err());
+        assert_eq!(physics_reads, 6);
     }
     #[test]
     fn mapping_reset_policy_distinguishes_wrap_duplicates_and_backward_counters() {

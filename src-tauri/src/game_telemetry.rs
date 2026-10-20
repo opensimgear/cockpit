@@ -7,6 +7,10 @@ pub(crate) const PROVIDER: &str = "assetto-corsa-rally";
 pub(crate) const MAX_PAGE: usize = 4096;
 const CHANNELS: [&str; 5] = ["rpm", "speed_kmh", "gear", "max_rpm", "rev_ratio"];
 pub(crate) const PHYSICS_SIZE: usize = 32;
+// ACR publishes the current engine limit as an int32 in its extended physics
+// page. Keep the original prefix valid for older sources and authored fixtures.
+pub(crate) const PHYSICS_CURRENT_MAX_RPM_OFFSET: usize = 588;
+pub(crate) const PHYSICS_EXTENDED_SIZE: usize = PHYSICS_CURRENT_MAX_RPM_OFFSET + 4;
 pub(crate) const GRAPHICS_SIZE: usize = 8;
 pub(crate) const STATIC_SIZE: usize = 416;
 
@@ -316,7 +320,13 @@ pub(crate) fn parse(sample: &RawSample) -> Result<Reading, String> {
     };
     let rpm = integer(&sample.physics, 20);
     let gear = integer(&sample.physics, 16);
-    let maximum = integer(&sample.statics, 412);
+    // Prefer the current limit, which can change with the car's engine state.
+    // Sparse ACR builds leave the static maximum at zero. Never infer a limit
+    // from observed RPM or reinterpret invalid integer bytes as a float.
+    let current_maximum = (sample.physics.len() >= PHYSICS_EXTENDED_SIZE)
+        .then(|| integer(&sample.physics, PHYSICS_CURRENT_MAX_RPM_OFFSET))
+        .filter(|maximum| (1..=100000).contains(maximum));
+    let maximum = current_maximum.unwrap_or_else(|| integer(&sample.statics, 412));
     let speed = f32::from_le_bytes(sample.physics[28..32].try_into().unwrap()) as f64;
     let valid_rpm = (0..=100000).contains(&rpm);
     let valid_maximum = (1..=100000).contains(&maximum);
@@ -671,6 +681,102 @@ mod tests {
             s.physics[28..32].copy_from_slice(&speed.to_le_bytes());
             assert!(parse(&s).unwrap().channels["speed_kmh"].value.is_none());
         }
+    }
+    #[test]
+    fn current_physics_limit_overrides_static_maximum_and_supports_sparse_acr() {
+        let mut s = sample();
+        s.physics.resize(PHYSICS_EXTENDED_SIZE, 0);
+        for maximum in [1i32, 8500, 100000] {
+            s.physics[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE]
+                .copy_from_slice(&maximum.to_le_bytes());
+            for static_maximum in [0i32, 7500] {
+                s.statics[412..416].copy_from_slice(&static_maximum.to_le_bytes());
+                let reading = parse(&s).unwrap();
+                assert_eq!(reading.channels["max_rpm"].value, Some(json!(maximum)));
+                assert_eq!(
+                    reading.channels["rev_ratio"].value,
+                    Some(json!(6300.0 / maximum as f64))
+                );
+            }
+        }
+        s.physics[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE]
+            .copy_from_slice(&8500i32.to_le_bytes());
+        s.statics[..60].fill(0);
+        s.graphics[4..8].fill(0);
+        let reading = parse(&s).unwrap();
+        assert!(reading.sparse_status());
+        assert_eq!(reading.channels["max_rpm"].value, Some(json!(8500)));
+    }
+    #[test]
+    fn invalid_current_limits_fall_back_only_to_valid_static_integer_limits() {
+        let mut s = sample();
+        s.physics.resize(PHYSICS_EXTENDED_SIZE, 0);
+        for maximum in [
+            0i32,
+            -1,
+            100001,
+            i32::MIN,
+            i32::MAX,
+            8500f32.to_bits() as i32,
+            f32::NAN.to_bits() as i32,
+            f32::INFINITY.to_bits() as i32,
+        ] {
+            s.physics[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE]
+                .copy_from_slice(&maximum.to_le_bytes());
+            s.statics[412..416].copy_from_slice(&7500i32.to_le_bytes());
+            let reading = parse(&s).unwrap();
+            assert_eq!(reading.channels["max_rpm"].value, Some(json!(7500)));
+            assert_eq!(reading.channels["rev_ratio"].value, Some(json!(0.84)));
+            for static_maximum in [0i32, -1, 100001] {
+                s.statics[412..416].copy_from_slice(&static_maximum.to_le_bytes());
+                let reading = parse(&s).unwrap();
+                assert_eq!(reading.channels["max_rpm"].status, ChannelStatus::Unknown);
+                assert!(reading.channels["max_rpm"].value.is_none());
+                assert!(reading.channels["rev_ratio"].value.is_none());
+                assert_eq!(reading.channels["rpm"].value, Some(json!(6300)));
+            }
+        }
+    }
+    #[test]
+    fn incomplete_physics_extensions_use_legacy_static_maximum_without_partial_reads() {
+        for length in PHYSICS_SIZE..PHYSICS_EXTENDED_SIZE {
+            let mut s = sample();
+            s.physics.resize(length, 0xff);
+            let reading = parse(&s).unwrap();
+            assert_eq!(reading.channels["max_rpm"].value, Some(json!(7500)));
+            s.statics[412..416].fill(0);
+            assert!(parse(&s).unwrap().channels["max_rpm"].value.is_none());
+        }
+    }
+    #[test]
+    fn current_limit_obeys_packet_freshness_and_is_not_retained_when_missing() {
+        let mut s = sample();
+        s.physics.resize(PHYSICS_EXTENDED_SIZE, 0);
+        s.statics[412..416].fill(0);
+        s.physics[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE]
+            .copy_from_slice(&8500i32.to_le_bytes());
+        let mut session = Session::new(100).unwrap();
+        assert!(!session.feed(&s, 0).fresh);
+        advance(&mut s, 11);
+        assert_eq!(session.feed(&s, 1).values()["max_rpm"], json!(8500));
+        s.physics[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE].fill(0);
+        // A changed limit without a new physics packet does not update channels.
+        assert_eq!(session.feed(&s, 50).values()["max_rpm"], json!(8500));
+        advance(&mut s, 12);
+        let missing = session.feed(&s, 51);
+        assert!(missing.fresh);
+        assert_eq!(missing.channels["max_rpm"].status, ChannelStatus::Unknown);
+        assert!(!missing.values().contains_key("rev_ratio"));
+        s.physics[PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE]
+            .copy_from_slice(&9000i32.to_le_bytes());
+        s.statics[68..70].copy_from_slice(&(b'X' as u16).to_le_bytes());
+        assert!(!session.feed(&s, 52).fresh);
+        advance(&mut s, 13);
+        assert_eq!(session.feed(&s, 53).values()["max_rpm"], json!(9000));
+        let stale = session.feed(&s, 154);
+        assert!(!stale.fresh);
+        assert_eq!(stale.channels["max_rpm"].status, ChannelStatus::Stale);
+        assert!(stale.values().is_empty());
     }
     #[test]
     fn baseline_progression_freeze_timeout_recovery_and_u32_wrap_are_guarded() {
