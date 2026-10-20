@@ -151,6 +151,7 @@ pub(crate) struct Health {
 /// freshness. restore(recovery=true) may neutralize/unhide/restore still-owned
 /// setup, but must never rehide or replay input, commands, scripts or macros.
 pub(crate) trait Host: Send {
+    fn activation_progress(&self, _: Option<u64>, _: &str, _: &str) {}
     fn desktop_status(&self) -> Value { Value::Null }
     fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String>;
@@ -399,6 +400,7 @@ impl<H: Host> Coordinator<H> {
         let effects = (|| {
             self.host.set_authority(None)?;
             if let Some(previous) = self.manifest.pending.as_ref().unwrap().outgoing.as_ref() {
+                self.host.activation_progress(candidate.admission_epoch,"releasing-previous-profile","Releasing previous profile bindings and outputs");
                 self.host.neutralize(previous)?;
             }
             for phase in APPLY_PHASES {

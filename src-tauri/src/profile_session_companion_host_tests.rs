@@ -8,6 +8,18 @@ use osg_profiles::resources::{Availability, Connection, ResourceSummary, Resourc
 #[path = "profile_session_companion_live_tests.rs"]
 mod live;
 
+#[test]
+fn companion_progress_uses_the_reported_phase_and_byte_counts() {
+    let (step, message) = panel_operation_status(&json!({"phase":"downloading","completedBytes":2048,"totalBytes":8193}));
+    assert_eq!(step, "companion-downloading-assets");
+    assert_eq!(message, "Companion downloading assets · 2 / 9 KiB");
+    assert_eq!(panel_operation_status(&json!({"phase":"rendering"})),
+        ("companion-rendering", "Companion rendering panel".into()));
+    assert_eq!(panel_operation_status(&json!({"phase":"awaiting-neutral"})),
+        ("companion-awaiting-neutral", "Waiting for companion touch controls to be released".into()));
+    assert_eq!(panel_operation_status(&json!({"phase":"ready"})).0, "companion-baseline");
+}
+
 fn snapshot() -> CompileSnapshot {
     CompileSnapshot {
         inventory_session: "native".into(),

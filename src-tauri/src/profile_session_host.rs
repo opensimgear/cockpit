@@ -28,6 +28,8 @@ use osg_profiles::{
 use serde_json::json;
 use std::{collections::BTreeMap, sync::{Arc, atomic::{AtomicU64, Ordering}}, time::Instant};
 
+type ProgressCallback = Arc<dyn Fn(u64, &str, &str) + Send + Sync>;
+
 struct NativePreparation {
     prepared: Prepared,
     report: CompilationReport,
@@ -94,6 +96,7 @@ pub(crate) struct NativeProfileHost {
     recovery_actions: BTreeMap<String, crate::profile_session_actions::PanelActions>,
     recovery_publications: BTreeMap<String, crate::profile_session_overrides::Overrides>,
     last_desktop_status: serde_json::Value,
+    progress: Option<ProgressCallback>,
 }
 fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
@@ -122,6 +125,38 @@ impl NativeProfileHost {
             recovery_actions: BTreeMap::new(),
             recovery_publications: BTreeMap::new(),
             last_desktop_status: serde_json::Value::Null,
+            progress: None,
+        }
+    }
+    /// Reports work from the exact captured admission, never from a timer or
+    /// from whichever profile happens to be active when a callback is read.
+    pub(crate) fn with_progress(mut self, callback: ProgressCallback) -> Self {
+        self.progress = Some(callback);
+        self
+    }
+    fn report_progress(&self, owner: &RunOwner, step: &str, message: &str) {
+        if let Some(state) = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner) {
+            Self::emit_progress(self.progress.as_ref(), state.admission_epoch, step, message);
+        }
+    }
+    fn emit_progress(callback: Option<&ProgressCallback>, epoch: u64, step: &str, message: &str) {
+        if let Some(callback) = callback { callback(epoch, step, message); }
+    }
+    fn desktop_binding_kind(program: &osg_mapping::program::Program) -> &'static str {
+        use osg_mapping::{desktop::Action, program::SinkKind};
+        let (mut keyboard, mut mouse) = (false, false);
+        for sink in &program.sinks {
+            if let SinkKind::Desktop { action } = &sink.kind {
+                match action {
+                    Action::KeyHold { .. } | Action::KeyTap { .. } | Action::Chord { .. } | Action::Repeat { .. } => keyboard = true,
+                    Action::MouseHold { .. } | Action::MouseClick { .. } | Action::Wheel { .. } | Action::Pointer { .. } => mouse = true,
+                }
+            }
+        }
+        match (keyboard, mouse) {
+            (true, false) => "keyboard bindings",
+            (false, true) => "mouse bindings",
+            _ => "keyboard and mouse bindings",
         }
     }
     fn run(&mut self, owner: &RunOwner) -> Result<&mut NativeRun, String> {
@@ -131,6 +166,9 @@ impl NativeProfileHost {
             .ok_or_else(|| "The native prepared run expired; capture a fresh profile plan.".into())
     }
     fn game_baseline(&mut self, owner: &RunOwner) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
+        if self.run(owner)?.game.requires_baseline() {
+            self.report_progress(owner, "game-telemetry-baseline", "Waiting for fresh game telemetry");
+        }
         let games = self.games.clone();
         let resources = self.resources.clone();
         let controllers = self.controllers.clone();
@@ -163,6 +201,10 @@ impl NativeProfileHost {
     fn panel_baseline(&mut self, owner: &RunOwner, delivery: &ExecutionPlan, live: bool) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
         let resources = self.resources.clone();
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        if delivery.sources.iter().any(|source| source.route.as_ref().is_some_and(|route|
+            matches!(route.transport, Transport::Usb | Transport::Can) && !route.id.starts_with("companion:"))) {
+            self.report_progress(owner, "peripheral-input-baseline", "Waiting for fresh peripheral input states");
+        }
         if live {self.check_transition(owner)?;self.run(owner)?.panels.begin_live_baseline()?;}
         loop {
             self.check_transition(owner)?;
@@ -604,6 +646,9 @@ impl NativeProfileHost {
     }
 }
 impl Host for NativeProfileHost {
+    fn activation_progress(&self,epoch:Option<u64>,step:&str,message:&str) {
+        if let Some(epoch)=epoch {Self::emit_progress(self.progress.as_ref(),epoch,step,message);}
+    }
     fn desktop_status(&self) -> serde_json::Value {
         self.authority.as_ref().and_then(|owner| self.prepared.get(&key(owner)))
             .and_then(|state| state.desktop.as_ref()).map_or_else(||self.last_desktop_status.clone(), |desktop| desktop.status())
@@ -644,6 +689,7 @@ impl Host for NativeProfileHost {
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
+        Self::emit_progress(self.progress.as_ref(), admission_epoch, "preparing-resources", "Preparing profile resources");
         let NativePreparation {mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
@@ -762,6 +808,7 @@ impl Host for NativeProfileHost {
         self.prepare_action_recovery(run)
     }
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
+        self.report_progress(&run.owner, "neutralizing-outputs", "Releasing profile bindings and neutralizing outputs");
         // Stop extending the volatile overlay at the first neutralization
         // fence. Release still follows physical action restoration below.
         if let Some(actor) = self.recovery_publications.get(&key(&run.owner)) {
@@ -811,10 +858,15 @@ impl Host for NativeProfileHost {
             ApplyPhase::Acquire => {
                 let native = self.native;
                 let origin = self.controllers.stream_page("", 0).captured_us;
+                if !prepared.plan.sources.is_empty() {
+                    self.report_progress(&run.owner, "acquiring-inputs", "Connecting profile inputs");
+                }
+                let progress = self.progress.clone();
                 let state = self.run(&run.owner)?;
                 state.clock_origin = origin;
                 state.panels.acquire(origin)?;
                 if prepared.plan.requirements.desktop_input {
+                    Self::emit_progress(progress.as_ref(), state.admission_epoch, "preparing-desktop-bindings", &format!("Preparing {}", Self::desktop_binding_kind(&prepared.plan.program)));
                     state.desktop = Some(crate::profile_session_desktop::Desktop::acquire(&run.owner, &prepared.plan.program, state.desktop_scope.clone())?);
                 }
                 if !state.bindings.is_empty() {
@@ -823,6 +875,7 @@ impl Host for NativeProfileHost {
                     }
                     let path = crate::config_paths::config_path()
                         .with_file_name(crate::profile_session_virtual::journal_name(&run.owner)?);
+                    Self::emit_progress(progress.as_ref(), state.admission_epoch, "creating-virtual-device", "Creating virtual controller output");
                     state.output = Some(
                         osg_virtual_controller::session::Session::start_with_journal(
                             osg_virtual_controller::entry::factory(),
@@ -837,10 +890,14 @@ impl Host for NativeProfileHost {
                     );
                 }
                 let games = self.games.clone();
+                if self.run(&run.owner)?.game.requires_baseline() {
+                    self.report_progress(&run.owner, "connecting-game-telemetry", "Connecting game telemetry");
+                }
                 self.run(&run.owner)?.game.acquire(&games)?;
                 let receipts = companion::receipts(&run.receipts)?;
                 let runtime = self.companions.clone();
                 if receipts.iter().any(|(release,_)|*release) {
+                    self.report_progress(&run.owner, "companion-restoration", "Restoring companion panels from the previous profile");
                     companion::restore_latest(&runtime, &receipts, true)?;
                 }
                 let selected = receipts.into_iter().filter_map(|(release,receipt)|(!release).then_some(receipt)).collect::<Vec<_>>();
@@ -848,6 +905,9 @@ impl Host for NativeProfileHost {
                     runtime.profile_panel_operation_history(&catalogue.instance_id)
                         .map(|operation|(catalogue.instance_id.clone(),operation))).collect();
                 self.run(&run.owner)?.companion_initial_operations=initial_operations;
+                if !selected.is_empty() {
+                    self.report_progress(&run.owner, "companion-assignment", "Assigning companion panels");
+                }
                 self.run(&run.owner)?.companions.acquire(&runtime, &selected)?;
                 for catalogue in &self.run(&run.owner)?.companion_catalogues {
                     runtime.profile_retry_panel(&catalogue.instance_id,&catalogue.publication_hash)?;
@@ -857,10 +917,16 @@ impl Host for NativeProfileHost {
             ApplyPhase::Baseline => {
                 let resources = self.resources.clone();
                 let controllers = self.controllers.clone();
+                if !prepared.plan.sources.is_empty() {
+                    self.report_progress(&run.owner, "capturing-neutral-inputs", "Checking neutral input states");
+                }
                 let game_frames = self.game_baseline(&run.owner)?;
                 self.check_transition(&run.owner)?;
                 let (delivery, companion_frames) = self.companion_baseline(&run.owner, &prepared.plan)?;
                 let panel_frames = self.panel_baseline(&run.owner, &delivery, false)?;
+                if delivery.sources.iter().any(|source| source.route.as_ref().is_some_and(|route| route.transport == Transport::Hid)) {
+                    self.report_progress(&run.owner, "controller-input-baseline", "Reading physical controller input states");
+                }
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
                     self.controllers.as_ref(),
@@ -884,6 +950,7 @@ impl Host for NativeProfileHost {
                 let controllers = self.controllers.clone();
                 let panels_io = self.panels.clone();
                 let admission_epoch=self.admission_epoch.clone();
+                let progress = self.progress.clone();
                 let (assignments, document, backend, game_preparation) = {
                     let state = self.run(&run.owner)?;
                     (
@@ -907,6 +974,7 @@ impl Host for NativeProfileHost {
                 // Visibility and panel setup may have invalidated the incoming
                 // panel session. Reacquire actual baselines before final compile.
                 self.companion_baseline(&run.owner, &prepared.plan)?;
+                self.report_progress(&run.owner, "configuring-mappings", "Configuring profile mappings");
                 let mut snapshot = resources.snapshot_for_compile(assignments)?;
                 snapshot.backend = backend;
                 Self::game_capture(&mut snapshot, game_preparation.as_ref());
@@ -924,6 +992,9 @@ impl Host for NativeProfileHost {
                 let panel_frames = self.panel_baseline(&run.owner, &delivery, true)?;
                 self.bind_actions(&run.owner, &delivery)?;
                 let companion_hub = if self.run(&run.owner)?.companions.is_empty() { None } else { Some(self.companions.profile_metadata()?) };
+                if delivery.sources.iter().any(|source| source.route.as_ref().is_some_and(|route| route.transport == Transport::Hid)) {
+                    self.report_progress(&run.owner, "controller-input-baseline", "Reading physical controller input states");
+                }
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
                     controllers.as_ref(),
@@ -968,9 +1039,11 @@ impl Host for NativeProfileHost {
                 let effects = reducer.drain();
                 state.reducer = Some(reducer);
                 if let Some(desktop) = state.desktop.as_mut() {
+                    Self::emit_progress(progress.as_ref(), state.admission_epoch, "activating-desktop-bindings", &format!("Activating {}", Self::desktop_binding_kind(&prepared.plan.program)));
                     desktop.start(state.reducer.as_ref().unwrap(), state.game_preparation.as_ref(), state.desktop_scope.clone())?;
                 }
                 Self::check_epoch(&admission_epoch,state.admission_epoch)?;
+                Self::emit_progress(progress.as_ref(), state.admission_epoch, "starting-routes", "Activating profile routes");
                 action::start(state)?;
                 state.started = started;
                 let _physical_diagnostics = action::dispatch(state,&effects);
@@ -1134,3 +1207,6 @@ impl Host for NativeProfileHost {
 #[cfg(test)]
 #[path = "profile_session_output_handoff_tests.rs"]
 mod output_handoff_tests;
+#[cfg(test)]
+#[path = "profile_session_progress_tests.rs"]
+mod progress_tests;

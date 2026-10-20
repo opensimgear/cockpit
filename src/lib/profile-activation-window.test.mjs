@@ -181,3 +181,15 @@ test('a failed cancel request releases its intent so the user can retry the same
   await h.poll(); assert.equal(cancelled, 2);
   h.adapter.dispose(); await flush();
 });
+
+test('automatic activation continues to game launch in its existing native window', async () => {
+  const h = harness();
+  await h.adapter.show(progress('automatic-operation'), () => {});
+  const launching = { ...progress('automatic-operation'), phase: 'launching', message: 'Launching Assetto Corsa Rally', canCancel: false };
+  assert.equal(await h.adapter.update(launching), true);
+  assert.deepEqual(h.calls.map(call => call.command), ['profile_activation_window_open', 'profile_activation_window_update']);
+  assert.deepEqual(h.calls.at(-1).progress, launching);
+  await h.adapter.close('automatic-operation');
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.calls.at(-1).operationId, 'automatic-operation');
+});

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { restoreCompanionPanels } from './lib/companion-startup';
   import Notifications from './lib/Notifications.svelte';
+  import ActivationProgress from './lib/ActivationProgress.svelte';
   import { notify as showNotification } from './lib/notifications';
   import Notification from './lib/Notification.svelte';
   import { onMount, tick } from 'svelte';
@@ -504,6 +505,7 @@
 
 <div class:light class="cockpit">
   <Notifications />
+  <ActivationProgress />
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="https://www.opensimgear.org" target="_blank" rel="noreferrer" onclick={openLink}><img src={light ? '/logo-light.svg' : '/logo-dark.svg'} alt="" /><span><strong>Open</strong>SimGear<small>COCKPIT</small></span></a>

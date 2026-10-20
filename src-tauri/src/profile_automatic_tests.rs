@@ -375,6 +375,55 @@ fn delayed_automatic_stage_is_cancelled_by_stop_and_pending_apply_blocks_learnin
     assert_eq!(manager.profile_automatic.view()["mode"], "manual");
     manager.shutdown();
 }
+
+#[test]
+fn external_game_activation_has_tracked_progress_and_exact_cancel_without_launching_a_game() {
+    let mut fixture = Fixture::new();
+    ok(&fixture.manager, "profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+    let previous = owner(&fixture.manager);
+    let id = create(&fixture.manager, "Automatic flight");
+    rule(&fixture.manager, "dcs", &id, 0);
+    fixture.process("dcs", 1);
+    fixture.wait_game("dcs");
+    mode(&fixture.manager, "automatic");
+    let (entered, observed) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let released = Mutex::new(released);
+    let prepare = fixture.manager.profile_prepare.clone();
+    fixture.manager.profile_prepare = Arc::new(move |candidate| {
+        let staged = prepare(candidate)?;
+        entered.send(()).map_err(|_| "The progress observer closed.".to_owned())?;
+        released.lock().unwrap().recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "The automatic progress test did not release its native gate.".to_owned())?;
+        Ok(staged)
+    });
+    let manager = Arc::new(fixture.manager);
+    let applying = manager.clone();
+    let worker = std::thread::spawn(move || applying.poll_automatic());
+    observed.recv_timeout(Duration::from_secs(5)).expect("Automatic preparation did not enter its native gate");
+    let current = request(&manager, "profile_activation_current", json!({}));
+    let progress = current["state"]["profileActivation"].clone();
+    let activation_id = progress["activationId"].as_str().unwrap().to_owned();
+    let cancelled = request(&manager, "profile_activation_cancel", json!({"activationId":activation_id}));
+    release.send(()).unwrap();
+    worker.join().unwrap();
+    assert_eq!(current["ok"], true, "{current}");
+    assert_eq!(progress["origin"], "automatic");
+    assert_eq!(progress["profileId"], id);
+    assert_eq!(progress["profileName"], "Automatic flight");
+    assert_eq!(progress["phase"], "preparing");
+    assert_eq!(cancelled["ok"], true, "{cancelled}");
+    let response = request(&manager, "profile_activation_status", json!({"activationId":activation_id}));
+    let completed = &response["state"]["profileActivation"];
+    assert_eq!(response["ok"], true, "{response}");
+    assert_eq!(completed["phase"], "cancelled", "{completed}");
+    assert_eq!(completed["outcome"], "previous-active");
+    assert!(!completed["steps"].as_array().unwrap().iter().any(|step|step["step"] == "launching"));
+    assert_eq!(owner(&manager), previous);
+    manager.poll_automatic();
+    assert_eq!(owner(&manager), previous, "Process polling must not replay a cancelled activation");
+    manager.shutdown();
+}
 #[test]
 fn final_admission_reverifies_process_even_before_cached_observer_catches_replacement() {
     let mut fixture = Fixture::new();

@@ -256,100 +256,180 @@ impl GatewayManager {
         if read_only {
             return Err("Repair profile storage before launching a game.".into());
         }
-        let mut candidate = Candidate { launch_preparation: true,
-            document,
-            assignments,
-            read_only,
-            game_id: None,
-            admission_epoch: Some(admission_epoch),
-            stage: None,
-        };
-        candidate.stage = Some(self.prepare_profile_at(&candidate, admission_epoch)?);
-        let prepared = self.games.prepare_profile_launch_for_selection(
-            game_id,
-            &candidate,
-            intent.game_id.as_deref(),
+        let activation_id = self.start_native_profile_activation(
+            &intent.profile_id, admission_epoch, "game-launch", Some(game_id),
         )?;
-        let capture = Capture {
-            settings,
-            policy_epoch,
-            policy_read_only,
-            admission_epoch,
-            requested,
-            intent,
-            active_profile_id,
-            candidate,
-        };
-        let mut held_owner = None;
-        let mut held_epoch = admission_epoch;
-        let mut attempted = false;
-        let mut actual_decision = None;
-        let mut completed_response = None;
+        self.capture_profile_activation_id(&activation_id, &document, &assignments);
         let result = (|| {
-            let armed = {
-                let _admission = self
-                    .profile_admission
-                    .write()
-                    .unwrap_or_else(|p| p.into_inner());
-                let _game = self
-                    .game_admission
-                    .read()
-                    .unwrap_or_else(|p| p.into_inner());
-                self.launch_current(&capture, admission_epoch)?;
-                let mut coordinator = self
-                    .profile_session
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
-                coordinator.check_apply()?;
-                let previous_stop = self.profile_automatic.emergency.load(Ordering::Acquire);
-                if previous_stop && capture.settings.mode != SelectionMode::Manual {
-                    return Err("Explicitly resume Automatic before launch.".into());
-                }
-                self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&json!({"command":"profile_select","id":capture.intent.profile_id,"selectionSource":if capture.settings.mode==SelectionMode::Manual{"manual"}else{"automatic"}}))?;
-                attempted = true;
-                if previous_stop {
-                    self.profile_automatic
-                        .emergency
-                        .store(false, Ordering::Release);
-                    if let Err(error) = self.launch_current(&capture, admission_epoch) {
+            let mut candidate = Candidate { launch_preparation: true,
+                document,
+                assignments,
+                read_only,
+                game_id: None,
+                admission_epoch: Some(admission_epoch),
+                stage: None,
+            };
+            candidate.stage = Some(self.prepare_profile_at(&candidate, admission_epoch)?);
+            self.note_profile_activation(admission_epoch, "preparing-game-launch", "Checking the game installation and launch settings…");
+            let prepared = self.games.prepare_profile_launch_for_selection(
+                game_id,
+                &candidate,
+                intent.game_id.as_deref(),
+            )?;
+            let capture = Capture {
+                settings,
+                policy_epoch,
+                policy_read_only,
+                admission_epoch,
+                requested,
+                intent,
+                active_profile_id,
+                candidate,
+            };
+            let mut held_owner = None;
+            let mut held_epoch = admission_epoch;
+            let mut attempted = false;
+            let mut actual_decision = None;
+            let mut completed_response = None;
+            let result = (|| {
+                let armed = {
+                    let _admission = self
+                        .profile_admission
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner());
+                    let _game = self
+                        .game_admission
+                        .read()
+                        .unwrap_or_else(|p| p.into_inner());
+                    self.launch_current(&capture, admission_epoch)?;
+                    let mut coordinator = self
+                        .profile_session
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
+                    coordinator.check_apply()?;
+                    let previous_stop = self.profile_automatic.emergency.load(Ordering::Acquire);
+                    if previous_stop && capture.settings.mode != SelectionMode::Manual {
+                        return Err("Explicitly resume Automatic before launch.".into());
+                    }
+                    self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&json!({"command":"profile_select","id":capture.intent.profile_id,"selectionSource":if capture.settings.mode==SelectionMode::Manual{"manual"}else{"automatic"}}))?;
+                    attempted = true;
+                    if previous_stop {
                         self.profile_automatic
                             .emergency
-                            .store(true, Ordering::Release);
-                        return Err(error);
+                            .store(false, Ordering::Release);
+                        if let Err(error) = self.launch_current(&capture, admission_epoch) {
+                            self.profile_automatic
+                                .emergency
+                                .store(true, Ordering::Release);
+                            return Err(error);
+                        }
                     }
-                }
-                let owner = coordinator.begin_launch(capture.candidate.clone())?;
-                held_owner = Some(owner.clone());
-                // Keep the coordinator guard across this atomic fence and bind:
-                // its background health worker cannot see a mixed epoch.
-                held_epoch = self
-                    .profile_admission_epoch
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                        (current == admission_epoch)
-                            .then(|| current.checked_add(1))
-                            .flatten()
+                    let owner = coordinator.begin_launch(capture.candidate.clone())?;
+                    held_owner = Some(owner.clone());
+                    // Keep the coordinator guard across this atomic fence and bind:
+                    // its background health worker cannot see a mixed epoch.
+                    held_epoch = self
+                        .profile_admission_epoch
+                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                            (current == admission_epoch)
+                                .then(|| current.checked_add(1))
+                                .flatten()
+                        })
+                        .map_err(|_| "A newer native control cancelled launch admission.")?
+                        .checked_add(1)
+                        .ok_or("Native launch admission epoch exhausted.")?;
+                    self.rebind_profile_activation_epoch(&activation_id, admission_epoch, held_epoch)?;
+                    coordinator.bind_launch_epoch(&owner, held_epoch)?;
+                    self.games.arm_profile_launch(
+                        prepared,
+                        &crate::games::launch::LaunchAdmission {
+                            candidate: capture.candidate.clone(),
+                            status: coordinator.status().clone(),
+                            admission_epoch: held_epoch,
+                            locks: locks(
+                                coordinator.status(),
+                                self.profile_automatic.emergency.load(Ordering::Acquire),
+                            ),
+                        },
+                    )?
+                };
+                let game_name = self.games.resource_catalogue().into_iter()
+                    .find(|game| game["id"] == game_id)
+                    .and_then(|game| game["name"].as_str().map(str::to_owned))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| game_id.to_owned());
+                self.note_profile_activation(held_epoch, "launching", &format!("Launching {game_name}…"));
+                let spawned = self
+                    .games
+                    .spawn_profile_launch(armed, |spawn| {
+                        let _admission = self
+                            .profile_admission
+                            .write()
+                            .unwrap_or_else(|p| p.into_inner());
+                        let _game = self
+                            .game_admission
+                            .read()
+                            .unwrap_or_else(|p| p.into_inner());
+                        self.launch_current(&capture, held_epoch)?;
+                        let owner = held_owner.as_ref().unwrap();
+                        let status = self
+                            .profile_session
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .check_launch_hold(owner, held_epoch)?;
+                        spawn(crate::games::launch::LaunchAdmission {
+                            candidate: capture.candidate.clone(),
+                            locks: locks(
+                                &status,
+                                self.profile_automatic.emergency.load(Ordering::Acquire),
+                            ),
+                            status,
+                            admission_epoch: held_epoch,
+                        })
                     })
-                    .map_err(|_| "A newer native control cancelled launch admission.")?
-                    .checked_add(1)
-                    .ok_or("Native launch admission epoch exhausted.")?;
-                coordinator.bind_launch_epoch(&owner, held_epoch)?;
-                self.games.arm_profile_launch(
-                    prepared,
-                    &crate::games::launch::LaunchAdmission {
-                        candidate: capture.candidate.clone(),
-                        status: coordinator.status().clone(),
-                        admission_epoch: held_epoch,
-                        locks: locks(
-                            coordinator.status(),
-                            self.profile_automatic.emergency.load(Ordering::Acquire),
-                        ),
-                    },
-                )?
-            };
-            let spawned = self
-                .games
-                .spawn_profile_launch(armed, |spawn| {
+                    .map_err(|failure| failure.message)?;
+                self.note_profile_activation(held_epoch, "launching", &format!("Waiting for {game_name} to start…"));
+                let started = self
+                    .games
+                    .wait_profile_launch(spawned, |owner, epoch| {
+                        self.launch_held(&capture, owner, epoch).map(|_| ())
+                    })
+                    .map_err(|failure| failure.message)?;
+                self.note_profile_activation(held_epoch, "launching", &format!("Verifying the {game_name} process…"));
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let confirmed = loop {
+                    self.launch_held(&capture, &started.owner, held_epoch)?;
+                    if let Some(confirmed) = self.games.confirm_started_profile_activation(&started)? {
+                        break confirmed;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err("The native watcher did not confirm the exact launched process before its deadline.".into());
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                };
+                let decision = self.launch_decision(&capture, &confirmed)?;
+                self.note_profile_activation(held_epoch, "configuring-game-context", &format!("Connecting {game_name} mappings and telemetry…"));
+                let mut candidate = self
+                    .profile_session
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .launch_candidate(
+                        &started.owner,
+                        capture.intent.game_id.as_deref(),
+                        held_epoch,
+                    )?;
+                candidate.stage = Some(
+                    crate::profile_session_host::NativeProfileHost::stage_launch_context(
+                        &self.profile_resources,
+                        &self.games,
+                        &self.controllers,
+                        self.profile_native,
+                        &candidate,
+                        started,
+                    )?,
+                );
+                {
                     let _admission = self
                         .profile_admission
                         .write()
@@ -359,137 +439,79 @@ impl GatewayManager {
                         .read()
                         .unwrap_or_else(|p| p.into_inner());
                     self.launch_current(&capture, held_epoch)?;
-                    let owner = held_owner.as_ref().unwrap();
-                    let status = self
-                        .profile_session
+                    if self.launch_decision(&capture, &confirmed)? != decision {
+                        return Err(
+                            "The selected native process changed during context preparation.".into(),
+                        );
+                    }
+                    // Pin saved graph/assignments against the final one-use stage.
+                    let (document, assignments, read_only) = self
+                        .profiles
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
-                        .check_launch_hold(owner, held_epoch)?;
-                    spawn(crate::games::launch::LaunchAdmission {
-                        candidate: capture.candidate.clone(),
-                        locks: locks(
-                            &status,
-                            self.profile_automatic.emergency.load(Ordering::Acquire),
-                        ),
-                        status,
-                        admission_epoch: held_epoch,
-                    })
-                })
-                .map_err(|failure| failure.message)?;
-            let started = self
-                .games
-                .wait_profile_launch(spawned, |owner, epoch| {
-                    self.launch_held(&capture, owner, epoch).map(|_| ())
-                })
-                .map_err(|failure| failure.message)?;
-            let deadline = Instant::now() + Duration::from_secs(3);
-            let confirmed = loop {
-                self.launch_held(&capture, &started.owner, held_epoch)?;
-                if let Some(confirmed) = self.games.confirm_started_profile_activation(&started)? {
-                    break confirmed;
+                        .compile_source(&capture.intent.profile_id)?;
+                    candidate.stage.as_ref().unwrap().validate(&Candidate { launch_preparation: candidate.launch_preparation,
+                        document,
+                        assignments,
+                        read_only,
+                        game_id: candidate.game_id.clone(),
+                        admission_epoch: Some(held_epoch),
+                        stage: None,
+                    })?;
+                    if self.profile_automatic.emergency.load(Ordering::Acquire) {
+                        return Err("Deactivation cancelled this pending game launch.".into());
+                    }
+                    let mut coordinator = self
+                        .profile_session
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    coordinator.check_launch_hold(held_owner.as_ref().unwrap(), held_epoch)?;
+                    coordinator.finish_launch(held_owner.as_ref().unwrap(), candidate)?;
+                    // Adopt the real watcher session before the parent releases its
+                    // pending guards, so automatic polling cannot reapply this run.
+                    self.profile_automatic.note(capture.policy_epoch, &decision);
+                    if let Decision::Select(target) = &decision {
+                        self.profile_automatic.finish(
+                            capture.policy_epoch,
+                            target.clone(),
+                            &Ok(()),
+                            false,
+                        );
+                    }
+                    actual_decision = Some(decision);
+                    drop(coordinator);
+                    self.launch_current(&capture, held_epoch)?;
+                    let mut response = self.automatic_response()?;
+                    response["launch"] = json!({"gameId":game_id,"profileId":capture.intent.profile_id,"selectedGameId":capture.intent.game_id,"state":"started"});
+                    self.launch_current(&capture, held_epoch)?;
+                    completed_response = Some(response);
                 }
-                if Instant::now() >= deadline {
-                    return Err("The native watcher did not confirm the exact launched process before its deadline.".into());
+                Ok(())
+            })();
+            if let Err(error) = result {
+                if attempted {
+                    let cleanup = self.cancel_profile_launch(held_owner.as_ref(), held_epoch);
+                    if let Some(Decision::Select(target)) = actual_decision {
+                        self.profile_automatic.finish(
+                            capture.policy_epoch,
+                            target,
+                            &Err(error.clone()),
+                            false,
+                        );
+                    }
+                    if let Err(cleanup) = cleanup {
+                        return Err(format!("{error} Cleanup requires attention: {cleanup}"));
+                    }
                 }
-                std::thread::sleep(Duration::from_millis(25));
-            };
-            let decision = self.launch_decision(&capture, &confirmed)?;
-            let mut candidate = self
-                .profile_session
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .launch_candidate(
-                    &started.owner,
-                    capture.intent.game_id.as_deref(),
-                    held_epoch,
-                )?;
-            candidate.stage = Some(
-                crate::profile_session_host::NativeProfileHost::stage_launch_context(
-                    &self.profile_resources,
-                    &self.games,
-                    &self.controllers,
-                    self.profile_native,
-                    &candidate,
-                    started,
-                )?,
-            );
-            {
-                let _admission = self
-                    .profile_admission
-                    .write()
-                    .unwrap_or_else(|p| p.into_inner());
-                let _game = self
-                    .game_admission
-                    .read()
-                    .unwrap_or_else(|p| p.into_inner());
-                self.launch_current(&capture, held_epoch)?;
-                if self.launch_decision(&capture, &confirmed)? != decision {
-                    return Err(
-                        "The selected native process changed during context preparation.".into(),
-                    );
-                }
-                // Pin saved graph/assignments against the final one-use stage.
-                let (document, assignments, read_only) = self
-                    .profiles
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .compile_source(&capture.intent.profile_id)?;
-                candidate.stage.as_ref().unwrap().validate(&Candidate { launch_preparation: candidate.launch_preparation,
-                    document,
-                    assignments,
-                    read_only,
-                    game_id: candidate.game_id.clone(),
-                    admission_epoch: Some(held_epoch),
-                    stage: None,
-                })?;
-                if self.profile_automatic.emergency.load(Ordering::Acquire) {
-                    return Err("Deactivation cancelled this pending game launch.".into());
-                }
-                let mut coordinator = self
-                    .profile_session
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                coordinator.check_launch_hold(held_owner.as_ref().unwrap(), held_epoch)?;
-                coordinator.finish_launch(held_owner.as_ref().unwrap(), candidate)?;
-                // Adopt the real watcher session before the parent releases its
-                // pending guards, so automatic polling cannot reapply this run.
-                self.profile_automatic.note(capture.policy_epoch, &decision);
-                if let Decision::Select(target) = &decision {
-                    self.profile_automatic.finish(
-                        capture.policy_epoch,
-                        target.clone(),
-                        &Ok(()),
-                        false,
-                    );
-                }
-                actual_decision = Some(decision);
-                drop(coordinator);
-                self.launch_current(&capture, held_epoch)?;
-                let mut response = self.automatic_response()?;
-                response["launch"] = json!({"gameId":game_id,"profileId":capture.intent.profile_id,"selectedGameId":capture.intent.game_id,"state":"started"});
-                self.launch_current(&capture, held_epoch)?;
-                completed_response = Some(response);
+                return Err(error);
             }
-            Ok(())
+            completed_response.ok_or_else(|| "The exact completed launch response is missing.".into())
         })();
-        if let Err(error) = result {
-            if attempted {
-                let cleanup = self.cancel_profile_launch(held_owner.as_ref(), held_epoch);
-                if let Some(Decision::Select(target)) = actual_decision {
-                    self.profile_automatic.finish(
-                        capture.policy_epoch,
-                        target,
-                        &Err(error.clone()),
-                        false,
-                    );
-                }
-                if let Err(cleanup) = cleanup {
-                    return Err(format!("{error} Cleanup requires attention: {cleanup}"));
-                }
-            }
-            return Err(error);
-        }
-        completed_response.ok_or_else(|| "The exact completed launch response is missing.".into())
+        self.finish_profile_activation(&activation_id, &match &result {
+            Ok(_) => json!({"ok":true}),
+            Err(error) => json!({"ok":false,"error":error}),
+        });
+        result
     }
 }
 

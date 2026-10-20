@@ -13,7 +13,8 @@ export type NativeProfileStatus = {
 };
 export type NativeProfileActivation = {
   activationId:string;profileId:string;
-  phase:'preparing'|'activating'|'cancelling'|'succeeded'|'cancelled'|'failed';
+  phase:'preparing'|'activating'|'launching'|'cancelling'|'succeeded'|'cancelled'|'failed';
+  step?:string;steps?:{step:string;message:string}[];origin?:string;profileName?:string;
   cancelRequested:boolean;canCancel:boolean;message:string;
   companions:{instanceId:string;publicationHash:string;name:string;operation?:CompanionOperation|null}[];
   outcome:null|'previous-active'|'active'|'inactive'|'recovery-needed';error:string|null;
@@ -35,7 +36,7 @@ const owner = (value: unknown): value is NativeProfileOwner => object(value) && 
 
 export function nativeProfileActivation(value:unknown,activationId:string):DeepReadonly<NativeProfileActivation>{
   if(!object(value)||value.activationId!==activationId||!uuid(value.activationId)||!uuid(value.profileId)
-    ||typeof value.phase!=='string'||!['preparing','activating','cancelling','succeeded','cancelled','failed'].includes(value.phase)
+    ||typeof value.phase!=='string'||!['preparing','activating','launching','cancelling','succeeded','cancelled','failed'].includes(value.phase)
     ||typeof value.cancelRequested!=='boolean'||typeof value.canCancel!=='boolean'||!text(value.message)
     ||!(value.outcome===null||typeof value.outcome==='string'&&['previous-active','active','inactive','recovery-needed'].includes(value.outcome))
     ||!(value.error===null||text(value.error))||!Array.isArray(value.companions)||value.companions.length>8

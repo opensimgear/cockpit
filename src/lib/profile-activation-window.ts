@@ -2,7 +2,7 @@ export interface ActivationWindowProgress {
   operationId: string;
   profileName: string;
   title: string;
-  phase: 'preparing' | 'activating' | 'cancelling';
+  phase: 'preparing' | 'activating' | 'cancelling' | 'launching';
   message: string;
   details: string[];
   canCancel: boolean;

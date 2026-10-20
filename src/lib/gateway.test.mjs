@@ -50,6 +50,14 @@ test('desktop routes the complete explicitly scoped request through one native m
   ]);
 });
 
+test('activation progress and Cancel bypass blocked profile library reads and use independent native queues',async()=>{
+ const blocked=deferred(),progress=deferred();const api=transport({invokeResults:async(_command,request)=>request.command==='profile_list'?blocked.promise:request.command==='profile_activation_current'?progress.promise:{ok:true,state}});
+ const library=api.gatewayRequest({command:'profile_list'});await tick();const current=api.gatewayRequest({command:'profile_activation_current'});await tick();
+ const cancelled=await api.gatewayRequest({command:'profile_activation_cancel',activationId:'exact-operation'});
+ assert.equal(cancelled,state);assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_list','profile_activation_current','profile_activation_cancel']);
+ progress.resolve({ok:true,state});blocked.resolve({ok:true,state});await Promise.all([library,current]);
+});
+
 test('retired standalone authoring, synthetic and companion feedback routes never reach desktop or HTTP transport',async()=>{
  for(const desktop of[true,false]){const api=transport({desktop});for(const command of['mapping_status','mapping_start','mapping_stop','mapping_import','mapping_virtual_inspect','mapping_companion_route','integration_get_state','integration_start','integration_inject','dcs_status','dcs_catalogue','dcs_start','companion_feedback_routes','companion_feedback','companion_game_capture','controller_visibility_apply','controller_visibility_launch'])await assert.rejects(api.gatewayRequest({command}),/retired/);assert.equal(api.calls.length,0);}
 });

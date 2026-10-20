@@ -5,6 +5,20 @@ const NEXT:&str="22222222-2222-4222-8222-222222222222";
 const PROFILE:&str="33333333-3333-4333-8333-333333333333";
 
 #[test]
+fn actual_steps_follow_exact_epoch_and_rebind_without_replaying_after_cancel() {
+    let tracker=Tracker::default();let epoch=AtomicU64::new(7);
+    tracker.begin(OP,PROFILE,||7).unwrap();
+    tracker.note(6,"hiding-peripherals","Old work");
+    tracker.note(7,"creating-virtual-device","Creating virtual controller output");
+    tracker.rebind(OP,7,8).unwrap();epoch.store(8,Ordering::Release);
+    tracker.note(7,"hiding-peripherals","Old work");
+    tracker.note(8,"launching","Launching DCS World…");
+    {let entries=tracker.entries.lock().unwrap();let current=&entries[OP];assert_eq!(current.phase,"launching");assert_eq!(current.steps.len(),2);assert_eq!(current.message,"Launching DCS World…");}
+    tracker.cancel(OP,&epoch).unwrap();tracker.note(8,"starting-routes","Must not appear");
+    let entries=tracker.entries.lock().unwrap();assert_eq!(entries[OP].phase,"cancelling");assert_eq!(entries[OP].steps.len(),2);
+}
+
+#[test]
 fn exact_cancel_is_idempotent_and_only_revokes_its_captured_epoch() {
     let tracker=Tracker::default();let epoch=AtomicU64::new(7);
     tracker.begin(OP,PROFILE,||epoch.fetch_add(1,Ordering::AcqRel)+1).unwrap();

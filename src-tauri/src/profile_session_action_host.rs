@@ -137,6 +137,9 @@ pub(super) fn dispatch(
 impl NativeProfileHost {
     pub(super) fn acquire_actions(&mut self, owner: &RunOwner) -> Result<(), String> {
         let epoch = self.admission_epoch.clone();
+        if !self.run(owner)?.actions.is_empty() {
+            self.report_progress(owner, "acquiring-peripheral-outputs", "Connecting peripheral output controls");
+        }
         let state = self.run(owner)?;
         if state.actions.is_empty() {
             return Ok(());

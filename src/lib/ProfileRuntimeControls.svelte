@@ -3,7 +3,7 @@
   import { ProfileRuntimeController, type RuntimeControlState, type RuntimeEditorTarget } from './profile-runtime-controller';
   import type { ProfileGameId } from './profile-runtime';
   import type { DeepReadonly, ProfileSummary } from './profiles';
-  import type {NativeProfileActivationWindow,ActivationWindowProgress} from './profile-activation-window';
+  import type {ActivationWindowProgress} from './profile-activation-window';
   let { controller, editor = null, profiles = [], gameIds = [], active = true, onState, compact = false,manageActivationProgress=true }: {
     controller: ProfileRuntimeController; editor?: RuntimeEditorTarget|null; profiles?: readonly DeepReadonly<ProfileSummary>[];
     gameIds?: readonly string[]; active?: boolean; onState?: (state: DeepReadonly<RuntimeControlState>)=>void; compact?:boolean;manageActivationProgress?:boolean;
@@ -11,8 +11,7 @@
   const runtime = untrack(()=>controller);
   let view = $state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
   let mounted = $state(false), gameId = $state('');
-  let nativeWindow:NativeProfileActivationWindow|null=null,windowOperation='';
-  let nativeReady=$state(false),nativeOpened=$state(false),nativeResolved=$state(false),elapsed=$state(0);
+  let nativeOpened=$state(false),nativeResolved=$state(false),elapsed=$state(0);
   const games: {id:ProfileGameId;name:string}[] = [{id:'dcs',name:'DCS World'},{id:'x-plane-11',name:'X-Plane 11'},{id:'x-plane-12',name:'X-Plane 12'},{id:'assetto-corsa-rally',name:'Assetto Corsa Rally'}];
   const choices = $derived(games.filter(game=>!gameIds.length||gameIds.includes(game.id)));
   const native = $derived(view.status);
@@ -46,19 +45,10 @@
       canCancel:!cancelling&&(progress?.canCancel??true)} satisfies ActivationWindowProgress;
   });
   onMount(()=>{
-    mounted=true;let disposed=false;
+    mounted=true;
     const stop=runtime.subscribe(next=>{view=next;onState?.(next);});
-    if(manageActivationProgress)void import('./profile-activation-window').then(module=>{if(!disposed){nativeWindow=new module.NativeProfileActivationWindow();nativeReady=true;}}).catch(()=>{nativeReady=true;nativeResolved=true;});
-    return()=>{disposed=true;mounted=false;nativeWindow?.dispose();stop();};
-  });
-  $effect(()=>{
-    const payload=progressPayload;if(!nativeReady)return;
-    if(!payload){if(windowOperation)void nativeWindow?.close(windowOperation);windowOperation='';nativeOpened=false;nativeResolved=false;return;}
-    if(windowOperation!==payload.operationId){
-      windowOperation=payload.operationId;nativeOpened=false;nativeResolved=false;
-      if(!nativeWindow){nativeResolved=true;return;}
-      void nativeWindow.show(payload,()=>runtime.cancelPendingActivation(payload.operationId)).then(opened=>{if(windowOperation===payload.operationId){nativeOpened=opened;nativeResolved=true;}});
-    }else if(nativeOpened){void nativeWindow?.update(payload).then(updated=>{if(!updated&&windowOperation===payload.operationId)nativeOpened=false;});}
+    nativeOpened='__TAURI_INTERNALS__' in window;nativeResolved=manageActivationProgress;
+    return()=>{mounted=false;stop();};
   });
   $effect(()=>{
     if(!manageActivationProgress||!mounted||!activating||!activationStarted)return;

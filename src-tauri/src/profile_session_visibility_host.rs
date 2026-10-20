@@ -60,6 +60,9 @@ fn wait(
 impl NativeProfileHost {
     pub(super) fn start_visibility(&mut self, owner: &RunOwner) -> Result<(), String> {
         let epoch = self.admission_epoch.clone();
+        if !self.run(owner)?.visibility.is_empty() {
+            self.report_progress(owner, "hiding-peripherals", "Hiding peripherals");
+        }
         let state = self.run(owner)?;
         let expected = state.admission_epoch;
         wait(

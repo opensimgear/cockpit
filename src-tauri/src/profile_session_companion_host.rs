@@ -27,6 +27,22 @@ fn panel_operation_failure(operation: &Value) -> Option<String> {
 fn panel_operation_progress(operation: &Value) -> Value {
     json!([operation["sessionId"], operation["attemptId"], operation["phase"], operation["completedBytes"], operation["totalBytes"]])
 }
+fn panel_operation_status(operation: &Value) -> (&'static str, String) {
+    let (step, message) = match operation["phase"].as_str() {
+        Some("opening") => ("companion-opening", "Companion opening panel"),
+        Some("checking-cache") => ("companion-checking-cache", "Companion checking cached assets"),
+        Some("downloading") => ("companion-downloading-assets", "Companion downloading assets"),
+        Some("rendering") => ("companion-rendering", "Companion rendering panel"),
+        Some("awaiting-neutral") => ("companion-awaiting-neutral", "Waiting for companion touch controls to be released"),
+        _ => ("companion-baseline", "Checking companion input readiness"),
+    };
+    let total = operation["totalBytes"].as_u64().unwrap_or(0);
+    let completed = operation["completedBytes"].as_u64().unwrap_or(0);
+    let message = if operation["phase"] == "downloading" && total > 0 {
+        format!("{message} · {} / {} KiB", completed / 1024, total.div_ceil(1024))
+    } else { message.into() };
+    (step, message)
+}
 fn diagnostic_failure(report: &crate::companion_host::ProfilePanelOperation, initial: Option<&Value>) -> Option<String> {
     // A retained failure is useful context, but cannot reject an explicit
     // retry before the device has reported a new attempt or state transition.
@@ -260,6 +276,9 @@ impl NativeProfileHost {
         if self.run(owner)?.companions.is_empty() {
             return Ok((self.resources.bind_delivery_reads(prepared)?, vec![]));
         }
+        self.report_progress(owner, "companion-baseline", "Waiting for companion panel readiness");
+        let callback = self.progress.clone();
+        let mut displayed_progress = None;
         let hub = self.companions.profile_metadata()?;
         let runtime = self.companions.clone();
         let provider = self.companions.profile_provider();
@@ -284,6 +303,7 @@ impl NativeProfileHost {
             let native = provider.resource_inventory();
             let now = self.controllers.stream_page("", 0).captured_us;
             let state = self.run(owner)?;
+            let mut current_operations = vec![];
             for catalogue in &state.companion_catalogues {
                 let report = runtime.profile_panel_operation(&catalogue.instance_id, &catalogue.publication_hash);
                 if let Some(report) = &report {
@@ -293,6 +313,9 @@ impl NativeProfileHost {
                     if let Some(error) = diagnostic_failure(report,initial_operations.get(&catalogue.instance_id)) { return Err(error); }
                     if report.live_session { live_seen.insert(catalogue.instance_id.clone()); }
                     if report.fresh && report.operation["phase"] != "failed" {
+                        if report.live_session || initial_operations.get(&catalogue.instance_id).is_none_or(|initial| initial != &report.operation) {
+                            current_operations.push(panel_operation_status(&report.operation));
+                        }
                         let signature = panel_operation_progress(&report.operation);
                         if progress.get(&catalogue.instance_id).is_none_or(|(previous,_,_)|previous != &signature) {
                             progress.insert(catalogue.instance_id.clone(), (signature, Instant::now() + PANEL_LOAD_IDLE_TIMEOUT,report.operation.clone()));
@@ -307,6 +330,18 @@ impl NativeProfileHost {
                     if Instant::now() >= *until { return Err(panel_load_timeout(Some(operation),false)); }
                 } else if Instant::now() >= legacy_deadline {
                     return Err(panel_load_timeout(None, false));
+                }
+            }
+            // Multiple companions may prepare concurrently. Keep every current
+            // operation visible instead of cycling messages on each 5 ms poll.
+            if !current_operations.is_empty() {
+                let step = current_operations.iter().find(|(step, _)| *step != "companion-baseline")
+                    .map_or("companion-baseline", |(step, _)| *step);
+                let message = current_operations.iter().map(|(_, message)| message.as_str()).collect::<Vec<_>>().join("; ");
+                let next = (step, message);
+                if displayed_progress.as_ref() != Some(&next) {
+                    Self::emit_progress(callback.as_ref(), state.admission_epoch, next.0, &next.1);
+                    displayed_progress = Some(next);
                 }
             }
             if state.companions.baseline_ready(&hub)?

@@ -196,7 +196,7 @@ pub struct GatewayManager {
     profile_prepare: ProfilePrepare,
     profile_native: bool,
     profile_admission_epoch: Arc<AtomicU64>,
-    profile_activations: profile_activation_progress::Tracker,
+    profile_activations: Arc<profile_activation_progress::Tracker>,
     profile_pending: AtomicUsize,
     profile_learning: crate::profile_input_learning::Runtime,
     retired_output_until:Mutex<Option<std::time::Instant>>,
@@ -304,9 +304,12 @@ impl GatewayManager {
         );
         let profile_resources = Arc::new(crate::profile_resources::Runtime::new(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, native));
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
+        let profile_activations=Arc::new(profile_activation_progress::Tracker::default());
+        let progress_tracker=profile_activations.clone();
         let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
-            crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone()),
+            crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone())
+                .with_progress(Arc::new(move|epoch,step,message|progress_tracker.note(epoch,step,message))),
             native.then(|| crate::config_paths::config_path().with_file_name("profile-session-v1.json")),
         )));
         let prepare_resources = profile_resources.clone();
@@ -347,7 +350,7 @@ impl GatewayManager {
             profile_prepare,
             profile_native: native,
             profile_admission_epoch,
-            profile_activations: profile_activation_progress::Tracker::default(),
+            profile_activations,
             profile_pending:AtomicUsize::new(0),
             retired_output_until:Mutex::new(None),
             profile_learning,
@@ -467,6 +470,7 @@ impl GatewayManager {
     fn prepare_profile_at(&self,candidate:&crate::profile_session::Candidate,arrival_epoch:u64)->Result<Arc<crate::profile_session::Stage>,String>{
         let current=||self.profile_admission_epoch.load(Ordering::Acquire)==arrival_epoch;
         if !current(){return Err("Profile preparation was cancelled by a newer native control.".into());}
+        self.note_profile_activation(arrival_epoch,"validating","Checking profile resources, mappings and device capabilities");
         self.guard_retired_recovery()?;
         let prepared=(self.profile_prepare)(candidate);
         if !current(){return Err("Profile preparation was cancelled by a newer native control.".into());}
@@ -544,7 +548,7 @@ impl GatewayManager {
         let command = request["command"].as_str().unwrap_or("");
         // Activation progress and cancellation remain responsive while takeover
         // owns the admission/coordinator locks. These APIs never claim outputs.
-        if matches!(command,"profile_activation_status"|"profile_activation_cancel") {
+        if matches!(command,"profile_activation_status"|"profile_activation_cancel"|"profile_activation_current") {
             return self.profile_activation_request(&request);
         }
         // System observation is independent of profile ownership, recovery,

@@ -517,6 +517,15 @@ impl GatewayManager {
             self.invalidate_learning();
             (self.profile_admission_epoch.load(Ordering::Acquire), target)
         };
+        let activation_id = match self.start_native_profile_activation(
+            &target.profile_id, admission_epoch, "automatic", target.game_id.as_deref(),
+        ) {
+            Ok(id) => id,
+            Err(error) => {
+                self.profile_automatic.finish(epoch, target, &Err(error), false);
+                return;
+            }
+        };
         let mut enumeration_changed = false;
         let result = (|| {
             let (document, assignments, read_only) = self
@@ -524,6 +533,7 @@ impl GatewayManager {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .compile_source(&target.profile_id)?;
+            self.capture_profile_activation_id(&activation_id, &document, &assignments);
             enumeration_changed =
                 crate::games::launch::enumeration_intents(&document).requires_startup_notice();
             let proof = target
@@ -596,6 +606,10 @@ impl GatewayManager {
         })();
         self.profile_automatic
             .finish(epoch, target, &result, enumeration_changed);
+        self.finish_profile_activation(&activation_id, &match result {
+            Ok(()) => json!({"ok":true}),
+            Err(error) => json!({"ok":false,"error":error}),
+        });
     }
     /// Explicitly install the native background owner for desktop/service hosts.
     /// A Weak reference avoids a permanent manager/worker ownership cycle.

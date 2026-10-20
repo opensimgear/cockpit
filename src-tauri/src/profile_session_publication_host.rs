@@ -48,6 +48,9 @@ fn wait(
 impl NativeProfileHost {
     pub(super) fn acquire_publication(&mut self, owner: &RunOwner) -> Result<(), String> {
         let epoch = self.admission_epoch.clone();
+        if !self.run(owner)?.publication.is_empty() {
+            self.report_progress(owner, "publishing-hardware-config", "Applying peripheral hardware configuration");
+        }
         let state = self.run(owner)?;
         let expected = state.admission_epoch;
         if state.publication.is_empty() {

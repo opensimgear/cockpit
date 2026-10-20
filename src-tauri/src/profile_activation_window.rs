@@ -22,6 +22,7 @@ enum ActivationPhase {
     Preparing,
     Activating,
     Cancelling,
+    Launching,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -127,9 +128,10 @@ pub(crate) async fn profile_activation_window_open(
             WebviewUrl::App("index.html?profile-activation-window".into()),
         )
         .title("Profile activation · OpenSimGear")
-        .inner_size(520.0, 330.0)
-        .min_inner_size(420.0, 270.0)
-        .resizable(true)
+        .inner_size(600.0, 76.0)
+        .min_inner_size(360.0, 60.0)
+        .decorations(false)
+        .resizable(false)
         .maximizable(false)
         .minimizable(false)
         .skip_taskbar(true)
@@ -266,5 +268,22 @@ mod tests {
         let mut value = progress("operation");
         value.details = vec![String::new(); 33];
         assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn game_launch_status_keeps_the_same_window_without_allowing_cancel() {
+        let state = ActivationWindowState::default();
+        state.start(progress("operation"));
+        let mut launching = progress("operation");
+        launching.phase = ActivationPhase::Launching;
+        launching.message = "Launching Assetto Corsa Rally".into();
+        launching.can_cancel = false;
+        assert!(launching.validate().is_ok());
+        assert!(state.update(launching, false));
+        assert!(!state.request_cancel("operation"));
+        let snapshot = serde_json::to_value(state.snapshot().unwrap()).unwrap();
+        assert_eq!(snapshot["progress"]["phase"], "launching");
+        assert_eq!(snapshot["progress"]["message"], "Launching Assetto Corsa Rally");
+        assert!(state.finish("operation"));
     }
 }

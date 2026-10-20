@@ -32,13 +32,19 @@ struct Activation {
     previous_owner: Option<crate::profile_session::RunOwner>,
     companions: Vec<CompanionTarget>,
     completed: Option<Instant>,
+    started: Instant,
+    step: String,
+    origin: String,
+    profile_name: String,
+    steps: Vec<Value>,
 }
 impl Activation {
     fn pending(&self) -> bool { self.completed.is_none() }
     fn view(&self, epoch: u64, companions: Vec<Value>) -> Value {
         json!({"activationId":self.id,"profileId":self.profile,"phase":self.phase,
             "cancelRequested":self.cancel_requested,"canCancel":self.pending()&&!self.cancel_requested&&self.epoch==epoch,
-            "message":self.message,"error":self.error,"outcome":self.outcome,"companions":companions})
+            "message":self.message,"step":self.step,"steps":self.steps,"origin":self.origin,"profileName":self.profile_name,
+            "error":self.error,"outcome":self.outcome,"companions":companions})
     }
 }
 
@@ -57,7 +63,8 @@ impl Tracker {
         }
         let epoch=begin_epoch();
         entries.insert(id.into(),Activation {id:id.into(),profile:profile.into(),epoch,phase:"preparing",cancel_requested:false,
-            message:"Checking devices and preparing the profile…".into(),error:None,outcome:None,previous_owner:None,companions:vec![],completed:None});
+            message:"Checking devices and preparing the profile…".into(),error:None,outcome:None,previous_owner:None,companions:vec![],completed:None,
+            started:Instant::now(),step:"preparing".into(),origin:"manual".into(),profile_name:profile.into(),steps:vec![]});
         Ok(epoch)
     }
     pub(super) fn activating(&self,id:&str) {
@@ -65,6 +72,23 @@ impl Tracker {
         if let Some(entry)=entries.get_mut(id).filter(|entry|entry.pending()&&!entry.cancel_requested) {
             entry.phase="activating";entry.message="Applying the profile and preparing companion screens…".into();
         }
+    }
+    pub(super) fn note(&self, epoch:u64, step:&str, message:&str) {
+        let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
+        if let Some(entry)=entries.values_mut().find(|entry|entry.pending()&&entry.epoch==epoch&&!entry.cancel_requested) {
+            entry.phase=if step=="launching" {"launching"}else if matches!(step,"preparing"|"validating"|"compiling") {"preparing"}else{"activating"};
+            entry.step=step.into();entry.message=message.chars().take(1024).collect();
+            if entry.steps.last().is_none_or(|previous|previous["step"]!=step||previous["message"]!=entry.message) {
+                if entry.steps.len()>=128 {entry.steps.remove(0);}
+                entry.steps.push(json!({"step":entry.step,"message":entry.message}));
+            }
+        }
+    }
+    pub(super) fn rebind(&self,id:&str,old:u64,new:u64)->Result<(),String> {
+        let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
+        let entry=entries.get_mut(id).filter(|entry|entry.pending()&&entry.epoch==old&&!entry.cancel_requested)
+            .ok_or("The activation was cancelled before game launch admission.")?;
+        entry.epoch=new;Ok(())
     }
     fn cancel(&self,id:&str,epoch:&AtomicU64)->Result<(),String> {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
@@ -81,6 +105,17 @@ impl Tracker {
 }
 
 impl GatewayManager {
+    pub(super) fn start_native_profile_activation(&self,profile:&str,epoch:u64,origin:&str,_game_id:Option<&str>)->Result<String,String> {
+        let id=uuid::Uuid::new_v4().to_string();
+        self.profile_activations.begin(&id,profile,||epoch)?;
+        let name=self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(profile).map(|source|source.0.name).unwrap_or_else(|_|profile.into());
+        if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(&id) {
+            entry.origin=origin.into();entry.profile_name=name;
+        }
+        Ok(id)
+    }
+    pub(super) fn note_profile_activation(&self,epoch:u64,step:&str,message:&str) {self.profile_activations.note(epoch,step,message);}
+    pub(super) fn rebind_profile_activation_epoch(&self,id:&str,old:u64,new:u64)->Result<(),String> {self.profile_activations.rebind(id,old,new)}
     pub(super) fn begin_profile_activation(&self,request:&Value)->Result<u64,String> {
         if !request.is_object()||request.to_string().len()>PROFILE_REQUEST_LIMIT
             || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
@@ -92,6 +127,9 @@ impl GatewayManager {
     }
     pub(super) fn capture_profile_activation(&self,request:&Value,document:&osg_profiles::ProfileDocument,assignments:&[osg_profiles::store::LocalAssignment]) {
         let Some(id)=request["activationId"].as_str() else{return;};
+        self.capture_profile_activation_id(id,document,assignments);
+    }
+    pub(super) fn capture_profile_activation_id(&self,id:&str,document:&osg_profiles::ProfileDocument,assignments:&[osg_profiles::store::LocalAssignment]) {
         let previous_owner=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().owner.clone();
         let companions=document.companion_assignments.iter().filter_map(|desired| {
             let assignment=assignments.iter().find(|a|a.resource_id==desired.resource_id)?;
@@ -101,7 +139,7 @@ impl GatewayManager {
                 name:document.resources.iter().find(|r|r.id==desired.resource_id).map(|r|r.name.clone()).unwrap_or_else(||"Companion".into())})
         }).collect();
         if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(id) {
-            entry.previous_owner=previous_owner;entry.companions=companions;
+            entry.previous_owner=previous_owner;entry.companions=companions;entry.profile_name=document.name.clone();
         }
     }
     pub(super) fn finish_profile_activation(&self,id:&str,response:&Value) {
@@ -145,6 +183,10 @@ impl GatewayManager {
                 ||request.as_object().unwrap().keys().any(|key|!matches!(key.as_str(),"command"|"clientId"|"activationId"))
                 ||!request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
                 return Err("Invalid Cockpit activation progress request.".into());
+            }
+            if request["command"]=="profile_activation_current" {
+                let current=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).values().filter(|entry|entry.pending()).max_by_key(|entry|entry.started).map(|entry|entry.id.clone());
+                return current.map(|id|self.profile_activation_view(&id)).unwrap_or(Ok(Value::Null));
             }
             let id=request["activationId"].as_str().filter(|id|operation_id(id)).ok_or("Choose an exact activation operation.")?;
             if request["command"]=="profile_activation_cancel" {self.profile_activations.cancel(id,&self.profile_admission_epoch)?;}

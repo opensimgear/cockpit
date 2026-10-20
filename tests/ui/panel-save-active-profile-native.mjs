@@ -12,7 +12,7 @@ const artifacts=resolve('.research/panel-save-active-profile-native');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function connectNative(){
   const targets=await(await fetch(`${process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222'}/json/list`,{signal:AbortSignal.timeout(5000)})).json();
-  const endpoint=targets.find(target=>target.type==='page'&&/127\.0\.0\.1:1420|localhost:1420/.test(target.url))?.webSocketDebuggerUrl;
+  const endpoint=targets.find(target=>target.type==='page'&&/127\.0\.0\.1:1420|localhost:1420/.test(target.url)&&!target.url.includes('profile-activation-window'))?.webSocketDebuggerUrl;
   assert.ok(endpoint,'Start the real native dev Cockpit with CDP enabled.');
   const socket=new RawSocket(endpoint,{handshakeTimeout:8000});
   await new Promise((resolve,reject)=>{socket.once('open',resolve);socket.once('error',reject);});

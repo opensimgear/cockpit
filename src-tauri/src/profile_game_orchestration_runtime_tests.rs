@@ -2,8 +2,21 @@ use super::*;
 use crate::game_discovery::{Platform, ProcessIdentity};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize},
-    Arc, Barrier, Mutex,
+    mpsc, Arc, Barrier, Mutex,
 };
+
+type ProgressGate = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+fn progress_gate() -> (ProgressGate, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let (entered, observed) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let released = Mutex::new(released);
+    let gate = Arc::new(move || {
+        entered.send(()).map_err(|_| "The progress observer closed.".to_owned())?;
+        released.lock().unwrap().recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "The progress test did not release its native gate within five seconds.".to_owned())
+    });
+    (gate, observed, release)
+}
 
 struct NoPorts;
 impl Provider for NoPorts {
@@ -20,14 +33,14 @@ struct Games {
     spawns: AtomicUsize,
     appear: AtomicBool,
     fail_spawn: AtomicBool,
-    spawn_gate: Mutex<Option<Arc<Barrier>>>,
+    spawn_gate: Mutex<Option<ProgressGate>>,
 }
 fn executable(id: &str) -> String {
     format!("C:\\Games\\{id}\\game.exe")
 }
 impl Platform for Games {
     fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
-        ["dcs","x-plane-11","x-plane-12","assetto-corsa-rally"].iter().map(|id|json!({"id":id,"installed":true,"processMonitoringSupported":true,"launchSupported":true,"executable":executable(id)})).collect()
+        ["dcs","x-plane-11","x-plane-12","assetto-corsa-rally"].iter().map(|id|json!({"id":id,"name":if *id=="dcs" {"DCS World"}else{id},"installed":true,"processMonitoringSupported":true,"launchSupported":true,"executable":executable(id)})).collect()
     }
     fn validate(&self, id: &str, path: &str) -> Result<(), String> {
         if path == executable(id) {
@@ -42,8 +55,7 @@ impl Platform for Games {
     fn spawn_process(&self, game: &Value) -> Result<(), String> {
         self.spawns.fetch_add(1, Ordering::AcqRel);
         if let Some(gate) = self.spawn_gate.lock().unwrap().clone() {
-            gate.wait();
-            gate.wait();
+            gate()?;
         }
         if self.appear.load(Ordering::Acquire) {
             let id = game["id"].as_str().unwrap();
@@ -176,6 +188,116 @@ fn launch(manager: &GatewayManager, id: &str) -> Result<Value, String> {
             .unwrap_or("Native launch failed")
             .into())
     }
+}
+
+fn activation_progress(manager: &GatewayManager, id: Option<&str>) -> Value {
+    let mut fields = json!({});
+    if let Some(id) = id { fields["activationId"] = json!(id); }
+    let response = request(manager, if id.is_some() {"profile_activation_status"} else {"profile_activation_current"}, fields);
+    assert_eq!(response["ok"], true, "{response}");
+    response["state"]["profileActivation"].clone()
+}
+
+#[test]
+fn tracked_game_launch_preflight_cancellation_preserves_the_active_profile() {
+    let mut fixture = Fixture::new();
+    let manager = Arc::get_mut(&mut fixture.manager).unwrap();
+    ok(manager, "profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+    let previous = manager.profile_session.lock().unwrap().status().owner.clone();
+    let prepare = manager.profile_prepare.clone();
+    let (gate, entered, release) = progress_gate();
+    manager.profile_prepare = Arc::new(move |candidate| {
+        let staged = prepare(candidate)?;
+        gate()?;
+        Ok(staged)
+    });
+    let launching = fixture.manager.clone();
+    let worker = std::thread::spawn(move || launch(&launching, "dcs"));
+    entered.recv_timeout(Duration::from_secs(5)).expect("Native game preparation did not enter its gate");
+    let progress = activation_progress(&fixture.manager, None);
+    let id = progress["activationId"].as_str().unwrap().to_owned();
+    let cancelled = request(&fixture.manager, "profile_activation_cancel", json!({"activationId":id}));
+    release.send(()).unwrap();
+    let result = worker.join().unwrap();
+    assert!(result.is_err());
+    assert_eq!(progress["origin"], "game-launch");
+    assert_eq!(progress["canCancel"], true);
+    assert_eq!(cancelled["ok"], true, "{cancelled}");
+    let completed = activation_progress(&fixture.manager, Some(&id));
+    assert_eq!(completed["phase"], "cancelled", "{completed}");
+    assert_eq!(completed["outcome"], "previous-active");
+    assert_eq!(fixture.manager.profile_session.lock().unwrap().status().owner, previous);
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn game_launch_progress_keeps_one_operation_through_hardware_and_real_process_start() {
+    let mut fixture = Fixture::new();
+    let manager = Arc::get_mut(&mut fixture.manager).unwrap();
+    let prepare = manager.profile_prepare.clone();
+    let (preparation, preparing_entered, preparing_release) = progress_gate();
+    manager.profile_prepare = Arc::new(move |candidate| {
+        let staged = prepare(candidate)?;
+        preparation()?;
+        Ok(staged)
+    });
+    let (spawning, spawning_entered, spawning_release) = progress_gate();
+    *fixture.games.spawn_gate.lock().unwrap() = Some(spawning);
+    let launching = fixture.manager.clone();
+    let worker = std::thread::spawn(move || launch(&launching, "dcs"));
+    preparing_entered.recv_timeout(Duration::from_secs(5)).expect("Native game preparation did not enter its gate");
+    let preparing = activation_progress(&fixture.manager, None);
+    preparing_release.send(()).unwrap();
+    spawning_entered.recv_timeout(Duration::from_secs(5)).expect("Native game spawn did not enter its gate");
+    let progress = activation_progress(&fixture.manager, None);
+    spawning_release.send(()).unwrap();
+    let result = worker.join().unwrap().unwrap();
+    assert_eq!(preparing["phase"], "preparing");
+    assert_eq!(progress["activationId"], preparing["activationId"]);
+    assert_eq!(progress["phase"], "launching", "{progress}");
+    assert_eq!(progress["step"], "launching");
+    assert_eq!(progress["message"], "Launching DCS World…");
+    assert_eq!(progress["canCancel"], true, "Held launch epoch must remain cancellable");
+    assert_eq!(result["launch"]["state"], "started");
+    let completed = activation_progress(&fixture.manager, progress["activationId"].as_str());
+    assert_eq!(completed["phase"], "succeeded", "{completed}");
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn tracked_cancel_during_game_process_wait_revokes_the_rebound_epoch_without_replay() {
+    let fixture = Fixture::new();
+    fixture.games.appear.store(false, Ordering::Release);
+    let launching = fixture.manager.clone();
+    let worker = std::thread::spawn(move || launch(&launching, "dcs"));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let progress = loop {
+        let progress = activation_progress(&fixture.manager, None);
+        if progress["phase"] == "launching" && progress["message"] == "Waiting for DCS World to start…" {
+            break progress;
+        }
+        assert!(Instant::now() < deadline, "Launch never reached process wait: {progress}");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let id = progress["activationId"].as_str().unwrap().to_owned();
+    let epoch = fixture.manager.profile_admission_epoch.load(Ordering::Acquire);
+    let cancelled = request(&fixture.manager, "profile_activation_cancel", json!({"activationId":id}));
+    assert_eq!(cancelled["ok"], true, "{cancelled}");
+    assert_ne!(fixture.manager.profile_admission_epoch.load(Ordering::Acquire), epoch);
+    assert!(worker.join().unwrap().is_err());
+    let completed = activation_progress(&fixture.manager, Some(&id));
+    assert_eq!(completed["phase"], "cancelled", "{completed}");
+    assert_eq!(completed["outcome"], "inactive");
+    assert!(fixture.manager.profile_session.lock().unwrap().status().owner.is_none());
+    fixture.manager.poll_automatic();
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 1);
+    ok(&fixture.manager, "profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+    let owner = fixture.manager.profile_session.lock().unwrap().status().owner.clone();
+    let newer_epoch = fixture.manager.profile_admission_epoch.load(Ordering::Acquire);
+    let stale = request(&fixture.manager, "profile_activation_cancel", json!({"activationId":id}));
+    assert_eq!(stale["ok"], true, "{stale}");
+    assert_eq!(fixture.manager.profile_admission_epoch.load(Ordering::Acquire), newer_epoch);
+    assert_eq!(fixture.manager.profile_session.lock().unwrap().status().owner, owner);
 }
 
 #[test]
