@@ -57,7 +57,7 @@ impl Service {
             registry,
             path: path.map(|p| p.join("controller-visibility-session.json")),
             factory: Arc::new(native),
-            qualified: super::capabilities::DEVELOPMENT_NATIVE_PROFILES,
+            qualified: super::capabilities::WINDOWS_NATIVE_OUTPUTS,
         }
     }
     pub fn with_suppression(mut self, control: super::suppression::Control) -> Self {
@@ -147,7 +147,7 @@ impl Service {
             "selfAccess":self.self_access,"platform":format!("{:?}",self.platform).to_lowercase(),"modes":super::capabilities::modes(self.platform),"enabled":settings.value.enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
             "selected":settings.value.devices.iter().filter(|(_,p)|!matches!(p,Intent::Visible)).map(|(id,_)|id).take(16).collect::<Vec<_>>(),
             "settingsError":settings.error,"global":global,"job":if self.platform==super::capabilities::Platform::Windows{json!(self.worker.lock().unwrap_or_else(|p|p.into_inner()).snapshot())}else{self.suppression.snapshot()},"recovery":recovery,"launch":self.launch.lock().unwrap_or_else(|p|p.into_inner()).snapshot(),
-            "reason":if super::capabilities::DEVELOPMENT_NATIVE_PROFILES{super::capabilities::DEVELOPMENT_REASON}else if self.qualified{"Apply affects every instance of the selected executable path. Existing applications may need a qualified device-handle refresh."}else{super::capabilities::reason(self.platform)}
+            "reason":if super::capabilities::WINDOWS_NATIVE_OUTPUTS{super::capabilities::WINDOWS_REASON}else if self.qualified{"Apply affects every instance of the selected executable path. Existing applications may need a qualified device-handle refresh."}else{super::capabilities::reason(self.platform)}
         }})
     }
     pub fn request(&self, request: &Value) -> Result<Value, String> {

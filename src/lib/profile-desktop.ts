@@ -10,11 +10,19 @@ export type DesktopAction = {kind:'key-hold';key:number}
   | {kind:'wheel';horizontal:number;vertical:number}
   | {kind:'pointer';axis:'x'|'y';speed:number;curve:number}
   | {kind:'repeat';key:number;delayMs:number;intervalMs:number};
-export type ProfileDesktopOutput = {id:string;name:string;required:boolean;ports:ProfilePort[];actions:{portId:string;action:DesktopAction}[]};
+/** The application reference resolves only through native, machine-local observation. */
+export type ProfileDesktopScope = {kind:'selected-game'}|{kind:'application';applicationReference?:string}|{kind:'desktop-wide'};
+export type ProfileDesktopOutput = {id:string;name:string;required:boolean;scope?:ProfileDesktopScope;ports:ProfilePort[];actions:{portId:string;action:DesktopAction}[]};
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const integer=(value:unknown,min:number,max:number)=>Number.isInteger(value)&&Number(value)>=min&&Number(value)<=max;
 export const desktopKeyValid=(value:unknown):value is number=>integer(value,4,0x47)||integer(value,0x49,0x65)||integer(value,0xe0,0xe7);
 const exact=(value:Record<string,unknown>,keys:string[])=>Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+export function desktopOutputScopeValid(value:unknown):value is ProfileDesktopScope {
+  if(!object(value))return false;
+  if(value.kind==='selected-game'||value.kind==='desktop-wide')return exact(value,['kind']);
+  if(value.kind!=='application')return false;
+  return Object.hasOwn(value,'applicationReference')?exact(value,['kind','applicationReference'])&&typeof value.applicationReference==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value.applicationReference):exact(value,['kind']);
+}
 export function desktopActionValid(value:unknown):value is DesktopAction {
   if(!object(value))return false;
   const key=desktopKeyValid(value.key),button=['left','right','middle','x1','x2'].includes(String(value.button));
@@ -70,5 +78,5 @@ export function desktopPreset(kind:DesktopPreset,id:string):{output:ProfileDeskt
     else if(kind==='encoder-tap'||kind==='mouse-click'||kind==='scroll')nodes.push({id:nodeId,name:'Press edge → ordered action',operation:{kind:'event-edge',edge:'rising'},inputs:[{id:'in',name:'Button',direction:'input',contract:{delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false}}],outputs:[{id:'out',name:'Press event',direction:'output',contract}]});
     if(nodes.some(node=>node.id===nodeId))routes.push({from:{nodeId,portId:'out'},to:{nodeId:id,portId:definition.portId}});
   }
-  return{output:{id,name:'Keyboard and mouse',required:true,ports:actions.map(definition=>desktopActionPort(definition.portId,desktopActionLabel(definition.action),definition.action)),actions},nodes,routes};
+  return{output:{id,name:'Keyboard and mouse',required:true,scope:{kind:'application'},ports:actions.map(definition=>desktopActionPort(definition.portId,desktopActionLabel(definition.action),definition.action)),actions},nodes,routes};
 }

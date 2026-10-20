@@ -79,7 +79,7 @@ export function graphDisconnect(value: DeepReadonly<ProfileGraphDraft>, bindingI
   const next=graphDraft(value);if(!next.document.bindings.some(binding=>binding.id===bindingId))throw new Error('Choose an existing route to remove.');
   next.document.bindings=next.document.bindings.filter(binding=>binding.id!==bindingId);return checked(next);
 }
-/** Desktop declarations remain portable. Machine enablement and scope never enter this graph. */
+/** Scope belongs to the saved endpoint; native identities and enablement remain local. */
 export function graphSetDesktop(value:DeepReadonly<ProfileGraphDraft>,output:ProfileDesktopOutput):ProfileGraphDraft {
   const next=graphDraft(value),existing=next.document.desktopOutputs??[];
   if(nodes(next.document).some(node=>node.id===output.id)&&!existing.some(node=>node.id===output.id))throw new Error('Use a unique desktop endpoint identity.');

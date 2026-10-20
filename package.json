@@ -72,6 +72,8 @@
     "profile-retired-recovery:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-retired-recovery.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-retired-recovery.test.mjs",
     "profile-library:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-library.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-library.test.mjs",
     "profile-authoring:ui": "node --test tests/ui/complete-profile-authoring.mjs",
+    "profiles:native:ui": "node --test tests/ui/profile-workflow-native.mjs",
+    "profiles:outputs:native": "node --test tests/ui/profile-outputs-native.mjs",
     "desktop:test": "node --test src/lib/profile-desktop.test.mjs src/lib/profile-desktop-ui.test.mjs src/lib/profile-desktop-preview.test.mjs src/lib/profile-desktop-preview-ui.test.mjs",
     "desktop:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-desktop.ts --test-coverage-include=src/lib/profile-desktop-runtime.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-desktop.test.mjs src/lib/profile-desktop-ui.test.mjs && node --experimental-test-coverage --test-coverage-include=src/lib/profile-desktop-preview.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-desktop-preview.test.mjs src/lib/profile-desktop-preview-ui.test.mjs",
     "desktop:native:ui": "node --test tests/ui/desktop-output-native.mjs",

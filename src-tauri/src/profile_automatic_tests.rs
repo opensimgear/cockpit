@@ -233,7 +233,7 @@ fn native_rules_are_strict_passive_and_stale_rules_can_be_removed_or_disabled() 
     assert!(owner(manager).is_none());
 }
 #[test]
-fn automatic_apply_is_idempotent_and_profile_saves_do_not_reapply_the_run() {
+fn automatic_apply_is_idempotent_and_editor_save_preserves_game_and_automatic_policy() {
     let fixture = Fixture::new();
     let manager = &fixture.manager;
     let id = create(manager, "A");
@@ -244,7 +244,7 @@ fn automatic_apply_is_idempotent_and_profile_saves_do_not_reapply_the_run() {
     assert!(owner(manager).is_none(), "Manual remains pinned");
     mode(manager, "automatic");
     manager.poll_automatic();
-    let first = owner(manager).unwrap();
+    let first = owner(manager).unwrap_or_else(|| panic!("{}",manager.profile_automatic.view()));
     assert_eq!(first.profile_id, id);
     assert_eq!(first.game_id.as_deref(), Some("dcs"));
     for _ in 0..4 {
@@ -257,7 +257,18 @@ fn automatic_apply_is_idempotent_and_profile_saves_do_not_reapply_the_run() {
         json!({"id":id,"expectedRevision":1,"name":"Edited saved profile"}),
     );
     manager.poll_automatic();
-    assert_eq!(owner(manager), Some(first));
+    assert_eq!(owner(manager), Some(first.clone()));
+    let policy = manager.profile_automatic.config();
+    let document = ok(manager,"profile_get",json!({"id":id}))["document"].clone();
+    let saved = ok(manager,"profile_editor_save",json!({"document":document,"expectedRevision":2,"assignments":[]}));
+    assert_eq!(saved["saveApplication"],json!({"state":"applied","error":null}));
+    let current = owner(manager).unwrap();
+    assert_ne!(current,first);
+    assert_eq!(current.profile_revision,3);
+    assert_eq!(current.game_id,first.game_id);
+    assert_eq!(manager.profile_automatic.config(),policy);
+    for _ in 0..4 {manager.poll_automatic();}
+    assert_eq!(owner(manager),Some(current));
     fixture.games.processes.lock().unwrap().clear();
     let deadline = Instant::now() + Duration::from_secs(2);
     while !manager

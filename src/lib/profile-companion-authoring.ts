@@ -39,7 +39,7 @@ export class ProfileCompanionAuthoringClient {
   constructor(private send:ProfileCompanionAuthoringSend){}
   async catalogue():Promise<DeepReadonly<ProfileCompanionCatalogue>> {return freeze(capture(catalogue(await this.send({command:'profile_companion_catalogue'}))));}
   async inspect(resourceId:string,publicationHash:string,offset=0,limit=32):Promise<DeepReadonly<ProfileCompanionPage>> {
-    if(!text(resourceId,256)||!hash(publicationHash)||!integer(offset,0,1024)||!integer(limit,1,64))throw new Error('Choose an exact companion resource, panel revision and bounded port page.');
+    if(!text(resourceId,256)||!hash(publicationHash)||!integer(offset,0,1024)||!integer(limit,1,64))throw new Error('Choose an exact companion resource, published panel and bounded port page.');
     const request={command:'profile_companion_inspect' as const,resourceId,publicationHash,offset,limit};
     return freeze(capture(page(await this.send(request),request)));
   }

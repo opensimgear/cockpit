@@ -1,177 +1,161 @@
 # Profiles
 
-Open **Profiles** to see Default, saved profiles and **Add profile**. Click a row,
-or focus it and press Enter or Space, to open that profile's editor. The runtime
-selection and applied revision appear separately, with **Stop** always available.
+A profile describes how your rig's inputs, transformations and outputs work
+together. Open **Profiles** to see Default and your saved profiles. Open a profile
+to edit it. The active profile appears separately, with **Stop** available.
 Opening an editor leaves the running profile alone.
 
-## Create and save
+## Create, save and start
 
-Choose **Add profile** for a blank graph seeded with the current inventory's
-resource blocks. Closed game integrations and offline resources remain usable
-for authoring. If the inventory exceeds the 64-block graph limit, explicitly
-choose the resources to include. Creation adds no signal routes or output policy.
+Choose **Add profile** to go straight to an empty editor. Name the profile, then
+use **Add from inventory** to choose controllers, OSG peripherals, companions
+and game integrations. Offline resources and closed games remain available for
+authoring. Adding a resource creates no routes. A profile supports 64 resource
+blocks.
 
-Name the profile and select exact ports from each block's provider catalogue.
-Resources copied from another profile need explicit machine assignments; copies
-retain the portable graph without acquiring the source's local identities.
-Use **Save profile** to commit the graph and assignments together.
+Select exact ports from each block's provider catalogue, connect routes and
+choose **Save profile**. Saving commits the graph and local resource assignments
+together. Saving an inactive profile leaves the current profile running.
+Choose **Start profile** when ready, with an optional game context.
 
-**Cancel creation** discards an unsaved draft. **Back to Profiles** and sidebar
-navigation offer Save, Discard or Keep editing for unsaved changes. A failed Save
-keeps the draft open. Saving, copying and navigating do not apply a profile.
+Saving the profile that is currently running applies the saved changes
+automatically and keeps its game context and Manual/Automatic selection mode.
+If the changes cannot be applied, they remain saved and Cockpit reports the
+failure; **Retry saved changes** lets you try again. Typing and graph edits
+remain local until Save.
 
-Default has a fixed identity and cannot be deleted. Its graph can be edited.
-Fresh startup selects Default without starting an output session. An untouched
-Default works without custom profiles or optional hiding/output dependencies.
+A new draft can also copy a saved profile. The copy keeps its graph and layout
+with a fresh identity. Select its local resources and match their ports
+explicitly; copies do not inherit the source's device assignments.
 
-## Import, export and delete
+**Cancel creation** discards an unsaved new profile. **Back to Profiles** and
+sidebar navigation offer Save, Discard or Keep editing for unsaved changes.
+A failed Save keeps the editor open. Default is editable, has a fixed name and
+cannot be deleted. Fresh startup selects Default without starting output.
 
-Use **Import profile** from the list or editor to paste portable JSON or choose
-a file up to 512 KiB. Import creates a new identity and needs explicit local
-resource assignments. It never applies the graph. A library contains at most
-32 profiles including Default.
+## Set up this computer
 
-**Export** reads the current saved revision, leaving unsaved editor edits alone.
-The dialog offers selectable JSON and a download. It excludes local assignments,
-credentials and backend slots. **Delete** is available for named profiles and
-confirms the exact saved revision. A concurrent edit requires refreshing before
-trying again. A captured applied revision remains independent of deletion.
-Import and Delete from a dirty editor first offer Save, Discard or Keep editing.
+Open **Settings → Controller and desktop output** for vJoy setup, device hiding
+enablement and keyboard/mouse enablement. These settings belong to this computer.
+The profile defines mappings, per-device hiding intent and keyboard/mouse scope.
+Game installation paths and provider connection settings remain in the owning
+game's details; a game block can open them and return to the same draft.
 
 ## Connect the rig
 
-Each graph line is a directed signal connection between exact declared ports.
-USB, CAN and gateway attachment appear as resource attributes. They do not become
-signal wires. A verified device observed through USB and CAN can retain both
-connections while native route selection chooses its current input authority.
+Each canvas line is one directed signal route between exact ports. USB, CAN and
+gateway attachment appear as resource metadata. A device observed over USB and
+CAN can retain both connections while Cockpit chooses its current input source.
 
-Expand **Editor groups** to name a frame and select its member blocks. Use the
-group picker to rename it or change its members, **Delete group** to remove the
-frame, and **Focus** to fit its blocks in the canvas. A profile supports 32 groups;
-each block belongs to at most one group. Removing a block removes its membership
-and removes an empty group.
+Select a provider port with **Use this exact port**, then drag **Outputs** onto
+**Inputs / actions**, or use **Connect exact ports**. The bindings table provides
+a keyboard alternative and lets you edit ports, remove routes or insert visible
+transformations. Different types, units, numeric ranges or state/event delivery
+need an explicit transformation. Reverse feedback is another directed route.
 
-The selected block's **Source outputs**, **Destination inputs** and **Destination
-actions** sections each have a collapse button. Group membership and collapsed
-sections follow Save, reopening, copies, portable import/export and Undo/Redo.
-These editor preferences leave the profile's semantic and compiled program
-identity unchanged.
+Transformations include range/unit conversion, scaling, deadzones, curves,
+comparisons and hysteresis, gates, boolean logic, input priority, state/event
+conversion, formatting, fallback, toggles, pulses, gestures, macros and typed
+scripts. Select a transformation to edit its parameters. A raw numeric provider
+can use **Interpret raw quantity** before **Convert units**; see the
+[quantity guide](profile-quantities.md).
 
-For a physical device, **Controller publication policy** can keep its configured
-setting or request Enable/Disable while the profile is active. This requires an
-advertised nonpersistent gateway CAN capability; native Apply verifies the exact
-device and ownership again. Offline policies remain saved without implying
-readiness. Publication changes can reconnect USB controller collections and
-require game rebinding. They leave saved device flash settings alone and are
-separate from the **Game visibility intent** that hides a device through HidHide.
-Direct USB and Pico publication overrides remain unsupported.
+For a game action with arguments, add **Action pack**, connect its event trigger
+and every ordered argument explicitly, then route the invocation to the action.
+**Set on change** is available for setter actions. Constants can supply argument
+values through their own visible edges.
 
-The canvas's **Draft controller effects** summary counts Enable, Disable and
-Keep configured choices alongside hiding requests and requested virtual
-controllers. These counts describe the editor draft. They do not confirm that a
-controller is currently published, hidden or delivering output; the applied run
-keeps its own captured revision until another Apply.
+**Add virtual controller** creates a logical controller output. Configure its
+buttons, axes, hats and neutral axis fallbacks, then connect selected inputs.
+The native plan supports eight controllers, with at most 128 controls per
+controller, 16 axes and four hats.
 
-Built-in transformation blocks show their configured rule parameters, including
-pulse and gesture timing, polarity, thresholds, axis curves and macro steps.
-Summaries are bounded previews; select a block for its complete declared
-parameters. Editing them changes that visible draft node. Applied path activity
-shows the parameters captured by its separate immutable native run, independently
-of newer editor previews.
+**Add keyboard and mouse** creates an endpoint from the chosen preset. In that
+block choose **Selected game**, **Selected application** or **Desktop-wide
+navigation**. Application capture stores an opaque reference to a native observed
+process; paths and process IDs stay local. Capture again if that application
+restarts. Scope is saved with the profile. See [keyboard and mouse
+mappings](keyboard-mouse.md).
 
-Select an output and an input/action using the canvas or **Connect exact ports**.
-Different units, types, ranges or delivery kinds require a visible processing
-node. Use the bindings table as a keyboard alternative. Its diagnostics identify
-the exact resource, port or edge that needs attention.
+Companion blocks capture a retained published panel explicitly. Choose its
+paired companion and published panel, then select feedback inputs or interactive
+control outputs. Replacing a panel or assigning a copied companion requires
+explicit port reconciliation. Browsing panels leaves its current runtime alone.
 
-For a raw numeric port, add **Interpret raw quantity** to name what its numbers
-represent and declare their unit. Then use **Convert units** for a physical unit
-conversion. Keep any range calibration in a separate visible node. The
-[quantity guide](profile-quantities.md) explains the contracts and freshness.
+For physical devices, **Game visibility intent** can hide the device while the
+profile is active. **Controller publication policy** separately keeps its
+configured setting or enables/disables USB controller publication while active.
+Temporary publication changes require an advertised gateway CAN capability.
+They leave saved flash settings alone, but can reconnect USB collections and
+require game rebinding. Direct USB and Pico publication overrides remain
+unsupported.
 
-For a combined rig:
+Direct OSG-to-DCS command routes require every HID publisher for their input
+devices to be disabled. Device hiding is separate. Unsupported or unknown
+publishers keep those commands blocked. A publication change during a run
+withdraws affected commands until the profile is started again; unrelated
+controller routes and read-only telemetry can continue.
 
-1. Add a virtual controller, declare its logical buttons/axes/hats and neutral
-   fallbacks, then connect selected ports from third-party A and B. Add a second
-   virtual controller for selected OSG module inputs.
-2. On third-party C, choose **Game visibility intent → Hidden while profile is
-   active**. This is an owned runtime policy; it does not create a signal edge.
-3. Select an OSG event output and the exact game command action. For actions with
-   arguments, add **Action pack**, connect its event trigger and every ordered
-   argument explicitly. Zero-argument commands need only their declared trigger.
-4. Select the game's actual altitude quantity. For DCS-BIOS's raw CommonData
-   reported MSL altitude, add **Interpret raw quantity**, name the reported
-   quantity and declare `ft`, then connect a visible `ft` to `m` conversion and
-   comparison/hysteresis nodes to a declared companion indicator input. Use a
-   separate formatting node for a text port. The [quantity guide](profile-quantities.md)
-   explains the exporter's measurement-validity limitation. A physical setter
-   uses **Set on change** with its exact typed argument. Select the companion's
-   retained panel publication explicitly.
-5. Inspect draft preflight, resolve required-resource or contract errors, and
-   save. Preflight is read-only and cannot grant output ownership.
+## Arrange and inspect
 
-Direct OSG-to-DCS command branches require every direct USB and gateway HID
-publisher of their input devices to be disabled. Hiding a controller is a
-separate policy. A profile can request temporary **Disable** only when the
-exact native CAN route advertises that capability; delivery then requires its
-owned lease and a fresh input baseline. An unsupported or unknown publisher
-keeps the command branch blocked. Publication changes during a run permanently
-withdraw the affected commands until a fresh Apply, while unrelated controller
-routes and read-only game telemetry continue.
+The canvas supports pan, zoom, Fit all, search, auto-layout and mouse/keyboard
+block movement. **Editor groups** create named frames with a Focus control.
+Each block belongs to at most one of the 32 groups. Output, input and action
+sections can be collapsed. Layout and grouping follow Save, copy, import/export
+and Undo/Redo. Disconnected resources keep their blocks and routes.
 
-Game/provider catalogues determine which ports are available. A directly
-connected OSG device exposes only the controls/actions supported by its adapter.
-Physical writes require their advertised native capabilities and owned leases.
-Virtual output, scripts and hiding retain their backend qualification gates;
-a saved graph does not enable those backends.
+Open **Debug** from the list or editor to reach **Profile debug**. It contains
+draft/saved-profile preflight, applied port samples, path activity, keyboard/mouse
+recording preview, native runtime details and retired-output recovery.
+**Inspect draft preflight** checks the draft without saving or starting it.
+Graph or inventory changes make a captured check stale. A ready check does not
+start output; starting independently rechecks current resources and ownership.
 
-## Apply and inspect
+Live inspection shows the running graph's captured values, transformations and
+destinations. Unsaved editor changes remain separate. Unknown, stale and
+unavailable differ from ordinary zero/false values. Destination samples describe
+requested values; they do not acknowledge device or simulator acceptance.
 
-Expand **Apply, Pause and applied runtime inspection**. Apply requires a saved
-revision and current local assignments. Choose an optional game context only
-when needed. Native admission rechecks resources, contracts and ownership; a
-failed read-only preparation leaves the previous healthy run intact.
+## Stop, recovery and games
 
-The applied snapshot remains independent of later editor changes. Inspection
-shows its exact ports and connections, source values, visible transformations
-and requested destinations. Captured timestamps and stale/unknown/neutral state
-are shown separately. A requested output value is not a device acknowledgement.
+Required unavailable resources block starting. Optional unavailable routes can
+degrade while independent routes continue. Wrong-game and absent-game routes
+stay dormant. Lost or stale inputs release their affected contributions.
+Reconnection needs fresh input baselines; held inputs and old events are not
+replayed.
 
-Required unavailable resources block activation. Optional unavailable branches
-are reported as degraded while independent admitted branches can continue.
-Wrong-game and absent-game branches stay dormant. Lost or stale input releases
-its affected contributions; reconnect requires fresh baselines and current
-native authority. Held input, old events and action requests are not replayed.
+**Stop** cancels pending starts/launches and releases owned output. **Pause** stops
+the run and retains the pause latch. **Clear pause** permits Automatic selection
+to resume; in Manual mode use **Start profile**. **Recover outputs** restores
+retained ownership without restarting mappings or commands. Retired ownership
+cleanup is available in Profile debug.
 
-**Stop** cancels pending Apply/launch and releases owned output. **Pause** stops
-the run and retains the pause latch. Clearing Pause permits Automatic selection
-to resume. In Manual mode, restart with an explicit Apply. **Recover outputs**
-restores retained ownership journals
-without restarting the graph, commands or hiding. Conflicting external edits or
-offline hardware can leave recovery pending for explicit attention.
-
-## Games and automatic selection
-
-Installation paths and provider settings belong in the owning game's details.
-The graph inspector can open those settings and return to the same draft and
-viewport. DCS-BIOS settings are in DCS details. Installation discovery, provider
-setup readiness, verified process identity and fresh telemetry are separate facts.
-
-Manual mode retains an explicit saved profile pin. Automatic uses enabled rules
-and a unique highest priority among verified running games; no match uses
-Default. A priority tie reports a hold. Stop, Pause, recovery and faults inhibit
-automatic activation until their explicit controls are resolved. Editing a saved
-graph does not silently reapply it.
+Manual mode retains an explicit profile pin. Automatic uses enabled game rules
+and the unique highest priority among verified running games; no match uses
+Default. A priority tie holds selection. Stop, Pause, recovery and faults inhibit
+automatic activation until resolved. Saving a running profile preserves this
+selection mode; saving another profile does not switch to it.
 
 Games **Launch** uses the saved Manual pin or Automatic rule/default. It prepares
-and owns neutral hardware before spawning, waits for the exact native process
-off-lock, then starts the admitted graph. **Stop profile** remains available while
-waiting. A game can stay open after Stop or a failed launch; the profile controls
-do not terminate it. Optional provider setup is needed only for matching branches
-that require it.
+neutral hardware, starts the game and waits for its verified process before
+running the graph. **Stop** remains available while waiting. Stopping a profile
+does not close the game. Provider setup is needed only by routes using it.
 
-See [editor details](unified-profile-editor.md), [portable contracts and fresh
-storage](unified-profiles.md), [game setup](games.md) and the [complete portable rig
-verification](verification/2026-10-17-complete-profile-rig.md). Browser and portable
-fixtures are distinct from actual Windows/game/controller/companion acceptance.
+## Import, export and delete
+
+Use **Import profile** to paste JSON or choose a file up to 512 KiB. Import creates
+an independent profile and requires explicit local resource assignments; it
+does not start output. The library holds up to 32 profiles including Default.
+
+**Export saved profile** exports saved content, leaving unsaved edits out. It
+offers selectable JSON and a download, excluding local device assignments,
+credentials, backend slots and native application identities. An application
+reference from another computer must be captured locally before use.
+
+**Delete** confirms removal of a named profile and local assignments. A running
+profile continues until stopped. A concurrent saved edit requires refreshing
+before deletion. Import and Delete from a dirty editor first offer Save, Discard
+or Keep editing.
+
+See [editor details](unified-profile-editor.md), [portable storage
+contracts](unified-profiles.md) and [game setup](games.md).

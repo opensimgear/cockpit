@@ -1,5 +1,5 @@
 /** Portable unified profile contracts. Native validation remains authoritative. */
-import { desktopActionValid, desktopActionContract, type ProfileDesktopOutput } from './profile-desktop.ts';
+import { desktopActionValid, desktopActionContract, desktopOutputScopeValid, type ProfileDesktopOutput } from './profile-desktop.ts';
 export const PROFILE_SCHEMA_VERSION = 2;
 export const MAX_PROFILE_BYTES = 524_288;
 export const MAX_PROFILES = 32;
@@ -92,8 +92,9 @@ export type ProfileRequest =
   | { command: 'profile_pause'; paused: boolean }
   | { command: 'profile_selection_mode'; mode: ProfileSelectionMode }
   | { command: 'profile_reset'; confirm: true };
-export type ProfileResult = { publicationReferences?: ProfilePublicationReferences; document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; profileSession?: import('./profile-runtime').NativeProfileStatus; automatic?: import('./profile-automatic').ProfileAutomaticStatus; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[] };
-export type ProfileEditorSaveResult = { document: ProfileDocument; assignments: ProfileLocalAssignment[]; profiles: ProfileSummary[]; session: ProfileSession };
+export type ProfileSaveApplication = { state: 'inactive' | 'applied' | 'failed'; error: string | null };
+export type ProfileResult = { publicationReferences?: ProfilePublicationReferences; document?: ProfileDocument; profiles?: ProfileSummary[]; session?: ProfileSession; profileSession?: import('./profile-runtime').NativeProfileStatus; automatic?: import('./profile-automatic').ProfileAutomaticStatus; deletedId?: string; diagnostics?: string[]; readOnly?: boolean; assignments?: ProfileLocalAssignment[]; saveApplication?: ProfileSaveApplication };
+export type ProfileEditorSaveResult = { document: ProfileDocument; assignments: ProfileLocalAssignment[]; profiles: ProfileSummary[]; session: ProfileSession; saveApplication?: ProfileSaveApplication };
 export type ProfileSend = (request: ProfileRequest) => Promise<ProfileResult>;
 export type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 export type ProfileEditorState = { document: ProfileDocument; baseDocument: ProfileDocument; baseRevision: number };
@@ -153,7 +154,7 @@ function ports(value: unknown): value is ProfilePort[] {
   return list(value, 128) && value.every(port) && new Set(value.map(item => (item as ProfilePort).id)).size === value.length;
 }
 function desktopOutput(value:unknown):value is ProfileDesktopOutput {
-  if(!exact(value,[...labelKeys,'required','ports','actions'])||!nodeLabel(value)||typeof value.required!=='boolean'||!ports(value.ports)||value.ports.length===0||!list(value.actions,128)||value.actions.length!==value.ports.length)return false;
+  if(!exact(value,[...labelKeys,'required','ports','actions',...(object(value)&&Object.hasOwn(value,'scope')?['scope']:[])])||!nodeLabel(value)||typeof value.required!=='boolean'||Object.hasOwn(value,'scope')&&!desktopOutputScopeValid(value.scope)||!ports(value.ports)||value.ports.length===0||!list(value.actions,128)||value.actions.length!==value.ports.length)return false;
   const declared=value.ports;
   for(const definition of value.actions){
     if(!exact(definition,['portId','action'])||!profilePortIdValid(definition.portId)||!desktopActionValid(definition.action))return false;
@@ -347,7 +348,7 @@ export class ProfilesClient {
     const checked = parseProfileDocument(JSON.stringify(document));
     return documentResult(await this.request({ command: 'profile_save', document: checked, expectedRevision }));
   }
-  /** Commit one editor graph and local pin set without changing runtime selection. */
+  /** Save the graph and local assignments; native also updates this profile if it is running. */
   async editorSave(document: ProfileDocument, expectedRevision: number | null, assignments: ProfileLocalAssignment[]): Promise<ProfileEditorSaveResult> {
     const error = profileDocumentError(document) || profileDocumentAssignmentsError(document, assignments);
     if (error) throw new Error(error);
@@ -360,7 +361,7 @@ export class ProfilesClient {
     const summary = result.profiles.find(summary => summary.id === saved.id);
     if (!summary || summary.name !== saved.name || summary.revision !== saved.revision || summary.isDefault !== (saved.id === DEFAULT_PROFILE_ID)) throw new Error('Atomic editor save summary does not match its saved document.');
     this.currentSession = captureProfileSession(result.session);
-    return { document: saved, assignments: clone(result.assignments!), profiles: clone(result.profiles), session: clone(result.session) };
+    return { document: saved, assignments: clone(result.assignments!), profiles: clone(result.profiles), session: clone(result.session), ...(result.saveApplication ? {saveApplication: clone(result.saveApplication)} : {}) };
   }
   async saveDraft(): Promise<ProfileDocument> {
     const editor = this.currentEditor;

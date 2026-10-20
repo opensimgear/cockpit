@@ -54,7 +54,7 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     await native({command:'profile_pause',paused:before.profiles.profileSession.paused});
     await inspector.getByRole('button',{name:'Update desktop actions',exact:true}).click();
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await expect(page.getByText(/Saved revision 1 · Editing this profile does not activate it/)).toBeVisible();
+    await expect(page.getByText('All changes saved · Save now and start this profile when ready.',{exact:true})).toBeVisible();
     await page.getByRole('button',{name:/Back to Profiles/}).click();
     await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click();
     await page.getByRole('button',{name:'Export saved profile',exact:true}).click();
@@ -88,6 +88,8 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     await page.getByRole('button',{name:/Back to Profiles/}).click();
     await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();
     await page.getByRole('button',{name:`Edit ${recordingName}`,exact:true}).click();
+    await page.getByRole('button',{name:'Debug',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Profile debug',exact:true})).toBeVisible();
     await page.getByRole('button',{name:'Inspect draft preflight',exact:true}).click();
     const recordingUi=page.getByRole('region',{name:'Keyboard and mouse recording preview',exact:true});
     await expect(recordingUi).toBeVisible();

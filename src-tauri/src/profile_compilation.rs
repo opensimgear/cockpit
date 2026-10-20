@@ -1,6 +1,6 @@
 //! Bounded, ephemeral compiler previews. Inspection never submits effects and
 //! cached plans are never an activation authority; Apply must capture again.
-use osg_profiles::compiler_models::{CompilationReport, CompileSnapshot};
+use osg_profiles::compiler_models::{BackendCapabilities, CompilationReport, CompileSnapshot};
 use osg_profiles::ProfileDocument;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -21,6 +21,29 @@ const SECTIONS: [&str; 8] = [
     "controllers",
     "visibility",
 ];
+
+/// Read-only platform/driver observation for Debug preflight. These callbacks
+/// cannot acquire a feeder or visibility owner; Apply captures them afresh.
+pub(crate) fn capture_output_capabilities(
+    document: &ProfileDocument,
+    backend: &mut BackendCapabilities,
+    native: bool,
+    inspect: impl FnOnce() -> Result<Vec<osg_virtual_controller::vjoy::Slot>, String>,
+    visibility: impl FnOnce() -> Result<Value, String>,
+) {
+    backend.name = osg_mapping_host::service::BACKEND.into();
+    backend.available = native && !document.virtual_outputs.is_empty() && inspect().is_ok();
+    backend.qualified = native && osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED;
+    backend.visibility_available = false;
+    backend.visibility_qualified = false;
+    if native && document.visibility.iter().any(|intent| intent.mode == osg_profiles::VisibilityMode::HiddenWhileActive) {
+        if let Ok(status) = visibility() {
+            backend.visibility_available = cfg!(windows) && status["visibility"]["modes"].as_array()
+                .is_some_and(|modes| modes.iter().any(|mode| mode["mode"] == "hide-all" && mode["supported"] == true));
+            backend.visibility_qualified = status["visibility"]["qualified"] == true;
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Runtime {

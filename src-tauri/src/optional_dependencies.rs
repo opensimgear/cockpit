@@ -21,12 +21,27 @@ pub(crate) fn open_hidhide() -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         let root = std::env::var_os("ProgramW6432").or_else(|| std::env::var_os("ProgramFiles")).ok_or("Windows Program Files directory is unavailable.")?;
         let path = Path::new(&root).join("Nefarius Software Solutions/HidHide/x64/HidHideClient.exe");
-        if !path.is_file() { return Err("HidHide configuration client is not installed. Set up HidHide in controller visibility settings first.".into()); }
+        if !path.is_file() { return Err("HidHide configuration client is not installed. Set up HidHide in Settings first.".into()); }
         std::process::Command::new(path).creation_flags(0x08000000).spawn().map_err(|e| format!("Could not open HidHide: {e}"))?;
         Ok(())
     }
     #[cfg(not(windows))]
     { Err("HidHide management is available in the Windows desktop app.".into()) }
+}
+
+/// Open the installed vJoy layout editor from its fixed upstream location.
+pub(crate) fn open_vjoy() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let root = std::env::var_os("ProgramW6432").or_else(|| std::env::var_os("ProgramFiles")).ok_or("Windows Program Files directory is unavailable.")?;
+        let path = Path::new(&root).join("vJoy/x64/vJoyConf.exe");
+        if !path.is_file() { return Err("vJoy configuration is not installed. Set up vJoy in Settings first.".into()); }
+        std::process::Command::new(path).creation_flags(0x08000000).spawn().map_err(|e| format!("Could not open vJoy configuration: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    { Err("vJoy configuration is available in the Windows desktop app.".into()) }
 }
 
 fn dependency(id: &str) -> Result<Value, String> {

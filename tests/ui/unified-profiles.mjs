@@ -1,4 +1,4 @@
-// Browser acceptance with authored gateway replies. No native service, device,
+// Frontend regression with authored gateway replies. No native service, device,
 // driver or game is used. Start a frontend-only Vite server before running.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,13 +59,14 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     const request = args.request;
     requests.push(plain(request));
     if(['profile_list','profile_status','profile_automatic_status'].includes(request.command))return {ok:true,state:{profiles:plain(listing())}};
+    if(request.command==='profile_desktop_status')return {ok:true,state:{desktop:{enabled:false,qualified:false,state:'disabled',reason:'Fixture observation only.',scope:{kind:'application'}}}};
     if(request.command==='profile_resources_list')return {ok:true,state:{profileResources:{session:'fixture-inventory',revision:'1',offset:0,total:0,resources:[],inventoryDiagnostics:[],readOnly:false}}};
     if(request.command==='profile_assignments_get')return {ok:true,state:{profiles:{...plain(listing()),document:plain(documents.get(request.id)),assignments:[]}}};
     if(request.command==='profile_editor_save'){
       assert.equal(request.expectedRevision,documents.get(request.document.id)?.revision??null);
       const document={...plain(request.document),revision:request.expectedRevision===null?1:request.expectedRevision+1};
       documents.set(document.id,document);
-      return {ok:true,state:{profiles:{...plain(listing()),document:plain(document),assignments:plain(request.assignments)}}};
+      return {ok:true,state:{profiles:{...plain(listing()),document:plain(document),assignments:plain(request.assignments),saveApplication:{state:'inactive',error:null}}}};
     }
     if(request.command==='profile_runtime_topology')return {ok:true,state:{profileTopology:{schemaVersion:1,owner,appliedSnapshot:applied,programHash:hash,capturedUs:'0',section:request.section,offset:0,total:0,items:[]}}};
     if(request.command==='profile_runtime_inspect')return {ok:true,state:{profileInspection:{schemaVersion:1,owner,appliedSnapshot:applied,programHash:hash,capturedUs:'0',offset:0,total:0,ports:[]}}};
@@ -87,24 +88,28 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await expect(page.getByRole('button',{name:'Add profile',exact:true})).toBeInViewport();
     await expect(page.getByRole('button',{name:'Stop current profile',exact:true})).toBeInViewport();
     const runtime = page.getByLabel('Runtime profile status');
-    await expect(runtime).toContainText('Default · 1');
+    await expect(runtime).toContainText('Active profile · Default');
     const inspection = page.getByRole('region',{name:'Applied source to destination activity'});
     await expect(inspection).not.toBeVisible();
     assert.equal(requests.filter(request=>request.command==='profile_runtime_topology').length,0);
-    const tools = page.locator('details.runtime-tools > summary');
-    await tools.click();
+    await activateByTab(page.getByRole('button',{name:'Debug',exact:true}),'Open Profile debug','Enter');
+    const debug = page.getByRole('region',{name:'Profile debug'});
+    await expect(debug.getByRole('heading',{name:'Profile debug',exact:true})).toBeVisible();
     await expect(inspection).toBeVisible();
     await expect.poll(()=>requests.filter(request=>request.command==='profile_runtime_topology').length).toBeGreaterThan(0);
-    await tools.click();
+    await activateByTab(debug.getByRole('button',{name:'← Back to Profiles',exact:true}),'Leave Profile debug','Space');
     await expect(inspection).not.toBeVisible();
 
     const add = page.getByRole('button',{name:'Add profile',exact:true});
     await activateByTab(add,'Add profile','Enter');
     await expect(page.getByRole('heading',{name:'New profile',exact:true})).toBeVisible();
+    await expect(page.locator('.resource-block')).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Add from inventory',exact:true})).toBeVisible();
     await page.getByLabel('Profile name',{exact:true}).fill('Browser rig');
     const save = page.getByRole('button',{name:'Save profile',exact:true});
     await activateByTab(save,'Save new profile','Enter');
-    await expect(page.getByText('Saved revision 1 · Editing this profile does not activate it.',{exact:true})).toBeVisible();
+    await expect(page.getByText('All changes saved · Save now and start this profile when ready.',{exact:true})).toBeVisible();
+    await expect(runtime.getByRole('button',{name:'Start profile',exact:true})).toBeEnabled();
     const savedId = [...documents.keys()].find(id=>id!==defaultId);
     assert.ok(savedId);
     const back = page.getByRole('button',{name:'Back to Profiles',exact:false});
@@ -129,11 +134,11 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await activateByTab(page.getByRole('button',{name:'Cancel creation',exact:true}),'Cancel new draft','Space');
     await expect(page.getByRole('list',{name:'Saved profiles'}).getByRole('listitem')).toHaveCount(2);
     assert.deepEqual(await page.getByRole('list',{name:'Saved profiles'}).getByRole('button',{name:/^Edit /}).evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label'))),['Edit Default','Edit Browser rig']);
-    await expect(runtime).toContainText('Default · 1');
+    await expect(runtime).toContainText('Active profile · Default');
     assert.equal(requests.filter(request=>request.command==='profile_editor_save').length,1);
 
     // A separate dirty departure proves the modal Save choice, in addition to
-    // keeping/discarding. This deliberately adds exactly one revisioned save.
+    // keeping/discarding. This deliberately adds exactly one saved replacement.
     await activateByTab(row,'Reopen before guarded save','Space');
     await page.getByLabel('Profile name',{exact:true}).fill('Browser rig saved by keyboard');
     await activateByTab(back,'Back before guarded save','Space');
@@ -143,8 +148,8 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     assert.equal(documents.get(savedId).name,'Browser rig saved by keyboard');
     assert.equal(documents.get(savedId).revision,2);
     assert.deepEqual(requests.filter(request=>request.command==='profile_editor_save').map(request=>request.expectedRevision),[null,1]);
-    assert.deepEqual(requests.filter(request=>request.command==='profile_assignments_get').map(request=>request.id),[savedId,savedId]);
-    await expect(runtime).toContainText('Default · 1');
+    assert.deepEqual(requests.filter(request=>request.command==='profile_assignments_get').map(request=>request.id),[defaultId,savedId,savedId]);
+    await expect(runtime).toContainText('Active profile · Default');
     assert.ok(requests.filter(request=>request.command==='profile_runtime_topology').every(request=>JSON.stringify(request.owner)===JSON.stringify(owner)));
     assert.deepEqual(unexpected,[]);
     assert.deepEqual(errors,[]);

@@ -8,6 +8,7 @@ import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import * as designer from '../../packages/companion-designer/src/index.ts';
+import * as companionScreen from './companion-screen.ts';
 import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
@@ -37,7 +38,7 @@ test('overview distinguishes a successful empty Windows detection from missing s
 });
 
 test('actual overview reads the native applied revision and exact profile identity rather than selected, saved-latest or retired game profile state',()=>{
- const html=overview(view(running()));assert.ok(html.includes('Applied saved rig'));assert.ok(html.includes('applied revision 3'));assert.ok(!html.includes('applied revision 9'));assert.ok(!html.includes('Unapplied editor selection'));assert.ok(html.includes('Open profiles'));assert.ok(html.includes('Native process detected'));assert.ok(!html.includes('PID'));
+ const html=overview(view(running()));assert.ok(html.includes('Applied saved rig'));assert.ok(!html.includes('applied revision'));assert.ok(!html.includes('applied revision 9'));assert.ok(!html.includes('Unapplied editor selection'));assert.ok(html.includes('Open profiles'));assert.ok(html.includes('Native process detected'));assert.ok(!html.includes('PID'));
  assert.ok(html.includes('Matching game context verified'));assert.ok(html.includes('Context readiness does not confirm fresh telemetry'));assert.ok(!html.includes('Receiving telemetry'));
  const retired={...games(),session:{phase:'running',profileId:'legacy'},profiles:[{id:'legacy',name:'Retired independent profile'}]};const inactive=overview(view(stopped()),{games:retired});assert.ok(inactive.includes('No active profile'));assert.ok(!inactive.includes('Retired independent profile'));assert.ok(!inactive.includes('Activate a profile in Games'));
 });
@@ -80,7 +81,7 @@ test('actual mounted App keeps passive header status fresh across views and stop
 test('header badges use native applied ownership and detected processes, never the editor selection or stale ownership',async()=>{
  const Header=await component('./HeaderStatus.svelte');
  const header=(profileState,extra={})=>render(Header,{props:{games:games(),gamesStale:false,profileState,profiles,...extra}}).body;
- const active=header(view(running()));assert.ok(active.includes('Active game'));assert.ok(active.includes('DCS World'));assert.ok(active.includes('Active profile · Running'));assert.ok(active.includes('Applied saved rig'));assert.ok(!active.includes('Unapplied editor selection'));assert.ok(active.includes('applied revision 3'));
+ const active=header(view(running()));assert.ok(active.includes('Active game'));assert.ok(active.includes('DCS World'));assert.ok(active.includes('Active profile · Running'));assert.ok(active.includes('Applied saved rig'));assert.ok(!active.includes('Unapplied editor selection'));assert.ok(!active.includes('applied revision'));
  const idle=header(view(stopped()),{games:{catalogue:[],detectedGames:[]}});assert.ok(idle.includes('Active profile · Stopped'));assert.ok(!idle.includes('Applied saved rig'));assert.ok(!idle.includes('DCS World'));assert.ok(idle.includes('None'));
  const stale=header({...view(running()),stale:true},{gamesStale:true});assert.ok(stale.includes('Unavailable'));assert.ok(!stale.includes('Applied saved rig'));assert.ok(!stale.includes('DCS World'));
  const degraded=header(view({...running(),state:'degraded'}));assert.ok(degraded.includes('Active profile · Degraded'));assert.ok(degraded.includes('Applied saved rig'));
@@ -91,7 +92,7 @@ async function companionCompactor(send){
  const filename=new URL('./CompanionDesigner.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureCompactor({compactSnapshots,setStore(next){store=next;}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'});let handlers;
  const Designer=evaluate(js.code,filename.pathname,name=>{
   if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name.endsWith('.svelte'))return{default:()=>{}};if(modules.has(name))return modules.get(name);
-  if(name==='@opensimgear/companion-designer')return designer;if(name==='@opensimgear/companion-ui')return{PanelCanvas:()=>{}};
+  if(name==='./companion-screen')return companionScreen;if(name==='@opensimgear/companion-designer')return designer;if(name==='@opensimgear/companion-ui')return{PanelCanvas:()=>{}};
   if(name==='./gateway')return{gatewayRequest:send};if(name==='./companions')return{sendPublication:noRequest};if(name==='./panel-actions')return{synchronizePanel:noRequest,removePanelAssignments:noRequest};if(name==='./companion-startup')return{restoreCompanionPanels:noRequest};if(name==='./firmware-widgets')return{firmwareWidgetPresets:[],simplifyFirmwareWidgets:document=>({document,removed:0})};throw new Error(`Unexpected compactor dependency ${name}`);
  },{crypto:{randomUUID:()=>id},captureCompactor(value){handlers=value;}});render(Designer,{props:{openSettings:noRequest}}).body;return handlers;
 }

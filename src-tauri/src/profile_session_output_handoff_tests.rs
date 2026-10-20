@@ -1080,8 +1080,11 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
         ..owner.clone()
     };
     let prepared = host.prepare(&incoming, &incoming_owner).unwrap();
-    // Passive proof tests do not qualify or activate the real backend.
-    assert!(!prepared.admission.blockers.is_empty());
+    // A compatible captured Windows backend is admitted independently of build
+    // flags. Preparation still cannot acquire or start an incoming feeder.
+    assert_eq!(prepared.admission.blockers.is_empty(), osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED);
+    assert!(host.run(&incoming_owner).unwrap().output.is_none());
+    assert_eq!(driver.lock().unwrap().messages.len(), 1);
     assert_eq!(host.run(&incoming_owner).unwrap().bindings[0].slot, 3);
     assert_eq!(
         host.run(&incoming_owner)

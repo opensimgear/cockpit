@@ -563,12 +563,12 @@ impl NativeProfileHost {
         let desktop_scope = if prepared.plan.requirements.desktop_input {
             let preferences = crate::profile_desktop_settings::Settings::native();
             if let Some(error) = preferences.error { return Err(error); }
-            if preferences.value.scope == crate::profile_desktop_settings::Scope::DesktopWide { Some(osg_desktop_output::Scope::DesktopWide) }
-            else if candidate.launch_preparation { None }
-            else if let Some(game_id) = candidate.game_id.as_deref() {
-                Some(crate::profile_session_desktop::selected_game_scope(games.desktop_process(game_id)?)?)
-            } else if preferences.value.application.is_none() { None }
-            else { Some(crate::profile_session_desktop::scope(game_preparation.as_ref())?) }
+            let declared = candidate.document.desktop_outputs.first().and_then(|output|output.scope.as_ref());
+            let uses_game = matches!(declared, Some(osg_profiles::DesktopScope::SelectedGame)) || declared.is_none();
+            let game = if uses_game {
+                candidate.game_id.as_deref().map(|game_id|if candidate.launch_preparation { Ok(None) } else { games.desktop_process(game_id) }).transpose()?
+            } else { None };
+            crate::profile_session_desktop::prepare_scope(declared,candidate.launch_preparation,game,&preferences.value)?
         } else { None };
         let scripts = crate::profile_session_scripts::Scripts::prepare(
             &prepared.plan.program,

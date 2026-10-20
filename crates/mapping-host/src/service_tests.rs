@@ -47,9 +47,9 @@ pub(super) fn setup() -> (
     (service, root, profile, assignments, calls)
 }
 #[test]
-fn native_development_readiness_matches_visibility_without_inspection_or_output() {
+fn native_windows_readiness_matches_visibility_without_inspection_or_output() {
     let (service, _root, _profile, _assignments, calls) = setup();
-    assert_eq!(LIVE_OUTPUT_QUALIFIED, osg_controller_input::visibility::capabilities::DEVELOPMENT_NATIVE_PROFILES);
+    assert_eq!(LIVE_OUTPUT_QUALIFIED, osg_controller_input::visibility::capabilities::WINDOWS_NATIVE_OUTPUTS);
     assert_eq!(service.qualified, LIVE_OUTPUT_QUALIFIED);
     assert!(!SCRIPT_LIVE_QUALIFIED);
     assert!(!service.script_live_qualified);
@@ -61,7 +61,7 @@ fn native_development_readiness_matches_visibility_without_inspection_or_output(
     assert_eq!(service.request(&json!({"command":"mapping_status"})).unwrap()["running"], false);
     assert_eq!(calls.load(Ordering::Relaxed), 0);
     if LIVE_OUTPUT_QUALIFIED {
-        assert!(QUALIFICATION.starts_with("Development acceptance mode:"));
+        assert!(QUALIFICATION.starts_with("Windows vJoy output and HidHide are available."));
     }
     service.shutdown();
 }

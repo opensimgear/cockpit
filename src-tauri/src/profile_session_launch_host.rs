@@ -12,7 +12,7 @@ struct NativeLaunchContext {
     started: crate::games::launch::StartedGame,
 }
 fn launched_desktop_scope(current:Option<&osg_desktop_output::Scope>,required:bool,process:&crate::game_discovery::ProcessIdentity)->Option<osg_desktop_output::Scope>{
-    if required && current!=Some(&osg_desktop_output::Scope::DesktopWide){
+    if required && current.is_none(){
         Some(osg_desktop_output::Scope::Application{identity:crate::profile_session_desktop::identity(process)})
     }else{current.cloned()}
 }

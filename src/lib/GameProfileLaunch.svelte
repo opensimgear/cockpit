@@ -50,7 +50,7 @@
   {#if !compact}<p class="launch-help">Uses the saved Manual pin or Automatic rule/default. Provider setup is required only for the matching game branches that the selected profile needs. Profile editing and game settings stay separate.</p>{/if}
   {#if unavailable}<p class="launch-help">{unavailable}</p>{/if}
   {#if message}<p class="launch-message" role="status" aria-live="polite">{message}</p>{/if}
-  {#if status}<p class="launch-help">Last native status: {status.state}{#if status.appliedSnapshot} · applied revision {status.appliedSnapshot.revision}{/if}{#if status.paused} · paused{/if}</p>{#if status.degradation.length}<ul class="launch-degradation" aria-label="Unavailable profile branches">{#each status.degradation as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}{#if status.fault}<p class="launch-error" role="status">{status.fault}</p>{/if}{/if}
+  {#if status}<p class="launch-help">Last native status: {status.state}{#if status.paused} · paused{/if}</p>{#if status.degradation.length}<ul class="launch-degradation" aria-label="Unavailable profile branches">{#each status.degradation as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}{#if status.fault}<p class="launch-error" role="status">{status.fault}</p>{/if}{/if}
   {#if error}<p class="launch-error" role="alert">{error}</p>{/if}
   {#if error||status}<button class="text-button status-read" disabled={reading} onclick={refreshStatus}>{reading?'Reading status…':'Refresh profile status'}</button>{/if}
 </div>

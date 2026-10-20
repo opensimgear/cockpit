@@ -46,6 +46,7 @@ fn main() {
             "export_companion_certificate",
             "optional_dependencies",
             "open_hidhide",
+            "open_vjoy",
             "optional_dependency_install",
             "pick_game_executable",
             "desktop_preferences",

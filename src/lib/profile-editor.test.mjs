@@ -80,6 +80,51 @@ test('save completion preserves newer edits and advances their optimistic base; 
   const pending2=deferred();h.api.editorSave=()=>pending2.promise;const second=h.store.save();h.store.back(true);await h.store.beginCopy(DEFAULT_PROFILE_ID);const copyId=h.store.state.editor.document.id;
   pending2.resolve(savedResult({...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:3}));await second;assert.equal(h.store.state.editor.document.id,copyId);assert.equal(h.store.state.editor.baseRevision,null);
 });
+
+test('active save accepts applied and failed runtime outcomes as a clean durable save with the native message',async()=>{
+  for(const application of [{state:'applied',error:null},{state:'failed',error:'Profile saved, but its running changes could not be applied: Required controller is offline. Reconnect it, then save again.'}]){
+    const h=harness();await h.store.open(DEFAULT_PROFILE_ID);
+    const document=plain(h.store.state.editor.document);document.editor.viewport.x=25;h.store.update(document);
+    const save=h.api.editorSave;
+    h.api.editorSave=async(...args)=>{
+      const result=await save(...args);result.saveApplication=application;
+      result.session={...session(),state:'running',appliedSnapshot:{...session().appliedSnapshot,revision:application.state==='applied'?2:1}};
+      return result;
+    };
+    await h.store.save();
+    assert.equal(h.store.state.error,'');assert.equal(h.store.state.busy,false);
+    assert.equal(h.store.state.editor.baseRevision,2);assert.equal(h.store.state.editor.document.revision,2);
+    assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.docs.get(DEFAULT_PROFILE_ID).editor.viewport.x,25);
+    assert.equal(h.store.state.session.state,'running');assert.equal(h.store.state.session.appliedSnapshot.revision,application.state==='applied'?2:1);
+    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and running changes applied.':application.error);
+    assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['get','save']);
+  }
+});
+
+test('newer edits rebase and remain dirty after either successful or failed save-time application',async()=>{
+  for(const application of [{state:'applied',error:null},{state:'failed',error:'Profile saved, but its running changes could not be applied: Reconnect the required controller, then save again.'}]){
+    const h=harness();await h.store.open(DEFAULT_PROFILE_ID);
+    const submitted=plain(h.store.state.editor.document);submitted.editor.viewport.x=10;h.store.update(submitted);
+    const pending=deferred();h.api.editorSave=()=>pending.promise;const saving=h.store.save();
+    const newer=plain(h.store.state.editor.document);newer.editor.viewport.x=90;h.store.update(newer);
+    pending.resolve({...savedResult({...submitted,revision:2}),saveApplication:application});await saving;
+    assert.equal(h.store.state.editor.document.editor.viewport.x,90);assert.equal(h.store.state.editor.baseDocument.editor.viewport.x,10);
+    assert.equal(h.store.state.editor.document.revision,2);assert.equal(h.store.state.editor.baseRevision,2);
+    assert.equal(profileEditorDirty(h.store.state.editor),true);assert.equal(h.store.state.error,'');
+    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and running changes applied.':application.error);
+  }
+});
+
+test('saving an inactive empty profile needs no inventory or separate Apply request',async()=>{
+  const h=harness();h.store.beginBlank([]);
+  const save=h.api.editorSave;h.api.editorSave=async(...args)=>({...await save(...args),saveApplication:{state:'inactive',error:null}});
+  await h.store.save();
+  assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.editor.document.resources.length,0);
+  assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.store.state.saveMessage,'Profile saved.');assert.equal(h.store.state.error,'');
+  assert.equal(h.store.state.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'paused');
+  assert.equal(h.store.state.session.appliedSnapshot.revision,2);
+  assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
+});
 test('stale, malformed and failed responses preserve local edits and expose actionable errors',async()=>{
   const h=harness();await h.store.open(DEFAULT_PROFILE_ID);let document=plain(h.store.state.editor.document);document.name='';h.store.update(document);await h.store.save();assert.ok(h.store.state.error);assert.equal(h.calls.filter(c=>Array.isArray(c)&&c[0]==='save').length,0);
   document=plain(h.store.state.editor.document);document.name='Default';h.store.update(document);h.api.editorSave=async()=>{throw new Error('Revision changed. Refresh saved profile.');};await h.store.save();assert.match(h.store.state.error,/Revision changed/);assert.equal(h.store.state.editor.document.id,DEFAULT_PROFILE_ID);
@@ -101,7 +146,7 @@ test('missing, mismatched or malformed committed summaries never advance the edi
   const h=harness();await h.store.open(DEFAULT_PROFILE_ID);await h.store.save();assert.equal(h.store.state.profiles[0].semanticHash,summary(h.store.state.editor.document).semanticHash);
 });
 test('read-only, capacity and inventory failures do not produce partial drafts or writes',async()=>{
-  const h=harness();assert.throws(()=>h.store.beginBlank(),/Refresh resource inventory/);await h.store.refreshInventory();h.api.list=async()=>({profiles:[],readOnly:true,diagnostics:['Corrupt library']});await h.store.refresh();assert.throws(()=>h.store.beginBlank(),/read-only/);assert.throws(()=>h.store.update(blankProfile(uid(1))),/read-only/);
+  const h=harness();h.store.beginBlank([]);assert.equal(h.store.state.editor.document.resources.length,0);assert.equal(h.store.state.inventoryLoaded,false);assert.deepEqual(h.calls,[]);h.store.back(true);assert.throws(()=>h.store.beginBlank(inventory()),/Refresh resource inventory/);await h.store.refreshInventory();h.api.list=async()=>({profiles:[],readOnly:true,diagnostics:['Corrupt library']});await h.store.refresh();assert.throws(()=>h.store.beginBlank(),/read-only/);assert.throws(()=>h.store.update(blankProfile(uid(1))),/read-only/);
   const other=harness();other.api.list=async()=>({profiles:Array.from({length:32},(_,n)=>({id:uid(n),name:'P',revision:1,isDefault:false,semanticHash:'hash'}))});await other.store.refresh();await other.store.refreshInventory();assert.throws(()=>other.store.beginBlank(),/library is full/);await assert.rejects(()=>other.store.beginCopy(uid(1)),/library is full/);
   other.provider.listAll=async()=>{throw new Error('Inventory changed; refresh');};await other.store.refreshInventory();assert.match(other.store.state.inventoryError,/refresh/);assert.equal(other.store.state.inventory.length,8);assert.equal(other.store.state.editor,null);
   const bad=harness();bad.api.list=async()=>({});await bad.store.refresh();assert.match(bad.store.state.error,/missing/);await bad.store.save();assert.throws(()=>bad.store.addResources([]),/Open a profile/);
@@ -109,7 +154,7 @@ test('read-only, capacity and inventory failures do not produce partial drafts o
 test('failed inventory refresh retains known blocks but cannot silently seed a new draft from stale cached inventory',async()=>{
   const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const original=plain(h.store.state.editor);h.store.back(true);
   h.provider.listAll=async()=>{throw new Error('Inventory revision changed while paging; refresh');};await h.store.refreshInventory();
-  assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.inventory.length,8);assert.throws(()=>h.store.beginBlank(),/Refresh resource inventory/);assert.equal(h.store.state.editor,null);assert.equal(h.docs.size,1);
+  assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.inventory.length,8);assert.throws(()=>h.store.beginBlank(),/Refresh resource inventory/);assert.throws(()=>h.store.beginBlank(h.store.state.inventory),/Refresh resource inventory/);assert.equal(h.store.state.editor,null);assert.equal(h.docs.size,1);
   h.provider.listAll=async()=>({resources:[...inventory(),resource('companion',3)]});await h.store.refreshInventory();h.store.beginBlank();assert.equal(h.store.state.editor.document.resources.length,9);assert.equal(original.document.resources.length,8);
 });
 test('sidebar guard keeps a canceled draft mounted and only discards after the explicit navigation choice',async()=>{

@@ -11,6 +11,7 @@
     "allow-export-companion-certificate",
     "allow-optional-dependencies",
     "allow-open-hidhide",
+    "allow-open-vjoy",
     "allow-optional-dependency-install",
     "allow-pick-game-executable",
     "allow-desktop-preferences",

@@ -114,6 +114,7 @@ impl Runtime {
         if !matches!(
             command,
             "profile_apply"
+                | "profile_editor_save"
                 | "profile_game_launch"
                 | "profile_select"
                 | "profile_selection_mode"

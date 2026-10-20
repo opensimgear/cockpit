@@ -450,6 +450,21 @@ test('editor save commits graph and local pins in one typed request without sele
   const zero={...created,resources:[{...resource(),ports:[]}]};assert.equal(profileDocumentAssignmentsError(zero,[{resourceId:'wheel',sourceId:'native:seed',ports:[]}]),'');assert.equal(profileDocumentAssignmentsError(created,[]),'');
 });
 
+test('editor save returns native application success, failure and inactivity without treating saved changes as persistence failure',async()=>{
+  for(const application of [{state:'applied',error:null},{state:'failed',error:'Profile saved, but its running changes could not be applied: Required controller is offline. Reconnect it, then save again.'},{state:'inactive',error:null}]){
+    const document=blank(),saved={...blank(),revision:2},calls=[];
+    const currentSession={...nativeSession(),state:application.state==='inactive'?'stopped':'running',appliedSnapshot:application.state==='inactive'?null:{profileId:DEFAULT_PROFILE_ID,revision:application.state==='applied'?2:1,semanticHash:'sha256:'+'c'.repeat(64)}};
+    const reply={document:saved,assignments:[],profiles:editorSummaries(saved),session:currentSession,saveApplication:clone(application)};
+    const client=new ProfilesClient(async request=>{calls.push(clone(request));return reply;});
+    const result=await client.editorSave(document,1,[]);
+    assert.equal(result.document.revision,2);assert.deepEqual(result.saveApplication,application);
+    assert.deepEqual(result.session,currentSession);assert.deepEqual(client.session,currentSession);
+    assert.deepEqual(calls.map(call=>call.command),['profile_editor_save']);assert.equal(client.editor,null);
+    result.saveApplication.error='Changed by caller';assert.deepEqual(reply.saveApplication,application);
+    reply.saveApplication.state='changed-later';assert.equal(result.saveApplication.state,application.state);
+  }
+});
+
 test('atomic editor save rejects incomplete pins, invalid revisions and protected builtin labels before transport', async () => {
   let calls=0;const client=new ProfilesClient(async()=>{calls++;return {}});const document=withResource();
   const pins=[{resourceId:'wheel',sourceId:'native:opaque',ports:[{profilePortId:'button',observedPortId:'button:0',expectedContractHash:'sha256:'+'a'.repeat(64)}]}];

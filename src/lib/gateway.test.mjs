@@ -163,6 +163,35 @@ test('new explicit Apply waits for prior Save and priority control completion wi
   }
 });
 
+test('Stop bypasses an editor Save while queued saves still persist without dispatching cancelled Apply',async()=>{
+  const pending=deferred(),api=transport({invokeResults:async(_name,request)=>{
+    if(request.command==='profile_editor_save'&&request.document.id==='active')await pending.promise;
+    return{ok:true,state};
+  }});
+  const active=api.gatewayRequest({command:'profile_editor_save',document:{id:'active'},expectedRevision:1,assignments:[]});
+  const queued=api.gatewayRequest({command:'profile_editor_save',document:{id:'inactive'},expectedRevision:1,assignments:[]});
+  const applying=api.gatewayRequest({command:'profile_apply',id:'cancelled',expectedRevision:2}),cancelled=assert.rejects(applying,/cancelled by Stop/);
+  await tick();await api.gatewayRequest({command:'profile_stop'});await api.gatewayRequest({command:'profile_status'});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_editor_save','profile_stop','profile_status']);
+  pending.resolve();await Promise.all([active,queued,cancelled]);
+  assert.deepEqual(api.calls.filter(call=>call.args.request.command==='profile_editor_save').map(call=>call.args.request.document.id),['active','inactive']);
+});
+
+test('capturing a draft application leaves pending Apply and learning requests eligible for native admission',async()=>{
+  const pending=deferred(),api=transport({invokeResults:async(_name,request)=>{
+    if(request.command==='profile_apply'||request.command==='profile_input_learn_start')await pending.promise;
+    return{ok:true,state};
+  }});
+  const active=api.gatewayRequest({command:'profile_apply',id:'active',expectedRevision:1});
+  const queued=api.gatewayRequest({command:'profile_apply',id:'next',expectedRevision:1});
+  const learning=api.gatewayRequest({command:'profile_input_learn_start',resourceId:'input'});
+  const nextLearning=api.gatewayRequest({command:'profile_input_learn_start',resourceId:'input'});
+  await tick();await api.gatewayRequest({command:'profile_desktop_capture_application'});
+  pending.resolve();await Promise.all([active,queued,learning,nextLearning]);
+  assert.equal(api.calls.filter(call=>call.args.request.command==='profile_apply').length,2);
+  assert.equal(api.calls.filter(call=>call.args.request.command==='profile_input_learn_start').length,2);
+});
+
 test('compiler previews follow profile edits without blocking independent inventory or activating', async () => {
   const waiting = deferred();
   const api = transport({ invokeResults: async (_command, request) => {

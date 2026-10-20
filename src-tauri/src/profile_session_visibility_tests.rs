@@ -423,9 +423,10 @@ fn visible_intent_is_io_free_and_does_not_unhide_external_policy() {
     assert!(io.calls.lock().unwrap().is_empty());
 }
 #[test]
-fn actual_native_qualification_cannot_be_bypassed_by_ready_captured_flags() {
+fn captured_flags_cannot_bypass_native_visibility_enablement() {
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
-    assert!(controllers.game_visibility("preflight",&json!({"mode":"hidhide-session","sourceIds":[PHYSICAL],"policies":{PHYSICAL:{"mode":"hide-all"}}})).unwrap_err().contains("not qualified"));
+    let error = controllers.game_visibility("preflight",&json!({"mode":"hidhide-session","sourceIds":[PHYSICAL],"policies":{PHYSICAL:{"mode":"hide-all"}}})).unwrap_err();
+    assert!(error.contains(if cfg!(windows) { "Enable optional visibility" } else { "not qualified" }), "{error}");
     let snapshot = snapshot();
     let error = Visibility::prepare(&plan(&snapshot), &snapshot, &owner(), controllers)
         .err()

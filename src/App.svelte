@@ -7,7 +7,7 @@
   import { createCockpitHistory, type CockpitRoute, type CompanionPage } from './lib/cockpit-history';
   import SystemDevices from './lib/SystemDevices.svelte';
   import { isVisibleSystemComponent, type SystemSnapshot } from './lib/system-inventory';
-  import ProfileRetiredRecovery from './lib/ProfileRetiredRecovery.svelte';
+  import OutputSettings from './lib/OutputSettings.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import HeaderStatus from './lib/HeaderStatus.svelte';
   import CompanionDesigner from './lib/CompanionDesigner.svelte';
@@ -503,7 +503,7 @@
         {#if profilesMounted || view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} onNavigate={() => {if(view==='profiles')recordRoute();}} active={view==='profiles'} /></div>{/if}
         {#if companionsMounted || view === 'companions'}<div hidden={view !== 'companions'}><CompanionDesigner bind:this={companionsPanel} active={view==='companions'} initialCompanionId={selectedCompanionId} onNavigate={() => {if(view==='companions')recordRoute();}} openSettings={() => navigate('preferences')} /></div>{/if}
         {#if view === 'overview'}
-          <ProfileRetiredRecovery active={view === 'overview'} /><OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openDevices={() => navigate('devices')} />
+          <OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
@@ -517,6 +517,7 @@
             </div>
           </section>
           <DesktopPreferences />
+          <OutputSettings />
           <CompanionListenerSettings />
         {:else if view === 'profiles'}
           <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->

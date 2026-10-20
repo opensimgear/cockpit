@@ -36,16 +36,36 @@ pub(crate) fn foreground() -> Result<ProcessIdentity, String> {
     #[cfg(windows)] { osg_desktop_output::windows::foreground_identity() }
     #[cfg(not(windows))] { Err("Native keyboard and mouse output is currently supported on Windows only.".into()) }
 }
-pub(crate) fn scope(game: Option<&crate::games::PreparedGame>) -> Result<Scope, String> {
-    let preferences = settings::Settings::native();
-    if let Some(error) = preferences.error { return Err(error); }
-    match preferences.value.scope {
-        settings::Scope::DesktopWide => Ok(Scope::DesktopWide),
-        settings::Scope::Application => {
-            if let Some(game) = game { return Ok(Scope::Application { identity: identity(&game.proof.process) }); }
-            let captured = preferences.value.application.ok_or("Choose an application or explicitly select desktop-wide scope before applying keyboard and mouse output.")?;
-            let process = crate::game_discovery::ProcessIdentity::parse(&captured)?;
-            Ok(Scope::Application { identity: identity(&process) })
+/// The outer game option records an explicit context; its inner value is the
+/// observed process. A missing process never falls back to another application.
+pub(crate) fn prepare_scope(
+    declared: Option<&osg_profiles::DesktopScope>, launch: bool,
+    game: Option<Option<crate::game_discovery::ProcessIdentity>>, preferences: &settings::Preferences,
+) -> Result<Option<Scope>, String> {
+    use osg_profiles::DesktopScope;
+    let application = |captured: &Value| -> Result<Option<Scope>, String> {
+        let process = crate::game_discovery::ProcessIdentity::parse(captured)?;
+        Ok(Some(Scope::Application { identity: identity(&process) }))
+    };
+    match declared {
+        Some(DesktopScope::DesktopWide) => Ok(Some(Scope::DesktopWide)),
+        Some(DesktopScope::Application { application_reference: Some(reference) }) => {
+            let captured = preferences.applications.get(reference).ok_or("This profile's selected application is unavailable on this computer. Capture the application in its keyboard and mouse block, then save the profile.")?;
+            application(captured)
+        }
+        Some(DesktopScope::Application { application_reference: None }) => Err("Choose an application in this profile's keyboard and mouse block, then save the profile.".into()),
+        Some(DesktopScope::SelectedGame) => {
+            let process = game.ok_or("Choose a game context for this profile's keyboard and mouse block, or select an application or desktop-wide scope.")?;
+            if launch { Ok(None) } else { selected_game_scope(process).map(Some) }
+        }
+        None => {
+            // Older profiles retain an application-only default. A legacy
+            // machine-wide desktop scope cannot silently broaden their output.
+            if let Some(process) = game {
+                if launch { Ok(None) } else { selected_game_scope(process).map(Some) }
+            } else {
+                application(preferences.application.as_ref().ok_or("Choose an application or game context in this profile's keyboard and mouse block before applying.")?)
+            }
         }
     }
 }
@@ -63,10 +83,10 @@ impl Desktop {
         osg_mapping_host::desktop::Desktop::acquire(run,program,preferences.value.enabled,settings::qualified(),
             crate::config_paths::config_path().with_file_name(journal_name(owner)?),scope).map(Self)
     }
-    pub(crate) fn start(&mut self,reducer:&Phase,game:Option<&crate::games::PreparedGame>,captured:Option<Scope>)->Result<(),String>{
+    pub(crate) fn start(&mut self,reducer:&Phase,_game:Option<&crate::games::PreparedGame>,captured:Option<Scope>)->Result<(),String>{
         if let Some(captured)=captured { self.0.bind_scope_before_start(captured)?; }
-        let resolved=if self.0.scope().is_none(){Some(scope(game)?)}else{None};
-        self.0.start(reducer,resolved)
+        if self.0.scope().is_none(){return Err("The saved keyboard and mouse scope has not been prepared.".into());}
+        self.0.start(reducer,None)
     }
     pub(crate) fn poll(&mut self,frames:&[Frame],reducer:&Phase)->Result<Vec<String>,String>{self.0.poll(frames,reducer)}
     pub(crate) fn keep_alive(&mut self)->Result<(),String>{self.0.keep_alive()}
@@ -83,5 +103,40 @@ mod tests{
         let game=crate::game_discovery::ProcessIdentity{pid:42,path:"C:\\Fixture\\Game.exe".into(),epoch:10};
         let scope=selected_game_scope(Some(game.clone())).unwrap();assert_eq!(scope,Scope::Application{identity:identity(&game)});
         assert_ne!(scope,Scope::Application{identity:identity(&unrelated)});
+    }
+    #[test]
+    fn saved_keyboard_scope_is_independent_of_machine_scope_and_other_profiles(){
+        use osg_profiles::DesktopScope;
+        let mut preferences=settings::Preferences::default();
+        preferences.scope=settings::Scope::DesktopWide;
+        let first=crate::game_discovery::ProcessIdentity{pid:42,path:"C:\\Fixture\\First.exe".into(),epoch:10};
+        let second=crate::game_discovery::ProcessIdentity{pid:43,path:"C:\\Fixture\\Second.exe".into(),epoch:11};
+        let first_reference="01234567-89ab-4cde-8fab-0123456789ab".to_string();
+        let second_reference="11234567-89ab-4cde-8fab-0123456789ab".to_string();
+        preferences.applications.insert(first_reference.clone(),first.value());
+        preferences.applications.insert(second_reference.clone(),second.value());
+        let first_scope=DesktopScope::Application{application_reference:Some(first_reference)};
+        let second_scope=DesktopScope::Application{application_reference:Some(second_reference)};
+        assert_eq!(prepare_scope(Some(&first_scope),false,Some(Some(second.clone())),&preferences).unwrap(),Some(Scope::Application{identity:identity(&first)}));
+        assert_eq!(prepare_scope(Some(&second_scope),false,None,&preferences).unwrap(),Some(Scope::Application{identity:identity(&second)}));
+        assert_eq!(prepare_scope(Some(&first_scope),true,Some(None),&preferences).unwrap(),Some(Scope::Application{identity:identity(&first)}),"launch preserves explicit application scope");
+        assert_eq!(prepare_scope(Some(&DesktopScope::DesktopWide),false,None,&preferences).unwrap(),Some(Scope::DesktopWide));
+        assert!(prepare_scope(None,false,None,&preferences).is_err(),"legacy machine desktop-wide preference cannot broaden an old profile");
+        assert!(prepare_scope(Some(&DesktopScope::Application{application_reference:None}),false,Some(Some(first.clone())),&preferences).is_err(),"unselected application does not inherit another context");
+        preferences.applications.clear();
+        assert!(prepare_scope(Some(&first_scope),false,None,&preferences).is_err(),"foreign/imported app references remain unavailable");
+    }
+    #[test]
+    fn selected_game_scope_defers_only_for_launch_and_never_inherits_an_unrelated_application(){
+        use osg_profiles::DesktopScope;
+        let mut preferences=settings::Preferences::default();
+        let game=crate::game_discovery::ProcessIdentity{pid:42,path:"C:\\Fixture\\Game.exe".into(),epoch:10};
+        preferences.application=Some(crate::game_discovery::ProcessIdentity{pid:99,path:"C:\\Fixture\\Other.exe".into(),epoch:88}.value());
+        assert_eq!(prepare_scope(Some(&DesktopScope::SelectedGame),true,Some(None),&preferences).unwrap(),None);
+        assert_eq!(prepare_scope(Some(&DesktopScope::SelectedGame),false,Some(Some(game.clone())),&preferences).unwrap(),Some(Scope::Application{identity:identity(&game)}));
+        assert!(prepare_scope(Some(&DesktopScope::SelectedGame),false,Some(None),&preferences).is_err());
+        assert!(prepare_scope(Some(&DesktopScope::SelectedGame),false,None,&preferences).is_err());
+        assert!(prepare_scope(None,false,Some(None),&preferences).is_err());
+        assert!(matches!(prepare_scope(None,false,None,&preferences).unwrap(),Some(Scope::Application{..})),"legacy captured applications retain application-only scope");
     }
 }

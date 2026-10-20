@@ -12,14 +12,18 @@ pub mod worker;
 pub use coordinator::{Coordinator, Snapshot};
 pub use protocol::{ProcessIdentity, Scope};
 
-/// Production output remains closed until the native qualification matrix passes.
-pub const QUALIFIED: bool = false;
+/// Windows output still requires local enablement and an owned native session.
+pub const QUALIFIED: bool = cfg!(windows);
 pub const QUALIFICATION_REASON: &str =
-    "Windows keyboard and mouse output has not completed native/game qualification.";
+    "Native keyboard and mouse output is available on Windows only.";
 pub fn qualification_gate() -> bool {
     QUALIFIED
-        || (cfg!(all(windows, debug_assertions))
-            && option_env!("OSG_DEV_DESKTOP_INPUT") == Some("1"))
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn windows_output_availability_does_not_depend_on_development_build_flags() {
+    assert_eq!(qualification_gate(), cfg!(windows));
+}

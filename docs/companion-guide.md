@@ -1,8 +1,8 @@
 # Use a companion panel
 
-Cockpit designs and hosts the panel. The browser companion displays it over the host's opt-in HTTPS listener; the native Companion app targets Android and iOS. Controller drivers belong on the Cockpit host only when its separately qualified output backend needs them. The companion computer needs no vJoy or HidHide.
+Cockpit designs and hosts the panel. The browser companion displays it over the host's opt-in HTTPS listener; the native Companion app targets Android and iOS. Controller drivers belong on the Cockpit host when its output backend needs them. Configure those drivers and output enablement in **Settings → Controller and desktop output**. The companion computer needs no vJoy or HidHide.
 
-Start with local preview. The [release matrix](companion-release-matrix.md) is the source of truth for supported installation, network and game-output combinations. **The qualified release matrix is currently empty.** Development builds and automated tests do not establish a signed, physically qualified release. Mobile authentication and unqualified host output remain disabled.
+Start with local preview. The [release matrix](companion-release-matrix.md) records installation, network and game-output qualification. **The qualified release matrix is currently empty.** Development builds and automated tests do not establish a signed, physically qualified release. Native mobile authentication remains disabled pending device qualification.
 
 ## Choose the right app
 
@@ -31,9 +31,9 @@ Use **New panel**, **Flight template**, **Racing template**, an imported panel o
 
 Momentary buttons release with the pointer. Toggles retain requested state until toggled again or cancelled. Pulse/encoder controls emit bounded pulses. Spring sliders return to their configured fallback; latched controls retain their value until cancellation. Page/layout changes and lifecycle cancellation clear held inputs. Logical axes, buttons and hats describe portable controls, not an OS device or a vJoy slot. Check their range and fallback.
 
-**Save panel** retains the design and creates its immutable transport revision internally; there is no separate Publish button. Select **Assigned companions** to update those assignments when saving. A failed companion update leaves the local save intact and reports the failure. **Export panel** creates a portable bundle without credentials, host trust, local output slots or game settings. Static PNG/JPEG/WebP assets travel inside it; external image URLs and animated assets are unsupported.
+**Save panel** retains the design and creates a fixed published copy internally; there is no separate Publish button. Select **Assigned companions** to update those assignments when saving. A failed companion update leaves the local save intact and reports the failure. **Export panel** creates a portable bundle without credentials, host trust, local output slots or game settings. Static PNG/JPEG/WebP assets travel inside it; external image URLs and animated assets are unsupported.
 
-Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A saved profile retains its exact captured revision; saving a newer panel does not rewrite that profile or its running graph. Active ownership may block an assignment change. Stop/recover the owner and explicitly reconcile the profile's instance and ports before applying a replacement revision.
+Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A profile keeps its selected published panel; saving a newer panel does not rewrite that choice or its running graph. Active ownership may block an assignment change. Stop/recover the owner and explicitly reconcile the profile's instance and ports before saving a replacement panel choice.
 
 ### Multiple viewports on one screen
 
@@ -53,11 +53,11 @@ The native mobile shell retains its separate explicit Connect/Start lifecycle, b
 
 ## Route controls through Profiles
 
-Open **Profiles**, then **Add profile** or an existing profile. A blank draft includes known companion resources without adding routes. Select the intended companion block and **Browse retained panels**. Choose its paired resource and **Retained immutable panel**, then **Capture panel revision in draft**.
+Open **Profiles**, then **Add profile** or an existing profile. A new profile opens an empty editor; use **Add from inventory** to add the companion. Select its block and **Browse published panels**. Choose the paired resource and **Published panel**, then **Use panel in profile**. **Remove selected panel** clears that panel choice while retaining the block's ports and routes.
 
 Use **Inspect exact panel ports** and **Add control output** to select declared controls. **Connect exact ports** routes each selected output to a specific virtual-controller input or supported action. Add virtual layouts and visible processing nodes explicitly. Input learning and exact local assignments do not infer whole-panel mappings. Copied/imported profiles require explicit instance and port reconciliation.
 
-**Save profile** stores the graph and local pins together without starting output. **Apply saved revision** performs fresh native admission, including qualification, backend readiness, exact capabilities, ownership and neutral baselines. Blocked live capabilities stay blocked. The applied inspector shows graph samples and requested destinations; it does not prove OS or game delivery. Use designer preview for local control testing; the retired standalone recording/mapping start workflow is unavailable.
+**Save profile** stores the graph and local pins together. Saving the running profile applies its changes while preserving its game context and selection mode; saving an inactive profile leaves the current run alone. Use **Start profile** when ready. Starting checks backend readiness, exact capabilities, ownership and neutral baselines. Open **Debug** for preflight, applied samples and path activity; requested destinations do not prove OS or game delivery. Use designer preview for local control testing and Profile debug for keyboard/mouse recording.
 
 ## Add feedback
 
@@ -65,7 +65,7 @@ Feedback widgets are visual outputs; changing presentation does not press a cont
 
 In the companion block, inspect the captured panel's **Feedback / widget inputs** and choose **Add feedback input** for each needed property. Connect exact ports through visible unit conversion, comparison/hysteresis, Gate or Format nodes as needed. A destination action requires a complete ordered invocation, using an explicit **Action pack** or supported **Set on change** node. Types, units and declared ranges must fit. Visibility, enabled and navigation properties are available only when the renderer advertises their supported semantics.
 
-For altitude, choose the actual aircraft catalogue channel and its defined quantity/units, rather than assuming a generic AGL or MSL value. Convert units and configure the condition and unavailable presentation explicitly. Only the matching verified game context may supply live game data. Wrong/no game, stale telemetry, disconnected peers and obsolete panel revisions cannot provide a fresh false/zero value or retain a Game confirmed presentation.
+For altitude, choose the actual aircraft catalogue channel and its defined quantity/units, rather than assuming a generic AGL or MSL value. Convert units and configure the condition and unavailable presentation explicitly. Only the matching verified game context may supply live game data. Wrong/no game, stale telemetry, disconnected peers and outdated panel publications cannot provide a fresh false/zero value or retain a Game confirmed presentation.
 
 | Displayed provenance | What it establishes |
 | --- | --- |
@@ -79,13 +79,13 @@ Freshness is separate from provenance. Unknown, stale and disconnected remain di
 
 **Clear visual state** and **Resync visuals** in the companion affect presentation only. Resync requests a fresh native snapshot without replaying input or actions. Changed source semantics or panel contracts require explicit profile reconciliation.
 
-## Apply, stop and recover owned state
+## Start, stop and recover owned state
 
-A profile captures exact companion instance/publication/capability references with its graph and feedback routes. There is no separate global feedback-route save or Games companion capture. Ordinary hardware routing can run without a game; game integrations remain dormant until their matching verified context. Saving or opening an editor leaves the captured running revision unchanged.
+A profile captures exact companion instance/publication/capability references with its graph and feedback routes. There is no separate global feedback-route save or Games companion capture. Ordinary hardware routing can run without a game; game integrations remain dormant until their matching verified context. Opening an editor leaves the running graph alone. Saving changes to that active profile applies them automatically; saving another profile does not switch to it.
 
-Host **Stop** and **Pause** release owned contributions; clearing Pause requires a separate Apply to start again. Switching profile, game-context loss and peer disconnect invalidate affected state and require fresh baselines. Restoration compares the exact still-owned assignment/state and preserves external changes. **Recover outputs** handles the current profile's retained journal without replaying its graph, commands, held input or hiding.
+Host **Stop** and **Pause** release owned contributions. **Clear pause** permits Automatic selection; use **Start profile** in Manual mode. Switching profile, game-context loss and peer disconnect invalidate affected state and require fresh baselines. Restoration compares the exact still-owned assignment/state and preserves external changes. **Recover outputs** handles the current profile's retained journal without replaying its graph, commands, held input or hiding.
 
-Recovery records from the previous mapping/game system are cleanup-only. Use the displayed retained cleanup controls in Games or **Previous output setup recovery** in Host controllers. Recover only the exact recorded owner; uncertain or externally changed state can remain pending. **Keep current setup**, when offered, explicitly abandons restoration ownership. Cleanup cannot start an old profile or migrate its configuration. Do not delete a journal to hide a conflict.
+Recovery records from the previous mapping/game system are cleanup-only. Open **Profiles → Debug** for **Previous output setup recovery**. Recover only the exact recorded owner; uncertain or externally changed state can remain pending. **Keep current setup**, when offered, explicitly abandons restoration ownership. Cleanup cannot start an old profile or migrate its configuration. Do not delete a journal to hide a conflict.
 
 Removing a companion in its settings revokes its saved pairing; reconnecting then requires pairing again. Disabling the listener stops remote sessions without deleting panels or profiles. Browser credentials live in that browser profile's dedicated HTTPS origin; clearing site data or changing origin requires pairing again. The mobile shell's forget/protected-storage controls remain subject to its native authentication gate.
 
@@ -114,9 +114,9 @@ The p95 25 ms/p99 50 ms touch-to-successful-virtual-submit numbers are qualifica
 | Another PC cannot connect | Check the listener's LAN/advertised address, stable port, certificate trust and firewall reachability. Loopback serves only the same PC. |
 | Fingerprint, certificate or hostname error | Compare the host fingerprint, endpoint and clocks. Do not bypass TLS validation. |
 | Panel saved, companion update failed | The local panel is retained. Inspect the exact assignment/ownership diagnostic and reconcile explicitly. |
-| Captured panel revision missing | Restore that exact retained panel or explicitly reconcile the profile to another compatible revision. |
+| Selected published panel missing | Restore that published panel or explicitly reconcile the profile to another compatible panel. |
 | Panel controls disarm on focus/page changes | This is lifecycle cancellation. A visible unfocused browser reconnects neutral for feedback only; focus requires another fresh baseline before controls resume. Hidden pages disconnect. Native mobile requires its explicit Start. |
-| Live output blocked | Read the native preflight reasons. Local preview can work while output remains unqualified. |
+| Live output blocked | Open Profile debug and read native preflight reasons. Check Settings output enablement, required drivers, assignments and neutral baselines. |
 | Feedback unknown/stale or wrong units | Check exact profile ports, captured panel, game-owned catalogue/channel, visible conversion and current applied owner/context. |
 | Pending recovery | Retain the journal and inspect its exact owner/conflict; cleanup does not restart a graph. |
 

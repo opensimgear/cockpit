@@ -19,7 +19,7 @@
   const stateLabels = { stopped: 'Stopped', running: 'Running', degraded: 'Degraded', paused: 'Paused', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Applying…', 'awaiting-game': 'Awaiting game' };
   const profileStatus = $derived(profileState.pending ? 'Updating…' : status ? stateLabels[status.state] : 'Unavailable');
   const profileLabel = $derived(applied ? profile?.name ?? `Profile ${applied.profileId.slice(0, 8)}` : status ? 'None' : 'Unavailable');
-  const profileTitle = $derived(applied ? `${profileLabel} · applied revision ${applied.revision} · ${profileStatus}` : profileState.statusError || profileStatus);
+  const profileTitle = $derived(applied ? `${profileLabel} · ${profileStatus}` : profileState.statusError || profileStatus);
 </script>
 
 <div class="header-statuses" aria-live="polite" aria-atomic="true">

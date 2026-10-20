@@ -50,14 +50,17 @@
     68
   ],
   "disabledCapabilities": {
-    "host-live-output": false,
     "windows-provisioning": false,
-    "windows-hiding": false,
     "live-scripts": false,
     "linux-output": false,
     "macos-output": false,
     "linux-isolated-launch": false,
     "mobile-authentication": false
+  },
+  "enabledWindowsCapabilities": {
+    "host-live-output": true,
+    "windows-hiding": true,
+    "windows-desktop-output": true
   },
   "budgets": {
     "activeCompanions": 8,

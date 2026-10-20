@@ -33,6 +33,14 @@ test('desktop validation rejects unsupported identities, hidden contract changes
  const changed=structuredClone(fixture.desktopOutputs[0]);changed.actions[0].action={kind:'key-tap',key:44,downMs:30,upMs:30};assert.throws(()=>graphSetDesktop(graph,changed),/Disconnect routes/);
  const removed=graphRemoveNode(graph,'desktop');assert.equal(removed.document.desktopOutputs,undefined);assert.equal(removed.document.bindings.length,1);
 });
+test('keyboard scope roundtrips per endpoint without native identities and rejects forged scope fields',()=>{
+ const source=structuredClone(fixture),reference='01234567-89ab-4cde-8fab-0123456789ab';
+ assert.equal(source.desktopOutputs[0].scope,undefined,'old documents retain the safe application default without rewriting their saved shape');
+ for(const scope of [{kind:'selected-game'},{kind:'desktop-wide'},{kind:'application'},{kind:'application',applicationReference:reference}]){
+  source.desktopOutputs[0].scope=scope;assert.equal(profileDocumentError(source),'');assert.deepEqual(JSON.parse(exportProfileDocument(source)).desktopOutputs[0].scope,scope);
+ }
+ for(const scope of [null,{kind:'process',pid:42},{kind:'desktop-wide',applicationReference:reference},{kind:'application',applicationReference:'not-native'},{kind:'application',pid:42,path:'forged.exe'}]){source.desktopOutputs[0].scope=scope;assert.ok(profileDocumentError(source));}
+});
 test('native desktop status requires local enablement and bounded tagged scope',()=>{
  const status={enabled:false,qualified:false,state:'stopped',reason:'Enablement required',scope:{kind:'application'},runtime:null};assert.deepEqual(JSON.parse(JSON.stringify(desktopStatus(status))),status);assert.throws(()=>desktopStatus({...status,enabled:'yes'}));assert.throws(()=>desktopStatus({...status,scope:{kind:'process',pid:123}}));
  for(const invalid of [null,undefined,42,'stopped',{}, {...status,qualified:1}, {...status,reason:7}, {...status,scope:null}])assert.throws(()=>desktopStatus(invalid));

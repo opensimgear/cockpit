@@ -49,20 +49,20 @@ impl Adapter for Fixture {
     }
 }
 #[test]
-fn native_development_readiness_keeps_explicit_visibility_settings_inert() {
+fn native_windows_readiness_keeps_explicit_visibility_settings_inert() {
     let (registry, id) = inventory();
     let temp = tempfile::tempdir().unwrap();
     let service = Service::new(Some(temp.path().into()), registry);
     let status = service.request(&json!({"command":"controller_visibility_status","sourceId":id})).unwrap();
-    assert_eq!(status["visibility"]["qualified"], super::super::capabilities::DEVELOPMENT_NATIVE_PROFILES);
+    assert_eq!(status["visibility"]["qualified"], super::super::capabilities::WINDOWS_NATIVE_OUTPUTS);
     assert_eq!(status["visibility"]["enabled"], false);
     assert_eq!(status["visibility"]["selectedCount"], 0);
     assert_eq!(status["visibility"]["global"]["inspected"], false);
     assert_eq!(status["visibility"]["selfAccess"]["status"], "not-requested");
     assert!(!service.active());
     assert!(temp.path().read_dir().unwrap().next().is_none());
-    if super::super::capabilities::DEVELOPMENT_NATIVE_PROFILES {
-        assert!(status["visibility"]["reason"].as_str().unwrap().starts_with("Development acceptance mode:"));
+    if super::super::capabilities::WINDOWS_NATIVE_OUTPUTS {
+        assert!(status["visibility"]["reason"].as_str().unwrap().starts_with("Windows vJoy output and HidHide are available."));
     }
 }
 #[test]

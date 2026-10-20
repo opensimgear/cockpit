@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 export default defineConfig(() => ({
   plugins: [svelte(), browserCompanionDev(), ...(process.env.TAURI_ENV_PLATFORM ? [] : [nativeGatewayBridge()])],
   clearScreen: false,
-  server: { port: process.env.TAURI_ENV_PLATFORM ? 1420 : 5173, strictPort: true, watch: { ignored: ['**/src-tauri/**', '**/apps/browser-companion/dist/**', '**/.research/**', '**/target/**'] } },
+  server: { port: process.env.TAURI_ENV_PLATFORM ? 1420 : 5173, strictPort: true, watch: { ignored: ['**/src-tauri/**', '**/apps/browser-companion/dist/**', '**/.research/**', '**/.tmp/**', '**/target/**'] } },
   build: {
     rollupOptions: {
       input: { main: resolve(root, 'index.html') },

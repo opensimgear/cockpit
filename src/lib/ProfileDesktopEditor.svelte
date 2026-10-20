@@ -1,14 +1,19 @@
 <script lang="ts">
-  import{untrack,onDestroy,tick}from'svelte';
-  import { desktopActionLabel,desktopActionValid,desktopActionPort,DESKTOP_KEYS,DESKTOP_KEY_CODES,type DesktopAction,type ProfileDesktopOutput } from './profile-desktop';
+  import{untrack,onDestroy,onMount,tick}from'svelte';
+  import { desktopActionLabel,desktopActionValid,desktopActionPort,desktopOutputScopeValid,DESKTOP_KEYS,DESKTOP_KEY_CODES,type DesktopAction,type ProfileDesktopOutput,type ProfileDesktopScope } from './profile-desktop';
+  import {desktopStatus,type DesktopApplication}from'./profile-desktop-runtime';
   import type {DeepReadonly} from './profiles';
   import {gatewayRequest}from'./gateway';
   let{output,change}:{output:DeepReadonly<ProfileDesktopOutput>;change:(output:ProfileDesktopOutput)=>void}=$props();
   let draft=$state.raw<ProfileDesktopOutput>(JSON.parse(JSON.stringify(untrack(()=>output)))),error=$state(''),capture=$state(''),captureBusy=$state(false),captureEpoch=0;
   let picker=$state<HTMLInputElement|null>(null);
-  $effect(()=>{draft=JSON.parse(JSON.stringify(output));captureEpoch++;capture='';captureBusy=false;error='';});
-  onDestroy(()=>{captureEpoch++;});
+  let applications=$state.raw<DesktopApplication[]>([]),applicationBusy=$state(false),applicationEpoch=0;
+  $effect(()=>{draft=JSON.parse(JSON.stringify(output));captureEpoch++;applicationEpoch++;capture='';captureBusy=false;applicationBusy=false;error='';});
+  onMount(()=>{void loadApplications();});
+  onDestroy(()=>{captureEpoch++;applicationEpoch++;});
   const valid=$derived(draft.actions.every(definition=>desktopActionValid(definition.action))&&draft.actions.length>0);
+  const applicationReference=$derived(draft.scope?.kind==='application'?draft.scope.applicationReference:undefined);
+  const applicationName=$derived(applications.find(application=>application.reference===applicationReference)?.name??(applicationReference?'Saved application · capture again if it has restarted':'No application selected'));
   const kinds:DesktopAction['kind'][]=['key-hold','key-tap','chord','mouse-hold','mouse-click','wheel','pointer','repeat'];
   function initial(kind:DesktopAction['kind']):DesktopAction{switch(kind){case'key-hold':return{kind,key:44};case'key-tap':return{kind,key:44,downMs:30,upMs:30};case'chord':return{kind,keys:[224,6]};case'mouse-hold':return{kind,button:'left'};case'mouse-click':return{kind,button:'left',downMs:30,upMs:30};case'wheel':return{kind,horizontal:0,vertical:1};case'pointer':return{kind,axis:'x',speed:900,curve:1};case'repeat':return{kind,key:44,delayMs:400,intervalMs:80};}}
   function edit(index:number,action:DesktopAction){draft={...draft,actions:draft.actions.map((definition,i)=>i===index?{...definition,action}:definition)};}
@@ -20,11 +25,17 @@
     const action=draft.actions[index].action;if('key'in action)field(index,'key',usage);else if(action.kind==='chord')field(index,'keys',[...new Set([...action.keys,usage])]);capture='';
   }
   function save(){error='';try{change(draft);}catch(reason){error=reason instanceof Error?reason.message:String(reason);}}
+  function scope(kind:ProfileDesktopScope['kind']){applicationEpoch++;applicationBusy=false;draft={...draft,scope:kind==='application'?{kind,...(applicationReference?{applicationReference}:{})}:{kind}};save();}
+  async function loadApplications(){try{applications=desktopStatus((await gatewayRequest({command:'profile_desktop_status'})).desktop).applications??[];}catch{/* Application capture reports actionable connection errors. */}}
+  async function captureApplication(){const epoch=++applicationEpoch;applicationBusy=true;error='';try{const status=desktopStatus((await gatewayRequest({command:'profile_desktop_capture_application'})).desktop);if(epoch!==applicationEpoch)return;const selected:ProfileDesktopScope={kind:'application',applicationReference:status.capturedApplicationReference??undefined};if(!desktopOutputScopeValid(selected)||!selected.applicationReference)throw Error('The native application capture returned no saved application. Focus the application and try again.');applications=status.applications??[];draft={...draft,scope:selected};save();}catch(reason){if(epoch===applicationEpoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(epoch===applicationEpoch)applicationBusy=false;}}
 </script>
 <section class="desktop-editor" aria-label="Keyboard and mouse action editor">
   <h4>Keyboard and mouse actions</h4>
-  <p>Exact physical key and mouse inputs for this graph. Native enablement and application scope are configured separately. Each input needs an explicit route.</p>
+  <p>Exact physical key and mouse inputs for this graph. Each input needs an explicit route.</p>
   <label>Endpoint label<input value={draft.name} maxlength="80" oninput={event=>draft={...draft,name:event.currentTarget.value}}/></label>
+  <label>Output scope<select aria-label="Keyboard and mouse scope" value={draft.scope?.kind??'legacy'} onchange={event=>scope(event.currentTarget.value as ProfileDesktopScope['kind'])}>{#if !draft.scope}<option value="legacy" disabled>Current game or previously selected application</option>{/if}<option value="selected-game">Selected game</option><option value="application">Selected application</option><option value="desktop-wide">Desktop-wide navigation</option></select></label>
+  {#if draft.scope?.kind==='application'}<p>Selected application: <strong>{applicationName}</strong></p><button class="secondary-button" disabled={applicationBusy} onclick={captureApplication}>{applicationBusy?'Capturing application…':'Use last focused external application'}</button><p>Focus the application, return to Cockpit, then capture it. Output runs only while that exact application is in front. Capture again after restarting the application.</p>{:else if draft.scope?.kind==='selected-game'}<p>Uses the verified game selected when this profile is applied or launched. Output pauses while another application is in front.</p>{:else if draft.scope?.kind==='desktop-wide'}<p>Keyboard and mouse output can operate across applications while this profile is active.</p>{/if}
+  <p>Scope is saved with this keyboard and mouse block. Save the profile to use the change.</p>
   <label class="check"><input type="checkbox" checked={draft.required} onchange={event=>draft={...draft,required:event.currentTarget.checked}}/>Required desktop backend</label>
   {#each draft.actions as definition,index (definition.portId)}
     {@const action=definition.action}
@@ -32,7 +43,7 @@
       <label>Action<select value={action.kind} onchange={event=>edit(index,initial(event.currentTarget.value as DesktopAction['kind']))}>{#each kinds as kind}<option value={kind}>{kind}</option>{/each}</select></label>
       {#if 'key'in action}<label>Physical key<select aria-label="Physical key" value={action.key} onchange={event=>field(index,'key',Number(event.currentTarget.value))}>{#each DESKTOP_KEYS as key (key.usage)}<option value={key.usage}>{key.label} · HID {key.usage}</option>{/each}</select></label>{/if}
       {#if action.kind==='chord'}<label>Ordered physical HID usages (comma separated)<input value={action.keys.join(', ')} onchange={event=>field(index,'keys',event.currentTarget.value.split(',').map(value=>Number(value.trim())))}/></label><p>Modifiers press before ordinary keys and release after them. Shared owners retain their holds.</p>{/if}
-      {#if 'key'in action||action.kind==='chord'}<button type="button" class="secondary-button" disabled={captureBusy} onclick={()=>beginCapture(definition.portId)}>{captureBusy?'Pausing runtime…':capture===definition.portId?'Picker ready below':'Capture a physical key'}</button>{#if capture===definition.portId}<input bind:this={picker} class="key-picker" aria-label="Physical key capture" placeholder="Focus here and press a key" onkeydown={event=>keyCapture(event,index)} onblur={()=>capture=''}/><p>Profile output is paused. Clearing Pause and Apply remain explicit after editing.</p>{/if}{/if}
+      {#if 'key'in action||action.kind==='chord'}<button type="button" class="secondary-button" disabled={captureBusy} onclick={()=>beginCapture(definition.portId)}>{captureBusy?'Pausing runtime…':capture===definition.portId?'Picker ready below':'Capture a physical key'}</button>{#if capture===definition.portId}<input bind:this={picker} class="key-picker" aria-label="Physical key capture" placeholder="Focus here and press a key" onkeydown={event=>keyCapture(event,index)} onblur={()=>capture=''}/><p>Profile output is paused. Use Clear pause or Start profile after editing.</p>{/if}{/if}
       {#if 'button'in action}<label>Mouse button<select value={action.button} onchange={event=>field(index,'button',event.currentTarget.value)}>{#each ['left','right','middle','x1','x2'] as button}<option value={button}>{button}</option>{/each}</select></label>{/if}
       {#if 'downMs'in action}<div class="pair"><label>Down dwell (ms)<input type="number" min="1" max="60000" value={action.downMs} onchange={event=>field(index,'downMs',Number(event.currentTarget.value))}/></label><label>Up dwell (ms)<input type="number" min="1" max="60000" value={action.upMs} onchange={event=>field(index,'upMs',Number(event.currentTarget.value))}/></label></div><p>Ordered taps use a bounded queue. Shared holds never release to manufacture another tap edge.</p>{/if}
       {#if action.kind==='wheel'}<div class="pair"><label>Horizontal steps<input type="number" min="-120" max="120" value={action.horizontal} onchange={event=>field(index,'horizontal',Number(event.currentTarget.value))}/></label><label>Vertical steps<input type="number" min="-120" max="120" value={action.vertical} onchange={event=>field(index,'vertical',Number(event.currentTarget.value))}/></label></div>{/if}
@@ -44,7 +55,7 @@
   <button class="secondary-button" disabled={draft.actions.length>=128} onclick={add}>Add exact action port</button>
   {#if error}<p role="alert">{error}</p>{/if}{#if !valid}<p role="status">Choose supported keys, bounded timings and valid action values before updating.</p>{/if}
   <button class="primary-button" disabled={!valid} onclick={save}>Update desktop actions</button>
-  <p>Save, import and preview send no input. Apply captures a saved revision. Native controller bindings may also react to the original control; visibility is a separate capability.</p>
+  <p>Save updates a running profile. Saving an inactive profile sends no input; use Start profile when ready. Import and preview send no input. Native controller bindings may also react to the original control; visibility is a separate capability.</p>
 </section>
 <style>
  .desktop-editor{border-top:1px solid var(--line);padding-top:14px;margin-top:16px;min-width:0}h4{font-size:12px}p{font-size:10px;color:var(--muted);line-height:1.8}label{display:grid;gap:6px;font-size:10px;margin:12px 0}fieldset{border:1px solid var(--line);margin:16px 0;padding:10px;min-width:0}legend{font-size:10px}.check{display:flex;align-items:center;gap:7px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}input:not([type="checkbox"]),select{width:100%;box-sizing:border-box;background:var(--input-bg);color:var(--text);padding:8px;border:1px solid var(--line);border-radius:5px;font-size:10px}button{font-size:10px;margin:6px 6px 6px 0}.key-picker{margin-top:10px}

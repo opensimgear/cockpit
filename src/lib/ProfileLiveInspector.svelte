@@ -36,10 +36,10 @@
 </script>
 
 <section class="profile-live panel" aria-label="Applied profile port inspection">
-  <div class="live-heading"><div><strong>Applied port samples</strong><p>{#if owner}{profileName??owner.profileId} · applied revision {owner.profileRevision} · run {owner.generation}{:else}No current native run is available to inspect.{/if}</p></div>{#if owner}<button class="text-button" disabled={view.loading} onclick={()=>inspector.refresh()}>{view.loading?'Reading…':'Refresh samples'}</button>{/if}</div>
+  <div class="live-heading"><div><strong>Applied port samples</strong><p>{#if owner}{profileName??owner.profileId} · run {owner.generation}{:else}No current native run is available to inspect.{/if}</p></div>{#if owner}<button class="text-button" disabled={view.loading} onclick={()=>inspector.refresh()}>{view.loading?'Reading…':'Refresh samples'}</button>{/if}</div>
   {#if owner}
     <p class="live-help">Read-only graph samples from the applied run. Inputs and action tuples show upstream/requested values; they do not confirm that a device or simulator accepted an output. Event values are the last observed sample.</p>
-    {#if differentRevision}<p class="live-notice">The editor differs from this applied revision. These samples describe the running graph; current draft edits are excluded.</p>{/if}
+    {#if differentRevision}<p class="live-notice">The editor has changes that are not running. These samples describe the running graph; current draft edits are excluded.</p>{/if}
     {#if selectedId&&editorProfileId===owner.profileId}<label class="follow-selection"><input type="checkbox" bind:checked={followSelection}/> Follow selected block <code>{selectedId}</code></label>{/if}
     <p class="sample-capture" role="status">{#if view.page}{view.stale?'Last capture · stale':'Native capture'} {view.page.capturedUs} μs · {nodeId?`block ${nodeId}`:'all declared applied ports'}{:else if view.loading}Waiting for the native applied capture…{:else}No port capture loaded.{/if}</p>
     {#if view.error}<p class="live-error" role="status">{view.error}</p>{/if}

@@ -78,11 +78,11 @@ class ReleaseReadinessTests(unittest.TestCase):
     def test_native_source_gate_enablement_cannot_be_hidden_by_a_false_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for relative, _ in release.GATES.values():
+            for relative, _ in {**release.GATES, **release.WINDOWS_GATES}.values():
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(release.ROOT / relative, target)
-            shutil.copyfile(release.ROOT / release.DEVELOPMENT_POLICY, root / release.DEVELOPMENT_POLICY)
+            shutil.copyfile(release.ROOT / release.WINDOWS_POLICY, root / release.WINDOWS_POLICY)
             self.assertFalse(release.validate(self.matrix, root)["releaseEligible"])
             for name, (relative, _) in release.GATES.items():
                 target = root / relative
@@ -101,15 +101,15 @@ class ReleaseReadinessTests(unittest.TestCase):
                     release.validate(self.matrix, root)
                 target.write_text(original, encoding="utf-8")
 
-    def test_host_constructor_cannot_bypass_a_disabled_live_output_constant(self):
+    def test_host_constructor_cannot_bypass_its_platform_output_constant(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for relative, _ in release.GATES.values():
+            for relative, _ in {**release.GATES, **release.WINDOWS_GATES}.values():
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(release.ROOT / relative, target)
-            shutil.copyfile(release.ROOT / release.DEVELOPMENT_POLICY, root / release.DEVELOPMENT_POLICY)
-            target = root / release.GATES['host-live-output'][0]
+            shutil.copyfile(release.ROOT / release.WINDOWS_POLICY, root / release.WINDOWS_POLICY)
+            target = root / release.WINDOWS_GATES['host-live-output'][0]
             source = target.read_text(encoding='utf-8')
             changed = source.replace('osg_virtual_controller::entry::factory(),\n            LIVE_OUTPUT_QUALIFIED,',
                                      'osg_virtual_controller::entry::factory(),\n            true,', 1)
@@ -118,25 +118,23 @@ class ReleaseReadinessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'host-live-output'):
                 release.validate(self.matrix, root)
 
-    def test_development_acceptance_cannot_enable_release_or_other_platforms(self):
+    def test_windows_output_cannot_enable_other_platforms_or_imply_companion_qualification(self):
+        self.assertEqual(set(self.matrix["enabledWindowsCapabilities"]), set(release.WINDOWS_GATES))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for relative, _ in release.GATES.values():
+            for relative, _ in {**release.GATES, **release.WINDOWS_GATES}.values():
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(release.ROOT / relative, target)
-            target = root / release.DEVELOPMENT_POLICY
-            original = (release.ROOT / release.DEVELOPMENT_POLICY).read_text(encoding="utf-8")
-            for before, after in [("cfg!(windows)", "true"), ("cfg!(debug_assertions)", "true"),
-                                  ("!windows || !debug", "!windows && !debug"),
-                                  ("value.len() == 1 &&", "value.len() >= 1 &&"),
-                                  ("None => false", "None => true")]:
-                with self.subTest(change=before):
-                    changed = original.replace(before, after, 1)
-                    self.assertNotEqual(changed, original)
-                    target.write_text(changed, encoding="utf-8")
-                    with self.assertRaisesRegex(ValueError, "Development acceptance"):
-                        release.validate(self.matrix, root)
+            target = root / release.WINDOWS_POLICY
+            original = (release.ROOT / release.WINDOWS_POLICY).read_text(encoding="utf-8")
+            target.write_text(original.replace("cfg!(windows)", "true", 1), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "limited to Windows"):
+                release.validate(self.matrix, root)
+        changed = deepcopy(self.matrix)
+        changed["enabledWindowsCapabilities"]["windows-desktop-output"] = False
+        with self.assertRaisesRegex(ValueError, "enabled Windows"):
+            release.validate(changed)
 
     def test_matrix_reader_rejects_duplicates_oversize_invalid_and_symlink(self):
         with tempfile.TemporaryDirectory() as directory:

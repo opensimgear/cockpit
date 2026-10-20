@@ -246,6 +246,10 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
     for output in &document.desktop_outputs {
         id(&output.id)?;
         label(&output.name)?;
+        if let Some(DesktopScope::Application { application_reference: Some(reference) }) = &output.scope {
+            check(uuid::Uuid::parse_str(reference).ok().map(|id| id.to_string()).as_deref() == Some(reference.as_str()),
+                "Choose a native captured application reference.")?;
+        }
         let declared = ports(&output.ports)?;
         check(!declared.is_empty() && output.actions.len() == declared.len(), "A desktop endpoint needs one exact action definition per typed input port.")?;
         let mut actions = BTreeSet::new();

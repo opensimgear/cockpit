@@ -7,7 +7,7 @@
     "sha256": "ef569a3105cd301b89580f18f60c66b339e95296acf2c0dfcaf4b4bbf8ab68fe",
     "size": 5302312,
     "url": "https://github.com/BrunnerInnovation/vJoy/releases/download/v2.2.2.0/vJoySetup_v2.2.2.0_Win10_Win11.exe",
-    "purpose": "Virtual joystick output for controller mappings. After setup, use Inspect vJoy in Mappings."
+    "purpose": "Virtual joystick output for profile mappings. After setup, use Configure vJoy and Refresh output setup in Settings."
   },
   {
     "id": "hidhide",
@@ -17,6 +17,6 @@
     "sha256": "f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6",
     "size": 8078016,
     "url": "https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe",
-    "purpose": "Optional controller hiding. After setup, use Inspect HidHide in a controller's Device visibility settings."
+    "purpose": "Controller hiding while a profile is running. After setup, enable device hiding in Settings."
   }
 ]

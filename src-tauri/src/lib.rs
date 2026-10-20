@@ -131,6 +131,11 @@ async fn open_hidhide() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn open_vjoy() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(optional_dependencies::open_vjoy).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn optional_dependency_install(app: tauri::AppHandle, id: String) -> Result<String, String> {
     let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -206,6 +211,7 @@ pub fn run() {
             export_companion_certificate,
             optional_dependencies,
             open_hidhide,
+            open_vjoy,
             optional_dependency_install,
             pick_game_executable,
             desktop::desktop_preferences,

@@ -109,7 +109,7 @@ let learningEpoch={};
 let retiredRecoveryEpoch={};
 function learningInterrupt(request:GatewayRequest):boolean{
   const command=request.command;
-  if(command.startsWith('profile_'))return ['profile_apply','profile_game_launch','profile_pause','profile_stop','profile_recover','profile_reset','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','profile_input_learn_cancel','profile_desktop_stop','profile_desktop_recover','profile_desktop_configure','profile_desktop_capture_application','profile_retired_recovery_recover','profile_retired_recovery_acknowledge','profile_retired_recovery_provision_recover','profile_retired_recovery_provision_cancel'].includes(command);
+  if(command.startsWith('profile_'))return ['profile_apply','profile_game_launch','profile_pause','profile_stop','profile_recover','profile_reset','profile_selection_mode','profile_game_rule_save','profile_game_rule_remove','profile_input_learn_cancel','profile_desktop_stop','profile_desktop_recover','profile_desktop_configure','profile_retired_recovery_recover','profile_retired_recovery_acknowledge','profile_retired_recovery_provision_recover','profile_retired_recovery_provision_cancel'].includes(command);
   if(/^(module_usb_|controller_|game_|companion_)/.test(command))return !['module_usb_ports','module_usb_list','module_usb_status','module_usb_config_read','module_usb_actions_describe','module_usb_actions_state','module_usb_events_state','module_usb_events_read','controller_list','controller_inspect','controller_visibility_status','controller_visibility_inspect','controller_visibility_processes','game_get_state','companion_status','companion_usb_ports','companion_usb_status','companion_browser_certificate'].includes(command);
   return ['start','stop','apply','save','register','unregister','enable','disable','forget','update-profile','configure','claim','release','connect','disconnect','reconnect','remove','config_apply','config_apply_save','config_save','config_discard','config_reset','action_claim','action_renew','action_release','action_invoke','action_invoke_owned','debug_invoke'].includes(command);
 }
@@ -120,7 +120,7 @@ function queuedRequest(request: GatewayRequest, operation: () => Promise<Gateway
   const learningStart=request.command==='profile_input_learn_start',capturedLearningEpoch=learningEpoch;
   const profileApply = request.command === 'profile_apply' || request.command === 'profile_game_launch';
   const profileControl = ['profile_stop', 'profile_pause', 'profile_recover','profile_desktop_stop','profile_desktop_recover'].includes(request.command);
-  const profileInterrupt = ['profile_stop', 'profile_pause', 'profile_recover','profile_desktop_stop','profile_desktop_recover','profile_desktop_configure','profile_desktop_capture_application', 'controller_visibility_restore'].includes(request.command);
+  const profileInterrupt = ['profile_stop', 'profile_pause', 'profile_recover','profile_desktop_stop','profile_desktop_recover','profile_desktop_configure', 'controller_visibility_restore'].includes(request.command);
   if (profileInterrupt) profileApplyEpoch = {};
   const applyEpoch = profileApplyEpoch;
   const usb = request.command.startsWith('module_usb_') && request.command !== 'module_usb_ports' && request.command !== 'module_usb_list';

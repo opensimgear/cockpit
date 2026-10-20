@@ -3,7 +3,6 @@
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
   import DeviceVisibility from './DeviceVisibility.svelte';
-  import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { controllerRoles, controlLabel, inputLabel, type ControllerResult, type HostController } from './controllers';
   let { topology = false, initialSourceId = '', detailsOnly = false }: { topology?: boolean; initialSourceId?: string; detailsOnly?: boolean } = $props();
@@ -76,7 +75,6 @@
 <section class="host-controllers" class:embedded={detailsOnly} aria-label="Host controllers">
   {#if !detailsOnly}
   <div class="panel-heading"><div><h2>{topology ? 'USB controllers connected to this computer' : 'Host controllers'}</h2><p>Physical controller input · {inventory.backendStatus ?? 'Connecting'}</p></div><span class="quiet-tag">Experimental</span></div>
-  {#if !topology}<OptionalDependencies />{/if}
   <div class="host-grid">
     {#each inventory.sources ?? [] as source (source.id)}
       <button class="host-card" class:selected={selected === source.id} class:offline={!source.online} onclick={() => select(source)}>

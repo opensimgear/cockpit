@@ -1,7 +1,6 @@
 <script lang="ts">
   import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
-  import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import type { HostController } from './controllers';
   import type { HidHideSelfAccess, VisibilityIntent, VisibilityStatus } from './visibility';
@@ -45,7 +44,6 @@
 </script>
 <section class="visibility" aria-label="Device visibility">
   <h3>Device visibility</h3>
-  <OptionalDependencies only="hidhide" />
   <p>These are local visibility preferences and inspection tools. Saving a selection does not hide a device. Author and apply device hiding in Profiles.</p>
   {#if error}<Notification message={String(error)} kind="error" />{/if}
   {#if status}
@@ -61,7 +59,7 @@
     {/if}
     <p class="notice">{status.reason}</p>
     {#if status.settingsError}<Notification message={'Saved settings need attention: ' + String(status.settingsError)} kind="error" />{/if}
-    <div class="visibility-toggle"><strong>Enable optional visibility controls on this computer</strong><button class="toggle" class:on={status.enabled} role="switch" aria-label="Enable optional visibility controls on this computer" aria-checked={status.enabled} disabled={busy || status.job?.active} onclick={() => action({ command: 'controller_visibility_enable', enabled: !status?.enabled })}><span></span></button></div>
+    <p>Device hiding is {status.enabled ? 'enabled' : 'disabled'} on this computer. Manage HidHide setup and enablement in Settings.</p>
     <div class="fields">
       <label>Saved policy<select bind:value={mode} disabled={busy || status.job?.active}>{#each status.modes as option}<option value={option.mode} disabled={!option.supported}>{option.label}{option.supported ? '' : ' · unavailable'}</option>{/each}</select></label>
       {#if mode === 'hide-from-process'}
@@ -98,8 +96,6 @@
   .fields, .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 14px 0; }
   label { display: flex; flex-direction: column; gap: 8px; min-width: min(100%, 200px); flex: 1; font-size: 10px; color: var(--soft); }
   select, input { width: 100%; min-width: 0; padding: 10px 11px; font-size: 10px; color: var(--text); background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
-  .visibility-toggle { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 16px 0; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .visibility-toggle strong { font-size: 10px; line-height: 1.6; font-weight: 500; color: var(--soft); }
   .hint { font-size: 9px; }
   .notice { display: block; font-size: 10px; line-height: 1.7; margin: 12px 0; background: var(--surface); }
   .startup-access { margin: 16px 0; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }

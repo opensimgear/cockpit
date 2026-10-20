@@ -135,7 +135,7 @@
     {/if}
   </div>
   <div class="graph-result-summary"><span>{document.resources.length} resource blocks</span><span>{document.bindings.length} signal routes</span><span>{document.processingNodes.length} transformations</span><span>{controllerEffects.virtual} requested virtual controllers</span><span>{document.desktopOutputs?.length??0} desktop endpoint</span><span>{controllerEffects.hidden} hide-while-active requests</span></div>
-  <section class="controller-effect-summary" aria-label="Draft controller effects"><strong>Draft controller effects</strong><p>Publication choices: <span>{controllerEffects.enabled} enable while active</span> · <span>{controllerEffects.disabled} disable while active</span> · <span>{controllerEffects.configured} keep configured</span>.</p><p>{controllerEffects.hidden} hide-while-active requests · {controllerEffects.virtual} requested virtual controllers.</p><small>Draft requests. Apply checks device support and ownership; editing keeps the applied revision unchanged.</small></section>
+  <section class="controller-effect-summary" aria-label="Draft controller effects"><strong>Draft controller effects</strong><p>Publication choices: <span>{controllerEffects.enabled} enable while active</span> · <span>{controllerEffects.disabled} disable while active</span> · <span>{controllerEffects.configured} keep configured</span>.</p><p>{controllerEffects.hidden} hide-while-active requests · {controllerEffects.virtual} requested virtual controllers.</p><small>Draft requests. Apply checks device support and ownership; Save applies changes when this profile is running.</small></section>
 </section>
 
 <style>

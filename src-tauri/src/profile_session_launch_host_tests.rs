@@ -488,7 +488,7 @@ fn desktop_launch_scope_uses_verified_started_process_independently_of_selected_
     let other=Scope::Application{identity:crate::profile_session_desktop::identity(&secondary_process())};
     let expected=Scope::Application{identity:crate::profile_session_desktop::identity(&started.process)};
     assert_eq!(launched_desktop_scope(None,true,&started.process),Some(expected.clone()));
-    assert_eq!(launched_desktop_scope(Some(&other),true,&started.process),Some(expected));
+    assert_eq!(launched_desktop_scope(Some(&other),true,&started.process),Some(other));
     assert_eq!(launched_desktop_scope(Some(&Scope::DesktopWide),true,&started.process),Some(Scope::DesktopWide));
     assert_eq!(launched_desktop_scope(None,false,&started.process),None);
     // The actual held NativeRun remains unarmed while process identity is

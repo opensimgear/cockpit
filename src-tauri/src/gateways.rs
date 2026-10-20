@@ -34,6 +34,8 @@ mod companion_retention;
 mod retired_game_io;
 #[path = "profile_recovery_transport.rs"]
 pub(crate) mod recovery_transport;
+#[path = "profile_editor_save.rs"]
+mod profile_editor_save;
 
 trait Adapter: Send + Sync {
     fn publication(&self,_request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{Err("This transport does not support native controller publication overrides.".into())}
@@ -141,7 +143,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 /// catalogue and editor reads must not keep cancelling the native learner.
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
-    if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker");}
+    if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker"|"profile_desktop_capture_application");}
     if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
     if command.starts_with("mapping_") || command=="companion_feedback_routes" { return false; }
     if command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
@@ -543,24 +545,31 @@ impl GatewayManager {
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
-        let profile_mutation = request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let editor_save = request["command"] == "profile_editor_save";
+        let save_running = editor_save && {
+            let session = self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
+            let status = session.status();
+            matches!(status.state, crate::profile_session::State::Running | crate::profile_session::State::Degraded)
+                && status.owner.as_ref().is_some_and(|owner| request["document"]["id"] == owner.profile_id)
+        };
+        let profile_mutation = editor_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         // Created before admission guards so notification follows their release,
         // including staged Apply's early-return paths.
         let _wake = profile_mutation.then(|| WakeProfileOnDrop(&self.profile_wake));
         let automatic_control = match request["command"].as_str().unwrap_or("") {
             "profile_desktop_stop" => "profile_stop",
-            "profile_desktop_configure" | "profile_desktop_capture_application" => "profile_pause",
+            "profile_desktop_configure" => "profile_pause",
             "profile_desktop_recover" => "profile_recover", other => other,
         };
         let _policy=self.profile_automatic.begin_control(automatic_control);
         self.profile_automatic.control(automatic_control);
-        let staging = matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch"));
+        let staging = editor_save || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch"));
         let learning_start=request["command"]=="profile_input_learn_start";
         let learning_passive=matches!(request["command"].as_str(),Some("profile_input_learn_status"|"profile_input_learn_cancel"));
         let _pending=if staging{self.profile_pending.fetch_add(1,Ordering::AcqRel);Some(PendingProfileApply(&self.profile_pending))}else{None};
-        let interrupt=learning_interrupt(&request);
-        let arrival_epoch=interrupt.then(||self.invalidate_learning());
-        if staging{let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)){return self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);}}
+        let interrupt=save_running || learning_interrupt(&request);
+        let arrival_epoch=if interrupt {Some(self.invalidate_learning())} else if editor_save {Some(self.profile_admission_epoch.load(Ordering::Acquire))} else {None};
+        if staging && !editor_save {let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)){return self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);}}
         if learning_start||learning_passive{return self.request_inner(request);}
         let _profile_write = (profile_mutation && !staging).then(|| self.profile_admission.write().unwrap_or_else(|p| p.into_inner()));
         let _profile_read = (!profile_mutation).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
@@ -683,6 +692,9 @@ impl GatewayManager {
                     let read_only = self.profiles.lock().unwrap_or_else(|p| p.into_inner())
                         .compile_source(osg_profiles::DEFAULT_PROFILE_ID)?.2;
                     let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                    crate::profile_compilation::capture_output_capabilities(document, &mut snapshot.backend, self.profile_native,
+                        osg_virtual_controller::inspection::current,
+                        || self.controllers.request(&json!({"command":"controller_visibility_status"})));
                     crate::profile_session_desktop::capabilities(&mut snapshot.backend,self.profile_native);
                     snapshot.read_only |= read_only;
                     return Ok(snapshot);
@@ -699,6 +711,9 @@ impl GatewayManager {
                     assignment.ports.retain(|port| resource.ports.iter().any(|logical| logical.id == port.profile_port_id));
                 }
                 let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                crate::profile_compilation::capture_output_capabilities(document, &mut snapshot.backend, self.profile_native,
+                    osg_virtual_controller::inspection::current,
+                    || self.controllers.request(&json!({"command":"controller_visibility_status"})));
                 crate::profile_session_desktop::capabilities(&mut snapshot.backend,self.profile_native);
                 snapshot.read_only |= read_only;
                 if read_only { snapshot.inventory_diagnostics.push("The profile library is read-only; repair its storage before activation.".into()); }
@@ -725,6 +740,12 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if command == "profile_editor_save" {
+                return match self.save_profile_editor(&request, native_arrival_epoch) {
+                    Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
+                    Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
+                };
+            }
             if command.starts_with("profile_desktop_") {
                 return match self.desktop_request(&request) { Ok(desktop)=>json!({"ok":true,"state":{"desktop":desktop}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()}) };
             }
@@ -1179,7 +1200,7 @@ mod tests {
         ] {
             let response = request(&manager,command,None,fields);
             assert_eq!(response["ok"],false,"{response}");
-            assert!(response["error"].as_str().unwrap().contains("qualified native development"));
+            assert!(response["error"].as_str().unwrap().contains("native Windows Cockpit"));
             assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
             assert_eq!(manager.profile_automatic.view(),automatic);
             assert_eq!(request(&manager,"profile_input_learn_status",None,json!({"learnId":learn_id}))["state"]["profileLearning"]["phase"],"listening");
@@ -1325,6 +1346,7 @@ mod tests {
             provider,
         )
     }
+    include!("profile_editor_save_tests.rs");
     fn request(manager: &GatewayManager, command: &str, id: Option<&str>, fields: Value) -> Value {
         let mut request = json!({"command":command,"clientId":CLIENT});
         if let Some(id) = id {
@@ -1544,7 +1566,7 @@ mod tests {
     }
 
     #[test]
-    fn applied_port_inspection_reads_only_the_exact_native_run_without_loading_a_newer_draft() {
+    fn applied_port_inspection_rejects_retired_owner_after_editor_save_updates_the_run() {
         use osg_profiles::{Port,Resource,ResourceKind,ProcessingNode,Direction,PortContract,PortValue,Binding,Endpoint};
         let (manager,_) = setup();
         let mut document=osg_profiles::default_document();
@@ -1564,12 +1586,14 @@ mod tests {
         let observed_us=retained["observedUs"].as_str().unwrap().parse::<u64>().unwrap();
         assert!(observed_us>0,"Native startup must retain the actual nonzero capture clock: {retained}");
         let mut edited=saved["state"]["profiles"]["document"].clone();edited["processingNodes"][0]["operation"]["value"]=json!(false);
-        assert_eq!(request(&manager,"profile_editor_save",None,json!({"document":edited,"expectedRevision":2,"assignments":[]}))["ok"],true);
-        let old=request(&manager,"profile_runtime_inspect",None,json!({"owner":owner,"nodeId":"display","limit":1}));assert_eq!(old["ok"],true,"{old}");
-        assert_eq!(old["state"]["profileInspection"]["appliedSnapshot"]["revision"],2);
-        assert_eq!(old["state"]["profileInspection"]["ports"][0]["sample"]["value"]["value"],true);
-        assert_eq!(old["state"]["profileInspection"]["ports"][0]["sample"],retained["sample"]);
-        assert_eq!(old["state"]["profileInspection"]["ports"][0]["observedUs"],retained["observedUs"]);
+        let saved=request(&manager,"profile_editor_save",None,json!({"document":edited,"expectedRevision":2,"assignments":[]}));
+        assert_eq!(saved["ok"],true,"{saved}");
+        assert_eq!(saved["state"]["profiles"]["saveApplication"]["state"],"applied");
+        let old=request(&manager,"profile_runtime_inspect",None,json!({"owner":owner,"nodeId":"display","limit":1}));assert_eq!(old["ok"],false,"{old}");
+        let current=saved["state"]["profiles"]["profileSession"]["owner"].clone();
+        let current=request(&manager,"profile_runtime_inspect",None,json!({"owner":current,"nodeId":"display","limit":1}));assert_eq!(current["ok"],true,"{current}");
+        assert_eq!(current["state"]["profileInspection"]["appliedSnapshot"]["revision"],3);
+        assert_eq!(current["state"]["profileInspection"]["ports"][0]["sample"]["value"]["value"],false);
         for fields in [json!({"owner":owner,"limit":65}),json!({"owner":owner,"nodeId":"missing"}),json!({"owner":owner,"drive":true})] {assert_eq!(request(&manager,"profile_runtime_inspect",None,fields)["ok"],false);}
         let mut wrong=owner.clone();wrong["generation"]=json!(999);assert_eq!(request(&manager,"profile_runtime_inspect",None,json!({"owner":wrong}))["ok"],false);
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);

@@ -23,7 +23,7 @@ export class ProfileRuntimeController{
     finally{this.reading=false;if(epoch===this.epoch)this.set({loading:false});}
   }
   async apply(editor:RuntimeEditorTarget,gameId?:ProfileGameId):Promise<boolean>{
-    if(editor.readOnly||editor.dirty||editor.baseRevision===null||editor.baseRevision!==editor.revision){this.set({error:'Save this exact profile revision before Apply. Unsaved edits are never applied.'});return false;}
+    if(editor.readOnly||editor.dirty||editor.baseRevision===null||editor.baseRevision!==editor.revision){this.set({error:'Save your changes before starting this profile.'});return false;}
     const id=editor.id,revision=editor.baseRevision;
     return this.run('apply',()=>this.client.apply(id,revision,gameId));
   }

@@ -219,8 +219,27 @@ pub struct DesktopOutput {
     pub id: String,
     pub name: String,
     pub required: bool,
+    /// Missing scope retains application-only compatibility for older profiles.
+    #[serde(default, deserialize_with = "present_desktop_scope", skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DesktopScope>,
     pub ports: Vec<Port>,
     pub actions: Vec<DesktopActionDefinition>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DesktopScope {
+    SelectedGame,
+    Application {
+        #[serde(rename = "applicationReference", default, deserialize_with = "present_application_reference", skip_serializing_if = "Option::is_none")]
+        application_reference: Option<String>,
+    },
+    DesktopWide,
+}
+fn present_desktop_scope<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<DesktopScope>, D::Error> {
+    DesktopScope::deserialize(deserializer).map(Some)
+}
+fn present_application_reference<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

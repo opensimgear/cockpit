@@ -36,7 +36,7 @@
   <section class="panel overview-card" aria-label="Native applied profile">
     <div class="overview-label"><Icon name="settings" size={18} /><h2>Applied profile</h2></div>
     <strong class="overview-value">{profileLabel}</strong>
-    {#if native}<p>{stateLabels[native.state]}{#if snapshot} · applied revision {snapshot.revision}{/if}{#if native.owner?.gameId} · {games?.catalogue.find(game => game.id === native.owner!.gameId)?.name ?? native.owner.gameId}{/if}</p>{:else}<p>Waiting for the current native profile status. Editor selection and saved changes do not activate a profile.</p>{/if}
+    {#if native}<p>{stateLabels[native.state]}{#if native.owner?.gameId} · {games?.catalogue.find(game => game.id === native.owner!.gameId)?.name ?? native.owner.gameId}{/if}</p>{:else}<p>Waiting for the current native profile status. Open a profile to start it. Saving a running profile applies its changes.</p>{/if}
     {#if native?.state === 'awaiting-game'}<p>Hardware remains neutral while the native launch waits for its exact verified game.</p>{/if}
     {#if native?.fault}<Notification message={native.fault} kind="error" />{/if}
     {#if native?.degradation.length}<ul class="degradation" aria-label="Unavailable profile branches">{#each native.degradation as message,index (index)}<li>{message}</li>{/each}</ul>{/if}

@@ -22,6 +22,28 @@ fn desktop_only_roundtrips_without_controllers_or_machine_settings() {
     assert!(json.get("scope").is_none());
 }
 #[test]
+fn desktop_scope_is_saved_semantics_without_native_process_identity() {
+    let mut source = document();
+    assert!(source.desktop_outputs[0].scope.is_none());
+    let legacy = source.semantic_hash().unwrap();
+    for scope in [DesktopScope::SelectedGame, DesktopScope::DesktopWide,
+        DesktopScope::Application { application_reference: Some("01234567-89ab-4cde-8fab-0123456789ab".into()) }] {
+        source.desktop_outputs[0].scope = Some(scope.clone());
+        let restored = ProfileDocument::parse(&source.export().unwrap()).unwrap();
+        assert_eq!(restored.desktop_outputs[0].scope, Some(scope));
+        assert_ne!(restored.semantic_hash().unwrap(), legacy);
+    }
+    source.desktop_outputs[0].scope = Some(DesktopScope::Application { application_reference: Some("forged.exe".into()) });
+    assert!(validate_document(&source).is_err());
+    let mut value = serde_json::to_value(document()).unwrap();
+    value["desktopOutputs"][0]["scope"] = serde_json::json!({"kind":"application","pid":42,"path":"forged.exe"});
+    assert!(ProfileDocument::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    for scope in [serde_json::Value::Null, serde_json::json!({"kind":"application","applicationReference":null})] {
+        value["desktopOutputs"][0]["scope"] = scope;
+        assert!(ProfileDocument::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+}
+#[test]
 fn desktop_readiness_and_requirements_are_independent_of_controller_drivers() {
     let document=document();
     let mut capture=snapshot();

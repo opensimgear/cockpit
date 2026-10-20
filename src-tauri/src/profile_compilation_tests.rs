@@ -15,6 +15,35 @@ fn snapshot() -> CompileSnapshot {
         read_only: false,
     }
 }
+
+#[test]
+fn debug_output_capture_observes_readiness_without_ownership_or_unused_driver_io() {
+    let mut document = osg_profiles::default_document();
+    let mut backend = BackendCapabilities::default();
+    capture_output_capabilities(&document, &mut backend, true,
+        || panic!("A profile without virtual output must not inspect its driver."),
+        || panic!("A profile without hiding must not inspect visibility."));
+    assert!(!backend.available);
+    document.virtual_outputs = osg_profiles::ProfileDocument::parse(include_bytes!("../../tests/fixtures/profiles/mixed.json")).unwrap().virtual_outputs;
+    assert!(!document.virtual_outputs.is_empty());
+    document.visibility = vec![osg_profiles::VisibilityIntent { resource_id: "physical".into(), mode: osg_profiles::VisibilityMode::HiddenWhileActive }];
+    let observations = std::cell::Cell::new(0);
+    capture_output_capabilities(&document, &mut backend, true,
+        || { observations.set(observations.get() + 1); Ok(vec![]) },
+        || { observations.set(observations.get() + 1); Ok(json!({"visibility":{"qualified":true,"modes":[{"mode":"hide-all","supported":true}]}})) });
+    assert_eq!(observations.get(), 2);
+    assert!(backend.available);
+    assert_eq!(backend.qualified, osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED);
+    assert_eq!(backend.visibility_available, cfg!(windows));
+    assert!(backend.visibility_qualified);
+    capture_output_capabilities(&document, &mut backend, true,
+        || Err("Driver is unavailable.".into()), || Err("Visibility status is unavailable.".into()));
+    assert!(!backend.available && !backend.visibility_available && !backend.visibility_qualified);
+    capture_output_capabilities(&document, &mut backend, false,
+        || panic!("Browser previews must not inspect native output."),
+        || panic!("Browser previews must not inspect native hiding."));
+    assert!(!backend.available && !backend.qualified && !backend.visibility_available && !backend.visibility_qualified);
+}
 #[test]
 fn native_summary_matches_the_shared_frontend_wire_fixture() {
     let mut snapshot = snapshot();

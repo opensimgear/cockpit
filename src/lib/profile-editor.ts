@@ -34,6 +34,7 @@ export type ProfileWorkspaceState = {
     diagnostics: string[];
     error: string;
     inventoryError: string;
+    saveMessage: string;
 };
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const uuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) && value !== DEFAULT_PROFILE_ID;
@@ -124,7 +125,7 @@ function draft(document: ProfileDocument, assignments: ProfileLocalAssignment[],
 }
 /** Local authoring state. Its API deliberately has no select/apply/start methods. */
 export class ProfileEditorStore {
-    private value: ProfileWorkspaceState = { view: 'list', profiles: [], session: null, editor: null, inventory: [], inventoryLoaded: false, busy: false, inventoryBusy: false, readOnly: false, diagnostics: [], error: '', inventoryError: '' };
+    private value: ProfileWorkspaceState = { view: 'list', profiles: [], session: null, editor: null, inventory: [], inventoryLoaded: false, busy: false, inventoryBusy: false, readOnly: false, diagnostics: [], error: '', inventoryError: '', saveMessage: '' };
     private listeners = new Set<(state: DeepReadonly<ProfileWorkspaceState>) => void>();
     private epoch = 0;
     private inventoryEpoch = 0;
@@ -172,7 +173,7 @@ export class ProfileEditorStore {
             return;
         if (!result.document || result.document.id !== id || !result.assignments)
             throw new Error('The requested profile and its local assignments were not returned together.');
-        this.set({ view: 'editor', editor: draft(result.document, result.assignments, result.document.revision), session: this.session(result) });
+        this.set({ view: 'editor', editor: draft(result.document, result.assignments, result.document.revision), session: this.session(result), saveMessage: '' });
     }
     catch (error) {
         if (epoch === this.epoch)
@@ -182,9 +183,9 @@ export class ProfileEditorStore {
         if (epoch === this.epoch)
             this.set({ busy: false });
     } }
-    beginBlank(resources: readonly DeepReadonly<ResourceSummary>[] = this.value.inventory): void { this.authoringAllowed(); if (!this.value.inventoryLoaded)
+    beginBlank(resources: readonly DeepReadonly<ResourceSummary>[] = this.value.inventory): void { this.authoringAllowed(); if (resources.length && !this.value.inventoryLoaded)
         throw new Error('Refresh resource inventory before creating a seeded profile.'); if (this.value.profiles.length >= MAX_PROFILES)
-        throw new Error('The profile library is full (32 including Default). Remove an unused named profile first.'); const seeded = seedProfile(this.newId(), resources); this.epoch++; this.set({ view: 'editor', editor: draft(seeded.document, seeded.assignments, null), busy: false, error: '' }); }
+        throw new Error('The profile library is full (32 including Default). Remove an unused named profile first.'); const seeded = seedProfile(this.newId(), resources); this.epoch++; this.set({ view: 'editor', editor: draft(seeded.document, seeded.assignments, null), busy: false, error: '', saveMessage: '' }); }
     async beginCopy(id: string): Promise<void> { this.authoringAllowed(); if (this.value.profiles.length >= MAX_PROFILES)
         throw new Error('The profile library is full (32 including Default). Remove an unused named profile first.'); const epoch = ++this.epoch; this.set({ busy: true, error: '' }); try {
         const result = await this.api.getAssignments(id);
@@ -213,7 +214,7 @@ export class ProfileEditorStore {
     back(discard = false): boolean { if (this.value.editor && profileEditorDirty(this.value.editor) && !discard)
         return false; this.epoch++; this.set({ view: 'list', editor: null, busy: false, error: '' }); return true; }
     async save(): Promise<void> { this.authoringAllowed(); const editor = this.value.editor; if (!editor || this.value.busy)
-        return; const epoch = this.epoch; const submitted = clone(editor); this.set({ busy: true, error: '' }); try {
+        return; const epoch = this.epoch; const submitted = clone(editor); this.set({ busy: true, error: '', saveMessage: '' }); try {
         const error = profileDocumentError(submitted.document) || profileAssignmentsError(submitted.assignments);
         if (error)
             throw new Error(error);
@@ -234,7 +235,7 @@ export class ProfileEditorStore {
         const next = unchanged ? committed : { ...current, document: { ...clone(current.document), revision: result.document.revision }, baseRevision: result.document.revision, baseDocument: clone(result.document), baseAssignments: clone(result.assignments) };
         const rows = this.value.profiles.filter(row => row.id !== result.document.id);
         rows.push(clone(summary));
-        this.set({ editor: next, profiles: rows, session: this.session(result) });
+        this.set({ editor: next, profiles: rows, session: this.session(result), saveMessage: result.saveApplication?.state === 'failed' ? result.saveApplication.error || 'Profile saved, but its running changes could not be applied.' : result.saveApplication?.state === 'applied' ? 'Profile saved and running changes applied.' : 'Profile saved.' });
     }
     catch (error) {
         if (epoch === this.epoch)

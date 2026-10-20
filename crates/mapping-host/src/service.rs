@@ -19,8 +19,8 @@ use std::{
     time::Duration,
 };
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub const QUALIFICATION: &str = if osg_controller_input::visibility::capabilities::DEVELOPMENT_NATIVE_PROFILES {
-    osg_controller_input::visibility::capabilities::DEVELOPMENT_REASON
+pub const QUALIFICATION: &str = if osg_controller_input::visibility::capabilities::WINDOWS_NATIVE_OUTPUTS {
+    osg_controller_input::visibility::capabilities::WINDOWS_REASON
 } else {
     "Live vJoy output and layout changes remain disabled until Windows validation is complete. You can use recording previews and inspect installed devices."
 };
@@ -31,7 +31,7 @@ pub const QUALIFICATION: &str = osg_virtual_controller::apple_helper::REASON;
 pub const BACKEND: &str = osg_virtual_controller::entry::BACKEND;
 pub const SCRIPT_LIVE_QUALIFIED: bool = false;
 /// Shared activation gate for every native coordinator using this backend.
-pub const LIVE_OUTPUT_QUALIFIED: bool = osg_controller_input::visibility::capabilities::DEVELOPMENT_NATIVE_PROFILES;
+pub const LIVE_OUTPUT_QUALIFIED: bool = osg_controller_input::visibility::capabilities::WINDOWS_NATIVE_OUTPUTS;
 fn native_readiness() -> Value {
     #[cfg(target_os = "linux")]
     {
