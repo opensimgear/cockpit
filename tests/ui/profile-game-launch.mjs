@@ -24,8 +24,11 @@ test('keyboard launch confirms active-profile switches, deactivation wins late a
  page.on('pageerror',error=>errors.push(error.message));
  await page.route('**/api/gateway/**',async route=>{unexpected.push('Unexpected HTTP gateway fallback');await route.abort();});
  await page.exposeFunction('__osgLaunchFixture',async(command,args)=>{
+  if(['profile_activation_window_open','profile_activation_window_update','profile_activation_window_close'].includes(command))return true;
+  if(command==='profile_activation_window_state')return null;
   if(command!=='gateway_request'){unexpected.push(command);throw new Error('Only intercepted gateway requests belong to this fixture.');}
   const request=structuredClone(args.request);requests.push(request);
+  if(request.command==='profile_game_candidates')return reply({profiles:{gameId:request.gameId,profiles:[],preferredProfileId:null}});
   if(request.command==='profile_game_launch'){
    assert.deepEqual(Object.keys(request).sort(),['clientId','command','expectedActiveOwner','gameId']);assert.deepEqual(request.expectedActiveOwner,nativeStatus.owner);const status=running();
    if(launchMode==='hold'){const hold=deferred();holds.push(hold);await hold.promise;}
@@ -38,17 +41,21 @@ test('keyboard launch confirms active-profile switches, deactivation wins late a
  await page.addInitScript(()=>{window.isTauri=true;window.__TAURI_INTERNALS__={invoke:(command,args)=>window.__osgLaunchFixture(command,args)};});
  try{
   await page.goto(endpoint);const nav=page.getByRole('navigation',{name:'Main navigation'}),gamesNav=nav.getByRole('button',{name:'Games',exact:true});await gamesNav.focus();await page.keyboard.press('Enter');
-  const dcs=page.locator('.game-tile').filter({has:page.getByRole('button',{name:'Open DCS World details',exact:true})}),tileOpen=dcs.getByRole('button',{name:'Open DCS World details',exact:true}),launch=dcs.getByRole('button',{name:'Launch DCS World',exact:true}),stop=dcs.getByRole('button',{name:'Deactivate profile',exact:true});
-  await expect(launch).toBeEnabled();await expect(page.getByLabel('Select game profile')).toHaveCount(0);await tileOpen.focus();await page.keyboard.press('Tab');await expect(launch).toBeFocused();await page.keyboard.press('Tab');await expect(stop).toBeFocused();await page.keyboard.press('Shift+Tab');await expect(launch).toBeFocused();await page.keyboard.press('Space');
-  await expect.poll(()=>holds.length).toBe(1);await expect(launch).toBeDisabled();await expect(stop).toBeEnabled();await expect(dcs.getByText(/Preparing the saved profile/)).toBeVisible();await expect(dcs.getByText(/Game launch completed/)).toHaveCount(0);
-  await stop.focus();await page.keyboard.press('Enter');await expect(dcs.getByText('No profile active.',{exact:true})).toBeVisible();holds[0].resolve();await expect(launch).toBeEnabled();await expect(dcs.getByText(/Game launch completed/)).toHaveCount(0);
+  const dcs=page.locator('.game-tile').filter({has:page.getByRole('button',{name:'Open DCS World details',exact:true})}),tileOpen=dcs.getByRole('button',{name:'Open DCS World details',exact:true}),launch=dcs.getByRole('button',{name:'Launch DCS World',exact:true});
+  await expect(launch).toBeEnabled();await expect(page.getByLabel('Select game profile')).toHaveCount(0);await expect(dcs.getByRole('button',{name:'Deactivate profile',exact:true})).toHaveCount(0);await expect(dcs.getByText('Unified profile selection',{exact:true})).toHaveCount(0);await tileOpen.focus();await page.keyboard.press('Tab');await expect(launch).toBeFocused();await page.keyboard.press('Space');
+  await expect.poll(()=>holds.length).toBe(1);await expect(launch).toBeDisabled();await expect(dcs.getByText(/Preparing the saved profile/)).toBeVisible();await expect(dcs.getByText(/Game launch completed/)).toHaveCount(0);
+  // Details retain cleanup controls. A former tile acknowledgement must not
+  // change a new details component after its profile has been deactivated.
+  await tileOpen.focus();await page.keyboard.press('Enter');const detail=page.locator('.game-details-heading'),detailLaunch=detail.getByRole('button',{name:'Launch DCS World',exact:true}),stop=detail.getByRole('button',{name:'Deactivate profile',exact:true});await expect(stop).toBeEnabled();await stop.focus();await page.keyboard.press('Space');await expect(detail.getByText('No profile active.',{exact:true})).toBeVisible();holds[0].resolve();await expect(detailLaunch).toBeEnabled();await expect(detail.getByText(/Game launch completed/)).toHaveCount(0);
   assert.equal(requests.filter(request=>request.command==='profile_game_launch').length,1);assert.equal(requests.filter(request=>request.command==='profile_stop').length,1);
-  // Leave a second pending tile launch. A fresh details component must still
-  // expose Deactivate, and its former tile acknowledgement must not alter the detail.
-  await launch.focus();await page.keyboard.press('Enter');await expect.poll(()=>holds.length).toBe(2);await tileOpen.focus();await page.keyboard.press('Enter');const detail=page.locator('.game-details-heading');await expect(detail.getByRole('button',{name:'Deactivate profile',exact:true})).toBeEnabled();await detail.getByRole('button',{name:'Deactivate profile',exact:true}).focus();await page.keyboard.press('Space');await expect(detail.getByText('No profile active.',{exact:true})).toBeVisible();holds[1].resolve();
+  // Also fence a late acknowledgement within the same details component.
+  await detailLaunch.focus();await page.keyboard.press('Enter');await expect.poll(()=>holds.length).toBe(2);await expect(stop).toBeEnabled();await stop.focus();await page.keyboard.press('Enter');await expect(detail.getByText('No profile active.',{exact:true})).toBeVisible();holds[1].resolve();await expect(detailLaunch).toBeEnabled();await expect(detail.getByText(/Game launch completed/)).toHaveCount(0);
   for(const obsolete of ['Captured mapping','Captured companions','Select game profile','Capture settings','Activate profile'])await expect(page.getByText(obsolete,{exact:true})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Launch DCS World',exact:true})).toBeEnabled();await expect(page.getByText('Provider not set up in this browser fixture.',{exact:true})).toBeVisible();
   launchMode='degraded';await detail.getByRole('button',{name:'Launch DCS World',exact:true}).focus();await page.keyboard.press('Enter');await expect(detail.getByText(/Game started with unavailable branches/)).toBeVisible();await expect(detail.getByText('Fixture optional companion is disconnected.',{exact:true})).toBeVisible();
+  // Native ownership can change outside this view. Only a different profile
+  // requires a switch question; launching the same Default profile does not.
+  const otherProfile='33333333-3333-4333-8333-333333333333';nativeStatus={...nativeStatus,owner:{...nativeStatus.owner,profileId:otherProfile},appliedSnapshot:{...nativeStatus.appliedSnapshot,profileId:otherProfile}};
   const beforeSwitch=structuredClone(nativeStatus.owner),beforeLaunches=requests.filter(request=>request.command==='profile_game_launch').length;
   await detail.getByRole('button',{name:'Launch DCS World',exact:true}).click();
   const switchDialog=page.getByRole('alertdialog',{name:'Switch active profile?',exact:true});await expect(switchDialog).toBeVisible();await switchDialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(switchDialog).toHaveCount(0);
@@ -60,6 +67,6 @@ test('keyboard launch confirms active-profile switches, deactivation wins late a
   const dimensions=await page.locator('main').evaluate(node=>({width:node.clientWidth,content:node.scrollWidth}));assert.ok(dimensions.content<=dimensions.width+1,JSON.stringify(dimensions));
   assert.equal(requests.some(request=>['game_launch','game_activate','game_profile_save','game_profile_default','mapping_preview_start','mapping_virtual_start','integration_start','dcs_start','profile_apply','profile_select','profile_selection_mode'].includes(request.command)),false);
   assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);await writeFile(resolve(artifacts,'fixture-requests.json'),JSON.stringify(requests,null,2));console.log(`Frontend-only keyboard launch fixture passed; ${requests.length} intercepted IPCs. Artifacts: ${artifacts}`);
- }catch(error){console.log(await page.locator('main').innerText());throw error;}
+ }catch(error){console.log(await page.locator('main').innerText());console.log(JSON.stringify({requests,errors,unexpected},null,2));throw error;}
  finally{holds.forEach(hold=>hold.resolve());await browser.close();}
 });

@@ -19,16 +19,16 @@ test('metadata library lists actual supported games and never constructs a profi
 test('provider setup, native verification and telemetry freshness remain separate facts',()=>{
  const game=dcs();delete game.integrationSetup;assert.equal(gameIntegrationLabel(game),'Integration not checked');assert.equal(gameIntegrationReady(game),false);
  for(const state of ['not-installed','setup-required','setting-up','ready','needs-attention','unsupported-platform'])assert.ok(gameIntegrationLabel({...game,integrationSetup:{state}}).length>5);
- game.integrationSetup={state:'ready',live:'waiting'};assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationLabel(game),'Ready for integration');assert.equal(gameIntegrationNativeVerified(game),false);
- for(const [live,label]of [['waiting','Waiting for game data'],['receiving','Receiving game data'],['stale','Game data is stale']]){game.integrationSetup.live=live;assert.equal(gameIntegrationLiveLabel(game),label);assert.equal(gameIntegrationReady(game),true);}
- game.installed=false;assert.equal(gameIntegrationLabel(game),'Game not installed');assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationLiveLabel({}),'Waiting for game data');
+ game.integrationSetup={state:'ready',live:'waiting'};assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationLabel(game),'Integration ready');assert.equal(gameIntegrationNativeVerified(game),false);
+ for(const [live,label]of [['waiting',''],['receiving','Receiving game data'],['stale','Game data is stale']]){game.integrationSetup.live=live;assert.equal(gameIntegrationLiveLabel(game),label);assert.equal(gameIntegrationReady(game),true);}
+ game.installed=false;assert.equal(gameIntegrationLabel(game),'Game not installed');assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationLiveLabel({}),'');
  for(const id of ['x-plane-11','x-plane-12'])assert.equal(gameIntegrationReady({...supportedGames.find(game=>game.id===id),installed:true,integrationSetup:{state:'ready',verified:false}}),true);
 });
 
 test('ACR verification requires its actual native provider and survives a closed game without inventing fresh data',()=>{
  const game={...supportedGames[1],installed:true,integrationSetup:{state:'needs-attention',connection:{source:'shared-memory'},verified:false,live:'waiting'}};
  assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationLabel(game),'Telemetry configured · verification needed');assert.equal(gameIntegrationVerificationLabel(game),'Native telemetry not verified');
- game.integrationSetup.verified=true;game.integrationSetup.state='ready';assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationNativeVerified(game),true);assert.equal(gameIntegrationVerificationLabel(game),'Native telemetry verified');assert.equal(gameIntegrationLiveLabel(game),'Waiting for game data');
+ game.integrationSetup.verified=true;game.integrationSetup.state='ready';assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationNativeVerified(game),true);assert.equal(gameIntegrationVerificationLabel(game),'Native telemetry verified');assert.equal(gameIntegrationLiveLabel(game),'');
  game.integrationSetup.live='stale';assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationLiveLabel(game),'Game data is stale');
  for(const live of ['waiting','receiving','stale']){game.integrationSetup.connection.source='synthetic';game.integrationSetup.live=live;assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationNativeVerified(game),false);assert.ok(!gameIntegrationLiveLabel(game).includes('Receiving game data'));}
  delete game.integrationSetup.connection;assert.equal(gameIntegrationNativeVerified(game),false);assert.equal(gameIntegrationLabel(game),'Native telemetry not verified');

@@ -24,8 +24,9 @@ DCS World, Assetto Corsa Rally, X-Plane 11 and X-Plane 12 have separate catalogu
 ## Integration setup and readiness
 
 Game details and tiles report integration setup independently from installation
-availability and live telemetry. **Ready for integration** can be shown while the
-game is closed. Receiving/stale/waiting game data is a separate runtime indicator.
+availability and live telemetry. **Integration ready** can be shown while the
+game is closed. Receiving/stale game data is a separate runtime indicator; waiting
+for game data is omitted from the UI.
 
 For DCS on Windows, choose its Saved Games user folder and **Set up integration**.
 Cockpit installs checksum-pinned DCS-Skunkworks DCS-BIOS 0.11.7, preserves existing

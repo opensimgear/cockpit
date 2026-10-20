@@ -46,7 +46,7 @@ export function gameIntegrationLabel(game: Game): string {
   if (game.id === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && !gameIntegrationNativeVerified(game)) return 'Native telemetry not verified';
   const labels: Record<GameIntegrationSetup['state'], string> = {
     'not-installed': 'Game not installed', 'setup-required': 'Integration setup required',
-    'setting-up': 'Setting up integration', ready: 'Ready for integration',
+    'setting-up': 'Setting up integration', ready: 'Integration ready',
     'needs-attention': 'Integration needs attention', 'unsupported-platform': 'Setup unavailable on this platform',
   };
   return labels[game.integrationSetup.state];
@@ -67,7 +67,7 @@ export function gameIntegrationVerificationLabel(game: Game): string {
 export function gameIntegrationLiveLabel(game: Game): string {
   if (game.id === 'assetto-corsa-rally' && game.integrationSetup?.connection?.source === 'synthetic') return game.integrationSetup.live === 'receiving' ? 'Receiving synthetic test data' : game.integrationSetup.live === 'stale' ? 'Synthetic test data is stale' : 'Waiting for synthetic test data';
   return game.integrationSetup?.live === 'receiving' ? 'Receiving game data'
-    : game.integrationSetup?.live === 'stale' ? 'Game data is stale' : 'Waiting for game data';
+    : game.integrationSetup?.live === 'stale' ? 'Game data is stale' : '';
 }
 
 export function gameIntegrationUserFolder(game: Game): string {

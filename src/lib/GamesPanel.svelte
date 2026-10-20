@@ -20,6 +20,7 @@
   const gameState:GamesState=$derived(status??response??{catalogue:supportedGames});
   const games=$derived(visibleGames(gameState.catalogue,showAll));
   const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
+  const selectedLiveLabel=$derived(selected?gameIntegrationLiveLabel(selected):'');
   const cleanup=$derived(gameState.cleanup);
   const occupied=$derived(!!cleanup&&!['idle','failed'].includes(cleanup.phase));
   const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up'));
@@ -84,7 +85,7 @@
           <dl class="provider-readiness" aria-label="Integration readiness">
             <div><dt>Provider setup</dt><dd>{gameIntegrationLabel(selected)}</dd></div>
             <div><dt>Game context</dt><dd>{gameContextLabel(selected)}<small>{selected.integrationContext?.processVerified ? 'Actual game process verified' : 'No verified matching process'}</small></dd></div>
-            <div><dt>Telemetry freshness</dt><dd>{gameIntegrationLiveLabel(selected)}</dd></div>
+            {#if selectedLiveLabel}<div><dt>Telemetry freshness</dt><dd>{selectedLiveLabel}</dd></div>{/if}
           </dl>
           <p class="field-help">{selected.integrationContext?.message ?? 'Game discovery identifies an installation. A verified running game and an active matching profile are required for live integration.'}</p>
           {#if selected.id === 'dcs'}
@@ -127,7 +128,7 @@
             {#if setupBlocked}<p class="field-help">{setupBlocked}</p>{/if}
           {/if}
           <button class="text-button setup-recheck" disabled={busy || pending || setupRunning || (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={12} /> Recheck readiness</button>
-          <div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{gameIntegrationLiveLabel(selected)}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>
+          {#if selectedLiveLabel}<div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{selectedLiveLabel}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>{/if}
         </section>
       </div>
       <aside class="game-sidebar">
@@ -150,6 +151,7 @@
     {#if !games.length}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31} /></div><h2>No supported games found</h2><p>Rescan your installations, or show all supported games to select a custom location.</p><div><button class="primary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan games</button><button class="secondary-button" onclick={() => { showAll = true; }}>Show supported games</button></div></div>{/if}
     <div class="game-grid">
       {#each games as game (game.id)}
+        {@const liveLabel=gameIntegrationLiveLabel(game)}
         <article class={['game-tile', { unavailable: !game.installed, rally: game.id === 'assetto-corsa-rally' }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
             <div class="game-art"><div class="art-grid"></div><span class="art-category">{game.provider === 'assetto-corsa-rally' ? 'Rally' : 'Flight'}</span>
@@ -157,7 +159,16 @@
               {:else}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="m0 107 65-67 48 45 64-65 90 72 39-33 34 35" stroke="currentColor" opacity=".2"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="36" opacity=".08"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="1.2" stroke-dasharray="8 7" opacity=".3"/><path d="m139 92 13-19h38l14 19 4 28h-74z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><path d="m151 91 7-12h26l8 12zM139 105h12M192 105h11M150 118h43" stroke="currentColor" stroke-width="1.5"/><path d="M140 122v8h10v-8M192 122v8h10v-8" stroke="currentColor" stroke-width="3"/></svg>{/if}
               <div class="game-wordmark">{game.provider === 'x-plane' ? 'X-PLANE' : game.id === 'dcs' ? 'DCS' : 'ACR'}<span>{game.provider === 'x-plane' ? game.id.slice(-2) : game.id === 'dcs' ? 'WORLD' : 'RALLY'}</span></div>
             </div>
-            <div class="tile-copy"><div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div><p>{game.provider === 'x-plane' ? 'Flight telemetry · Indicators & displays' : game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p><div class="tile-footer"><span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span><span>Unified profile selection</span></div><div class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></div>{#if game.id === 'assetto-corsa-rally' && game.installed}<div class={['tile-verification', { verified: gameIntegrationNativeVerified(game) }]}>{gameIntegrationVerificationLabel(game)}</div>{/if}{#if game.installed}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{gameIntegrationLiveLabel(game)}</div>{/if}</div>
+            <div class="tile-copy">
+              <div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div>
+              <p>{game.provider === 'x-plane' ? 'Flight telemetry · Indicators & displays' : game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p>
+              <div class="tile-footer">
+                <span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span>
+                <span class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></span>
+              </div>
+              {#if game.id === 'assetto-corsa-rally' && game.installed}<div class={['tile-verification', { verified: gameIntegrationNativeVerified(game) }]}>{gameIntegrationVerificationLabel(game)}</div>{/if}
+              {#if game.installed&&liveLabel}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{liveLabel}</div>{/if}
+            </div>
           </button>
           {#if game.installed}<div class="tile-launch"><GameProfileLaunch {game} busy={locked} compact/></div>{/if}
         </article>
@@ -204,7 +215,7 @@
   .supported-switch input:checked + .switch-track::after { background: var(--accent); transform: translateX(12px); }
   .supported-switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 4px; }
   .game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 980px; }
-  .game-tile { position: relative; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); overflow: hidden; transition: border-color .2s, transform .2s; }
+  .game-tile { display: flex; flex-direction: column; position: relative; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); overflow: hidden; transition: border-color .2s, transform .2s; }
   .game-tile:hover, .game-tile:focus-within { border-color: var(--accent); }
   .tile-details { display: block; width: 100%; padding: 0; text-align: left; color: var(--text); background: transparent; }
   .tile-details:focus-visible { outline-offset: -4px; }
@@ -221,11 +232,12 @@
   .tile-title h2 { font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
   .tile-title :global(svg) { color: var(--muted); }
   .tile-copy p { color: var(--muted); font-size: 10px; margin-top: 9px; line-height: 1.5; }
-  .tile-footer { border-top: 1px solid var(--faint-line); margin-top: 19px; padding-top: 14px; display: flex; justify-content: space-between; color: var(--muted); font-size: 9px; gap: 12px; }
-  .tile-footer > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tile-status { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+  .tile-footer { border-top: 1px solid var(--faint-line); margin-top: 19px; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 9px; gap: 12px; }
+  .tile-status { display: flex; align-items: center; gap: 6px; color: var(--accent); flex-shrink: 0; white-space: nowrap; }
   .tile-status span, .installation-status span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-  .tile-integration, .tile-live { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); margin-top: 11px; }
+  .tile-integration, .tile-live { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); }
+  .tile-integration { min-width: 0; margin-left: auto; justify-content: flex-end; text-align: right; line-height: 1.5; }
+  .tile-integration :global(svg) { flex-shrink: 0; }
   .tile-integration.ready { color: var(--accent); }
   .tile-integration.attention { color: #c5a26e; }
   .tile-live { margin-top: 8px; }
@@ -234,7 +246,7 @@
   .live-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: var(--muted); }
   .live-dot.receiving { background: var(--accent); }
   .live-dot.stale { background: #c5a26e; }
-  .tile-launch {padding:0 20px 18px;}
+  .tile-launch {margin-top:auto;padding:0 20px 18px;}
 
   .unavailable .game-art { opacity: .42; filter: grayscale(1); }
   .unavailable .tile-copy { opacity: .5; }
