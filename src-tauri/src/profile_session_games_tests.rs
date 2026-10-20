@@ -424,6 +424,55 @@ fn missing_wrong_game_and_unadvertised_contracts_never_open_sources() {
 struct ProcessFixture {
     process: Mutex<Option<crate::game_discovery::ProcessIdentity>>,
 }
+struct AcrProcessFixture {
+    game:Value,
+    process:crate::game_discovery::ProcessIdentity,
+}
+impl crate::game_discovery::Platform for AcrProcessFixture {
+    fn integration_setup_supported(&self)->bool{true}
+    fn catalogue(&self,_:&BTreeMap<String,String>)->Vec<Value>{vec![self.game.clone()]}
+    fn validate(&self,_:&str,_:&str)->Result<(),String>{Ok(())}
+    fn launch(&self,_:&Value)->Result<crate::game_discovery::ProcessIdentity,String>{Err("No launch expected".into())}
+    fn find(&self,_:&Value)->Result<Option<crate::game_discovery::ProcessIdentity>,String>{Ok(Some(self.process.clone()))}
+    fn alive(&self,process:&crate::game_discovery::ProcessIdentity)->Result<bool,String>{Ok(process==&self.process)}
+}
+#[test]
+fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_fenced() {
+    for separator in ['\\','/'] {
+        let folder=crate::test_directory();
+        let executable=folder.path().join("acr.exe");
+        fs::write(&executable,b"Authored executable identity fixture, never launched").unwrap();
+        let fingerprint=crate::acr_setup::fingerprint(&executable).unwrap();
+        let paths=crate::games::Paths::in_directory(folder.path());
+        fs::write(&paths.provider_setup,serde_json::to_vec(&json!({"schemaVersion":1,"games":{"assetto-corsa-rally":{
+            "connection":{"source":"shared-memory","freshnessMs":1500},"configuredFingerprint":fingerprint,"verifiedFingerprint":fingerprint
+        }}})).unwrap()).unwrap();
+        let full_path=executable.to_string_lossy().replace(['\\','/'],&separator.to_string());
+        let platform=Arc::new(AcrProcessFixture {
+            game:json!({"id":"assetto-corsa-rally","provider":"assetto-corsa-rally","installed":true,"executable":executable,"launchSupported":true,"processMonitoringSupported":true}),
+            process:crate::game_discovery::ProcessIdentity {pid:42,path:full_path.clone(),epoch:10},
+        });
+        let games=GamesRuntime::new(Arc::new(|request|panic!("Acquisition must not mutate game configuration: {request}")),paths,platform);
+        let game=games.prepare_profile_game_context("assetto-corsa-rally").unwrap().unwrap();
+        assert_eq!(game.proof.process.path,full_path);
+        let descriptors=crate::profile_resource_ports::integration(&game.catalogue).unwrap();
+        let mut plan=empty_plan();source(&mut plan,"assetto-corsa-rally",&descriptors[0]);
+        let mut reader=GameSources::prepare(&plan,Some(game.clone())).unwrap();
+        let mut calls=vec![];
+        reader.acquire_with_acr(&games,|pid,image|{
+            calls.push((pid,image.to_owned()));
+            Ok(Box::new(crate::game_telemetry::FixtureSource::new()))
+        }).unwrap();
+        assert_eq!(calls,vec![(42,"acr.exe".to_owned())]);
+        assert_eq!(reader.game.as_ref().unwrap().proof.process.path,full_path,"Only the transport's basename argument is shortened");
+        reader.stop();
+        let mut forged=game;
+        forged.proof.process.path=format!("different-directory{separator}acr.exe");
+        let mut changed=GameSources::prepare(&plan,Some(forged)).unwrap();
+        assert!(changed.acquire_with_acr(&games,|_,_|panic!("A changed full process path must fail before opening the reader")).is_err());
+        games.shutdown();
+    }
+}
 impl crate::game_discovery::Platform for ProcessFixture {
     fn integration_setup_supported(&self) -> bool {
         true

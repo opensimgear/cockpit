@@ -304,6 +304,12 @@ impl GameSources {
         Ok(result)
     }
     pub(crate) fn acquire(&mut self, games: &GamesRuntime) -> Result<(), String> {
+        self.acquire_with_acr(games, |pid,image|crate::acr_windows::WindowsSource::new_for_image(pid,image)
+            .map(|source|Box::new(source) as Box<dyn crate::game_telemetry::Source>))
+    }
+    fn acquire_with_acr(&mut self, games:&GamesRuntime,
+        mut open_acr:impl FnMut(u32,&str)->Result<Box<dyn crate::game_telemetry::Source>,String>,
+    )->Result<(),String>{
         self.validate_catalogue(true)?;
         let Some(game) = &self.game else {
             return Ok(());
@@ -329,10 +335,9 @@ impl GameSources {
                 source,
             }) => *source = Some(crate::xplane::Source::new(connection, outputs.clone())?),
             Some(Reader::Acr { source, .. }) => {
-                *source = Some(Box::new(crate::acr_windows::WindowsSource::new_for_image(
-                    game.proof.process.pid,
-                    &game.proof.process.path,
-                )?))
+                let path=&game.proof.process.path;
+                let image=path.rsplit(['\\','/']).next().unwrap_or(path);
+                *source=Some(open_acr(game.proof.process.pid,image)?);
             }
             None => {}
         }
