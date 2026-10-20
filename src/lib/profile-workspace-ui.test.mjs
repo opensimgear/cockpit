@@ -30,7 +30,15 @@ test('group and collapsed-port authoring survives atomic Save, reopen, copy, exp
  const exported=modules.get('./profiles').exportProfileDocument(plain(h.store.state.editor.document));assert.deepEqual(JSON.parse(exported).editor,expected);h.store.back();await h.store.beginCopy(id);assert.deepEqual(plain(h.store.state.editor.document.editor),expected);assert.notEqual(h.store.state.editor.document.id,id);assert.deepEqual(plain(h.store.state.editor.assignments),[]);assert.deepEqual(h.calls.map(call=>call[0]),['save','get','get']);
 });
 
-test('Profiles enters a Default-only list with visible Add and native keyboard-operable exact-profile rows',async()=>{const h=harness();await h.store.refresh();const body=html(h.store,h.client);assert.ok(/<h1[^>]*>Profiles<\/h1>/.test(body));assert.match(body,/<button[^>]*>[^]*?Add profile/);assert.match(body,/<button[^>]*aria-label="Edit Default"/);assert.match(body,/<button[^>]*title="Activate saved profile \(hardware only\)"[^>]*aria-label="Activate Default"[^>]*disabled/);assert.ok(body.includes('Built-in · editable'));assert.ok(body.includes('aria-label="Profile selection mode"'));assert.ok(body.includes('Runtime profile status'));assert.ok(!body.includes('Saved revision'));assert.ok(body.includes('Debug'));assert.ok(!body.includes('Profile canvas'));assert.deepEqual(h.calls,[]);});
+test('Profiles enters a Default-only list with visible Add and native keyboard-operable exact-profile rows',async()=>{
+ const h=harness();await h.store.refresh();const body=html(h.store,h.client),plainHtml=body.replace(/<!--[\s\S]*?-->/g,'');
+ assert.ok(/<h1[^>]*>Profiles<\/h1>/.test(body));assert.match(body,/<button[^>]*>[^]*?Add profile/);
+ const row=body.match(/<button[^>]*class="[^"]*\bprofile-row\b[^"]*"[^>]*>/)?.[0];assert.ok(row);assert.match(row,/aria-label="Edit Default"/);assert.match(row,/title="Default"/);
+ assert.match(body,/<button[^>]*title="Activate saved profile \(hardware only\)"[^>]*aria-label="Activate Default"[^>]*disabled/);
+ assert.match(plainHtml,/<strong[^>]*>Default<\/strong>\s*<(span|small)\b[^>]*>Built-in<\/\1>/);
+ assert.ok(!body.includes('Built-in · editable'));assert.doesNotMatch(plainHtml,/>Saved profile<\/(?:span|small)>/);
+ assert.ok(body.includes('aria-label="Profile selection mode"'));assert.ok(body.includes('Runtime profile status'));assert.ok(!body.includes('Saved revision'));assert.ok(body.includes('Debug'));assert.ok(!body.includes('Profile canvas'));assert.deepEqual(h.calls,[]);
+});
 
 test('tile activation applies only the explicit saved target without editor navigation and respects current native admission',async()=>{
  const h=harness();h.docs.set(uid(2),{...blankProfile(uid(2),'Named rig'),revision:7});await h.store.refresh();const row=h.store.state.profiles.find(profile=>profile.id===uid(2)),other=h.store.state.profiles.find(profile=>profile.id===DEFAULT_PROFILE_ID),requests=[],visits=[];
