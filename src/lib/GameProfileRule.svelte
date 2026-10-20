@@ -1,25 +1,26 @@
 <script lang="ts">
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
+  import {notify} from './notifications';
   import {GameProfileContextClient,type GameProfileCandidates} from './game-profile-context';
   import type {DeepReadonly} from './profiles';
   import type {Game} from './games';
   import Icon from './Icon.svelte';
   let{game,active=true,busy=false,client:suppliedClient}:{game:Game;active?:boolean;busy?:boolean;client?:GameProfileContextClient}=$props();
   const client=untrack(()=>suppliedClient)??new GameProfileContextClient(async request=>{const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Matching profiles are unavailable.');return result;});
-  let candidates=$state.raw<DeepReadonly<GameProfileCandidates>|null>(null),profileId=$state(''),loading=$state(false),pending=$state(false),error=$state(''),notice=$state(''),mounted=$state(false);
+  let candidates=$state.raw<DeepReadonly<GameProfileCandidates>|null>(null),profileId=$state(''),loading=$state(false),pending=$state(false),error=$state(''),mounted=$state(false);
   let epoch=0,disposed=false,contextId=untrack(()=>game.id);
   const savedId=$derived(candidates?.preferredProfileId??'');
   const dirty=$derived(!!candidates&&profileId!==savedId);
   const ready=$derived(active&&!busy&&!pending&&!!candidates);
-  function syncGame(){if(game.id===contextId)return;contextId=game.id;epoch++;candidates=null;profileId='';loading=false;pending=false;error='';notice='';}
+  function syncGame(){if(game.id===contextId)return;contextId=game.id;epoch++;candidates=null;profileId='';loading=false;pending=false;error='';}
   $effect(syncGame);
   function accept(value:DeepReadonly<GameProfileCandidates>,preserveDraft=false){const edited=dirty;candidates=value;if(!preserveDraft||!edited)profileId=value.preferredProfileId??'';}
   async function refresh(){if(disposed||!active||loading||pending)return;const requestEpoch=++epoch,gameId=game.id;loading=true;try{const value=await client.candidates(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId)return;accept(value,true);error='';}catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId)error=cause instanceof Error?cause.message:String(cause);}finally{if(!disposed&&epoch===requestEpoch)loading=false;}}
   async function chooseProfile(value:string){
     if(disposed||!ready||value===savedId||value&&!candidates!.profiles.some(profile=>profile.id===value))return;
-    const requestEpoch=++epoch,gameId=game.id;profileId=value;loading=false;pending=true;notice='';error='';
-    try{const result=value?await client.savePreference(gameId,value):await client.removePreference(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId)return;accept(result);notice=value?'Profile choice remembered.':'Remembered choice removed. You will be asked when multiple profiles match.';}
+    const requestEpoch=++epoch,gameId=game.id;profileId=value;loading=false;pending=true;error='';
+    try{const result=value?await client.savePreference(gameId,value):await client.removePreference(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId)return;accept(result);notify(value?'Auto selection saved':'Auto selection cleared');}
     catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId){profileId=savedId;error=cause instanceof Error?cause.message:String(cause);}}
     finally{if(!disposed&&epoch===requestEpoch)pending=false;}
   }
@@ -35,10 +36,10 @@
   </div>
   {#if candidates}
     {#if candidates.profiles.length}<ul class="matching-profiles" aria-label={`Profiles for ${game.name}`}>
-      {#each candidates.profiles as profile (profile.id)}<li class="profile-tile" class:remembered={profile.id===savedId}><span class="profile-mark"><Icon name="network" size={18}/></span><div class="profile-copy"><span class="profile-name" title={profile.name}>{profile.name}</span>{#if profile.id===savedId}<span class="choice-badge"><Icon name="check" size={14}/>Remembered</span>{:else if candidates.profiles.length===1}<span class="choice-badge"><Icon name="zap" size={14}/>Automatic</span>{/if}</div></li>{/each}
+      {#each candidates.profiles as profile (profile.id)}<li class="profile-tile" class:remembered={profile.id===savedId}><span class="profile-mark"><Icon name="network" size={18}/></span><div class="profile-copy"><span class="profile-name" title={profile.name}>{profile.name}</span>{#if profile.id===savedId}<span class="choice-badge"><Icon name="check" size={14}/>Auto select</span>{:else if candidates.profiles.length===1}<span class="choice-badge"><Icon name="zap" size={14}/>Automatic</span>{/if}</div></li>{/each}
     </ul>{:else}<p class="rule-help">No matching profiles. Launch uses Default for hardware only. Set a profile’s game context in the profile editor to add it here.</p>{/if}
   {:else}<p class="rule-help rule-status" role="status"><Icon name={loading?'refresh':'info'} size={14}/><span>{loading?'Loading matching profiles…':'Matching profiles will appear here.'}</span></p>{/if}
-  {#if notice}<p class="rule-help rule-status" role="status"><Icon name="check" size={14}/><span>{notice}</span></p>{/if}{#if error}<p class="rule-warning" role="alert"><Icon name="alert" size={14}/><span>{error}</span><button class="text-button" disabled={loading||pending} onclick={refresh}><Icon name="refresh" size={14}/>Retry</button></p>{/if}
+  {#if error}<p class="rule-warning" role="alert"><Icon name="alert" size={14}/><span>{error}</span><button class="text-button" disabled={loading||pending} onclick={refresh}><Icon name="refresh" size={14}/>Retry</button></p>{/if}
 </section>
 <style>
   .game-profile-rule{padding:20px;margin-bottom:20px;min-width:0;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6)}
