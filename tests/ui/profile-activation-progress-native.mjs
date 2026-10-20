@@ -60,7 +60,7 @@ test('real native progress covers physical activation, exact cancellation, recov
           const target=(await targets()).find(target=>target.type==='page'&&target.url.includes('profile-activation-window'));
           if(target&&target.id!==lastTarget){surface?.close();surface=await connectTarget(target);lastTarget=target.id;}
           if(target&&surface){
-            const snapshot=await surface.evaluate(`(async()=>{const state=await window.__TAURI_INTERNALS__.invoke('profile_activation_window_state'),main=document.querySelector('main'),button=main?.querySelector('button'),status=main?.querySelector('[role="status"]');return state?.progress.phase===${JSON.stringify(phase)}&&button&&status?{state,text:status.textContent.trim(),button:button.textContent.trim(),disabled:button.disabled,children:[...main.children].map(node=>node.tagName),headings:main.querySelectorAll('h1,h2,h3,.profile-name,.activation-heading,.progress-track,footer').length,width:innerWidth,height:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth||document.documentElement.scrollHeight>innerHeight}:null;})()`);
+            const snapshot=await surface.evaluate(`(async()=>{if(!window.__TAURI_INTERNALS__?.invoke)return null;const state=await window.__TAURI_INTERNALS__.invoke('profile_activation_window_state'),main=document.querySelector('main'),status=main?.querySelector('[role="status"]');return state?.progress.phase===${JSON.stringify(phase)}&&status?{state,text:status.textContent.trim(),buttons:main.querySelectorAll('button').length,children:[...main.children].map(node=>node.tagName),headings:main.querySelectorAll('h1,h2,h3,.profile-name,.activation-heading,.progress-track,footer').length,width:innerWidth,height:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth||document.documentElement.scrollHeight>innerHeight}:null;})()`);
             if(snapshot&&!observation.snapshots.some(row=>row.text===snapshot.text)){
               observation.snapshots.push(snapshot);
               if(observation.snapshots.length===1)await screenshot(`native-${phase}-progress.png`,surface).catch(()=>{});
@@ -86,7 +86,7 @@ test('real native progress covers physical activation, exact cancellation, recov
       observation.events=await native.evaluate('window.__profileCleanupEvidence.events');
       assert.ok(observation.events.some(event=>event.type==='finish'&&event.activationId===operationId&&!event.error),`Actual ${phase} did not finish its exact cleanup request.`);
       assert.ok(observation.snapshots.length,`The native ${phase} window did not render live cleanup status.`);
-      for(const snapshot of observation.snapshots){assert.equal(snapshot.state.progress.operationId,operationId);assert.equal(snapshot.state.progress.canCancel,false);assert.equal(snapshot.disabled,true);assert.equal(snapshot.button,'Cleaning up…');assert.deepEqual(snapshot.children,['P','BUTTON']);assert.equal(snapshot.headings,0);assert.equal(snapshot.overflow,false);assert.ok(snapshot.width>=580&&snapshot.width<=620);assert.ok(snapshot.height>=60&&snapshot.height<=90);assert.ok(snapshot.text);}
+      for(const snapshot of observation.snapshots){assert.equal(snapshot.state.progress.operationId,operationId);assert.equal(snapshot.state.progress.canCancel,false);assert.equal(snapshot.buttons,0);assert.deepEqual(snapshot.children,['P']);assert.equal(snapshot.headings,0);assert.equal(snapshot.overflow,false);assert.ok(snapshot.width>=580&&snapshot.width<=620);assert.ok(snapshot.height>=60&&snapshot.height<=90);assert.ok(snapshot.text);}
       return observation;
     }finally{
       finished=true;await collect;surface?.close();
@@ -175,7 +175,7 @@ test('real native progress covers physical activation, exact cancellation, recov
     await screenshot('activation-success.png');evidence.deactivationProgress=await cleanupProgress(`Deactivate ${profileName}`,'deactivating');await until(async()=>(await profileStatus()).owner===null,'Deactivate did not release the profile');await ready(original.publicationHash);
     evidence.checks.push('An explicit retry activates the physical panel, closes native progress on success and Deactivate restores the original panel');
     assert.ok(evidence.recoveryProgress,'Cold-download cancellation must exercise the actual Recover progress path.');
-    evidence.checks.push('Actual Deactivate and Recover each open the same compact native window, report recorded cleanup steps, disable cancellation, close the exact operation and restore the ordinary physical panel');
+    evidence.checks.push('Actual Deactivate and Recover each open the same compact native window with status text only and no button, report recorded cleanup steps, close the exact operation and restore the ordinary physical panel');
   }catch(error){evidence.error=error.message;await checkpoint(`Acceptance failed: ${error.message}`);await screenshot('failure.png').catch(()=>{});if(child)await screenshot('failure-window.png',child).catch(()=>{});throw error;}
   finally{
     try{

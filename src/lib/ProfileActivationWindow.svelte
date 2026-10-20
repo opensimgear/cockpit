@@ -52,7 +52,7 @@
 <div class:light class="cockpit activation-window">
   <main aria-label="Profile operation progress">
     <p class:warning={!!error} role="status" aria-live="polite" title={status}>{status}</p>
-    <button class="secondary-button" disabled={!canCancel} onclick={() => void cancel()}>{cleaningUp ? 'Cleaning up…' : cancelling ? 'Cancelling…' : 'Cancel'}</button>
+    {#if !cleaningUp}<button class="secondary-button" disabled={!canCancel} onclick={() => void cancel()}>{cancelling ? 'Cancelling…' : 'Cancel'}</button>{/if}
   </main>
 </div>
 
