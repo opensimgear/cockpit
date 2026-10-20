@@ -72,7 +72,6 @@
 
 <div class="unified-launch" class:compact aria-label={`Unified profile launch for ${game.name}`}>
   <div class="launch-actions"><button class="primary-button" disabled={disabled} aria-label={`Launch ${game.name}`} onclick={launch}><Icon name={launching?'refresh':'play'} size={14}/>{launching?'Preparing launch…':'Launch'}</button></div>
-  {#if !compact}<p class="launch-help">A profile with this game context is activated before launch. With multiple matching profiles, choose one or use your remembered choice. When no profiles match, Default provides hardware only.</p>{/if}
   {#if unavailable}<p class="launch-help">{unavailable}</p>{/if}
   {#if message}<p class="launch-message" role="status" aria-live="polite">{message}</p>{/if}
   {#if status}<p class="launch-help">{statusLabel(status)}</p>{#if status.degradation.length}<ul class="launch-degradation" aria-label="Unavailable profile branches">{#each status.degradation as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}{#if status.fault}<p class="launch-error" role="status">{status.fault}</p>{/if}{/if}
