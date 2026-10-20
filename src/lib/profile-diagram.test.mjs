@@ -99,10 +99,24 @@ test('joystick axes and direct buttons do not look merged at a shared controller
   const nodes=placed([{nodeId:'right',x:0,y:156},{nodeId:'left',x:0,y:468},{nodeId:'roll',x:432,y:0},{nodeId:'pitch',x:432,y:312},{nodeId:'collective',x:432,y:624},{nodeId:'controller',x:864,y:312}]);
   const bindings=[edge('right','roll'),edge('right','pitch'),edge('right','controller'),edge('left','collective'),edge('left','controller'),edge('roll','controller'),edge('pitch','controller'),edge('collective','controller')];
   const routes=verifyRoutes(nodes,bindings),verticalOwners=new Map();
+  for(const node of nodes){
+    const outgoing=routes.filter(route=>route.binding.from.nodeId===node.id).sort((a,b)=>a.points[0].y-b.points[0].y);
+    const incoming=routes.filter(route=>route.binding.to.nodeId===node.id).sort((a,b)=>a.points.at(-1).y-b.points.at(-1).y);
+    for(let i=1;i<outgoing.length;i++)assert.ok(outgoing[i-1].points.at(-1).y<=outgoing[i].points.at(-1).y,'Source attachments must follow final destination attachment order');
+    for(let i=1;i<incoming.length;i++)assert.ok(incoming[i-1].points[0].y<=incoming[i].points[0].y,'Destination attachments must follow actual source attachment order');
+  }
+
   for(const route of routes)for(let i=1;i<route.points.length;i++){
     const a=route.points[i-1],b=route.points[i];if(a.x!==b.x)continue;
     assert.ok(!verticalOwners.has(a.x)||verticalOwners.get(a.x)===route.binding.id,'Separate connections need separate bend columns');
     verticalOwners.set(a.x,route.binding.id);
+  }
+  for(let i=0;i<routes.length;i++)for(let j=i+1;j<routes.length;j++)for(let a=1;a<routes[i].points.length;a++)for(let b=1;b<routes[j].points.length;b++){
+    let p=routes[i].points[a-1],q=routes[i].points[a],r=routes[j].points[b-1],s=routes[j].points[b];
+    if(p.x===q.x&&r.y===s.y)[p,q,r,s]=[r,s,p,q];
+    if(p.y!==q.y||r.x!==s.x)continue;
+    const intersects=r.x>Math.min(p.x,q.x)&&r.x<Math.max(p.x,q.x)&&p.y>Math.min(r.y,s.y)&&p.y<Math.max(r.y,s.y);
+    assert.equal(intersects,false,`${routes[i].binding.id} crosses ${routes[j].binding.id} despite orderable endpoints`);
   }
   const inputHeights=routes.filter(route=>route.binding.to.nodeId==='controller').map(route=>route.points.at(-1).y).sort((a,b)=>a-b);
   for(let i=1;i<inputHeights.length;i++)assert.ok(inputHeights[i]-inputHeights[i-1]>=20);

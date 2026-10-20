@@ -75,13 +75,22 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
   const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
   for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:{x:from.position.x+width,y:from.position.y+height/2},end:{x:to.position.x,y:to.position.y+height/2}});}
-  for(const node of nodes)for(const side of ['from','to'] as const){
-    const incident=valid.filter(binding=>binding[side].nodeId===node.id).sort((a,b)=>{
-      const peer=(binding:DeepReadonly<ProfileBinding>)=>byId.get(binding[side==='from'?'to':'from'].nodeId)!;
-      return peer(a).position.y-peer(b).position.y||peer(a).position.x-peer(b).position.x||a.id.localeCompare(b.id);
-    });
-    const spacing=Math.min(laneSpacing,(height-48)/Math.max(1,incident.length-1));
-    incident.forEach((binding,index)=>{anchors.get(binding.id)![side==='from'?'start':'end'].y+= (index-(incident.length-1)/2)*spacing;});
+  const attachments=nodes.flatMap(node=>(['to','from'] as const).map(side=>({node,side,incident:valid.filter(binding=>binding[side].nodeId===node.id)})));
+  // Match ordering at the actual opposite attachment, not the other block's top.
+  // An input fan can move a destination above/below a neighbouring block's port.
+  for(let sweep=0;sweep<12;sweep++){
+    let changed=false;
+    for(const side of ['to','from'] as const)for(const group of attachments.filter(group=>group.side===side)){
+      const opposite=(binding:DeepReadonly<ProfileBinding>)=>anchors.get(binding.id)![side==='from'?'end':'start'];
+      group.incident.sort((a,b)=>opposite(a).y-opposite(b).y||opposite(a).x-opposite(b).x||a.id.localeCompare(b.id));
+      const spacing=Math.min(laneSpacing,(height-48)/Math.max(1,group.incident.length-1));
+      group.incident.forEach((binding,index)=>{
+        const attachment=anchors.get(binding.id)![side==='from'?'start':'end'];
+        const y=group.node.position.y+height/2+(index-(group.incident.length-1)/2)*spacing;
+        if(attachment.y!==y)changed=true;attachment.y=y;
+      });
+    }
+    if(!changed)break;
   }
   const xs=new Set(boxes.flatMap(box=>[box.left,box.right]));
   const ys=new Set([...boxes.flatMap(box=>[box.top,box.bottom]),...[...anchors.values()].flatMap(pair=>[pair.start.y,pair.end.y])]);
