@@ -36,9 +36,13 @@ export function gameExecutableName(gameId: GameId): string {
 }
 
 export function gameDisplayPath(path?: string | null): string {
-  if (!path?.startsWith('\\\\?\\')) return path ?? '';
-  if (path.slice(4, 8).toUpperCase() === 'UNC\\') return '\\\\' + path.slice(8);
-  return /^[a-z]:[\\/]/i.test(path.slice(4)) ? path.slice(4) : path;
+  path = path ?? '';
+  if (path.startsWith('\\\\?\\')) {
+    if (path.slice(4, 8).toUpperCase() === 'UNC\\') path = '\\\\' + path.slice(8);
+    else if (/^[a-z]:[\\/]/i.test(path.slice(4))) path = path.slice(4);
+    else return path;
+  }
+  return /^[a-z]:[\\/]/i.test(path) || path.startsWith('\\\\') ? path.replaceAll('/', '\\') : path;
 }
 
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
