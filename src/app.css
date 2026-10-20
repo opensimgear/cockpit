@@ -337,10 +337,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 3px; margi
 .gateway-discovery strong { color: var(--soft); font-size: 12px; font-weight: 500; }
 .gateway-discovery p { font-size: 10px; line-height: 1.7; margin-top: 7px; }
 
-.toast { overflow: hidden; }
-.toast-countdown { position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: var(--accent); transform-origin: left; animation: toast-countdown var(--toast-duration) linear forwards; }
-@keyframes toast-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-
 .gateway-offline { border-style: dashed; }
 .gateway-card-header > .secondary-button { flex-shrink: 0; }
 .gateway-copy { min-width: 0; }
