@@ -8,6 +8,10 @@ use std::collections::BTreeSet;
 
 const ASSIGNMENT: &str = "companion-assignment";
 const RELEASE: &str = "companion-release";
+// USB companions may need to transfer panel images, persist them, render the
+// replacement, and confirm released touch before a neutral baseline exists.
+// Keep this bounded while renewing neutral outputs and checking cancellation.
+const PANEL_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub(super) fn prepare_catalogues(
     hub: &Hub,
@@ -206,7 +210,7 @@ impl NativeProfileHost {
         let hub = self.companions.profile_metadata()?;
         let provider = self.companions.profile_provider();
         let resources = self.resources.clone();
-        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        let deadline = Instant::now() + PANEL_LOAD_TIMEOUT;
         loop {
             self.check_transition(owner)?;
             if let Some(output) = self.run(owner)?.output.as_mut() {
@@ -244,7 +248,7 @@ impl NativeProfileHost {
                 }
             }
             if Instant::now() >= deadline {
-                return Err("The assigned companion did not supply its actual publication, capabilities and fresh neutral baseline before activation.".into());
+                return Err("The assigned companion did not finish loading its panel and supply its actual publication, capabilities and fresh neutral baseline within 60 seconds".into());
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }

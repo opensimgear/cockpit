@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
-  import Notification from './Notification.svelte';
+  import { notify } from './notifications';
   import ProfileRoutingEditor from './ProfileRoutingEditor.svelte';
   import ProfileComponentPalette from './ProfileComponentPalette.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
@@ -66,7 +66,7 @@
   const learningIdle=$derived(!!runtimeState.status&&!runtimeState.stale&&runtimeState.status.owner===null&&!['transitioning','recovery-needed'].includes(runtimeState.status.state));
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
-  onMount(() => { const stop=store.subscribe(next=>workspace=next);if(workspace.view==='list')void store.refresh();return stop; });
+  onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));if(workspace.view==='list')void store.refresh();return()=>{stop();stopSaved();}; });
   onDestroy(() => { navigationCancelled?.();runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
   $effect(()=>{void editorContext;editingName=false;});
@@ -168,7 +168,6 @@
     </div>
   {/if}
   {@render runtimeTools()}
-  {#if workspace.saveMessage}<Notification message={workspace.saveMessage} kind={workspace.saveNotificationKind}/>{/if}
   {#if workspace.diagnostics.length}<div class="profile-diagnostics" role="status">{#each workspace.diagnostics as diagnostic,index (index)}<p>{diagnostic}</p>{/each}</div>{/if}
   {#if workspace.readOnly}<p class="workspace-error" role="status">This library is read-only. Resolve its diagnostics before making changes.</p>{/if}
   {#if notice||workspace.error}<p class="workspace-error" role="alert">{notice||workspace.error}</p>{/if}

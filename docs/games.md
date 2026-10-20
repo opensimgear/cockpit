@@ -131,7 +131,7 @@ Automatic selection is inhibited by deactivation, recovery and faults until the
 corresponding explicit controls are resolved. Game/context loss revokes affected
 integration authority; Automatic reevaluates saved rules and Default fallback.
 
-Use **Profiles → Recover outputs** for unified session recovery. It restores
+Use **Profiles → Recover** for unified session recovery. It restores
 retained ownership and never restarts commands, scripts, timers or hiding from a
 saved run. Offline devices and conflicting external edits can leave recovery
 pending. Reconnect and inspect the reported exact blocker before trying again.

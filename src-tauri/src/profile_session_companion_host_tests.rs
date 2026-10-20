@@ -300,6 +300,8 @@ pub(crate) struct NativeFixture {
     inventory: Option<std::thread::JoinHandle<()>>,
     reply: Arc<std::sync::Mutex<serde_json::Value>>,
     inventory_boundary: InventoryBoundary,
+    baseline_delay_ms: Arc<AtomicU64>,
+    baseline_waiting: Arc<std::sync::atomic::AtomicBool>,
 }
 impl NativeFixture {
     pub(crate) fn new() -> Self {
@@ -429,6 +431,10 @@ impl NativeFixture {
         let stop = quit.clone();
         let reply = Arc::new(std::sync::Mutex::new(json!({})));
         let captured_reply = reply.clone();
+        let baseline_delay_ms = Arc::new(AtomicU64::new(0));
+        let peer_delay = baseline_delay_ms.clone();
+        let baseline_waiting = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let peer_waiting = baseline_waiting.clone();
         let peer = std::thread::spawn(move || {
             let mut opened: Option<serde_json::Value> = None;
             let mut sequence = 0u64;
@@ -445,11 +451,26 @@ impl NativeFixture {
                         peer_hub.now_ms(),
                     );
                     if current["ok"] == true {
+                        let delay = peer_delay.swap(0, Ordering::AcqRel);
+                        if delay > 0 {
+                            // A genuine peer remains connected while loading its
+                            // display, but cannot claim an input baseline yet.
+                            peer_waiting.store(true, Ordering::Release);
+                            let deadline = Instant::now() + std::time::Duration::from_millis(delay);
+                            let mut heartbeat = 0u64;
+                            while Instant::now() < deadline && !stop.load(Ordering::Acquire) {
+                                heartbeat += 1;
+                                let reply = peer_hub.handle_wire(json!({"version":1,"type":"heartbeat","clientId":current["clientId"],"sessionId":current["sessionId"],"generation":current["generation"],"publicationHash":current["publicationHash"],"sequence":heartbeat.to_string()}), "peer", peer_hub.now_ms());
+                                if reply["ok"] != true { break; }
+                                std::thread::sleep(std::time::Duration::from_millis(5));
+                            }
+                            sequence = heartbeat;
+                            peer_waiting.store(false, Ordering::Release);
+                        } else { sequence = 0; }
                         let baseline = json!({"version":1,"type":"baseline","clientId":current["clientId"],"sessionId":current["sessionId"],"generation":current["generation"],"publicationHash":current["publicationHash"],"sequence":"0",
                             "values":controls.iter().map(|c|(c.id.clone(),c.fallback())).collect::<BTreeMap<_,_>>()});
                         if peer_hub.handle_wire(baseline, "peer", peer_hub.now_ms())["ok"] == true {
                             opened = Some(current);
-                            sequence = 0;
                         }
                     }
                 } else if let Some(current) = &opened {
@@ -527,6 +548,8 @@ impl NativeFixture {
             inventory: Some(inventory),
             reply,
             inventory_boundary,
+            baseline_delay_ms,
+            baseline_waiting,
         }
     }
     pub(crate) fn host(&self) -> NativeProfileHost {
@@ -718,6 +741,54 @@ impl Drop for NativeFixture {
         self.companions.shutdown();
         self.controllers.shutdown();
     }
+}
+
+#[test]
+fn companion_panel_loading_can_finish_after_the_old_three_second_deadline() {
+    let fixture = NativeFixture::new();
+    let candidate = fixture.candidate(false);
+    fixture.baseline_delay_ms.store(3_400, Ordering::Release);
+    let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
+    let started = Instant::now();
+    coordinator.apply(candidate).unwrap();
+    assert!(started.elapsed() >= std::time::Duration::from_millis(3_400));
+    assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
+    assert!(coordinator.status().fault.is_none());
+    let status = fixture.hub.command(&json!({"command":"companion_status"})).unwrap();
+    assert_eq!(status["instances"][0]["publicationHash"], fixture.desired.publication_hash);
+    assert_eq!(status["instances"][0]["armed"], true);
+    coordinator.stop().unwrap();
+    assert_eq!(fixture.hub.assignment_snapshot(&["instance".into()]).unwrap()["assignments"][0]["publicationHash"], fixture.original.publication_hash);
+}
+
+#[test]
+fn native_control_cancels_a_loading_companion_without_waiting_for_its_deadline() {
+    let fixture = NativeFixture::new();
+    let candidate = fixture.candidate(false);
+    fixture.baseline_delay_ms.store(10_000, Ordering::Release);
+    let waiting = fixture.baseline_waiting.clone();
+    let epoch = fixture.epoch.clone();
+    let canceller = std::thread::spawn(move || {
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        while !waiting.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "The peer never began loading its replacement panel");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let cancelled = Instant::now();
+        // Stop/Recover invalidate this atomic epoch before taking the profile
+        // coordinator lock, which is held by the pending activation.
+        epoch.fetch_add(1, Ordering::AcqRel);
+        cancelled
+    });
+    let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
+    let error = coordinator.apply(candidate).unwrap_err();
+    let cancelled = canceller.join().unwrap();
+    assert!(error.contains("cancelled"), "{error}");
+    assert!(cancelled.elapsed() < std::time::Duration::from_secs(1), "Cancellation must interrupt the passive panel wait promptly");
+    assert!(coordinator.status().owner.is_none());
+    assert_eq!(fixture.hub.assignment_snapshot(&["instance".into()]).unwrap()["assignments"][0]["publicationHash"], fixture.original.publication_hash);
+    coordinator.recover().unwrap();
+    assert_eq!(coordinator.status().state, crate::profile_session::State::Stopped);
 }
 
 #[test]

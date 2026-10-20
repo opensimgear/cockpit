@@ -70,7 +70,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
   }
   try{
     await list();
-    if((await status()).state==='recovery-needed')await page.getByRole('button',{name:'Recover outputs',exact:true}).click();
+    if((await status()).state==='recovery-needed')await page.getByRole('button',{name:'Recover',exact:true}).click();
     await native({command:'profile_stop'});
     const modeSwitch=pageActions.getByRole('switch',{name:'Automatic profile selection',exact:true});
     const profileBadge=page.locator('.topbar .profile-status'),modeCard=page.locator('.topbar .profile-mode-status'),modeBadge=modeCard.locator('.mode-value');

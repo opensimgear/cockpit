@@ -141,7 +141,7 @@ replayed.
 **Deactivate** cancels pending activation/launches and releases owned output.
 Cockpit then shows **No profile active**. Choose **Activate** to use a saved
 profile again, or explicitly select Automatic to resume automatic selection.
-**Recover outputs** restores
+**Recover** restores
 retained ownership without restarting mappings or commands. Retired ownership
 cleanup is available in Profile debug.
 

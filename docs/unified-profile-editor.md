@@ -156,7 +156,7 @@ before activating the requested profile.
 **Deactivate** cancels pending activation or launches and releases output. It
 leaves no active profile. Choose **Activate** to use a saved profile again, or
 explicitly select Automatic to resume automatic selection.
-**Recover outputs** performs native cleanup without replaying mappings. Leaving
+**Recover** performs native cleanup without replaying mappings. Leaving
 the editor leaves the active profile alone.
 
 Saved documents retain internal optimistic revisions for concurrency. The

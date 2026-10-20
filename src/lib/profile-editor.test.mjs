@@ -74,16 +74,18 @@ test('copy creation, layout edits, unsaved Back and saved reopening preserve gra
 });
 test('save completion preserves newer edits and advances their optimistic base; a switched editor is untouched',async()=>{
   const h=harness();await h.store.open(DEFAULT_PROFILE_ID);const pending=deferred();h.api.editorSave=()=>pending.promise;
+  const notifications=[];h.store.subscribeSaveNotifications(notification=>notifications.push(notification));
   const first=h.store.save();const newer=plain(h.store.state.editor.document);newer.editor.viewport.x=40;h.store.update(newer);
   pending.resolve(savedResult({...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:2}));await first;
   assert.equal(h.store.state.editor.document.editor.viewport.x,40);assert.equal(h.store.state.editor.document.revision,2);assert.equal(h.store.state.editor.baseRevision,2);assert.equal(profileEditorDirty(h.store.state.editor),true);
   const pending2=deferred();h.api.editorSave=()=>pending2.promise;const second=h.store.save();h.store.back(true);await h.store.beginCopy(DEFAULT_PROFILE_ID);const copyId=h.store.state.editor.document.id;
-  pending2.resolve(savedResult({...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:3}));await second;assert.equal(h.store.state.editor.document.id,copyId);assert.equal(h.store.state.editor.baseRevision,null);
+  pending2.resolve(savedResult({...plain(h.docs.get(DEFAULT_PROFILE_ID)),revision:3}));await second;assert.equal(h.store.state.editor.document.id,copyId);assert.equal(h.store.state.editor.baseRevision,null);assert.equal(notifications.length,1,'A stale completion must not notify the replacement editor.');
 });
 
 test('active save accepts applied and failed runtime outcomes as a clean durable save with the native message',async()=>{
   for(const application of [{state:'applied',error:null},{state:'failed',error:'Profile saved, but its running changes could not be applied: Required controller is offline. Reconnect it, then save again.'}]){
     const h=harness();await h.store.open(DEFAULT_PROFILE_ID);
+    const notifications=[];h.store.subscribeSaveNotifications(notification=>notifications.push(notification));
     const document=plain(h.store.state.editor.document);document.editor.viewport.x=25;h.store.update(document);
     const save=h.api.editorSave;
     h.api.editorSave=async(...args)=>{
@@ -96,8 +98,7 @@ test('active save accepts applied and failed runtime outcomes as a clean durable
     assert.equal(h.store.state.editor.baseRevision,2);assert.equal(h.store.state.editor.document.revision,2);
     assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.docs.get(DEFAULT_PROFILE_ID).editor.viewport.x,25);
     assert.equal(h.store.state.session.state,'running');assert.equal(h.store.state.session.appliedSnapshot.revision,application.state==='applied'?2:1);
-    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and active changes applied.':application.error.replace('its running changes','its active changes'));
-    assert.equal(h.store.state.saveNotificationKind,application.state==='applied'?'info':'warning');
+    assert.deepEqual(plain(notifications),[{message:application.state==='applied'?'Profile saved and active changes applied.':application.error.replace('its running changes','its active changes'),kind:application.state==='applied'?'info':'warning'}]);
     assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['get','save']);
   }
 });
@@ -105,6 +106,7 @@ test('active save accepts applied and failed runtime outcomes as a clean durable
 test('newer edits rebase and remain dirty after either successful or failed save-time application',async()=>{
   for(const application of [{state:'applied',error:null},{state:'failed',error:'Profile saved, but its running changes could not be applied: Reconnect the required controller, then save again.'}]){
     const h=harness();await h.store.open(DEFAULT_PROFILE_ID);
+    const notifications=[];h.store.subscribeSaveNotifications(notification=>notifications.push(notification));
     const submitted=plain(h.store.state.editor.document);submitted.editor.viewport.x=10;h.store.update(submitted);
     const pending=deferred();h.api.editorSave=()=>pending.promise;const saving=h.store.save();
     const newer=plain(h.store.state.editor.document);newer.editor.viewport.x=90;h.store.update(newer);
@@ -112,20 +114,42 @@ test('newer edits rebase and remain dirty after either successful or failed save
     assert.equal(h.store.state.editor.document.editor.viewport.x,90);assert.equal(h.store.state.editor.baseDocument.editor.viewport.x,10);
     assert.equal(h.store.state.editor.document.revision,2);assert.equal(h.store.state.editor.baseRevision,2);
     assert.equal(profileEditorDirty(h.store.state.editor),true);assert.equal(h.store.state.error,'');
-    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and active changes applied.':application.error.replace('its running changes','its active changes'));
-    assert.equal(h.store.state.saveNotificationKind,application.state==='applied'?'info':'warning');
+    assert.deepEqual(plain(notifications),[{message:application.state==='applied'?'Profile saved and active changes applied.':application.error.replace('its running changes','its active changes'),kind:application.state==='applied'?'info':'warning'}]);
   }
 });
 
 test('saving an inactive empty profile needs no inventory or separate Apply request',async()=>{
   const h=harness();h.store.beginBlank([]);
+  const notifications=[];h.store.subscribeSaveNotifications(notification=>notifications.push(notification));
   const save=h.api.editorSave;h.api.editorSave=async(...args)=>({...await save(...args),saveApplication:{state:'inactive',error:null}});
   await h.store.save();
   assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.editor.document.resources.length,0);
-  assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.store.state.saveMessage,'Profile saved.');assert.equal(h.store.state.saveNotificationKind,'info');assert.equal(h.store.state.error,'');
+  assert.equal(profileEditorDirty(h.store.state.editor),false);assert.deepEqual(plain(notifications),[{message:'Profile saved.',kind:'info'}]);assert.equal(h.store.state.error,'');
   assert.equal(h.store.state.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'stopped');
   assert.equal(h.store.state.session.appliedSnapshot.revision,2);
   assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
+});
+
+test('save notifications are emitted once per committed save and never replayed by inventory polling, edits or remounting',async()=>{
+  const h=harness();h.store.beginBlank([]);
+  const notifications=[],stop=h.store.subscribeSaveNotifications(notification=>notifications.push(notification));
+  let stateUpdates=0;const stopState=h.store.subscribe(()=>stateUpdates++);
+  await h.store.save();const id=h.store.state.editor.document.id;
+  assert.deepEqual(plain(notifications),[{message:'Profile saved.',kind:'info'}]);
+  const afterSave=stateUpdates;
+  for(let poll=0;poll<4;poll++)await h.store.refreshInventory();
+  await h.store.refresh();const renamed=plain(h.store.state.editor.document);renamed.name='Later edit';h.store.update(renamed);
+  assert.ok(stateUpdates>afterSave+10,'The same workspace updates as the 3-second polling loop still occur.');
+  assert.equal(notifications.length,1,'Background updates must not repeat the previous save success.');
+  await h.store.save();assert.deepEqual(plain(notifications),[{message:'Profile saved.',kind:'info'},{message:'Profile saved.',kind:'info'}],'A second actual save with identical feedback is a new event.');
+  stop();h.store.back();await h.store.open(id);
+  const remounted=[];h.store.subscribeSaveNotifications(notification=>remounted.push(notification));
+  await h.store.refreshInventory();assert.deepEqual(remounted,[],'Reopening or resubscribing must not replay a prior save.');
+  const updated=plain(h.store.state.editor.document);updated.name='Newest edit';h.store.update(updated);await h.store.save();
+  assert.deepEqual(plain(remounted),[{message:'Profile saved.',kind:'info'}]);assert.equal(notifications.length,2,'Unmounted notification subscribers are released.');
+  h.api.editorSave=async()=>{throw new Error('Disk unavailable');};await h.store.save();
+  assert.match(h.store.state.error,/Disk unavailable/);assert.equal(remounted.length,1,'Failed saves cannot announce success.');
+  stopState();h.store.dispose();
 });
 test('stale, malformed and failed responses preserve local edits and expose actionable errors',async()=>{
   const h=harness();await h.store.open(DEFAULT_PROFILE_ID);let document=plain(h.store.state.editor.document);document.name='';h.store.update(document);await h.store.save();assert.ok(h.store.state.error);assert.equal(h.calls.filter(c=>Array.isArray(c)&&c[0]==='save').length,0);
