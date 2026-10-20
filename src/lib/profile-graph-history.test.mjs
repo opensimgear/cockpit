@@ -5,6 +5,7 @@ const modules=await loadModules(['./profiles','./profile-inventory','./profile-g
 const {ProfileGraphHistory,ProfileEditorUndo}=modules.get('./profile-graph-history');
 const {ProfileEditorStore}=modules.get('./profile-editor');
 const plain=value=>JSON.parse(JSON.stringify(value));
+const nativeOrder=value=>Array.isArray(value)?value.map(nativeOrder):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,item])=>[key,nativeOrder(item)])):value;
 const initial=()=>({document:{schemaVersion:2,id:'11111111-1111-4111-8111-111111111111',name:'Graph',revision:1,eligibility:{gameIds:[]},resources:[],bindings:[],processingNodes:[],virtualOutputs:[],visibility:[],overrides:[],companionAssignments:[],editor:{positions:[],viewport:{x:0,y:0,zoom:1}}},assignments:[]});
 
 test('groups, collapsed categories and deleting their last member remain undoable across saved revisions',()=>{
@@ -25,6 +26,14 @@ test('history undoes and redoes independent semantic and layout changes with rea
 test('undo followed by an edit discards only the abandoned future and no-op updates create no entries',()=>{
   const history=new ProfileGraphHistory(initial());const next=plain(history.current);next.document.name='First';history.commit(next,'First');next.document.name='Second';history.commit(next,'Second');history.undo();
   const branch=plain(history.current);branch.document.name='Branch';history.commit(branch,'Branch');assert.equal(history.canRedo,false);assert.equal(history.undo().document.name,'First');history.commit(history.current,'No operation');assert.equal(history.canRedo,true);assert.throws(()=>history.commit({...branch,document:{...branch.document,name:'Third'}},' '),/Describe/);
+});
+
+test('object-key ordering creates no history entry or abandoned redo while ordered arrays remain undoable',()=>{
+  const value=initial();value.document.resources=['a','b'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));value.document.editor.groups=[{id:'controls',name:'Controls',members:['a','b']}];
+  const history=new ProfileGraphHistory(value),renamed=plain(value);renamed.document.name='Changed';history.commit(renamed,'Rename');history.undo();assert.equal(history.redoLabel,'Rename');
+  history.commit(nativeOrder(history.current),'Reordered object keys');assert.equal(history.canUndo,false);assert.equal(history.redoLabel,'Rename');history.redo();assert.equal(history.undoLabel,'Rename');
+  history.commit(nativeOrder(history.current),'Reordered object keys again');assert.equal(history.undoLabel,'Rename');history.undo();assert.equal(history.current.document.name,'Graph');
+  const reordered=plain(history.current);reordered.document.editor.groups[0].members.reverse();history.commit(nativeOrder(reordered),'Reverse member order');assert.equal(history.undoLabel,'Reverse member order');assert.equal(history.canRedo,false);assert.deepEqual(plain(history.current.document.editor.groups[0].members),['b','a']);assert.deepEqual(plain(history.undo().document.editor.groups[0].members),['a','b']);
 });
 test('bounded entry and byte budgets drop oldest history without changing the current graph',()=>{
   const history=new ProfileGraphHistory(initial(),3);for(let i=0;i<8;i++){const next=plain(history.current);next.document.name=`Name ${i}`;history.commit(next,'Rename');}assert.equal(history.current.document.name,'Name 7');history.undo();history.undo();assert.equal(history.canUndo,false);assert.equal(history.current.document.name,'Name 5');
@@ -47,6 +56,24 @@ test('actual editor history covers graph/layout changes, Save revision rebasing 
   const renamed=plain(h.store.state.editor.document);renamed.name='Rally';h.undo.edit(renamed,undefined,'Rename profile');const moved=plain(h.store.state.editor.document);moved.editor.viewport={x:120,y:-40,zoom:.7};h.undo.edit(moved,[],'Move canvas');assert.equal(h.undo.status.undoLabel,'Move canvas');
   await h.store.save();assert.equal(h.store.state.editor.baseRevision,2);assert.equal(h.undo.status.canUndo,true);assert.equal(h.undo.step('undo'),true);assert.equal(h.store.state.editor.document.revision,2);assert.equal(h.store.state.editor.document.editor.viewport.x,0);assert.equal(h.undo.step('undo'),true);assert.equal(h.store.state.editor.document.name,'Graph');assert.equal(h.undo.step('redo'),true);assert.equal(h.store.state.editor.document.name,'Rally');assert.equal(h.store.state.session.appliedSnapshot.revision,applied.revision);assert.deepEqual(h.calls,['save']);
   h.store.back(true);assert.equal(h.undo.status.canUndo,false);await h.store.open(h.id);assert.equal(h.undo.status.canRedo,false);assert.equal(h.store.state.editor.document.name,'Rally');
+});
+
+test('native object-key ordering during sync preserves labels and redo without adding an edit',async()=>{
+  const h=editorHarness();await h.store.open(h.id);assert.equal(h.undo.status.canUndo,false);
+  h.store.update(nativeOrder(h.store.state.editor.document),nativeOrder(h.store.state.editor.assignments));assert.equal(h.undo.status.canUndo,false);
+  const renamed=plain(h.store.state.editor.document);renamed.name='Renamed';h.undo.edit(renamed,[],'Rename profile');assert.equal(h.undo.status.undoLabel,'Rename profile');h.undo.step('undo');
+  h.store.update(nativeOrder(h.store.state.editor.document),nativeOrder(h.store.state.editor.assignments));assert.equal(h.undo.status.canUndo,false);assert.equal(h.undo.status.redoLabel,'Rename profile');assert.equal(h.undo.step('redo'),true);assert.equal(h.undo.status.undoLabel,'Rename profile');assert.equal(h.store.state.editor.document.name,'Renamed');
+  const added=plain(h.store.state.editor.document);added.resources=['a','b'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));added.editor.groups=[{id:'controls',name:'Controls',members:['a','b']}];h.undo.edit(added,[],'Add group');
+  const reordered=nativeOrder(h.store.state.editor.document);reordered.editor.groups[0].members.reverse();h.store.update(reordered,[]);assert.equal(h.undo.status.undoLabel,'Edit profile graph');assert.equal(h.undo.step('undo'),true);assert.deepEqual(plain(h.store.state.editor.document.editor.groups[0].members),['a','b']);
+});
+
+test('native ordered Save revision leaves a discovered connection and its exact pins as one undoable edit',async()=>{
+  const h=editorHarness();await h.store.open(h.id);const document=plain(h.store.state.editor.document);document.resources=['source','target'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));const assignments=['source','target'].map(id=>({resourceId:id,sourceId:`native:${id}`,ports:[]}));h.undo.edit(document,assignments,'Add resource blocks');
+  const graph=modules.get('./profile-graph'),observed=direction=>({descriptor:{id:`native:${direction}`,name:direction,direction,contract:{delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null}},contractHash:`sha256:${'1'.repeat(64)}`,routeIds:['native:route'],current:true});
+  let connected=graph.graphSelectProviderPort({document:h.store.state.editor.document,assignments:h.store.state.editor.assignments},'source','native:source',observed('output'));connected=graph.graphSelectProviderPort(connected,'target','native:target',observed('input'));connected=graph.graphConnect(connected,{nodeId:'source',portId:connected.document.resources[0].ports[0].id},{nodeId:'target',portId:connected.document.resources[1].ports[0].id});h.undo.edit(connected.document,connected.assignments,'Connect exact ports');assert.equal(h.undo.status.undoLabel,'Connect exact ports');
+  h.api.editorSave=async(document,revision,assignments)=>{h.calls.push('save');return nativeOrder({...h.result({...plain(document),revision:revision+1}),assignments:plain(assignments)});};
+  await h.store.save();assert.equal(h.store.state.editor.baseRevision,2);assert.equal(h.store.state.editor.document.bindings.length,1);assert.equal(h.undo.status.undoLabel,'Connect exact ports');assert.equal(h.undo.step('undo'),true);assert.equal(h.store.state.editor.document.revision,2);assert.equal(h.store.state.editor.document.bindings.length,0);assert.deepEqual(plain(h.store.state.editor.document.resources.map(resource=>resource.ports.length)),[0,0]);assert.deepEqual(plain(h.store.state.editor.assignments.map(assignment=>assignment.ports.length)),[0,0]);assert.equal(h.undo.status.undoLabel,'Add resource blocks');
+  assert.equal(h.undo.step('redo'),true);assert.equal(h.store.state.editor.document.bindings.length,1);assert.deepEqual(plain(h.store.state.editor.assignments.map(assignment=>assignment.ports.length)),[1,1]);assert.equal(h.undo.status.undoLabel,'Connect exact ports');assert.deepEqual(h.calls,['save']);
 });
 test('inflight Save history keeps newer edits and cannot undo into another editor epoch',async()=>{
   const h=editorHarness();await h.store.open(h.id);const before=plain(h.store.state.editor.document);before.name='Submitted';h.undo.edit(before,[],'Rename');let resolve;h.api.editorSave=()=>new Promise(done=>resolve=done);const saving=h.store.save();assert.equal(h.undo.step('undo'),false);

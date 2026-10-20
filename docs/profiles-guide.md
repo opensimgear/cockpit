@@ -20,8 +20,9 @@ integration to the canvas. **None** removes that association and integration.
 Changing context replaces the integration and its routes in one Undo edit.
 There is no separate integration palette section.
 
-Select exact ports from each block's provider catalogue, connect routes and
-choose **Save profile**. Saving commits the graph and local resource assignments
+Blocks automatically discover and show their available inputs and outputs.
+Drag between their input and output groups to choose the exact ports in a side
+panel, connect the route, and choose **Save profile**. Saving commits the graph and local resource assignments
 together and shows a notification. Saving an inactive profile leaves the active
 profile alone. Choose **Activate** on its tile when ready; it uses the saved game
 context. A game can be closed while hardware remains active and game routes wait.
@@ -69,8 +70,11 @@ Each canvas line is one directed signal route between exact ports. USB, CAN and
 gateway attachment appear as resource metadata. A device observed over USB and
 CAN can retain both connections while Cockpit chooses its current input source.
 
-Select a provider port with **Use this exact port**, then drag **Outputs** onto
-**Inputs / actions**, or use **Connect exact ports**. The bindings table provides
+Drag **Outputs** onto **Inputs / actions**, or start from an input and drag to
+an output. The side panel selects both blocks and lets you search their discovered
+ports by name or ID. Choose the output and input, then create the route. Ports
+are saved automatically with that connection. Cancel or Escape leaves the graph
+unchanged. You can also click a port group or use **Connect exact ports**. The bindings table provides
 a keyboard alternative and lets you edit ports or remove routes. Click a
 connection line to insert a compatible transformation; transformations are not
 palette components. Different types, units, numeric ranges or state/event delivery

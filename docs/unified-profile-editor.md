@@ -63,10 +63,16 @@ heading and resize it by its corner. Collapsible source/input/action sections
 help organize ports. These preferences follow Save, import/export and Undo/Redo,
 whose icon buttons sit at the top of the canvas workspace.
 
-Select a resource and choose **Use this exact port** from its paged provider
-catalogue. Only selected typed ports enter the graph. Large provider catalogues
-stay paged. Cached contracts support offline authoring; runtime admission checks
-current availability. Assigning a copied resource requires an explicit inventory
+Adding an assigned resource automatically discovers its inputs and outputs across
+all provider pages. Blocks show counts and a preview of the available ports.
+Discovery does not create routes or fill the saved graph with unused ports.
+Companions discover the panel selected in the profile, including its prospective
+ports when the companion is offline or currently runs a different panel.
+The connection side panel searches the full catalogue by name or ID; only the
+ports used by a new route are declared and pinned in that same Undo edit.
+Saved ports remain available when a resource disconnects. The inspector's paged
+provider catalogue also supports explicit selection of cached contracts for
+offline authoring. Assigning a copied resource requires an explicit inventory
 choice and a matching provider port for every saved logical port.
 
 Required resources must be available to activate. Optional unavailable routes can
@@ -81,9 +87,12 @@ enablement live in **Settings → Controller and desktop output**.
 
 ## Routes, actions and processing
 
-Drag **Outputs** onto **Inputs / actions**, activate those buttons with the
-keyboard, or choose **Connect exact ports**. Select a concrete source output and
-destination input. Different types, units, ranges and state/event delivery need
+Drag **Outputs** onto **Inputs / actions**, or drag in the opposite direction,
+to open the connection side panel with both blocks selected. Clicking either
+port group, activating it with the keyboard, or choosing **Connect exact ports**
+also opens the panel. Select a source output and destination input, then create
+the route. Cancel or Escape closes the panel without adding ports or routes.
+Different types, units, ranges and state/event delivery need
 an explicit conversion node. An input has one writer; OR or input-priority nodes
 make intentional fan-in visible. Reverse feedback is a separate route.
 

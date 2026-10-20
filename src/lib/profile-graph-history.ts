@@ -5,6 +5,8 @@ import type { ProfileEditorStore } from './profile-editor';
 
 type Entry={label:string;value:ProfileGraphDraft};
 const frozen=<T>(value:T):DeepReadonly<T>=>{if(value&&typeof value==='object'){Object.values(value).forEach(frozen);Object.freeze(value);}return value as DeepReadonly<T>;};
+/** Native Save may reorder object keys. Arrays retain their authored order. */
+const graphStructure=(value:DeepReadonly<ProfileGraphDraft>):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a<b?-1:a>b?1:0)):item);
 /** Bounded local authoring history. It has no persistence or runtime capability. */
 export class ProfileGraphHistory {
   private entries:Entry[]=[];
@@ -22,7 +24,7 @@ export class ProfileGraphHistory {
   commit(value:DeepReadonly<ProfileGraphDraft>,label:string):DeepReadonly<ProfileGraphDraft>{
     const next=graphDraft(value),current=this.current;
     if(next.document.id!==current.document.id||next.document.revision!==current.document.revision)throw new Error('Reset or rebase history when the editor identity or saved revision changes.');
-    if(JSON.stringify(next)===JSON.stringify(current))return current;
+    if(graphStructure(next)===graphStructure(current))return current;
     if(!label.trim())throw new Error('Describe this undoable graph edit.');
     this.entries=this.entries.slice(0,this.cursor+1);this.entries.push({label,value:next});this.cursor++;
     const size=()=>new TextEncoder().encode(JSON.stringify(this.entries)).length;
@@ -49,7 +51,7 @@ export class ProfileEditorUndo {
     const identity=`${editor.document.id}/${this.store.editorEpoch}`,value=graphDraft({document:editor.document,assignments:editor.assignments});
     if(identity!==this.identity||!this.history){this.identity=identity;this.history=new ProfileGraphHistory(value);return this.history;}
     if(this.history.current.document.revision!==editor.document.revision)this.history.rebaseRevision(editor.document.revision);
-    if(JSON.stringify(this.history.current)!==JSON.stringify(value))this.history.commit(value,'Edit profile graph');
+    if(graphStructure(this.history.current)!==graphStructure(value))this.history.commit(value,'Edit profile graph');
     return this.history;
   }
   get status():{canUndo:boolean;canRedo:boolean;undoLabel:string;redoLabel:string}{const history=this.sync();return{canUndo:history?.canUndo??false,canRedo:history?.canRedo??false,undoLabel:history?.undoLabel??'',redoLabel:history?.redoLabel??''};}
