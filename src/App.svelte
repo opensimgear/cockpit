@@ -330,6 +330,7 @@
     } catch { /* A missing saved label never substitutes for native applied identity. */ }
     finally { if (epoch === profileNamesEpoch) profileNamesPending = false; }
   }
+  $effect(() => { if (view === 'games') void refreshProfileNames(); });
   async function refreshProfileStatus() {
     if (disposed || document.hidden) return;
     if (await profileRuntime.refresh()) {
@@ -551,7 +552,7 @@
         {:else if view === 'companions'}
           <!-- Companion editors stay mounted for history navigation. -->
         {:else if view === 'games'}
-          <GamesPanel bind:selectedGameId onNavigate={gameId=>{selectedGameId=gameId;recordRoute();}} status={games} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
+          <GamesPanel bind:selectedGameId onNavigate={gameId=>{selectedGameId=gameId;recordRoute();}} status={games} profiles={profileSummaries} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'devices'}
           <!-- Shared inventory stays mounted during configuration. -->
         {:else if view === 'device' && selected}

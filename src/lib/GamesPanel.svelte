@@ -6,10 +6,12 @@
   import GameProviderSettings from './GameProviderSettings.svelte';
   import GameProfileRule from './GameProfileRule.svelte';
   import GameProfileLaunch from './GameProfileLaunch.svelte';
+  import type {DeepReadonly,ProfileSummary} from './profiles';
   import {gameContextLabel} from './game-provider-settings';
   import {gameExecutableName,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameCleanupLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
-  let {status,busy,request,profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),onNavigate}: {
+  let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),onNavigate}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
+    profiles?:DeepReadonly<ProfileSummary[]>;
     profileBlockedReason?:string;selectedGameId?:GameId|'';returnLabel?:string;returnToEditor?:()=>void;
     onNavigate?:(gameId:GameId|'')=>void;
   }=$props();
@@ -152,6 +154,7 @@
     <div class="game-grid">
       {#each games as game (game.id)}
         {@const liveLabel=gameIntegrationLiveLabel(game)}
+        {@const matchingCount=profiles.filter(profile=>profile.gameIds?.includes(game.id)).length}
         <article class={['game-tile', { unavailable: !game.installed, rally: game.id === 'assetto-corsa-rally' }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
             <div class="game-art"><div class="art-grid"></div><span class="art-category">{game.provider === 'assetto-corsa-rally' ? 'Rally' : 'Flight'}</span>
@@ -166,11 +169,10 @@
                 <span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span>
                 <span class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></span>
               </div>
-              {#if game.id === 'assetto-corsa-rally' && game.installed}<div class={['tile-verification', { verified: gameIntegrationNativeVerified(game) }]}>{gameIntegrationVerificationLabel(game)}</div>{/if}
               {#if game.installed&&liveLabel}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{liveLabel}</div>{/if}
             </div>
           </button>
-          {#if game.installed}<div class="tile-launch"><GameProfileLaunch {game} busy={locked} compact/></div>{/if}
+          <div class="tile-launch"><span class="tile-profile-count">{matchingCount} matching {matchingCount===1?'profile':'profiles'}</span>{#if game.installed}<GameProfileLaunch {game} busy={locked} compact/>{/if}</div>
         </article>
       {/each}
     </div>
@@ -241,12 +243,11 @@
   .tile-integration.ready { color: var(--accent); }
   .tile-integration.attention { color: #c5a26e; }
   .tile-live { margin-top: 8px; }
-  .tile-verification { color: var(--muted); font-size: 9px; margin-top: 8px; }
-  .tile-verification.verified { color: var(--accent); }
   .live-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: var(--muted); }
   .live-dot.receiving { background: var(--accent); }
   .live-dot.stale { background: #c5a26e; }
-  .tile-launch {margin-top:auto;padding:0 20px 18px;}
+  .tile-launch {display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:12px;margin-top:auto;padding:0 20px 18px;}
+  .tile-profile-count {padding-top:11px;color:var(--muted);font-size:9px;line-height:1.5;white-space:nowrap;}
 
   .unavailable .game-art { opacity: .42; filter: grayscale(1); }
   .unavailable .tile-copy { opacity: .5; }
