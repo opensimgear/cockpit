@@ -18,6 +18,7 @@
     "allow-open-vjoy",
     "allow-optional-dependency-install",
     "allow-pick-game-executable",
+    "allow-pick-game-integration-folder",
     "allow-desktop-preferences",
     "allow-set-tray-preferences",
     "allow-set-autostart",

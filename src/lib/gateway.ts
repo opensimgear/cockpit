@@ -98,6 +98,11 @@ export async function pickGameExecutable(gameId: GameId, currentPath?: string | 
   if (!isTauri()) throw new Error('The native file picker is available in the Cockpit desktop app.');
   return invoke<string | null>('pick_game_executable', { gameId, currentPath: currentPath ?? null });
 }
+
+export async function pickGameIntegrationFolder(kind: 'saved-games' | 'catalogue', currentPath?: string | null): Promise<string | null> {
+  if (!isTauri()) throw new Error('The native folder picker is available in the Cockpit desktop app.');
+  return invoke<string | null>('pick_game_integration_folder', { kind, currentPath: currentPath ?? null });
+}
 type GatewayResult = { ok: boolean; state?: GatewayState; error?: string };
 // Each gateway owns its command queue. A blocked serial connection must not
 // hold up discovery or requests for another gateway, including the same backend.

@@ -1,6 +1,169 @@
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[test]
+fn remove_owned_install_restores_original_scripts_and_preserves_other_files() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    fs::create_dir_all(target.join("Scripts")).unwrap();
+    let original = b"-- Existing unrelated exporter\n";
+    fs::write(target.join("Scripts/Export.lua"), original).unwrap();
+    fs::write(target.join("Scripts/Other.lua"), b"external script").unwrap();
+    install_guarded(
+        &target,
+        &work,
+        fixture_files(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    assert!(removal_available(&target, &work).unwrap());
+    remove(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert_eq!(
+        fs::read(target.join("Scripts/Export.lua")).unwrap(),
+        original
+    );
+    assert_eq!(
+        fs::read(target.join("Scripts/Other.lua")).unwrap(),
+        b"external script"
+    );
+    assert!(!target.join("Scripts/DCS-BIOS").exists());
+    assert!(!removal_available(&target, &work).unwrap());
+    assert!(!recovery_pending(&work));
+}
+
+#[test]
+fn remove_reverses_aircraft_repairs_before_the_owned_installation() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    install_guarded(
+        &target,
+        &work,
+        fixture_files(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    mh6_mod(&target);
+    install_guarded(
+        &target,
+        &work,
+        BTreeMap::new(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    assert!(target.join("Scripts").join(aircraft::RELATIVE).exists());
+    remove(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert!(!target.join("Scripts/DCS-BIOS").exists());
+    assert!(!target.join("Scripts/Export.lua").exists());
+    assert!(!target.join("Scripts").join(aircraft::RELATIVE).exists());
+    assert!(target.join("Mods/aircraft/AH-6J/entry.lua").exists());
+}
+
+#[test]
+fn remove_preserves_external_modules_and_refuses_modified_owned_exports() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    fixture_module(&target);
+    assert!(!removal_available(&target, &work).unwrap());
+    assert!(remove(&target, &work, || false, |_, _| {}, || Ok(()))
+        .unwrap_err()
+        .contains("not installed by Cockpit"));
+    install_guarded(
+        &target,
+        &work,
+        BTreeMap::new(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    remove(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert!(target.join("Scripts/DCS-BIOS/BIOS.lua").exists());
+    assert!(!target.join("Scripts/Export.lua").exists());
+
+    let owned = scratch.0.join("Owned");
+    fs::create_dir(&owned).unwrap();
+    install_guarded(
+        &owned,
+        &work,
+        fixture_files(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    let export = owned.join("Scripts/Export.lua");
+    fs::write(&export, b"external replacement export").unwrap();
+    assert!(remove(&owned, &work, || false, |_, _| {}, || Ok(()))
+        .unwrap_err()
+        .contains("preserved"));
+    assert_eq!(fs::read(&export).unwrap(), b"external replacement export");
+    assert!(owned.join("Scripts/DCS-BIOS/BIOS.lua").exists());
+    assert!(!recovery_pending(&work));
+}
+
+#[test]
+fn interrupted_remove_uses_existing_recovery_journal() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    install_guarded(
+        &target,
+        &work,
+        fixture_files(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    let receipts = completed_receipts(&target, &work).unwrap();
+    fs::rename(&receipts[0].1, work.join(JOURNAL)).unwrap();
+    assert!(recovery_pending(&work));
+    assert_eq!(recover(&work).unwrap()["restored"], true);
+    assert!(!target.join("Scripts/DCS-BIOS").exists());
+    assert!(!target.join("Scripts/Export.lua").exists());
+    assert!(!recovery_pending(&work));
+}
+
+#[test]
+fn removed_unrelated_user_folder_does_not_block_owned_integration_removal() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    install_guarded(
+        &target,
+        &work,
+        fixture_files(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    fs::remove_dir_all(&target).unwrap();
+    let other = scratch.0.join("DCS.other");
+    fs::create_dir(&other).unwrap();
+    install_guarded(
+        &other,
+        &work,
+        fixture_files(),
+        &|| false,
+        &|_, _| {},
+        &|| Ok(()),
+    )
+    .unwrap();
+    remove(&other, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert!(!other.join("Scripts/DCS-BIOS").exists());
+    assert!(!recovery_pending(&work));
+}
+
 fn mh6_mod(target: &Path) -> PathBuf {
     let root = target.join("Mods/aircraft/AH-6J");
     fs::create_dir_all(&root).unwrap();

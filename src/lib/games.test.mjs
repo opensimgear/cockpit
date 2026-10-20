@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./games']);
 const games=modules.get('./games');
-const {supportedGames,gameExecutableName,visibleGames,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason,gameCleanupLabel}=games;
+const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason,gameCleanupLabel}=games;
 const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
@@ -23,6 +23,9 @@ test('provider setup, native verification and telemetry freshness remain separat
  for(const [live,label]of [['waiting',''],['receiving','Receiving game data'],['stale','Game data is stale']]){game.integrationSetup.live=live;assert.equal(gameIntegrationLiveLabel(game),label);assert.equal(gameIntegrationReady(game),true);}
  game.installed=false;assert.equal(gameIntegrationLabel(game),'Game not installed');assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationLiveLabel({}),'');
  for(const id of ['x-plane-11','x-plane-12'])assert.equal(gameIntegrationReady({...supportedGames.find(game=>game.id===id),installed:true,integrationSetup:{state:'ready',verified:false}}),true);
+ assert.equal(gameIntegrationInstalled({...dcs(),integrationSetup:{state:'ready',installed:false}}),false);
+ assert.equal(gameIntegrationInstalled({...dcs(),integrationSetup:{state:'needs-attention',installed:true}}),true);
+ assert.equal(gameIntegrationReady({...dcs(),integrationSetup:{state:'needs-attention',installed:true}}),false);
 });
 
 test('ACR verification requires its actual native provider and survives a closed game without inventing fresh data',()=>{

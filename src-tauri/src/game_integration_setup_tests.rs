@@ -1,5 +1,92 @@
 use super::*;
 use crate::game_discovery::ProcessIdentity;
+
+#[test]
+fn remove_native_api_configuration_resets_readiness_without_changing_game_files() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("setup.json");
+    let runtime = GameIntegrationSetup::new(path.clone(), true);
+    let xplane = json!({"id":"x-plane-12","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe"});
+    runtime
+        .request(
+            &json!({"command":"game_integration_setup"}),
+            &xplane,
+            Arc::new(FakePlatform(false)),
+        )
+        .unwrap();
+    let acr = acr_game(&scratch);
+    let executable = Path::new(acr["executable"].as_str().unwrap());
+    let bytes = fs::read(executable).unwrap();
+    acr_record(&runtime, &acr, true);
+    let mut catalogue = vec![xplane.clone(), acr.clone()];
+    runtime.decorate(&mut catalogue);
+    for game in &catalogue {
+        assert_eq!(game["integrationSetup"]["installed"], true);
+        assert_eq!(game["integrationSetup"]["removable"], true);
+    }
+    for game in [&xplane, &acr] {
+        runtime
+            .request(
+                &json!({"command":"game_integration_remove"}),
+                game,
+                Arc::new(FakePlatform(false)),
+            )
+            .unwrap();
+    }
+    runtime.decorate(&mut catalogue);
+    for game in &catalogue {
+        assert_eq!(game["integrationSetup"]["state"], "setup-required");
+        assert_eq!(game["integrationSetup"]["installed"], false);
+        assert_eq!(game["integrationSetup"]["removable"], false);
+    }
+    assert!(read_settings(&path).unwrap()["games"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+    assert_eq!(fs::read(executable).unwrap(), bytes);
+}
+
+#[test]
+fn remove_dcs_blocks_running_game_then_restores_owned_loader_and_preserves_external_module() {
+    let scratch = Scratch::new();
+    let target = scratch.0.join("DCS");
+    fs::create_dir(&target).unwrap();
+    crate::dcs_setup::fixture_module(&target);
+    let path = scratch.0.join("setup.json");
+    let runtime = GameIntegrationSetup::new(path.clone(), true);
+    runtime
+        .request(
+            &json!({"command":"game_integration_setup","userFolder":target}),
+            &game(),
+            Arc::new(FakePlatform(false)),
+        )
+        .unwrap();
+    wait_setup(&runtime);
+    let mut catalogue = vec![game()];
+    runtime.decorate(&mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["installed"], true);
+    assert_eq!(catalogue[0]["integrationSetup"]["removable"], true);
+    let remove = json!({"command":"game_integration_remove","userFolder":target});
+    assert!(runtime
+        .request(&remove, &game(), Arc::new(FakePlatform(true)))
+        .unwrap_err()
+        .contains("Close DCS"));
+    assert!(target.join("Scripts/Export.lua").exists());
+    runtime
+        .request(&remove, &game(), Arc::new(FakePlatform(false)))
+        .unwrap();
+    wait_setup(&runtime);
+    runtime.decorate(&mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["installed"], true);
+    assert_eq!(catalogue[0]["integrationSetup"]["removable"], false);
+    assert!(catalogue[0]["integrationSetup"]["removalMessage"]
+        .as_str()
+        .unwrap()
+        .contains("outside Cockpit"));
+    assert!(target.join("Scripts/DCS-BIOS/BIOS.lua").exists());
+    assert!(!target.join("Scripts/Export.lua").exists());
+    assert!(read_settings(&path).unwrap()["games"]["dcs"].is_null());
+}
 #[test]
 fn xplane_setup_is_repeatable_preserves_overrides_and_separates_live_status() {
     let scratch = Scratch::new();

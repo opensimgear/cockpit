@@ -66,7 +66,7 @@ test('Games loading and repeated remounts do not turn a coalesced status read in
     await h.openGames();
     await h.page.getByRole('switch',{name:'Show all supported',exact:true}).check();
     await h.page.getByRole('button',{name:'Open X-Plane 12 details, installation not found',exact:true}).click();
-    await expect(h.page.getByRole('region',{name:'Game integration setup'}).getByRole('button',{name:'Set up telemetry',exact:true})).toBeDisabled();
+    await expect(h.page.getByRole('region',{name:'Game integration setup'}).getByRole('button',{name:'Install integration',exact:true})).toBeDisabled();
     await h.assertNoFalseNotifications();await h.page.getByRole('button',{name:'All games',exact:true}).click();
     h.releaseInitial();
     await expect(h.page.getByRole('button',{name:'Open X-Plane 12 details',exact:true})).toBeVisible();

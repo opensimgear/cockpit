@@ -56,6 +56,7 @@ fn main() {
             "open_vjoy",
             "optional_dependency_install",
             "pick_game_executable",
+            "pick_game_integration_folder",
             "desktop_preferences",
             "set_tray_preferences",
             "set_autostart",

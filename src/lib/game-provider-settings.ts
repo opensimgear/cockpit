@@ -57,6 +57,18 @@ export function providerSettingsEqual(a: ProviderSettingsDraft, b: ProviderSetti
   return JSON.stringify({ ...a, baseRevision: null }) === JSON.stringify({ ...b, baseRevision: null });
 }
 
+/** Accept untouched remote fields without losing local edits. */
+export function rebaseProviderSettingsDraft(current: ProviderSettingsDraft, base: ProviderSettingsDraft, saved: ProviderSettingsDraft): ProviderSettingsDraft {
+  if (current.gameId !== base.gameId || current.gameId !== saved.gameId) return clone(saved);
+  const next = clone(saved);
+  for (const key of ['userFolder','aircraftModule'] as const) if (current[key] !== base[key]) next[key] = current[key];
+  for (const key of Object.keys(current.connection)) {
+    const local = current.connection as unknown as Record<string, unknown>, before = base.connection as unknown as Record<string, unknown>;
+    if (local[key] !== before[key]) (next.connection as unknown as Record<string, unknown>)[key] = local[key];
+  }
+  return next;
+}
+
 export function prepareProviderSettingsSave(draft: ProviderSettingsDraft): ProviderSettingsSave {
   const error = providerSettingsError(draft); if (error) throw new Error(error);
   const submitted = clone(draft);

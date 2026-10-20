@@ -264,6 +264,7 @@ impl GameIntegrationSetup {
             if id == "dcs" {
                 status["version"] = json!(crate::dcs_setup::VERSION);
             }
+            self.inner.decorate_removal(id, &mut status);
             self.decorate_provider_settings(id, &mut status);
             game["integrationSetup"] = status;
         }
@@ -346,6 +347,9 @@ impl GameIntegrationSetup {
         }
         if let Some(error) = &self.inner.settings_error {
             return Err(error.clone());
+        }
+        if command == "game_integration_remove" {
+            return self.remove(request, game, platform);
         }
         if command == "game_integration_setup" && id.starts_with("x-plane-") {
             if game["installed"] != true {
@@ -468,6 +472,100 @@ impl GameIntegrationSetup {
                 Ok(())
             });
             let mut status = inner.inspect(&game, None);
+            if let Err(error) = result {
+                status["state"] = json!("needs-attention");
+                status["message"] = json!(error);
+            }
+            inner
+                .states
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert("dcs".into(), status);
+            inner.busy.store(false, Ordering::Release);
+        }));
+        Ok(())
+    }
+    fn remove(
+        &self,
+        request: &Value,
+        game: &Value,
+        platform: Arc<dyn Platform>,
+    ) -> Result<(), String> {
+        let id = game["id"].as_str().ok_or("Choose a supported game.")?;
+        if self.pending() {
+            return Err(
+                "Recover the interrupted DCS integration operation before removing integration."
+                    .into(),
+            );
+        }
+        if id != "dcs" {
+            if !matches!(id, "assetto-corsa-rally" | "x-plane-11" | "x-plane-12") {
+                return Err("Choose a supported integration to remove.".into());
+            }
+            // These providers use the game's native APIs and install no game files.
+            let mut saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());
+            let mut draft = saved.clone();
+            draft["games"].as_object_mut().unwrap().remove(id);
+            write_settings(&self.inner.path, &draft)?;
+            *saved = draft;
+            drop(saved);
+            self.refresh(std::slice::from_ref(game));
+            return Ok(());
+        }
+        if platform.find(game)?.is_some() {
+            return Err("Close DCS before removing its integration files.".into());
+        }
+        let checked = self.inner.inspect(game, request.get("userFolder"));
+        let target = folder(&checked["userFolder"])?;
+        reject_game_install_folder(&target, game)?;
+        if !crate::dcs_setup::removal_available(&target, &self.inner.work)? {
+            return Err("This DCS-BIOS installation was not installed by Cockpit. Its files were preserved; remove it with its original installer.".into());
+        }
+        self.inner.cancel.store(false, Ordering::Release);
+        self.inner.busy.store(true, Ordering::Release);
+        self.inner.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id.into(), json!({"state":"setting-up","message":"Removing DCS integration.","progress":"Restoring export scripts and removing owned files","userFolder":target,"version":crate::dcs_setup::VERSION,"installed":true,"removable":true}));
+        let inner = self.inner.clone();
+        let game = game.clone();
+        let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(previous) = worker.take() {
+            let _ = previous.join();
+        }
+        *worker = Some(thread::spawn(move || {
+            let result = crate::dcs_setup::remove(
+                &target,
+                &inner.work,
+                || inner.cancel.load(Ordering::Acquire),
+                |message, percent| {
+                    if let Some(status) = inner
+                        .states
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get_mut("dcs")
+                    {
+                        status["progress"] = json!(message);
+                        status["percent"] = json!(percent);
+                    }
+                },
+                || {
+                    if platform.find(&game)?.is_some() {
+                        Err(
+                            "DCS started during integration removal. Close DCS before continuing."
+                                .into(),
+                        )
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .and_then(|_| {
+                let mut saved = inner.saved.lock().unwrap_or_else(|p| p.into_inner());
+                let mut draft = saved.clone();
+                draft["games"].as_object_mut().unwrap().remove("dcs");
+                write_settings(&inner.path, &draft)?;
+                *saved = draft;
+                Ok(())
+            });
+            let mut status = inner.inspect(&game, Some(&json!(target)));
             if let Err(error) = result {
                 status["state"] = json!("needs-attention");
                 status["message"] = json!(error);
@@ -614,6 +712,36 @@ impl GameIntegrationSetup {
     }
 }
 impl Inner {
+    fn decorate_removal(&self, id: &str, status: &mut Value) {
+        status["installed"] = json!(false);
+        status["removable"] = json!(false);
+        if id != "dcs" {
+            let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner());
+            let installed = saved["games"][id]["connection"].is_object();
+            status["installed"] = json!(installed);
+            status["removable"] = json!(installed && self.native && self.settings_error.is_none());
+            return;
+        }
+        let Some(target) = status["userFolder"].as_str() else {
+            return;
+        };
+        let target = Path::new(target);
+        let present = target.join("Scripts/DCS-BIOS").exists();
+        match crate::dcs_setup::removal_available(target, &self.work) {
+            Ok(owned) => {
+                status["installed"] = json!(present || owned);
+                status["removable"] =
+                    json!(owned && !crate::dcs_setup::recovery_pending(&self.work));
+                if present && !owned {
+                    status["removalMessage"] = json!("This DCS-BIOS installation is managed outside Cockpit. Remove it with its original installer.");
+                }
+            }
+            Err(error) => {
+                status["installed"] = json!(present);
+                status["removalMessage"] = json!(error);
+            }
+        }
+    }
     fn accept_acr_proof(&self, proof: &Value) -> Result<(), String> {
         let mut draft = self.saved.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let record = &mut draft["games"]["assetto-corsa-rally"];

@@ -1162,7 +1162,11 @@ pub(crate) fn recovery_pending(work: &Path) -> bool {
     work.join(JOURNAL).exists()
 }
 fn journal(work: &Path) -> Result<Value, String> {
-    let value: Value = serde_json::from_slice(&read(&work.join(JOURNAL), 2 * 1024 * 1024)?)
+    read_receipt(&work.join(JOURNAL))
+}
+fn read_receipt(path: &Path) -> Result<Value, String> {
+    reject_link(path)?;
+    let value: Value = serde_json::from_slice(&read(path, 2 * 1024 * 1024)?)
         .map_err(|_| "The DCS setup recovery journal is invalid.")?;
     if value["schemaVersion"] != 1
         || value["id"]
@@ -1197,6 +1201,112 @@ fn journal(work: &Path) -> Result<Value, String> {
         }
     }
     Ok(value)
+}
+fn completed_receipts(
+    target: &Path,
+    work: &Path,
+) -> Result<Vec<(std::time::SystemTime, PathBuf, Value)>, String> {
+    let target = checked_target(target)?;
+    if !work.exists() {
+        return Ok(Vec::new());
+    }
+    reject_link(work)?;
+    let mut receipts = Vec::new();
+    for entry in fs::read_dir(work).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let Some(id) = name.to_str().filter(|s| uuid::Uuid::parse_str(s).is_ok()) else {
+            continue;
+        };
+        reject_link(&entry.path())?;
+        let path = entry.path().join("completed.json");
+        if !path.exists() {
+            continue;
+        }
+        let value = read_receipt(&path)?;
+        if value["id"] != id {
+            return Err("A DCS setup receipt does not match its backup folder. Existing files were preserved.".into());
+        }
+        let recorded_target = Path::new(value["target"].as_str().unwrap());
+        // Receipts for a removed or unrelated user folder do not block this installation.
+        if fs::canonicalize(recorded_target).ok().as_ref() == Some(&target) {
+            checked_target(recorded_target)?;
+            let modified = fs::metadata(&path)
+                .and_then(|metadata| metadata.modified())
+                .map_err(|e| e.to_string())?;
+            receipts.push((modified, path, value));
+        }
+    }
+    receipts.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(receipts)
+}
+/// Only completed Cockpit transactions can be uninstalled. External installations remain owned by their installer.
+pub(crate) fn removal_available(target: &Path, work: &Path) -> Result<bool, String> {
+    Ok(!completed_receipts(target, work)?.is_empty())
+}
+fn removal_preflight(work: &Path, value: &Value) -> Result<(), String> {
+    let target = checked_target(Path::new(value["target"].as_str().unwrap()))?;
+    let backup = work.join(value["id"].as_str().unwrap());
+    for (relative, before, after, backup_name) in [
+        (
+            "Export.lua",
+            "exportBefore",
+            "exportAfter",
+            "Export.lua.before",
+        ),
+        (
+            aircraft::RELATIVE,
+            "aircraftBefore",
+            "aircraftAfter",
+            "DCSAircraft.lua.before",
+        ),
+    ] {
+        if value.get(before).is_none() {
+            continue;
+        }
+        let path = target.join("Scripts").join(relative);
+        let mut parent = Some(path.as_path());
+        while let Some(current) = parent {
+            if current == target {
+                break;
+            }
+            reject_link(current)?;
+            parent = current.parent();
+        }
+        let current = if path.exists() {
+            Some(hash(&read(&path, MAX_EXPORT)?))
+        } else {
+            None
+        };
+        if current.as_deref() != value[before].as_str()
+            && current.as_deref() != value[after].as_str()
+        {
+            return Err(format!("{} changed after setup. Integration removal preserved its contents; restore the matching setup version before removing integration.", path.display()));
+        }
+        if let Some(expected) = value[before].as_str() {
+            if hash(&read(&backup.join(backup_name), MAX_EXPORT)?) != expected {
+                return Err("A DCS integration backup failed its integrity check. Existing files were preserved.".into());
+            }
+        }
+    }
+    if value["installModule"] == true {
+        let root = target.join("Scripts/DCS-BIOS");
+        for (relative, expected) in value["files"].as_object().unwrap() {
+            let path = root.join(safe_relative(relative)?);
+            let mut parent = Some(path.as_path());
+            while let Some(current) = parent {
+                if current == target {
+                    break;
+                }
+                reject_link(current)?;
+                parent = current.parent();
+            }
+            if path.exists() && hash(&read(&path, MAX_FILE)?) != expected.as_str().unwrap() {
+                return Err(format!("{} changed after setup. Integration removal preserved the module; restore its installed version before removing integration.", path.display()));
+            }
+        }
+    }
+    Ok(())
 }
 fn clean_owned_tree(root: &Path, files: &Value, conflicts: &mut Vec<String>) -> Result<(), String> {
     if !root.exists() {
@@ -1342,6 +1452,44 @@ pub(crate) fn recover(work: &Path) -> Result<Value, String> {
         return Ok(json!({"restored":true,"conflicts":[]}));
     }
     restore(work, &journal(work)?)
+}
+/// Undo completed transactions in reverse order, using the same durable, byte-checked recovery as interrupted setup.
+pub(crate) fn remove(
+    target: &Path,
+    work: &Path,
+    check: impl Fn() -> bool,
+    progress: impl Fn(&str, u8),
+    write_boundary: impl Fn() -> Result<(), String>,
+) -> Result<(), String> {
+    if recovery_pending(work) {
+        return Err("Recover the interrupted DCS integration operation before removing it.".into());
+    }
+    let receipts = completed_receipts(target, work)?;
+    if receipts.is_empty() {
+        return Err("This DCS-BIOS installation was not installed by Cockpit. Its files were preserved; remove it with its original installer.".into());
+    }
+    let total = receipts.len();
+    for (index, (_, path, value)) in receipts.into_iter().enumerate() {
+        cancelled(&check)?;
+        removal_preflight(work, &value)?;
+        write_boundary()?;
+        progress(
+            "Restoring DCS export scripts and removing owned integration files",
+            (index * 100 / total) as u8,
+        );
+        // Moving the receipt first makes interruption during removal recoverable.
+        fs::rename(&path, work.join(JOURNAL))
+            .map_err(|e| format!("Cannot prepare DCS integration removal: {e}"))?;
+        let restored = restore(work, &value)?;
+        if restored["restored"] != true {
+            return Err(format!(
+                "Integration removal preserved external changes. Recovery is required: {}",
+                restored["conflicts"]
+            ));
+        }
+    }
+    progress("DCS integration removed", 100);
+    Ok(())
 }
 fn install_guarded_for_installation(
     installation: Option<&Path>,

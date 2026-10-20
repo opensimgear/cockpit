@@ -122,6 +122,56 @@ async fn pick_game_executable(
     .map_err(|e| e.to_string())?
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum GameIntegrationFolder {
+    SavedGames,
+    Catalogue,
+}
+
+#[tauri::command]
+async fn pick_game_integration_folder(
+    app: tauri::AppHandle,
+    kind: GameIntegrationFolder,
+    current_path: Option<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    // The Windows shell parser ignores mixed separators even when Path::is_dir
+    // accepts them. Preserve UNC roots when rfd strips a Win32 namespace prefix.
+    #[cfg(windows)]
+    let current_path = current_path.map(|path| {
+        let path = path.replace('/', "\\");
+        path.strip_prefix(r"\\?\UNC\")
+            .map(|rest| format!(r"\\{rest}"))
+            .unwrap_or(path)
+    });
+    let title = match kind {
+        GameIntegrationFolder::SavedGames => "DCS Saved Games folder",
+        GameIntegrationFolder::Catalogue => "DCS-BIOS doc/json directory",
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut picker = app.dialog().file().set_title(title);
+        if let Some(directory) = current_path
+            .as_deref()
+            .map(std::path::Path::new)
+            .filter(|p| p.is_absolute() && p.is_dir())
+        {
+            picker = picker.set_directory(directory);
+        }
+        picker
+            .blocking_pick_folder()
+            .map(|folder| {
+                let path = folder.into_path().map_err(|e| e.to_string())?;
+                path.to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "The folder path is not valid text.".to_owned())
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn optional_dependencies() -> Value {
     optional_dependencies::list()
@@ -222,6 +272,7 @@ pub fn run() {
             open_vjoy,
             optional_dependency_install,
             pick_game_executable,
+            pick_game_integration_folder,
             desktop::desktop_preferences,
             desktop::set_tray_preferences,
             desktop::set_autostart

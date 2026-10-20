@@ -312,6 +312,17 @@ test('native game file selection returns the absolute path or cancellation and d
   const failed=transport({invokeError:new Error('Picker failed')});await assert.rejects(failed.pickGameExecutable('dcs'),/Picker failed/);
 });
 
+test('native integration folder selection forwards the location kind without changing provider setup', async () => {
+  const path = String.raw`C:\Users\Pilot\Saved Games\DCS`;
+  const api = transport({invokeResults: command => command === 'pick_game_integration_folder' ? path : null});
+  assert.equal(await api.pickGameIntegrationFolder('saved-games', path), path);
+  assert.deepEqual(api.calls,[{kind:'invoke',command:'pick_game_integration_folder',args:{kind:'saved-games',currentPath:path}}]);
+  const cancelled=transport({invokeResults:()=>null});assert.equal(await cancelled.pickGameIntegrationFolder('catalogue'),null);
+  assert.deepEqual(cancelled.calls[0].args,{kind:'catalogue',currentPath:null});
+  const browser=transport({desktop:false});await assert.rejects(browser.pickGameIntegrationFolder('saved-games'),/desktop app/);assert.equal(browser.calls.length,0);
+  const failed=transport({invokeError:new Error('Picker failed')});await assert.rejects(failed.pickGameIntegrationFolder('catalogue'),/Picker failed/);
+});
+
 test('discovery is one aggregate request and never changes or disconnects either connection', async () => {
   const api = transport();
   await api.gatewayRequest({ command: 'connect', gatewayId: first, backend: 'stm32', port: 'COM1' });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
 const modules = await loadModules(['./runtime-config','./panel-input-metadata','./games','./game-provider-settings']);
-const { defaultProviderConnection, providerSettingsDraft, providerSettingsError, providerSettingsEqual, prepareProviderSettingsSave, settleProviderSettingsSave, gameContextLabel } = modules.get('./game-provider-settings');
+const { defaultProviderConnection, providerSettingsDraft, providerSettingsError, providerSettingsEqual, prepareProviderSettingsSave, rebaseProviderSettingsDraft, settleProviderSettingsSave, gameContextLabel } = modules.get('./game-provider-settings');
 const plain = value => JSON.parse(JSON.stringify(value));
 const rev = n => `sha256:${String(n).repeat(64)}`;
 const game = (id='dcs', revision=rev(1)) => ({id,name:id,provider:id==='dcs'?'dcs-bios':id.startsWith('x-plane')?'x-plane':'assetto-corsa-rally',installed:false,launchSupported:false,integrationSetup:{state:'setup-required',message:'Setup required',providerSetupRevision:revision,aircraftModule:'A-10C',userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}}});
@@ -59,6 +59,15 @@ test('save response updates a clean editor but never changes a switched/rebased 
   assert.equal(settleProviderSettingsSave(d,save,game('x-plane-12')),d);
   const rebased={...d,baseRevision:rev(3)};assert.equal(settleProviderSettingsSave(rebased,save,returned),rebased);
   assert.throws(()=>settleProviderSettingsSave(d,save,game('dcs',null)),/revision/);
+});
+
+test('remote settings rebase untouched fields while preserving committed and unfinished edits',()=>{
+  const base=draft(),local=plain(base);local.connection.commandPort=7779;local.userFolder='C:\\Saved Games\\DCS';
+  const remote=game('dcs',rev(2));remote.integrationSetup.connection.listenPort=5011;remote.integrationSetup.aircraftModule='F-16C';
+  const saved=providerSettingsDraft(remote),rebased=rebaseProviderSettingsDraft(local,base,saved);
+  assert.equal(rebased.baseRevision,rev(2));assert.equal(rebased.connection.commandPort,7779);assert.equal(rebased.connection.listenPort,5011);assert.equal(rebased.aircraftModule,'F-16C');assert.equal(rebased.userFolder,local.userFolder);
+  rebased.connection.commandPort=7780;assert.equal(local.connection.commandPort,7779);assert.equal(saved.connection.commandPort,7778);
+  const switched=providerSettingsDraft(game('x-plane-12'));assert.deepEqual(plain(rebaseProviderSettingsDraft(local,base,switched)),plain(switched));
 });
 test('setup, process proof, profile readiness and freshness remain distinct', () => {
   const g=game();g.installed=true;g.integrationSetup.state='ready';g.integrationSetup.live='receiving';assert.equal(gameContextLabel(g),'Game context not verified');

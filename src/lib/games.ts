@@ -2,6 +2,7 @@ export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'x-plane';
 export type GameId = 'dcs' | 'assetto-corsa-rally' | 'x-plane-11' | 'x-plane-12';
 export type GameIntegrationSetup = {
   state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
+  installed?: boolean; removable?: boolean; removalMessage?: string;
   message: string; userFolder?: string; candidates?: string[]; version?: string; cataloguePath?: string;
   connection?: Record<string, unknown>; progress?: string; recoveryNeeded?: boolean; repairable?: boolean;
   live?: 'waiting' | 'receiving' | 'stale'; liveMessage?: string; verified?: boolean;
@@ -19,7 +20,7 @@ export type Game = { id: GameId; name: string; provider: GameProvider; installed
 export type GameCleanup = { phase: 'idle' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; retiredProfileId?: string | null; error?: string | null; steps?: string[]; recoveryArchive?: string | null };
 export type DetectedGame = { gameId: GameId; name: string };
 export type GamesState = { detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };
-export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_settings_save';
+export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
 export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
@@ -66,6 +67,10 @@ export function gameIntegrationReady(game: Game): boolean {
   return game.installed && game.integrationSetup?.state === 'ready' && (game.id === 'dcs' || game.provider === 'x-plane' || gameIntegrationNativeVerified(game));
 }
 
+export function gameIntegrationInstalled(game: Game): boolean {
+  return game.integrationSetup?.installed ?? ['ready','needs-attention'].includes(game.integrationSetup?.state??'');
+}
+
 export function gameIntegrationVerificationLabel(game: Game): string {
   return gameIntegrationNativeVerified(game) ? 'Native telemetry verified' : 'Native telemetry not verified';
 }
@@ -93,7 +98,7 @@ export function gameIntegrationTargetError(game: Game, folder: string): string {
   return game.id === 'dcs' ? gameIntegrationFolderError(folder) : '';
 }
 
-export function gameIntegrationSetupRequest(game: Game, command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover', folder: string): GameRequest {
+export function gameIntegrationSetupRequest(game: Game, command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove', folder: string): GameRequest {
   return { command, gameId: game.id, ...(game.id === 'dcs' && folder.trim() ? { userFolder: folder.trim() } : {}) };
 }
 

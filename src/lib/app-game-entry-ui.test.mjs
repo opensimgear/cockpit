@@ -26,7 +26,7 @@ async function component(name){
     if(name==='svelte')return svelte;
     if(dependencies.has(name))return dependencies.get(name);
     if(modules.has(name))return modules.get(name);
-    if(name==='./gateway')return{gatewayRequest:noRequest,pickGameExecutable:noRequest};
+    if(name==='./gateway')return{gatewayRequest:noRequest,pickGameExecutable:noRequest,pickGameIntegrationFolder:noRequest};
     if(name==='./notifications')return{notify:noRequest};
     throw new Error(`Unexpected Games dependency ${name}`);
   });
@@ -69,7 +69,7 @@ test('actual App Games tiles expose unified launch without injecting hardware ta
 
 test('actual App game details retain provider setup and native rule selection without the retired per-game hardware editor',async()=>{
   const{body,props}=await appGames('dcs');
-  for(const label of ['Matching profiles','Matching profiles will appear here.','DCS-BIOS connection and catalogue','Save game settings','aria-label="Launch DCS World"'])assert.ok(body.includes(label),label);
+  for(const label of ['Matching profiles','Matching profiles will appear here.','DCS-BIOS locations','Network and timing','aria-label="Launch DCS World"'])assert.ok(body.includes(label),label);
   for(const label of ['Capture current mappings','Capture current companion','Add hardware profile','Use default profile','Accept binding changes','Deactivate profile'])assert.ok(!body.includes(label),label);
   assert.equal(props.selectedGameId,'dcs');assert.equal('targets' in props,false);assert.equal('readConfig' in props,false);
 });
