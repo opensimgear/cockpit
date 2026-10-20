@@ -1,4 +1,4 @@
-import { profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileEditorGroup, type ProfileLocalAssignment, type ProfilePortContract, type ProfilePortGroup, type ProfileScalarSchema } from './profiles';
+import { profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileEditorGroup, type ProfileEditorGroupBounds, type ProfileLocalAssignment, type ProfilePortContract, type ProfilePortGroup, type ProfileScalarSchema } from './profiles';
 import type { ResourceSummary } from './profile-inventory';
 import type { GameId } from './games';
 import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout, profileCategory } from './profile-editor';
@@ -42,16 +42,78 @@ export function canvasMove(document:DeepReadonly<ProfileDocument>,nodeId:string,
   const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;next.editor.positions=next.editor.positions.filter(p=>p.nodeId!==nodeId);next.editor.positions.push({nodeId,x:clamp(position.x,-1e6,1e6),y:clamp(position.y,-1e6,1e6)});return next;
 }
 export type CanvasGroup = DeepReadonly<ProfileEditorGroup> & {x:number;y:number;width:number;height:number};
-/** Frames follow member positions; groups never change graph identity or routes. */
+const GROUP_WIDTH=440,GROUP_HEIGHT=360,GROUP_GAP=24;
+export const PROFILE_GROUP_MIN_WIDTH=328,PROFILE_GROUP_MIN_HEIGHT=300;
+const boundsOf=(group:Pick<CanvasGroup,'x'|'y'|'width'|'height'>):ProfileEditorGroupBounds=>({x:group.x,y:group.y,width:group.width,height:group.height});
+const overlaps=(a:ProfileEditorGroupBounds,b:ProfileEditorGroupBounds)=>a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;
+/** Old profiles derive their frames without changing the saved document. */
 export function canvasGroups(document:DeepReadonly<ProfileDocument>,nodes:readonly CanvasNode[]):CanvasGroup[]{
-  return(document.editor.groups??[]).flatMap(group=>{const members=nodes.filter(node=>group.members.includes(node.id));if(!members.length)return[];const x=Math.min(...members.map(node=>node.position.x))-20,y=Math.min(...members.map(node=>node.position.y))-44;return[{...group,x,y,width:Math.max(...members.map(node=>node.position.x+PROFILE_BLOCK_WIDTH))-x+20,height:Math.max(...members.map(node=>node.position.y+PROFILE_BLOCK_HEIGHT))-y+20}];});
+  return(document.editor.groups??[]).map((group,index)=>{if(group.bounds)return{...group,...group.bounds};const members=nodes.filter(node=>group.members.includes(node.id));if(!members.length)return{...group,x:index*(GROUP_WIDTH+GROUP_GAP),y:0,width:GROUP_WIDTH,height:GROUP_HEIGHT};const x=Math.min(...members.map(node=>node.position.x))-20,y=Math.min(...members.map(node=>node.position.y))-44;return{...group,x,y,width:Math.max(PROFILE_GROUP_MIN_WIDTH,Math.max(...members.map(node=>node.position.x+PROFILE_BLOCK_WIDTH))-x+20),height:Math.max(PROFILE_GROUP_MIN_HEIGHT,Math.max(...members.map(node=>node.position.y+PROFILE_BLOCK_HEIGHT))-y+20)};});
 }
 function checkedLayout(document:ProfileDocument):ProfileDocument{const error=profileDocumentError(document);if(error)throw new Error(error);return document;}
+function freeBounds(bounds:ProfileEditorGroupBounds,occupied:readonly ProfileEditorGroupBounds[]):ProfileEditorGroupBounds{
+  let next={...bounds,x:clamp(bounds.x,-1e6,1e6),y:clamp(bounds.y,-1e6,1e6)};
+  for(let attempt=0;attempt<2048;attempt++){
+    const conflict=occupied.find(other=>overlaps(next,other));if(!conflict)return next;
+    const x=conflict.x+conflict.width+GROUP_GAP;
+    if(x<=1e6)next.x=x;else{next.x=-1e6;next.y=Math.max(...occupied.map(other=>other.y+other.height))+GROUP_GAP;if(next.y>1e6)break;}
+  }
+  throw new Error('There is no space for another group at these coordinates.');
+}
+/** Materialize legacy layout only as part of an authored action, retaining relative member positions. */
+function groupLayout(document:DeepReadonly<ProfileDocument>):ProfileDocument{
+  const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;
+  const nodes=canvasNodes(document,[],[]),frames=canvasGroups(document,nodes),occupied=frames.filter(group=>group.bounds).map(boundsOf);
+  // Auto-placed blocks must stay still when another block acquires a saved position.
+  for(const node of nodes)if(!next.editor.positions.some(row=>row.nodeId===node.id))next.editor.positions.push({nodeId:node.id,...node.position});
+  for(const group of next.editor.groups??[]){
+    if(group.bounds)continue;const frame=frames.find(candidate=>candidate.id===group.id)!;
+    const bounds=freeBounds(boundsOf(frame),occupied);occupied.push(bounds);group.bounds=bounds;
+    if(bounds.x!==frame.x||bounds.y!==frame.y)for(const member of group.members){const node=canvasNodes(next,[],[]).find(candidate=>candidate.id===member);if(node){next.editor.positions=next.editor.positions.filter(row=>row.nodeId!==member);next.editor.positions.push({nodeId:member,x:clamp(node.position.x+bounds.x-frame.x,-1e6,1e6),y:clamp(node.position.y+bounds.y-frame.y,-1e6,1e6)});}}
+  }
+  return next;
+}
+function nextGroupId(groups:readonly DeepReadonly<ProfileEditorGroup>[]):string{for(let n=1;n<=4096;n++)if(!groups.some(group=>group.id===`group-${n}`))return`group-${n}`;throw new Error('The canvas cannot add another group.');}
+export function canvasCreateGroup(document:DeepReadonly<ProfileDocument>,name:string,at:CanvasPoint={x:0,y:0}):ProfileDocument{
+  if(![at.x,at.y].every(finite))throw new Error('Use finite group coordinates.');
+  const next=groupLayout(document),groups=next.editor.groups??[],bounds=freeBounds({x:at.x,y:at.y,width:GROUP_WIDTH,height:GROUP_HEIGHT},groups.map(group=>group.bounds!));
+  next.editor.groups=[...groups,{id:nextGroupId(groups),name:name.trim(),members:[],bounds}];return checkedLayout(next);
+}
+export function canvasRenameGroup(document:DeepReadonly<ProfileDocument>,id:string,name:string):ProfileDocument{
+  const next=JSON.parse(JSON.stringify(document)) as ProfileDocument,group=next.editor.groups?.find(group=>group.id===id);if(!group)throw new Error('Choose an existing editor group.');group.name=name.trim();return checkedLayout(next);
+}
+/** Hit testing is based on the card center and excludes the group's title bar. */
+export function canvasGroupAt(document:DeepReadonly<ProfileDocument>,point:CanvasPoint):string|null{
+  if(![point.x,point.y].every(finite))throw new Error('Use finite group coordinates.');
+  return canvasGroups(document,canvasNodes(document,[],[])).find(group=>point.x>=group.x&&point.x<=group.x+group.width&&point.y>=group.y+36&&point.y<=group.y+group.height)?.id??null;
+}
+/** A drop is one history action: move the block and update its single group membership. */
+export function canvasMoveIntoGroup(document:DeepReadonly<ProfileDocument>,nodeId:string,position:CanvasPoint):ProfileDocument{
+  const next=canvasMove(groupLayout(document),nodeId,position),saved=next.editor.positions.find(row=>row.nodeId===nodeId)!,id=canvasGroupAt(next,{x:saved.x+PROFILE_BLOCK_WIDTH/2,y:saved.y+PROFILE_BLOCK_HEIGHT/2});
+  for(const group of next.editor.groups??[])group.members=group.members.filter(member=>member!==nodeId);
+  if(id)next.editor.groups!.find(group=>group.id===id)!.members.push(nodeId);return checkedLayout(next);
+}
+export function canvasSetGroupBounds(document:DeepReadonly<ProfileDocument>,id:string,bounds:ProfileEditorGroupBounds):ProfileDocument{
+  const next=groupLayout(document),group=next.editor.groups?.find(group=>group.id===id);if(!group)throw new Error('Choose an existing editor group.');
+  if(next.editor.groups!.some(other=>other.id!==id&&overlaps(bounds,other.bounds!)))throw new Error('Groups cannot overlap.');
+  const nodes=canvasNodes(next,[],[]).filter(node=>group.members.includes(node.id));
+  if(nodes.some(node=>node.position.x+PROFILE_BLOCK_WIDTH/2<bounds.x||node.position.x+PROFILE_BLOCK_WIDTH/2>bounds.x+bounds.width||node.position.y+PROFILE_BLOCK_HEIGHT/2<bounds.y+36||node.position.y+PROFILE_BLOCK_HEIGHT/2>bounds.y+bounds.height))throw new Error('Keep the group large enough for its components.');
+  group.bounds={...bounds};return checkedLayout(next);
+}
+export function canvasResizeGroup(document:DeepReadonly<ProfileDocument>,id:string,size:{width:number;height:number}):ProfileDocument{
+  const frame=canvasGroups(document,canvasNodes(document,[],[])).find(group=>group.id===id);if(!frame)throw new Error('Choose an existing editor group.');return canvasSetGroupBounds(document,id,{x:frame.x,y:frame.y,...size});
+}
+export function canvasMoveGroup(document:DeepReadonly<ProfileDocument>,id:string,position:CanvasPoint):ProfileDocument{
+  if(![position.x,position.y].every(finite))throw new Error('Use finite group coordinates.');
+  let next=groupLayout(document);const group=next.editor.groups?.find(group=>group.id===id);if(!group)throw new Error('Choose an existing editor group.');const bounds=group.bounds!,x=clamp(position.x,-1e6,1e6),y=clamp(position.y,-1e6,1e6),dx=x-bounds.x,dy=y-bounds.y;
+  for(const node of canvasNodes(next,[],[]).filter(node=>group.members.includes(node.id)))next=canvasMove(next,node.id,{x:node.position.x+dx,y:node.position.y+dy});
+  return canvasSetGroupBounds(next,id,{...bounds,x,y});
+}
 export function canvasSaveGroup(document:DeepReadonly<ProfileDocument>,name:string,members:readonly string[],id?:string):ProfileDocument{
   const next=JSON.parse(JSON.stringify(document)) as ProfileDocument,groups=next.editor.groups??[];
   if(id&&!groups.some(group=>group.id===id))throw new Error('Choose an existing editor group.');
-  if(!id){for(let n=1;n<=4096;n++)if(!groups.some(group=>group.id===`group-${n}`)){id=`group-${n}`;break;}}
-  next.editor.groups=[...groups.filter(group=>group.id!==id),{id:id!,name:name.trim(),members:[...members]}];return checkedLayout(next);
+  if(!id)id=nextGroupId(groups);const previous=groups.find(group=>group.id===id);
+  next.editor.groups=[...groups.filter(group=>group.id!==id),{...previous,id,name:name.trim(),members:[...members]}];return checkedLayout(next);
 }
 export function canvasDeleteGroup(document:DeepReadonly<ProfileDocument>,id:string):ProfileDocument{
   const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;if(!next.editor.groups?.some(group=>group.id===id))throw new Error('Choose an existing editor group.');

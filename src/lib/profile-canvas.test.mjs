@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./profile-editor','./profile-canvas']);const{blankProfile,seedProfile}=modules.get('./profile-editor');const{canvasNodes,canvasZoom,canvasPan,canvasFit,canvasMove,canvasStatus,canvasTransports,canvasSearch,scalarLabel,portContractLabel,canvasGameId}=modules.get('./profile-canvas');
+const modules=await loadModules(['./profiles','./profile-editor','./profile-canvas','./profile-graph-history']);const{blankProfile,seedProfile}=modules.get('./profile-editor');const{canvasNodes,canvasZoom,canvasPan,canvasFit,canvasMove,canvasStatus,canvasTransports,canvasSearch,scalarLabel,portContractLabel,canvasGameId}=modules.get('./profile-canvas');
 const id='11111111-1111-4111-8111-111111111111';const plain=v=>JSON.parse(JSON.stringify(v));
 const resource={id:'native:can-usb',name:'Panel',resourceType:'osg-module',availability:'online',connections:[{route:{transport:'can'}},{route:{transport:'usb'}}],attributes:{gateway:'G'},portCount:20000};
 
@@ -22,10 +22,62 @@ test('named editor groups frame their current members and edit independently of 
   const moved=canvasMove(grouped,'a',{x:-100,y:-50}),frame=canvasGroups(moved,canvasNodes(moved,[],[]))[0];assert.equal(frame.x,-120);assert.equal(frame.y,-94);
   const second=canvasSaveGroup(grouped,'Other',['c']);assert.equal(second.editor.groups[1].id,'group-2');
   const updated=canvasSaveGroup(second,'Renamed',['b'],'group-1');assert.deepEqual(plain(updated.editor.groups.find(group=>group.id==='group-1')),{id:'group-1',name:'Renamed',members:['b']});assert.equal(updated.resources.length,3);assert.deepEqual(plain(updated.bindings),[]);
-  for(const [name,members,group]of [['', ['a']],['Good',[]],['Good',['missing']],['Good',['a','a']],['Good',['c']],['Good',['a'],'missing']])assert.throws(()=>canvasSaveGroup(second,name,members,group));
-  assert.throws(()=>canvasDeleteGroup(doc,'missing'),/existing/);assert.equal(canvasDeleteGroup(grouped,'group-1').editor.groups,undefined);assert.equal(canvasGroups({editor:{groups:[{id:'stale',name:'Stale',members:['missing']}]}},[]).length,0);
+  for(const [name,members,group]of [['', ['a']],['Good',['missing']],['Good',['a','a']],['Good',['c']],['Good',['a'],'missing']])assert.throws(()=>canvasSaveGroup(second,name,members,group));
+  assert.throws(()=>canvasDeleteGroup(doc,'missing'),/existing/);assert.equal(canvasDeleteGroup(grouped,'group-1').editor.groups,undefined);assert.equal(canvasGroups({editor:{groups:[{id:'empty',name:'Empty',members:[]}]}},[]).length,1);
   let collapsed=doc;for(const group of ['outputs','inputs','actions']){collapsed=canvasTogglePorts(collapsed,'a',group);assert.equal(canvasPortCollapsed(collapsed,'a',group),true);}assert.equal(canvasPortCollapsed(doc,'a','outputs'),false);assert.equal(collapsed.editor.collapsedPortGroups.length,3);
   collapsed=canvasTogglePorts(collapsed,'a','outputs');assert.equal(canvasPortCollapsed(collapsed,'a','outputs'),false);assert.equal(canvasPortCollapsed(collapsed,'a','inputs'),true);collapsed=canvasTogglePorts(canvasTogglePorts(collapsed,'a','inputs'),'a','actions');assert.equal(collapsed.editor.collapsedPortGroups,undefined);assert.throws(()=>canvasTogglePorts(doc,'missing','outputs'));
+});
+
+test('empty group creation finds a disjoint frame and bounds persist independently of member positions',()=>{
+  const {canvasCreateGroup,canvasRenameGroup,canvasGroups,canvasDeleteGroup,canvasGroupAt}=modules.get('./profile-canvas');
+  const document=blankProfile(id),first=canvasCreateGroup(document,' Controls ',{x:20,y:30}),second=canvasCreateGroup(first,'Outputs',{x:20,y:30});
+  assert.equal(document.editor.groups,undefined);assert.equal(first.editor.groups[0].name,'Controls');assert.deepEqual(plain(first.editor.groups[0].members),[]);
+  const frames=canvasGroups(second,canvasNodes(second,[],[]));assert.equal(frames.length,2);assert.ok(frames[1].x>=frames[0].x+frames[0].width);assert.deepEqual(plain(frames[0].bounds),{x:20,y:30,width:440,height:360});
+  assert.equal(canvasGroupAt(second,{x:60,y:50}),null);assert.equal(canvasGroupAt(second,{x:60,y:90}),'group-1');assert.equal(canvasGroupAt(second,{x:-40,y:-40}),null);assert.throws(()=>canvasGroupAt(second,{x:NaN,y:0}),/finite/);
+  const renamed=canvasRenameGroup(second,'group-1',' Renamed ');assert.equal(renamed.editor.groups[0].name,'Renamed');assert.deepEqual(plain(renamed.editor.groups[0].bounds),plain(first.editor.groups[0].bounds));assert.throws(()=>canvasRenameGroup(second,'missing','Other'),/existing/);assert.throws(()=>canvasRenameGroup(second,'group-1',' '));assert.throws(()=>canvasCreateGroup(document,'Controls',{x:Infinity,y:0}),/finite/);
+  assert.deepEqual(plain(canvasDeleteGroup(second,'group-1').editor.groups[0]),plain(second.editor.groups[1]));
+});
+
+test('dragging a block between groups and outside updates membership and position in one undo action',()=>{
+  const {canvasCreateGroup,canvasMoveIntoGroup,canvasDeleteGroup}=modules.get('./profile-canvas'),{ProfileGraphHistory}=modules.get('./profile-graph-history');
+  const document=blankProfile(id);document.resources=[{id:'wheel',name:'Wheel',kind:'device',required:false,ports:[]}];document.editor.positions=[{nodeId:'wheel',x:-400,y:0}];
+  const initial=canvasCreateGroup(canvasCreateGroup(document,'Controls'),'Outputs'),history=new ProfileGraphHistory({document:initial,assignments:[]});
+  const drop=(position)=>history.commit({document:canvasMoveIntoGroup(history.current.document,'wheel',position),assignments:[]},'Move component');
+  drop({x:40,y:70});assert.deepEqual(plain(history.current.document.editor.groups.map(group=>group.members)),[['wheel'],[]]);
+  drop({x:504,y:70});assert.deepEqual(plain(history.current.document.editor.groups.map(group=>group.members)),[[],['wheel']]);assert.equal(history.current.document.editor.positions[0].x,504);
+  history.undo();assert.deepEqual(plain(history.current.document.editor.groups.map(group=>group.members)),[['wheel'],[]]);assert.equal(history.current.document.editor.positions[0].x,40);history.redo();
+  drop({x:-700,y:70});assert.deepEqual(plain(history.current.document.editor.groups.map(group=>group.members)),[[],[]]);assert.equal(history.current.document.resources.length,1);history.undo();
+  const removed=canvasDeleteGroup(history.current.document,'group-2');assert.equal(removed.resources.length,1);assert.equal(removed.editor.positions[0].x,504);assert.deepEqual(plain(removed.bindings),[]);assert.equal(removed.editor.groups.length,1);
+  assert.throws(()=>canvasMoveIntoGroup(initial,'missing',{x:0,y:0}),/existing/);assert.deepEqual(plain(initial.editor.groups.map(group=>group.members)),[[],[]]);
+});
+
+test('moving a group moves its members, prevents overlap and guards resize bounds without changing routes',()=>{
+  const {canvasCreateGroup,canvasMoveIntoGroup,canvasMoveGroup,canvasResizeGroup,canvasSetGroupBounds}=modules.get('./profile-canvas');
+  const document=blankProfile(id);document.resources=[{id:'wheel',name:'Wheel',kind:'device',required:false,ports:[]}];
+  const initial=canvasMoveIntoGroup(canvasCreateGroup(canvasCreateGroup(document,'Controls'),'Outputs'),'wheel',{x:40,y:70});
+  const moved=canvasMoveGroup(initial,'group-1',{x:-100,y:100});assert.equal(moved.editor.groups[0].bounds.x,-100);assert.deepEqual(plain(moved.editor.positions[0]),{nodeId:'wheel',x:-60,y:170});assert.deepEqual(plain(moved.editor.groups[0].members),['wheel']);assert.deepEqual(plain(moved.bindings),[]);
+  assert.throws(()=>canvasMoveGroup(initial,'group-1',{x:300,y:0}),/overlap/);assert.deepEqual(plain(initial.editor.groups[0].bounds),{x:0,y:0,width:440,height:360});
+  const resized=canvasResizeGroup(initial,'group-1',{width:440,height:500});assert.equal(resized.editor.groups[0].bounds.height,500);
+  assert.throws(()=>canvasResizeGroup(initial,'group-1',{width:600,height:360}),/overlap/);assert.throws(()=>canvasResizeGroup(initial,'group-1',{width:100,height:200}));assert.throws(()=>canvasResizeGroup(initial,'missing',{width:400,height:400}),/existing/);assert.throws(()=>canvasMoveGroup(initial,'missing',{x:0,y:0}),/existing/);assert.throws(()=>canvasMoveGroup(initial,'group-1',{x:NaN,y:0}),/finite/);
+  assert.throws(()=>canvasSetGroupBounds(initial,'group-1',{x:0,y:210,width:440,height:360}),/large enough/);assert.throws(()=>canvasSetGroupBounds(initial,'missing',{x:0,y:0,width:440,height:360}),/existing/);
+});
+
+test('legacy groups stay unchanged on display and become stationary disjoint frames on the first authored drop',()=>{
+  const {canvasGroups,canvasMoveIntoGroup}=modules.get('./profile-canvas'),document=blankProfile(id);
+  document.resources=['a','b'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));document.editor.positions=[{nodeId:'a',x:20,y:50},{nodeId:'b',x:40,y:70}];document.editor.groups=[{id:'a-group',name:'A',members:['a']},{id:'b-group',name:'B',members:['b']}];
+  const before=plain(document),frames=canvasGroups(document,canvasNodes(document,[],[]));assert.ok(frames[0].x+frames[0].width>frames[1].x);assert.deepEqual(plain(document),before);
+  const next=canvasMoveIntoGroup(document,'a',{x:-500,y:-500});assert.deepEqual(plain(document),before);assert.deepEqual(plain(next.editor.groups[0].members),[]);assert.ok(next.editor.groups.every(group=>group.bounds));assert.ok(next.editor.groups[1].bounds.x>=next.editor.groups[0].bounds.x+next.editor.groups[0].bounds.width);assert.equal(next.editor.positions.find(row=>row.nodeId==='b').x,372);
+  const stationary=plain(next.editor.groups[0].bounds),again=canvasMoveIntoGroup(next,'a',{x:-600,y:-600});assert.deepEqual(plain(again.editor.groups[0].bounds),stationary);
+});
+
+test('group drops freeze implicit block positions so unrelated components do not jump with the moved block',()=>{
+  const {canvasMoveIntoGroup,canvasCreateGroup}=modules.get('./profile-canvas'),document=blankProfile(id);
+  document.resources=['a','b','c'].map(id=>({id,name:id,kind:'device',required:false,ports:[]}));
+  const before=canvasNodes(document,[],[]),moved=canvasMoveIntoGroup(document,'a',{x:900,y:1200}),after=canvasNodes(moved,[],[]);
+  const point=node=>({x:node.position.x,y:node.position.y});
+  for(const id of ['b','c'])assert.deepEqual(point(after.find(node=>node.id===id)),point(before.find(node=>node.id===id)));
+  assert.equal(document.editor.positions.length,0);assert.equal(moved.editor.positions.length,3);
+  const grouped=canvasCreateGroup(document,'Controls');for(const node of canvasNodes(grouped,[],[]))assert.deepEqual(point(node),point(before.find(original=>original.id===node.id)));
 });
 test('canvas retains saved blocks and exact graph objects when inventory goes offline or disappears',()=>{const seed=seedProfile(id,[resource]);const online=canvasNodes(seed.document,seed.assignments,[resource]);assert.equal(canvasStatus(online[0]),'Online');assert.deepEqual(plain(canvasTransports(online[0])),['CAN','USB']);const offline=canvasNodes(seed.document,seed.assignments,[]);assert.equal(offline.length,1);assert.match(canvasStatus(offline[0]),/Offline/);assert.equal(offline[0].assignment.sourceId,resource.id);assert.deepEqual(plain(offline[0].position),plain(online[0].position));assert.equal(canvasStatus(canvasNodes(seed.document,[],[])[0]),'Unassigned');assert.equal(canvasStatus(canvasNodes(seed.document,seed.assignments,[{...resource,availability:'unavailable'}])[0]),'Unavailable / dormant');assert.equal(canvasSearch(online,'usb').length,1);assert.equal(canvasSearch(online,'companion').length,0);assert.equal(canvasSearch(online,'  ').length,1);});
 test('missing positions are placed safely below saved nodes and processing/virtual types stay distinct',()=>{const doc=blankProfile(id);doc.resources=[{id:'saved',name:'Saved',kind:'device',required:false,ports:[]},{id:'new',name:'New',kind:'game',required:false,ports:[]}];doc.processingNodes=[{id:'transform',name:'Convert',inputs:[],outputs:[],operation:{kind:'identity'}}];doc.virtualOutputs=[{id:'vjoy',name:'Output',required:false,ports:[],layout:{buttons:[],axes:[],hats:[]}}];doc.editor.positions=[{nodeId:'saved',x:30,y:800}];const nodes=canvasNodes(doc,[],[]);assert.equal(nodes[0].position.y,800);assert.ok(nodes[1].position.y>800+232);assert.equal(canvasStatus(nodes[2]),'Explicit transformation');assert.equal(canvasStatus(nodes[3]),'Profile output');assert.equal(nodes[1].category,'Game integration');const moved=canvasMove(doc,'saved',{x:1e9,y:-1e9});assert.deepEqual(plain(moved.editor.positions.find(p=>p.nodeId==='saved')),{nodeId:'saved',x:1e6,y:-1e6});assert.equal(doc.editor.positions[0].y,800);assert.throws(()=>canvasMove(doc,'missing',{x:0,y:0}),/existing/);assert.throws(()=>canvasMove(doc,'saved',{x:NaN,y:0}),/finite/);});

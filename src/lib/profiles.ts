@@ -54,7 +54,8 @@ export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 
   | { kind: 'script'; source: string; parameters: Record<string, Exclude<ProfileValue, null>> };
 export type ProfileProcessingNode = { id: string; name: string; operation: ProfileOperation; inputs: ProfilePort[]; outputs: ProfilePort[] };
 export type ProfileVirtualOutput = { id: string; name: string; required: boolean; ports: ProfilePort[]; layout: ProfileControllerLayout };
-export type ProfileEditorGroup = { id: string; name: string; members: string[] };
+export type ProfileEditorGroupBounds = { x: number; y: number; width: number; height: number };
+export type ProfileEditorGroup = { id: string; name: string; members: string[]; bounds?: ProfileEditorGroupBounds };
 export type ProfilePortGroup = 'outputs' | 'inputs' | 'actions';
 export type ProfileDocument = {
   schemaVersion: 2; id: string; name: string; revision: number; eligibility: { gameIds: string[] };
@@ -235,7 +236,9 @@ export function profileDocumentError(value: unknown): string {
   const nodeIds = new Set(nodes.map(row => row.id));
   if (!object(value.editor) || !Object.hasOwn(value.editor, 'positions') || !Object.hasOwn(value.editor, 'viewport') || Object.keys(value.editor).some(key => !['positions', 'viewport', 'groups', 'collapsedPortGroups'].includes(key)) || !list(value.editor.positions, 336) || !value.editor.positions.every(row => exact(row, ['nodeId', 'x', 'y']) && identifier(row.nodeId) && nodeIds.has(row.nodeId) && coordinate(row.x) && coordinate(row.y)) || new Set(value.editor.positions.map(row => (row as {nodeId:string}).nodeId)).size !== value.editor.positions.length || !exact(value.editor.viewport, ['x', 'y', 'zoom']) || !coordinate(value.editor.viewport.x) || !coordinate(value.editor.viewport.y) || !finite(value.editor.viewport.zoom) || value.editor.viewport.zoom < 0.1 || value.editor.viewport.zoom > 4) return 'Use bounded editor positions and viewport.';
   const groups = Object.hasOwn(value.editor, 'groups') ? value.editor.groups : [];
-  if (!list(groups, 32) || !Array.from(groups).every(row => exact(row, ['id', 'name', 'members']) && identifier(row.id) && text(row.name) && list(row.members, 336) && row.members.length > 0 && Array.from(row.members).every(member => identifier(member) && nodeIds.has(member))) || new Set(groups.map(row => (row as ProfileEditorGroup).id)).size !== groups.length) return 'Use at most 32 named editor groups with existing block members.';
+  if (!list(groups, 32) || !Array.from(groups).every(row => object(row) && ['id', 'name', 'members'].every(key => Object.hasOwn(row,key)) && Object.keys(row).every(key => ['id','name','members','bounds'].includes(key)) && identifier(row.id) && text(row.name) && list(row.members, 336) && Array.from(row.members).every(member => identifier(member) && nodeIds.has(member)) && (!Object.hasOwn(row,'bounds') || exact(row.bounds,['x','y','width','height']) && coordinate(row.bounds.x) && coordinate(row.bounds.y) && finite(row.bounds.width) && finite(row.bounds.height) && row.bounds.width >= 328 && row.bounds.height >= 300 && row.bounds.width <= 2_001_000 && row.bounds.height <= 2_001_000)) || new Set(groups.map(row => (row as ProfileEditorGroup).id)).size !== groups.length) return 'Use at most 32 named editor groups with bounded frames and existing block members.';
+  const framedGroups = groups.filter(row => (row as ProfileEditorGroup).bounds).map(row => (row as ProfileEditorGroup).bounds!);
+  if (framedGroups.some((bounds,index) => framedGroups.slice(index+1).some(other => bounds.x < other.x+other.width && bounds.x+bounds.width > other.x && bounds.y < other.y+other.height && bounds.y+bounds.height > other.y))) return 'Editor groups cannot overlap.';
   const members = groups.flatMap(row => (row as ProfileEditorGroup).members);
   if (new Set(members).size !== members.length) return 'Each block can belong to only one editor group.';
   const collapsed = Object.hasOwn(value.editor, 'collapsedPortGroups') ? value.editor.collapsedPortGroups : [];

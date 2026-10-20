@@ -14,18 +14,22 @@ canvas to preview its position, then drop it to place the block there. Clicking 
 palette component also adds it. Additions keep the current selection; select the
 new block to open its settings. Offline paired companions and closed games remain
 available. Adding a resource creates no routes. A profile supports 64 resource
-blocks.
+blocks. Palette sections collapse independently. Choose **Game context** in the
+editor header to show that game's entry under **Integrations**, or **None** to
+hide integrations from the palette. This filters components available to add;
+it preserves existing blocks and their mappings.
 
 Select exact ports from each block's provider catalogue, connect routes and
 choose **Save profile**. Saving commits the graph and local resource assignments
 together and shows a notification. Saving an inactive profile leaves the active
-profile alone. Choose **Activate** on its tile or **Activate profile** in the
-editor when ready, with an optional game context in the editor.
+profile alone. Choose **Activate** on its tile when ready. The editor's context
+selector filters the integration palette; game launch supplies the runtime game
+context.
 
 Saving the active profile applies the saved changes
 automatically and keeps its game context and Manual/Automatic selection mode.
 If the changes cannot be applied, they remain saved and Cockpit reports the
-failure; **Retry saved changes** lets you try again. Typing and graph edits
+failure; deactivate and activate the saved profile to try again. Typing and graph edits
 remain local until Save.
 
 A new draft can also copy a saved profile. The copy keeps its graph and layout
@@ -113,9 +117,12 @@ controller routes and read-only telemetry can continue.
 ## Arrange and inspect
 
 The canvas supports pan, zoom, Fit all, search, auto-layout and mouse/keyboard
-block movement. **Editor groups** create named frames with a Focus control.
-Each block belongs to at most one of the 32 groups. Output, input and action
-sections can be collapsed. Layout and grouping follow Save, copy, import/export
+block movement. The palette's **Groups** section lists named frames and provides
+Add, Focus, Rename and Remove controls. Drag components into a frame to join it;
+drag them outside to leave it. Each block belongs to at most one of the 32 groups.
+Frames can move and resize but cannot overlap. Removing a frame keeps its
+components and routes. Output, input and action sections can be collapsed.
+Layout and grouping follow Save, copy, import/export
 and Undo/Redo. Disconnected resources keep their blocks and routes.
 
 Open **Debug** from the list or editor to reach **Profile debug**. It contains

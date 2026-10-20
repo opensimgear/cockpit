@@ -33,9 +33,10 @@ test('editor groups and collapsed categories are optional, bounded and reject st
   const editor={...document.editor,groups:[{id:'controls',name:'Driving controls',members:['wheel','pedals']}],collapsedPortGroups:[{nodeId:'wheel',group:'outputs'},{nodeId:'wheel',group:'inputs'},{nodeId:'wheel',group:'actions'}]};
   document.editor=editor;assert.equal(profileDocumentError(document),'');assert.deepEqual(parseProfileDocument(exportProfileDocument(document)),document);
   assert.equal(profileDocumentError({...document,editor:{...editor,groups:[],collapsedPortGroups:[]}}),'');
+  assert.equal(profileDocumentError({...document,editor:{...editor,groups:[{id:'empty',name:'Empty',members:[]}]}}),'');
   for(const patch of [
     {groups:null},{groups:{}},{groups:Array(1)},{groups:[{id:'controls',name:'Controls',members:Array(1)}]},{groups:[{id:'controls',name:'',members:['wheel']}]},{groups:[{id:'bad id',name:'Controls',members:['wheel']}]},
-    {groups:[{id:'controls',name:'Controls',members:[]}]},{groups:[{id:'controls',name:'Controls',members:['missing']}]},
+    {groups:[{id:'controls',name:'Controls',members:['missing']}]},
     {groups:[{id:'controls',name:'Controls',members:['wheel','wheel']}]},{groups:[{id:'controls',name:'Controls',members:['wheel'],extra:true}]},
     {groups:[{id:'controls',name:'Controls',members:['wheel']},{id:'other',name:'Other',members:['wheel']}]},
     {groups:[{id:'same',name:'Controls',members:['wheel']},{id:'same',name:'Other',members:['pedals']}]},
@@ -48,6 +49,14 @@ test('editor groups and collapsed categories are optional, bounded and reject st
   const many={...document,resources:Array.from({length:33},(_,index)=>({...resource(),id:`node-${index}`}))};
   many.editor={...document.editor,positions:[],groups:many.resources.slice(0,32).map(node=>({id:`group-${node.id}`,name:node.name,members:[node.id]})),collapsedPortGroups:many.resources.flatMap(node=>['outputs','inputs','actions'].map(group=>({nodeId:node.id,group})))};
   assert.equal(profileDocumentError(many),'');many.editor.groups.push({id:'last-group',name:'Last group',members:['node-32']});invalid(many);
+});
+
+test('persisted group frames accept empty groups and touching edges, reject overlaps and malformed geometry',()=>{
+  const document=withResource(),frame={x:0,y:0,width:440,height:360},group={id:'controls',name:'Controls',members:[],bounds:frame};
+  document.editor.groups=[group,{id:'other',name:'Other',members:['wheel'],bounds:{...frame,x:440}}];
+  assert.equal(profileDocumentError(document),'');assert.deepEqual(parseProfileDocument(exportProfileDocument(document)),document);
+  for(const bounds of [null,{},[],{...frame,width:327},{...frame,height:299},{...frame,x:1_000_001},{...frame,y:-1_000_001},{...frame,width:NaN},{...frame,height:Infinity},{...frame,width:2_001_001},{...frame,height:2_001_001},{...frame,extra:true}])invalid({...document,editor:{...document.editor,groups:[{...group,bounds}]}});
+  invalid({...document,editor:{...document.editor,groups:[group,{...document.editor.groups[1],bounds:{...frame,x:439}}]}});
 });
 
 test('saved display summaries are bounded immutable metadata and reject runtime or editor fields', () => {

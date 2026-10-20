@@ -1,4 +1,4 @@
-import {canvasNodes, type CanvasPoint} from './profile-canvas';
+import {canvasMoveIntoGroup, canvasNodes, type CanvasPoint} from './profile-canvas';
 import type {DeepReadonly, ProfileDocument, ProfileLocalAssignment} from './profiles';
 import type {ResourceSummary} from './profile-inventory';
 
@@ -21,5 +21,5 @@ export function profilePlaceComponent(before:DeepReadonly<ProfileDocument>,after
   if(![position.x,position.y].every(value=>Number.isFinite(value)&&Math.abs(value)<=1e6))throw new Error('Drop a component at bounded canvas coordinates.');
   if(![...after.resources,...after.processingNodes,...after.virtualOutputs,...(after.desktopOutputs??[])].some(node=>node.id===nodeId))throw new Error('Place an existing profile component.');
   after.editor.positions=[...canvasNodes(before,[],[]).filter(node=>node.id!==nodeId).map(node=>({nodeId:node.id,...node.position})),{nodeId,...position}];
-  return after;
+  return canvasMoveIntoGroup(after,nodeId,position);
 }

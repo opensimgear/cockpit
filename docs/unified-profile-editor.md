@@ -14,7 +14,10 @@ and drop it at that position, or click its palette entry to add it. Neither meth
 changes the current selection; select the new block when ready to configure it.
 Resource additions create no routes, transformations or device policies. Offline
 paired resources and closed-game integrations remain available, with up to 64
-resource blocks.
+resource blocks. Sections collapse independently, with **Groups** first and
+**Integrations** next. The header's **Game context** selector filters integrations
+to one supported game; **None** hides them. It leaves existing graph components
+and eligibility unchanged.
 Existing blocks and bindings remain when resources disconnect.
 
 The new editor also offers **Copy saved profile**. A copy retains its graph and
@@ -26,12 +29,12 @@ draft with a blank graph or copy requires confirmation.
 profile is active, Save also prepares and applies the saved changes using the
 same game context and selection mode. If another profile is active, or no
 profile is active, Save only stores the edited profile. Successful saves appear
-as notifications, without a persistent saved-feedback banner. **Activate profile**
-is the explicit action for activating an inactive saved profile.
+as notifications, without a persistent saved-feedback banner. **Activate** on a
+profile tile activates an inactive saved profile; the editor has no activation card.
 
 A failed storage write keeps the draft open. A successful Save with a failed
 runtime update reports that the profile was saved and its changes could not be
-applied; **Retry saved changes** remains available. New edits made during Save
+applied; deactivating and activating the saved profile retries it. New edits made during Save
 remain unsaved, and a late reply cannot replace a different editor.
 
 **Cancel creation** discards the new draft. **Back to Profiles** and sidebar
@@ -46,9 +49,13 @@ metadata. Every solid canvas line is an actual directed signal binding.
 
 The canvas supports pan, anchored zoom, Fit all, search, selection, pointer and
 keyboard movement and auto-layout. Positions and viewport are editor metadata.
-Opening or copying a graph preserves its saved layout. Named editor groups,
-Focus controls and collapsible source/input/action sections help organize large
-graphs. These preferences follow Save, import/export and Undo/Redo.
+Opening or copying a graph preserves its saved layout. Create, rename, focus or
+remove groups from the palette. Group frames have saved bounds and cannot overlap.
+Dropping a component into a frame joins it; dragging it outside removes its
+membership. Deleting a group keeps components and routes. Move a frame by its
+heading and resize it by its corner. Collapsible source/input/action sections
+help organize ports. These preferences follow Save, import/export and Undo/Redo,
+whose icon buttons sit at the top of the canvas workspace.
 
 Select a resource and choose **Use this exact port** from its paged provider
 catalogue. Only selected typed ports enter the graph. Large provider catalogues

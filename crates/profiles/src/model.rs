@@ -285,12 +285,25 @@ pub struct EditorLayout {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_port_groups: Vec<CollapsedPortGroup>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EditorGroup {
     pub id: String,
     pub name: String,
     pub members: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "editor_group_bounds")]
+    pub bounds: Option<EditorGroupBounds>,
+}
+fn editor_group_bounds<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<EditorGroupBounds>, D::Error> {
+    EditorGroupBounds::deserialize(deserializer).map(Some)
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorGroupBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

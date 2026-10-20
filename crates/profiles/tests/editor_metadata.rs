@@ -10,6 +10,7 @@ fn decorated() -> ProfileDocument {
     document.editor.groups = vec![EditorGroup {
         id: "physical-inputs".into(), name: "Physical inputs".into(),
         members: document.resources.iter().take(2).map(|node| node.id.clone()).collect(),
+        bounds: None,
     }];
     document.editor.collapsed_port_groups = vec![CollapsedPortGroup {
         node_id: document.resources[0].id.clone(), group: EditorPortGroup::Outputs,
@@ -60,7 +61,7 @@ fn stored_exported_imported_and_duplicated_groups_remain_independent_of_runtime(
 fn group_names_ids_membership_and_collection_limits_are_strict() {
     let valid = serde_json::to_value(decorated()).unwrap();
     let mut invalid = vec![];
-    for (field, value) in [("id",json!("../group")),("name",json!(" bad ")),("name",json!("x".repeat(81))),("members",json!([])),("members",json!(["missing"])),("authority",json!(true))] {
+    for (field, value) in [("id",json!("../group")),("name",json!(" bad ")),("name",json!("x".repeat(81))),("members",json!(["missing"])),("authority",json!(true))] {
         let mut changed=valid.clone();changed["editor"]["groups"][0][field]=value;invalid.push(changed);
     }
     for count in [2,33] {
@@ -95,10 +96,32 @@ fn compiled_program_hash_is_unchanged_by_grouping_and_collapsed_ports() {
     let capture=CompileSnapshot{inventory_session:"metadata-test".into(),inventory_revision:"1".into(),assignments:vec![],resources:vec![],game_context:None,backend:BackendCapabilities::default(),inventory_diagnostics:vec![],read_only:false};
     let first=osg_profiles::compiler::compile(&plain,&capture);
     assert!(first.plan.is_some(),"{first:?}");
-    let mut changed=plain.clone();changed.editor.groups.push(EditorGroup{id:"logic".into(),name:"Logic".into(),members:vec!["constant".into()]});changed.editor.collapsed_port_groups.push(CollapsedPortGroup{node_id:"constant".into(),group:EditorPortGroup::Outputs});
+    let mut changed=plain.clone();changed.editor.groups.push(EditorGroup{id:"logic".into(),name:"Logic".into(),members:vec!["constant".into()],bounds:Some(EditorGroupBounds{x:0.0,y:0.0,width:440.0,height:360.0})});changed.editor.collapsed_port_groups.push(CollapsedPortGroup{node_id:"constant".into(),group:EditorPortGroup::Outputs});
     let second=osg_profiles::compiler::compile(&changed,&capture);
     assert!(second.plan.is_some(),"{second:?}");
     assert_eq!(first.document_semantic_hash,second.document_semantic_hash);
     assert_eq!(first.program_hash,second.program_hash);
     assert!(first.program_hash.is_some());
+}
+
+#[test]
+fn empty_group_frames_roundtrip_and_reject_invalid_or_overlapping_geometry() {
+    let mut graph=document();
+    graph.editor.groups=vec![
+        EditorGroup{id:"empty".into(),name:"Empty group".into(),members:vec![],bounds:Some(EditorGroupBounds{x:-20.0,y:0.0,width:440.0,height:360.0})},
+        EditorGroup{id:"second".into(),name:"Second group".into(),members:vec![],bounds:Some(EditorGroupBounds{x:420.0,y:0.0,width:328.0,height:300.0})},
+    ];
+    assert_eq!(graph.semantic_hash().unwrap(),document().semantic_hash().unwrap());
+    assert_eq!(ProfileDocument::parse(&graph.export().unwrap()).unwrap(),graph);
+    let valid=serde_json::to_value(&graph).unwrap();
+    for (field,value) in [("x",json!(1_000_001)),("y",json!(-1_000_001)),("width",json!(327)),("height",json!(299)),("width",json!(2_001_001)),("height",json!(2_001_001)),("extra",json!(false))] {
+        let mut changed=valid.clone();changed["editor"]["groups"][0]["bounds"][field]=value;rejected(&changed);
+    }
+    for value in [Value::Null,json!({}),json!([]),json!("frame")] {
+        let mut changed=valid.clone();changed["editor"]["groups"][0]["bounds"]=value;rejected(&changed);
+    }
+    let mut changed=valid.clone();changed["editor"]["groups"][1]["bounds"]["x"]=json!(419);rejected(&changed);
+    // Legacy groups have no stored frame and remain readable until an editor action materializes one.
+    let mut legacy=document();legacy.editor.groups.push(EditorGroup{id:"empty".into(),name:"Empty legacy group".into(),members:vec![],bounds:None});
+    osg_profiles::validate_document(&legacy).unwrap();
 }

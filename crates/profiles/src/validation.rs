@@ -415,12 +415,22 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
         id(&group.id)?;
         label(&group.name)?;
         check(group_ids.insert(&group.id), "Duplicate editor group identifier.")?;
-        check(!group.members.is_empty() && group.members.len() <= MAX_RESOURCES + MAX_PROCESSING_NODES + MAX_VIRTUAL_OUTPUTS,
-            "An editor group needs 1-336 known member nodes.")?;
+        check(group.members.len() <= MAX_RESOURCES + MAX_PROCESSING_NODES + MAX_VIRTUAL_OUTPUTS,
+            "An editor group supports at most 336 known member nodes.")?;
+        if let Some(bounds) = &group.bounds {
+            check(coordinate(bounds.x) && coordinate(bounds.y) && bounds.width.is_finite() && bounds.height.is_finite()
+                && (328.0..=2_001_000.0).contains(&bounds.width) && (300.0..=2_001_000.0).contains(&bounds.height),
+                "Editor group frame is invalid.")?;
+        }
         for member in &group.members {
             check(nodes.contains_key(member.as_str()) && grouped.insert(member),
                 "Editor group member is unknown or belongs to more than one group.")?;
         }
+    }
+    let frames: Vec<_> = document.editor.groups.iter().filter_map(|group|group.bounds.as_ref()).collect();
+    for (index, bounds) in frames.iter().enumerate() {
+        check(!frames.iter().skip(index+1).any(|other|bounds.x < other.x+other.width && bounds.x+bounds.width > other.x
+            && bounds.y < other.y+other.height && bounds.y+bounds.height > other.y), "Editor groups cannot overlap.")?;
     }
     check(document.editor.collapsed_port_groups.len() <= 3 * (MAX_RESOURCES + MAX_PROCESSING_NODES + MAX_VIRTUAL_OUTPUTS),
         "Too many collapsed editor port groups.")?;

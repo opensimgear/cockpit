@@ -17,8 +17,8 @@ test('component palette offers paired companions by device name, not retained pa
  const paired={...resource('companion',1),name:'Browser tablet',portCount:0,attributes:{componentKind:'paired-companion',companionId:'tablet'}};
  const offline={...paired,id:'offline-tablet',name:'Offline tablet',availability:'offline',attributes:{...paired.attributes,companionId:'offline'}};
  const panel={...paired,id:'old-panel',name:'Flight instruments panel',attributes:{companionId:'tablet',publicationHash:hash}};
- const body=render(Palette,{props:{inventory:[...inventory.filter(resource=>resource.resourceType!=='companion'),paired,offline,panel],assignedIds:new Set(),resourceCount:0,virtualCount:0,desktopAdded:false,refresh:noRequest,addResource:noRequest,addVirtual:noRequest,addDesktop:noRequest}}).body;
- for(const name of ['Component palette','Search components','Add Browser tablet','Add Offline tablet','Add virtual controller','Add keyboard and mouse','Controllers','OSG devices','Games'])assert.ok(body.includes(name),name);
+ const body=render(Palette,{props:{inventory:[...inventory.filter(resource=>resource.resourceType!=='companion'),paired,offline,panel],assignedIds:new Set(),selectedGame:'dcs',resourceCount:0,virtualCount:0,desktopAdded:false,refresh:noRequest,addResource:noRequest,addVirtual:noRequest,addDesktop:noRequest}}).body;
+ for(const name of ['Component palette','Search components','Add Browser tablet','Add Offline tablet','Add virtual controller','Add keyboard and mouse','Controllers','OSG devices','Integrations'])assert.ok(body.includes(name),name);
  assert.ok(!body.includes('Flight instruments panel'));assert.ok(!body.includes('Add transformation'));assert.ok(!body.includes('Visible transformation'));assert.ok(!body.includes('type="checkbox"'));
  assert.ok(!/<button[^>]*aria-label="Add Offline tablet"[^>]*disabled/.test(body),'A paired offline companion remains addable.');
  assert.match(body,/<button[^>]*aria-label="Add Offline tablet"[^>]*draggable="true"/);
@@ -49,6 +49,14 @@ test('drop admission rechecks inventory, capacities and companion aliases after 
  const component={kind:'resource',sourceId:paired.id};assert.equal(profilePaletteCanAdd(component,document,[],[paired,legacy]),true);assert.equal(profilePaletteCanAdd(component,document,assignments,[paired,legacy]),false);assert.equal(profilePaletteCanAdd(component,document,[],[]),false);assert.equal(profilePaletteCanAdd({kind:'resource',sourceId:legacy.id},document,[],[paired,legacy]),false);
  document.resources=Array.from({length:64},(_,i)=>({id:`resource-${i}`,name:'Resource',kind:'device',required:false,ports:[]}));assert.equal(profilePaletteCanAdd(component,document,[],[paired]),false);
  document.virtualOutputs=Array.from({length:8},(_,i)=>({id:`virtual-${i}`}));assert.equal(profilePaletteCanAdd({kind:'virtual'},document,[],[]),false);document.desktopOutputs=[{id:'desktop'}];assert.equal(profilePaletteCanAdd({kind:'desktop'},document,[],[]),false);
+});
+
+test('palette additions join the drop group in the same undoable edit for resources and outputs',()=>{
+ const {profilePlaceComponent}=modules.get('./profile-palette'),{canvasCreateGroup}=modules.get('./profile-canvas'),{ProfileGraphHistory}=modules.get('./profile-graph-history');
+ const before=canvasCreateGroup(blankProfile(uid(6)),'Controls'),after=plain(before);after.resources=[{id:'wheel',name:'Wheel',kind:'device',required:false,ports:[]}];
+ const placed=profilePlaceComponent(before,after,'wheel',{x:40,y:60});assert.deepEqual(plain(placed.editor.groups[0].members),['wheel']);
+ const virtual=modules.get('./profile-graph').graphSetVirtual({document:placed,assignments:[]},{id:'vjoy',name:'Output',required:false,layout:{buttons:['fire'],axes:[],hats:[]}});
+ const second=profilePlaceComponent(placed,virtual.document,'vjoy',{x:100,y:80}),history=new ProfileGraphHistory({document:placed,assignments:[]});history.commit({document:second,assignments:[]},'Add output');assert.deepEqual(plain(history.current.document.editor.groups[0].members),['wheel','vjoy']);assert.deepEqual(plain(history.undo().document.editor.groups[0].members),['wheel']);assert.deepEqual(plain(history.redo().document.editor.groups[0].members),['wheel','vjoy']);
 });
 
 test('draft controller effect summary survives save and reopen without claiming applied publication or changing its revision',async()=>{
@@ -228,7 +236,16 @@ test('actual Add handler opens an empty editor immediately without requiring or 
 test('profile mode switch shares the Debug and Add action bar and appears only once on the list',async()=>{
  const h=harness();await h.store.refresh();const body=html(h.store,h.client),actions=body.match(/<div\b[^>]*class="[^"]*\bpage-actions\b[^"]*"[^>]*>([^]*?)<\/div><\/div>/)?.[1],runtimeCard=body.match(/<section\b[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];
  assert.ok(actions);assert.match(actions,/<button\b[^>]*role="switch"[^>]*aria-label="Automatic profile selection"/);assert.ok(actions.includes('Debug'));assert.ok(actions.includes('Add profile'));assert.ok(runtimeCard);assert.ok(!runtimeCard.includes('Profile selection mode'));assert.ok(!runtimeCard.includes('Activate a saved profile from its tile'));assert.equal((body.match(/aria-label="Profile selection mode"/g)??[]).length,1);assert.deepEqual(h.calls,[]);
- await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
+ await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(!editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
+});
+
+test('profile editor has an independent game context filter, a top history toolbar, and no activation card',async()=>{
+ const h=harness();await h.store.refresh();await h.store.open(DEFAULT_PROFILE_ID);const body=html(h.store,h.client).replace(/<!--[\s\S]*?-->/g,'');
+ const context=body.match(/<select[^>]*aria-label="Game context"[^>]*>([^]*?)<\/select>/)?.[1];assert.ok(context);assert.match(context,/<option value=""[^>]*>None<\/option>/);
+ for(const game of modules.get('./games').supportedGames)assert.ok(context.includes(`value="${game.id}"`),game.name);
+ const runtime=body.match(/<section[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];assert.ok(runtime!==undefined);assert.ok(!runtime.includes('Game context'));assert.ok(!runtime.includes('Activate profile'));assert.ok(!body.includes('class="group-editor"'));
+ assert.match(body,/<div class="routing-toolbar[^]*?aria-label="Edit history"[^]*?aria-label="Undo"[^]*?<svg[^]*?aria-label="Redo"[^]*?<svg/);
+ assert.ok(body.indexOf('aria-label="Edit history"')<body.indexOf('aria-label="Search profile blocks"'));assert.deepEqual(h.calls.map(call=>call[0]),['get']);
 });
 
 test('fresh active ownership puts its tile first and stale or absent ownership restores ordinary ordering and tile appearance',async()=>{
