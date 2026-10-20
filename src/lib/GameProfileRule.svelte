@@ -31,7 +31,7 @@
 <section class="game-profile-rule panel" aria-label="Matching profiles">
   <div class="rule-heading">
     <h2><Icon name="network" size={18}/>Matching profiles</h2>
-    {#if candidates&&(candidates.profiles.length>1||savedId)}<div class="preference-choice"><label><span class="rule-label"><Icon name="save" size={14}/>Remembered profile{#if pending}<span class="choice-saving" role="status"><Icon name="refresh" size={14}/>Saving…</span>{/if}</span><select aria-label="Remembered profile" value={profileId} onchange={event=>chooseProfile(event.currentTarget.value)} disabled={!ready}><option value="">Ask me each time</option>{#each candidates.profiles as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label></div>{/if}
+    {#if candidates&&(candidates.profiles.length>1||savedId)}<div class="preference-choice"><label><span class="rule-label"><Icon name="zap" size={14}/>Auto select{#if pending}<span class="choice-saving" role="status"><Icon name="refresh" size={14}/>Saving…</span>{/if}</span><select aria-label="Auto select" value={profileId} onchange={event=>chooseProfile(event.currentTarget.value)} disabled={!ready}><option value="">Ask me each time</option>{#each candidates.profiles as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label></div>{/if}
   </div>
   {#if candidates}
     {#if candidates.profiles.length}<ul class="matching-profiles" aria-label={`Profiles for ${game.name}`}>
@@ -53,10 +53,11 @@
   .profile-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
   .profile-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .choice-badge{display:inline-flex;align-items:center;gap:6px;font-size:var(--game-detail-text-size,12px);color:var(--accent);white-space:nowrap}
-  .preference-choice{display:grid;width:300px;max-width:100%;margin-left:auto}
-  .preference-choice label{display:grid;gap:7px;min-width:0;font-size:var(--game-detail-text-size,12px);color:var(--muted)}
+  .preference-choice{display:grid;width:400px;max-width:100%;margin-left:auto}
+  .preference-choice label{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;min-width:0;font-size:var(--game-detail-text-size,12px);color:var(--muted)}
   .preference-choice select{width:100%;min-width:0;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6)}
   .rule-label,.rule-status{display:flex;align-items:center;gap:7px}
+  .rule-label{white-space:nowrap}
   .rule-status{align-items:flex-start}
   .choice-saving{display:inline-flex;align-items:center;gap:5px;margin-left:auto;color:var(--soft)}
   .rule-warning button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6)}
