@@ -87,11 +87,10 @@
 
     <div class="game-content">
         <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={18} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><Icon name={selected.installed ? 'check' : 'info'} size={14} />{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={discoverInstallation}><Icon name="search" size={14} />Discover automatically</button></div>
-          {#if selected.source}<p class="field-help icon-text"><Icon name="folder" size={14} /><span>Source: {selected.source}</span></p>{/if}
           {#if selected.provider === 'x-plane' && selected.installations?.length}
             <label class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
           {/if}
-          <div class="editor-label"><span id="game-executable-label" class="icon-text"><Icon name="play" size={14} />Game executable</span><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={14}/></button></div>
+          <div class="editor-label"><span id="game-executable-label" class="icon-text"><Icon name="play" size={14} />Game executable</span><div class="executable-row"><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={14}/></button>{#if selected.source}<span class="installation-source-badge" title={selected.source} aria-label={`Installation source: ${selected.source}`}>{selected.source}</span>{/if}</div></div>
           <p class="field-help">Choose {gameExecutableName(selected.id)} in your installation folder.</p>
           {#if executablePath && executablePath !== selected.executable}<div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}><Icon name="check" size={14} />Use this path</button></div>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
@@ -277,6 +276,9 @@
   h3 {font-size:var(--game-detail-heading-size);line-height:var(--game-detail-line-height);font-weight:600;}
   .editor-label {display:flex;flex-direction:column;gap:8px;color:var(--soft);font-size:var(--game-detail-text-size);}
   .editor-label { margin-top: 16px; }
+  .executable-row {display:flex;align-items:center;gap:10px;min-width:0;}
+  .executable-row>.executable-picker {flex:1;}
+  .installation-source-badge {display:inline-block;flex-shrink:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface-raised);color:var(--soft);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   .executable-picker {width:100%;min-width:0;justify-content:space-between;text-align:left;padding:11px 12px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--soft);}
   .executable-picker>span {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:var(--game-detail-text-size);}
   .executable-picker>span.empty {font-family:inherit;color:var(--muted);}
