@@ -123,6 +123,30 @@ function draft(document: ProfileDocument, assignments: ProfileLocalAssignment[],
         throw new Error(error);
     return { document: checked, assignments: clone(assignments), baseDocument: clone(checked), baseAssignments: clone(assignments), baseRevision };
 }
+/** Editing completeness is feedback after persistence, never a condition for saving. */
+function saveWarnings(document: ProfileDocument, assignments: ProfileLocalAssignment[], inventory: readonly DeepReadonly<ResourceSummary>[], inventoryLoaded: boolean): string {
+    const endpoint = (port: { nodeId: string; portId: string }) => JSON.stringify([port.nodeId, port.portId]);
+    const bound = new Set(document.bindings.flatMap(binding => [endpoint(binding.from), endpoint(binding.to)]));
+    const ports = [
+        ...document.resources.flatMap(resource => resource.ports.map(port => ({ nodeId: resource.id, portId: port.id }))),
+        ...document.processingNodes.flatMap(node => [...node.inputs, ...node.outputs].map(port => ({ nodeId: node.id, portId: port.id }))),
+        ...(document.desktopOutputs ?? []).flatMap(output => output.ports.map(port => ({ nodeId: output.id, portId: port.id }))),
+    ];
+    const unconnected = ports.filter(port => !bound.has(endpoint(port))).length;
+    const used = (resource: ProfileDocument['resources'][number]) => resource.ports.length || document.companionAssignments.some(panel => panel.resourceId === resource.id)
+        || document.visibility.some(intent => intent.resourceId === resource.id && intent.mode === 'hidden-while-active')
+        || document.overrides.some(intent => intent.resourceId === resource.id);
+    const unassigned = document.resources.filter(resource => used(resource) && !assignments.some(assignment => assignment.resourceId === resource.id)).length;
+    const offline = inventoryLoaded ? document.resources.filter(resource => {
+        const assignment = assignments.find(assignment => assignment.resourceId === resource.id);
+        return used(resource) && assignment && inventory.find(source => source.id === assignment.sourceId)?.availability !== 'online';
+    }).length : 0;
+    return [
+        unassigned ? `${unassigned} component${unassigned === 1 ? ' is' : 's are'} unassigned` : '',
+        offline ? `${offline} component${offline === 1 ? ' is' : 's are'} offline or unavailable` : '',
+        unconnected ? `${unconnected} selected port${unconnected === 1 ? ' is' : 's are'} not connected` : '',
+    ].filter(Boolean).join('; ');
+}
 /** Local authoring state. Its API deliberately has no select/apply/start methods. */
 export class ProfileEditorStore {
     private value: ProfileWorkspaceState = { view: 'list', profiles: [], session: null, editor: null, inventory: [], inventoryLoaded: false, busy: false, inventoryBusy: false, readOnly: false, diagnostics: [], error: '', inventoryError: '' };
@@ -270,7 +294,9 @@ export class ProfileEditorStore {
         const rows = this.value.profiles.filter(row => row.id !== result.document.id);
         rows.push(clone(summary));
         this.set({ editor: next, profiles: rows, session: this.session(result) });
-        const notification: ProfileSaveNotification = Object.freeze({ kind: result.saveApplication?.state === 'failed' ? 'warning' : 'info', message: result.saveApplication?.state === 'failed' ? result.saveApplication.error?.replace('its running changes', 'its active changes') || 'Profile saved, but its active changes could not be applied.' : result.saveApplication?.state === 'applied' ? 'Profile saved and active changes applied.' : 'Profile saved.' });
+        const warnings = saveWarnings(committed.document, committed.assignments, this.value.inventory, this.value.inventoryLoaded);
+        const success = result.saveApplication?.state === 'applied' ? 'Profile saved and active changes applied.' : 'Profile saved.';
+        const notification: ProfileSaveNotification = Object.freeze({ kind: result.saveApplication?.state === 'failed' || warnings ? 'warning' : 'info', message: result.saveApplication?.state === 'failed' ? result.saveApplication.error?.replace('its running changes', 'its active changes') || 'Profile saved, but its active changes could not be applied.' : success + (warnings ? ` ${warnings}.` : '') });
         for (const listener of this.saveListeners) listener(notification);
     }
     catch (error) {

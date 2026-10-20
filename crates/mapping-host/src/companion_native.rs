@@ -81,8 +81,8 @@ impl CompanionProvider {
                     "The selected companion publication or native descriptor changed.".into(),
                 );
             }
-            if selection.controls.is_empty() || selection.controls.len() > 128 {
-                return Err("Choose one to 128 declared controls for each companion.".into());
+            if selection.controls.len() > 128 {
+                return Err("Choose at most 128 declared controls for each companion.".into());
             }
             let controls: BTreeSet<_> = selection.controls.iter().cloned().collect();
             if controls.len() != selection.controls.len()

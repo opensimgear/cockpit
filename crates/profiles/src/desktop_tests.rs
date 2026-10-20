@@ -79,9 +79,12 @@ fn blank_editor_remains_valid_while_desktop_definition_budget_is_shared() {
     assert_eq!(compile(&default_document(),&snapshot()).readiness,PlanReadiness::Ready);
     let mut disconnected=document();disconnected.bindings.clear();disconnected.processing_nodes.clear();
     let preview=compile(&disconnected,&snapshot());
-    assert_eq!(preview.readiness,PlanReadiness::Blocked);
-    assert!(preview.plan.is_some(),"unconnected desktop draft retains its editable compiled shape");
-    assert!(preview.diagnostics.iter().any(|diagnostic|diagnostic.code=="noExecutableOutput"));
+    assert_eq!(preview.readiness,PlanReadiness::Ready);
+    assert!(preview.diagnostics.iter().any(|diagnostic|diagnostic.code=="noExecutableOutput"
+        &&diagnostic.severity==DiagnosticSeverity::Warning&&diagnostic.message=="Unconnected keyboard and mouse bindings are inactive."));
+    let plan=preview.plan.unwrap();
+    assert!(plan.sinks.is_empty()&&plan.program.sinks.is_empty(),"Unused bindings must not create executable effects");
+    assert!(!plan.requirements.desktop_input&&!plan.requirements.virtual_devices&&!plan.requirements.visibility,"Unused definitions must not acquire output backends");
     let mut source=document();
     let base=source.processing_nodes[0].clone();
     for index in 0..253 {let mut node=base.clone();node.id=format!("extra-{index}");source.processing_nodes.push(node);}

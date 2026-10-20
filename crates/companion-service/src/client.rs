@@ -1092,7 +1092,7 @@ fn verify_publication(publication: &Value) -> Result<(Value, BTreeMap<String, Pr
     crate::feedback_descriptors(&document)?;
     let controls = document["ui"]["controls"]
         .as_array()
-        .filter(|values| !values.is_empty() && values.len() <= 128)
+        .filter(|values| values.len() <= 128)
         .ok_or("Invalid publication control budget")?;
     let mut primitives = BTreeMap::new();
     for control in controls {
@@ -1549,6 +1549,45 @@ mod tests {
         serde_json::from_str(include_str!("../tests/fixtures/c1-flight-publication.json")).unwrap()
     }
     #[test]
+    fn publications_without_controls_keep_static_and_feedback_only_panels_valid() {
+        for feedback in [false, true] {
+            let bounds = json!({"x":0.1,"y":0.1,"width":0.8,"height":0.8});
+            let mut document = json!({"schemaVersion":2,"ui":{"schemaVersion":1,"id":"display","title":"Display","controls":[],"feedbackWidgets":[],"pages":[{"id":"main","title":"Main","items":[]}],"assets":[]},"presentation":{"widgets":[],"groups":[],"viewports":[{"pageId":"main","width":480,"height":320}],"grid":{"columns":24,"rows":16,"snap":true}},"targets":[],"bindings":[]});
+            let mut assets = Vec::new();
+            if feedback {
+                document["ui"]["feedbackWidgets"] = json!([{"id":"speed-output","label":"Speed","kind":"gauge","channelId":"speed"}]);
+                document["ui"]["pages"][0]["items"] = json!([{"kind":"feedback","refId":"speed-output","bounds":bounds}]);
+                document["presentation"]["widgets"] = json!([{"id":"speed-widget","pageId":"main","kind":"numeric","label":"Speed","bounds":bounds,"controlIds":[],"feedbackIds":["speed-output"],"config":{"min":0,"max":2000,"unit":"km/h","precision":0}}]);
+            } else {
+                let mut png = std::io::Cursor::new(Vec::new());
+                image::DynamicImage::new_rgb8(1, 1).write_to(&mut png, image::ImageFormat::Png).unwrap();
+                let bytes = png.into_inner();
+                document["ui"]["assets"] = json!([{"id":"logo","sha256":crate::hash(&bytes),"sizeBytes":bytes.len(),"mime":"image/png"}]);
+                document["presentation"]["widgets"] = json!([{"id":"logo-widget","pageId":"main","kind":"image","label":"Logo","bounds":bounds,"controlIds":[],"feedbackIds":[],"config":{"assetId":"logo"}}]);
+                assets.push(crate::AssetPayload {asset_id:"logo".into(),base64:STANDARD.encode(&bytes)});
+            }
+            let canonical = serde_json_canonicalizer::to_string(&document).unwrap();
+            let upload = crate::PublicationUpload {
+                publication_hash: tls::sha256(canonical.as_bytes()),
+                canonical_document: canonical,
+                capability_fingerprint: None,
+                assets,
+            };
+            let publication = crate::Publication::validate(upload.clone()).unwrap();
+            let (verified, primitives) = verify_publication(&serde_json::to_value(upload).unwrap()).unwrap();
+            assert_eq!(verified["document"], document);
+            assert!(primitives.is_empty());
+            assert!(fallback_batches(&primitives).is_empty());
+            assert!(!changes_valid(&json!([]), &primitives));
+            assert!(!changes_valid(&json!([{"controlId":"invented","value":true}]), &primitives));
+            assert_eq!(publication.feedback.len(), usize::from(feedback));
+            if feedback {
+                assert_eq!(publication.feedback[0].unit.as_deref(), Some("km/h"));
+                assert_eq!(publication.feedback[0].range.as_ref().unwrap().max, 2000.0);
+            }
+        }
+    }
+    #[test]
     fn native_publication_and_input_validation_rejects_shape_hash_asset_and_range_confusion() {
         let publication = fixture();
         let (valid, controls) = verify_publication(&publication).unwrap();
@@ -1577,22 +1616,23 @@ mod tests {
         bad["canonicalDocument"] = json!("bad-json");
         bad["publicationHash"] = json!(tls::sha256(b"bad-json"));
         assert!(verify_publication(&bad).is_err());
-        for alter in 0..5 {
+        for alter in 0..6 {
             let mut bad = publication.clone();
             let mut doc: Value =
                 serde_json::from_str(bad["canonicalDocument"].as_str().unwrap()).unwrap();
             match alter {
                 0 => doc["schemaVersion"] = json!(3),
-                1 => doc["ui"]["controls"] = json!([]),
+                1 => doc["ui"]["controls"] = Value::Null,
                 2 => doc["ui"]["controls"][0]["kind"] = json!("unknown"),
                 3 => doc["ui"]["controls"][0]["id"] = json!(""),
-                _ => {
+                4 => {
                     let duplicated = doc["ui"]["controls"][0].clone();
                     doc["ui"]["controls"]
                         .as_array_mut()
                         .unwrap()
                         .push(duplicated);
                 }
+                _ => doc["ui"]["controls"] = json!((0..129).map(|index| json!({"id":format!("control-{index}"),"kind":"button","label":"Button"})).collect::<Vec<_>>()),
             }
             let canonical = serde_json_canonicalizer::to_string(&doc).unwrap();
             bad["canonicalDocument"] = json!(canonical);

@@ -115,6 +115,59 @@ fn exact_native_subscription_requires_real_baseline_and_discards_prestart_transi
 }
 
 #[test]
+fn display_only_native_subscription_keeps_real_baseline_heartbeat_loss_and_publication_fences() {
+    use osg_companion_service::{SourceDefinition,SourceSink};
+    use std::sync::atomic::{AtomicU64,Ordering};
+    let clock=Arc::new(AtomicU64::new(100));let captured=clock.clone();
+    let provider=CompanionProvider::new(Arc::new(move||captured.load(Ordering::Acquire)));
+    let declared=SourceDefinition {source_id:"screen".into(),name:"Display only".into(),publication_hash:definition("screen").publication_hash,controls:vec![]};
+    let selection=NativeSelection {definition:native_definition(declared.clone()).unwrap(),controls:vec![]};
+    assert!(provider.subscribe_native(&[selection.clone()]).is_err(),"Metadata alone cannot invent registration");
+    provider.register(declared).unwrap();
+    assert!(provider.subscribe_native(&[]).is_err());
+    assert!(provider.subscribe_native(&vec![selection.clone();9]).is_err());
+    let mut changed=selection.clone();changed.definition.name="Different descriptor".into();
+    assert!(provider.subscribe_native(&[changed]).is_err());
+    let mut feed=provider.subscribe_native(&[selection.clone()]).unwrap();
+    assert!(feed.baseline().is_err(),"Zero controls do not manufacture a live input session");
+    let mut wrong=token("screen",1);wrong.publication_hash=format!("sha256:{}","b".repeat(64));
+    assert!(provider.baseline_native(&wrong,0,&[]).is_err());
+    provider.baseline_native(&token("screen",1),0,&[]).unwrap();
+    let baseline=feed.baseline().unwrap();
+    assert_eq!(baseline.len(),1);assert_eq!(baseline[0].reason,Reason::Baseline);assert!(baseline[0].changes.is_empty());
+    let generation=baseline[0].generation;
+    clock.store(200,Ordering::Release);assert!(feed.poll().unwrap().is_empty());
+    provider.heartbeat_native(&token("screen",1)).unwrap();
+    let renewal=feed.poll().unwrap();
+    assert_eq!(renewal.len(),1);assert_eq!(renewal[0].reason,Reason::Change);assert_eq!(renewal[0].captured_us,Counter(200));assert!(renewal[0].changes.is_empty());
+    clock.store(200+LEASE_US,Ordering::Release);
+    let loss=feed.poll().unwrap();assert_eq!(loss.len(),1);assert_eq!(loss[0].reason,Reason::Disconnect);assert!(loss[0].changes.is_empty());
+    assert!(feed.validate_baseline().is_err());assert!(feed.baseline().is_err());
+    assert!(provider.baseline_native(&token("screen",1),0,&[]).is_err(),"Expired identity cannot be replayed");
+    provider.baseline_native(&token("screen",2),0,&[]).unwrap();
+    let reconnected=feed.poll().unwrap();assert_eq!(reconnected[0].reason,Reason::Baseline);assert!(reconnected[0].generation>generation);
+    assert!(feed.validate_baseline().is_ok());
+    let mut replacement=selection.definition;replacement.publication_hash=format!("sha256:{}","b".repeat(64));
+    provider.register_definition(replacement).unwrap();
+    assert_eq!(feed.poll().unwrap()[0].reason,Reason::Disconnect);assert!(feed.validate_baseline().is_err());
+}
+
+#[test]
+fn lifecycle_only_selection_does_not_require_selecting_declared_interactive_controls() {
+    let provider=CompanionProvider::new(Arc::new(||100));
+    provider.register_definition(definition("left")).unwrap();
+    let mut feed=provider.subscribe_native(&[NativeSelection {controls:vec![],..selection("left")}]).unwrap();
+    assert!(feed.baseline().is_err());
+    assert!(provider.baseline_native(&token("left",1),0,&[]).is_err(),"The actual device must still supply its complete declared baseline");
+    baseline(&provider,"left",1);
+    let initial=feed.baseline().unwrap();assert_eq!(initial.len(),1);assert!(initial[0].changes.is_empty());
+    assert!(feed.validate_baseline().is_ok());
+    provider.loss_native(&token("left",1)).unwrap();
+    let loss=feed.poll().unwrap();assert_eq!(loss.len(),1);assert_eq!(loss[0].reason,Reason::Disconnect);assert!(loss[0].changes.is_empty());
+    assert!(feed.validate_baseline().is_err());
+}
+
+#[test]
 fn loss_and_reconnect_are_native_generation_fenced_and_peer_isolated() {
     let provider = CompanionProvider::new(Arc::new(|| 100));
     for id in ["left", "right"] {
@@ -238,7 +291,6 @@ fn native_subscriptions_are_bounded_and_exact_without_authoring_a_shadow_profile
         .subscribe_native(&[selection("left"), selection("left")])
         .is_err());
     for controls in [
-        vec![],
         vec!["unknown".into()],
         vec!["button".into(); 2],
         vec!["button".into(); 129],

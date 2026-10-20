@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { loadModules } from './test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./profile-editor']);
+const modules=await loadModules(['./profiles','./profile-editor','./profile-desktop']);
 const {DEFAULT_PROFILE_ID,exportProfileDocument}=modules.get('./profiles');
 const {ProfileEditorStore,ProfileNavigationGuard,seedProfile,blankProfile,copyProfile,addProfileResources,profileAutoLayout,profileEditorDirty,profileCategory}=modules.get('./profile-editor');
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -163,6 +163,34 @@ test('saving an inactive empty profile needs no inventory or separate Apply requ
   assert.equal(h.store.state.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'stopped');
   assert.equal(h.store.state.session.appliedSnapshot.revision,2);
   assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
+});
+
+test('a disconnected desktop endpoint saves with one warning only for the explicit save',async()=>{
+  const h=harness();h.store.beginBlank([]);const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));
+  const document=plain(h.store.state.editor.document);document.desktopOutputs=[modules.get('./profile-desktop').desktopPreset('key-hold','desktop').output];h.store.update(document);await h.store.save();
+  assert.equal(h.store.state.error,'');assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.docs.get(document.id).desktopOutputs.length,1);assert.deepEqual(plain(notifications),[{message:'Profile saved. 1 selected port is not connected.',kind:'warning'}]);assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
+  await h.store.refreshInventory();await h.store.refreshSaved();h.store.back();await h.store.open(document.id);assert.equal(notifications.length,1,'Background refresh and reopening cannot replay the warning.');
+});
+
+test('unassigned or offline selected resources remain saveable and report concrete counts',async()=>{
+  for(const assigned of [false,true]){const h=harness(),source={...resource('host-controller',1),availability:'offline'};h.provider.listAll=async()=>({resources:[source]});await h.store.refreshInventory();h.store.beginBlank([]);const document=plain(h.store.state.editor.document),contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};document.resources=[{id:'device',name:'Selected device',kind:'device',required:true,ports:[{id:'button',name:'Button',direction:'output',contract}]}];const assignments=assigned?[{resourceId:'device',sourceId:source.id,ports:[{profilePortId:'button',observedPortId:'native-button',expectedContractHash:`sha256:${'2'.repeat(64)}`}]}]:[];h.store.update(document,assignments);const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));await h.store.save();assert.equal(h.store.state.error,'');assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.docs.get(document.id).resources.length,1);assert.deepEqual(plain(notifications),[{message:`Profile saved. 1 component is ${assigned?'offline or unavailable':'unassigned'}; 1 selected port is not connected.`,kind:'warning'}]);}
+});
+
+test('no-port hardware blocks and online panel-only companions save without completeness warnings',async()=>{
+  for(const panelOnly of [false,true]){const h=harness(),source={...resource(panelOnly?'companion':'host-controller',1),availability:panelOnly?'online':'offline'};h.provider.listAll=async()=>({resources:[source]});await h.store.refreshInventory();h.store.beginBlank([]);const document=plain(h.store.state.editor.document);document.resources=[{id:'component',name:'Component',kind:panelOnly?'companion':'device',required:false,ports:[]}];if(panelOnly)document.companionAssignments=[{resourceId:'component',publicationHash:`sha256:${'1'.repeat(64)}`}];h.store.update(document,[{resourceId:'component',sourceId:source.id,ports:[]}]);const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));await h.store.save();assert.equal(h.store.state.error,'');assert.deepEqual(plain(notifications),[{message:'Profile saved.',kind:'info'}]);}
+});
+
+test('a connected online source and desktop action save without a disconnected-port warning',async()=>{
+  const h=harness(),source=resource('host-controller',1);h.provider.listAll=async()=>({resources:[source]});await h.store.refreshInventory();h.store.beginBlank([]);const document=plain(h.store.state.editor.document),output=modules.get('./profile-desktop').desktopPreset('key-hold','desktop').output;document.resources=[{id:'device',name:'Device',kind:'device',required:false,ports:[{id:'button',name:'Button',direction:'output',contract:plain(output.ports[0].contract)}]}];document.desktopOutputs=[output];document.bindings=[{id:'route',from:{portId:'button',nodeId:'device'},to:{portId:output.ports[0].id,nodeId:output.id}}];h.store.update(document,[{resourceId:'device',sourceId:source.id,ports:[{profilePortId:'button',observedPortId:'native-button',expectedContractHash:`sha256:${'2'.repeat(64)}`}]}]);const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));await h.store.save();assert.equal(h.store.state.error,'');assert.deepEqual(plain(notifications),[{message:'Profile saved.',kind:'info'}]);
+});
+
+test('offline panel or visibility effects warn without inventing port requirements and active-apply failure takes priority',async()=>{
+  for(const effect of ['panel','visibility','publication']){const h=harness(),source={...resource(effect==='panel'?'companion':'host-controller',1),availability:'offline'};h.provider.listAll=async()=>({resources:[source]});await h.store.refreshInventory();h.store.beginBlank([]);const document=plain(h.store.state.editor.document);document.resources=[{id:'component',name:'Component',kind:effect==='panel'?'companion':'device',required:false,ports:[]}];if(effect==='panel')document.companionAssignments=[{resourceId:'component',publicationHash:`sha256:${'1'.repeat(64)}`}];else if(effect==='visibility')document.visibility=[{resourceId:'component',mode:'hidden-while-active'}];else document.overrides=[{resourceId:'component',enabled:false}];h.store.update(document,[{resourceId:'component',sourceId:source.id,ports:[]}]);const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));await h.store.save();assert.deepEqual(plain(notifications),[{message:'Profile saved. 1 component is offline or unavailable.',kind:'warning'}]);}
+  const h=harness();h.store.beginBlank([]);const document=plain(h.store.state.editor.document);document.desktopOutputs=[modules.get('./profile-desktop').desktopPreset('key-hold','desktop').output];h.store.update(document);const save=h.api.editorSave;h.api.editorSave=async(...args)=>({...await save(...args),saveApplication:{state:'failed',error:'Profile saved, but its active changes could not be applied: Device disconnected.'}});const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));await h.store.save();assert.deepEqual(plain(notifications),[{message:'Profile saved, but its active changes could not be applied: Device disconnected.',kind:'warning'}]);
+});
+
+test('copied panel-only and device-policy effects warn when their companion or device is unassigned',async()=>{
+  for(const effect of ['panel','visibility','publication']){const h=harness();h.store.beginBlank([]);const document=plain(h.store.state.editor.document);document.resources=[{id:'component',name:'Copied component',kind:effect==='panel'?'companion':'device',required:false,ports:[]}];if(effect==='panel')document.companionAssignments=[{resourceId:'component',publicationHash:`sha256:${'1'.repeat(64)}`}];else if(effect==='visibility')document.visibility=[{resourceId:'component',mode:'hidden-while-active'}];else document.overrides=[{resourceId:'component',enabled:false}];h.store.update(document,[]);const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));await h.store.save();assert.equal(h.store.state.error,'');assert.equal(profileEditorDirty(h.store.state.editor),false);assert.deepEqual(plain(notifications),[{message:'Profile saved. 1 component is unassigned.',kind:'warning'}]);}
 });
 
 test('save notifications are emitted once per committed save and never replayed by inventory polling, edits or remounting',async()=>{

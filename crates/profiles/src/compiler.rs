@@ -516,9 +516,9 @@ fn compile_mode(
     let disconnected_desktop = sink_plans.is_empty() && !document.desktop_outputs.is_empty();
     if disconnected_desktop {
         report.diagnostics.push(CompileDiagnostic { code: "noExecutableOutput".into(), severity: DiagnosticSeverity::Warning,
-            message: "This editing canvas has no connected executable output. Connect an exact destination input before Apply; blank drafts can still be saved and exported.".into(), location: GraphLocation::default() });
+            message: "Unconnected keyboard and mouse bindings are inactive.".into(), location: GraphLocation::default() });
     }
-    report.readiness = if disconnected_desktop || snapshot.read_only
+    report.readiness = if snapshot.read_only
         || branches
             .iter()
             .any(|branch| branch.required && branch.readiness == PlanReadiness::Blocked)

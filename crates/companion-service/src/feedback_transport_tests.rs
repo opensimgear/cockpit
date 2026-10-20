@@ -6,7 +6,7 @@ use crate::{
 };
 #[cfg(windows)]
 #[test]
-fn large_feedback_snapshots_native_resync_freshness_and_disconnected_peers_are_isolated() {
+fn large_feedback_only_snapshots_native_resync_freshness_and_disconnected_peers_are_isolated() {
     let directory = tempfile::tempdir().unwrap();
     let sink = Arc::new(Recorder::default());
     let hub = Hub::new("feedback-host".into(), sink.clone());
@@ -20,8 +20,11 @@ fn large_feedback_snapshots_native_resync_freshness_and_disconnected_peers_are_i
         .unwrap();
     let mut d: serde_json::Value = serde_json::from_str(&document()).unwrap();
     let bounds = d["ui"]["pages"][0]["items"][0]["bounds"].clone();
-    let mut widgets = d["presentation"]["widgets"].as_array().unwrap().clone();
-    let mut items = d["ui"]["pages"][0]["items"].as_array().unwrap().clone();
+    d["ui"]["controls"] = json!([]);
+    d["targets"] = json!([]);
+    d["bindings"] = json!([]);
+    let mut widgets = Vec::new();
+    let mut items = Vec::new();
     let mut outputs = Vec::new();
     for i in 0..64 {
         outputs.push(json!({"id":format!("output-{i}"),"channelId":format!("channel-{i}"),"kind":"text","label":"Label"}));
