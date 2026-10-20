@@ -367,7 +367,7 @@ fn delayed_automatic_stage_is_cancelled_by_stop_and_pending_apply_blocks_learnin
     assert!(denied["error"]
         .as_str()
         .unwrap()
-        .contains("pending profile Apply"));
+        .contains("pending profile activation"));
     ok(&manager, "profile_stop", json!({}));
     barrier.wait();
     worker.join().unwrap();

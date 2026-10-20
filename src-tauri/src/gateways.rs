@@ -378,27 +378,31 @@ impl GatewayManager {
     fn profile_session_request(&self, request: &Value, native_arrival_epoch: Option<u64>) -> Result<Value, String> {
         let command = request["command"].as_str().ok_or("Choose a profile session operation.")?;
         let fields: &[&str] = match command {
-            "profile_apply" => &["id", "expectedRevision", "gameId"],
-            "profile_game_launch" => &["gameId"],
+            "profile_apply" => &["id", "expectedRevision", "gameId", "expectedActiveOwner"],
+            "profile_game_launch" => &["gameId", "expectedActiveOwner"],
             "profile_stop" | "profile_recover" => &[],
             _ => return Err("Unknown profile session operation.".into()),
         };
         if request.as_object().ok_or("A profile session request must be an object.")?.keys().any(|key| key != "command" && !fields.contains(&key.as_str())) {
             return Err("Unknown field in profile session request.".into());
         }
+        let expected_owner = request.get("expectedActiveOwner")
+            .map(|value| serde_json::from_value::<Option<crate::profile_session::RunOwner>>(value.clone())
+                .map_err(|_| "Activation requires the exact observed active owner or null.".to_owned()))
+            .transpose()?;
         let staged_epoch = || native_arrival_epoch.filter(|epoch| self.profile_admission_epoch.load(Ordering::Acquire) == *epoch).ok_or("This staged profile request was cancelled by a newer native control. Submit it again explicitly.");
         match command {
-            "profile_game_launch" => return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).ok_or("Choose a supported native game installation to launch.")?, staged_epoch()?),
+            "profile_game_launch" => return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).ok_or("Choose a supported native game installation to launch.")?, staged_epoch()?, expected_owner.as_ref()),
             "profile_apply" => {
                 let admission_epoch = staged_epoch()?;
-                let id = request["id"].as_str().ok_or("Choose a saved profile to apply.")?;
-                let expected = request["expectedRevision"].as_u64().filter(|revision| *revision > 0 && *revision <= osg_profiles::MAX_REVISION).ok_or("Apply requires the current saved expectedRevision.")?;
+                let id = request["id"].as_str().ok_or("Choose a saved profile to activate.")?;
+                let expected = request["expectedRevision"].as_u64().filter(|revision| *revision > 0 && *revision <= osg_profiles::MAX_REVISION).ok_or("Activation requires the current saved profile version.")?;
                 let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
-                if document.revision != expected { return Err("The saved profile changed. Reload its revision before applying.".into()); }
+                if document.revision != expected { return Err("The saved profile changed. Reload it before activating.".into()); }
                 let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
-                self.pin_staged_manual(id,admission_epoch)?;
-                crate::profile_session::apply_staged_admitted(
+                self.pin_staged_manual(id,admission_epoch,expected_owner.as_ref())?;
+                crate::profile_session::apply_staged_admitted_checked(
                     &self.profile_session,
                     crate::profile_session::Candidate { launch_preparation: false, document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
                     |candidate| self.prepare_profile_at(candidate,admission_epoch),
@@ -407,7 +411,7 @@ impl GatewayManager {
                         let game_admission = self.game_admission.read().unwrap_or_else(|p| p.into_inner());
                         if self.closed.load(Ordering::Acquire)
                             || self.profile_admission_epoch.load(Ordering::Acquire) != admission_epoch {
-                            return Err("Profile Apply was cancelled by Stop, recovery or a newer activation. Apply again explicitly.".into());
+                            return Err("Profile activation was cancelled by deactivation, recovery or a newer activation. Activate again explicitly.".into());
                         }
                         self.guard_retired_recovery()?;
                         let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
@@ -420,6 +424,7 @@ impl GatewayManager {
                         Ok((admission, game_admission))
                     },
                     || { self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); },
+                    expected_owner.as_ref(),
                 )?;
             },
             "profile_stop" => {let stopped=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).stop();let pinned=self.automatic_stop_pin();stopped.and(pinned)?;},
@@ -430,9 +435,10 @@ impl GatewayManager {
         self.decorate_profile_session(&mut response);
         Ok(response)
     }
-    fn pin_staged_manual(&self,id:&str,arrival_epoch:u64)->Result<(),String>{
+    fn pin_staged_manual(&self,id:&str,arrival_epoch:u64,expected_owner:Option<&Option<crate::profile_session::RunOwner>>)->Result<(),String>{
         let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
-        if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=arrival_epoch{return Err("This staged Manual selection was cancelled by a newer native control.".into());}
+        if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=arrival_epoch{return Err("Profile activation was cancelled by a newer native control.".into());}
+        if let Some(expected)=expected_owner{self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).check_expected_owner(expected)?;}
         self.automatic_manual_pin(id)?;
         self.profiles.lock().unwrap_or_else(|p|p.into_inner()).request(&json!({"command":"profile_selection_mode","mode":"manual"}))?;
         Ok(())
@@ -498,7 +504,7 @@ impl GatewayManager {
     }
     fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
     fn guard_learning(&self)->Result<(),String>{
-        if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile Apply or selection control to finish before input learning.".into());}
+        if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile activation or mode changes to finish before input learning.".into());}
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("claim")?;
         self.guard_retired_recovery()?;
         let adapters=self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values().cloned().collect::<Vec<_>>();
@@ -1346,6 +1352,7 @@ mod tests {
         )
     }
     include!("profile_editor_save_tests.rs");
+    include!("profile_activation_tests.rs");
     fn request(manager: &GatewayManager, command: &str, id: Option<&str>, fields: Value) -> Value {
         let mut request = json!({"command":command,"clientId":CLIENT});
         if let Some(id) = id {
@@ -1544,7 +1551,7 @@ mod tests {
     }
     #[test]
     fn input_learning_pending_apply_and_late_baseline_cannot_overlap_new_output(){
-        let (manager,source)=learning_manager(None);manager.profile_pending.store(1,Ordering::Release);let blocked=request(&manager,"profile_input_learn_start",None,source);assert_eq!(blocked["ok"],false);assert!(blocked["error"].as_str().unwrap().contains("pending profile Apply"));manager.profile_pending.store(0,Ordering::Release);
+        let (manager,source)=learning_manager(None);manager.profile_pending.store(1,Ordering::Release);let blocked=request(&manager,"profile_input_learn_start",None,source);assert_eq!(blocked["ok"],false);assert!(blocked["error"].as_str().unwrap().contains("pending profile activation"));manager.profile_pending.store(0,Ordering::Release);
         let gate=Arc::new(std::sync::Barrier::new(2));let(manager,source)=learning_manager(Some(gate.clone()));let manager=Arc::new(manager);let learning=manager.clone();let pending=std::thread::spawn(move||request(&learning,"profile_input_learn_start",None,source));gate.wait();let applied=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));assert_eq!(applied["ok"],true,"{applied}");gate.wait();let late=pending.join().unwrap();assert_eq!(late["ok"],false,"{late}");assert!(late["error"].as_str().unwrap().contains("cancelled"));assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["profileSession"]["state"],"running");
     }
     #[test]

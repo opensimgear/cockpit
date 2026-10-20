@@ -70,7 +70,7 @@ impl Runtime {
     pub(super) fn view(&self) -> Value {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let (status, message) = if self.emergency.load(Ordering::Acquire) {
-            ("blocked","Stop or a failed profile control prevents automatic activation. Resolve the reported error, then select Automatic explicitly to resume.")
+            ("blocked","Deactivation or a failed profile control prevents automatic activation. Resolve the reported error, then select Automatic explicitly to resume.")
         } else {
             (state.status, state.message.as_str())
         };
@@ -99,7 +99,7 @@ impl Runtime {
             "waiting"
         };
         state.message = if state.settings.mode == SelectionMode::Manual {
-            "Manual selection stays pinned until Automatic is selected.".into()
+            "Activate or deactivate profiles manually. Automatic mode follows your game rules.".into()
         } else {
             "Waiting for verified native game contexts.".into()
         };
@@ -161,7 +161,7 @@ impl Runtime {
             }
             Decision::Conflict(games) => {
                 state.status = "conflict";
-                state.message="Equal highest-priority game rules conflict; the current safe selection is retained.".into();
+                state.message="Equal highest-priority game rules conflict; the active profile is unchanged.".into();
                 state.conflicts = games.clone();
                 None
             }
@@ -172,7 +172,7 @@ impl Runtime {
                 state.last_attempt = Some(target.clone());
                 state.status = "preparing";
                 state.message =
-                    "Preparing the selected saved profile through native admission.".into();
+                    "Preparing the saved profile for activation.".into();
                 Some(next)
             }
         }
@@ -191,7 +191,7 @@ impl Runtime {
         let restart_notice = result.is_ok() && target.game_id.is_some() && enumeration_changed;
         state.target = Some(target);
         state.status = if result.is_ok() { "active" } else { "failed" };
-        state.message=match result{Ok(())=>"Automatic selection applied the exact saved revision. Process polling does not replay its actions.".into(),Err(error)=>error.clone()};
+        state.message=match result{Ok(())=>"Automatic mode activated the saved profile. Process polling does not replay its actions.".into(),Err(error)=>error.clone()};
         if restart_notice {
             state.message.push_str(" This profile changes controller availability; the running game may need a restart to see it.");
         }
@@ -287,7 +287,7 @@ impl GatewayManager {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .stop();
-            return Err(format!("Outputs were stopped, but Manual selection could not be persisted: {error}. Explicitly repair/recover before Automatic."));
+            return Err(format!("Profile deactivated, but Manual mode could not be persisted: {error}. Explicitly repair/recover before Automatic."));
         }
         self.profiles
             .lock()
@@ -318,7 +318,7 @@ impl GatewayManager {
             "profile_automatic_status" => {}
             "profile_selection_mode" => {
                 let mode: SelectionMode = serde_json::from_value(request["mode"].clone())
-                    .map_err(|_| "Choose Manual or Automatic selection.")?;
+                    .map_err(|_| "Choose Manual or Automatic mode.")?;
                 let selected = self
                     .profiles
                     .lock()

@@ -11,7 +11,7 @@ export type NativeProfileStatus = {
   degradation: string[]; fault: string | null;
 };
 export type ProfileRuntimeRequest = { command: 'profile_status' | 'profile_stop' | 'profile_recover' }
-  | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: ProfileGameId };
+  | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: ProfileGameId; expectedActiveOwner?:DeepReadonly<NativeProfileOwner>|null };
 export type ProfileRuntimeSend = (request: ProfileRuntimeRequest) => Promise<unknown>;
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -50,11 +50,11 @@ export class ProfileRuntimeClient {
     return nativeProfileStatus(await this.send(request));
   }
   status(): Promise<DeepReadonly<NativeProfileStatus>> { return this.request({ command: 'profile_status' }); }
-  apply(id: string, expectedRevision: number, gameId?: ProfileGameId): Promise<DeepReadonly<NativeProfileStatus>> {
-    if (!uuid(id) || !revision(expectedRevision) || gameId !== undefined && !game(gameId)) {
+  apply(id: string, expectedRevision: number, gameId?: ProfileGameId, expectedActiveOwner?:DeepReadonly<NativeProfileOwner>|null): Promise<DeepReadonly<NativeProfileStatus>> {
+    if (!uuid(id) || !revision(expectedRevision) || gameId !== undefined && !game(gameId) || expectedActiveOwner!==undefined&&expectedActiveOwner!==null&&!owner(expectedActiveOwner)) {
       throw new Error('Apply requires an exact saved profile revision and a supported optional game context.');
     }
-    return this.request({ command: 'profile_apply', id, expectedRevision, ...(gameId === undefined ? {} : { gameId }) });
+    return this.request({ command: 'profile_apply', id, expectedRevision, ...(gameId === undefined ? {} : { gameId }), ...(expectedActiveOwner===undefined?{}:{expectedActiveOwner:expectedActiveOwner===null?null:JSON.parse(JSON.stringify(expectedActiveOwner))}) });
   }
   stop(): Promise<DeepReadonly<NativeProfileStatus>> { return this.request({ command: 'profile_stop' }); }
   recover(): Promise<DeepReadonly<NativeProfileStatus>> { return this.request({ command: 'profile_recover' }); }

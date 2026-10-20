@@ -8,8 +8,7 @@
   const provided=untrack(()=>supplied),controller=provided??new ProfileAutomaticController(new ProfileAutomaticClient(async request=>{const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Native automatic profile selection is unavailable.');return result;}));
   let view=$state.raw(controller.state),mounted=$state(false);
   const blocked=$derived(!active||!view.status||view.stale||view.status.readOnly||!!view.pending);
-  const profileName=(id:string)=>profiles.find(profile=>profile.id===id)?.name??id;
-  const description=$derived(view.status?.mode==='manual'?`Manual keeps ${profileName(view.status.manualProfileId)} pinned. Automatic selects matching saved profiles for verified running games, with Default as the fallback.`:'Automatic selects matching saved profiles for verified running games, with Default as the fallback. Manual keeps your selection pinned.');
+  const description='Manual activates profiles when you choose. Automatic uses matching game rules, with Default as the fallback.';
   function mountStatus(){mounted=true;const stop=controller.subscribe(next=>view=next);return()=>{mounted=false;stop();};}
   onMount(mountStatus);onDestroy(()=>{if(!provided)controller.dispose();});
   function watchStatus(){if(!mounted||!active)return;const refresh=()=>{if(!document.hidden)void controller.refresh();};refresh();document.addEventListener('visibilitychange',refresh);const timer=window.setInterval(refresh,1000);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};}

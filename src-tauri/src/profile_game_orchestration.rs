@@ -15,6 +15,7 @@ fn launch_intent(
     requested: &GameIdentity,
     running: &[VerifiedGame],
     profiles: &[osg_profiles::ProfileDocument],
+    active_profile_id: Option<&str>,
 ) -> Result<LaunchIntent, String> {
     settings.validate()?;
     requested.validate()?;
@@ -36,7 +37,7 @@ fn launch_intent(
     }
     let intent = if settings.mode == SelectionMode::Manual {
         LaunchIntent {
-            profile_id: settings.manual_profile_id.clone(),
+            profile_id: active_profile_id.unwrap_or(osg_profiles::DEFAULT_PROFILE_ID).into(),
             game_id: Some(requested.game_id.clone()),
         }
     } else {

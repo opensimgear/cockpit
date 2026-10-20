@@ -179,6 +179,92 @@ fn launch(manager: &GatewayManager, id: &str) -> Result<Value, String> {
 }
 
 #[test]
+fn explicit_game_launch_only_replaces_the_confirmed_owner() {
+    let fixture = Fixture::new();
+    let first = ok(&fixture.manager,"profile_apply",json!({
+        "id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1,"expectedActiveOwner":null
+    }));
+    let owner = first["profileSession"]["owner"].clone();
+    let unconfirmed = request(&fixture.manager,"profile_game_launch",json!({
+        "gameId":"dcs","expectedActiveOwner":null
+    }));
+    assert_eq!(unconfirmed["ok"],false,"{unconfirmed}");
+    assert!(unconfirmed["error"].as_str().unwrap().contains("active profile changed"));
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),0);
+    assert_eq!(ok(&fixture.manager,"profile_status",json!({}))["profileSession"]["owner"],owner);
+
+    let confirmed = ok(&fixture.manager,"profile_game_launch",json!({
+        "gameId":"dcs","expectedActiveOwner":owner
+    }));
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),1);
+    let current = confirmed["profileSession"]["owner"].clone();
+    assert_ne!(current,owner);
+    assert_eq!(current["profileId"],osg_profiles::DEFAULT_PROFILE_ID);
+    assert_eq!(confirmed["launch"]["selectedGameId"],"dcs");
+
+    let stale = request(&fixture.manager,"profile_game_launch",json!({
+        "gameId":"x-plane-12","expectedActiveOwner":owner
+    }));
+    assert_eq!(stale["ok"],false,"{stale}");
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),1);
+    assert_eq!(ok(&fixture.manager,"profile_status",json!({}))["profileSession"]["owner"],current);
+}
+
+#[test]
+fn game_launch_rechecks_confirmed_owner_after_slow_preparation() {
+    let mut fixture = Fixture::new();
+    let manager = Arc::get_mut(&mut fixture.manager).unwrap();
+    let first = ok(manager,"profile_apply",json!({
+        "id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1,"expectedActiveOwner":null
+    }));
+    let owner = first["profileSession"]["owner"].clone();
+    let prepare = manager.profile_prepare.clone();
+    let gate = Arc::new(Barrier::new(2));
+    let paused = gate.clone();
+    manager.profile_prepare = Arc::new(move |candidate| {
+        let result = prepare(candidate);
+        paused.wait();
+        paused.wait();
+        result
+    });
+    let pending = fixture.manager.clone();
+    let worker = std::thread::spawn(move || request(&pending,"profile_game_launch",json!({
+        "gameId":"dcs","expectedActiveOwner":owner
+    })));
+    gate.wait();
+    let epoch = fixture.manager.profile_admission_epoch.load(Ordering::Acquire);
+    fixture.manager.profile_session.lock().unwrap().stop().unwrap();
+    assert_eq!(fixture.manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+    gate.wait();
+    let rejected = worker.join().unwrap();
+    assert_eq!(rejected["ok"],false,"{rejected}");
+    assert!(rejected["error"].as_str().unwrap().contains("active profile changed"),"{rejected}");
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),0);
+    assert!(fixture.manager.profile_session.lock().unwrap().status().owner.is_none());
+}
+
+#[test]
+fn manual_game_launch_uses_active_profile_and_defaults_after_deactivation() {
+    let fixture = Fixture::new();
+    let selected = ok(&fixture.manager,"profile_create",json!({"name":"Only when active"}))["document"]["id"].clone();
+    let active = ok(&fixture.manager,"profile_apply",json!({
+        "id":selected,"expectedRevision":1,"expectedActiveOwner":null
+    }));
+    let with_active = ok(&fixture.manager,"profile_game_launch",json!({
+        "gameId":"dcs","expectedActiveOwner":active["profileSession"]["owner"]
+    }));
+    assert_eq!(with_active["launch"]["profileId"],selected);
+    ok(&fixture.manager,"profile_stop",json!({}));
+    assert_eq!(fixture.manager.profile_automatic.config().0.manual_profile_id,selected.as_str().unwrap());
+    fixture.games.processes.lock().unwrap().clear();
+    let without_active = ok(&fixture.manager,"profile_game_launch",json!({
+        "gameId":"x-plane-12","expectedActiveOwner":null
+    }));
+    assert_eq!(without_active["launch"]["profileId"],osg_profiles::DEFAULT_PROFILE_ID);
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),2);
+}
+
+#[test]
 fn blocked_preflight_keeps_status_and_stop_responsive_and_never_admits_late_stage() {
     let mut fixture = Fixture::new();
     let manager = Arc::get_mut(&mut fixture.manager).unwrap();
@@ -263,7 +349,7 @@ fn completed_newer_stop_cannot_be_rebased_by_an_older_apply_or_launch_arrival() 
             // Also cover Stop arriving after Apply's first parse/check but
             // before its separate Manual policy-pinning boundary.
             assert!(manager
-                .pin_staged_manual(osg_profiles::DEFAULT_PROFILE_ID, arrival)
+                .pin_staged_manual(osg_profiles::DEFAULT_PROFILE_ID, arrival, None)
                 .unwrap_err()
                 .contains("cancelled"));
         }

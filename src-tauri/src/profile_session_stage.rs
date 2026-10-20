@@ -1,6 +1,6 @@
 //! Native preparation can block on a catalogue, driver or isolated compiler.
 //! Its payload crosses into the coordinator once, after that work completes.
-use super::{Candidate, Coordinator, Host};
+use super::{Candidate, Coordinator, Host, RunOwner};
 use sha2::{Digest, Sha256};
 use std::{
     any::Any,
@@ -81,13 +81,27 @@ pub(crate) fn apply_staged<H: Host>(
 /// records its admission epoch before another staged request can enter.
 pub(crate) fn apply_staged_admitted<H: Host, Guard>(
     coordinator: &Mutex<Coordinator<H>>,
-    mut candidate: Candidate,
+    candidate: Candidate,
     prepare: impl FnOnce(&Candidate) -> Result<Arc<Stage>, String>,
     admit: impl FnOnce(&Candidate) -> Result<Guard, String>,
     committed: impl FnOnce(),
 ) -> Result<(), String> {
+    apply_staged_admitted_checked(coordinator, candidate, prepare, admit, committed, None)
+}
+
+/// Explicit activation can only replace the owner observed by the operator.
+/// Check again under the coordinator lock: health can retire an owner without
+/// changing the operator admission epoch while native preparation is waiting.
+pub(crate) fn apply_staged_admitted_checked<H: Host, Guard>(
+    coordinator: &Mutex<Coordinator<H>>,
+    mut candidate: Candidate,
+    prepare: impl FnOnce(&Candidate) -> Result<Arc<Stage>, String>,
+    admit: impl FnOnce(&Candidate) -> Result<Guard, String>,
+    committed: impl FnOnce(),
+    expected_owner: Option<&Option<RunOwner>>,
+) -> Result<(), String> {
     if candidate.stage.is_some() {
-        return Err("Apply requires a fresh native preparation.".into());
+        return Err("Activation requires a fresh native preparation.".into());
     }
     if candidate.read_only {
         return Err("Profile storage is read-only; repair it before activation.".into());
@@ -99,10 +113,11 @@ pub(crate) fn apply_staged_admitted<H: Host, Guard>(
         .check_apply()?;
     candidate.stage = Some(prepare(&candidate)?);
     let admission = admit(&candidate)?;
-    let result = coordinator
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .apply(candidate);
+    let result = {
+        let mut coordinator = coordinator.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
+        coordinator.apply(candidate)
+    };
     if result.is_ok() {
         committed();
     }

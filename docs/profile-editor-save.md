@@ -1,6 +1,8 @@
 # Atomic profile editor save
 
-`profile_editor_save` accepts `{document, expectedRevision, assignments}` and returns `{document, assignments, profiles, session}` (including bounded real library summaries and their native semantic hashes). The editor owns its Add/Copy/Cancel draft until Save succeeds. Saving does not select or apply a profile, acquire a device, or start output.
+`profile_editor_save` accepts `{document, expectedRevision, assignments}` and returns `{document, assignments, profiles, session, saveApplication}` (including bounded real library summaries and their native semantic hashes). The editor owns its Add/Copy/Cancel draft until Save succeeds. Saving an inactive profile only stores it and never activates it. Saving the active profile prepares and reapplies the saved graph using its existing game context and selection mode.
+
+`saveApplication.state` distinguishes `inactive`, `applied` and `failed`. A failed reapply does not undo successful storage; its error remains actionable and the user can retry the saved changes. Newer native lifecycle operations take precedence over an in-flight save. Success is reported through the shared notification area rather than a persistent saved-feedback banner.
 
 An explicit `expectedRevision: null` creates only a new canonical UUID at document revision 1. Existing IDs and capacity overflow are rejected. A numeric expected revision must match both the saved graph and the submitted document; a successful replacement increments it once. Missing, unsafe, stale and mismatched revisions are rejected.
 

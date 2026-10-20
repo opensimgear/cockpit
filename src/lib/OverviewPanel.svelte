@@ -14,13 +14,13 @@
   const native = $derived(profileState.stale ? null : profileState.status);
   const snapshot = $derived(native?.appliedSnapshot);
   const appliedName = $derived(snapshot ? profiles.find(profile => profile.id === snapshot.profileId)?.name ?? (snapshot.profileId === DEFAULT_PROFILE_ID ? 'Default' : snapshot.profileId) : null);
-  const stateLabels = { stopped: 'Stopped', running: 'Running', degraded: 'Running with unavailable branches', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Preparing profile', 'awaiting-game': 'Waiting for the verified game' };
-  const profileLabel = $derived(!native ? profileState.statusError ? 'Native status unavailable' : 'Checking profile…' : native.state === 'stopped' ? 'No active profile' : appliedName ?? stateLabels[native.state]);
+  const stateLabels = { stopped: 'No profile active', running: 'Active', degraded: 'Active with unavailable branches', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Activating profile', 'awaiting-game': 'Waiting for the verified game' };
+  const profileLabel = $derived(!native ? profileState.statusError ? 'Native status unavailable' : 'Checking profile…' : native.state === 'stopped' ? 'No profile active' : appliedName ?? stateLabels[native.state]);
   const selectedContext = $derived(native?.owner?.gameId ? games?.catalogue.find(game => game.id === native.owner!.gameId) : undefined);
   const contextLabel = $derived(!native ? 'Context status unavailable' : !native.owner ? 'No applied game context' : !native.owner.gameId ? 'Hardware-only profile' : selectedContext ? gameContextLabel(selectedContext) : 'Waiting for native game context');
 </script>
 
-<div class="page-heading"><div><div class="eyebrow">YOUR COCKPIT AT A GLANCE</div><h1>Overview</h1><p>Your detected games, applied profile and connected hardware.</p></div><span class="quiet-tag">Native status</span></div>
+<div class="page-heading"><div><div class="eyebrow">YOUR COCKPIT AT A GLANCE</div><h1>Overview</h1><p>Your detected games, active profile and connected hardware.</p></div><span class="quiet-tag">Native status</span></div>
 {#if games?.error || games?.cleanup?.error || inventoryError}<Notification message={String(games?.cleanup?.error || games?.error || inventoryError)} kind="error" />{/if}
 {#if profileState.statusError}<Notification message={profileState.statusError} kind="error" />{/if}
 {#if games?.cleanup && games.cleanup.phase !== 'idle'}<div class="cleanup-note"><strong>Previous owned setup · {gameCleanupLabel(games.cleanup)}</strong><p>This recovery record is separate from the applied profile.</p><button class="text-button" onclick={openGames}>Review cleanup <Icon name="chevron" size={13} /></button></div>{/if}
@@ -33,10 +33,10 @@
     {#each games?.detectionErrors ?? [] as error}<Notification message={String(error)} kind="error" />{/each}
     <button class="text-button" onclick={openGames}>Open games <Icon name="chevron" size={13} /></button>
   </section>
-  <section class="panel overview-card" aria-label="Native applied profile">
-    <div class="overview-label"><Icon name="settings" size={18} /><h2>Applied profile</h2></div>
+  <section class="panel overview-card" aria-label="Active profile">
+    <div class="overview-label"><Icon name="settings" size={18} /><h2>Active profile</h2></div>
     <strong class="overview-value">{profileLabel}</strong>
-    {#if native}<p>{stateLabels[native.state]}{#if native.owner?.gameId} · {games?.catalogue.find(game => game.id === native.owner!.gameId)?.name ?? native.owner.gameId}{/if}</p>{:else}<p>Waiting for the current native profile status. Open a profile to start it. Saving a running profile applies its changes.</p>{/if}
+    {#if native && native.state !== 'stopped'}<p>{stateLabels[native.state]}{#if native.owner?.gameId} · {games?.catalogue.find(game => game.id === native.owner!.gameId)?.name ?? native.owner.gameId}{/if}</p>{:else if !native}<p>Waiting for the current native profile status. Open a profile to activate it. Saving an active profile applies its changes.</p>{/if}
     {#if native?.state === 'awaiting-game'}<p>Hardware remains neutral while the native launch waits for its exact verified game.</p>{/if}
     {#if native?.fault}<Notification message={native.fault} kind="error" />{/if}
     {#if native?.degradation.length}<ul class="degradation" aria-label="Unavailable profile branches">{#each native.degradation as message,index (index)}<li>{message}</li>{/each}</ul>{/if}

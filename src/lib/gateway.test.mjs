@@ -131,7 +131,7 @@ test('profile runtime controls and status bypass slow Apply while older unsent A
   }});
   const firstApply=api.gatewayRequest({command:'profile_apply',id:'first',expectedRevision:1});
   const queuedApply=api.gatewayRequest({command:'profile_apply',id:'old-queued',expectedRevision:1});
-  const rejected=assert.rejects(queuedApply,/cancelled by Stop or recovery/);
+  const rejected=assert.rejects(queuedApply,/cancelled by deactivation or recovery/);
   await tick();
   await api.gatewayRequest({command:'profile_status'});
   await api.gatewayRequest({command:'profile_stop'});
@@ -151,7 +151,7 @@ test('new explicit Apply waits for prior Save and priority control completion wi
     }});
     const save=api.gatewayRequest({command:'profile_editor_save',document:{id:'draft'},expectedRevision:1,assignments:[]});
     const old=api.gatewayRequest({command:'profile_apply',id:'cancelled',expectedRevision:2});
-    const rejected=assert.rejects(old,/cancelled by Stop or recovery/);
+    const rejected=assert.rejects(old,/cancelled by deactivation or recovery/);
     const stop=api.gatewayRequest({command});
     const fresh=api.gatewayRequest({command:'profile_apply',id:'fresh',expectedRevision:2});
     await api.gatewayRequest({command:'profile_status'});
@@ -170,7 +170,7 @@ test('Stop bypasses an editor Save while queued saves still persist without disp
   }});
   const active=api.gatewayRequest({command:'profile_editor_save',document:{id:'active'},expectedRevision:1,assignments:[]});
   const queued=api.gatewayRequest({command:'profile_editor_save',document:{id:'inactive'},expectedRevision:1,assignments:[]});
-  const applying=api.gatewayRequest({command:'profile_apply',id:'cancelled',expectedRevision:2}),cancelled=assert.rejects(applying,/cancelled by Stop/);
+  const applying=api.gatewayRequest({command:'profile_apply',id:'cancelled',expectedRevision:2}),cancelled=assert.rejects(applying,/cancelled by deactivation/);
   await tick();await api.gatewayRequest({command:'profile_stop'});await api.gatewayRequest({command:'profile_status'});
   assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_editor_save','profile_stop','profile_status']);
   pending.resolve();await Promise.all([active,queued,cancelled]);

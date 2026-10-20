@@ -18,7 +18,7 @@ const hash = `sha256:${'1'.repeat(64)}`;
 const plain = value => JSON.parse(JSON.stringify(value));
 const blank = () => ({schemaVersion:2,id:defaultId,name:'Default',revision:1,eligibility:{gameIds:[]},resources:[],bindings:[],processingNodes:[],virtualOutputs:[],visibility:[],overrides:[],companionAssignments:[],editor:{positions:[],viewport:{x:0,y:0,zoom:1}}});
 
-test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact applied run', {timeout:60000}, async () => {
+test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact active owner', {timeout:60000}, async () => {
   await mkdir(artifacts,{recursive:true});
   const driver = await readFile(new URL(import.meta.url)), driverSha256 = createHash('sha256').update(driver).digest('hex');
   await writeFile(resolve(artifacts,'driver-source.mjs'),driver);
@@ -86,7 +86,8 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await expect(page.getByRole('button',{name:'Edit Default',exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Edit Default',exact:true})).toBeInViewport();
     await expect(page.getByRole('button',{name:'Add profile',exact:true})).toBeInViewport();
-    await expect(page.getByRole('button',{name:'Stop current profile',exact:true})).toBeInViewport();
+    await expect(page.getByRole('button',{name:'Deactivate current profile',exact:true})).toBeInViewport();
+    await expect(page.getByText('Selected for runtime',{exact:true})).toHaveCount(0);
     const runtime = page.getByLabel('Runtime profile status');
     await expect(runtime).toContainText('Active profile · Default');
     const inspection = page.getByRole('region',{name:'Applied source to destination activity'});
@@ -108,8 +109,9 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await page.getByLabel('Profile name',{exact:true}).fill('Browser rig');
     const save = page.getByRole('button',{name:'Save profile',exact:true});
     await activateByTab(save,'Save new profile','Enter');
-    await expect(page.getByText('All changes saved · Save now and start this profile when ready.',{exact:true})).toBeVisible();
-    await expect(runtime.getByRole('button',{name:'Start profile',exact:true})).toBeEnabled();
+    await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByText('Profile saved.',{exact:true}).last()).toBeVisible();
+    await expect(page.locator('main').getByText(/All changes saved|Profile saved/)).toHaveCount(0);
+    await expect(runtime.getByRole('button',{name:'Activate profile',exact:true})).toBeEnabled();
     const savedId = [...documents.keys()].find(id=>id!==defaultId);
     assert.ok(savedId);
     const back = page.getByRole('button',{name:'Back to Profiles',exact:false});

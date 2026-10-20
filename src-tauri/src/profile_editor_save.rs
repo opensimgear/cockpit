@@ -26,11 +26,11 @@ impl GatewayManager {
         let application = match owner {
             None => json!({"state":"inactive","error":null}),
             Some(owner) => {
-                let result = candidate.and_then(|candidate| candidate.ok_or_else(|| "The saved profile is missing its running candidate.".to_owned()))
+                let result = candidate.and_then(|candidate| candidate.ok_or_else(|| "The saved profile is missing its active candidate.".to_owned()))
                     .and_then(|candidate| self.apply_saved_editor(candidate, &owner, arrival));
                 match result {
                     Ok(()) => json!({"state":"applied","error":null}),
-                    Err(error) => json!({"state":"failed","error":format!("Profile saved, but its running changes could not be applied: {error}")}),
+                    Err(error) => json!({"state":"failed","error":format!("Profile saved, but its changes could not be applied to the active profile: {error}")}),
                 }
             }
         };
@@ -44,7 +44,7 @@ impl GatewayManager {
             .ok_or("Applying the saved changes was cancelled by a newer profile control.")?;
         if candidate.game_id.as_ref().is_some_and(|game| !candidate.document.eligibility.game_ids.is_empty()
             && !candidate.document.eligibility.game_ids.contains(game)) {
-            return Err("The saved profile is not eligible for its running game context.".into());
+            return Err("The saved profile is not eligible for its active game context.".into());
         }
         if candidate.read_only { return Err("Repair profile storage before applying its saved changes.".into()); }
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).check_apply()?;
@@ -54,7 +54,7 @@ impl GatewayManager {
         let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
         let _game = self.game_admission.read().unwrap_or_else(|p|p.into_inner());
         if self.closed.load(Ordering::Acquire) || self.profile_admission_epoch.load(Ordering::Acquire) != epoch {
-            return Err("Applying the saved changes was cancelled by Stop, recovery or a newer profile control.".into());
+            return Err("Applying the saved changes was cancelled by deactivation, recovery or a newer profile control.".into());
         }
         self.guard_retired_recovery()?;
         let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(&previous.profile_id)?;
@@ -65,7 +65,7 @@ impl GatewayManager {
         // exact owner under the same coordinator lock that performs takeover.
         let mut coordinator = self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
         if coordinator.status().owner.as_ref() != Some(previous) {
-            return Err("The running profile changed while these saved changes were preparing.".into());
+            return Err("The active profile changed while these saved changes were preparing.".into());
         }
         // Keep the selected profile, Manual/Automatic mode and rule reconciler
         // unchanged. Only this exact active run is replaced.

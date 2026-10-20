@@ -2,10 +2,10 @@
 
 A profile describes how your rig's inputs, transformations and outputs work
 together. Open **Profiles** to see Default and your saved profiles. Open a profile
-to edit it. The active profile appears separately, with **Stop** available.
-Opening an editor leaves the running profile alone.
+to edit it. Cockpit has either **No profile active** or one active profile, with
+**Deactivate** available. Opening an editor leaves the active profile alone.
 
-## Create, save and start
+## Create, save and activate
 
 Choose **Add profile** to go straight to an empty editor. Name the profile, then
 use **Add from inventory** to choose controllers, OSG peripherals, companions
@@ -15,10 +15,11 @@ blocks.
 
 Select exact ports from each block's provider catalogue, connect routes and
 choose **Save profile**. Saving commits the graph and local resource assignments
-together. Saving an inactive profile leaves the current profile running.
-Choose **Start profile** when ready, with an optional game context.
+together and shows a notification. Saving an inactive profile leaves the active
+profile alone. Choose **Activate** on its tile or **Activate profile** in the
+editor when ready, with an optional game context in the editor.
 
-Saving the profile that is currently running applies the saved changes
+Saving the active profile applies the saved changes
 automatically and keeps its game context and Manual/Automatic selection mode.
 If the changes cannot be applied, they remain saved and Cockpit reports the
 failure; **Retry saved changes** lets you try again. Typing and graph edits
@@ -31,7 +32,13 @@ explicitly; copies do not inherit the source's device assignments.
 **Cancel creation** discards an unsaved new profile. **Back to Profiles** and
 sidebar navigation offer Save, Discard or Keep editing for unsaved changes.
 A failed Save keeps the editor open. Default is editable, has a fixed name and
-cannot be deleted. Fresh startup selects Default without starting output.
+cannot be deleted. Fresh startup in Manual mode has no active profile and
+acquires no output.
+
+Choosing **Activate** for another profile asks whether to switch. **Cancel**
+leaves the active profile alone. **Switch profile** deactivates it and activates
+the requested profile. Opening, saving or copying a profile never selects it as
+a separate runtime state.
 
 ## Set up this computer
 
@@ -92,8 +99,8 @@ unsupported.
 
 Direct OSG-to-DCS command routes require every HID publisher for their input
 devices to be disabled. Device hiding is separate. Unsupported or unknown
-publishers keep those commands blocked. A publication change during a run
-withdraws affected commands until the profile is started again; unrelated
+publishers keep those commands blocked. A publication change while active
+withdraws affected commands until the profile is activated again; unrelated
 controller routes and read-only telemetry can continue.
 
 ## Arrange and inspect
@@ -107,38 +114,41 @@ and Undo/Redo. Disconnected resources keep their blocks and routes.
 Open **Debug** from the list or editor to reach **Profile debug**. It contains
 draft/saved-profile preflight, applied port samples, path activity, keyboard/mouse
 recording preview, native runtime details and retired-output recovery.
-**Inspect draft preflight** checks the draft without saving or starting it.
+**Inspect draft preflight** checks the draft without saving or activating it.
 Graph or inventory changes make a captured check stale. A ready check does not
-start output; starting independently rechecks current resources and ownership.
+activate output; activation independently rechecks current resources and ownership.
 
-Live inspection shows the running graph's captured values, transformations and
+Live inspection shows the active graph's captured values, transformations and
 destinations. Unsaved editor changes remain separate. Unknown, stale and
 unavailable differ from ordinary zero/false values. Destination samples describe
 requested values; they do not acknowledge device or simulator acceptance.
 
-## Stop, recovery and games
+## Deactivation, recovery and games
 
-Required unavailable resources block starting. Optional unavailable routes can
+Required unavailable resources block activation. Optional unavailable routes can
 degrade while independent routes continue. Wrong-game and absent-game routes
 stay dormant. Lost or stale inputs release their affected contributions.
 Reconnection needs fresh input baselines; held inputs and old events are not
 replayed.
 
-**Stop** cancels pending starts/launches and releases owned output. Use **Start
-profile** to run a saved profile again, or explicitly select Automatic to resume
-automatic selection. **Recover outputs** restores
+**Deactivate** cancels pending activation/launches and releases owned output.
+Cockpit then shows **No profile active**. Choose **Activate** to use a saved
+profile again, or explicitly select Automatic to resume automatic selection.
+**Recover outputs** restores
 retained ownership without restarting mappings or commands. Retired ownership
 cleanup is available in Profile debug.
 
-Manual mode retains an explicit profile pin. Automatic uses enabled game rules
+Manual mode keeps profile activation under your control. Automatic uses enabled game rules
 and the unique highest priority among verified running games; no match uses
-Default. A priority tie holds selection. Stop, recovery and faults inhibit
-automatic activation until resolved. Saving a running profile preserves this
-selection mode; saving another profile does not switch to it.
+Default. A priority tie holds selection. Deactivation, recovery and faults inhibit
+automatic activation until resolved. Saving an active profile preserves this
+selection mode; saving another profile does not switch to it. Enabling Automatic
+authorizes its rule-driven switches without a confirmation on every game change.
 
-Games **Launch** uses the saved Manual pin or Automatic rule/default. It prepares
+Games **Launch** uses the active profile in Manual mode, or Default if no profile
+is active. Automatic mode uses its matching rule/default. Launch prepares
 neutral hardware, starts the game and waits for its verified process before
-running the graph. **Stop** remains available while waiting. Stopping a profile
+activating the graph. **Deactivate** remains available while waiting. Deactivating a profile
 does not close the game. Provider setup is needed only by routes using it.
 
 ## Import, export and delete
@@ -152,8 +162,8 @@ offers selectable JSON and a download, excluding local device assignments,
 credentials, backend slots and native application identities. An application
 reference from another computer must be captured locally before use.
 
-**Delete** confirms removal of a named profile and local assignments. A running
-profile continues until stopped. A concurrent saved edit requires refreshing
+**Delete** confirms removal of a named profile and local assignments. An active
+profile continues until deactivated. A concurrent saved edit requires refreshing
 before deletion. Import and Delete from a dirty editor first offer Save, Discard
 or Keep editing.
 

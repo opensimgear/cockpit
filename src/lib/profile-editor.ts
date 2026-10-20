@@ -35,6 +35,7 @@ export type ProfileWorkspaceState = {
     error: string;
     inventoryError: string;
     saveMessage: string;
+    saveNotificationKind: 'info' | 'warning';
 };
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const uuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) && value !== DEFAULT_PROFILE_ID;
@@ -125,7 +126,7 @@ function draft(document: ProfileDocument, assignments: ProfileLocalAssignment[],
 }
 /** Local authoring state. Its API deliberately has no select/apply/start methods. */
 export class ProfileEditorStore {
-    private value: ProfileWorkspaceState = { view: 'list', profiles: [], session: null, editor: null, inventory: [], inventoryLoaded: false, busy: false, inventoryBusy: false, readOnly: false, diagnostics: [], error: '', inventoryError: '', saveMessage: '' };
+    private value: ProfileWorkspaceState = { view: 'list', profiles: [], session: null, editor: null, inventory: [], inventoryLoaded: false, busy: false, inventoryBusy: false, readOnly: false, diagnostics: [], error: '', inventoryError: '', saveMessage: '', saveNotificationKind: 'info' };
     private listeners = new Set<(state: DeepReadonly<ProfileWorkspaceState>) => void>();
     private epoch = 0;
     private inventoryEpoch = 0;
@@ -235,7 +236,7 @@ export class ProfileEditorStore {
         const next = unchanged ? committed : { ...current, document: { ...clone(current.document), revision: result.document.revision }, baseRevision: result.document.revision, baseDocument: clone(result.document), baseAssignments: clone(result.assignments) };
         const rows = this.value.profiles.filter(row => row.id !== result.document.id);
         rows.push(clone(summary));
-        this.set({ editor: next, profiles: rows, session: this.session(result), saveMessage: result.saveApplication?.state === 'failed' ? result.saveApplication.error || 'Profile saved, but its running changes could not be applied.' : result.saveApplication?.state === 'applied' ? 'Profile saved and running changes applied.' : 'Profile saved.' });
+        this.set({ editor: next, profiles: rows, session: this.session(result), saveNotificationKind: result.saveApplication?.state === 'failed' ? 'warning' : 'info', saveMessage: result.saveApplication?.state === 'failed' ? result.saveApplication.error?.replace('its running changes', 'its active changes') || 'Profile saved, but its active changes could not be applied.' : result.saveApplication?.state === 'applied' ? 'Profile saved and active changes applied.' : 'Profile saved.' });
     }
     catch (error) {
         if (epoch === this.epoch)

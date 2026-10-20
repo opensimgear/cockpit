@@ -22,26 +22,30 @@ fn rule(id: &str, profile: &str, priority: i16) -> Rule {
     }
 }
 #[test]
-fn manual_launch_uses_pinned_profile_while_automatic_without_match_uses_hardware_default() {
+fn manual_launch_uses_active_profile_or_default_and_ignores_the_retired_selection() {
     let documents = vec![osg_profiles::default_document(), profile(A)];
     let mut settings = Settings::default();
-    settings.manual_profile_id = A.into();
+    settings.manual_profile_id = B.into();
     settings.rules = vec![rule("x-plane-12", osg_profiles::DEFAULT_PROFILE_ID, 100)];
     let running = vec![VerifiedGame {
         identity: game("x-plane-12"),
         process_session: "native-existing".into(),
     }];
     assert_eq!(
-        launch_intent(&settings, &game("dcs"), &running, &documents).unwrap(),
+        launch_intent(&settings, &game("dcs"), &running, &documents, Some(A)).unwrap(),
         LaunchIntent {
             profile_id: A.into(),
             game_id: Some("dcs".into())
         }
     );
+    assert_eq!(
+        launch_intent(&settings, &game("dcs"), &running, &documents, None).unwrap(),
+        LaunchIntent { profile_id: osg_profiles::DEFAULT_PROFILE_ID.into(), game_id: Some("dcs".into()) }
+    );
     settings.mode = SelectionMode::Automatic;
     settings.rules.clear();
     assert_eq!(
-        launch_intent(&settings, &game("dcs"), &[], &documents).unwrap(),
+        launch_intent(&settings, &game("dcs"), &[], &documents, Some(A)).unwrap(),
         LaunchIntent {
             profile_id: osg_profiles::DEFAULT_PROFILE_ID.into(),
             game_id: None
@@ -59,7 +63,7 @@ fn proposed_native_identity_competes_by_priority_without_inventing_a_process_ses
         process_session: "native-existing".into(),
     }];
     assert_eq!(
-        launch_intent(&settings, &game("dcs"), &running, &documents).unwrap(),
+        launch_intent(&settings, &game("dcs"), &running, &documents, None).unwrap(),
         LaunchIntent {
             profile_id: A.into(),
             game_id: Some("dcs".into())
@@ -67,14 +71,14 @@ fn proposed_native_identity_competes_by_priority_without_inventing_a_process_ses
     );
     settings.rules[1].priority = 15;
     assert_eq!(
-        launch_intent(&settings, &game("dcs"), &running, &documents).unwrap(),
+        launch_intent(&settings, &game("dcs"), &running, &documents, None).unwrap(),
         LaunchIntent {
             profile_id: B.into(),
             game_id: Some("x-plane-12".into())
         }
     );
     settings.rules[1].priority = 10;
-    assert!(launch_intent(&settings, &game("dcs"), &running, &documents)
+    assert!(launch_intent(&settings, &game("dcs"), &running, &documents, None)
         .unwrap_err()
         .contains("conflict"));
 }
@@ -86,7 +90,7 @@ fn disabled_changed_removed_or_ineligible_launch_rules_never_select_silently() {
     settings.rules = vec![rule("dcs", A, 1)];
     settings.rules[0].enabled = false;
     assert_eq!(
-        launch_intent(&settings, &game("dcs"), &[], &documents)
+        launch_intent(&settings, &game("dcs"), &[], &documents, None)
             .unwrap()
             .game_id,
         None
@@ -94,14 +98,14 @@ fn disabled_changed_removed_or_ineligible_launch_rules_never_select_silently() {
     settings.rules[0].enabled = true;
     settings.rules[0].identity.executable.push_str(".old");
     assert_eq!(
-        launch_intent(&settings, &game("dcs"), &[], &documents)
+        launch_intent(&settings, &game("dcs"), &[], &documents, None)
             .unwrap()
             .game_id,
         None
     );
     settings.rules[0].identity = game("dcs");
     documents[1].eligibility.game_ids = vec!["x-plane-12".into()];
-    assert!(launch_intent(&settings, &game("dcs"), &[], &documents).is_err());
+    assert!(launch_intent(&settings, &game("dcs"), &[], &documents, None).is_err());
     documents.pop();
-    assert!(launch_intent(&settings, &game("dcs"), &[], &documents).is_err());
+    assert!(launch_intent(&settings, &game("dcs"), &[], &documents, None).is_err());
 }

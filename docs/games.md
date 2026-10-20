@@ -108,12 +108,15 @@ an integration, and settings saves revoke an affected old context before returni
 
 ## Activation, launch and recovery
 
-**Launch** uses the saved Manual pin or Automatic rule/default. Native prepares a
+**Launch** uses the active profile in Manual mode, or Default if none is active.
+Automatic mode uses its matching rule/default. If a
+profile is active, it asks for confirmation before switching. Cancelling leaves
+that profile active and launches nothing. Native prepares a
 saved hardware-only candidate, writes ownership/recovery intent and holds its
 hardware neutral before one process spawn. Process waiting happens off-lock;
-**Stop profile** and passive native status stay available. The independent watcher
+**Deactivate profile** and passive native status stay available. The independent watcher
 must confirm the exact executable, PID and process creation identity before a
-fresh native context can start the graph. Browser process fields cannot grant it.
+fresh native context can activate the graph. Browser process fields cannot grant it.
 An already running external process prevents a duplicate spawn.
 
 Optional provider setup is needed only for the selected graph's matching branches.
@@ -121,10 +124,10 @@ A hardware-only profile can launch while optional integrations remain dormant. A
 higher-priority verified running game can retain the selected profile context
 while another game is launched. The returned state shows that actual decision.
 
-Stop cancels pending launch and releases owned output without terminating the
+Deactivation cancels pending launch and releases owned output without terminating the
 game. An uncertain spawn or failed post-spawn admission is not replayed; a game
 may remain open while its profile requires cleanup.
-Automatic selection is inhibited by Stop, recovery and faults until the
+Automatic selection is inhibited by deactivation, recovery and faults until the
 corresponding explicit controls are resolved. Game/context loss revokes affected
 integration authority; Automatic reevaluates saved rules and Default fallback.
 

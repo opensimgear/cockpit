@@ -14,6 +14,7 @@ struct Capture {
     admission_epoch: u64,
     requested: GameIdentity,
     intent: LaunchIntent,
+    active_profile_id: Option<String>,
     candidate: Candidate,
 }
 fn locks(status: &Status, emergency: bool) -> Locks {
@@ -24,11 +25,9 @@ fn locks(status: &Status, emergency: bool) -> Locks {
     }
 }
 impl GatewayManager {
-    fn launch_documents(&self, settings: &Settings) -> Vec<osg_profiles::ProfileDocument> {
-        let mut ids = BTreeSet::from([
-            osg_profiles::DEFAULT_PROFILE_ID.to_owned(),
-            settings.manual_profile_id.clone(),
-        ]);
+    fn launch_documents(&self, settings: &Settings, active_profile_id: Option<&str>) -> Vec<osg_profiles::ProfileDocument> {
+        let mut ids = BTreeSet::from([osg_profiles::DEFAULT_PROFILE_ID.to_owned()]);
+        ids.extend(active_profile_id.map(str::to_owned));
         ids.extend(
             settings
                 .rules
@@ -110,7 +109,8 @@ impl GatewayManager {
             &settings,
             &capture.requested,
             &running,
-            &self.launch_documents(&settings),
+            &self.launch_documents(&settings, capture.active_profile_id.as_deref()),
+            capture.active_profile_id.as_deref(),
         )? != capture.intent
         {
             return Err(
@@ -132,7 +132,7 @@ impl GatewayManager {
             .unwrap_or_else(|p| p.into_inner());
         self.launch_current(capture, epoch)?;
         if self.profile_automatic.emergency.load(Ordering::Acquire) {
-            return Err("Stop inhibited this pending game launch.".into());
+            return Err("Deactivation cancelled this pending game launch.".into());
         }
         self.profile_session
             .lock()
@@ -151,8 +151,8 @@ impl GatewayManager {
                 "The exact launched process is no longer confirmed by the native watcher.".into(),
             );
         }
-        let documents = self.launch_documents(&capture.settings);
-        if launch_intent(&capture.settings, &capture.requested, &running, &documents)?
+        let documents = self.launch_documents(&capture.settings, capture.active_profile_id.as_deref());
+        if launch_intent(&capture.settings, &capture.requested, &running, &documents, capture.active_profile_id.as_deref())?
             != capture.intent
         {
             return Err(
@@ -220,6 +220,7 @@ impl GatewayManager {
         &self,
         game_id: &str,
         admission_epoch: u64,
+        expected_owner: Option<&Option<RunOwner>>,
     ) -> Result<Value, String> {
         if self.profile_admission_epoch.load(Ordering::Acquire) != admission_epoch {
             return Err("The launch request was cancelled before native preparation.".into());
@@ -230,13 +231,22 @@ impl GatewayManager {
         {
             return Err("Repair or explicitly resume Automatic selection before launching.".into());
         }
+        // Manual launch follows the active profile. A deactivated profile has
+        // no hidden selection that can later be reactivated by launching a game.
+        let active_profile_id = {
+            let coordinator = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
+            coordinator.check_apply()?;
+            coordinator.status().owner.as_ref().map(|owner| owner.profile_id.clone())
+        };
         let requested = self.games.profile_activation_identity(game_id)?;
         let running = self.launch_observations(&settings)?;
         let intent = launch_intent(
             &settings,
             &requested,
             &running,
-            &self.launch_documents(&settings),
+            &self.launch_documents(&settings, active_profile_id.as_deref()),
+            active_profile_id.as_deref(),
         )?;
         let (document, assignments, read_only) = self
             .profiles
@@ -246,10 +256,6 @@ impl GatewayManager {
         if read_only {
             return Err("Repair profile storage before launching a game.".into());
         }
-        self.profile_session
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .check_apply()?;
         let mut candidate = Candidate { launch_preparation: true,
             document,
             assignments,
@@ -271,6 +277,7 @@ impl GatewayManager {
             admission_epoch,
             requested,
             intent,
+            active_profile_id,
             candidate,
         };
         let mut held_owner = None;
@@ -293,6 +300,7 @@ impl GatewayManager {
                     .profile_session
                     .lock()
                     .unwrap_or_else(|p| p.into_inner());
+                if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
                 coordinator.check_apply()?;
                 let previous_stop = self.profile_automatic.emergency.load(Ordering::Acquire);
                 if previous_stop && capture.settings.mode != SelectionMode::Manual {
@@ -435,7 +443,7 @@ impl GatewayManager {
                     stage: None,
                 })?;
                 if self.profile_automatic.emergency.load(Ordering::Acquire) {
-                    return Err("Stop inhibited this pending game launch.".into());
+                    return Err("Deactivation cancelled this pending game launch.".into());
                 }
                 let mut coordinator = self
                     .profile_session

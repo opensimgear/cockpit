@@ -66,9 +66,14 @@ changes. Saving a draft cannot mutate an already captured snapshot. Editor-only
 changes do not change the semantic hash, which excludes layout and document
 identity/name/revision metadata.
 
-Session metadata separates selected profile, manual/automatic selection mode,
-stopped/faulted state and the captured applied revision. Automatic selection must
-honor manual mode, Stop and faults. Selecting a document cannot rearm processing.
+Internal session metadata retains compatibility selection fields, Manual/Automatic
+policy, native lifecycle state and the captured applied revision. The user sees
+only **No profile active** or one active profile. Compatibility selection fields
+do not control Manual game launch: it uses the active owner or Default when no
+owner exists. Explicit switches capture the expected native
+owner and require confirmation before deactivation and activation. Automatic
+selection must honor Manual mode, deactivation and faults. Opening a document
+cannot activate processing.
 Pure snapshot/session metadata does not submit output. The native coordinator
 owns preflight, acquisition, execution, neutralization, compensation and recovery.
 Process restart never replays a saved applied snapshot. Automatic selection, when

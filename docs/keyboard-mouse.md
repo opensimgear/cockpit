@@ -47,21 +47,22 @@ Older profiles without a saved scope retain an application-only default: use
 their explicit game context or the previously captured local application. A
 legacy machine-wide desktop setting does not broaden an old profile's scope.
 
-## Save, start and stop
+## Save, activate and deactivate
 
-Saving an inactive profile stores it; choose **Start profile** when ready.
-Saving the currently running profile applies its changes automatically while
+Saving an inactive profile stores it and shows a notification; choose **Activate
+profile** when ready. Saving the active profile applies its changes automatically while
 retaining game context and selection mode. If that update fails, the changes
 remain saved and Cockpit offers **Retry saved changes**. Opening an editor,
-importing and application capture do not start output.
+importing and application capture do not activate output. If another profile is
+active, activation asks for confirmation before switching profiles.
 
 Application-scoped output only runs while its exact target process is in front.
 Focus loss cancels pending actions and releases this profile's holds. Returning
 requires fresh released/neutral controls before rearming. **Waiting** means some
 controls still need release or centering; already armed actions can continue.
 
-**Stop** cancels pending work and prevents automatic rearming. Use **Start
-profile** to run again, or explicitly select Automatic to resume automatic
+**Deactivate** cancels pending work and prevents automatic rearming. Cockpit
+then shows **No profile active**. Use **Activate profile** again, or explicitly select Automatic to resume automatic
 selection. A mixed profile must pass the readiness checks of
 every required output backend. Failed activation does not turn into recording.
 

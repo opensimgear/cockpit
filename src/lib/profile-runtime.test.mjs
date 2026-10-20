@@ -18,10 +18,18 @@ test('explicit controls send saved identity and revision without document, resou
   await client.status();await client.apply(id,3);await client.apply(id,3,'dcs');await client.stop();await client.recover();
   assert.deepEqual(calls,[{command:'profile_status'},{command:'profile_apply',id,expectedRevision:3},{command:'profile_apply',id,expectedRevision:3,gameId:'dcs'},{command:'profile_stop'},{command:'profile_recover'}]);
 });
+
+test('activation serializes an explicit inactive guard or independent exact active-owner guard',async()=>{
+  const calls=[],client=new ProfileRuntimeClient(async request=>{calls.push(request);return stopped();}),expected=running().owner;
+  await client.apply(id,3,undefined,null);await client.apply(id,3,'dcs',expected);expected.generation=99;expected.gameId='x-plane-12';
+  assert.deepEqual(calls,[{command:'profile_apply',id,expectedRevision:3,expectedActiveOwner:null},{command:'profile_apply',id,expectedRevision:3,gameId:'dcs',expectedActiveOwner:running().owner}]);assert.notEqual(calls[1].expectedActiveOwner,expected);
+});
 test('invalid requests never reach native transport and a native rejection is not retried or converted to success',async()=>{
   let calls=0;const client=new ProfileRuntimeClient(async()=>{calls++;throw new Error('required resource missing');});
   for(const [target,revision,game]of[['wrong',1], [id,0],[id,Infinity],[id,Number.MAX_SAFE_INTEGER+1],[id,1,'wrong'],[id,1,null]])assert.throws(()=>client.apply(target,revision,game),/exact saved/);
   assert.equal(calls,0);
+  for(const expectedOwner of [false,'active',{},[],{...running().owner,session:'old'},{...running().owner,generation:0},{...running().owner,generation:1.5},{...running().owner,generation:Number.MAX_SAFE_INTEGER+1},{...running().owner,profileId:'wrong'},{...running().owner,profileRevision:0},{...running().owner,gameId:'wrong'},{...running().owner,gameId:undefined}])assert.throws(()=>client.apply(id,3,undefined,expectedOwner),/exact saved/);
+  assert.equal(calls,0,'A malformed confirmation must never reach native transport.');
   await assert.rejects(client.apply(id,1),/required resource missing/);assert.equal(calls,1);
 });
 test('malformed and inconsistent native evidence cannot become running UI state',()=>{

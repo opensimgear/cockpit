@@ -3,7 +3,7 @@
 Profiles opens to the saved profile list, including editable Default and
 **Add profile**. Rows open with pointer, Enter or Space. The active profile and
 editing document are separate: opening or navigating an editor does not switch
-the running profile.
+the active profile. There is no separate selected-for-runtime state.
 
 ## Creating and saving
 
@@ -19,10 +19,11 @@ resources as Unassigned until explicitly assigned. Replacing an edited new
 draft with a blank graph or copy requires confirmation.
 
 **Save profile** commits the graph and local assignments together. If that
-profile is running, Save also prepares and applies the saved changes using the
-same game context and selection mode. If another profile is running, or no
-profile is running, Save only stores the edited profile. **Start profile** is
-the explicit action for starting an inactive saved profile.
+profile is active, Save also prepares and applies the saved changes using the
+same game context and selection mode. If another profile is active, or no
+profile is active, Save only stores the edited profile. Successful saves appear
+as notifications, without a persistent saved-feedback banner. **Activate profile**
+is the explicit action for activating an inactive saved profile.
 
 A failed storage write keeps the draft open. A successful Save with a failed
 runtime update reports that the profile was saved and its changes could not be
@@ -51,8 +52,8 @@ stay paged. Cached contracts support offline authoring; runtime admission checks
 current availability. Assigning a copied resource requires an explicit inventory
 choice and a matching provider port for every saved logical port.
 
-Required resources must be available to start. Optional unavailable routes can
-remain degraded while independent routes run. Block names, required policy,
+Required resources must be available to activate. Optional unavailable routes can
+remain degraded while independent routes remain active. Block names, required policy,
 game visibility intent and supported temporary publication policies are edited
 in the selected resource's inspector.
 
@@ -115,18 +116,18 @@ The **Debug** button on the list or editor opens **Profile debug**. The main
 editor focuses on authoring; diagnostics live in this separate view:
 
 - **Inspect draft preflight** checks the current draft or a selected saved
-  profile and its local assignments without saving or starting it. Diagnostics
+  profile and its local assignments without saving or activating it. Diagnostics
   identify exact blocks and edges. Changes to graph or inventory make the
   captured result stale; Refresh preflight captures current inputs.
-- **Applied port samples** and **Path activity** inspect the active run, including
+- **Applied port samples** and **Path activity** inspect the active graph, including
   exact ports, values, transformations, freshness and requested destinations.
-  Unsaved draft changes remain separate from the running graph.
+  Unsaved draft changes remain separate from the active graph.
 - **Recording preview** checks keyboard/mouse operations and timing using sample
   controls. It never submits OS input.
 - **Native runtime and desktop output details** expose technical state for
   diagnosis. Retired-output recovery is also available here.
 
-Preflight readiness never grants output ownership. Starting or updating a running
+Preflight readiness never grants output ownership. Activating or updating an active
 profile performs fresh native admission. Destination samples describe requests,
 not device/simulator acknowledgements. Unknown, stale and unavailable remain
 distinct from false or zero. Event samples show the last observed event and
@@ -134,21 +135,27 @@ are not an event history or input-learning mechanism.
 
 ## Runtime and concurrency details
 
-The runtime card shows the active profile and state. Save running changes or
-use **Start profile** for another saved profile. **Stop** cancels pending starts
-or launches and releases output. Use **Start profile** to run again, or explicitly
-select Automatic to resume automatic selection.
+The top card shows **No profile active** or the one active profile and the
+Manual/Automatic toggle. Tiles show an **Active** badge only for that active
+profile. **Activate** and **Activate profile** request activation. When another
+profile is active, a confirmation offers **Cancel** or **Switch
+profile**. Cancelling changes nothing; confirming deactivates the active profile
+before activating the requested profile.
+
+**Deactivate** cancels pending activation or launches and releases output. It
+leaves no active profile. Choose **Activate** to use a saved profile again, or
+explicitly select Automatic to resume automatic selection.
 **Recover outputs** performs native cleanup without replaying mappings. Leaving
-the editor leaves the running profile active.
+the editor leaves the active profile alone.
 
 Saved documents retain internal optimistic revisions for concurrency. The
 `profile_editor_save` request uses `expectedRevision: null` for creation and the
 captured saved revision for replacement. Native commits graph/assignments
-atomically, then reapplies only when that exact profile is still running.
+atomically, then reapplies only when that exact profile is still active.
 The applied run captures immutable content; edits cannot mutate it in place.
 Revisions are implementation details, not a user-managed profile workflow.
 
 Tests cover editor entry, empty creation, copy/assignment boundaries, atomic
 save, active-save updates, navigation races, port paging, typed graph authoring,
-scope persistence, Undo/Redo and separate Debug rendering. Hardware, driver and
+scope persistence, activation switching/cancellation, Undo/Redo and separate Debug rendering. Hardware, driver and
 game behavior are additionally checked through the running development Cockpit.

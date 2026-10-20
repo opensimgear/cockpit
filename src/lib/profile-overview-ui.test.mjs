@@ -41,17 +41,17 @@ test('overview distinguishes a successful empty Windows detection from missing s
 test('actual overview reads the native applied revision and exact profile identity rather than selected, saved-latest or retired game profile state',()=>{
  const html=overview(view(running()));assert.ok(html.includes('Applied saved rig'));assert.ok(!html.includes('applied revision'));assert.ok(!html.includes('applied revision 9'));assert.ok(!html.includes('Unapplied editor selection'));assert.ok(html.includes('Open profiles'));assert.ok(html.includes('Native process detected'));assert.ok(!html.includes('PID'));
  assert.ok(html.includes('Matching game context verified'));assert.ok(html.includes('Context readiness does not confirm fresh telemetry'));assert.ok(!html.includes('Receiving telemetry'));
- const retired={...games(),session:{phase:'running',profileId:'legacy'},profiles:[{id:'legacy',name:'Retired independent profile'}]};const inactive=overview(view(stopped()),{games:retired});assert.ok(inactive.includes('No active profile'));assert.ok(!inactive.includes('Retired independent profile'));assert.ok(!inactive.includes('Activate a profile in Games'));
+ const retired={...games(),session:{phase:'running',profileId:'legacy'},profiles:[{id:'legacy',name:'Retired independent profile'}]};const inactive=overview(view(stopped()),{games:retired});assert.ok(inactive.includes('No profile active'));assert.ok(!inactive.includes('Stopped'));assert.ok(!inactive.includes('Retired independent profile'));assert.ok(!inactive.includes('Activate a profile in Games'));
 });
 
 test('actual overview distinguishes hardware-only, awaiting-game, degradation and recovery without inventing telemetry or active ownership',()=>{
  let status=running();status.owner.gameId=null;assert.ok(overview(view(status)).includes('Hardware-only profile'));
  status=running();status.state='awaiting-game';let html=overview(view(status));assert.ok(html.includes('Hardware remains neutral'));assert.ok(html.includes('Waiting for the verified game'));
- status=running();status.state='degraded';status.degradation=['Exact optional companion is offline.'];html=overview(view(status));assert.ok(html.includes('Running with unavailable branches'));assert.ok(html.includes(status.degradation[0]));
- for(const state of ['faulted','recovery-needed','transitioning']){status={...stopped(),state,fault:state==='faulted'?'Native source continuity failed.':null};notifications.length=0;html=overview(view(status));assert.ok(!html.includes('No active profile'));if(status.fault)assert.ok(notifications.includes(status.fault));}
+ status=running();status.state='degraded';status.degradation=['Exact optional companion is offline.'];html=overview(view(status));assert.ok(html.includes('Active with unavailable branches'));assert.ok(html.includes(status.degradation[0]));
+ for(const state of ['faulted','recovery-needed','transitioning']){status={...stopped(),state,fault:state==='faulted'?'Native source continuity failed.':null};notifications.length=0;html=overview(view(status));assert.ok(!html.includes('No profile active'));if(status.fault)assert.ok(notifications.includes(status.fault));}
  html=overview({...view(running()),stale:true,statusError:'Current status unavailable.'});assert.ok(html.includes('Native status unavailable'));assert.ok(!html.includes('Applied saved rig'));assert.ok(!html.includes('Matching game context verified'));
  assert.ok(overview(view(null)).includes('Checking profile…'));
- const cleanup=games();cleanup.cleanup={phase:'recovery-needed',error:'A retained output receipt remains.'};html=overview(view(stopped()),{games:cleanup});assert.ok(html.includes('Previous owned setup'));assert.ok(html.includes('No active profile'));assert.ok(html.includes('Review cleanup'));
+ const cleanup=games();cleanup.cleanup={phase:'recovery-needed',error:'A retained output receipt remains.'};html=overview(view(stopped()),{games:cleanup});assert.ok(html.includes('Previous owned setup'));assert.ok(html.includes('No profile active'));assert.ok(html.includes('Review cleanup'));
 });
 
 test('device manual actions use the real native ownership block, with no retired binding inference or imaginary output acknowledgement',()=>{
@@ -93,14 +93,14 @@ test('mounted App reads selection mode from the same passive native status reply
 test('header badges show authoritative selection mode and applied ownership without a stopped label or stale inference',async()=>{
  const Header=await component('./HeaderStatus.svelte');
  const header=(profileState,extra={})=>render(Header,{props:{games:games(),gamesStale:false,profileState,profiles,profileMode:'manual',profileModeStale:false,...extra}}).body;
- const active=header(view(running()));assert.ok(active.includes('Active game'));assert.ok(active.includes('DCS World'));assert.ok(active.includes('Active profile · Running'));assert.ok(active.includes('Applied saved rig'));assert.ok(active.includes('Manual'));assert.ok(!active.includes('Automatic'));assert.ok(!active.includes('Unapplied editor selection'));assert.ok(!active.includes('applied revision'));
+ const active=header(view(running()));assert.ok(active.includes('Active game'));assert.ok(active.includes('DCS World'));assert.ok(active.includes('Active profile'));assert.ok(!active.includes('Running'));assert.ok(active.includes('Applied saved rig'));assert.ok(active.includes('Manual'));assert.ok(!active.includes('Automatic'));assert.ok(!active.includes('Unapplied editor selection'));assert.ok(!active.includes('applied revision'));
  const idle=header(view(stopped()),{games:{catalogue:[],detectedGames:[]},profileMode:'automatic'});assert.ok(idle.includes('Active profile'));assert.ok(!idle.includes('Stopped'));assert.ok(idle.includes('Automatic'));assert.ok(!idle.includes('Applied saved rig'));assert.ok(!idle.includes('DCS World'));assert.ok(idle.includes('None'));
  const stale=header({...view(running()),stale:true},{gamesStale:true});assert.ok(stale.includes('Unavailable'));assert.ok(!stale.includes('Applied saved rig'));assert.ok(!stale.includes('DCS World'));
- const degraded=header(view({...running(),state:'degraded'}));assert.ok(degraded.includes('Active profile · Degraded'));assert.ok(degraded.includes('Applied saved rig'));
+ const degraded=header(view({...running(),state:'degraded'}));assert.ok(degraded.includes('Active profile · Unavailable branches'));assert.ok(degraded.includes('Applied saved rig'));
  const missing=header(view(stopped()),{games:{catalogue:[],detectionErrors:['Process scan unavailable']}});assert.ok(missing.includes('Unavailable'));
  const pending=header(view(stopped()),{profileMode:null,profileModeStale:true});assert.ok(pending.includes('Mode unavailable'));assert.ok(!pending.includes('Manual'));assert.ok(!pending.includes('Automatic'));
  const staleMode=header(view(running()),{profileMode:'automatic',profileModeStale:true,profileModeError:'Native policy read failed.'});assert.ok(staleMode.includes('Mode unavailable'));assert.ok(staleMode.includes('Native policy read failed.'));assert.ok(!staleMode.includes('Automatic'));assert.ok(staleMode.includes('Applied saved rig'));
- for(const state of ['faulted','recovery-needed','transitioning']){const html=header(view({...stopped(),state}));assert.ok(!html.includes('Stopped'));assert.ok(html.includes({faulted:'Faulted','recovery-needed':'Recovery needed',transitioning:'Applying…'}[state]));}
+ for(const state of ['faulted','recovery-needed','transitioning']){const html=header(view({...stopped(),state}));assert.ok(!html.includes('Stopped'));assert.ok(html.includes({faulted:'Faulted','recovery-needed':'Recovery needed',transitioning:'Activating…'}[state]));}
 });
 
 async function companionCompactor(send){

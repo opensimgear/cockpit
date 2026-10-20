@@ -13,7 +13,7 @@ mod journal;
 use journal::{Manifest, Store, Transition};
 #[path = "profile_session_stage.rs"]
 mod staging;
-pub(crate) use staging::{apply_staged, apply_staged_admitted, Stage};
+pub(crate) use staging::{apply_staged, apply_staged_admitted, apply_staged_admitted_checked, Stage};
 #[path = "profile_session_inspection.rs"]
 pub(crate) mod inspection;
 #[path = "profile_session_topology.rs"]
@@ -266,6 +266,12 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn status(&self) -> &Status {
         &self.status
     }
+    pub(crate) fn check_expected_owner(&self, expected: &Option<RunOwner>) -> Result<(), String> {
+        if self.status.owner.as_ref() != expected.as_ref() {
+            return Err("The active profile changed. Refresh and confirm the activation again.".into());
+        }
+        Ok(())
+    }
     pub(crate) fn desktop_status(&self) -> Value {
         let mut status=self.host.desktop_status();
         let desktop_pending=self.manifest.active.iter().chain(self.manifest.pending.iter().flat_map(|transition|transition.incoming.iter().chain(transition.outgoing.iter())))
@@ -309,7 +315,7 @@ impl<H: Host> Coordinator<H> {
         self.apply_mode(candidate, false)
     }
     fn apply_mode(&mut self, candidate: Candidate, hold: bool) -> Result<(), String> {
-        if candidate.launch_preparation!=hold{return Err("Native launch preparation cannot be applied as an ordinary running profile.".into())}
+        if candidate.launch_preparation!=hold{return Err("Native launch preparation cannot be used as an ordinary active profile.".into())}
         self.check_apply()?;
         if candidate.read_only {
             return Err("Profile storage is read-only; repair it before activation.".into());
@@ -341,11 +347,11 @@ impl<H: Host> Coordinator<H> {
     }
     pub(crate) fn check_apply(&self) -> Result<(), String> {
         if self.launch.is_some() || self.manifest.pending.is_some() {
-            return Err("Stop or recover the pending profile transition before another Apply.".into());
+            return Err("Deactivate or recover the pending profile transition before another activation.".into());
         }
         if self.status.state == State::RecoveryNeeded {
             return Err(
-                "Recover the interrupted profile session before applying another profile.".into(),
+                "Recover the interrupted profile session before activating another profile.".into(),
             );
         }
         Ok(())
@@ -500,7 +506,7 @@ impl<H: Host> Coordinator<H> {
         let neutralize = self.neutralize_owned();
         let result = self.compensate(false);
         self.status.state = State::RecoveryNeeded;
-        self.status.fault = Some(match neutralize.and(result) { Ok(()) => format!("Profile takeover failed: {error}. Owned effects were compensated; explicitly recover before applying with fresh baselines."), Err(restore) => format!("Profile takeover failed: {error}. Recovery remains necessary: {restore}") });
+        self.status.fault = Some(match neutralize.and(result) { Ok(()) => format!("Profile takeover failed: {error}. Owned effects were compensated; explicitly recover before activating with fresh baselines."), Err(restore) => format!("Profile takeover failed: {error}. Recovery remains necessary: {restore}") });
         Err(self.status.fault.clone().unwrap())
     }
     fn compensate(&mut self, recovery: bool) -> Result<(), String> {
@@ -654,7 +660,7 @@ impl<H: Host> Coordinator<H> {
                     | "controller_visibility_hide"
             )
         {
-            return Err("The unified profile session owns this runtime state. Stop or recover it before making independent changes.".into());
+            return Err("The active profile owns this runtime state. Deactivate or recover it before making independent changes.".into());
         }
         Ok(())
     }

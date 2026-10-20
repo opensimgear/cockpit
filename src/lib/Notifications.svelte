@@ -3,7 +3,7 @@
   import { notifications, dismissNotification } from './notifications';
 </script>
 
-<div class="notifications" aria-label="Notifications">
+<div class="notifications" role="region" aria-label="Notifications">
   {#each $notifications as notification (notification.id)}
     <div class="toast" class:error={notification.kind === 'error'} class:warning={notification.kind === 'warning'} role={notification.kind !== 'info' ? 'alert' : 'status'}>
       <Icon name={notification.kind !== 'info' ? 'alert' : 'check'} size={19} />

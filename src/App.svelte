@@ -221,7 +221,7 @@
   const profileMutationBlock = $derived(profileState.stale || !profileState.status
     ? 'Current native profile ownership is unavailable. Refresh native status before making independent changes.'
     : profileState.status.owner || ['transitioning', 'recovery-needed', 'awaiting-game', 'running', 'degraded'].includes(profileState.status.state)
-      ? 'The native profile session owns this runtime state. Stop or recover it in Profiles before making independent changes.' : '');
+      ? 'An active profile owns these controls. Deactivate it or recover its outputs in Profiles before making independent changes.' : '');
   let inventoryError = $state('');
   let systemSnapshot = $state.raw<SystemSnapshot>();
   let drafts = $state<Record<string, Settings>>({});

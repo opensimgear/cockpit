@@ -8,7 +8,7 @@ const require=createRequire(import.meta.url),modulePath=process.env.OSG_PLAYWRIG
 const {chromium}=require(modulePath),{expect}=require(modulePath+'/test');
 const artifacts=resolve('.research/profile-workflow-native');
 
-test('running cockpit creates directly, saves inactive profiles, reapplies active saves, and separates Settings/Debug',{timeout:180000},async()=>{
+test('native cockpit saves with notifications and confirms exclusive profile activation',{timeout:180000},async()=>{
   const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
   const page=browser.contexts().flatMap(context=>context.pages()).find(page=>/127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(page.url()));
   assert.ok(page,'Start the native dev cockpit before running this test.');
@@ -20,6 +20,14 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     assert.equal(response.ok,true,response.error);return response.state;
   };
   const status=async()=>(await native({command:'profile_status'})).profiles.profileSession;
+  const notifications=page.getByRole('region',{name:'Notifications',exact:true});
+  async function saved(message='Profile saved.'){
+    const toast=notifications.getByRole('status').filter({has:page.getByText(message,{exact:true})});
+    await expect(toast).toBeVisible();
+    await expect(page.locator('main').getByText(/All changes saved|Profile saved/)).toHaveCount(0);
+    await toast.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+  }
+  async function noSelectedBadge(){await expect(page.getByText('Selected for runtime',{exact:true})).toHaveCount(0);}
   const navigation=page.getByRole('navigation',{name:'Main navigation'});
   async function list(){
     await navigation.getByRole('button',{name:'Profiles',exact:true}).click();
@@ -36,14 +44,19 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     const modeSwitch=runtime.getByRole('switch',{name:'Automatic profile selection',exact:true});
     const profileBadge=page.locator('.topbar .profile-status'),modeBadge=profileBadge.locator('.mode-badge');
     await expect(modeSwitch).toBeEnabled();await expect(modeSwitch).toHaveAttribute('aria-checked','false');
+    await expect(runtime.getByText('No profile active',{exact:true})).toBeVisible();
+    await expect(runtime.getByRole('button',{name:'Deactivate current profile',exact:true})).toHaveCount(0);
+    await noSelectedBadge();
     await expect(page.getByRole('region',{name:'Automatic profile selection',exact:true})).toHaveCount(0);
     await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
     await modeSwitch.click();await expect(modeSwitch).toHaveAttribute('aria-checked','true');
     await expect(modeBadge).toHaveText('Automatic');
     await modeSwitch.click();await expect(modeSwitch).toHaveAttribute('aria-checked','false');
     await expect.poll(async()=>(await native({command:'profile_status'})).profiles.automatic.mode).toBe('manual');
-    await runtime.getByRole('button',{name:'Stop current profile',exact:true}).click();
-    await expect.poll(async()=>(await status()).state).toBe('stopped');
+    const deactivate=runtime.getByRole('button',{name:'Deactivate current profile',exact:true});
+    if(await deactivate.count())await deactivate.click();await native({command:'profile_stop'});
+    await expect.poll(async()=>(await status()).owner).toBeNull();
+    await expect(runtime.getByText('No profile active',{exact:true})).toBeVisible();
     await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
     await runtime.screenshot({path:resolve(artifacts,'profile-mode.png')});
     await page.getByRole('button',{name:'Settings',exact:true}).click();
@@ -62,13 +75,14 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     await page.getByRole('button',{name:'Add keyboard and mouse',exact:true}).click();
     await page.getByLabel('Keyboard and mouse scope',{exact:true}).selectOption('desktop-wide');
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await expect(page.getByText('All changes saved',{exact:false})).toBeVisible();
+    await saved();
+    await noSelectedBadge();
     assert.equal((await status()).owner,null,'Saving a new inactive profile must not activate it.');
     const first=(await native({command:'profile_list'})).profiles.profiles.find(profile=>profile.name===name);assert.ok(first);
     let document=(await native({command:'profile_get',id:first.id})).profiles.document;
     assert.equal(document.resources.length,0);assert.equal(document.desktopOutputs[0].scope.kind,'desktop-wide');
     // Connect a neutral constant through the actual editor. This acquires desktop
-    // output during Start without emitting a nonneutral key into another app.
+    // output during activation without emitting a nonneutral key into another app.
     await page.getByLabel('Visible transformation',{exact:true}).selectOption('constant');
     await page.getByRole('button',{name:'Add transformation',exact:true}).click();
     await page.getByRole('button',{name:'Connect exact ports',exact:true}).click();
@@ -79,16 +93,17 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     await composer.getByLabel('Exact destination input / action',{exact:true}).selectOption('action-1');
     await composer.getByRole('button',{name:'Create exact route',exact:true}).click();
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await expect(page.getByRole('button',{name:'Start profile',exact:true})).toBeEnabled();
-    await page.getByRole('button',{name:'Start profile',exact:true}).click();
+    await saved();
+    await expect(page.getByRole('button',{name:'Activate profile',exact:true})).toBeEnabled();
+    await page.getByRole('button',{name:'Activate profile',exact:true}).click();
     await expect.poll(async()=>(await status()).owner?.profileId).toBe(first.id);
-    const running=await status(),desktopRunning=(await native({command:'profile_desktop_status'})).desktop;
-    assert.ok(desktopRunning.runtime,'The native desktop output session must actually be acquired.');
+    const activated=await status(),desktopActive=(await native({command:'profile_desktop_status'})).desktop;
+    assert.ok(desktopActive.runtime,'The native desktop output session must actually be acquired.');
     const updated=`${name} updated`;names.add(updated);await page.getByLabel('Profile name',{exact:true}).fill(updated);
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await expect(page.getByText('Profile saved and running changes applied.',{exact:true})).toBeVisible();
-    const changed=await status();assert.equal(changed.owner.profileId,first.id);assert.ok(changed.owner.generation>running.owner.generation);
-    assert.equal(changed.owner.gameId,running.owner.gameId);
+    await saved('Profile saved and active changes applied.');
+    const changed=await status();assert.equal(changed.owner.profileId,first.id);assert.ok(changed.owner.generation>activated.owner.generation);
+    assert.equal(changed.owner.gameId,activated.owner.gameId);
     assert.equal((await native({command:'profile_status'})).profiles.session.selectionMode,'manual');
     assert.equal(Object.hasOwn(changed,'paused'),false,'Profile runtime status must not expose a Pause latch.');
     await expect(page.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
@@ -96,7 +111,7 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     assert.ok(!/\brevision\b/i.test(await page.locator('main').innerText()),'Normal profile editing must not expose revision numbers.');
     await page.getByRole('button',{name:'Debug',exact:true}).click();
     const debug=page.getByRole('region',{name:'Profile debug'});await expect(debug).toBeVisible();
-    await expect(debug.getByRole('button',{name:'Stop current profile',exact:true})).toBeEnabled();
+    await expect(debug.getByRole('button',{name:'Deactivate current profile',exact:true})).toBeEnabled();
     await expect(debug.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
     await debug.getByRole('button',{name:'Inspect draft preflight',exact:true}).click();
     await expect(debug.getByText('Readiness:',{exact:false})).toBeVisible();
@@ -107,18 +122,48 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     await expect(page.getByRole('region',{name:'Native graph preflight'})).toHaveCount(0);
     await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
     const inactive=`${name} inactive`;names.add(inactive);await page.getByLabel('Profile name',{exact:true}).fill(inactive);await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await expect(page.getByText('Profile saved.',{exact:true})).toBeVisible();assert.deepEqual((await status()).owner,changed.owner,'Saving another profile must leave the running owner unchanged.');
+    await saved();assert.deepEqual((await status()).owner,changed.owner,'Saving another profile must leave the active owner unchanged.');
+    const second=(await native({command:'profile_list'})).profiles.profiles.find(profile=>profile.name===inactive);assert.ok(second);
     await page.screenshot({path:resolve(artifacts,'inactive-save.png'),fullPage:true});
+
+    // An activation request alone must not select, deactivate or replace an owner.
+    // Exercise the actual tile buttons and both choices of the native-guarded dialog.
+    await list();await noSelectedBadge();
+    await expect(page.getByRole('button',{name:`Deactivate ${updated}`,exact:true})).toBeEnabled();
+    const activateSecond=page.getByRole('button',{name:`Activate ${inactive}`,exact:true});
+    await activateSecond.click();
+    const switchDialog=page.getByRole('dialog',{name:'Switch active profile?',exact:true});
+    await expect(switchDialog).toBeVisible();
+    await expect(switchDialog).toContainText(`Deactivate ${updated} and activate ${inactive}?`);
+    assert.deepEqual((await status()).owner,changed.owner);
+    await switchDialog.getByRole('button',{name:'Cancel',exact:true}).click();
+    await expect(switchDialog).toHaveCount(0);
+    assert.deepEqual((await status()).owner,changed.owner,'Cancelling a switch must preserve the exact active owner.');
+    await activateSecond.click();await switchDialog.getByRole('button',{name:'Switch profile',exact:true}).click();
+    await expect.poll(async()=>(await status()).owner?.profileId).toBe(second.id);
+    const switched=await status();assert.ok(switched.owner.generation>changed.owner.generation);
+    await expect(page.getByRole('button',{name:`Activate ${updated}`,exact:true})).toBeEnabled();
+    await expect(page.getByRole('button',{name:`Deactivate ${inactive}`,exact:true})).toBeEnabled();
+    assert.ok(!(await native({command:'profile_desktop_status'})).desktop.runtime||
+      (await native({command:'profile_desktop_status'})).desktop.runtime.state==='stopped',
+      'Switching to the empty profile must release the former desktop output session.');
+    await noSelectedBadge();
+    await page.screenshot({path:resolve(artifacts,'profile-switch.png'),fullPage:true});
     await page.getByRole('button',{name:'Debug',exact:true}).click();
     await expect(debug.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
-    await debug.getByRole('button',{name:'Stop current profile',exact:true}).click();
-    await expect.poll(async()=>(await status()).state).toBe('stopped');
-    const stopped=await status();assert.equal(stopped.owner,null);assert.equal(stopped.appliedSnapshot,null);
+    await debug.getByRole('button',{name:'Deactivate current profile',exact:true}).click();
+    await expect.poll(async()=>(await status()).owner).toBeNull();
+    const inactiveStatus=await status();assert.equal(inactiveStatus.appliedSnapshot,null);
+    await expect(debug.getByText('No profile active',{exact:true})).toBeVisible();
+    await list();await noSelectedBadge();
+    await expect(runtime.getByText('No profile active',{exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:/^Deactivate /})).toHaveCount(0);
+    assert.ok(!/\b(running|stopped)\b/i.test(await runtime.innerText()),'The profile card must use activation terminology.');
     assert.deepEqual(errors,[]);
-    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,headerModeBadge:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,activeSave:{before:running.owner,after:changed.owner},desktopQualified:desktopRunning.qualified,desktopRuntimeAcquired:!!desktopRunning.runtime,debugSeparated:true,stopOnly:true,debugStop:stopped,pageErrors:errors},null,2)+'\n');
+    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,headerModeBadge:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,saveNotifications:true,savedBannerAbsent:true,selectedBadgeAbsent:true,activeSave:{before:activated.owner,after:changed.owner},desktopQualified:desktopActive.qualified,desktopRuntimeAcquired:!!desktopActive.runtime,debugSeparated:true,activation:{cancelPreservedOwner:changed.owner,switchedOwner:switched.owner,deactivated:inactiveStatus},pageErrors:errors},null,2)+'\n');
   }catch(error){await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true});throw error;}
   finally{
-    try{await native({command:'profile_stop'});await native({command:'profile_select',id:'00000000-0000-4000-8000-000000000001',selectionSource:'manual'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();}
+    try{await native({command:'profile_stop'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();}
     finally{await browser.close();}
   }
 });

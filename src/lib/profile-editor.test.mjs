@@ -96,7 +96,8 @@ test('active save accepts applied and failed runtime outcomes as a clean durable
     assert.equal(h.store.state.editor.baseRevision,2);assert.equal(h.store.state.editor.document.revision,2);
     assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.docs.get(DEFAULT_PROFILE_ID).editor.viewport.x,25);
     assert.equal(h.store.state.session.state,'running');assert.equal(h.store.state.session.appliedSnapshot.revision,application.state==='applied'?2:1);
-    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and running changes applied.':application.error);
+    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and active changes applied.':application.error.replace('its running changes','its active changes'));
+    assert.equal(h.store.state.saveNotificationKind,application.state==='applied'?'info':'warning');
     assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['get','save']);
   }
 });
@@ -111,7 +112,8 @@ test('newer edits rebase and remain dirty after either successful or failed save
     assert.equal(h.store.state.editor.document.editor.viewport.x,90);assert.equal(h.store.state.editor.baseDocument.editor.viewport.x,10);
     assert.equal(h.store.state.editor.document.revision,2);assert.equal(h.store.state.editor.baseRevision,2);
     assert.equal(profileEditorDirty(h.store.state.editor),true);assert.equal(h.store.state.error,'');
-    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and running changes applied.':application.error);
+    assert.equal(h.store.state.saveMessage,application.state==='applied'?'Profile saved and active changes applied.':application.error.replace('its running changes','its active changes'));
+    assert.equal(h.store.state.saveNotificationKind,application.state==='applied'?'info':'warning');
   }
 });
 
@@ -120,7 +122,7 @@ test('saving an inactive empty profile needs no inventory or separate Apply requ
   const save=h.api.editorSave;h.api.editorSave=async(...args)=>({...await save(...args),saveApplication:{state:'inactive',error:null}});
   await h.store.save();
   assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.editor.document.resources.length,0);
-  assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.store.state.saveMessage,'Profile saved.');assert.equal(h.store.state.error,'');
+  assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.store.state.saveMessage,'Profile saved.');assert.equal(h.store.state.saveNotificationKind,'info');assert.equal(h.store.state.error,'');
   assert.equal(h.store.state.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'stopped');
   assert.equal(h.store.state.session.appliedSnapshot.revision,2);
   assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);

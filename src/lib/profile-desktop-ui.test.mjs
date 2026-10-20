@@ -12,7 +12,7 @@ const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:
 const stoppedReply=()=>({profiles:{profileSession:stopped()}});
 test('desktop action authoring is passive and physical key capture stops output before owning picker focus',async()=>{
  const calls=[],changes=[],view=await component('./ProfileDesktopEditor.svelte',async request=>{calls.push(plain(request));return stoppedReply();});
- const rendered=view.render({output:preset,change:output=>changes.push(plain(output))});assert.deepEqual(calls,[]);assert.match(rendered.html,/Physical key/);assert.match(rendered.html,/Save updates a running profile/);assert.match(rendered.html,/Saving an inactive profile sends no input/);assert.match(rendered.html,/Start profile/);assert.doesNotMatch(rendered.html,/revision|Apply/i);
+ const rendered=view.render({output:preset,change:output=>changes.push(plain(output))});assert.deepEqual(calls,[]);assert.match(rendered.html,/Physical key/);assert.match(rendered.html,/Save updates an active profile/);assert.match(rendered.html,/Saving an inactive profile sends no input/);assert.match(rendered.html,/activate it when ready/);assert.doesNotMatch(rendered.html,/revision|Apply|Start profile|running profile/i);
  const h=rendered.handlers;let prevented=0;
  const event=code=>({code,key:'a',preventDefault(){prevented++;},stopPropagation(){prevented++;}});
  h.keyCapture(event('KeyQ'),0);assert.equal(h.state.draft.actions[0].action.key,44);assert.equal(prevented,0);
@@ -32,14 +32,14 @@ test('key capture requires native confirmation that outputs are stopped and rele
  const snapshot={profileId:'00000000-0000-4000-8000-000000000001',revision:1,semanticHash:'sha256:'+'a'.repeat(64)};
  const owner={session:'11111111-1111-4111-8111-111111111111',generation:1,profileId:snapshot.profileId,profileRevision:1,gameId:null};
  for(const profileSession of [{...stopped(),state:'recovery-needed',fault:'Output cleanup is incomplete'}, {...stopped(),state:'running',appliedSnapshot:snapshot,owner}, {...stopped(),appliedSnapshot:snapshot}, {...stopped(),fault:'Output cleanup is incomplete'}]){
-  let focused=0;const view=await component('./ProfileDesktopEditor.svelte',async()=>({profiles:{profileSession}}));const{handlers:h}=view.render({output:preset,change(){throw Error('No edit expected');}});h.setPicker({focus(){focused++;}});await h.beginCapture('action-1');assert.equal(focused,0);assert.equal(h.state.capture,'');assert.equal(h.state.captureBusy,false);assert.match(h.state.error,/Stop and recover/);
+  let focused=0;const view=await component('./ProfileDesktopEditor.svelte',async()=>({profiles:{profileSession}}));const{handlers:h}=view.render({output:preset,change(){throw Error('No edit expected');}});h.setPicker({focus(){focused++;}});await h.beginCapture('action-1');assert.equal(focused,0);assert.equal(h.state.capture,'');assert.equal(h.state.captureBusy,false);assert.match(h.state.error,/Deactivate and recover/);
  }
  const view=await component('./ProfileDesktopEditor.svelte',async()=>({}));const{handlers:h}=view.render({output:preset,change(){throw Error('No edit expected');}});await h.beginCapture('action-1');assert.equal(h.state.capture,'');assert.match(h.state.error,/status is malformed/);
 });
 test('desktop controls keep preferences separate, send exact stop and ignore an older status after Stop',async()=>{
  const calls=[];let resolveOld;const stopped={enabled:false,qualified:false,state:'paused',reason:'Explicit Stop',scope:{kind:'application'},application:null,runtime:null};
  const view=await component('./ProfileDesktopControls.svelte',async request=>{calls.push(plain(request));if(request.command==='profile_desktop_status')return new Promise(resolve=>resolveOld=resolve);return{desktop:stopped};});
- const{html,handlers:h}=view.render({requested:true});assert.deepEqual(calls,[]);assert.match(html,/requires keyboard and mouse output/);assert.match(html,/Stop keyboard and mouse output/);assert.match(html,/releases its outputs/);assert.doesNotMatch(html,/Pause|Clear pause/);
+ const{html,handlers:h}=view.render({requested:true});assert.deepEqual(calls,[]);assert.match(html,/requires keyboard and mouse output/);assert.match(html,/Deactivate profile outputs/);assert.match(html,/releases its outputs/);assert.doesNotMatch(html,/Pause|Clear pause|Start profile|Stop keyboard and mouse output/);
  const old=h.request({command:'profile_desktop_status'});await h.request({command:'profile_desktop_stop'});resolveOld({desktop:{...stopped,state:'active'}});await old;assert.equal(h.state.status.state,'paused');assert.equal(h.state.error,'');
  h.configure(false);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls.at(-1),{command:'profile_desktop_configure',enabled:false,scope:{kind:'application'}});assert.ok(calls.every(request=>!Object.hasOwn(request,'document')&&!Object.hasOwn(request,'pid')&&!Object.hasOwn(request,'executable')));assert.doesNotMatch(html,/Application scope|Use last focused external application|Native owners/);
 });

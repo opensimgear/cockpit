@@ -33,7 +33,7 @@ Momentary buttons release with the pointer. Toggles retain requested state until
 
 **Save panel** retains the design and creates a fixed published copy internally; there is no separate Publish button. Select **Assigned companions** to update those assignments when saving. A failed companion update leaves the local save intact and reports the failure. **Export panel** creates a portable bundle without credentials, host trust, local output slots or game settings. Static PNG/JPEG/WebP assets travel inside it; external image URLs and animated assets are unsupported.
 
-Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A profile keeps its selected published panel; saving a newer panel does not rewrite that choice or its running graph. Active ownership may block an assignment change. Stop/recover the owner and explicitly reconcile the profile's instance and ports before saving a replacement panel choice.
+Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A profile keeps its selected published panel; saving a newer panel does not rewrite that choice or its active graph. Active ownership may block an assignment change. Deactivate/recover the owner and explicitly reconcile the profile's instance and ports before saving a replacement panel choice.
 
 ### Multiple viewports on one screen
 
@@ -57,7 +57,7 @@ Open **Profiles**, then **Add profile** or an existing profile. A new profile op
 
 Use **Inspect exact panel ports** and **Add control output** to select declared controls. **Connect exact ports** routes each selected output to a specific virtual-controller input or supported action. Add virtual layouts and visible processing nodes explicitly. Input learning and exact local assignments do not infer whole-panel mappings. Copied/imported profiles require explicit instance and port reconciliation.
 
-**Save profile** stores the graph and local pins together. Saving the running profile applies its changes while preserving its game context and selection mode; saving an inactive profile leaves the current run alone. Use **Start profile** when ready. Starting checks backend readiness, exact capabilities, ownership and neutral baselines. Open **Debug** for preflight, applied samples and path activity; requested destinations do not prove OS or game delivery. Use designer preview for local control testing and Profile debug for keyboard/mouse recording.
+**Save profile** stores the graph and local pins together and shows a notification. Saving the active profile applies its changes while preserving its game context and selection mode; saving an inactive profile leaves the active profile alone. Use **Activate profile** when ready. If another profile is active, confirm **Switch profile** to deactivate it and activate the requested profile. Activation checks backend readiness, exact capabilities, ownership and neutral baselines. Open **Debug** for preflight, applied samples and path activity; requested destinations do not prove OS or game delivery. Use designer preview for local control testing and Profile debug for keyboard/mouse recording.
 
 ## Add feedback
 
@@ -79,11 +79,11 @@ Freshness is separate from provenance. Unknown, stale and disconnected remain di
 
 **Clear visual state** and **Resync visuals** in the companion affect presentation only. Resync requests a fresh native snapshot without replaying input or actions. Changed source semantics or panel contracts require explicit profile reconciliation.
 
-## Start, stop and recover owned state
+## Activate, deactivate and recover owned state
 
-A profile captures exact companion instance/publication/capability references with its graph and feedback routes. There is no separate global feedback-route save or Games companion capture. Ordinary hardware routing can run without a game; game integrations remain dormant until their matching verified context. Opening an editor leaves the running graph alone. Saving changes to that active profile applies them automatically; saving another profile does not switch to it.
+A profile captures exact companion instance/publication/capability references with its graph and feedback routes. There is no separate global feedback-route save or Games companion capture. Ordinary hardware routing can work without a game; game integrations remain dormant until their matching verified context. Opening an editor leaves the active graph alone. Saving changes to that active profile applies them automatically; saving another profile does not switch to it.
 
-Host **Stop** releases owned contributions. Use **Start profile** to run again, or explicitly select Automatic to resume automatic selection. Switching profile, game-context loss and peer disconnect invalidate affected state and require fresh baselines. Restoration compares the exact still-owned assignment/state and preserves external changes. **Recover outputs** handles the current profile's retained journal without replaying its graph, commands, held input or hiding.
+**Deactivate** releases owned contributions and leaves **No profile active**. Use **Activate profile** again, or explicitly select Automatic to resume automatic selection. Switching profile, game-context loss and peer disconnect invalidate affected state and require fresh baselines. Restoration compares the exact still-owned assignment/state and preserves external changes. **Recover outputs** handles the current profile's retained journal without replaying its graph, commands, held input or hiding.
 
 Recovery records from the previous mapping/game system are cleanup-only. Open **Profiles → Debug** for **Previous output setup recovery**. Recover only the exact recorded owner; uncertain or externally changed state can remain pending. **Keep current setup**, when offered, explicitly abandons restoration ownership. Cleanup cannot start an old profile or migrate its configuration. Do not delete a journal to hide a conflict.
 
