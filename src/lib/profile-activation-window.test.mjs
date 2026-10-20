@@ -193,3 +193,28 @@ test('automatic activation continues to game launch in its existing native windo
   assert.equal(h.timers.size, 0);
   assert.equal(h.calls.at(-1).operationId, 'automatic-operation');
 });
+
+test('cleanup phases pass through to the compact native window and reject queued cancellation', async () => {
+  for (const phase of ['deactivating','recovering']) {
+    const h = harness(); let cancelled = 0;
+    const cleanup = { ...progress('cleanup'), phase, canCancel: true, message: 'Unhiding peripherals' };
+    await h.adapter.show(cleanup, () => { cancelled++; });
+    h.setSnapshot({ progress: cleanup, cancelRequested: true });
+    await h.poll(); assert.equal(cancelled, 0);
+    assert.deepEqual(h.calls[0].progress, cleanup);
+    assert.equal(await h.adapter.update({ ...cleanup, message: 'Releasing keyboard and mouse bindings' }), true);
+    assert.equal(h.calls.at(-1).progress.phase, phase);
+    await h.adapter.close('cleanup'); assert.equal(h.timers.size, 0);
+  }
+});
+
+test('a cancellation read queued during activation cannot abort cleanup of the same operation', async () => {
+  const pending = deferred(); let cancelled = 0;
+  const h = harness({ invoke: async command => command === 'profile_activation_window_state' ? pending.promise : true });
+  await h.adapter.show(progress('operation'), () => { cancelled++; });
+  const polling = h.poll();
+  await h.adapter.update({ ...progress('operation'), phase: 'recovering', message: 'Releasing bindings', canCancel: false });
+  pending.resolve({ progress: progress('operation'), cancelRequested: true });
+  await polling; await flush(); assert.equal(cancelled, 0);
+  h.adapter.dispose(); await flush();
+});

@@ -71,6 +71,9 @@ impl NativeProfileHost {
             return Ok(());
         }
         let owner_key = key(&run.owner);
+        if self.prepared.get(&owner_key).is_some_and(|state| state.publication.needs_cleanup()) {
+            self.report_progress(&run.owner, "cleanup-restoring-peripheral-config", "Restoring peripheral hardware configuration");
+        }
         if let Some(state) = self.prepared.get_mut(&owner_key) {
             return wait(&mut state.publication, true, || Ok(()));
         }
@@ -80,6 +83,9 @@ impl NativeProfileHost {
                 return Ok(());
             }
             self.recovery_publications.insert(owner_key.clone(), actor);
+        }
+        if self.recovery_publications.get(&owner_key).is_some_and(|actor| !actor.is_empty()) {
+            self.report_progress(&run.owner, "cleanup-restoring-peripheral-config", "Restoring peripheral hardware configuration");
         }
         wait(
             self.recovery_publications.get_mut(&owner_key).unwrap(),

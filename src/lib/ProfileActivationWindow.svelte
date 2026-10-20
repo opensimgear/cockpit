@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import type { ActivationWindowSnapshot } from './profile-activation-window';
+  import {profileProgressCanCancel, type ActivationWindowSnapshot} from './profile-activation-window';
 
   let snapshot = $state<ActivationWindowSnapshot | null>(null);
   let loading = false;
   let cancelPending = $state(false);
   let error = $state('');
   const cancelling = $derived(cancelPending || snapshot?.cancelRequested || snapshot?.progress.phase === 'cancelling');
-  const canCancel = $derived(!!snapshot?.progress.canCancel && !cancelling);
+  const cleaningUp = $derived(snapshot?.progress.phase === 'deactivating' || snapshot?.progress.phase === 'recovering');
+  const canCancel = $derived(!!snapshot && profileProgressCanCancel(snapshot.progress) && !cancelling);
   const status = $derived(error || snapshot?.progress.message || 'Preparing profile…');
   const light = (() => { try { return localStorage.getItem('osg-light') === 'true'; } catch { return false; } })();
 
@@ -49,9 +50,9 @@
 <svelte:window onkeydown={event => { if (event.key === 'Escape' && canCancel) { event.preventDefault(); void cancel(); } }} />
 
 <div class:light class="cockpit activation-window">
-  <main aria-label="Profile activation progress">
+  <main aria-label="Profile operation progress">
     <p class:warning={!!error} role="status" aria-live="polite" title={status}>{status}</p>
-    <button class="secondary-button" disabled={!canCancel} onclick={() => void cancel()}>{cancelling ? 'Cancelling…' : 'Cancel'}</button>
+    <button class="secondary-button" disabled={!canCancel} onclick={() => void cancel()}>{cleaningUp ? 'Cleaning up…' : cancelling ? 'Cancelling…' : 'Cancel'}</button>
   </main>
 </div>
 

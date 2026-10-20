@@ -2,7 +2,7 @@ export interface ActivationWindowProgress {
   operationId: string;
   profileName: string;
   title: string;
-  phase: 'preparing' | 'activating' | 'cancelling' | 'launching';
+  phase: 'preparing' | 'activating' | 'cancelling' | 'launching' | 'deactivating' | 'recovering';
   message: string;
   details: string[];
   canCancel: boolean;
@@ -12,6 +12,10 @@ export interface ActivationWindowSnapshot {
   progress: ActivationWindowProgress;
   cancelRequested: boolean;
 }
+
+/** Cleanup must finish even if a late close or cancellation intent is queued. */
+export const profileProgressCanCancel = (progress: Pick<ActivationWindowProgress, 'phase' | 'canCancel'>): boolean =>
+  progress.canCancel && !['deactivating', 'recovering', 'cancelling', 'launching'].includes(progress.phase);
 
 type NativeInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 type CancelCallback = () => void | Promise<unknown>;
@@ -112,11 +116,12 @@ export class NativeProfileActivationWindow {
   }
 
   private async poll(operation: NonNullable<NativeProfileActivationWindow['active']>): Promise<void> {
-    if (this.polling || this.active !== operation || operation.delivered) return;
+    if (this.polling || this.active !== operation || operation.delivered || !profileProgressCanCancel(operation.progress)) return;
     this.polling = true;
     try {
       const snapshot = await this.invoke<ActivationWindowSnapshot | null>('profile_activation_window_state');
-      if (this.active !== operation || snapshot?.progress.operationId !== operation.operationId || !snapshot.cancelRequested) return;
+      if (this.active !== operation || snapshot?.progress.operationId !== operation.operationId || !snapshot.cancelRequested
+        || !profileProgressCanCancel(operation.progress) || !profileProgressCanCancel(snapshot.progress)) return;
       operation.delivered = true;
       try {
         if (await operation.cancel() === false) await this.resetFailedCancel(operation);

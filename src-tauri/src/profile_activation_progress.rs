@@ -37,12 +37,13 @@ struct Activation {
     origin: String,
     profile_name: String,
     steps: Vec<Value>,
+    cancellable: bool,
 }
 impl Activation {
     fn pending(&self) -> bool { self.completed.is_none() }
     fn view(&self, epoch: u64, companions: Vec<Value>) -> Value {
         json!({"activationId":self.id,"profileId":self.profile,"phase":self.phase,
-            "cancelRequested":self.cancel_requested,"canCancel":self.pending()&&!self.cancel_requested&&self.epoch==epoch,
+            "cancelRequested":self.cancel_requested,"canCancel":self.cancellable&&self.pending()&&!self.cancel_requested&&self.epoch==epoch,
             "message":self.message,"step":self.step,"steps":self.steps,"origin":self.origin,"profileName":self.profile_name,
             "error":self.error,"outcome":self.outcome,"companions":companions})
     }
@@ -64,7 +65,7 @@ impl Tracker {
         let epoch=begin_epoch();
         entries.insert(id.into(),Activation {id:id.into(),profile:profile.into(),epoch,phase:"preparing",cancel_requested:false,
             message:"Checking devices and preparing the profile…".into(),error:None,outcome:None,previous_owner:None,companions:vec![],completed:None,
-            started:Instant::now(),step:"preparing".into(),origin:"manual".into(),profile_name:profile.into(),steps:vec![]});
+            started:Instant::now(),step:"preparing".into(),origin:"manual".into(),profile_name:profile.into(),steps:vec![],cancellable:true});
         Ok(epoch)
     }
     pub(super) fn activating(&self,id:&str) {
@@ -76,7 +77,8 @@ impl Tracker {
     pub(super) fn note(&self, epoch:u64, step:&str, message:&str) {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
         if let Some(entry)=entries.values_mut().find(|entry|entry.pending()&&entry.epoch==epoch&&!entry.cancel_requested) {
-            entry.phase=if step=="launching" {"launching"}else if matches!(step,"preparing"|"validating"|"compiling") {"preparing"}else{"activating"};
+            entry.phase=if entry.origin=="deactivation" {"deactivating"}else if entry.origin=="recovery" {"recovering"}
+                else if step=="launching" {"launching"}else if matches!(step,"preparing"|"validating"|"compiling") {"preparing"}else{"activating"};
             entry.step=step.into();entry.message=message.chars().take(1024).collect();
             if entry.steps.last().is_none_or(|previous|previous["step"]!=step||previous["message"]!=entry.message) {
                 if entry.steps.len()>=128 {entry.steps.remove(0);}
@@ -94,6 +96,7 @@ impl Tracker {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
         let entry=entries.get_mut(id).ok_or("This activation is no longer available. Check the active profile.")?;
         if !entry.pending() { return Ok(()); }
+        if !entry.cancellable {return Err("Output cleanup must finish before another profile operation.".into());}
         if entry.cancel_requested { return Ok(()); }
         if epoch.compare_exchange(entry.epoch,entry.epoch.wrapping_add(1),Ordering::AcqRel,Ordering::Acquire).is_err() {
             return Err("This activation has finished or been replaced. Check the active profile.".into());
@@ -105,6 +108,24 @@ impl Tracker {
 }
 
 impl GatewayManager {
+    pub(super) fn begin_profile_cleanup(&self,request:&mut Value,epoch:u64)->Option<String> {
+        let id=request["activationId"].as_str().filter(|id|operation_id(id)).map(str::to_owned).unwrap_or_else(||uuid::Uuid::new_v4().to_string());
+        // Progress is best effort. Emergency neutralization must still proceed
+        // if all volatile tracker slots are occupied or an ID is reused.
+        if self.profile_activations.begin(&id,osg_profiles::DEFAULT_PROFILE_ID,||epoch).is_err(){return None;}
+        let recovering=request["command"]=="profile_recover";
+        if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(&id) {
+            entry.cancellable=false;entry.origin=if recovering{"recovery"}else{"deactivation"}.into();
+            entry.phase=if recovering{"recovering"}else{"deactivating"};
+            entry.step="cleanup-starting".into();entry.message=if recovering{"Recovering outputs…"}else{"Deactivating profile…"}.into();
+            entry.profile_name="Profile".into();
+        }
+        request["activationId"]=json!(id);Some(id)
+    }
+    pub(super) fn identify_profile_cleanup(&self,id:&str,profile:Option<&str>) {
+        if let Some(profile)=profile {if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(id)
+            .filter(|entry|entry.pending()&&!entry.cancellable){entry.profile=profile.into();}}
+    }
     pub(super) fn start_native_profile_activation(&self,profile:&str,epoch:u64,origin:&str,_game_id:Option<&str>)->Result<String,String> {
         let id=uuid::Uuid::new_v4().to_string();
         self.profile_activations.begin(&id,profile,||epoch)?;
@@ -143,8 +164,9 @@ impl GatewayManager {
         }
     }
     pub(super) fn finish_profile_activation(&self,id:&str,response:&Value) {
-        // Called only after the activation released its admission/coordinator
-        // guards. Capture the actual remaining owner, never infer it from IPC.
+        // The operation's coordinator guard has been released. Cleanup keeps
+        // admission until this snapshot, so a later activation cannot delay its
+        // completion. Capture the actual owner, never infer it from IPC.
         let status=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
         let mut entries=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner());
         let Some(entry)=entries.get_mut(id) else {return;};
@@ -155,7 +177,9 @@ impl GatewayManager {
             else if status.owner.is_some(){"active"}else{"inactive"});
         entry.error=if entry.cancel_requested&&entry.outcome!=Some("recovery-needed") {None}
             else {response["error"].as_str().map(|error|error.chars().take(512).collect())};
-        entry.message=if succeeded&&entry.cancel_requested {"The profile became active before cancellation could take effect.".into()}
+        entry.message=if succeeded&&entry.origin=="deactivation" {"Profile deactivated.".into()}
+            else if succeeded&&entry.origin=="recovery" {"Outputs recovered.".into()}
+            else if succeeded&&entry.cancel_requested {"The profile became active before cancellation could take effect.".into()}
             else if succeeded {"Profile activated.".into()}
             else if entry.cancel_requested {match entry.outcome {
                 Some("previous-active")=>"Activation cancelled. The previous profile is still active.".into(),

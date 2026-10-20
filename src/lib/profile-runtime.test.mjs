@@ -15,6 +15,14 @@ test('activation progress and cancellation bind exact operation identity without
   await assert.rejects(client.activationStatus('old'),/exact profile activation/);assert.throws(()=>client.apply(id,3,undefined,null,'old'),/exact saved/);
 });
 
+test('cleanup progress retains native phases, origin and actual cleanup steps',()=>{
+  for(const [phase,origin]of[['deactivating','deactivation'],['recovering','recovery']]){
+    const wire={activationId:run,profileId:id,phase,origin,step:'unhiding-peripherals',steps:[{step:'releasing-bindings',message:'Releasing keyboard and mouse bindings'},{step:'unhiding-peripherals',message:'Unhiding peripherals'}],canCancel:false,cancelRequested:false,message:'Unhiding peripherals',companions:[],outcome:null,error:null};
+    const value=nativeProfileActivation(wire,run);wire.steps[0].message='changed';
+    assert.equal(value.phase,phase);assert.equal(value.origin,origin);assert.equal(value.message,'Unhiding peripherals');assert.equal(value.steps[0].message,'Releasing keyboard and mouse bindings');assert.ok(Object.isFrozen(value.steps));
+  }
+});
+
 test('native runtime snapshots retain exact applied authority and never share mutable transport state',()=>{
   const wire=running(),captured=nativeProfileStatus(wire);wire.owner.generation=7;wire.appliedSnapshot.revision=9;wire.degradation.push('later');
   assert.equal(captured.owner.generation,4);assert.equal(captured.appliedSnapshot.revision,3);assert.deepEqual(captured.degradation,[]);

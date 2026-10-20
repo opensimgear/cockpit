@@ -1,4 +1,34 @@
 #[test]
+fn cleanup_progress_is_available_before_admission_and_cannot_cancel_output_release() {
+    for (command,phase,origin,message) in [("profile_stop","deactivating","deactivation","Profile deactivated."),("profile_recover","recovering","recovery","Outputs recovered.")] {
+        let(manager,_)=setup();let operation=uuid::Uuid::new_v4().to_string();
+        let admission=manager.profile_admission.write().unwrap();
+        let coordinator=manager.profile_session.lock().unwrap();
+        let pending=manager.clone();let pending_id=operation.clone();
+        let worker=std::thread::spawn(move||request(&pending,command,None,json!({"activationId":pending_id})));
+        let deadline=std::time::Instant::now()+Duration::from_secs(3);
+        let current=loop {
+            let current=request(&manager,"profile_activation_current",None,json!({}));
+            if current["state"]["profileActivation"]["activationId"]==operation {break current;}
+            assert!(std::time::Instant::now()<deadline,"Cleanup progress waited for the output locks: {current}");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let current=&current["state"]["profileActivation"];
+        assert_eq!(current["phase"],phase);assert_eq!(current["origin"],origin);assert_eq!(current["canCancel"],false);
+        let epoch=manager.profile_admission_epoch.load(Ordering::Acquire);
+        let cancel=request(&manager,"profile_activation_cancel",None,json!({"activationId":operation}));
+        assert_eq!(cancel["ok"],false);assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+        drop(coordinator);drop(admission);
+        let result=worker.join().unwrap();assert_eq!(result["ok"],true,"{result}");
+        let completed=request(&manager,"profile_activation_status",None,json!({"activationId":operation}));
+        let completed=&completed["state"]["profileActivation"];
+        assert_eq!(completed["phase"],"succeeded");assert_eq!(completed["message"],message);assert_eq!(completed["outcome"],"inactive");
+        assert!(!completed["steps"].as_array().unwrap().is_empty());
+        assert!(request(&manager,"profile_activation_current",None,json!({}))["state"]["profileActivation"].is_null());
+    }
+}
+
+#[test]
 fn cancelling_tracked_preparation_keeps_the_previous_exact_owner_without_a_warning() {
     let(mut manager,_)=setup();
     let initial=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));

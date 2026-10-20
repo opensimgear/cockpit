@@ -23,6 +23,14 @@ enum ActivationPhase {
     Activating,
     Cancelling,
     Launching,
+    Deactivating,
+    Recovering,
+}
+
+impl ActivationPhase {
+    fn can_cancel(&self) -> bool {
+        matches!(self, Self::Preparing | Self::Activating)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -78,7 +86,7 @@ impl ActivationWindowState {
 
     fn request_cancel(&self, operation_id: &str) -> bool {
         let mut state = self.0.lock().unwrap();
-        let Some(current) = state.as_mut().filter(|s| s.progress.operation_id == operation_id && s.progress.can_cancel) else {
+        let Some(current) = state.as_mut().filter(|s| s.progress.operation_id == operation_id && s.progress.can_cancel && s.progress.phase.can_cancel()) else {
             return false;
         };
         current.cancel_requested = true;
@@ -144,8 +152,8 @@ pub(crate) async fn profile_activation_window_open(
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = handle.state::<ActivationWindowState>();
                 if state.snapshot().is_some() {
-                    // Closing the progress window cancels the exact operation displayed.
-                    // Keep it visible until safe cleanup finishes in the main controller.
+                    // Closing can only request cancellation of a cancellable
+                    // activation; cleanup remains visible until it finishes.
                     api.prevent_close();
                     // Let the displayed page submit its own operation ID. A close
                     // event queued while another activation replaces this one
@@ -285,5 +293,28 @@ mod tests {
         assert_eq!(snapshot["progress"]["phase"], "launching");
         assert_eq!(snapshot["progress"]["message"], "Launching Assetto Corsa Rally");
         assert!(state.finish("operation"));
+    }
+
+    #[test]
+    fn cleanup_phases_retain_native_status_and_refuse_cancel_even_with_a_stale_flag() {
+        for (phase, serialized) in [(ActivationPhase::Deactivating, "deactivating"), (ActivationPhase::Recovering, "recovering")] {
+            let state = ActivationWindowState::default();
+            state.start(progress("operation"));
+            assert!(state.request_cancel("operation"));
+            let mut cleanup = progress("operation");
+            cleanup.phase = phase;
+            cleanup.message = "Unhiding peripherals".into();
+            // The phase remains authoritative if a stale renderer carries the
+            // prior cancellable activation flag across the cleanup boundary.
+            cleanup.can_cancel = true;
+            assert!(cleanup.validate().is_ok());
+            assert!(state.update(cleanup, true));
+            assert!(!state.request_cancel("operation"));
+            let snapshot = serde_json::to_value(state.snapshot().unwrap()).unwrap();
+            assert_eq!(snapshot["progress"]["phase"], serialized);
+            assert_eq!(snapshot["progress"]["message"], "Unhiding peripherals");
+            assert_eq!(snapshot["cancelRequested"], false);
+            assert!(state.finish("operation"));
+        }
     }
 }

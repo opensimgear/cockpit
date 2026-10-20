@@ -163,17 +163,32 @@ function resultState(result: GatewayResult): GatewayState {
   return result.state;
 }
 
+export type ProfileCleanupEvent={type:'start'|'finish';activationId:string;phase:'deactivating'|'recovering';error?:string};
+const cleanupListeners=new Set<(event:ProfileCleanupEvent)=>void>();
+export function subscribeProfileCleanup(listener:(event:ProfileCleanupEvent)=>void):()=>void {
+  cleanupListeners.add(listener);return()=>{cleanupListeners.delete(listener);};
+}
+function publishCleanup(event:ProfileCleanupEvent){
+  for(const listener of cleanupListeners){try{listener(event);}catch{/* Progress rendering never delays emergency output cleanup. */}}
+}
+
 export function gatewayRequest(request: GatewayRequest): Promise<GatewayState> {
   if (/^(mapping_|dcs_|integration_)/.test(request.command) || ['companion_feedback','companion_feedback_routes','companion_game_capture','controller_visibility_apply','controller_visibility_launch'].includes(request.command)) return Promise.reject(new GatewayError('This standalone route is retired. Use Profiles for authoring and activation, or retained recovery for previous ownership records.'));
   return queuedRequest(request, async () => {
     if (isTauri()) {
-      let result: GatewayResult;
+      const phase=request.command==='profile_stop'?'deactivating':request.command==='profile_recover'?'recovering':undefined;
+      const activationId=phase&&cleanupListeners.size?(request.activationId??crypto.randomUUID()):undefined;
+      let failure:string|undefined;
+      if(activationId&&phase)publishCleanup({type:'start',activationId,phase});
       try {
-        result = await invoke<GatewayResult>('gateway_request', { request: { ...request, clientId } });
+        const result=await invoke<GatewayResult>('gateway_request', { request: { ...request,...(activationId?{activationId}:{}), clientId } });
+        return resultState(result);
       } catch (error) {
-        throw new GatewayError(error instanceof Error ? error.message : String(error));
+        const wrapped=error instanceof GatewayError?error:new GatewayError(error instanceof Error ? error.message : String(error));
+        failure=wrapped.message;throw wrapped;
+      } finally {
+        if(activationId&&phase)publishCleanup({type:'finish',activationId,phase,...(failure?{error:failure}:{})});
       }
-      return resultState(result);
     }
     const response = await fetch(browserEndpoint, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSG-Client': '1' },

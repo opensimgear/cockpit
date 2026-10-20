@@ -83,6 +83,9 @@ impl NativeProfileHost {
             return Ok(());
         }
         let owner_key = key(&run.owner);
+        if self.prepared.get(&owner_key).is_some_and(|state| state.visibility.needs_cleanup()) {
+            self.report_progress(&run.owner, "cleanup-unhiding-peripherals", "Unhiding peripherals");
+        }
         if let Some(state) = self.prepared.get_mut(&owner_key) {
             return wait(
                 &mut state.visibility,
@@ -102,6 +105,9 @@ impl NativeProfileHost {
         }
         // Retain the object on pending/error: the next recovery polls the same
         // native worker instead of cancelling and restarting restoration.
+        if self.recovery_visibility.get(&owner_key).is_some_and(Visibility::needs_cleanup) {
+            self.report_progress(&run.owner, "cleanup-unhiding-peripherals", "Unhiding peripherals");
+        }
         wait(
             self.recovery_visibility.get_mut(&owner_key).unwrap(),
             true,

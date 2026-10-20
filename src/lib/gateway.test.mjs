@@ -58,6 +58,23 @@ test('activation progress and Cancel bypass blocked profile library reads and us
  progress.resolve({ok:true,state});blocked.resolve({ok:true,state});await Promise.all([library,current]);
 });
 
+test('cleanup dispatch opens progress with the exact native ID without waiting for rendering and reports completion/failure',async()=>{
+ const blocked=deferred(),events=[];
+ const api=transport({invokeResults:async()=>blocked.promise});
+ const unsubscribe=api.subscribeProfileCleanup(event=>{events.push(plain(event));return new Promise(()=>{});});
+ const stopping=api.gatewayRequest({command:'profile_stop'});await tick();
+ assert.deepEqual(events,[{type:'start',activationId:'test-client-uuid',phase:'deactivating'}]);
+ assert.equal(api.calls[0].args.request.activationId,'test-client-uuid');
+ blocked.resolve({ok:true,state});await stopping;
+ assert.deepEqual(events[1],{type:'finish',activationId:'test-client-uuid',phase:'deactivating'});unsubscribe();
+ const failure=transport({result:{ok:false,error:'Owned output cleanup is uncertain.',state}}),failed=[];
+ failure.subscribeProfileCleanup(event=>failed.push(plain(event)));
+ await assert.rejects(failure.gatewayRequest({command:'profile_recover',activationId:'exact-recovery'}),/uncertain/);
+ assert.equal(failed[0].activationId,'exact-recovery');assert.equal(failed[1].error,'Owned output cleanup is uncertain.');
+ const observerFailure=transport();observerFailure.subscribeProfileCleanup(()=>{throw new Error('UI unavailable');});
+ assert.equal(await observerFailure.gatewayRequest({command:'profile_stop'}),state);
+});
+
 test('retired standalone authoring, synthetic and companion feedback routes never reach desktop or HTTP transport',async()=>{
  for(const desktop of[true,false]){const api=transport({desktop});for(const command of['mapping_status','mapping_start','mapping_stop','mapping_import','mapping_virtual_inspect','mapping_companion_route','integration_get_state','integration_start','integration_inject','dcs_status','dcs_catalogue','dcs_start','companion_feedback_routes','companion_feedback','companion_game_capture','controller_visibility_apply','controller_visibility_launch'])await assert.rejects(api.gatewayRequest({command}),/retired/);assert.equal(api.calls.length,0);}
 });

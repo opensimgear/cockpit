@@ -277,6 +277,10 @@ impl NativeProfileHost {
     }
     pub(super) fn restore_actions(&mut self, run: &OwnedRun, recovery: bool) -> Result<(), String> {
         let owner_key = key(&run.owner);
+        let progress=self.progress.clone();
+        let progress_epoch=self.progress_epoch(&run.owner);
+        let announce=|| {if let Some(epoch)=progress_epoch {Self::emit_progress(progress.as_ref(),epoch,
+            "cleanup-restoring-peripheral-outputs", "Restoring peripheral output controls");}};
         if let Some(state) = self.prepared.get_mut(&owner_key) {
             if !run.attempted.contains(&ApplyPhase::Acquire) {
                 // Phase recapture may have replaced an unused preparation
@@ -294,6 +298,7 @@ impl NativeProfileHost {
                 return Ok(());
             }
             exact_receipts(run, &state.actions)?;
+            if !state.actions.is_empty() && !state.actions.poll().cleanup_complete {announce();}
             if recovery {
                 let status = state.actions.poll();
                 if status.stopped && !status.cleanup_complete {
@@ -312,6 +317,9 @@ impl NativeProfileHost {
         }
         if !has_receipts(&run.receipts) {
             return Ok(());
+        }
+        if run.attempted.contains(&ApplyPhase::Acquire) {
+            announce();
         }
         if recovery
             && self.recovery_actions.get(&owner_key).is_some_and(|a| {

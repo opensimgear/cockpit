@@ -49,6 +49,17 @@ test('native profile acquires and restores vJoy and HidHide, then owns a neutral
     const result=(await native({command:'profile_editor_save',document,assignments,expectedRevision:null})).profiles;
     created.set(result.document.id,result.document.revision);assert.equal(result.saveApplication.state,'inactive');return result.document;
   };
+  const trackedStop=async(label,expectedSteps)=>{
+    const activationId=randomUUID();
+    await native({command:'profile_stop',activationId});
+    const progress=(await native({command:'profile_activation_status',activationId})).profileActivation;
+    assert.equal(progress.activationId,activationId);assert.equal(progress.phase,'succeeded');
+    assert.equal(progress.origin,'deactivation');assert.equal(progress.outcome,'inactive');
+    assert.equal(progress.canCancel,false);assert.equal(progress.cancelRequested,false);assert.equal(progress.error,null);
+    for(const step of expectedSteps)assert.ok(progress.steps.some(current=>current.step===step),`Missing actual ${label} cleanup step ${step}: ${JSON.stringify(progress.steps)}`);
+    (evidence.cleanupProgress??=[]).push({label,...progress});
+    return progress;
+  };
   let selectedBefore,sourceId,intentBefore;
   try{
     const initial=(await native({command:'profile_status'})).profiles;selectedBefore=initial.session.selectedProfileId;
@@ -112,7 +123,7 @@ test('native profile acquires and restores vJoy and HidHide, then owns a neutral
     assert.ok(record.plan.after.hidden.some(value=>value.toLowerCase()===hiddenBefore.instanceId.toLowerCase()));
     const hidden={controllerId:sourceId,hidden:true,configured:true,verifiedBy:'owning native worker driver readback',committedPosition:record.position};
     assert.equal(before.virtualDevices.find(slot=>slot.id===busy.id)?.status,'free');
-    await native({command:'profile_stop'});
+    await trackedStop('vJoy and HidHide',['cleanup-removing-virtual-device','cleanup-unhiding-peripherals','cleanup-stopping-mappings']);
     const restored=await until(inventory,value=>value.virtualDevices.find(slot=>slot.id===busy.id)?.status==='free'&&value.hiddenDevices.some(value=>(value.controllerId===sourceId||value.controllerIds?.includes(sourceId))&&value.hidden===hiddenBefore.hidden&&value.configured===hiddenBefore.configured),'vJoy release and exact visibility restoration');
     const cleanRecord=JSON.parse(await readFile(visibilityJournalPath,'utf8'));assert.equal(cleanRecord.clean,true);assert.equal(cleanRecord.position,0);
     assert.equal((await status()).owner,null);
@@ -137,7 +148,7 @@ test('native profile acquires and restores vJoy and HidHide, then owns a neutral
     assert.deepEqual(desktopActive.runtime.backend.held,[]);assert.deepEqual(desktopActive.runtime.backend.possibleHeld,[]);assert.equal(desktopActive.runtime.backend.uncertain,false);
     const inspected=(await native({command:'profile_runtime_inspect',owner:desktopRun.owner,nodeId:'neutral',offset:0,limit:32})).profileInspection;
     assert.ok(inspected.ports.some(port=>port.endpoint.portId==='out'&&port.sample.status==='known'&&port.sample.value.value===false));
-    await native({command:'profile_stop'});
+    await trackedStop('neutral keyboard bindings',['cleanup-releasing-desktop-bindings','cleanup-stopping-mappings']);
     const desktopStopped=(await native({command:'profile_desktop_status'})).desktop;
     assert.equal((await status()).owner,null);assert.equal(desktopStopped.runtime.state,'stopped');assert.equal(desktopStopped.runtime.backend.cleanupComplete,true);
     assert.deepEqual(desktopStopped.runtime.backend.held,[]);assert.deepEqual(desktopStopped.runtime.backend.possibleHeld,[]);

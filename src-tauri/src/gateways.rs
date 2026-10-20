@@ -391,7 +391,7 @@ impl GatewayManager {
         let fields: &[&str] = match command {
             "profile_apply" => &["id", "expectedRevision", "gameId", "expectedActiveOwner", "activationId"],
             "profile_game_launch" => &["gameId", "expectedActiveOwner"],
-            "profile_stop" | "profile_recover" => &[],
+            "profile_stop" | "profile_recover" => &["activationId"],
             _ => return Err("Unknown profile session operation.".into()),
         };
         if request.as_object().ok_or("A profile session request must be an object.")?.keys().any(|key| key != "command" && !fields.contains(&key.as_str())) {
@@ -441,8 +441,18 @@ impl GatewayManager {
                     expected_owner.as_ref(),
                 )?;
             },
-            "profile_stop" => {let stopped=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).stop();let pinned=self.automatic_stop_pin();stopped.and(pinned)?;},
-            "profile_recover" => {let result=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).recover();self.profile_automatic.retry_event();result?;},
+            "profile_stop" => {
+                let stopped={let mut session=self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
+                    if let Some(id)=request["activationId"].as_str(){self.identify_profile_cleanup(id,session.cleanup_profile_id());}
+                    session.stop_with_progress(native_arrival_epoch.unwrap_or_else(||self.profile_admission_epoch.load(Ordering::Acquire)))};
+                let pinned=self.automatic_stop_pin();stopped.and(pinned)?;
+            },
+            "profile_recover" => {
+                let result={let mut session=self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
+                    if let Some(id)=request["activationId"].as_str(){self.identify_profile_cleanup(id,session.cleanup_profile_id());}
+                    session.recover_with_progress(native_arrival_epoch.unwrap_or_else(||self.profile_admission_epoch.load(Ordering::Acquire)))};
+                self.profile_automatic.retry_event();result?;
+            },
             _ => unreachable!(),
         }
         let mut response = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&json!({"command":"profile_status"}))?;
@@ -544,7 +554,7 @@ impl GatewayManager {
             _=>self.profile_learning.cancel(text("learnId")?),
         }
     }
-    pub fn request(&self, request: Value) -> Value {
+    pub fn request(&self, mut request: Value) -> Value {
         let command = request["command"].as_str().unwrap_or("");
         // Activation progress and cancellation remain responsive while takeover
         // owns the admission/coordinator locks. These APIs never claim outputs.
@@ -598,6 +608,21 @@ impl GatewayManager {
         let arrival_epoch=if tracked_activation {
             match self.begin_profile_activation(&request) {Ok(epoch)=>Some(epoch),Err(error)=>return self.error(&error,None)}
         } else if interrupt {Some(self.invalidate_learning())} else if editor_save||panel_save {Some(self.profile_admission_epoch.load(Ordering::Acquire))} else {None};
+        if matches!(command,"profile_stop"|"profile_recover") {
+            let epoch=arrival_epoch.unwrap_or_else(||self.profile_admission_epoch.load(Ordering::Acquire));
+            let operation=self.begin_profile_cleanup(&mut request,epoch);
+            let response={
+                let _profile=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+                if interrupt {self.invalidate_learning();}
+                let _game=self.game_admission.read().unwrap_or_else(|p|p.into_inner());
+                let response=self.request_inner_at(request,Some(epoch));
+                // Publish cleanup completion before a later activation can
+                // acquire the coordinator for slow device preparation.
+                if let Some(operation)=operation.as_deref(){self.finish_profile_activation(operation,&response);}
+                response
+            };
+            return response;
+        }
         if staging && !editor_save&&!panel_save {
             let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
             if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)) {

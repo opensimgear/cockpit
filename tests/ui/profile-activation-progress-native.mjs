@@ -1,4 +1,6 @@
 // Real dev Cockpit, a native child window and a physical USB screen. No mocked IPC.
+// Cleanup observation subscribes to the actual loaded gateway module; it never
+// replaces transport or inserts artificial delays into native output cleanup.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -23,7 +25,7 @@ async function connectTarget(target){
 }
 async function until(operation,label,timeout=20000){const end=Date.now()+timeout;let last;while(Date.now()<end){try{const value=await operation();if(value)return value;}catch(error){if(error.code==='ERR_ASSERTION')throw error;last=error;}await sleep(100);}throw new Error(`${label}${last?`: ${last.message}`:''}`);}
 
-test('profile list refreshes itself and native activation progress cancels the exact physical-screen attempt',{timeout:300000},async()=>{
+test('real native progress covers physical activation, exact cancellation, recovery and deactivation',{timeout:300000},async()=>{
   await mkdir(artifacts,{recursive:true});
   const mainTarget=(await targets()).find(target=>target.type==='page'&&/127\.0\.0\.1:1420|localhost:1420/.test(target.url)&&!target.url.includes('profile-activation-window'));
   assert.ok(mainTarget,'Start the real native dev Cockpit with CDP enabled.');
@@ -46,8 +48,50 @@ test('profile list refreshes itself and native activation progress cancels the e
   const openProgress=async()=>{
     const target=await until(async()=>{const target=(await targets()).find(target=>target.type==='page'&&target.url.includes('profile-activation-window'));if(target)return target;const problem=await native.evaluate(`document.querySelector('.profiles-workspace .runtime-error-banner')?.innerText.trim()??''`);assert.ok(!problem,`Activation failed before its progress window opened: ${problem}`);return null;},'Native activation progress window did not open',15000);
     const surface=await connectTarget(target);
-    await until(()=>surface.evaluate(`(async()=>{const state=await window.__TAURI_INTERNALS__.invoke('profile_activation_window_state');return state?.progress.profileName===${JSON.stringify(profileName)}&&!!document.querySelector('main[aria-label="Profile activation progress"] [role="status"]')?.textContent.trim();})()`),'Progress window did not load the target profile');
+    await until(()=>surface.evaluate(`(async()=>{const state=await window.__TAURI_INTERNALS__.invoke('profile_activation_window_state');return state?.progress.profileName===${JSON.stringify(profileName)}&&!!document.querySelector('main[aria-label="Profile operation progress"] [role="status"]')?.textContent.trim();})()`),'Progress window did not load the target profile');
     return surface;
+  };
+  const cleanupProgress=async(label,phase)=>{
+    await native.evaluate(`(async()=>{const loaded=performance.getEntriesByType('resource').map(entry=>entry.name).find(name=>new URL(name).pathname==='/src/lib/gateway.ts');if(!loaded)throw new Error('The running app did not load the actual gateway module.');const {subscribeProfileCleanup}=await import(loaded);window.__profileCleanupEvidence={events:[],unsubscribe:subscribeProfileCleanup(event=>window.__profileCleanupEvidence.events.push({at:Date.now(),...event}))};})()`);
+    const observation={phase,snapshots:[]};evidence[`${phase}Observation`]=observation;let finished=false,surface,lastTarget;
+    const collect=(async()=>{
+      while(!finished){
+        try{
+          const target=(await targets()).find(target=>target.type==='page'&&target.url.includes('profile-activation-window'));
+          if(target&&target.id!==lastTarget){surface?.close();surface=await connectTarget(target);lastTarget=target.id;}
+          if(target&&surface){
+            const snapshot=await surface.evaluate(`(async()=>{const state=await window.__TAURI_INTERNALS__.invoke('profile_activation_window_state'),main=document.querySelector('main'),button=main?.querySelector('button'),status=main?.querySelector('[role="status"]');return state?.progress.phase===${JSON.stringify(phase)}&&button&&status?{state,text:status.textContent.trim(),button:button.textContent.trim(),disabled:button.disabled,children:[...main.children].map(node=>node.tagName),headings:main.querySelectorAll('h1,h2,h3,.profile-name,.activation-heading,.progress-track,footer').length,width:innerWidth,height:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth||document.documentElement.scrollHeight>innerHeight}:null;})()`);
+            if(snapshot&&!observation.snapshots.some(row=>row.text===snapshot.text)){
+              observation.snapshots.push(snapshot);
+              if(observation.snapshots.length===1)await screenshot(`native-${phase}-progress.png`,surface).catch(()=>{});
+            }
+          }
+        }catch(error){observation.lastObservationError=error.message;}
+        await sleep(20);
+      }
+    })();
+    try{
+      await click(label);
+      const call=await until(()=>native.evaluate(`window.__profileCleanupEvidence.events.find(event=>event.type==='start'&&event.phase===${JSON.stringify(phase)})??null`),`Actual ${phase} was not dispatched`);
+      const operationId=call.activationId;assert.match(operationId,/^[0-9a-f-]{36}$/);observation.operationId=operationId;
+      observation.terminal=await until(async()=>{const state=(await request('profile_activation_status',{activationId:operationId})).profileActivation;assert.equal(state.canCancel,false,'Output cleanup must remain non-cancellable.');return ['succeeded','failed'].includes(state.phase)?state:null;},`Native ${phase} did not finish`,90000);
+      assert.equal(observation.terminal.phase,'succeeded',observation.terminal.error??observation.terminal.message);
+      assert.equal(observation.terminal.outcome,'inactive');assert.equal(observation.terminal.origin,phase==='deactivating'?'deactivation':'recovery');
+      assert.ok(observation.terminal.steps.length,'Native cleanup must retain its actual step history.');
+      if(phase==='deactivating')assert.ok(observation.terminal.steps.some(step=>/companion|panel/i.test(step.message)),`Cleanup must report restoring the physical companion: ${JSON.stringify(observation.terminal.steps)}`);
+      // Cleanup can finish before the OS child is ready. Its absence at that
+      // instant is not proof of completion; first observe the actual window.
+      await until(()=>observation.snapshots.length,`The native ${phase} window did not render live cleanup status`,15000);
+      await until(async()=>!(await targets()).some(target=>target.type==='page'&&target.url.includes('profile-activation-window')),`${phase} progress window remained after cleanup`,15000);
+      observation.events=await native.evaluate('window.__profileCleanupEvidence.events');
+      assert.ok(observation.events.some(event=>event.type==='finish'&&event.activationId===operationId&&!event.error),`Actual ${phase} did not finish its exact cleanup request.`);
+      assert.ok(observation.snapshots.length,`The native ${phase} window did not render live cleanup status.`);
+      for(const snapshot of observation.snapshots){assert.equal(snapshot.state.progress.operationId,operationId);assert.equal(snapshot.state.progress.canCancel,false);assert.equal(snapshot.disabled,true);assert.equal(snapshot.button,'Cleaning up…');assert.deepEqual(snapshot.children,['P','BUTTON']);assert.equal(snapshot.headings,0);assert.equal(snapshot.overflow,false);assert.ok(snapshot.width>=580&&snapshot.width<=620);assert.ok(snapshot.height>=60&&snapshot.height<=90);assert.ok(snapshot.text);}
+      return observation;
+    }finally{
+      finished=true;await collect;surface?.close();
+      await native.evaluate(`(()=>{window.__profileCleanupEvidence?.unsubscribe();delete window.__profileCleanupEvidence;})()`).catch(()=>{});
+    }
   };
   try{
     const initial=await profileStatus();assert.equal(initial.owner,null,'Run acceptance with no active profile.');assert.equal(initial.fault,null);
@@ -103,7 +147,7 @@ test('profile list refreshes itself and native activation progress cancels the e
     await screenshot('native-progress-on-overview.png',child);await screenshot('overview-during-activation.png');
     evidence.checks.push('Leaving Profiles for Overview keeps the same native progress window alive and its physical download status continues to advance');
     await checkpoint('Progress continues on Overview; requesting cancellation');
-    const cancelledAt=Date.now();await click('Cancel','main[aria-label="Profile activation progress"]',child);
+    const cancelledAt=Date.now();await click('Cancel','main[aria-label="Profile operation progress"]',child);
     const cancelView=await child.evaluate(`({text:document.querySelector('main')?.innerText,disabled:document.querySelector('main button')?.disabled})`).catch(()=>null);evidence.cancelView=cancelView;
     if(cancelView){assert.match(cancelView.text,/Cancelling|cleanup/i);assert.equal(cancelView.disabled,true);}
     const terminal=await until(async()=>{const state=(await request('profile_activation_status',{activationId})).profileActivation;return state&&['cancelled','failed','succeeded'].includes(state.phase)?state:null;},'Cancelled activation did not reach a terminal native result',90000);evidence.cancelled={elapsedMs:Date.now()-cancelledAt,terminal};await checkpoint('Native cancellation reached a terminal result');
@@ -115,7 +159,7 @@ test('profile list refreshes itself and native activation progress cancels the e
     if(['faulted','recovery-needed'].includes(afterCancel.state)){
       evidence.recoveryMessage=await until(()=>native.evaluate(`(()=>{const root=document.querySelector('.profiles-workspace'),button=[...root.querySelectorAll('button')].find(button=>button.textContent.trim()==='Recover');return button&&!button.disabled?root.querySelector('.runtime-error-banner')?.innerText.trim():null;})()`),'Profiles did not offer Recover after cancellation cleanup');
       assert.match(evidence.recoveryMessage,/cancel|cleanup|recover/i);assert.ok(!evidence.recoveryMessage.includes('newer native control'));
-      await click('Recover');
+      evidence.recoveryProgress=await cleanupProgress('Recover','recovering');
     }
     const recovered=await until(async()=>{const state=await profileStatus();return state.owner===null&&state.fault===null&&state.state==='stopped'?state:null;},'Recovery did not release the cancelled profile cleanly');assert.equal(recovered.owner,null);assert.equal(recovered.fault,null);await ready(original.publicationHash);
     const visible=await native.evaluate(`document.querySelector('.profiles-workspace')?.innerText??''`);assert.ok(!visible.includes('Profile preparation was cancelled by a newer native control.'));
@@ -128,8 +172,10 @@ test('profile list refreshes itself and native activation progress cancels the e
     const active=await ready(fixture.publicationHash);evidence.active={operation:active.device.operation,sessionId:active.device.sessionId};
     assert.ok(Object.values(active.instance.values??{}).every(value=>value===false),'Successful activation must establish a fresh neutral input baseline.');
     await until(async()=>!(await targets()).some(target=>target.type==='page'&&target.url.includes('profile-activation-window')),'Success did not close the native progress window',15000);child.close();child=undefined;
-    await screenshot('activation-success.png');await click(`Deactivate ${profileName}`);await until(async()=>(await profileStatus()).owner===null,'Deactivate did not release the profile');await ready(original.publicationHash);
+    await screenshot('activation-success.png');evidence.deactivationProgress=await cleanupProgress(`Deactivate ${profileName}`,'deactivating');await until(async()=>(await profileStatus()).owner===null,'Deactivate did not release the profile');await ready(original.publicationHash);
     evidence.checks.push('An explicit retry activates the physical panel, closes native progress on success and Deactivate restores the original panel');
+    assert.ok(evidence.recoveryProgress,'Cold-download cancellation must exercise the actual Recover progress path.');
+    evidence.checks.push('Actual Deactivate and Recover each open the same compact native window, report recorded cleanup steps, disable cancellation, close the exact operation and restore the ordinary physical panel');
   }catch(error){evidence.error=error.message;await checkpoint(`Acceptance failed: ${error.message}`);await screenshot('failure.png').catch(()=>{});if(child)await screenshot('failure-window.png',child).catch(()=>{});throw error;}
   finally{
     try{

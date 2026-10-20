@@ -151,6 +151,7 @@ pub(crate) struct Health {
 /// freshness. restore(recovery=true) may neutralize/unhide/restore still-owned
 /// setup, but must never rehide or replay input, commands, scripts or macros.
 pub(crate) trait Host: Send {
+    fn set_cleanup_progress(&mut self, _: Option<u64>) {}
     fn activation_progress(&self, _: Option<u64>, _: &str, _: &str) {}
     fn desktop_status(&self) -> Value { Value::Null }
     fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
@@ -534,6 +535,24 @@ impl<H: Host> Coordinator<H> {
         self.active_candidate = None;
         self.status.applied_snapshot = None;
         Ok(())
+    }
+    pub(crate) fn cleanup_profile_id(&self) -> Option<&str> {
+        self.manifest.pending.as_ref().and_then(|pending|pending.incoming.as_ref().or(pending.outgoing.as_ref()))
+            .or(self.manifest.active.as_ref()).map(|run|run.owner.profile_id.as_str())
+    }
+    pub(crate) fn stop_with_progress(&mut self,epoch:u64) -> Result<(),String> {
+        self.host.set_cleanup_progress(Some(epoch));
+        self.host.activation_progress(Some(epoch),"cleanup-revoking-authority","Releasing profile output authority");
+        let result=self.stop();
+        self.host.set_cleanup_progress(None);
+        result
+    }
+    pub(crate) fn recover_with_progress(&mut self,epoch:u64) -> Result<(),String> {
+        self.host.set_cleanup_progress(Some(epoch));
+        self.host.activation_progress(Some(epoch),"cleanup-validating-journal","Checking recorded output ownership for recovery");
+        let result=self.recover();
+        self.host.set_cleanup_progress(None);
+        result
     }
     pub(crate) fn stop(&mut self) -> Result<(), String> {
         self.launch = None;

@@ -97,6 +97,7 @@ pub(crate) struct NativeProfileHost {
     recovery_publications: BTreeMap<String, crate::profile_session_overrides::Overrides>,
     last_desktop_status: serde_json::Value,
     progress: Option<ProgressCallback>,
+    cleanup_epoch: Option<u64>,
 }
 fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
@@ -126,6 +127,7 @@ impl NativeProfileHost {
             recovery_publications: BTreeMap::new(),
             last_desktop_status: serde_json::Value::Null,
             progress: None,
+            cleanup_epoch: None,
         }
     }
     /// Reports work from the exact captured admission, never from a timer or
@@ -135,9 +137,15 @@ impl NativeProfileHost {
         self
     }
     fn report_progress(&self, owner: &RunOwner, step: &str, message: &str) {
-        if let Some(state) = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner) {
-            Self::emit_progress(self.progress.as_ref(), state.admission_epoch, step, message);
+        if let Some(epoch) = self.progress_epoch(owner) {
+            Self::emit_progress(self.progress.as_ref(), epoch, step, message);
         }
+    }
+    fn progress_epoch(&self, owner: &RunOwner) -> Option<u64> {
+        // Stop/Recover has its own exact admission. Cold recovery deliberately
+        // has no prepared executable run, but must still report its real work.
+        self.cleanup_epoch.or_else(|| self.prepared.get(&key(owner))
+            .filter(|state| state.owner == *owner).map(|state| state.admission_epoch))
     }
     fn emit_progress(callback: Option<&ProgressCallback>, epoch: u64, step: &str, message: &str) {
         if let Some(callback) = callback { callback(epoch, step, message); }
@@ -646,6 +654,9 @@ impl NativeProfileHost {
     }
 }
 impl Host for NativeProfileHost {
+    fn set_cleanup_progress(&mut self, epoch: Option<u64>) {
+        self.cleanup_epoch = epoch;
+    }
     fn activation_progress(&self,epoch:Option<u64>,step:&str,message:&str) {
         if let Some(epoch)=epoch {Self::emit_progress(self.progress.as_ref(),epoch,step,message);}
     }
@@ -805,10 +816,13 @@ impl Host for NativeProfileHost {
         self.recapture_publication_phase(phase,prepared,run,previous)
     }
     fn prepare_recovery(&mut self, run: &OwnedRun) -> Result<(), String> {
+        self.report_progress(&run.owner, "cleanup-validating-recorded-outputs", "Validating recorded profile outputs");
         self.prepare_action_recovery(run)
     }
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
-        self.report_progress(&run.owner, "neutralizing-outputs", "Releasing profile bindings and neutralizing outputs");
+        if self.prepared.contains_key(&key(&run.owner)) {
+            self.report_progress(&run.owner, "neutralizing-outputs", "Stopping profile outputs");
+        }
         // Stop extending the volatile overlay at the first neutralization
         // fence. Release still follows physical action restoration below.
         if let Some(actor) = self.recovery_publications.get(&key(&run.owner)) {
@@ -819,22 +833,51 @@ impl Host for NativeProfileHost {
         let mut adapter_result=Ok(());
         let mut desktop_result=Ok(());
         let mut desktop_status=None;
+        let progress=self.progress.clone();
+        let progress_epoch=self.progress_epoch(&run.owner);
+        let report=|step:&str,message:&str| {
+            if let Some(epoch)=progress_epoch {Self::emit_progress(progress.as_ref(),epoch,step,message);}
+        };
         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
             state.publication.revoke_renewal();
-            if let Some(mut desktop) = state.desktop.take() { desktop_result = desktop.stop(); desktop_status=Some(desktop.status()); }
+            if let Some(mut desktop) = state.desktop.take() {
+                let program=state.delivery.as_ref().or(state.acquisition_plan.as_ref()).or(state.report.plan.as_ref())
+                    .map(|plan|&plan.program);
+                let kind=program.map(Self::desktop_binding_kind).unwrap_or("keyboard and mouse bindings");
+                report("cleanup-releasing-desktop-bindings",&format!("Releasing {kind}"));
+                desktop_result = desktop.stop(); desktop_status=Some(desktop.status());
+            }
             if let Some(reducer) = state.reducer.as_mut() {
+                if reducer.active() {report("cleanup-stopping-mappings", "Stopping profile mappings and routes");}
                 reducer.stop();
                 state.recording.record(reducer.drain_reports());
                 reducer.drain();
             }
+            if run.attempted.contains(&ApplyPhase::Acquire) && !state.actions.is_empty()
+                && !state.actions.poll().cleanup_complete {
+                report("cleanup-releasing-peripheral-outputs", "Releasing peripheral output controls");
+            }
             let _=state.actions.stop();
+            if state.report.plan.as_ref().is_some_and(|plan|plan.program.nodes.iter()
+                .any(|node|matches!(node.operation,osg_mapping::program::Operation::Script {..}))) {
+                report("cleanup-stopping-scripts", "Stopping profile scripts");
+            }
             state.scripts.stop();
+            if state.game.provider_identity().is_some() || state.game_preparation.is_some() {
+                report("cleanup-disconnecting-game", "Releasing profile game context and telemetry");
+            }
             state.game.stop();
             state.panels.stop();
             let withdrawal = Self::withdraw_game(&resources, state);
+            if run.attempted.contains(&ApplyPhase::Acquire) && !state.companions.is_empty() {
+                report("cleanup-releasing-companion-bindings", "Releasing companion controls and feedback");
+            }
             let companion_stop = state.companions.stop_native(&companions);
             let mut output_result = Ok(());
             if let Some(output) = state.output.as_mut() {
+                if output.active() {
+                    report("cleanup-removing-virtual-device", "Neutralizing and removing virtual controller output");
+                }
                 output_result = crate::profile_session_virtual::neutralize_output(output, &state.recording);
             }
             adapter_result=withdrawal.and(output_result).and(companion_stop);
@@ -1060,6 +1103,9 @@ impl Host for NativeProfileHost {
         if let Some(state) = self.prepared.get(&key(&run.owner)) {
             Self::withdraw_game(&self.resources, state)?;
         }
+        if !run.receipts.is_empty() {
+            self.report_progress(&run.owner, "cleanup-validating-receipts", "Checking recorded output ownership");
+        }
         let captured = companion::receipts(&run.receipts)?;
         let _publication_receipts=crate::profile_session_overrides::Overrides::from_run(run,self.panels.clone())?;
         let visibility_receipt=crate::profile_session_visibility::Visibility::from_receipts(run,self.controllers.clone())?;
@@ -1090,6 +1136,7 @@ impl Host for NativeProfileHost {
                     let record = osg_desktop_output::Coordinator::inspect_owned_journal(&path,&token,scope.as_ref())?;
                     if record.uncertain || !record.cleanup_complete || !record.held.is_empty() || record.in_flight.is_some() {
                         if !recovery { return Err("Desktop cleanup is uncertain; use explicit profile recovery.".into()); }
+                        self.report_progress(&run.owner, "cleanup-recovering-desktop-bindings", "Releasing recorded keyboard and mouse bindings");
                         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) { state.desktop.take(); }
                         let preferences = crate::profile_desktop_settings::Settings::native();
                         osg_desktop_output::Coordinator::recover_journal(preferences.value.enabled, crate::profile_desktop_settings::qualified(), path)?;
@@ -1100,12 +1147,16 @@ impl Host for NativeProfileHost {
                 }
             }
             if run.receipts.iter().any(|r|r.kind=="virtual-output") {
+                self.report_progress(&run.owner, "cleanup-restoring-virtual-device", "Restoring recorded virtual controller state");
                 if let Some(output) = self.prepared.get_mut(&key(&run.owner)).and_then(|state|state.output.as_mut()) {
                     crate::profile_session_virtual::restore_retained_output(output, &run.owner, recovery)?;
                 }
                 crate::profile_session_virtual::recover(&run.owner)?;
             }
-            if !captured.is_empty() { companion::restore_latest(&self.companions, &captured, false)?; }
+            if !captured.is_empty() {
+                self.report_progress(&run.owner, "cleanup-restoring-companion-panels", "Restoring companion panels");
+                companion::restore_latest(&self.companions, &captured, false)?;
+            }
         }
         self.prepared.remove(&key(&run.owner));
         Ok(())

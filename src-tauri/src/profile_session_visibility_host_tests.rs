@@ -267,6 +267,14 @@ fn actual_host_retains_exact_cleanup_after_conflict_and_releases_it_after_restor
     let mut run = owned_run(owner.clone(), visibility.receipts().unwrap());
     visibility.start().unwrap();
     host.recovery_visibility.insert(key(&owner), visibility);
+    let progress = Arc::new(std::sync::Mutex::new(vec![]));
+    let observed = progress.clone();
+    let observed_io = io.clone();
+    host = host.with_progress(Arc::new(move |epoch, step, message| {
+        observed.lock().unwrap().push((epoch, step.to_owned(), message.to_owned(),
+            observed_io.driver.lock().unwrap().active));
+    }));
+    host.set_cleanup_progress(Some(45));
     let own = io
         .owned
         .lock()
@@ -284,6 +292,10 @@ fn actual_host_retains_exact_cleanup_after_conflict_and_releases_it_after_restor
     host.restore_visibility(&run).unwrap();
     run.attempted.clear();
     host.restore_visibility(&run).unwrap();
+    assert_eq!(*progress.lock().unwrap(), vec![
+        (45, "cleanup-unhiding-peripherals".into(), "Unhiding peripherals".into(), true),
+        (45, "cleanup-unhiding-peripherals".into(), "Unhiding peripherals".into(), true),
+    ], "Each real restore attempt reports before driver mutation; empty cleanup emits nothing");
 }
 
 #[test]
