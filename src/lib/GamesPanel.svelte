@@ -78,8 +78,18 @@
       <div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}/>{/key}</div>
     </div>
 
-    <div class="games-detail-layout">
-      <div class="game-content">
+    <div class="game-content">
+        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={17} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><span></span>{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={12} /> Rescan</button></div>
+          {#if selected.source}<p class="field-help">Source: {selected.source}</p>{/if}
+          {#if selected.provider === 'x-plane' && selected.installations?.length}
+            <label class="editor-label">Detected installations<select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
+          {/if}
+          <div class="editor-label"><span id="game-executable-label">Game executable</span><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={15}/></button></div>
+          <p class="field-help">Choose {gameExecutableName(selected.id)} in your installation folder.</p>
+          {#if executablePath && executablePath !== selected.executable}<div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}>Use this path</button></div>{/if}
+          {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
+          {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
+        </section>
         {#key selected.id}<GameProfileRule game={selected} busy={busy||pending}/>{/key}
         <section class="panel setup-panel" id="game-integration-settings" aria-label="Game integration setup">
           <div class="sidebar-title"><Icon name="link" size={17} /><h3>Integration setup</h3></div>
@@ -133,20 +143,6 @@
           <button class="text-button setup-recheck" disabled={busy || pending || setupRunning || (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={12} /> Recheck readiness</button>
           {#if selectedLiveLabel}<div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{selectedLiveLabel}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>{/if}
         </section>
-      </div>
-      <aside class="game-sidebar">
-        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={17} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><span></span>{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={12} /> Rescan</button></div>
-          {#if selected.source}<p class="field-help">Source: {selected.source}</p>{/if}
-          {#if selected.provider === 'x-plane' && selected.installations?.length}
-            <label class="editor-label">Detected installations<select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
-          {/if}
-          <div class="editor-label"><span id="game-executable-label">Game executable</span><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={15}/></button></div>
-          <p class="field-help">Choose {gameExecutableName(selected.id)} in your installation folder.</p>
-          {#if executablePath && executablePath !== selected.executable}<div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}>Use this path</button></div>{/if}
-          {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
-          {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
-        </section>
-      </aside>
     </div>
   {:else}
     <div class="page-heading games-toolbar"><div><div class="eyebrow">YOUR GAMES</div><h1>Games</h1><p>{gameState.catalogue.filter(game => game.installed).length} found · {gameState.catalogue.length} supported</p></div><div class="toolbar-controls"><button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={13} /> Rescan</button><label class="supported-switch"><input type="checkbox" role="switch" bind:checked={showAll} /><span class="switch-track" aria-hidden="true"></span> Show all supported</label></div></div>
@@ -266,7 +262,6 @@
   .game-details-heading h2 { font-size: 23px; letter-spacing: -.5px; margin-top: 7px; }
   .detail-subtitle { font-size: 10px; color: var(--muted); margin-top: 8px; }
   .detail-launch { margin-left: auto; }
-  .games-detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 23px; }
   h3 { font-size: 12px; font-weight: 600; }
   .editor-label { display: flex; flex-direction: column; gap: 8px; color: var(--soft); font-size: 10px; }
   .editor-label { margin-top: 16px; }
@@ -275,8 +270,7 @@
   .executable-picker>span.empty {font-family:inherit;color:var(--muted);}
   .executable-picker :global(svg) {flex-shrink:0;color:var(--muted);}
   .executable-picker:not(:disabled):hover {border-color:var(--accent);}
-  .game-sidebar { min-width: 0; }
-  .installation-panel { padding: 21px; }
+  .installation-panel { padding: 21px; margin-bottom:20px; }
   .sidebar-title { display: flex; gap: 9px; align-items: center; color: var(--soft); }
   .installation-status-row {display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:20px;}
   .installation-status-row>button {flex-shrink:0;font-size:9px;padding:8px 10px;}
@@ -322,9 +316,6 @@
   .session-warning { background: #b18b550a; border-color: #b18b5560; }
   .session-warning .session-icon { color: #c5a26e; }
   @media (hover: none) { .tile-launch {padding:0 20px 18px;} }
-  @media (max-width: 1050px) { .games-detail-layout { grid-template-columns: minmax(0, 1fr); }
-  .setup-panel { margin-top: 0; }
-  }
   @media (max-width: 600px) { .games-toolbar { align-items: start; }
   .toolbar-controls { align-items: end; flex-direction: column-reverse; gap: 12px; }
   .game-grid { grid-template-columns: 1fr; }
