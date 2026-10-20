@@ -106,7 +106,7 @@ impl Sources {
                     .map(|(identity, route)| (identity.module_id, (identity.serial, route.boot)))
             })
             .collect::<BTreeMap<_, _>>();
-        let controllers = self.controllers.resource_inventory();
+        let host = self.controllers.authoritative_resource_inventory().map(|controllers| {
         let host = controllers
             .sources
             .into_iter()
@@ -173,15 +173,12 @@ impl Sources {
                 result
             })
             .collect();
+        batch("host-controllers", &controllers.session, revision, host)
+        });
         let mut batches = vec![
             (
                 "host-controllers".into(),
-                Ok(batch(
-                    "host-controllers",
-                    &controllers.session,
-                    revision,
-                    host,
-                )),
+                host,
             ),
             (
                 "standalone-usb".into(),
@@ -218,7 +215,8 @@ impl Sources {
         for (id, state) in &gateways {
             let scope = format!("gateway:{id}");
             self.can_scopes.insert(scope.clone());
-            let observed = self.can_observations(id, state, &verified);
+            let observed = if state["connected"] == true { self.can_observations(id, state, &verified) }
+                else { Err("Gateway is disconnected; remembered module inventory is retained.".into()) };
             self.refresh_can_capabilities(id, state);
             batches.push((
                 scope.clone(),
@@ -232,7 +230,7 @@ impl Sources {
             {
                 batches.push((
                     scope.clone(),
-                    Ok(batch(scope, &self.session, revision, vec![])),
+                    Err("Gateway is unavailable; remembered module inventory is retained.".into()),
                 ));
             }
         }
@@ -483,9 +481,11 @@ impl Sources {
         Ok(Some(item))
     }
     fn companion_observations(&self) -> Result<Vec<Observation>, String> {
+        let paired = self.host.resource_instance_ids()?;
         self.companions
             .resource_inventory()
             .into_iter()
+            .filter(|source| paired.contains(&source.definition.source_id))
             .map(|source| {
                 let publication = self.host.resource_publication(&source.definition.source_id);
                 let transport = self.host.resource_transport(&source.definition.source_id);
@@ -549,7 +549,8 @@ impl Sources {
         verified: &BTreeMap<String, (String, u32)>,
     ) -> Result<Vec<Observation>, String> {
         let mut observed = Vec::new();
-        for module in state["modules"].as_array().into_iter().flatten() {
+        let modules = state["modules"].as_array().ok_or("Gateway module inventory is unavailable; retained resources are preserved.")?;
+        for module in modules {
             let Some(id) = module["id"].as_str() else {
                 continue;
             };

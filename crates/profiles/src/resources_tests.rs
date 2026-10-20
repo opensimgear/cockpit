@@ -72,6 +72,76 @@ fn only_id(registry: &Registry) -> String {
     registry.list(0, 128).unwrap().resources[0].id.clone()
 }
 
+fn paired_companion(key: &str) -> Observation {
+    let mut item = observation(key, None, Transport::Network, 0);
+    item.name = key.into();
+    item.resource_type = ResourceType::Companion;
+    item.evidence = vec![IdentityEvidence { kind: EvidenceKind::CompanionInstance, value: key.into() }];
+    item
+}
+
+#[test]
+fn complete_companion_membership_removes_unpaired_cache_after_restart_but_preserves_offline_pairs() {
+    let mut registry = Registry::new();
+    registry.reconcile(batch("companions", 1, vec![paired_companion("removed"), paired_companion("paired")])).unwrap();
+    let ids = registry.list(0,128).unwrap().resources.into_iter().map(|item|(item.name,item.id)).collect::<BTreeMap<_,_>>();
+    let mut restored = Registry::restore(registry.saved()).unwrap();
+    restored.provider_failed("companions", "Temporary protected store failure");
+    assert_eq!(restored.list(0,128).unwrap().total,2);
+    let mut partial = batch("companions",1,vec![]);partial.complete=false;
+    restored.reconcile(partial).unwrap();
+    assert_eq!(restored.list(0,128).unwrap().total,2);
+    let mut offline = paired_companion("paired");offline.route=None;offline.ports=None;
+    let report = restored.reconcile(batch("companions",2,vec![offline])).unwrap();
+    assert!(report.changed.contains(&ids["removed"]));
+    assert!(restored.inspect(&ids["removed"],0,128).is_err());
+    let retained = restored.inspect(&ids["paired"],0,128).unwrap();
+    assert_eq!(retained.resource.availability,Availability::Offline);
+    assert_eq!(retained.ports.len(),2);
+    let again = Registry::restore(restored.saved()).unwrap();
+    assert_eq!(again.list(0,128).unwrap().total,1);
+    assert_eq!(only_id(&again),ids["paired"]);
+}
+
+#[test]
+fn removal_revokes_tokens_cleans_redirects_and_repairing_gets_a_new_identity() {
+    let mut registry = Registry::new();
+    registry.reconcile(batch("companions",1,vec![paired_companion("panel")])).unwrap();
+    let id=only_id(&registry);
+    let alias=uuid::Uuid::new_v4().to_string();
+    let mut saved=registry.saved();saved.redirects.insert(alias.clone(),id.clone());
+    let mut registry=Registry::restore(saved).unwrap();
+    registry.reconcile(batch("companions",1,vec![paired_companion("panel")])).unwrap();
+    assert_eq!(registry.inspect(&alias,0,128).unwrap().resource.id,id);
+    let token=registry.token(&id,"button:0",Access::Read).unwrap();
+    registry.reconcile(batch("companions",2,vec![])).unwrap();
+    assert!(registry.validate_token(&token,"button:0",Access::Read).is_err());
+    assert!(registry.inspect(&alias,0,128).is_err());
+    assert!(registry.saved().redirects.is_empty());
+    registry.saved().validate().unwrap();
+    registry.reconcile(batch("companions",3,vec![paired_companion("panel")])).unwrap();
+    assert_ne!(only_id(&registry),id);
+    assert!(registry.inspect(&id,0,128).is_err());
+}
+
+#[test]
+fn authoritative_forget_removes_only_its_sighting_and_usb_unplug_stays_cached() {
+    let mut registry=Registry::new();
+    let item=observation("module",Some("physical-module"),Transport::Hid,0);
+    registry.reconcile(batch("host-controllers",1,vec![item.clone()])).unwrap();
+    registry.reconcile(batch("standalone-usb",1,vec![item])).unwrap();
+    let id=only_id(&registry);
+    registry.reconcile(batch("host-controllers",2,vec![])).unwrap();
+    assert_eq!(only_id(&registry),id);
+    assert!(registry.saved().resources[0].sightings.iter().all(|s|s.scope=="standalone-usb"));
+    registry.reconcile(batch("standalone-usb",2,vec![])).unwrap();
+    assert_eq!(registry.inspect(&id,0,128).unwrap().resource.availability,Availability::Offline);
+    let mut can=observation("forgotten-can",None,Transport::Can,0);can.name="forgotten-can".into();
+    registry.reconcile(batch("gateway:one",1,vec![can])).unwrap();
+    registry.reconcile(batch("gateway:one",2,vec![])).unwrap();
+    assert_eq!(registry.list(0,128).unwrap().total,1);
+}
+
 #[test]
 fn persistent_identity_offline_refs_and_baselines_survive_without_replaying() {
     let mut registry = Registry::new();

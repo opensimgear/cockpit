@@ -659,6 +659,17 @@ impl Runtime {
     pub(crate) fn resource_transport(&self, instance_id: &str) -> Option<osg_companion_service::SourceTransport> {
         self.metadata.get()?.hub.source_transport(instance_id)
     }
+    /// Existing pairing metadata only. Inventory must neither create a host nor
+    /// start its listener/USB services; read failures are not an empty inventory.
+    pub(crate) fn resource_instance_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
+        if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
+        if let Some(metadata) = self.metadata.get() { return Ok(metadata.hub.resource_instance_ids()); }
+        let Some(path) = &self.path else { return Ok(Default::default()); };
+        if !path.join("companion-host-state.dpapi").try_exists().map_err(|error| error.to_string())? {
+            return Ok(Default::default());
+        }
+        Ok(self.metadata(false)?.hub.resource_instance_ids())
+    }
     pub(crate) fn resource_publication(&self, instance_id: &str) -> Result<osg_companion_service::Publication, String> {
         self.metadata.get().ok_or("Companion setup is not initialized; no inventory access starts it.")?
             .hub.assigned_publication(instance_id)

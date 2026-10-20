@@ -42,6 +42,13 @@ Companion transport comes from the native adapter that owns its current session;
 inventory does not assume that a companion is connected over a network.
 
 Disconnect preserves last-known descriptors and the profile's own bindings.
+Explicit removal is different: complete paired-companion, saved-controller and
+gateway module inventories retire records no longer configured by that provider.
+Unpairing a companion or removing its panel assignment removes its inventory
+resource, including metadata retained by earlier runs. Saved profile blocks and
+bindings remain unresolved until edited; cleanup does not rewrite profiles.
+Offline paired companions and unplugged USB devices keep their descriptors, and
+failed or partial provider reads do not establish removal.
 Restart restores metadata offline under a new inventory session. A new route
 needs current capability verification and a fresh baseline before it can obtain
 authority. A partial or failed capability read cannot silently delete another
@@ -110,6 +117,9 @@ local contracts. Provider IDs such as `button:0` must be explicitly mapped to
 logical graph ports with captured contract hashes. P0's scalar graph schema cannot
 represent every structured action yet; P1 rejects lossy assignments. P2 extends
 the graph/compiler contract, and P6/P7 deliver the list, Add flow and editor.
+
+The profile page refreshes inventory when opened, while visible, and when its
+inventory picker opens. Removed entries also leave the picker's pending selection.
 
 Automated contract tests and CI builds are separate from physical acceptance.
 Existing USB/identity issues #3/#4 and Windows/game/companion qualification tickets

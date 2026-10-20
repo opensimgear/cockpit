@@ -120,13 +120,16 @@ fn inventory_retains_distinct_gateway_modules_and_closed_game_ports_without_effe
         .filter(|r| r.attributes["provider"] != "dcs-bios")
         .all(|r| r.port_count > 0));
     sources.gateways = Arc::new(|| vec![]);
-    for (_, batch) in sources.collect(2) {
-        registry.reconcile(batch.unwrap()).unwrap();
+    for (scope, batch) in sources.collect(2) {
+        match batch {
+            Ok(batch) => { registry.reconcile(batch).unwrap(); },
+            Err(error) => registry.provider_failed(&scope,&error),
+        }
     }
     let offline = registry.inspect(&first, 0, 32).unwrap();
     assert_eq!(
         offline.resource.availability,
-        osg_profiles::resources::Availability::Offline
+        osg_profiles::resources::Availability::Unavailable
     );
     assert_eq!(offline.ports.len(), 2);
     assert!(registry
@@ -479,7 +482,7 @@ fn changed_or_missing_companion_publications_retain_metadata_without_write_autho
     assert!(item.diagnostics.iter().any(|v| v == "Baseline expired"));
 }
 #[test]
-fn missing_cached_companion_publication_does_not_initialize_native_host_services() {
+fn unpaired_retained_companion_descriptors_are_omitted_without_initializing_host_services() {
     use osg_companion_service::SourceSink;
     let (sources, _temporary) = sources();
     let publication = publication();
@@ -487,10 +490,54 @@ fn missing_cached_companion_publication_does_not_initialize_native_host_services
         .companions
         .register(publication.definition("test-companion"))
         .unwrap();
-    let item = sources.companion_observations().unwrap().remove(0);
-    assert!(item.ports.is_none());
-    assert!(item.route.is_none());
-    assert!(!item.diagnostics.is_empty());
+    assert!(sources.companion_observations().unwrap().is_empty());
+}
+
+#[test]
+fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unassigned_sources() {
+    struct Memory(Mutex<Vec<u8>>);
+    impl osg_companion_service::persistence::StateStorage for Memory {
+        fn read(&self)->Result<Option<Vec<u8>>,String>{Ok(Some(self.0.lock().unwrap().clone()))}
+        fn write(&self,bytes:&[u8])->Result<(),String>{*self.0.lock().unwrap()=bytes.to_vec();Ok(())}
+    }
+    for removal in ["companion_unassign","companion_revoke"] {
+    let (mut sources,temporary)=sources();
+    let publication=publication();
+    let record=json!({"schemaVersion":1,"hostId":"inventory-host","credentials":[{"companionId":"paired","name":"Offline screen","tokenHash":"a".repeat(64),"kind":"browser"}],"instances":[{"instanceId":"test-companion","companionId":"paired","publicationHash":publication.publication_hash,"definition":publication.definition("test-companion")}]});
+    let hub=osg_companion_service::Hub::with_existing_storage(Arc::new(Memory(Mutex::new(serde_json::to_vec(&record).unwrap()))),sources.companions.clone()).unwrap().unwrap();
+    sources.host=Arc::new(crate::companion_host::Runtime::with_profile_metadata(hub.clone(),sources.companions.clone(),temporary.path().into()));
+    let items=sources.companion_observations().unwrap();
+    assert_eq!(items.len(),1);assert!(items[0].route.is_none());assert!(items[0].ports.is_none());
+    let request=if removal=="companion_unassign"{json!({"command":removal,"instanceId":"test-companion"})}else{json!({"command":removal,"companionId":"paired"})};
+    hub.command(&request).unwrap();
+    assert_eq!(sources.companions.resource_inventory().len(),1,"Sink definitions intentionally remain cached.");
+    assert!(sources.companion_observations().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn disconnected_or_vanished_gateway_is_not_an_authoritative_empty_inventory() {
+    let (mut sources,_temporary)=sources();
+    let inputs=Arc::new(Mutex::new(vec![("one".to_owned(),can_state())]));
+    let feed=inputs.clone();sources.gateways=Arc::new(move||feed.lock().unwrap().clone());
+    let initial=sources.collect(1).into_iter().find(|(scope,_)|scope=="gateway:one").unwrap().1.unwrap();
+    assert!(initial.complete);assert_eq!(initial.observations.len(),1);
+    *inputs.lock().unwrap()=vec![("one".into(),json!({"connected":false,"modules":[]}))];
+    assert!(sources.collect(2).into_iter().find(|(scope,_)|scope=="gateway:one").unwrap().1.is_err());
+    inputs.lock().unwrap().clear();
+    assert!(sources.collect(3).into_iter().find(|(scope,_)|scope=="gateway:one").unwrap().1.is_err());
+}
+
+#[test]
+fn unavailable_durable_inventory_never_becomes_an_authoritative_empty_batch() {
+    let (mut sources,temporary)=sources();
+    std::fs::write(temporary.path().join("companion-host-state.dpapi"),b"unreadable protected host state").unwrap();
+    sources.host=Arc::new(crate::companion_host::Runtime::new(Some(temporary.path().into()),sources.companions.clone()));
+    assert!(sources.companion_observations().is_err());
+    let controllers=temporary.path().join("controllers.json");std::fs::write(&controllers,b"corrupt controller settings").unwrap();
+    sources.controllers=Arc::new(osg_controller_input::ControllerService::new(Some(controllers),false));
+    assert!(sources.controllers.authoritative_resource_inventory().is_err());
+    assert!(sources.can_observations("gateway",&json!({"error":"not available"}),&BTreeMap::new()).is_err());
 }
 #[test]
 fn restored_host_metadata_remains_a_distinct_offline_controller_without_guessing_osg_identity() {

@@ -139,6 +139,28 @@ test('late open/list/inventory results cannot overwrite a newer editor or dispos
   b.resolve({document:blankProfile(uid(2)),assignments:[]});await second;a.resolve({document:blankProfile(uid(1)),assignments:[]});await first;assert.equal(h.store.state.editor.document.id,uid(2));
   const later=deferred();h.provider.listAll=()=>later.promise;const read=h.store.refreshInventory();h.store.dispose();later.resolve({resources:inventory()});await read;assert.equal(h.store.state.inventoryLoaded,false);
 });
+
+test('inventory refresh retires removed companions without editing profiles or invalidating unchanged preflight',async()=>{
+  const h=harness();let snapshot={session:'native-one',revision:'1',resources:inventory()};
+  h.provider.listAll=async()=>plain(snapshot);
+  await h.store.refreshInventory();h.store.beginBlank();
+  const editor=plain(h.store.state.editor),first=h.store.inventoryRevision;
+  await h.store.refreshInventory();assert.equal(h.store.inventoryRevision,first,'Identical polling must keep captured preflight current.');
+  const removed=snapshot.resources.find(resource=>resource.resourceType==='companion').id;
+  snapshot={...snapshot,revision:'2',resources:snapshot.resources.filter(resource=>resource.id!==removed)};
+  await h.store.refreshInventory();assert.equal(h.store.inventoryRevision,first+1);assert.ok(!h.store.state.inventory.some(resource=>resource.id===removed));
+  assert.deepEqual(plain(h.store.state.editor),editor,'Removed inventory must not erase saved graph blocks, routes or local assignments.');
+  snapshot={...snapshot,session:'native-two'};await h.store.refreshInventory();
+  assert.equal(h.store.inventoryRevision,first+2,'A native restart must invalidate previously captured authority even with identical resources.');
+});
+
+test('inventory availability changes invalidate preflight once and failed polls preserve last-known resources',async()=>{
+  const h=harness();await h.store.refreshInventory();const before=h.store.inventoryRevision,known=plain(h.store.state.inventory),read=h.provider.listAll;
+  h.provider.listAll=async()=>{throw Error('Companion provider unavailable');};
+  await h.store.refreshInventory();assert.equal(h.store.inventoryRevision,before+1);assert.equal(h.store.state.inventoryLoaded,false);assert.deepEqual(plain(h.store.state.inventory),known);
+  await h.store.refreshInventory();assert.equal(h.store.inventoryRevision,before+1,'Repeated identical failures must not invent new inventory changes.');
+  h.provider.listAll=read;await h.store.refreshInventory();assert.equal(h.store.inventoryRevision,before+2);assert.equal(h.store.state.inventoryLoaded,true);assert.equal(h.store.state.inventoryError,'');
+});
 test('missing, mismatched or malformed committed summaries never advance the editor base or fabricate hashes',async()=>{
   for(const mutate of [result=>delete result.profiles,result=>result.profiles=[],result=>result.profiles.push({...result.profiles[0]}),result=>result.profiles[0].name='Wrong',result=>result.profiles[0].revision=99,result=>result.profiles[0].isDefault=false,result=>result.profiles[0].semanticHash='',result=>result.profiles[0].id=uid(99)]){
     const h=harness();await h.store.refresh();await h.store.open(DEFAULT_PROFILE_ID);const current=plain(h.store.state.editor.document);current.editor.viewport.x=75;h.store.update(current);

@@ -116,10 +116,11 @@ fn companion_authoring_identity_is_cached_exact_and_retained_when_offline() {
     let runtime=Runtime::new(None,Arc::new(|_|panic!("Authoring must not start discovery")),false);
     let mut item=observed(1);item.key="paired".into();item.resource_type=ResourceType::Companion;
     item.evidence=vec![IdentityEvidence{kind:EvidenceKind::CompanionInstance,value:"paired-instance".into()}];
-    runtime.state.lock().unwrap().registry.reconcile(batch("companions","paired-provider",1,vec![item])).unwrap();
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","paired-provider",1,vec![item.clone()])).unwrap();
     let id=runtime.state.lock().unwrap().registry.list(0,1).unwrap().resources[0].id.clone();
     assert_eq!(runtime.companion_authoring_identity(&id).unwrap(),(id.clone(),"paired-instance".into()));
-    runtime.state.lock().unwrap().registry.reconcile(batch("companions","paired-provider",2,vec![])).unwrap();
+    item.route=None;item.ports=None;
+    runtime.state.lock().unwrap().registry.reconcile(batch("companions","paired-provider",2,vec![item])).unwrap();
     assert_eq!(runtime.companion_authoring_identity(&id).unwrap(),(id,"paired-instance".into()));
     let mut wrong=observed(1);wrong.key="controller".into();
     runtime.state.lock().unwrap().registry.reconcile(batch("host","host-provider",1,vec![wrong])).unwrap();
@@ -127,6 +128,27 @@ fn companion_authoring_identity_is_cached_exact_and_retained_when_offline() {
     assert!(runtime.companion_authoring_identity(&host).is_err());
     assert!(runtime.companion_authoring_identity("missing").is_err());
     runtime.shutdown();assert!(runtime.companion_authoring_identity(&host).is_err());
+}
+
+#[test]
+fn companion_removal_persists_after_restart_while_provider_failures_preserve_retained_metadata() {
+    let directory=temporary();
+    let mut item=observed(1);item.resource_type=ResourceType::Companion;item.key="paired-panel".into();
+    let inputs=Arc::new(Mutex::new(Ok::<_,String>(vec![item])));
+    let collector={let feed=inputs.clone();Arc::new(move|revision|vec![("companions".into(),feed.lock().unwrap().clone().map(|items|batch("companions","native-session",revision,items)))]) as Collect};
+    let runtime=Runtime::new(Some(directory.path().into()),collector.clone(),false);
+    let first=runtime.request(&json!({"command":"profile_resources_list"})).unwrap();
+    let id=first["resources"][0]["id"].clone();assert_eq!(first["total"],1);
+    runtime.shutdown();
+    *inputs.lock().unwrap()=Err("Protected pairing metadata is temporarily unavailable".into());
+    let restored=Runtime::new(Some(directory.path().into()),collector,false);
+    let failed=restored.request(&json!({"command":"profile_resources_list"})).unwrap();
+    assert_eq!(failed["total"],1);assert_eq!(failed["resources"][0]["id"],id);
+    *inputs.lock().unwrap()=Ok(vec![]);
+    assert_eq!(restored.request(&json!({"command":"profile_resources_list"})).unwrap()["total"],0);
+    restored.shutdown();
+    let again=Runtime::new(Some(directory.path().into()),Arc::new(|_|vec![]),false);
+    assert_eq!(again.request(&json!({"command":"profile_resources_list"})).unwrap()["total"],0);
 }
 fn observed(generation: u64) -> Observation {
     Observation {

@@ -38,6 +38,11 @@ impl ControllerService {
     pub fn resource_inventory(&self) -> registry::ResourceInventory {
         self.registry.lock().unwrap_or_else(|p| p.into_inner()).resource_inventory()
     }
+    /// Failed retained settings cannot authoritatively forget cached inventory.
+    pub fn authoritative_resource_inventory(&self) -> Result<registry::ResourceInventory, String> {
+        if !self.storage_valid { return Err("Remembered controller settings could not be loaded; retained inventory is preserved.".into()); }
+        Ok(self.resource_inventory())
+    }
 
     pub fn new(path: Option<PathBuf>, native: bool) -> Self {
         Self::start(path, native, false)

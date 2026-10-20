@@ -130,10 +130,12 @@ export class ProfileEditorStore {
     private listeners = new Set<(state: DeepReadonly<ProfileWorkspaceState>) => void>();
     private epoch = 0;
     private inventoryEpoch = 0;
+    private inventoryVersion = 0;
+    private inventorySignature = '';
     constructor(private api: ProfileEditorApi, private inventory: Pick<ProfileInventoryClient, 'listAll'>, private newId: () => string = () => globalThis.crypto.randomUUID()) { }
     get state(): DeepReadonly<ProfileWorkspaceState> { return freeze(this.value); }
     get editorEpoch(): number { return this.epoch; }
-    get inventoryRevision(): number { return this.inventoryEpoch; }
+    get inventoryRevision(): number { return this.inventoryVersion; }
     subscribe(listener: (state: DeepReadonly<ProfileWorkspaceState>) => void): () => void { this.listeners.add(listener); listener(this.state); return () => { this.listeners.delete(listener); }; }
     private set(patch: Partial<ProfileWorkspaceState>) { this.value = { ...this.value, ...patch }; for (const listener of this.listeners)
         listener(this.state); }
@@ -154,15 +156,21 @@ export class ProfileEditorStore {
         if (epoch === this.epoch)
             this.set({ busy: false });
     } }
-    async refreshInventory(): Promise<void> { const epoch = ++this.inventoryEpoch; this.set({ inventoryBusy: true, inventoryError: '' }); try {
+    async refreshInventory(): Promise<void> { const epoch = ++this.inventoryEpoch; this.set({ inventoryBusy: true }); try {
         const result = await this.inventory.listAll();
         if (epoch !== this.inventoryEpoch)
             return;
+        const signature = JSON.stringify([result.session, result.revision, result.resources, result.inventoryDiagnostics ?? [], result.readOnly === true]);
+        if (!this.value.inventoryLoaded || signature !== this.inventorySignature) this.inventoryVersion++;
+        this.inventorySignature = signature;
         this.set({ inventory: clone(result.resources) as ResourceSummary[], inventoryLoaded: true, inventoryError: result.inventoryDiagnostics?.join(' ') ?? '' });
     }
     catch (error) {
-        if (epoch === this.inventoryEpoch)
-            this.set({ inventoryLoaded: false, inventoryError: error instanceof Error ? error.message : String(error) });
+        if (epoch === this.inventoryEpoch) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (this.value.inventoryLoaded || this.value.inventoryError !== message) this.inventoryVersion++;
+            this.set({ inventoryLoaded: false, inventoryError: message });
+        }
     }
     finally {
         if (epoch === this.inventoryEpoch)

@@ -346,6 +346,15 @@ impl Hub {
         Ok(publication.clone())
     }
 
+    /// Durable pairing/assignment membership, independent of live sessions or
+    /// publication availability. Retained sink descriptors can outlive revoke.
+    pub fn resource_instance_ids(&self) -> BTreeSet<String> {
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        inner.record.instances.iter()
+            .filter(|assignment| inner.record.credentials.iter().any(|credential| credential.companion_id == assignment.companion_id))
+            .map(|assignment| assignment.instance_id.clone()).collect()
+    }
+
     /// Trusted local persistence boundary; never exposed as a wire operation.
     /// Metadata only: unlike operator status, this does not expire sessions or
     /// copy publication documents/assets while a profile editor is browsing.

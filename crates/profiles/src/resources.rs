@@ -533,6 +533,28 @@ impl Registry {
                 entry.live.remove(&key);
             }
         }
+        let mut changed = Vec::new();
+        // These native scopes enumerate remembered configuration, including
+        // paired/offline devices. Omission in a complete successful response
+        // means explicit removal, unlike discovery scopes such as USB unplug.
+        if batch.complete {
+            let keys = batch.observations.iter().map(|item| item.key.as_str()).collect::<BTreeSet<_>>();
+            next.entries.retain(|id, entry| {
+                let authoritative = match entry.saved.resource_type {
+                    ResourceType::Companion => batch.scope == "companions",
+                    ResourceType::HostController => batch.scope == "host-controllers",
+                    ResourceType::OsgModule => batch.scope == "host-controllers" || batch.scope.starts_with("gateway:"),
+                    ResourceType::GameIntegration => false,
+                };
+                if authoritative {
+                    entry.saved.sightings.retain(|sighting| sighting.scope != batch.scope || keys.contains(sighting.key.as_str()));
+                }
+                let retained = !entry.saved.sightings.is_empty();
+                if !retained { changed.push(id.clone()); }
+                retained
+            });
+            next.redirects.retain(|_, target| next.entries.contains_key(target));
+        }
         next.scopes.insert(
             batch.scope.clone(),
             Scope {
@@ -542,7 +564,6 @@ impl Registry {
             },
         );
         next.saved().validate()?;
-        let mut changed = Vec::new();
         for (id, entry) in &mut next.entries {
             if before.get(id) != Some(&fingerprint(entry)?) {
                 entry.generation = entry
