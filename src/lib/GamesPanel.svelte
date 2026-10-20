@@ -66,14 +66,14 @@
       </div>
       {#if cleanup.phase === 'recovery-needed' || cleanup.phase === 'failed'}<button class="secondary-button" disabled={busy || pending} onclick={() => send({ command: 'game_recover' })}><Icon name="refresh" size={14} /> Recover setup</button>
       {/if}
-      {#if cleanup.phase === 'recovery-needed'}<button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.showModal()}>Keep current setup</button>{/if}
+      {#if cleanup.phase === 'recovery-needed'}<button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.showModal()}><Icon name="check" size={14} />Keep current setup</button>{/if}
     </div>
   {/if}
   {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} kind="error" />{/if}
 
-  {#if returnToEditor}<button class="text-button back-link" onclick={returnToEditor}><span aria-hidden="true">←</span> {returnLabel ?? 'Return to profile'}</button>{/if}
+  {#if returnToEditor}<button class="text-button back-link" onclick={returnToEditor}><Icon name="back" size={14} /> {returnLabel ?? 'Return to profile'}</button>{/if}
   {#if selected}
-    <button class="text-button back-link" onclick={allGames}><span aria-hidden="true">←</span> All games</button>
+    <button class="text-button back-link" onclick={allGames}><Icon name="back" size={14} /> All games</button>
     <div class="game-details-heading">
       <div class={['game-detail-mark', { rally: selected.id === 'assetto-corsa-rally' }]}><Icon name={selected.provider !== 'assetto-corsa-rally' ? 'command' : 'wheel'} size={32} /></div>
       <div><p class="game-kicker">{selected.provider !== 'assetto-corsa-rally' ? 'Flight simulation' : 'Rally simulation'}</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selected.provider === 'dcs-bios' ? 'DCS-BIOS' : selected.provider === 'x-plane' ? 'X-Plane RREF telemetry' : 'Rally telemetry'}</p></div>
@@ -81,32 +81,32 @@
     </div>
 
     <div class="game-content">
-        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={17} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><span></span>{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={12} /> Rescan</button></div>
-          {#if selected.source}<p class="field-help">Source: {selected.source}</p>{/if}
+        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={18} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><Icon name={selected.installed ? 'check' : 'info'} size={14} />{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan</button></div>
+          {#if selected.source}<p class="field-help icon-text"><Icon name="folder" size={14} /><span>Source: {selected.source}</span></p>{/if}
           {#if selected.provider === 'x-plane' && selected.installations?.length}
-            <label class="editor-label">Detected installations<select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
+            <label class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
           {/if}
-          <div class="editor-label"><span id="game-executable-label">Game executable</span><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={15}/></button></div>
+          <div class="editor-label"><span id="game-executable-label" class="icon-text"><Icon name="play" size={14} />Game executable</span><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={14}/></button></div>
           <p class="field-help">Choose {gameExecutableName(selected.id)} in your installation folder.</p>
-          {#if executablePath && executablePath !== selected.executable}<div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}>Use this path</button></div>{/if}
-          {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
+          {#if executablePath && executablePath !== selected.executable}<div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}><Icon name="check" size={14} />Use this path</button></div>{/if}
+          {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}><Icon name="search" size={14} />Use automatic discovery</button>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         </section>
         {#key selected.id}<GameProfileRule game={selected} busy={busy||pending}/>{/key}
         <section class="panel setup-panel" id="game-integration-settings" aria-label="Game integration setup">
-          <div class="sidebar-title"><Icon name="link" size={17} /><h3>Integration setup</h3></div>
-          <div class={['setup-readiness', { ready: gameIntegrationReady(selected), attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={gameIntegrationReady(selected) ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={15} /><strong>{gameIntegrationLabel(selected)}</strong></div>
+          <div class="sidebar-title"><Icon name="link" size={18} /><h3>Integration setup</h3></div>
+          <div class={['setup-readiness', { ready: gameIntegrationReady(selected), attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={gameIntegrationReady(selected) ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={14} /><strong>{gameIntegrationLabel(selected)}</strong></div>
           <p class="field-help">{selected.id === 'assetto-corsa-rally' && selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry does not verify the native game connection.' : selected.integrationSetup?.message ?? 'Check whether this game is ready to send data to your hardware.'}</p>
           <dl class="provider-readiness" aria-label="Integration readiness">
-            <div><dt>Provider setup</dt><dd>{gameIntegrationLabel(selected)}</dd></div>
-            <div><dt>Game context</dt><dd>{gameContextLabel(selected)}<small>{selected.integrationContext?.processVerified ? 'Actual game process verified' : 'No verified matching process'}</small></dd></div>
-            {#if selectedLiveLabel}<div><dt>Telemetry freshness</dt><dd>{selectedLiveLabel}</dd></div>{/if}
+            <div><dt><Icon name="settings" size={14} />Provider setup</dt><dd>{gameIntegrationLabel(selected)}</dd></div>
+            <div><dt><Icon name="gamepad" size={14} />Game context</dt><dd>{gameContextLabel(selected)}<small>{selected.integrationContext?.processVerified ? 'Actual game process verified' : 'No verified matching process'}</small></dd></div>
+            {#if selectedLiveLabel}<div><dt><Icon name="activity" size={14} />Telemetry freshness</dt><dd>{selectedLiveLabel}</dd></div>{/if}
           </dl>
           <p class="field-help">{selected.integrationContext?.message ?? 'Game discovery identifies an installation. A verified running game and an active matching profile are required for live integration.'}</p>
           {#if selected.id === 'dcs'}
-            <p class="setup-version">DCS-BIOS <strong>{selected.integrationSetup?.version ?? '0.11.7'}</strong></p>
+            <p class="setup-version icon-text"><Icon name="chip" size={14} />DCS-BIOS <strong>{selected.integrationSetup?.version ?? '0.11.7'}</strong></p>
             {#if selected.integrationSetup?.aircraftExports?.length}
-              <details class="telemetry-channel-details aircraft-hooks"><summary>Aircraft mod export hooks</summary>
+              <details class="telemetry-channel-details aircraft-hooks"><summary><span class="icon-text"><Icon name="command" size={14} />Aircraft mod export hooks</span></summary>
                 <p>Only mods in the selected DCS installation and Saved Games folder are included. Recheck and run setup after adding, updating or removing a mod.</p>
                 <dl>{#each selected.integrationSetup.aircraftExports as hook (hook.aircraft)}
                   <div><dt>{hook.aircraft === 'OH-6A' ? 'OH-6A Cayuse' : hook.aircraft}<small>{hook.capability === 'common-data-only' ? 'Common flight telemetry' : 'Controls and cockpit instruments'}</small></dt><dd>{hook.message}</dd></div>
@@ -114,19 +114,19 @@
               </details>
             {/if}
           {:else if selected.provider === 'x-plane'}
-            <p class="setup-version">RREF UDP · X-Plane {selected.id.endsWith('12') ? '12' : '11'}</p>
+            <p class="setup-version icon-text"><Icon name="network" size={14} />RREF UDP · X-Plane {selected.id.endsWith('12') ? '12' : '11'}</p>
             <p class="field-help">Set up integration preserves local UDP settings and changes no game files. Connection settings belong to this game. Its profile graph chooses the telemetry channels to use.</p>
             {#if selected.integrationSetup?.connection}<p class="field-help">{String(selected.integrationSetup.connection.host)}:{String(selected.integrationSetup.connection.port)} · {String(selected.integrationSetup.connection.updateHz)} updates/sec</p>{/if}
           {:else}
-            <p class="setup-version">{selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry' : 'Native shared memory'}{#if selected.integrationSetup?.version && selected.integrationSetup.connection?.source !== 'synthetic'} · Build <strong>{selected.integrationSetup.version}</strong>{/if}</p>
+            <p class="setup-version icon-text"><Icon name="chip" size={14} /><span>{selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry' : 'Native shared memory'}{#if selected.integrationSetup?.version && selected.integrationSetup.connection?.source !== 'synthetic'} · Build <strong>{selected.integrationSetup.version}</strong>{/if}</span></p>
             <p class="field-help">Set up checks the native telemetry provider. A matching verified game and an active profile are required before its branches can run.</p>
-            <div class={['native-verification', { verified: gameIntegrationNativeVerified(selected) }]}><Icon name={gameIntegrationNativeVerified(selected) ? 'check' : 'info'} size={13} /><span>{gameIntegrationVerificationLabel(selected)}</span></div>
+            <div class={['native-verification', { verified: gameIntegrationNativeVerified(selected) }]}><Icon name={gameIntegrationNativeVerified(selected) ? 'check' : 'info'} size={14} /><span>{gameIntegrationVerificationLabel(selected)}</span></div>
             {#if !gameIntegrationNativeVerified(selected)}<p class="field-help">Start ACR and enter a driving session, then recheck to verify compatible native telemetry.</p>{/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.probeChannels && Object.keys(selected.integrationSetup.probeChannels).length}
-              <details class="telemetry-channel-details"><summary>Last native check</summary><p>Channel availability from the last compatibility check. Live values appear separately when telemetry is receiving.</p><dl>{#each Object.entries(selected.integrationSetup.probeChannels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}</dd></div>{/each}</dl></details>
+              <details class="telemetry-channel-details"><summary><span class="icon-text"><Icon name="search" size={14} />Last native check</span></summary><p>Channel availability from the last compatibility check. Live values appear separately when telemetry is receiving.</p><dl>{#each Object.entries(selected.integrationSetup.probeChannels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}</dd></div>{/each}</dl></details>
             {/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.channels && Object.keys(selected.integrationSetup.channels).length}
-              <details class="telemetry-channel-details"><summary>Telemetry channels</summary><dl>{#each Object.entries(selected.integrationSetup.channels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}{#if typeof value.value === 'number'} · {Number.isInteger(value.value) ? value.value : value.value.toFixed(1)}{:else if typeof value.value === 'string'} · {value.value}{/if}</dd></div>{/each}</dl></details>
+              <details class="telemetry-channel-details"><summary><span class="icon-text"><Icon name="activity" size={14} />Telemetry channels</span></summary><dl>{#each Object.entries(selected.integrationSetup.channels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}{#if typeof value.value === 'number'} · {Number.isInteger(value.value) ? value.value : value.value.toFixed(1)}{:else if typeof value.value === 'string'} · {value.value}{/if}</dd></div>{/each}</dl></details>
             {/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
           {/if}
@@ -134,7 +134,7 @@
           {#if selected.id === 'dcs'}<p class="field-help">Inspect the applied profile in Profiles for its actual observed DCS port samples and command requests.</p>{/if}
           {#if selected.integrationSetup?.state === 'setting-up'}
             <div class="setup-progress" role="status" aria-live="polite"><Icon name="refresh" size={14} /><span>{selected.integrationSetup.progress ?? 'Preparing integration…'}</span></div>
-            <button class="secondary-button setup-main-action" disabled={busy || pending} onclick={() => integrationCommand('game_integration_cancel')}>Cancel setup</button>
+            <button class="secondary-button setup-main-action" disabled={busy || pending} onclick={() => integrationCommand('game_integration_cancel')}><Icon name="close" size={14} />Cancel setup</button>
           {:else if selected.integrationSetup?.recoveryNeeded}
             <p class="setup-warning">Recover the interrupted setup before trying again.</p>
             <button class="secondary-button setup-main-action" disabled={locked || !!profileBlockedReason} onclick={() => integrationCommand('game_integration_recover')}><Icon name="refresh" size={14} /> Recover integration setup</button>
@@ -142,7 +142,7 @@
             <button class="primary-button setup-main-action" disabled={setupDisabled} onclick={() => integrationCommand('game_integration_setup')}><Icon name={selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'refresh' : selected.id === 'dcs' ? 'download' : 'link'} size={14} /> {selected.integrationSetup?.state === 'ready' || selected.integrationSetup?.state === 'needs-attention' ? 'Repair integration' : selected.id === 'dcs' ? 'Set up integration' : 'Set up telemetry'}</button>
             {#if setupBlocked}<p class="field-help">{setupBlocked}</p>{/if}
           {/if}
-          <button class="text-button setup-recheck" disabled={busy || pending || setupRunning || (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={12} /> Recheck readiness</button>
+          <button class="text-button setup-recheck" disabled={busy || pending || setupRunning || (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={14} /> Recheck readiness</button>
           {#if selectedLiveLabel}<div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{selectedLiveLabel}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>{/if}
         </section>
     </div>
@@ -184,29 +184,35 @@
   <h2 id="recovery-review-title">Keep current setup?</h2>
   <p class="review-description">This preexisting game-session record still needs explicit recovery.</p>
   <p class="review-warning">Keeping the current setup releases game session ownership and archives the recovery record. Your hardware and integration settings stay as they are.</p>
-  <div class="review-actions"><button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.close()}>Cancel</button><button class="primary-button" disabled={busy || pending} onclick={keepCurrentSetup}>Keep current setup</button></div>
+  <div class="review-actions"><button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.close()}><Icon name="close" size={14} />Cancel</button><button class="primary-button" disabled={busy || pending} onclick={keepCurrentSetup}><Icon name="check" size={14} />Keep current setup</button></div>
 </dialog>
 
 <style>
-  .game-content {min-width:0;}
+  .game-content {min-width:0;font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
+  .game-content .field-help {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);overflow-wrap:anywhere;}
+  .game-content button, .game-content select {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
+  .game-content select {max-width:100%;min-width:0;}
+  .icon-text {display:inline-flex;align-items:center;gap:7px;}
+  .icon-text :global(svg), .sidebar-title :global(svg), .provider-readiness :global(svg), .installation-status :global(svg), .setup-readiness :global(svg), .native-verification :global(svg) {flex-shrink:0;}
   .game-content>.setup-panel {margin-top:0;margin-bottom:23px;}
   .provider-readiness {display:grid;gap:12px;margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:6px;}
   .provider-readiness>div {display:grid;gap:5px;}
-  .provider-readiness dt {font-size:9px;color:var(--muted);}
-  .provider-readiness dd {margin:0;color:var(--soft);font-size:10px;line-height:1.6;}
-  .provider-readiness small {display:block;color:var(--muted);font-size:9px;}
+  .provider-readiness dt {display:flex;align-items:center;gap:7px;font-size:var(--game-detail-text-size);color:var(--muted);}
+  .provider-readiness dd {margin:0;color:var(--soft);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);overflow-wrap:anywhere;}
+  .provider-readiness small {display:block;color:var(--muted);font-size:var(--game-detail-text-size);}
   .launch-review { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; width: 430px; max-width: calc(100% - 32px); padding: 28px; box-shadow: 0 20px 80px #0005; }
   .launch-review::backdrop { background: #0008; }
   .review-icon { color: var(--accent); background: var(--accent-bg); display: grid; place-items: center; width: 46px; height: 46px; border-radius: 11px; margin-bottom: 19px; }
-  .launch-review h2 { font-size: 21px; letter-spacing: -.3px; margin-top: 8px; }
-  .review-description, .review-warning { font-size: 11px; color: var(--muted); line-height: 1.8; margin-top: 14px; }
+  .launch-review h2 {font-size:var(--game-detail-heading-size,14px);line-height:var(--game-detail-line-height,1.6);letter-spacing:-.3px;margin-top:8px;}
+  .review-description, .review-warning {font-size:var(--game-detail-text-size,12px);color:var(--muted);line-height:var(--game-detail-line-height,1.6);margin-top:14px;}
   .review-warning { color: #c5a26e; padding: 13px; background: #b18b550a; border: 1px solid #b18b5540; border-radius: 6px; }
   .review-actions { display: flex; justify-content: end; gap: 10px; margin-top: 23px; }
-  .games-workspace { padding-bottom: 30px; }
-  .game-status-loading {margin-bottom:20px;color:var(--muted);font-size:11px;line-height:1.7;}
+  .review-actions button {font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);}
+  .games-workspace {--game-detail-text-size:12px;--game-detail-heading-size:14px;--game-detail-line-height:1.6;padding-bottom:30px;}
+  .game-status-loading {margin-bottom:20px;color:var(--muted);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
   .games-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 27px; }
-  .game-kicker { color: var(--muted); font-size: 8px; letter-spacing: 1.7px; text-transform: uppercase; font-weight: 600; }
+  .game-kicker {color:var(--muted);font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);letter-spacing:1.3px;text-transform:uppercase;font-weight:600;}
   .toolbar-controls { display: flex; align-items: center; gap: 21px; }
   .supported-switch { display: flex; gap: 8px; align-items: center; color: var(--soft); font-size: 10px; cursor: pointer; position: relative; }
   .supported-switch input { position: absolute; opacity: 0; width: 30px; height: 20px; margin: 0; }
@@ -235,7 +241,7 @@
   .tile-copy p { color: var(--muted); font-size: 10px; margin-top: 9px; line-height: 1.5; }
   .tile-footer { border-top: 1px solid var(--faint-line); margin-top: 19px; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 9px; gap: 12px; }
   .tile-status { display: flex; align-items: center; gap: 6px; color: var(--accent); flex-shrink: 0; white-space: nowrap; }
-  .tile-status span, .installation-status span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .tile-status span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
   .tile-integration, .tile-live { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); }
   .tile-integration { min-width: 0; margin-left: auto; justify-content: flex-end; text-align: right; line-height: 1.5; }
   .tile-integration :global(svg) { flex-shrink: 0; }
@@ -258,62 +264,65 @@
   .games-empty h2 { font-size: 19px; letter-spacing: -.3px; }
   .games-empty p { color: var(--muted); font-size: 11px; margin: 12px auto 22px; max-width: 360px; line-height: 1.8; }
   .games-empty > div:last-child { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
-  .back-link { margin-bottom: 23px; padding-left: 0; }
+  .back-link {margin-bottom:23px;padding-left:0;font-size:var(--game-detail-text-size);}
   .game-details-heading { display: flex; gap: 17px; align-items: center; margin-bottom: 27px; }
-  .game-detail-mark { color: #a1c5d7; width: 65px; height: 65px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-raised); display: grid; place-items: center; }
+  .game-detail-mark {color:#a1c5d7;width:65px;height:65px;flex-shrink:0;border-radius:12px;border:1px solid var(--line);background:var(--surface-raised);display:grid;place-items:center;}
   .game-detail-mark.rally { color: #c8b292; }
-  .game-details-heading h2 { font-size: 23px; letter-spacing: -.5px; margin-top: 7px; }
-  .detail-subtitle { font-size: 10px; color: var(--muted); margin-top: 8px; }
+  .game-details-heading>div:not(.game-detail-mark):not(.detail-launch) {min-width:0;}
+  .game-details-heading h2 {font-size:24px;letter-spacing:-.5px;margin-top:7px;overflow-wrap:anywhere;}
+  .detail-subtitle {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);color:var(--muted);margin-top:8px;}
   .detail-launch { margin-left: auto; }
-  h3 { font-size: 12px; font-weight: 600; }
-  .editor-label { display: flex; flex-direction: column; gap: 8px; color: var(--soft); font-size: 10px; }
+  h3 {font-size:var(--game-detail-heading-size);line-height:var(--game-detail-line-height);font-weight:600;}
+  .editor-label {display:flex;flex-direction:column;gap:8px;color:var(--soft);font-size:var(--game-detail-text-size);}
   .editor-label { margin-top: 16px; }
   .executable-picker {width:100%;min-width:0;justify-content:space-between;text-align:left;padding:11px 12px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--soft);}
-  .executable-picker>span {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:9px;}
+  .executable-picker>span {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:var(--game-detail-text-size);}
   .executable-picker>span.empty {font-family:inherit;color:var(--muted);}
   .executable-picker :global(svg) {flex-shrink:0;color:var(--muted);}
   .executable-picker:not(:disabled):hover {border-color:var(--accent);}
   .installation-panel { padding: 21px; margin-bottom:20px; }
   .sidebar-title { display: flex; gap: 9px; align-items: center; color: var(--soft); }
   .installation-status-row {display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:20px;}
-  .installation-status-row>button {flex-shrink:0;font-size:9px;padding:8px 10px;}
-  .installation-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+  .installation-status-row>button {flex-shrink:0;padding:8px 10px;}
+  .installation-status {display:flex;align-items:center;gap:7px;color:var(--muted);font-size:var(--game-detail-text-size);}
   .installation-status.found { color: var(--accent); }
   .installation-actions { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
-  .installation-actions button, .automatic-discovery { font-size: 9px; }
+  .installation-actions button, .automatic-discovery {font-size:var(--game-detail-text-size);}
   .automatic-discovery { padding-left: 0; margin-top: 15px; }
-  .platform-note { color: #c5a26e; font-size: 10px; line-height: 1.8; margin-top: 17px; }
+  .platform-note {color:#c5a26e;font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:17px;}
   .setup-panel { margin-top: 20px; padding: 21px; }
-  .setup-readiness { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; margin-top: 19px; line-height: 1.5; }
+  .setup-readiness {display:flex;align-items:center;gap:7px;color:var(--muted);font-size:var(--game-detail-text-size);margin-top:19px;line-height:var(--game-detail-line-height);}
   .setup-readiness.ready { color: var(--accent); }
   .setup-readiness.attention, .setup-warning { color: #c5a26e; }
-  .setup-version { font-size: 9px; color: var(--muted); margin-top: 16px; }
+  .setup-version {font-size:var(--game-detail-text-size);color:var(--muted);margin-top:16px;}
   .setup-version strong { color: var(--soft); }
-  .native-verification { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #c5a26e; margin-top: 15px; }
+  .native-verification {display:flex;align-items:center;gap:7px;font-size:var(--game-detail-text-size);color:#c5a26e;margin-top:15px;}
   .native-verification.verified { color: var(--accent); }
-  .telemetry-channel-details { font-size: 9px; color: var(--muted); margin-top: 15px; }
-  .telemetry-channel-details p { font-size: 9px; line-height: 1.8; margin-top: 10px; }
+  .telemetry-channel-details {font-size:var(--game-detail-text-size);color:var(--muted);margin-top:15px;}
+  .telemetry-channel-details p {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:10px;}
   .telemetry-channel-details summary { cursor: pointer; color: var(--soft); }
   .telemetry-channel-details dl { margin-top: 10px; }
-  .telemetry-channel-details dl > div { display: flex; justify-content: space-between; gap: 10px; line-height: 1.8; padding: 4px 0; }
+  .telemetry-channel-details dl > div {display:flex;justify-content:space-between;gap:10px;line-height:var(--game-detail-line-height);padding:4px 0;overflow-wrap:anywhere;}
+  .telemetry-channel-details dl > div>* {min-width:0;}
   .telemetry-channel-details dt { text-transform: capitalize; }
   .telemetry-channel-details dd { text-align: right; margin: 0; }
   .aircraft-hooks dt { text-transform: none; }
-  .aircraft-hooks dt small { display: block; margin-top: 4px; color: var(--muted); font-weight: normal; }
-  .setup-main-action { width: 100%; margin-top: 17px; font-size: 10px; }
-  .setup-warning { font-size: 10px; line-height: 1.8; margin-top: 12px; }
-  .setup-recheck { padding-left: 0; font-size: 9px; margin-top: 13px; }
-  .setup-progress { display: flex; align-items: center; gap: 8px; color: var(--accent); font-size: 10px; line-height: 1.8; margin-top: 15px; }
+  .aircraft-hooks dt small {display:block;margin-top:4px;color:var(--muted);font-weight:normal;font-size:var(--game-detail-text-size);}
+  .setup-main-action {width:100%;margin-top:17px;font-size:var(--game-detail-text-size);white-space:normal;}
+  .setup-warning {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:12px;}
+  .setup-recheck {padding-left:0;font-size:var(--game-detail-text-size);margin-top:13px;}
+  .setup-progress {display:flex;align-items:center;gap:8px;color:var(--accent);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:15px;}
   .setup-live { border-top: 1px solid var(--line); padding-top: 17px; margin-top: 15px; display: flex; align-items: start; gap: 8px; }
   .setup-live .live-dot { margin-top: 4px; }
-  .setup-live strong { font-size: 10px; font-weight: 500; color: var(--soft); }
-  .setup-live p { font-size: 9px; color: var(--muted); line-height: 1.8; margin-top: 7px; }
+  .setup-live strong {font-size:var(--game-detail-text-size);font-weight:500;color:var(--soft);}
+  .setup-live p {font-size:var(--game-detail-text-size);color:var(--muted);line-height:var(--game-detail-line-height);margin-top:7px;}
   .session-banner { display: flex; align-items: center; gap: 13px; padding: 17px; background: var(--accent-bg); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 22px; }
   .session-icon { color: var(--accent); }
   .session-copy { flex: 1; min-width: 0; }
   .session-copy strong { font-size: 12px; }
-  .session-copy p { color: var(--muted); font-size: 10px; margin-top: 6px; line-height: 1.7; }
-  .session-copy details { color: var(--soft); font-size: 10px; margin-top: 12px; }
+  .session-copy p {color:var(--muted);font-size:var(--game-detail-text-size);margin-top:6px;line-height:var(--game-detail-line-height);}
+  .session-copy details {color:var(--soft);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:12px;}
+  .session-banner>button {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   .session-copy summary { cursor: pointer; }
   .session-copy li { padding: 3px 0; }
   .session-warning { background: #b18b550a; border-color: #b18b5560; }
@@ -323,7 +332,7 @@
   .toolbar-controls { align-items: end; flex-direction: column-reverse; gap: 12px; }
   .game-grid { grid-template-columns: 1fr; }
   .game-details-heading { flex-wrap: wrap; }
-  .game-details-heading h2 { font-size: 19px; }
+  .game-details-heading h2 {font-size:24px;}
   .game-detail-mark { width: 50px; height: 50px; }
   .detail-launch { margin-left: 0; width: 100%; }
   .session-banner { flex-wrap: wrap; }

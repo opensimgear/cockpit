@@ -72,31 +72,31 @@
 
 <div class="unified-launch" class:compact aria-label={`Unified profile launch for ${game.name}`}>
   <div class="launch-actions"><button class="primary-button" disabled={disabled} aria-label={`Launch ${game.name}`} onclick={launch}><Icon name={launching?'refresh':'play'} size={14}/>{launching?'Preparing launch…':'Launch'}</button></div>
-  {#if unavailable}<p class="launch-help">{unavailable}</p>{/if}
-  {#if message}<p class="launch-message" role="status" aria-live="polite">{message}</p>{/if}
-  {#if status}<p class="launch-help">{statusLabel(status)}</p>{#if status.degradation.length}<ul class="launch-degradation" aria-label="Unavailable profile branches">{#each status.degradation as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}{#if status.fault}<p class="launch-error" role="status">{status.fault}</p>{/if}{/if}
-  {#if error}<p class="launch-error" role="alert">{error}</p>{/if}
-  {#if error||status}<button class="text-button status-read" disabled={reading} onclick={refreshStatus}>{reading?'Reading status…':'Refresh profile status'}</button>{/if}
+  {#if unavailable}<p class="launch-help"><Icon name="info" size={14}/><span>{unavailable}</span></p>{/if}
+  {#if message}<p class="launch-message" role="status" aria-live="polite"><Icon name={launching?'refresh':'info'} size={14}/><span>{message}</span></p>{/if}
+  {#if status}<p class="launch-help"><Icon name={status.state==='running'?'check':'info'} size={14}/><span>{statusLabel(status)}</span></p>{#if status.degradation.length}<ul class="launch-degradation" aria-label="Unavailable profile branches">{#each status.degradation as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}{#if status.fault}<p class="launch-error" role="status"><Icon name="alert" size={14}/><span>{status.fault}</span></p>{/if}{/if}
+  {#if error}<p class="launch-error" role="alert"><Icon name="alert" size={14}/><span>{error}</span></p>{/if}
+  {#if error||status}<button class="text-button status-read" disabled={reading} onclick={refreshStatus}><Icon name="refresh" size={14}/>{reading?'Reading status…':'Refresh profile status'}</button>{/if}
 </div>
 {#if choiceOpen}
   <dialog class="profile-switch-dialog profile-choice-dialog" aria-modal="true" aria-labelledby="game-profile-choice-title" oncancel={event=>{event.preventDefault();cancelSwitch();}} {@attach showDialog}>
-    <h2 id="game-profile-choice-title">Choose a profile for {game.name}</h2>
+    <h2 id="game-profile-choice-title"><Icon name="network" size={18}/>Choose a profile for {game.name}</h2>
     <p>These profiles share this game context. The selected profile will be activated before the game launches.</p>
-    <label class="profile-choice-label">Profile<select aria-label="Profile for game launch" bind:value={profileId}><option value="" disabled>Choose a profile</option>{#each candidates?.profiles??[] as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label>
+    <label class="profile-choice-label"><span><Icon name="network" size={14}/>Profile</span><select aria-label="Profile for game launch" bind:value={profileId}><option value="" disabled>Choose a profile</option>{#each candidates?.profiles??[] as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label>
     <label class="remember-choice"><input type="checkbox" bind:checked={rememberChoice}/> Remember my choice</label>
-    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}>Cancel</button><button class="primary-button" disabled={busy||launching||!profileId} onclick={confirmChoice}>Launch</button></div>
+    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}><Icon name="close" size={14}/>Cancel</button><button class="primary-button" disabled={busy||launching||!profileId} onclick={confirmChoice}><Icon name="play" size={14}/>Launch</button></div>
   </dialog>
 {/if}
 {#if switchOpen}
   <dialog class="profile-switch-dialog" role="alertdialog" aria-modal="true" aria-labelledby="game-profile-switch-title" oncancel={event=>{event.preventDefault();cancelSwitch();}} {@attach showDialog}>
-    <h2 id="game-profile-switch-title">Switch active profile?</h2>
+    <h2 id="game-profile-switch-title"><Icon name="refresh" size={18}/>Switch active profile?</h2>
     <p>A profile is already active. Launching {game.name} will deactivate it and activate the profile for this game.</p>
-    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}>Cancel</button><button class="primary-button" disabled={busy||launching} onclick={confirmSwitch}>Switch profile</button></div>
+    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}><Icon name="close" size={14}/>Cancel</button><button class="primary-button" disabled={busy||launching} onclick={confirmSwitch}><Icon name="refresh" size={14}/>Switch profile</button></div>
   </dialog>
 {/if}
 
 <style>
-  .profile-switch-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(100% - 40px);max-width:480px;padding:24px;margin:0;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 20px 80px #0005}.profile-switch-dialog::backdrop{background:#0009}.profile-switch-dialog h2{font-size:17px}.profile-switch-dialog p{font-size:12px;line-height:1.7;color:var(--muted);margin:16px 0}.profile-switch-dialog .launch-actions{justify-content:flex-end}
-  .profile-choice-label{display:grid;gap:8px;font-size:12px;color:var(--muted)}.profile-choice-label select{width:100%;min-width:0}.remember-choice{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--soft);margin:18px 0 24px}
-  .unified-launch{min-width:0;}.launch-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;}.unified-launch>.launch-actions{justify-content:flex-end;}.launch-actions button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:10px;}.launch-help,.launch-message,.launch-error{font-size:10px;line-height:1.75;margin-top:10px;max-width:480px;overflow-wrap:anywhere;}.launch-help{color:var(--muted);}.launch-message{color:var(--soft);}.launch-error{color:#d3a078;}.launch-degradation{font-size:10px;color:#d3a078;line-height:1.75;padding-left:16px;margin-top:9px;}.status-read{font-size:9px;margin-top:7px;padding-left:0;}.compact .launch-help,.compact .launch-message,.compact .launch-error{font-size:9px;}
+  .profile-switch-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(100% - 40px);max-width:480px;padding:24px;margin:0;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 20px 80px #0005}.profile-switch-dialog::backdrop{background:#0009}.profile-switch-dialog h2{display:flex;align-items:center;gap:9px;font-size:var(--game-detail-heading-size,14px);line-height:var(--game-detail-line-height,1.6)}.profile-switch-dialog p{font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);color:var(--muted);margin:16px 0}.profile-switch-dialog .launch-actions{justify-content:flex-end}
+  .profile-choice-label{display:grid;gap:8px;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);color:var(--muted)}.profile-choice-label>span{display:flex;align-items:center;gap:7px}.profile-choice-label select{width:100%;min-width:0;font-size:var(--game-detail-text-size,12px)}.remember-choice{display:flex;align-items:center;gap:9px;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);color:var(--soft);margin:18px 0 24px}
+  .unified-launch{min-width:0;}.launch-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;}.unified-launch>.launch-actions{justify-content:flex-end;}.launch-actions button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);}.launch-help,.launch-message,.launch-error{display:flex;align-items:flex-start;gap:7px;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);margin-top:10px;max-width:480px;overflow-wrap:anywhere;}.launch-help :global(svg),.launch-message :global(svg),.launch-error :global(svg){flex-shrink:0;margin-top:3px;}.profile-switch-dialog :global(svg){flex-shrink:0;}.launch-help{color:var(--muted);}.launch-message{color:var(--soft);}.launch-error{color:#d3a078;}.launch-degradation{font-size:var(--game-detail-text-size,12px);color:#d3a078;line-height:var(--game-detail-line-height,1.6);padding-left:16px;margin-top:9px;}.status-read{font-size:var(--game-detail-text-size,12px);margin-top:7px;padding-left:0;}.compact .launch-actions button{font-size:10px;}.compact .launch-help,.compact .launch-message,.compact .launch-error{font-size:9px;}
 </style>
