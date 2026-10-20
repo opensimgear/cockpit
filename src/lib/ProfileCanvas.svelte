@@ -10,7 +10,8 @@
   import {processingSummary} from './profile-processing';
   import type{CompileDiagnostic}from'./profile-compilation';
   import { ProfilePortBrowser } from './profile-port-browser';
-  let { document, assignments, inventory, inventoryClient, selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, highlightedEdges = [], diagnostics = [], undo, redo }: {
+  import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
+  let { document, assignments, inventory, inventoryClient, selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
@@ -18,12 +19,15 @@
     connectBlocks?:(fromNodeId:string,toNodeId:string)=>void;connectionFrom?:(nodeId:string)=>void;connectionTo?:(nodeId:string)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
     editConnection?:(bindingId:string)=>void;
     diagnostics?:readonly DeepReadonly<CompileDiagnostic>[];
+    paletteDrag?:ProfilePaletteDrag|null;canDropComponent?:(component:ProfilePaletteComponent)=>boolean;
+    dropComponent?:(component:ProfilePaletteComponent,position:CanvasPoint)=>void;endPaletteDrag?:()=>void;
   } = $props();
   let stage: HTMLDivElement;
   let search = $state('');
   let view = $state<CanvasViewport>({ ...untrack(() => document.editor.viewport) });
   let dragged = $state<{id:string;position:CanvasPoint}|null>(null);
   let wire=$state<{nodeId:string;pointer:number;end:CanvasPoint}|null>(null);
+  let palettePreview=$state<CanvasPoint|null>(null);
   let page = $state<DeepReadonly<ResourceDetails>|null>(null), portsBusy = $state(false), portError = $state('');
   let editingGroup=$state(''),groupName=$state(''),groupMembers=$state<string[]>([]),layoutError=$state('');
   let groupSnapshot='';
@@ -47,6 +51,7 @@
   let portEpoch = 0;
   $effect(() => { const signature=JSON.stringify(document.editor.viewport);if(signature!==savedViewportSignature){savedViewportSignature=signature;view = { ...document.editor.viewport };} });
   $effect(()=>{const added=nodes.find(node=>node.id===selectedId&&!knownNodeIds.has(node.id));knownNodeIds=new Set(nodes.map(node=>node.id));if(added)focusNewNode(added);});
+  $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(()=>{if(!editingGroup){groupSnapshot='';return;}const saved=document.editor.groups?.find(group=>group.id===editingGroup);if(!saved){editingGroup='';groupName='';groupMembers=[];groupSnapshot='';return;}const signature=JSON.stringify(saved);if(signature!==groupSnapshot){groupName=saved.name;groupMembers=[...saved.members];groupSnapshot=signature;}});
   $effect(() => {
     const resourceId = companionAuthoring&&selected?.resource?.kind==='companion'?undefined:observedId;
@@ -60,6 +65,29 @@
   function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2});persist(); }
   function layout() { if(readOnly)return;const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;next.editor.positions=profileAutoLayout(nodes.map(node=>node.id),document.bindings);next.editor.viewport=canvasFit(next.editor.positions.map(position=>({position})),stage?.clientWidth||900,stage?.clientHeight||600);change(next,'Auto-layout'); }
   function choose(id:string,_direction:'input'|'output'='output') { selectedId=id; }
+  function clearPalettePreview(){palettePreview=null;}
+  function acceptsPaletteDrop(event:DragEvent){
+    if(readOnly||!paletteDrag||!dropComponent||canDropComponent?.(paletteDrag.component)===false)return false;
+    const target=event.target as Element|null;
+    if(target?.closest('.canvas-inspector'))return false;
+    const rect=stage.getBoundingClientRect();
+    return event.clientX>=rect.left&&event.clientX<=rect.right&&event.clientY>=rect.top&&event.clientY<=rect.bottom;
+  }
+  function palettePosition(event:DragEvent):CanvasPoint{
+    const rect=stage.getBoundingClientRect(),clamp=(value:number)=>Math.min(1e6,Math.max(-1e6,value));
+    return{x:clamp((event.clientX-rect.left-view.x)/view.zoom-PROFILE_BLOCK_WIDTH/2),y:clamp((event.clientY-rect.top-view.y)/view.zoom-PROFILE_BLOCK_HEIGHT/2)};
+  }
+  function overPalette(event:DragEvent){
+    if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
+    event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect='copy';palettePreview=palettePosition(event);
+  }
+  function leavePalette(event:DragEvent){if(event.relatedTarget&&stage.contains(event.relatedTarget as Node))return;clearPalettePreview();}
+  function dropPalette(event:DragEvent){
+    if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
+    event.preventDefault();event.stopPropagation();
+    const component=paletteDrag!.component,position=palettePosition(event);clearPalettePreview();
+    try{dropComponent?.(component,position);}finally{endPaletteDrag?.();}
+  }
   function focusNewNode(node:CanvasNode){view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+PROFILE_BLOCK_WIDTH/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+PROFILE_BLOCK_HEIGHT/2)*view.zoom};}
   function slideDetails(_node: HTMLElement) {
     return { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
@@ -86,6 +114,7 @@
   function finish(event:PointerEvent,cancel=false) {if(wire&&event.pointerId===wire.pointer){const from=wire.nodeId;wire=null;if(!cancel){choose(from,'output');const target=window.document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLElement>('[data-connection-target]')?.dataset.connectionTarget;if(target&&target!==from)connectBlocks?.(from,target);else connectionFrom?.(from);}if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);return;} if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(dragged&&!readOnly)change(canvasMove(document,dragged.id,dragged.position));else if(!drag.moved){if(drag.id)choose(drag.id);else selectedId='';}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId); }
   function wheel(event:WheelEvent) { event.preventDefault();if(event.ctrlKey||event.metaKey){const rect=stage.getBoundingClientRect();zoom(event.deltaY<0?1.1:1/1.1,{x:event.clientX-rect.left,y:event.clientY-rect.top});}else{view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});persist();} }
   function keyboard(event:KeyboardEvent) {
+    if(event.key==='Escape'&&paletteDrag){clearPalettePreview();endPaletteDrag?.();return;}
     if(event.key==='Escape'&&wire){event.preventDefault();const pointer=wire.pointer;wire=null;if(stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);return;}
     if((event.target as Element).closest('input,textarea,select,[contenteditable="true"]'))return;
     if(!readOnly&&(undo||redo)&&(event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())){event.preventDefault();if(event.shiftKey||event.key.toLowerCase()==='y')redo?.();else undo?.();return;}
@@ -103,14 +132,22 @@
   }
 </script>
 
+<svelte:window ondragend={clearPalettePreview}/>
+
 <section class="profile-graph" aria-label="Profile resource graph">
   <div class="canvas-toolbar"><label class="canvas-search"><Icon name="search" size={14}/><input aria-label="Search profile blocks" placeholder="Find a block, type or transport…" bind:value={search} onkeydown={event=>{if(event.key==='Enter')focusMatch();}}/></label><button class="text-button" onclick={focusMatch} disabled={!matches.length}>{search?`${matches.length} matches`:`${nodes.length} blocks`}</button><button class="secondary-button" onclick={fit}>Fit all</button><button class="secondary-button" disabled={readOnly} onclick={layout}>Auto-layout</button><div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button><output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output><button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div></div>
   <details class="group-editor"><summary>Editor groups · {document.editor.groups?.length??0}</summary><p>Organize blocks into named frames. Each block belongs to at most one group.</p><div class="group-controls"><label>Edit group<select aria-label="Edit editor group" value={editingGroup} onchange={event=>editGroup(event.currentTarget.value)}><option value="">New group</option>{#each document.editor.groups??[] as saved (saved.id)}<option value={saved.id}>{saved.name}</option>{/each}</select></label><button class="text-button" disabled={readOnly} onclick={()=>editGroup('')}>New group</button><label>Group name<input aria-label="Editor group name" maxlength="80" bind:value={groupName} disabled={readOnly}/></label></div><fieldset disabled={readOnly}><legend>Group members</legend><div class="group-members">{#each nodes as node (node.id)}{@const owner=document.editor.groups?.find(saved=>saved.id!==editingGroup&&saved.members.includes(node.id))}<label><input type="checkbox" checked={groupMembers.includes(node.id)} disabled={!!owner} onchange={event=>groupMember(node.id,event.currentTarget.checked)}/>{node.name}{#if owner}<small> · {owner.name}</small>{/if}</label>{/each}</div></fieldset><div class="group-controls"><button class="secondary-button" disabled={readOnly||!groupName.trim()||!groupMembers.length||(!editingGroup&&(document.editor.groups?.length??0)>=32)} onclick={saveGroup}>{editingGroup?'Update group':'Create group'}</button><button class="text-button" disabled={readOnly||!editingGroup} onclick={deleteGroup}>Delete group</button>{#each document.editor.groups??[] as saved (saved.id)}<button class="text-button" onclick={()=>focusGroup(saved.id)}>Focus {saved.name}</button>{/each}</div>{#if layoutError}<p class="port-error" role="alert">{layoutError}</p>{/if}</details>
   <p class="canvas-help" id="profile-canvas-help">Drag the background to pan. Ctrl/⌘ + wheel zooms. Select a block to inspect ports; Alt + arrow keys move its focused heading.{#if connectBlocks}{' '}Drag Outputs onto Inputs / actions to choose an exact mapping. Ctrl/⌘ + Z undoes; Shift + Z redoes.{/if}{' '}Every solid line is an explicit signal route.{#if editConnection}{' '}Select a connection line to insert a transformation.{/if}</p>
   <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
-    <div class="canvas-stage" class:node-dragging={!!dragged} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={move} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard}>
+    <div class="canvas-stage" class:node-dragging={!!dragged} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={move} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
       <div class="canvas-world" style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
+        {#if palettePreview&&paletteDrag}
+          <div class="palette-drop-preview" role="img" aria-label="Component drop preview" data-component-kind={paletteDrag.component.kind} data-preview-x={palettePreview.x} data-preview-y={palettePreview.y} style={`left:${palettePreview.x}px;top:${palettePreview.y}px;width:${PROFILE_BLOCK_WIDTH}px;height:${PROFILE_BLOCK_HEIGHT}px`}>
+            <div class="preview-heading"><span class="block-category">{paletteDrag.category}</span><strong title={paletteDrag.name}>{paletteDrag.name}</strong></div>
+            <span class="preview-hint"><Icon name="plus" size={18}/>Release to add</span>
+          </div>
+        {/if}
         {#each frames as frame (frame.id)}<div class="editor-group-frame" style={`left:${frame.x}px;top:${frame.y}px;width:${frame.width}px;height:${frame.height}px`}><button class="editor-group-heading" onclick={()=>focusGroup(frame.id)} aria-label={`Focus group ${frame.name}`}>{frame.name} <span>{frame.members.length} blocks</span></button></div>{/each}
         <svg class="signal-edges" width="1" height="1" aria-label="Saved signal routes"><defs><marker id="profile-signal-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" /></marker></defs>{#each routes as route (route.binding.id)}{@const binding=route.binding}<path class="signal-edge" data-binding-id={binding.id} class:highlighted={highlightedEdges.includes(binding.id)} class:problem={diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(binding.id))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{binding.id}: {binding.from.portId} → {binding.to.portId}</title></path>{#if editConnection}<path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Edit connection ${binding.id}: ${binding.from.portId} to ${binding.to.portId}`} onpointerdown={event=>event.stopPropagation()} onclick={()=>editConnection?.(binding.id)} onkeydown={event=>connectionKey(event,binding.id)}><title>Click to insert a transformation</title></path>{/if}{/each}{#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={`M${from.position.x+PROFILE_BLOCK_WIDTH},${from.position.y+116} L${pending.end.x},${pending.end.y}`}><title>Choose destination, then exact ports</title></path>{/if}{/if}</svg>
         {#each renderedNodes as node (node.id)}
@@ -122,7 +159,7 @@
           </article>
         {/each}
       </div>
-      {#if !nodes.length}<div class="empty-canvas">No resource blocks in this profile. Add resources from inventory.</div>{/if}
+      {#if !nodes.length&&!palettePreview}<div class="empty-canvas">Drag a component from the palette onto the canvas, or click one to add it.</div>{/if}
     </div>
     {#if selected}
     <aside class="canvas-inspector" aria-label="Selected block inspector" transition:slideDetails>
@@ -145,6 +182,7 @@
 </section>
 
 <style>
+  .palette-drop-preview{position:absolute;box-sizing:border-box;z-index:4;pointer-events:none;display:flex;flex-direction:column;border:2px dashed var(--accent);border-radius:9px;background:color-mix(in srgb,var(--surface) 90%,var(--accent));box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent),0 8px 24px #0003;opacity:.88;overflow:hidden;}.preview-heading{display:grid;gap:6px;padding:14px;border-bottom:1px dashed var(--accent);}.preview-heading strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.preview-hint{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;color:var(--accent);font-size:12px;}.palette-dropping{outline:1px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:-1px;}
   .signal-edge-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer}.signal-edge-hit:hover,.signal-edge-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none;stroke-width:18}
   .canvas-stage.node-dragging, .canvas-stage.node-dragging :global(*) { cursor: grabbing; }
   .controller-effect-summary{margin:0 16px 16px;padding:12px;border:1px solid var(--line);border-radius:6px;font-size:11px;line-height:1.7;}.controller-effect-summary strong{font-size:11px;color:var(--soft)}.controller-effect-summary p{margin:6px 0;color:var(--soft)}.controller-effect-summary small{font-size:10px;color:var(--muted)}

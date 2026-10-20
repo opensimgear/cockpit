@@ -78,6 +78,7 @@ test('native palette authors an unassigned production companion and inserts conn
   const selectLabel = (label, value, scope) => until(() => native.evaluate(`(()=>{const root=document.querySelector(${JSON.stringify(scope)});const select=[...(root?.querySelectorAll('label')??[])].find(element=>element.textContent.trim().startsWith(${JSON.stringify(label)}))?.querySelector('select');if(!select||select.disabled||![...select.options].some(option=>option.value===${JSON.stringify(value)}))return false;select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`), `UI select unavailable: ${label}`);
   const uiGraph = () => native.evaluate(`(()=>{const root=document.querySelector('.profiles-workspace');return{nodes:[...root.querySelectorAll('.resource-block')].map(node=>({id:node.dataset.nodeId,kind:[...node.classList].find(kind=>['resource','processing','virtual','desktop','device','companion','game'].includes(kind))})),processing:root.querySelectorAll('.resource-block.processing').length,edges:root.querySelectorAll('.signal-edge').length};})()`);
   const selectNode = id => until(() => native.evaluate(`(()=>{const node=[...document.querySelectorAll('.profiles-workspace .resource-block')].find(node=>node.dataset.nodeId===${JSON.stringify(id)});if(!node)return false;node.querySelector('.block-heading').click();return true;})()`), `Graph block unavailable: ${id}`);
+  const selectedNode = () => native.evaluate(`document.querySelector('.profiles-workspace .resource-block.selected')?.dataset.nodeId??null`);
   const capture = async file => { const value = await native.send('Page.captureScreenshot', { format: 'png' }); await writeFile(resolve(artifacts, file), Buffer.from(value.data, 'base64')); };
   const save = async () => {
     await click('Save profile');
@@ -144,23 +145,30 @@ test('native palette authors an unassigned production companion and inserts conn
     const legacyCompanionIds = (await resources()).filter(resource => resource.resourceType === 'companion' && resource.attributes.componentKind !== 'paired-companion').map(resource => resource.id);
     assert.equal(await native.evaluate(`Array.from(document.querySelectorAll('.component-palette button[data-resource-id]')).some(button=>${JSON.stringify(legacyCompanionIds)}.includes(button.dataset.resourceId))`), false, 'Legacy assigned-panel instances must not appear as separately addable companion components');
     await click('Add virtual controller', '.component-palette');
+    assert.equal(await selectedNode(), null, 'Adding a component must not select it or open its inspector.');
     let state = await save(); const virtualId = state.document.virtualOutputs[0].id;
     assert.equal(state.document.processingNodes.length, 0); assert.equal(state.document.bindings.length, 0);
+    await selectNode(virtualId);
     await click('Add keyboard and mouse', '.component-palette');
+    assert.equal(await selectedNode(), virtualId, 'Adding another output must preserve the selected block.');
     state = await save(); const desktopId = state.document.desktopOutputs[0].id;
     assert.equal(state.document.processingNodes.length, 0); assert.equal(state.document.bindings.length, 0); assert.equal(state.document.desktopOutputs[0].actions.length, 1);
     assert.equal(await native.evaluate(`document.querySelector('.component-palette [aria-label="Add keyboard and mouse"]')?.disabled`), true);
+    await selectNode(desktopId);
     basicResource = (await resources()).find(resource => resource.resourceType === 'host-controller') ?? (await resources()).find(resource => resource.resourceType === 'osg-module');
     if (basicResource) {
       await until(() => native.evaluate(`(()=>{const button=[...document.querySelectorAll('.component-palette [data-resource-id]')].find(button=>button.dataset.resourceId===${JSON.stringify(basicResource.id)});if(!button||button.disabled)return false;button.click();return true;})()`), 'Basic hardware component was not available in the palette');
+      assert.equal(await selectedNode(), desktopId, 'Adding hardware must preserve the selected output.');
       state = await save(); const local = state.assignments.find(assignment => assignment.sourceId === basicResource.id); assert.ok(local); assert.deepEqual(state.document.resources.find(resource => resource.id === local.resourceId).ports, []);
     }
     checks.push('Palette search and output/resource buttons add only the requested component, without routes or implicit transformations');
 
     await until(() => native.evaluate(`(()=>{const button=[...document.querySelectorAll('.component-palette [data-resource-id]')].find(button=>button.dataset.resourceId===${JSON.stringify(peerResource.id)});if(!button||button.disabled)return false;button.click();return true;})()`), 'Temporary companion component could not be added');
+    assert.equal(await selectedNode(), desktopId, 'Adding a companion must preserve the selected output.');
     state = await save(); const local = state.assignments.find(assignment => assignment.sourceId === peerResource.id), companionNodeId = local.resourceId;
     assert.deepEqual(state.document.resources.find(resource => resource.id === companionNodeId).ports, []); assert.deepEqual(state.document.companionAssignments, []); assert.equal(await unassigned(), true);
-    await until(() => native.evaluate(`document.querySelector('[aria-label="Profile companion panel selection"]')?.textContent.includes('No panel is selected for this block.')`), 'Adding a companion did not open its unconfigured panel inspector');
+    await selectNode(companionNodeId);
+    await until(() => native.evaluate(`document.querySelector('[aria-label="Profile companion panel selection"]')?.textContent.includes('No panel is selected for this block.')`), 'Selecting the companion did not open its unconfigured panel inspector');
     const catalogue = (await request({ command: 'profile_companion_catalogue' })).profileCompanionAuthoring;
     let selectedPanel, selectedPort;
     for (const panel of catalogue.panels) {
@@ -176,7 +184,7 @@ test('native palette authors an unassigned production companion and inserts conn
     await until(() => native.evaluate(`(()=>{const row=[...document.querySelectorAll('.companion-authoring .panel-ports li')].find(row=>row.querySelector('code')?.textContent===${JSON.stringify(selectedPort.descriptor.id)});const button=[...(row?.querySelectorAll('button')??[])].find(button=>button.textContent.trim()==='Add control output');if(!button||button.disabled)return false;button.click();return true;})()`), 'The selected real companion output could not be added');
     state = await save(); const sourcePortId = state.assignments.find(assignment => assignment.resourceId === companionNodeId).ports.find(port => port.observedPortId === selectedPort.descriptor.id).profilePortId;
     assert.equal(state.document.companionAssignments[0].publicationHash, selectedPanel.publicationHash); assert.equal(await unassigned(), true);
-    checks.push('Adding an unassigned companion opens panel configuration; selecting a real panel and declared output still does not assign it natively');
+    checks.push('Palette additions preserve selection; explicitly selecting the unassigned companion opens panel configuration without assigning it natively');
 
     await click('Connect exact ports');
     for (const [label, value] of [['Source block', companionNodeId], ['Exact source output', sourcePortId], ['Destination block', virtualId], ['Exact destination input / action', state.document.virtualOutputs[0].ports[0].id]]) await selectLabel(label, value, '.route-composer');

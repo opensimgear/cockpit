@@ -9,9 +9,12 @@ the active profile. There is no separate selected-for-runtime state.
 
 **Add profile** immediately opens an empty draft editor. The searchable
 **Components** palette adds individual resource blocks, virtual controllers and
-keyboard/mouse outputs. Resource additions create no routes, transformations or
-device policies. Offline paired resources and closed-game integrations remain
-available, with up to 64 resource blocks.
+keyboard/mouse outputs. Drag a component onto the canvas to preview its placement
+and drop it at that position, or click its palette entry to add it. Neither method
+changes the current selection; select the new block when ready to configure it.
+Resource additions create no routes, transformations or device policies. Offline
+paired resources and closed-game integrations remain available, with up to 64
+resource blocks.
 Existing blocks and bindings remain when resources disconnect.
 
 The new editor also offers **Copy saved profile**. A copy retains its graph and

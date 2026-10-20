@@ -15,6 +15,8 @@
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
   import { ProfileEditorStore, ProfileNavigationGuard, addProfileResources, profileEditorDirty } from './profile-editor';
   import {ProfileEditorUndo}from'./profile-graph-history';
+  import {profilePaletteCanAdd,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag}from'./profile-palette';
+  import type {CanvasPoint}from'./profile-canvas';
   import {ProfileCompilerClient}from'./profile-compilation';
   import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
@@ -45,7 +47,8 @@
   let workspace = $state.raw(store.state);
   const history=new ProfileEditorUndo(store);
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
-  let routingEditor=$state.raw<{addVirtual:()=>void;addDesktop:()=>void}>();
+  let routingEditor=$state.raw<{addVirtual:(position?:CanvasPoint)=>void;addDesktop:(position?:CanvasPoint)=>void}>();
+  let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let editingName = $state(false), nameDraft = $state('');
   const editor = $derived(workspace.editor);
   const editorIdentity=$derived(editor?.document.id??'');
@@ -67,6 +70,8 @@
   onDestroy(() => { navigationCancelled?.();runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
   $effect(()=>{void editorContext;editingName=false;});
+  $effect(()=>{void editorContext;paletteDrag=null;});
+  $effect(()=>{if(paletteDrag&&(!active||debugOpen||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
     const refresh=()=>{if(!document.hidden&&!store.state.inventoryBusy)void store.refreshInventory();};
@@ -108,10 +113,23 @@
   function cancel() { const pending=navigationGuard.awaitingChoice;if(!navigationGuard.discard())return;workspace=store.state;notice='';leaveDialog=false;if(!pending)onNavigate?.(null); }
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
   async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank([]));else{const previous=getNavigation();await store.beginCopy(id);workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());} }
-  function addResource(resource:DeepReadonly<ResourceSummary>) {
-    if(!editor||workspace.busy||workspace.readOnly||assignedIds.has(resource.id))return;
-    report(()=>{const previous=new Set(editor!.document.resources.map(resource=>resource.id));const next=addProfileResources(JSON.parse(JSON.stringify(editor!.document)),JSON.parse(JSON.stringify(editor!.assignments)),[resource]);change(next.document,next.assignments,'Add component');routingSelection=next.document.resources.find(resource=>!previous.has(resource.id))?.id??routingSelection;});
+  function canDropComponent(component:ProfilePaletteComponent):boolean {
+    return !!editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profilePaletteCanAdd(component,editor.document,editor.assignments,workspace.inventory);
   }
+  function addResource(resource:DeepReadonly<ResourceSummary>,position?:CanvasPoint) {
+    if(!editor||!canDropComponent({kind:'resource',sourceId:resource.id}))return;
+    report(()=>{const before=editor!.document,previous=new Set(before.resources.map(resource=>resource.id));const next=addProfileResources(JSON.parse(JSON.stringify(before)),JSON.parse(JSON.stringify(editor!.assignments)),[resource]);const nodeId=next.document.resources.find(resource=>!previous.has(resource.id))!.id;change(profilePlaceComponent(before,next.document,nodeId,position),next.assignments,'Add component');});
+  }
+  function dropComponent(component:ProfilePaletteComponent,position:CanvasPoint){
+    if(!canDropComponent(component))return;
+    if(component.kind==='virtual')routingEditor?.addVirtual(position);
+    else if(component.kind==='desktop')routingEditor?.addDesktop(position);
+    else{const resource=workspace.inventory.find(resource=>resource.id===component.sourceId);if(resource)addResource(resource,position);}
+  }
+  function startPaletteDrag(drag:ProfilePaletteDrag){
+    if(canDropComponent(drag.component))paletteDrag=drag;
+  }
+  function endPaletteDrag(){paletteDrag=null;}
   function gameSettings(gameId:GameId,returnState?:unknown) { openGameSettings?.(gameId,{editorStore:store,profileId:editor?.document.id,selection:returnState}); }
   function prepareLibrary(next:()=>void){requestNavigation(()=>{onNavigate?.(null);libraryContext=store.editorEpoch;next();});}
   async function libraryDeleted(){if(store.editorEpoch!==libraryContext||store.state.view!=='list')return;await store.refresh();workspace=store.state;}
@@ -162,8 +180,8 @@
     {#if editor.baseRevision===null}<div class="editor-basics panel"><fieldset class="draft-source"><legend>Start from</legend><button class="secondary-button" disabled={workspace.busy||workspace.readOnly} onclick={()=>source('blank')}>Blank profile</button><label>Copy saved profile<select aria-label="Copy source profile" bind:value={copyId} disabled={workspace.busy}>{#each rows as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label><button class="secondary-button" disabled={workspace.busy||workspace.readOnly||!copyId} onclick={()=>source(copyId)}>Use copy</button><p>Copies retain the graph and layout with a new identity. Select devices for the copy; machine assignments are excluded.</p></fieldset></div>{/if}
     {#if error}<p class="workspace-error" role="alert">{error}</p>{/if}
     <div class="profile-authoring">
-      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.length} desktopAdded={!!editor.document.desktopOutputs?.length} disabled={workspace.readOnly||workspace.busy||libraryBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>void store.refreshInventory()} {addResource} addVirtual={()=>routingEditor?.addVirtual()} addDesktop={()=>routingEditor?.addDesktop()}/>
-      <div class="profile-canvas-workspace">{#key editor.document.id}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} active={active&&!debugOpen} runtimeIdle={learningIdle} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}</div>
+      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.length} desktopAdded={!!editor.document.desktopOutputs?.length} disabled={workspace.readOnly||workspace.busy||libraryBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>void store.refreshInventory()} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDesktop={()=>{if(canDropComponent({kind:'desktop'}))routingEditor?.addDesktop();}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
+      <div class="profile-canvas-workspace">{#key editor.document.id}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} active={active&&!debugOpen} runtimeIdle={learningIdle} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}</div>
     </div>
   {/if}
   </div>

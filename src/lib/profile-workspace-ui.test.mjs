@@ -1,6 +1,7 @@
 import {webcrypto} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
 const modules=await loadModules(['./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser']);
+modules.set('./profile-palette',(await loadModules(['./profile-palette'])).get('./profile-palette'));
 const noRequest=()=>{throw new Error('Rendering/navigation must not send a native request.');};
 const componentCache=new Map();async function component(name){if(componentCache.has(name))return componentCache.get(name);const filename=new URL(name,import.meta.url);const{js}=compile(await readFile(filename,'utf8'),{filename:filename.pathname,generate:'server'});const dependencies=new Map();for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(dependencies.has(name))return dependencies.get(name);if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});componentCache.set(name,exports.default);return exports.default;}
 const ProfilesPanel=await component('./ProfilesPanel.svelte'),ProfileCanvas=await component('./ProfileCanvas.svelte');
@@ -19,6 +20,8 @@ test('component palette offers paired companions by device name, not retained pa
  for(const name of ['Component palette','Search components','Add Browser tablet','Add Offline tablet','Add virtual controller','Add keyboard and mouse','Controllers','OSG devices','Games'])assert.ok(body.includes(name),name);
  assert.ok(!body.includes('Flight instruments panel'));assert.ok(!body.includes('Add transformation'));assert.ok(!body.includes('Visible transformation'));assert.ok(!body.includes('type="checkbox"'));
  assert.ok(!/<button[^>]*aria-label="Add Offline tablet"[^>]*disabled/.test(body),'A paired offline companion remains addable.');
+ assert.match(body,/<button[^>]*aria-label="Add Offline tablet"[^>]*draggable="true"/);
+ for(const label of ['Add virtual controller','Add keyboard and mouse'])assert.match(body,new RegExp(`<button[^>]*aria-label="${label}"[^>]*draggable="true"`));
 });
 
 test('palette prevents duplicate physical companions across legacy assignments and respects each component capacity',async()=>{
@@ -28,6 +31,23 @@ test('palette prevents duplicate physical companions across legacy assignments a
  for(const label of ['Add Browser tablet','Add host-controller 1','Add virtual controller','Add keyboard and mouse'])assert.match(body,new RegExp(`<button[^>]*aria-label="${label}"[^>]*disabled`),label);
  const readOnly=render(Palette,{props:{...props,resourceCount:0,virtualCount:0,desktopAdded:false,assignedIds:new Set(),disabled:true}}).body;
  for(const label of ['Add Browser tablet','Add host-controller 1','Add virtual controller','Add keyboard and mouse'])assert.match(readOnly,new RegExp(`<button[^>]*aria-label="${label}"[^>]*disabled`),label);
+ assert.ok(!readOnly.includes('draggable="true"'));
+});
+
+test('drop addition places one component without shifting implicit existing blocks or changing viewport and is one Undo edit',()=>{
+ const {profilePlaceComponent}=modules.get('./profile-palette'),{canvasNodes}=modules.get('./profile-canvas'),graph=modules.get('./profile-graph'),{ProfileGraphHistory}=modules.get('./profile-graph-history');
+ const value=seedProfile(uid(4),inventory.filter(item=>item.resourceType==='host-controller'));value.document.editor.positions=[];value.document.editor.viewport={x:-174,y:88,zoom:.6};const before=plain(value),positions=canvasNodes(value.document,value.assignments,inventory).map(node=>({nodeId:node.id,...node.position}));
+ const next=graph.graphSetVirtual(value,{id:'dropped',name:'Virtual controller',required:false,layout:{buttons:['fire'],axes:[],hats:[]}});next.document=profilePlaceComponent(value.document,next.document,'dropped',{x:-128.5,y:472.25});
+ assert.deepEqual(plain(next.document.editor.positions),[...positions,{nodeId:'dropped',x:-128.5,y:472.25}]);assert.deepEqual(plain(next.document.editor.viewport),before.document.editor.viewport);assert.deepEqual(plain(value),before);
+ const history=new ProfileGraphHistory(value);history.commit(next,'Add component');assert.deepEqual(plain(history.undo()),before);assert.deepEqual(plain(history.redo()),plain(next));
+ for(const position of [{x:NaN,y:1},{x:0,y:Infinity},{x:1e6+1,y:0}])assert.throws(()=>profilePlaceComponent(value.document,next.document,'dropped',position),/bounded canvas/);
+});
+
+test('drop admission rechecks inventory, capacities and companion aliases after a drag starts',()=>{
+ const {profilePaletteCanAdd}=modules.get('./profile-palette'),document=blankProfile(uid(5)),paired={...resource('companion',1),attributes:{componentKind:'paired-companion',companionId:'tablet'}},legacy={...paired,id:'old-panel',attributes:{companionId:'tablet'}},assignments=[{resourceId:'other',sourceId:legacy.id,ports:[]}];
+ const component={kind:'resource',sourceId:paired.id};assert.equal(profilePaletteCanAdd(component,document,[],[paired,legacy]),true);assert.equal(profilePaletteCanAdd(component,document,assignments,[paired,legacy]),false);assert.equal(profilePaletteCanAdd(component,document,[],[]),false);assert.equal(profilePaletteCanAdd({kind:'resource',sourceId:legacy.id},document,[],[paired,legacy]),false);
+ document.resources=Array.from({length:64},(_,i)=>({id:`resource-${i}`,name:'Resource',kind:'device',required:false,ports:[]}));assert.equal(profilePaletteCanAdd(component,document,[],[paired]),false);
+ document.virtualOutputs=Array.from({length:8},(_,i)=>({id:`virtual-${i}`}));assert.equal(profilePaletteCanAdd({kind:'virtual'},document,[],[]),false);document.desktopOutputs=[{id:'desktop'}];assert.equal(profilePaletteCanAdd({kind:'desktop'},document,[],[]),false);
 });
 
 test('draft controller effect summary survives save and reopen without claiming applied publication or changing its revision',async()=>{

@@ -9,10 +9,12 @@ to edit it. Cockpit has either **No profile active** or one active profile, with
 
 Choose **Add profile** to go straight to an empty editor. Name the profile, then
 use the **Components** palette beside the canvas to add controllers, OSG devices,
-paired companions, game integrations and outputs. Search the palette and click a
-component to add it and open its settings. Offline paired companions and closed
-games remain available. Adding a resource creates no routes. A profile supports
-64 resource blocks.
+paired companions, game integrations and outputs. Drag a component onto the
+canvas to preview its position, then drop it to place the block there. Clicking a
+palette component also adds it. Additions keep the current selection; select the
+new block to open its settings. Offline paired companions and closed games remain
+available. Adding a resource creates no routes. A profile supports 64 resource
+blocks.
 
 Select exact ports from each block's provider catalogue, connect routes and
 choose **Save profile**. Saving commits the graph and local resource assignments

@@ -120,6 +120,9 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(page.getByText('0 blocks',{exact:true})).toBeVisible();
     names.add(name);await renameProfile(name);
     await palette.getByRole('button',{name:'Add keyboard and mouse',exact:true}).click();
+    await expect(page.locator('.profiles-workspace .resource-block.selected')).toHaveCount(0);
+    await expect(page.locator('.canvas-inspector')).toHaveCount(0);
+    await page.locator('.resource-block.desktop .block-heading').click();
     await page.getByLabel('Keyboard and mouse scope',{exact:true}).selectOption('desktop-wide');
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
     await saved();
