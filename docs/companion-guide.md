@@ -27,7 +27,11 @@ The [example notes](../examples/companion/README.md) describe control behavior, 
 
 ## Edit and save a panel
 
-Use **New panel**, **Flight template**, **Racing template**, an imported panel or a saved Panels entry. Add supported widgets from the palette and edit their labels, positions and behavior. Inspect the intended viewport, rotation and pages. Small-target warnings need a layout adjustment and real-device review; a phone-sized preview is not touch qualification.
+The Panels list shows each panel's title above its preview, followed by page, widget and companion details. Use the card's **Duplicate panel** button to save an independent copy, including its assets, with fresh identities and no companion assignments.
+
+Choose **New panel**, enter a **Panel name**, then set **Initial screen size** to a companion with known dimensions or **Custom**. Custom width and height must be whole numbers from 320 to 8192 pixels. **Create panel** opens the editor at that size; choosing a companion here only initializes the size and does not assign it.
+
+You can also start from **Flight template**, **Racing template**, an imported panel or a saved Panels entry. Add supported widgets from the palette and edit their labels, positions and behavior. Inspect the intended viewport, rotation and pages. Small-target warnings need a layout adjustment and real-device review; a phone-sized preview is not touch qualification.
 
 Momentary buttons release with the pointer. Toggles retain requested state until toggled again or cancelled. Pulse/encoder controls emit bounded pulses. Spring sliders return to their configured fallback; latched controls retain their value until cancellation. Page/layout changes and lifecycle cancellation clear held inputs. Logical axes, buttons and hats describe portable controls, not an OS device or a vJoy slot. Check their range and fallback.
 

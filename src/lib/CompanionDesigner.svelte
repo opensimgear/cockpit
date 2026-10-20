@@ -8,10 +8,10 @@
   import { gatewayRequest } from './gateway';
   import { ProfilesClient } from './profiles';
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
-  import { companionScreenSize, panelScreenReason } from './companion-screen';
+  import { companionScreenSize, panelScreenReason, knownPanelScreenChoices, panelScreenSizeReason, PANEL_SCREEN_MIN, PANEL_SCREEN_MAX } from './companion-screen';
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import {
-    newDocument, createDesignerHistory, applyDesignerCommand, applyPixelDesignerCommand, undoDesigner, redoDesigner,
+    newDocument, createDesignerHistory, applyDesignerCommand, applyPixelDesignerCommand, undoDesigner, redoDesigner, DESIGNER_LIMITS,
     createLibrary, saveDraft, duplicateDraft, openDraft,
     importAsset, validateAssets, exportBundle, importBundle, publishDocument,
     viewportRegions, widgetViewport, boundsContain,
@@ -26,6 +26,7 @@
   let assetInput = $state<HTMLInputElement>();
   let connectionsPanel = $state.raw<{showMain:(recordNavigation?:boolean)=>boolean;getCompanionId:()=>string;showCompanion:(id:string)=>void;requestNavigation:(continueNavigation:()=>void,cancelNavigation?:()=>void)=>void}>();
   let editorOpen = $state(false);
+  let newPanelOpen=$state(false),newPanelName=$state(''),newPanelSource=$state('custom'),newPanelWidth=$state(1280),newPanelHeight=$state(800),newPanelError=$state('');
   let companionDetailsOpen = $state(untrack(() => !!initialCompanionId));
   let dirty = $state(false);
   let hostState = $state.raw<CompanionHostState>({});
@@ -70,6 +71,9 @@
   let discardPanelOnRestore = false;
   let store: import('./companion-library').CompanionLibraryStore | undefined;
   const document = $derived(history.present);
+  const panelScreenChoices=$derived(knownPanelScreenChoices(hostState));
+  const chosenPanelScreen=$derived(newPanelSource==='custom'?{width:newPanelWidth,height:newPanelHeight}:panelScreenChoices.find(choice=>choice.id===newPanelSource));
+  const newPanelReason=$derived(!newPanelName.trim()?'Enter a panel name.':!chosenPanelScreen?'Choose a companion with a known screen size, or select Custom.':panelScreenSizeReason(chosenPanelScreen.width,chosenPanelScreen.height));
   const page = $derived(document.ui.pages.find(p => p.id === pageId) ?? document.ui.pages[0]);
   const emptyPageNumbers = $derived(document.ui.pages.flatMap((page,index)=>document.presentation.widgets.some(widget=>widget.pageId===page.id)?[]:[index]));
   const espAssigned=$derived(panelAssignments(draftId).some(i=>(hostState.host?.clients??[]).some(c=>c.companionId===i.companionId&&c.kind==='esp32')));
@@ -267,11 +271,32 @@
       input.value = String(Math.round(widget.bounds[key] * scale));
     }
   }
+  function beginCreate() {
+    if(!storageReady||busy||library.drafts.length>=DESIGNER_LIMITS.drafts)return;
+    newPanelName=`Panel ${library.drafts.length+1}`;newPanelSource='custom';newPanelWidth=1280;newPanelHeight=800;newPanelError='';newPanelOpen=true;
+    void refreshCompanions();
+  }
+  function choosePanelScreen(id:string){newPanelSource=id;newPanelError='';const screen=panelScreenChoices.find(choice=>choice.id===id);if(screen){newPanelWidth=screen.width;newPanelHeight=screen.height;}}
   function create() {
-    if(!leaveEditor())return;editorOpen=true;dirty=true;propertiesOpen=false;
-    stop(); name = `Panel ${library.drafts.length + 1}`; draftId = crypto.randomUUID();
-    history = createDesignerHistory(newDocument(name)); pageId = document.ui.pages[0].id; selected = []; assets = []; message = '';error='';
-    onNavigate?.({kind:'panel',id:draftId});
+    if(!newPanelOpen||!storageReady||busy||newPanelReason||!chosenPanelScreen)return;
+    try{
+      const size=chosenPanelScreen;
+      const next=newDocument(newPanelName.trim());
+      next.presentation.viewports=next.presentation.viewports.map(screen=>({...screen,width:size.width,height:size.height}));
+      const nextHistory=createDesignerHistory(next);
+      if(!leaveEditor())return;stop();name=next.ui.title;draftId=crypto.randomUUID();history=nextHistory;pageId=document.ui.pages[0].id;selected=[];assets=[];propertiesOpen=false;selectedViewportId='';message='';error='';editorOpen=true;dirty=true;newPanelOpen=false;
+      onNavigate?.({kind:'panel',id:draftId});
+    }catch(reason){newPanelError=reason instanceof Error?reason.message:String(reason);}
+  }
+  async function duplicatePanel(id:string){
+    if(!storageReady||busy)return;
+    await operation(async()=>{
+      const source=library.drafts.find(entry=>entry.id===id);if(!source)throw Error('This panel is no longer available.');
+      let copyName='';for(let number=1;!copyName;number++){const suffix=number===1?' copy':` copy ${number}`;const candidate=source.name.slice(0,120-suffix.length).trimEnd()+suffix;if(!library.drafts.some(entry=>entry.name===candidate))copyName=candidate;}
+      const next=duplicateDraft(library,id,copyName),copy=next.drafts.at(-1)!;copy.document.ui.title=copyName;
+      const panel=await publishDocument(copy.document,copy.assets);
+      await persist(next,{...publications,[copy.id]:[panel]});message=`Panel duplicated as “${copyName}”.`;
+    });
   }
   function load(id: string, recordNavigation = true, checkLeave = true) {
     try {
@@ -440,13 +465,14 @@
     <h2>Panels</h2>
     {#if error}<Notification message={String(error)} kind="error" />{/if}
     {#if message}<Notification message={String(message)} />{/if}
-    <div class="panel-list-heading"><p>Create a panel, edit its layout and assign it to your companions.</p><div class="panel-list-actions"><button class="action" disabled={!storageReady || busy} onclick={() => importInput?.click()}><Icon name="upload" size={16} />Import panel</button><input bind:this={importInput} class="panel-import" type="file" accept=".json,.osg-panel" onchange={e => { void importFile(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} disabled={!storageReady || busy} /><button class="action" disabled={!storageReady || busy} onclick={create}><Icon name="plus" size={16} />New panel</button></div></div>
+    <div class="panel-list-heading"><p>Create a panel, edit its layout and assign it to your companions.</p><div class="panel-list-actions"><button class="action" disabled={!storageReady || busy} onclick={() => importInput?.click()}><Icon name="upload" size={16} />Import panel</button><input bind:this={importInput} class="panel-import" type="file" accept=".json,.osg-panel" onchange={e => { void importFile(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} disabled={!storageReady || busy} /><button class="action" disabled={!storageReady || busy || library.drafts.length>=DESIGNER_LIMITS.drafts} onclick={beginCreate}><Icon name="plus" size={16} />New panel</button></div></div>
     {#if !storageReady}<p>Loading panels…</p>
     {:else if !library.drafts.length}<div class="empty-panels"><h3>No panels yet</h3><p>Create your first panel to get started.</p></div>
     {:else}<div class="panel-tiles">
       {#each library.drafts as entry (entry.id)}
         <div class="panel-tile-container">
-        <button class="panel-tile" onclick={() => load(entry.id)}>
+        <button class="panel-tile" aria-label={`Edit ${entry.name}`} disabled={busy} onclick={() => load(entry.id)}>
+          <h3 class="panel-tile-title">{entry.name}</h3>
           <svg class="panel-thumbnail" viewBox="0 0 320 180" aria-hidden="true">
             <rect width="320" height="180" fill="#101b25" />
             {#each entry.document.presentation.widgets.filter(w => w.pageId===entry.document.ui.pages[0].id) as item}
@@ -454,9 +480,9 @@
               <text x={(item.bounds.x+item.bounds.width/2)*320} y={(item.bounds.y+item.bounds.height/2)*180} text-anchor="middle" dominant-baseline="middle" fill={item.style?.foreground ?? '#e1eaf0'} font-size="10">{item.label.slice(0,25)}</text>
             {/each}
           </svg>
-          <div class="tile-copy"><h3>{entry.name}</h3><p>{entry.document.ui.pages.length} {entry.document.ui.pages.length===1?'page':'pages'} · {entry.document.presentation.widgets.length} {entry.document.presentation.widgets.length===1?'widget':'widgets'}</p><span>{new Set(panelAssignments(entry.id).map(i => i.companionId)).size} {new Set(panelAssignments(entry.id).map(i => i.companionId)).size===1?'companion':'companions'}</span></div>
+          <div class="tile-copy"><p>{entry.document.ui.pages.length} {entry.document.ui.pages.length===1?'page':'pages'} · {entry.document.presentation.widgets.length} {entry.document.presentation.widgets.length===1?'widget':'widgets'}</p><span>{new Set(panelAssignments(entry.id).map(i => i.companionId)).size} {new Set(panelAssignments(entry.id).map(i => i.companionId)).size===1?'companion':'companions'}</span></div>
         </button>
-        <button class="panel-tile-delete" aria-label={`Delete ${entry.name}`} title="Delete panel" disabled={busy} onclick={() => removeDraft(entry.id)}><Icon name="trash" size={16}/></button>
+        <div class="panel-tile-actions"><button aria-label={`Duplicate ${entry.name}`} title="Duplicate panel" disabled={busy||library.drafts.length>=DESIGNER_LIMITS.drafts} onclick={()=>duplicatePanel(entry.id)}><Icon name="copy" size={16}/></button><button class="panel-tile-delete" aria-label={`Delete ${entry.name}`} title="Delete panel" disabled={busy} onclick={() => removeDraft(entry.id)}><Icon name="trash" size={16}/></button></div>
         </div>
       {/each}
     </div>{/if}
@@ -603,6 +629,16 @@
   </div>
   </section>
   {/if}
+  {#if newPanelOpen}<dialog class="leave-panel-dialog new-panel-dialog" aria-label="New panel" use:showLeaveDialog oncancel={event=>{event.preventDefault();newPanelOpen=false;}}>
+    <form onsubmit={event=>{event.preventDefault();create();}}><h2>New panel</h2>
+      <label>Panel name<input aria-label="Panel name" bind:value={newPanelName} maxlength="120" required use:focusName/></label>
+      <label>Initial screen size<select aria-label="Initial screen size" value={newPanelSource} onchange={event=>choosePanelScreen(event.currentTarget.value)}><option value="custom">Custom</option>{#each panelScreenChoices as choice (choice.id)}<option value={choice.id}>{choice.name} · {choice.width} × {choice.height} px</option>{/each}</select></label>
+      <div class="panel-size-fields"><label>Width (px)<input aria-label="Panel width" type="number" min={PANEL_SCREEN_MIN} max={PANEL_SCREEN_MAX} step="1" value={chosenPanelScreen?.width??newPanelWidth} readonly={newPanelSource!=='custom'} oninput={event=>newPanelWidth=event.currentTarget.valueAsNumber} required/></label><label>Height (px)<input aria-label="Panel height" type="number" min={PANEL_SCREEN_MIN} max={PANEL_SCREEN_MAX} step="1" value={chosenPanelScreen?.height??newPanelHeight} readonly={newPanelSource!=='custom'} oninput={event=>newPanelHeight=event.currentTarget.valueAsNumber} required/></label></div>
+      <p class="hint">Choose a companion to use its screen dimensions, or enter a custom size. Companions with a known screen size are listed. You can change the size in the editor.</p>
+      {#if newPanelError||newPanelReason}<p class="layout-error" role="alert">{newPanelError||newPanelReason}</p>{/if}
+      <div class="new-panel-actions"><button type="button" class="secondary-button" onclick={()=>newPanelOpen=false}>Cancel</button><button type="submit" class="primary-button" disabled={busy||!storageReady||!!newPanelReason}>Create panel</button></div>
+    </form>
+  </dialog>{/if}
   {#if pendingLeave}<dialog class="leave-panel-dialog" role="alertdialog" aria-modal="true" aria-labelledby="leave-panel-title" use:showLeaveDialog oncancel={event=>{event.preventDefault();keepEditing();}}>
     <h2 id="leave-panel-title">Keep your unsaved changes?</h2><p>Save this panel before leaving, or discard this draft.</p>
     {#if error}<p class="layout-error" role="alert">{error}</p>{/if}
@@ -615,6 +651,8 @@
 </section>
 
 <style>
+  .new-panel-dialog form{display:grid;gap:9px}.new-panel-dialog h2{margin-bottom:5px}.new-panel-dialog label{margin:0}.panel-size-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.new-panel-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:9px}.new-panel-dialog input[readonly]{color:var(--muted)}
+
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
   .history-tools{margin-right:auto}.history-tools + .layout-toolset{border-left:0;padding-left:0}
   .action-tooltip{display:inline-flex}
@@ -640,8 +678,8 @@
   .back-panels{display:inline-flex;align-items:center;gap:6px;background:transparent;border:0;color:var(--accent);font-size:10px;padding:6px 0;margin-bottom:18px}.back-panels:hover{background:transparent;text-decoration:underline}
   .editor-heading{flex-wrap:wrap}.editor-heading h1{overflow-wrap:anywhere}
   .panel-list-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}.panel-import{display:none}.action,.toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px}.panels-section{margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}.panel-list-heading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:20px 0}
-  .panel-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:18px;margin:20px 0}.panel-tile-container{position:relative;min-width:0}.panel-tile{padding:0;width:100%;height:100%;text-align:left;overflow:hidden;border-radius:10px;background:var(--surface)}.panel-tile-delete{position:absolute;top:10px;right:10px;display:grid;place-items:center;width:34px;height:34px;padding:0;color:var(--danger,#e67979);opacity:0;pointer-events:none;transition:opacity 120ms ease}.panel-tile-container:hover .panel-tile-delete,.panel-tile-container:focus-within .panel-tile-delete{opacity:1;pointer-events:auto}.panel-thumbnail{display:block;width:100%;aspect-ratio:16/9}.tile-copy{padding:16px}.tile-copy h3{font-size:17px;margin:0 0 8px}.tile-copy p{margin:0 0 10px}.tile-copy span{font-size:12px;color:var(--accent)}.empty-panels{padding:60px 24px;text-align:center;border:1px dashed var(--line);border-radius:10px;margin:20px 0}
-  @media(hover:none){.panel-tile-delete{opacity:1;pointer-events:auto}}
+  .panel-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:18px;margin:20px 0}.panel-tile-container{position:relative;min-width:0}.panel-tile{padding:0;width:100%;height:100%;display:flex;flex-direction:column;text-align:left;overflow:hidden;border-radius:10px;background:var(--surface)}.panel-thumbnail{display:block;width:100%;aspect-ratio:16/9}.panel-tile-title{width:100%;box-sizing:border-box;font-size:17px;margin:0;padding:16px 96px 16px 16px;min-height:64px;overflow-wrap:anywhere}.panel-tile-actions{position:absolute;top:12px;right:10px;display:flex;gap:6px}.panel-tile-actions button{display:grid;place-items:center;width:32px;height:32px;padding:0}.panel-tile-delete{color:var(--danger,#e67979)}.tile-copy{padding:16px;flex:1}.tile-copy p{margin:0 0 10px}.tile-copy span{font-size:12px;color:var(--accent)}.empty-panels{padding:60px 24px;text-align:center;border:1px dashed var(--line);border-radius:10px;margin:20px 0}
+
   h2{font-size:22px;margin:0}h3{font-size:13px;margin:18px 0 10px}p{font-size:13px;color:var(--muted);line-height:1.6}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:12px 0}.workspace{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px}.workspace>aside,.panel-canvas-workspace{min-width:0}.workspace>aside{padding:16px;background:var(--surface);border:1px solid var(--line);border-radius:7px;align-self:start}.palette{display:grid;grid-template-columns:1fr 1fr;gap:5px}
   button,select,input,textarea{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);padding:8px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}label{display:flex;flex-direction:column;gap:5px;font-size:12px;margin:7px 0}input,select,textarea{max-width:100%;min-width:0;box-sizing:border-box}input[type=checkbox]{width:auto;accent-color:var(--accent)}.bounds{display:grid;grid-template-columns:1fr 1fr;gap:6px}.hint{font-size:11px;line-height:1.5;overflow-wrap:anywhere}code{font-size:10px;overflow-wrap:anywhere}details{margin-top:20px}textarea{width:100%;font-family:monospace}
   @media(max-width:1050px){.workspace{grid-template-columns:220px minmax(0,1fr)}}@media(max-width:650px){.workspace{grid-template-columns:1fr}.panel-list-actions{flex-wrap:wrap}.editor-heading{align-items:flex-start}}

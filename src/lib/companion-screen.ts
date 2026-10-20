@@ -3,6 +3,35 @@ import type { Publication } from '../../packages/companion-designer/src/index.ts
 import type { CompanionHostState } from './companions.ts';
 
 export type ScreenSize = { width:number; height:number };
+export type PanelScreenChoice = ScreenSize & { id:string; name:string };
+export const PANEL_SCREEN_MIN = 320;
+export const PANEL_SCREEN_MAX = 8192;
+
+/** Matches the viewport dimensions accepted by the panel document model. */
+export function panelScreenSizeReason(width:number,height:number):string {
+  return [width,height].every(value=>Number.isInteger(value)&&value>=PANEL_SCREEN_MIN&&value<=PANEL_SCREEN_MAX)
+    ? '' : `Screen width and height must be whole numbers between ${PANEL_SCREEN_MIN} and ${PANEL_SCREEN_MAX} pixels.`;
+}
+
+/** Screen dimensions are independent of connection state and panel assignment. */
+export function knownPanelScreenChoices(state:CompanionHostState):PanelScreenChoice[] {
+  const choices:PanelScreenChoice[]=[];
+  const seen=new Set<string>();
+  for(const client of state.host?.clients??[]) {
+    const id=client.companionId;
+    if(typeof id!=='string'||!id||seen.has(id))continue;
+    const reported=client.screen;
+    const screen=reported&&typeof reported==='object'&&'width' in reported&&'height' in reported
+      &&typeof reported.width==='number'&&typeof reported.height==='number'&&!panelScreenSizeReason(reported.width,reported.height)
+      ? {width:reported.width,height:reported.height} : companionScreenSize(state,id);
+    if(!screen||panelScreenSizeReason(screen.width,screen.height))continue;
+    const name=typeof client.name==='string'&&client.name.trim()?client.name.trim():id;
+    choices.push({id,name,...screen});
+    seen.add(id);
+  }
+  return choices;
+}
+
 export function boardScreenSize(profile?:string):ScreenSize|undefined {
   if(profile==='sunton-3248s035r')return {width:480,height:320};
   if(profile==='waveshare-lcd7-s3')return {width:800,height:480};

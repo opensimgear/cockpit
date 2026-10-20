@@ -1101,6 +1101,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await confirmCleanup.click();
     await expect(devices.locator('[data-component-id="visibility:stale-hide"]')).toHaveCount(0);
     await companionsNav.click();await panels.getByRole('button',{name:'New panel',exact:true}).click();
+    await page.getByRole('dialog',{name:'New panel',exact:true}).getByRole('button',{name:'Create panel',exact:true}).click();
     await panelEditor.locator('.widget').first().click();await panelEditor.getByRole('button',{name:'Delete widget',exact:true}).click();
     await expect(deleteItemDialog).toHaveCount(0);await expect(panelEditor.locator('.widget')).toHaveCount(0);
     await panelEditor.getByRole('button',{name:'Undo',exact:true}).click();await expect(panelEditor.locator('.widget')).toHaveCount(1);

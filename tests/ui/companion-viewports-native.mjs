@@ -22,6 +22,7 @@ test('native companion editor authors, validates, previews and saves multiple vi
     assert.equal(await page.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke), 'function');
     await page.getByRole('button', { name: 'Companions', exact: true }).click();
     await page.getByRole('button', { name: 'New panel', exact: true }).click();
+    await page.getByRole('dialog', { name: 'New panel', exact: true }).getByRole('button', { name: 'Create panel', exact: true }).click();
     const editor = page.getByRole('region', { name: 'Panel editor', exact: true });
     const outlines = editor.locator('.viewport-outline');
     const viewportList = editor.locator('.viewport-list');
