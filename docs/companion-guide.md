@@ -15,6 +15,8 @@ Start with local preview. The [release matrix](companion-release-matrix.md) reco
 
 A browser client does not select or qualify the host output backend. Use the [native build instructions](../apps/companion/README.md#development-and-native-builds) for development builds; signed installation/update paths remain in the release matrix.
 
+Companion messages use information, warning and error icons on tiles, in settings and during setup. Hover an icon or focus it with the keyboard to read the full message. Press Escape to dismiss it.
+
 ## Import an example and try it locally
 
 1. Download [Flight button box](../examples/companion/flight-button-box.json) or [Racing axes](../examples/companion/axis-racing.json). These are portable panel bundles, without credentials or game bindings.

@@ -3,6 +3,7 @@
   import { notify } from './notifications';
   import Notification from './Notification.svelte';
   import Icon from './Icon.svelte';
+  import CompanionMessage from './CompanionMessage.svelte';
   import { selectedUsbIsPaired } from './companion-pairing';
   import { onMount } from 'svelte';
   import { gatewayRequest } from './gateway';
@@ -121,7 +122,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
 </script>
 
 <section class="usb" aria-label="ESP32 companion setup">
-  <header><div><h3>ESP32 companion</h3><p>Connect the screen by USB for setup. Choose Wi-Fi or keep it connected directly.</p></div><span role="status">{port && usb?.port===port ? usb.stage : 'Choose a USB device'}</span></header>
+  <header><div><h3>ESP32 companion</h3><p>Connect the screen by USB for setup. Choose Wi-Fi or keep it connected directly.</p></div><CompanionMessage message={port&&usb?.port===port?usb.stage||'USB connected':'Choose a USB device'}/></header>
   {#if companionId && usb?.lastHostError}<Notification message={usb.lastHostError} kind="error" />{/if}
   {#if error}<Notification message={String(error)} kind="error" />{/if}
   {#if usb?.scanError}<Notification message={usb.scanError} kind="error" />{/if}
@@ -131,17 +132,17 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
         <label>USB device<select value={port} disabled={busy || installing || installOpen} onchange={e=>action(()=>selectPort(e.currentTarget.value))}><option value="">Choose a device</option>{#each pairingPorts as item}<option value={item.port}>{item.name} ({item.port})</option>{/each}</select></label>
         <button disabled={busy || installing || installOpen} onclick={() => action(async () => { await send('companion_usb_ports',{...(companionId?{companionId}:{})}); })}><Icon name="refresh" size={16} />Refresh</button>
       </div>
-      {#if !pairingPorts.length}<p class="small">{companionId?'Connect this companion by USB to change its connection settings.':'No unpaired USB devices detected. Connect another screen, or remove an existing companion before pairing it again.'}</p>{/if}
+      {#if !pairingPorts.length}<CompanionMessage message={companionId?'Connect this companion by USB to change its connection settings.':'No unpaired USB devices detected. Connect another screen, or remove an existing companion before pairing it again.'}/>{/if}
       <label>Board / Screen<select bind:value={profile} disabled={busy || installing || installOpen || !!identifiedBoard} required><option value="" disabled>Choose Board / Screen</option>{#each hostState.firmwareProfiles ?? [] as board}<option value={board.id}>{board.name}{board.available?'':' · firmware not bundled'}</option>{/each}</select></label>
     </div>
     <section class="firmware-controls" aria-label="Firmware">
       <h4>Firmware</h4>
       {#if !port}
-        <p>Select a port to detect firmware</p>
+        <CompanionMessage message="Select a port to detect firmware"/>
       {:else if detecting}
-        <p role="status">Detecting firmware…</p>
+        <CompanionMessage message="Detecting firmware…"/>
       {:else}
-        <p>{detectionError?'Firmware detection did not complete. Retry detection or install compatible firmware.':firmwareCurrent?'Firmware is up to date':installedVersion?'Firmware update available':'Firmware not detected. Install the current firmware before pairing.'}</p>
+        <CompanionMessage kind={firmwareCurrent?'info':'warning'} message={detectionError|| (firmwareCurrent?'Firmware is up to date':installedVersion?'Firmware update available':'Firmware not detected. Install the current firmware before pairing.')}/>
         <div class="firmware-versions">
           <p>Current: {installedVersion??'Not detected'}</p>
           {#if hostState.firmwareVersion}<p>Available: {hostState.firmwareVersion}</p>{/if}
@@ -165,7 +166,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
           {/if}
         </div>
       {/if}
-      {#if installing || usb?.flashing}<p role="status">{transport?.stage} · Keep the device connected.</p>{/if}
+      {#if installing || usb?.flashing}<CompanionMessage message={`${transport?.stage||'Installing firmware'} · Keep the device connected.`}/>{/if}
     </section>
   </div>
   {#if step!==4}
@@ -180,10 +181,10 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
           <label>Wi-Fi network<select value={ssid} disabled={busy || installing} onchange={e=>ssid=e.currentTarget.value}><option value="">Choose a network</option>{#if ssid && !(usb?.networks??[]).some(n=>n.ssid===ssid)}<option value={ssid}>{ssid}</option>{/if}{#each [...new Map((usb?.networks??[]).map(n=>[n.ssid,n])).values()] as network}<option value={network.ssid}>{network.ssid} · {network.rssi} dBm{network.secured?' · secured':''}</option>{/each}</select></label>
           <button disabled={busy || installing || !!usb?.scanning || !firmwareCurrent} onclick={()=>action(async()=>{await send('companion_usb_scan');})}><Icon name="refresh" size={16} />{usb?.scanning?'Scanning…':'Scan'}</button>
         </div>
-        {#if usb?.scanning}<p role="status">Scanning Wi-Fi networks…</p>{/if}
+        {#if usb?.scanning}<CompanionMessage message="Scanning Wi-Fi networks…"/>{/if}
       <label>Network name (or hidden SSID)<input bind:value={ssid} maxlength="32" autocomplete="off" disabled={busy || installing} /></label>
         {#if ssid}<label>Wi-Fi password<input type="password" bind:value={password} oninput={()=>passwordChanged=true} placeholder={savedPassword && !passwordChanged && ssid===savedSsid?'•••••••• (saved on device)':'Enter Wi-Fi password'} maxlength="64" autocomplete="new-password" disabled={busy || installing} /></label>{/if}
-        {#if hostState.listener && !hostState.listener.enabled}<p>Enable the companion listener in Settings so the screen can reach this PC.</p>{/if}
+        {#if hostState.listener && !hostState.listener.enabled}<CompanionMessage kind="warning" message="Enable the companion listener in Settings so the screen can reach this PC."/>{/if}
       {/if}
     </section>
     <section class="panel-setup" aria-label="Panel setup">
@@ -192,13 +193,13 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
         <option value="">Assign a panel later</option>
         {#each publications as panel}<option value={panel.publicationHash} title={panelScreenReason(panel,screenSize)} disabled={!!panelScreenReason(panel,screenSize)}>{panel.document.ui.title}{panelScreenReason(panel,screenSize)?' · Not compatible':''}</option>{/each}
       </select></label>
-      <p>{screenSize?`Screen size: ${screenSize.width} × ${screenSize.height} px. Panels must match this size on every page.`:'Connect the screen to identify its size before assigning a panel.'}</p>
+      <CompanionMessage message={screenSize?`Screen size: ${screenSize.width} × ${screenSize.height} px. Panels must match this size on every page.`:'Connect the screen to identify its size before assigning a panel.'}/>
     </section>
     <div class="pair-device-actions"><span class="disabled-reason" title={pairDisabledReason || undefined} aria-label={pairDisabledReason || undefined}>
       <button disabled={!!pairDisabledReason || installOpen} onclick={()=>action(provision)}><Icon name="link" size={16} />Pair device</button>
     </span></div>
   {:else}
-    <p role="status">Pairing device. Keep USB connected until setup is saved.</p>
+    <CompanionMessage message="Pairing device. Keep USB connected until setup is saved."/>
   {/if}
 </section>
 <style>
@@ -207,5 +208,5 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
  .firmware-versions{display:grid;gap:6px;margin-top:12px}.firmware-versions p{margin:0}
  .setup-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;margin-top:22px}.device-controls{min-width:0}.firmware-controls{min-width:0;border-left:1px solid #344452;padding-left:28px}.firmware-controls h4{margin:0 0 10px}.firmware-controls .firmware-action{margin-top:16px}.device-row{align-items:flex-end;margin-top:0}.device-row label{flex:1;min-width:180px;margin:0}.device-row button{margin:0}.device-controls>label{max-width:none}.pair-device-actions{display:flex;justify-content:flex-end;margin-top:24px}.disabled-reason{display:inline-flex}.disabled-reason:has(button:disabled){cursor:not-allowed}.disabled-reason button:disabled{pointer-events:none}@media(max-width:850px){.setup-columns{grid-template-columns:1fr}.firmware-controls{border-left:0;border-top:1px solid #344452;padding-left:0;padding-top:20px}}
 
- .usb{border:1px solid #344452;border-radius:8px;padding:16px;margin:14px 0;color:#dce7ed;font-size:13px}header{display:flex;justify-content:space-between;gap:16px;align-items:start}h3{margin:0}h4{margin:18px 0 10px}p{line-height:1.5;color:#a9bdcb}.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:12px 0}label{display:flex;flex-direction:column;gap:6px;margin:10px 0;max-width:500px}button,input,select{font:inherit;color:#dce7ed;border:1px solid #344452;border-radius:5px;background:#14212c;padding:9px}button{cursor:pointer;margin:3px;display:inline-flex;align-items:center;gap:6px}button:disabled{opacity:.45;cursor:default}.small{font-size:12px}
+ .usb{border:1px solid #344452;border-radius:8px;padding:16px;margin:14px 0;color:#dce7ed;font-size:13px}header{display:flex;justify-content:space-between;gap:16px;align-items:start}h3{margin:0}h4{margin:18px 0 10px}p{line-height:1.5;color:#a9bdcb}.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:12px 0}label{display:flex;flex-direction:column;gap:6px;margin:10px 0;max-width:500px}button,input,select{font:inherit;color:#dce7ed;border:1px solid #344452;border-radius:5px;background:#14212c;padding:9px}button{cursor:pointer;margin:3px;display:inline-flex;align-items:center;gap:6px}button:disabled{opacity:.45;cursor:default}
 </style>
