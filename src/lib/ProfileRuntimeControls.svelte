@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, untrack, type Snippet } from 'svelte';
   import { ProfileRuntimeController, type RuntimeControlState, type RuntimeEditorTarget } from './profile-runtime-controller';
   import type { ProfileGameId } from './profile-runtime';
   import type { DeepReadonly, ProfileSummary } from './profiles';
-  let { controller, editor = null, profiles = [], gameIds = [], active = true, onState }: {
+  let { controller, editor = null, profiles = [], gameIds = [], active = true, onState, modeControl }: {
     controller: ProfileRuntimeController; editor?: RuntimeEditorTarget|null; profiles?: readonly DeepReadonly<ProfileSummary>[];
-    gameIds?: readonly string[]; active?: boolean; onState?: (state: DeepReadonly<RuntimeControlState>)=>void;
+    gameIds?: readonly string[]; active?: boolean; onState?: (state: DeepReadonly<RuntimeControlState>)=>void; modeControl?:Snippet;
   } = $props();
   const runtime = untrack(()=>controller);
   let view = $state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
@@ -34,7 +34,7 @@
 </script>
 
 <section class="profile-runtime panel" aria-label="Runtime profile status">
-  <div class="runtime-heading"><div><strong>Active profile · {native?.owner?appliedName:'None'}</strong><span class:stale={view.stale} aria-live="polite">{native?native.state:'Checking status…'}{#if view.stale&&native} · updating{/if}</span></div></div>
+  <div class="runtime-heading"><div><strong>Active profile · {native?.owner?appliedName:'None'}</strong><span class:stale={view.stale} aria-live="polite">{native?native.state:'Checking status…'}{#if view.stale&&native} · updating{/if}</span></div>{#if modeControl}{@render modeControl()}{/if}</div>
   {#if native}
     {#if native.state==='awaiting-game'}<p class="runtime-notice">Hardware is prepared and held neutral while the game context is verified. Processing has not started. Stop cancels this launch.</p>{/if}
     {#if native.fault}<p class="runtime-error" role="alert">{native.fault}</p>{/if}

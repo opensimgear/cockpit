@@ -32,6 +32,20 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     await list();
     if((await status()).state==='recovery-needed')await page.getByRole('button',{name:'Recover outputs',exact:true}).click();
     await native({command:'profile_stop'});
+    const runtime=page.getByRole('region',{name:'Runtime profile status',exact:true});
+    const modeSwitch=runtime.getByRole('switch',{name:'Automatic profile selection',exact:true});
+    const profileBadge=page.locator('.topbar .profile-status'),modeBadge=profileBadge.locator('.mode-badge');
+    await expect(modeSwitch).toBeEnabled();await expect(modeSwitch).toHaveAttribute('aria-checked','false');
+    await expect(page.getByRole('region',{name:'Automatic profile selection',exact:true})).toHaveCount(0);
+    await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
+    await modeSwitch.click();await expect(modeSwitch).toHaveAttribute('aria-checked','true');
+    await expect(modeBadge).toHaveText('Automatic');
+    await modeSwitch.click();await expect(modeSwitch).toHaveAttribute('aria-checked','false');
+    await expect.poll(async()=>(await native({command:'profile_status'})).profiles.automatic.mode).toBe('manual');
+    await runtime.getByRole('button',{name:'Stop current profile',exact:true}).click();
+    await expect.poll(async()=>(await status()).state).toBe('stopped');
+    await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
+    await runtime.screenshot({path:resolve(artifacts,'profile-mode.png')});
     await page.getByRole('button',{name:'Settings',exact:true}).click();
     const setup=page.getByRole('region',{name:'Controller and desktop output settings'});
     await expect(setup.getByRole('button',{name:'Configure vJoy',exact:true})).toBeVisible();
@@ -101,7 +115,7 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     await expect.poll(async()=>(await status()).state).toBe('stopped');
     const stopped=await status();assert.equal(stopped.owner,null);assert.equal(stopped.appliedSnapshot,null);
     assert.deepEqual(errors,[]);
-    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,activeSave:{before:running.owner,after:changed.owner},desktopQualified:desktopRunning.qualified,desktopRuntimeAcquired:!!desktopRunning.runtime,debugSeparated:true,stopOnly:true,debugStop:stopped,pageErrors:errors},null,2)+'\n');
+    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,headerModeBadge:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,activeSave:{before:running.owner,after:changed.owner},desktopQualified:desktopRunning.qualified,desktopRuntimeAcquired:!!desktopRunning.runtime,debugSeparated:true,stopOnly:true,debugStop:stopped,pageErrors:errors},null,2)+'\n');
   }catch(error){await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true});throw error;}
   finally{
     try{await native({command:'profile_stop'});await native({command:'profile_select',id:'00000000-0000-4000-8000-000000000001',selectionSource:'manual'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();}

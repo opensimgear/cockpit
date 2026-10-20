@@ -11,9 +11,10 @@ import * as designer from '../../packages/companion-designer/src/index.ts';
 import * as companionScreen from './companion-screen.ts';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
+const modules=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'a'.repeat(64)}`;
 const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
+const automatic=(mode='manual')=>({schemaVersion:1,mode,manualProfileId:modules.get('./profiles').DEFAULT_PROFILE_ID,rules:[],status:mode==='manual'?'manual':'waiting',message:'Native profile selection policy.',conflicts:[],lastAttempt:null,target:null,readOnly:false});
 const running=()=>({...stopped(),state:'running',appliedSnapshot:{profileId:id,revision:3,semanticHash:hash},owner:{session,generation:4,profileId:id,profileRevision:3,gameId:'dcs'}});
 const view=status=>({status,pending:null,loading:false,stale:!status,error:'',statusError:''});
 const profiles=[{id,name:'Applied saved rig',revision:9,isDefault:false,semanticHash:hash},{id:other,name:'Unapplied editor selection',revision:7,isDefault:false,semanticHash:hash}];
@@ -59,7 +60,7 @@ test('device manual actions use the real native ownership block, with no retired
 });
 
 async function mountedApp(send){
- const filename=new URL('../App.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureApp({navigate,refreshProfileStatus,refreshProfileNames,get state(){return{profileState,profileSummaries,view};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),mounts=[],timers=new Map(),listeners=new Map();let handlers,nextTimer=0;
+ const filename=new URL('../App.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureApp({navigate,refreshProfileStatus,refreshProfileNames,get state(){return{profileState,profileSummaries,profileMode,profileModeStale,profileModeError,view};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),mounts=[],timers=new Map(),listeners=new Map();let handlers,nextTimer=0;
  const document={hidden:false},location=new URL('http://localhost/'),window={location,addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}},history={state:null,replaceState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},pushState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},go(){},back(){},forward(){}};window.history=history;
  const App=evaluate(js.code,filename.pathname,name=>{
   if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onMount(fn){mounts.push(fn);}};if(name.endsWith('.svelte'))return{default:()=>{}};
@@ -70,22 +71,36 @@ async function mountedApp(send){
 }
 const savedRows=()=>[{id:modules.get('./profiles').DEFAULT_PROFILE_ID,name:'Default',revision:1,isDefault:true,semanticHash:hash},...profiles];
 test('actual mounted App keeps passive header status fresh across views and stops hidden polling without output controls',async()=>{
- const calls=[];let hold;const app=await mountedApp(async request=>{calls.push(plain(request));if(request.command==='profile_status'){if(hold)await hold;return{profiles:{profileSession:running()}};}if(request.command==='profile_list')return{profiles:{profiles:savedRows()}};if(request.command==='game_get_state')return{games:games()};throw new Error(`Unexpected App request ${request.command}`);});
- assert.deepEqual(calls,[]);const cleanup=app.mount();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_list','profile_status']);assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);assert.equal(app.handlers.state.profileSummaries.length,3);
+ const calls=[];let hold;const app=await mountedApp(async request=>{calls.push(plain(request));if(request.command==='profile_status'){if(hold)await hold;return{profiles:{profileSession:running(),automatic:automatic()}};}if(request.command==='profile_list')return{profiles:{profiles:savedRows()}};if(request.command==='game_get_state')return{games:games()};throw new Error(`Unexpected App request ${request.command}`);});
+ assert.deepEqual(calls,[]);const cleanup=app.mount();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_list','profile_status']);assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);assert.equal(app.handlers.state.profileSummaries.length,3);assert.equal(app.handlers.state.profileMode,'manual');assert.equal(app.handlers.state.profileModeStale,false);
  calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status']);
  calls.length=0;app.document.hidden=true;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls,[]);app.document.hidden=false;app.handlers.navigate('profiles');for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status']);
  for(const page of ['devices','topology','preferences']){app.handlers.navigate(page);await settle();calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status'],page);}
  app.handlers.navigate('overview');let release;hold=new Promise(yes=>release=yes);const pending=app.handlers.refreshProfileStatus();await settle();const before=app.handlers.state.profileState;cleanup.forEach(fn=>fn?.());release();await pending;assert.equal(app.handlers.state.profileState,before);assert.equal(app.timers.size,0);assert.ok(calls.every(c=>['profile_status','profile_list','game_get_state'].includes(c.command)));
 });
 
-test('header badges use native applied ownership and detected processes, never the editor selection or stale ownership',async()=>{
+test('mounted App reads selection mode from the same passive native status reply and hides stale or malformed mode',async()=>{
+ let mode=automatic(),status=stopped(),failure=null,hold;const calls=[];
+ const app=await mountedApp(async request=>{calls.push(request.command);if(request.command==='profile_status'){if(hold)await hold;if(failure)throw failure;return{profiles:{profileSession:status,automatic:mode}};}if(request.command==='profile_list')return{profiles:{profiles:savedRows()}};if(request.command==='game_get_state')return{games:games()};throw new Error(`Unexpected App request ${request.command}`);});
+ const cleanup=app.mount();await settle();assert.equal(app.handlers.state.profileMode,'manual');assert.equal(app.handlers.state.profileModeStale,false);
+ mode=automatic('automatic');await app.handlers.refreshProfileStatus();assert.equal(app.handlers.state.profileMode,'automatic');assert.equal(app.handlers.state.profileState.status.owner,null,'Mode does not depend on a running owner.');
+ mode={...automatic(),mode:'guessed'};await app.handlers.refreshProfileStatus();assert.equal(app.handlers.state.profileModeStale,true);assert.match(app.handlers.state.profileModeError,/malformed/);assert.equal(app.handlers.state.profileState.stale,false,'Valid runtime status remains usable when policy metadata is malformed.');
+ failure=new Error('Native policy status unavailable.');await app.handlers.refreshProfileStatus();assert.equal(app.handlers.state.profileModeStale,true);assert.ok(app.handlers.state.profileModeError.includes(failure.message));
+ failure=null;mode=automatic();status=running();await app.handlers.refreshProfileStatus();assert.equal(app.handlers.state.profileMode,'manual');assert.equal(app.handlers.state.profileModeStale,false);assert.equal(app.handlers.state.profileModeError,'');
+ let release;hold=new Promise(yes=>release=yes);mode=automatic('automatic');const pending=app.handlers.refreshProfileStatus();await settle();const before=plain(app.handlers.state);cleanup.forEach(fn=>fn?.());release();await pending;assert.deepEqual(plain(app.handlers.state),before,'Disposed responses cannot update header mode.');assert.ok(calls.every(command=>['profile_status','profile_list','game_get_state'].includes(command)));
+});
+
+test('header badges show authoritative selection mode and applied ownership without a stopped label or stale inference',async()=>{
  const Header=await component('./HeaderStatus.svelte');
- const header=(profileState,extra={})=>render(Header,{props:{games:games(),gamesStale:false,profileState,profiles,...extra}}).body;
- const active=header(view(running()));assert.ok(active.includes('Active game'));assert.ok(active.includes('DCS World'));assert.ok(active.includes('Active profile · Running'));assert.ok(active.includes('Applied saved rig'));assert.ok(!active.includes('Unapplied editor selection'));assert.ok(!active.includes('applied revision'));
- const idle=header(view(stopped()),{games:{catalogue:[],detectedGames:[]}});assert.ok(idle.includes('Active profile · Stopped'));assert.ok(!idle.includes('Applied saved rig'));assert.ok(!idle.includes('DCS World'));assert.ok(idle.includes('None'));
+ const header=(profileState,extra={})=>render(Header,{props:{games:games(),gamesStale:false,profileState,profiles,profileMode:'manual',profileModeStale:false,...extra}}).body;
+ const active=header(view(running()));assert.ok(active.includes('Active game'));assert.ok(active.includes('DCS World'));assert.ok(active.includes('Active profile · Running'));assert.ok(active.includes('Applied saved rig'));assert.ok(active.includes('Manual'));assert.ok(!active.includes('Automatic'));assert.ok(!active.includes('Unapplied editor selection'));assert.ok(!active.includes('applied revision'));
+ const idle=header(view(stopped()),{games:{catalogue:[],detectedGames:[]},profileMode:'automatic'});assert.ok(idle.includes('Active profile'));assert.ok(!idle.includes('Stopped'));assert.ok(idle.includes('Automatic'));assert.ok(!idle.includes('Applied saved rig'));assert.ok(!idle.includes('DCS World'));assert.ok(idle.includes('None'));
  const stale=header({...view(running()),stale:true},{gamesStale:true});assert.ok(stale.includes('Unavailable'));assert.ok(!stale.includes('Applied saved rig'));assert.ok(!stale.includes('DCS World'));
  const degraded=header(view({...running(),state:'degraded'}));assert.ok(degraded.includes('Active profile · Degraded'));assert.ok(degraded.includes('Applied saved rig'));
  const missing=header(view(stopped()),{games:{catalogue:[],detectionErrors:['Process scan unavailable']}});assert.ok(missing.includes('Unavailable'));
+ const pending=header(view(stopped()),{profileMode:null,profileModeStale:true});assert.ok(pending.includes('Mode unavailable'));assert.ok(!pending.includes('Manual'));assert.ok(!pending.includes('Automatic'));
+ const staleMode=header(view(running()),{profileMode:'automatic',profileModeStale:true,profileModeError:'Native policy read failed.'});assert.ok(staleMode.includes('Mode unavailable'));assert.ok(staleMode.includes('Native policy read failed.'));assert.ok(!staleMode.includes('Automatic'));assert.ok(staleMode.includes('Applied saved rig'));
+ for(const state of ['faulted','recovery-needed','transitioning']){const html=header(view({...stopped(),state}));assert.ok(!html.includes('Stopped'));assert.ok(html.includes({faulted:'Faulted','recovery-needed':'Recovery needed',transitioning:'Applying…'}[state]));}
 });
 
 async function companionCompactor(send){

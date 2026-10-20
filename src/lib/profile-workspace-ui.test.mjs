@@ -112,7 +112,7 @@ async function appHarness() {
   const filename=new URL('../App.svelte',import.meta.url);
   const source=(await readFile(filename,'utf8')).replace('</script>',`captureAppNavigation({navigate,openGameSettings,returnToSettingsOrigin,readSettingsHash,setPanel(panel){profilesPanel=panel;},get state(){return{view,selectedGameId,settingsVisit};}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'});
-  const helpers=await loadModules(['./profile-retired-recovery','./profile-desktop-preview','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices',]);
+  const helpers=await loadModules(['./profile-automatic','./profile-retired-recovery','./profile-desktop-preview','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices',]);
   const exports={},events=[];let navigation,location=new URL('http://localhost/#workspace');
   const window={get location(){return location;},dispatchEvent(event){events.push(event);}};
   const history={pushState(_state,_unused,url){location=new URL(url,location);},replaceState(_state,_unused,url){location=new URL(url,location);}};
@@ -184,4 +184,8 @@ test('actual Add handler opens an empty editor immediately without requiring or 
   render(exports.default,{props:{editorStore:h.store,resourceClient:h.client}}).body;handlers.add();
   assert.equal(h.store.state.view,'editor');assert.equal(h.store.state.editor.baseRevision,null);assert.deepEqual(plain(h.store.state.editor.document.resources),[]);assert.deepEqual(plain(h.store.state.editor.assignments),[]);assert.deepEqual(h.calls,[]);
  }
+});
+
+test('profile mode switch is inside the top runtime card with no duplicate mode control below the tiles',async()=>{
+ const h=harness();await h.store.refresh();const body=html(h.store,h.client),runtimeCard=body.match(/<section\b[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];assert.ok(runtimeCard);assert.match(runtimeCard,/<button\b[^>]*role="switch"[^>]*aria-label="Automatic profile selection"/);assert.equal((body.match(/aria-label="Profile selection mode"/g)??[]).length,1);assert.deepEqual(h.calls,[]);
 });

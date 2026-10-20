@@ -27,7 +27,8 @@
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { gatewayRequest, GatewayError, releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
-  import { ProfilesClient, captureProfileSummaries, type DeepReadonly, type ProfileSummary } from './lib/profiles';
+  import { ProfilesClient, captureProfileSummaries, type DeepReadonly, type ProfileSelectionMode, type ProfileSummary } from './lib/profiles';
+  import { captureAutomaticStatus } from './lib/profile-automatic';
   import { ProfileRuntimeClient } from './lib/profile-runtime';
   import { ProfileRuntimeController, type RuntimeControlState } from './lib/profile-runtime-controller';
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
@@ -187,7 +188,31 @@
   let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
   let gamesPolling = false;
-  const profileRuntime = new ProfileRuntimeController(new ProfileRuntimeClient(async request => (await gatewayRequest(request)).profiles?.profileSession));
+  let profileMode = $state<ProfileSelectionMode | null>(null);
+  let profileModeStale = $state(true);
+  let profileModeError = $state('');
+  const profileRuntime = new ProfileRuntimeController(new ProfileRuntimeClient(async request => {
+    try {
+      const result = await gatewayRequest(request);
+      if (!disposed) {
+        try {
+          profileMode = captureAutomaticStatus(result.profiles?.automatic).mode;
+          profileModeStale = false;
+          profileModeError = '';
+        } catch (error) {
+          profileModeStale = true;
+          profileModeError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      return result.profiles?.profileSession;
+    } catch (error) {
+      if (!disposed) {
+        profileModeStale = true;
+        profileModeError = error instanceof Error ? error.message : String(error);
+      }
+      throw error;
+    }
+  }));
   const savedProfiles = new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {});
   let profileState = $state.raw<DeepReadonly<RuntimeControlState>>(profileRuntime.state);
   let profileSummaries = $state.raw<DeepReadonly<ProfileSummary[]>>([]);
@@ -496,7 +521,7 @@
     </aside>
 
     <div class="main-shell">
-      <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
+      <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} {profileMode} {profileModeStale} {profileModeError} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
       <main>
         <div class="main-content">
         <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={openCompanion} openIntegration={openGameSettings} onNavigate={() => {if(view==='devices')recordRoute();}} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>

@@ -1,13 +1,16 @@
 <script lang="ts">
   import type { GamesState } from './games';
-  import type { DeepReadonly, ProfileSummary } from './profiles';
+  import type { DeepReadonly, ProfileSelectionMode, ProfileSummary } from './profiles';
   import type { RuntimeControlState } from './profile-runtime-controller';
 
-  let { games, gamesStale, profileState, profiles }: {
+  let { games, gamesStale, profileState, profiles, profileMode, profileModeStale = true, profileModeError = '' }: {
     games: GamesState | undefined;
     gamesStale: boolean;
     profileState: DeepReadonly<RuntimeControlState>;
     profiles: DeepReadonly<ProfileSummary[]>;
+    profileMode: ProfileSelectionMode | null;
+    profileModeStale?: boolean;
+    profileModeError?: string;
   } = $props();
 
   const detected = $derived(gamesStale ? [] : games?.detectedGames ?? []);
@@ -16,10 +19,11 @@
   const status = $derived(profileState.stale ? null : profileState.status);
   const applied = $derived(status?.owner ? status.appliedSnapshot : null);
   const profile = $derived(profiles.find(item => item.id === applied?.profileId));
-  const stateLabels = { stopped: 'Stopped', running: 'Running', degraded: 'Degraded', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Applying…', 'awaiting-game': 'Awaiting game' };
+  const stateLabels = { stopped: '', running: 'Running', degraded: 'Degraded', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Applying…', 'awaiting-game': 'Awaiting game' };
   const profileStatus = $derived(profileState.pending ? 'Updating…' : status ? stateLabels[status.state] : 'Unavailable');
   const profileLabel = $derived(applied ? profile?.name ?? `Profile ${applied.profileId.slice(0, 8)}` : status ? 'None' : 'Unavailable');
-  const profileTitle = $derived(applied ? `${profileLabel} · ${profileStatus}` : profileState.statusError || profileStatus);
+  const profileTitle = $derived(applied ? `${profileLabel} · ${profileStatus}` : profileState.statusError || profileStatus || 'No profile is running.');
+  const modeLabel = $derived(profileModeStale || !profileMode ? 'Mode unavailable' : profileMode === 'automatic' ? 'Automatic' : 'Manual');
 </script>
 
 <div class="header-statuses" aria-live="polite" aria-atomic="true">
@@ -29,7 +33,8 @@
   </span>
   <span class="header-status profile-status" title={profileTitle}>
     <span class="badge-dot" class:active={status?.state === 'running'} class:attention={!!status && ['degraded', 'faulted', 'recovery-needed', 'awaiting-game'].includes(status.state)}></span>
-    <span class="badge-copy"><span class="badge-label">Active profile · {profileStatus}</span><strong>{profileLabel}</strong></span>
+    <span class="badge-copy"><span class="badge-label">{profileStatus ? `Active profile · ${profileStatus}` : 'Active profile'}</span><strong>{profileLabel}</strong></span>
+    <span class="mode-badge" title={profileModeStale || !profileMode ? profileModeError || 'Current native profile selection mode is unavailable.' : `${modeLabel} profile selection`}>{modeLabel}</span>
   </span>
 </div>
 
@@ -42,6 +47,7 @@
   .badge-dot.attention { background: #d8ad65; }
   .badge-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .badge-label { color: var(--muted); font-size: 8px; white-space: nowrap; }
+  .mode-badge { flex-shrink: 0; border: 1px solid var(--line); border-radius: 999px; padding: 3px 6px; color: var(--soft); font-size: 8px; white-space: nowrap; }
   strong { color: var(--soft); font-size: 10px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 800px) { .header-status { max-width: 145px; } .profile-status { max-width: 190px; } }
   @media (max-width: 520px) { .header-statuses { gap: 4px; } .header-status { padding: 5px 6px; gap: 5px; max-width: 100px; } .profile-status { max-width: 125px; } .badge-label { font-size: 7px; } strong { font-size: 9px; } }
