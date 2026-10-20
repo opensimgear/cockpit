@@ -1,6 +1,7 @@
 //! USB companion transport. Operator messages stay on the local side of Hub.
 mod flash;
 mod reconnect;
+mod serial_write;
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub use flash::*;
 use osg_companion_service::Hub;
@@ -422,18 +423,8 @@ mod candidate_tests {
 fn set(state: &Arc<Mutex<Value>>, key: &str, value: Value) {
     state.lock().unwrap_or_else(|p| p.into_inner())[key] = value;
 }
-fn send(port: &mut dyn SerialPort, v: &Value) -> Result<(), String> {
-    let mut bytes = serde_json::to_vec(v).map_err(|_| "Invalid serial record.")?;
-    if bytes.len() > 8192 {
-        bytes.zeroize();
-        return Err("Serial record exceeds device budget.".into());
-    }
-    bytes.push(b'\n');
-    let result = port
-        .write_all(&bytes)
-        .map_err(|_| "USB write failed.".to_string());
-    bytes.zeroize();
-    result
+fn send(port: &mut dyn SerialPort, v: &Value, public:&Arc<Mutex<Value>>) -> Result<(), String> {
+    serial_write::send(port,v,public,false)
 }
 fn reply_frames(value: &Value) -> Result<Vec<Value>, String> {
     let bytes = serde_json::to_vec(value).map_err(|_| "Invalid reply.")?;
@@ -562,9 +553,7 @@ fn worker(
             }
             if last_probe.elapsed() > Duration::from_millis(if ready { 1000 } else { 500 }) {
                 nonce = uuid::Uuid::new_v4().to_string();
-                use std::io::Write;
-                port.write_all(b"\n").map_err(|e|e.to_string())?;
-                send(&mut *port, &json!({"command":"status","requestId":nonce}))?;
+                serial_write::send(&mut *port,&json!({"command":"status","requestId":nonce}),public,true)?;
                 last_probe = Instant::now();
             }
             // One local command per loop; no provisioning retries.
@@ -573,7 +562,7 @@ fn worker(
                     if public.lock().unwrap_or_else(|p| p.into_inner())["device"]["connectionMode"]
                         == "serial"
                     {
-                        let _ = send(&mut *port, &json!({"command":"stop"}));
+                        let _ = send(&mut *port, &json!({"command":"stop"}),public);
                     }
                     return Ok(());
                 }
@@ -599,7 +588,7 @@ fn worker(
                             if v["command"]=="scan-wifi"{
                                 scan_started=Some(Instant::now());set(public,"scanning",json!(true));set(public,"scanError",Value::Null);set(public,"networks",json!([]));
                             }
-                            send(&mut *port,&v)?;
+                            send(&mut *port,&v,public)?;
                         },
                         Action::Provision(mut v, id) => {
                             if provision.is_some() {
@@ -608,7 +597,7 @@ fn worker(
                             }
                             let assignment =
                                 v.as_object_mut().and_then(|v| v.remove("_assignment"));
-                            send(&mut *port, &v)?;
+                            send(&mut *port, &v,public)?;
                             provision = Some((id, Instant::now(), assignment));
                             set(public, "stage", json!("Provisioning device"));
                         }
@@ -632,6 +621,7 @@ fn worker(
                             send(
                                 &mut *port,
                                 &json!({"command":"arm","sessionId":status["sessionId"],"generation":status["generation"],"publicationHash":status["publicationHash"],"armEpoch":status["armEpoch"]}),
+                                public,
                             )?;
                         }
                         Action::Stop => unreachable!(),
@@ -696,7 +686,7 @@ fn worker(
                                                     response["frame"]["error"].clone(),
                                                 );
                                             }
-                                            send(&mut *port, &response)?;
+                                            send(&mut *port, &response,public)?;
                                         }
                                     }
                                     _ => {
@@ -733,6 +723,7 @@ fn worker(
                                                 send(
                                                     &mut *port,
                                                     &json!({"command":"connect","unixMs":unix}),
+                                                    public,
                                                 )?;
                                             }
                                             ready = true;
