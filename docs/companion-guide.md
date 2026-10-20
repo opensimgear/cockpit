@@ -59,7 +59,7 @@ The native mobile shell retains its separate explicit Connect/Start lifecycle, b
 
 ## Route controls through Profiles
 
-Open **Profiles**, then **Add profile** or an existing profile. A new profile opens an empty editor; use **Add from inventory** to add the companion. Select its block and **Browse published panels**. Choose the paired resource and **Published panel**, then **Use panel in profile**. **Remove selected panel** clears that panel choice while retaining the block's ports and routes.
+Open **Profiles**, then **Add profile** or an existing profile. Use the **Components** palette to add a paired companion by its device name. Its block opens the published panel catalogue, where you choose a **Published panel**, then **Use panel in profile**. Adding a companion does not choose a panel or capture any ports. **Remove selected panel** clears that panel choice while retaining the block's ports and routes.
 
 Use **Inspect exact panel ports** and **Add control output** to select declared controls. **Connect exact ports** routes each selected output to a specific virtual-controller input or supported action. Add virtual layouts and visible processing nodes explicitly. Input learning and exact local assignments do not infer whole-panel mappings. Copied/imported profiles require explicit instance and port reconciliation.
 

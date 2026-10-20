@@ -62,6 +62,9 @@ pub struct SourceChange {
 /// Callbacks only update bounded in-memory source state; no network I/O or mapping run lock.
 pub trait SourceSink: Send + Sync {
     fn register(&self, definition: SourceDefinition) -> Result<(), String>;
+    /// Remove a native profile's first-assignment descriptor after its exact
+    /// durable owner has been restored to the original absent baseline.
+    fn unregister(&self, _source_id: &str) -> Result<(), String> { Ok(()) }
     fn baseline(
         &self,
         token: &SourceToken,

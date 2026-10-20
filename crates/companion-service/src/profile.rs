@@ -49,23 +49,38 @@ impl Preparation {
     }
 }
 
+/// Stable native slot for a paired installation that has no assigned panel.
+/// Knowing this name grants neither pairing authority nor an input session.
+pub fn profile_instance_id(companion: &str) -> String {
+    format!("profile-{}", &hash(companion.as_bytes())[..48])
+}
+
 fn current_identity(inner: &Inner, instance: &str) -> Result<(String, String), String> {
     let assignment = inner
         .record
         .instances
         .iter()
-        .find(|a| a.instance_id == instance)
-        .ok_or("Assign this local instance to a paired companion before preparing a profile.")?;
+        .find(|a| a.instance_id == instance);
     let credential = inner
         .record
         .credentials
         .iter()
-        .find(|c| c.companion_id == assignment.companion_id)
+        .find(|c| match assignment {
+            Some(assignment) => c.companion_id == assignment.companion_id,
+            None => {
+                profile_instance_id(&c.companion_id) == instance
+                    && !inner
+                        .record
+                        .instances
+                        .iter()
+                        .any(|a| a.companion_id == c.companion_id)
+            }
+        })
         .ok_or("This companion installation is no longer authorized.")?;
     let bytes = serde_json::to_vec(&(assignment, &credential.token_hash))
         .map_err(|error| error.to_string())?;
     Ok((
-        assignment.companion_id.clone(),
+        credential.companion_id.clone(),
         format!("sha256:{}", hash(&bytes)),
     ))
 }

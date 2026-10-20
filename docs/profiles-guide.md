@@ -8,10 +8,11 @@ to edit it. Cockpit has either **No profile active** or one active profile, with
 ## Create, save and activate
 
 Choose **Add profile** to go straight to an empty editor. Name the profile, then
-use **Add from inventory** to choose controllers, OSG peripherals, companions
-and game integrations. Offline resources and closed games remain available for
-authoring. Adding a resource creates no routes. A profile supports 64 resource
-blocks.
+use the **Components** palette beside the canvas to add controllers, OSG devices,
+paired companions, game integrations and outputs. Search the palette and click a
+component to add it and open its settings. Offline paired companions and closed
+games remain available. Adding a resource creates no routes. A profile supports
+64 resource blocks.
 
 Select exact ports from each block's provider catalogue, connect routes and
 choose **Save profile**. Saving commits the graph and local resource assignments
@@ -56,9 +57,12 @@ CAN can retain both connections while Cockpit chooses its current input source.
 
 Select a provider port with **Use this exact port**, then drag **Outputs** onto
 **Inputs / actions**, or use **Connect exact ports**. The bindings table provides
-a keyboard alternative and lets you edit ports, remove routes or insert visible
-transformations. Different types, units, numeric ranges or state/event delivery
-need an explicit transformation. Reverse feedback is another directed route.
+a keyboard alternative and lets you edit ports or remove routes. Click a
+connection line to insert a compatible transformation; transformations are not
+palette components. Different types, units, numeric ranges or state/event delivery
+need an explicit transformation. For those ports, choose **Connect with transformation**
+in the exact connection editor to create both routes together. Reverse feedback
+is another directed route.
 
 Transformations include range/unit conversion, scaling, deadzones, curves,
 comparisons and hysteresis, gates, boolean logic, input priority, state/event
@@ -77,15 +81,16 @@ buttons, axes, hats and neutral axis fallbacks, then connect selected inputs.
 The native plan supports eight controllers, with at most 128 controls per
 controller, 16 axes and four hats.
 
-**Add keyboard and mouse** creates an endpoint from the chosen preset. In that
-block choose **Selected game**, **Selected application** or **Desktop-wide
+Choose **Keyboard and mouse** in the palette to add an endpoint, then configure
+its actions. In that block choose **Selected game**, **Selected application** or **Desktop-wide
 navigation**. Application capture stores an opaque reference to a native observed
 process; paths and process IDs stay local. Capture again if that application
 restarts. Scope is saved with the profile. See [keyboard and mouse
 mappings](keyboard-mouse.md).
 
-Companion blocks capture a retained published panel explicitly. Choose its
-paired companion and published panel, then select feedback inputs or interactive
+Companions appear in the palette by their paired device names, including devices
+without a panel. Panels are chosen after adding a companion: select its published
+panel in the block settings, then select feedback inputs or interactive
 control outputs. Replacing a panel or assigning a copied companion requires
 explicit port reconciliation. Browsing panels leaves its current runtime alone.
 

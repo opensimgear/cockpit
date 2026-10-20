@@ -69,7 +69,9 @@ impl Registry {
                 .live
                 .get(&(sighting.scope.clone(), sighting.key.clone()))?;
             (live.route.id == format!("companion:{instance_id}")
-                && matches!(live.route.transport, Transport::Usb | Transport::Network))
+                && (matches!(live.route.transport, Transport::Usb | Transport::Network)
+                    || (live.route.transport==Transport::Integration && sighting.attributes.get("componentKind").is_some_and(|kind|kind=="paired-companion")
+                        && live.route.attributes.get("preparationOnly").is_some_and(|kind|kind=="paired-companion"))))
             .then_some((sighting, live))
         });
         let (sighting, live) = routes

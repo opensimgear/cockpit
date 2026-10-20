@@ -6,9 +6,9 @@ use super::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AssignmentReceipt {
     schema_version: u8,
-    expected: AssignmentRef,
+    expected: Option<AssignmentRef>,
     desired: AssignmentRef,
-    baseline: AssignmentRef,
+    baseline: Option<AssignmentRef>,
     capability_fingerprint: String,
     installation_fingerprint: String,
 }
@@ -41,6 +41,21 @@ fn reconstruct(inner: &Inner, reference: &AssignmentRef) -> Result<Assignment, S
         definition: publication.definition(&reference.instance_id),
         ownership: reference.ownership.clone(),
     })
+}
+fn baseline(inner: &Inner, receipt: &AssignmentReceipt) -> Result<Option<Assignment>, String> {
+    receipt
+        .baseline
+        .as_ref()
+        .map(|reference| reconstruct(inner, reference))
+        .transpose()
+}
+fn current(inner: &Inner, instance: &str) -> Option<AssignmentRef> {
+    inner
+        .record
+        .instances
+        .iter()
+        .find(|row| row.instance_id == instance)
+        .map(reference)
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssignmentRestore {
@@ -80,6 +95,14 @@ fn digest(value: &impl Serialize) -> Result<String, String> {
         hash(&serde_json::to_vec(value).map_err(|error| error.to_string())?)
     ))
 }
+fn baseline_publication_hash(publication: Option<&str>) -> Result<String, String> {
+    match publication {
+        Some(publication) => Ok(publication.into()),
+        // Keep the protected stamp schema compatible. Absence has a stable
+        // digest sentinel rather than pretending a panel was originally set.
+        None => digest(&Option::<Assignment>::None),
+    }
+}
 fn installation(inner: &Inner, companion: &str) -> Result<String, String> {
     let credential = inner
         .record
@@ -95,23 +118,54 @@ fn shape(receipt: &AssignmentReceipt) -> Result<(), String> {
         .ownership
         .as_ref()
         .ok_or("The assignment receipt has no native owner.")?;
+    let transition = match &receipt.expected {
+        None => receipt.baseline.is_none() && stamp.revision == 1,
+        Some(expected) => match &expected.ownership {
+            None => receipt.baseline.as_ref() == Some(expected) && stamp.revision == 1,
+            Some(prior) => {
+                prior.owner != stamp.owner
+                    && prior.revision.checked_add(1) == Some(stamp.revision)
+                    && prior.baseline_hash == stamp.baseline_hash
+                    && prior.baseline_publication_hash == stamp.baseline_publication_hash
+            }
+        },
+    };
     ensure(
         receipt.schema_version == 1
             && uuid::Uuid::parse_str(&stamp.owner)
                 .is_ok_and(|owner| owner.to_string() == stamp.owner)
             && stamp.revision > 0
-            && receipt.expected.instance_id == receipt.desired.instance_id
-            && receipt.baseline.instance_id == receipt.desired.instance_id
-            && receipt.expected.companion_id == receipt.desired.companion_id
-            && receipt.baseline.companion_id == receipt.desired.companion_id
-            && receipt.baseline.ownership.is_none()
+            && receipt.expected.as_ref().is_none_or(|expected| {
+                expected.instance_id == receipt.desired.instance_id
+                    && expected.companion_id == receipt.desired.companion_id
+            })
+            && receipt.baseline.as_ref().is_none_or(|baseline| {
+                baseline.instance_id == receipt.desired.instance_id
+                    && baseline.companion_id == receipt.desired.companion_id
+                    && baseline.ownership.is_none()
+            })
+            && (receipt.baseline.is_some()
+                || receipt.desired.instance_id
+                    == profile_instance_id(&receipt.desired.companion_id))
+            && transition
             && digest_id(&receipt.capability_fingerprint)
             && digest_id(&receipt.installation_fingerprint)
             && digest_id(&stamp.baseline_hash)
-            && stamp.baseline_publication_hash == receipt.baseline.publication_hash,
+            && stamp.baseline_publication_hash
+                == baseline_publication_hash(
+                    receipt
+                        .baseline
+                        .as_ref()
+                        .map(|baseline| baseline.publication_hash.as_str()),
+                )?,
         "Invalid or modified native assignment receipt.",
     )?;
-    for assignment in [&receipt.expected, &receipt.desired, &receipt.baseline] {
+    for assignment in receipt
+        .expected
+        .iter()
+        .chain(std::iter::once(&receipt.desired))
+        .chain(receipt.baseline.iter())
+    {
         ensure(
             id(&assignment.instance_id)
                 && id(&assignment.companion_id)
@@ -147,7 +201,7 @@ pub(super) fn validate_stamp(inner: &Inner, receipt: &AssignmentReceipt) -> Resu
 pub(super) fn validate_owned(inner: &Inner, receipt: &AssignmentReceipt) -> Result<(), String> {
     validate_stamp(inner, receipt)?;
     let desired = reconstruct(inner, &receipt.desired)?;
-    let baseline = reconstruct(inner, &receipt.baseline)?;
+    let baseline = baseline(inner, receipt)?;
     ensure(
         inner
             .record
@@ -185,11 +239,20 @@ impl Hub {
             .instances
             .iter()
             .find(|assignment| assignment.instance_id == proof.instance_id)
-            .ok_or("The prepared companion assignment disappeared.")?
-            .clone();
-        publication(&inner, &expected)?;
+            .cloned();
+        if let Some(expected) = &expected {
+            publication(&inner, expected)?;
+        } else {
+            ensure(
+                inner.record.instances.len() < MAX_INSTANCES,
+                "The companion assignment limit was reached.",
+            )?;
+        }
         let mut baseline = expected.clone();
-        if let Some(stamp) = &expected.ownership {
+        if let Some(stamp) = expected
+            .as_ref()
+            .and_then(|expected| expected.ownership.as_ref())
+        {
             ensure(
                 stamp.owner != owner,
                 "A new assignment requires a new native profile owner.",
@@ -198,20 +261,24 @@ impl Hub {
                 .ok_or("The outgoing companion assignment receipt is required for takeover.")?;
             validate_owned(&inner, previous)?;
             ensure(
-                previous.desired == reference(&expected),
+                expected
+                    .as_ref()
+                    .is_some_and(|expected| previous.desired == reference(expected)),
                 "The outgoing receipt owns a different companion assignment.",
             )?;
-            baseline = reconstruct(&inner, &previous.baseline)?;
+            baseline = self::baseline(&inner, previous)?;
         } else {
             ensure(
                 previous.is_none(),
                 "An outgoing receipt cannot claim an unowned assignment.",
             )?;
         }
-        baseline.ownership = None;
+        if let Some(baseline) = &mut baseline {
+            baseline.ownership = None;
+        }
         let revision = expected
-            .ownership
             .as_ref()
+            .and_then(|expected| expected.ownership.as_ref())
             .map_or(Some(1), |stamp| stamp.revision.checked_add(1))
             .ok_or("Companion ownership revision exhausted.")?;
         let desired = Assignment {
@@ -223,15 +290,19 @@ impl Hub {
                 owner: owner.into(),
                 revision,
                 baseline_hash: digest(&baseline)?,
-                baseline_publication_hash: baseline.publication_hash.clone(),
+                baseline_publication_hash: baseline_publication_hash(
+                    baseline
+                        .as_ref()
+                        .map(|baseline| baseline.publication_hash.as_str()),
+                )?,
             }),
         };
         let receipt = AssignmentReceipt {
             schema_version: 1,
             installation_fingerprint: installation(&inner, &desired.companion_id)?,
-            expected: reference(&expected),
+            expected: expected.as_ref().map(reference),
             desired: reference(&desired),
-            baseline: reference(&baseline),
+            baseline: baseline.as_ref().map(reference),
             capability_fingerprint: proof.capability_fingerprint.clone(),
         };
         shape(&receipt)?;
@@ -245,17 +316,19 @@ impl Hub {
             return Ok(());
         }
         ensure(
-            inner
-                .record
-                .instances
-                .iter()
-                .any(|assignment| reference(assignment) == receipt.expected)
+            current(&inner, receipt.instance_id()) == receipt.expected
+                && (receipt.expected.is_some()
+                    || (receipt.instance_id()
+                        == profile_instance_id(&receipt.desired.companion_id)
+                        && !inner.record.instances.iter().any(|assignment| {
+                            assignment.companion_id == receipt.desired.companion_id
+                        })))
                 && installation(&inner, &receipt.desired.companion_id)?
                     == receipt.installation_fingerprint,
             "Companion assignment or installation changed after the acquisition was captured.",
         )?;
         let desired = reconstruct(&inner, &receipt.desired)?;
-        let baseline = reconstruct(&inner, &receipt.baseline)?;
+        let baseline = baseline(&inner, receipt)?;
         ensure(
             receipt.desired.ownership.as_ref().unwrap().baseline_hash == digest(&baseline)?,
             "The captured original companion baseline changed.",
@@ -266,7 +339,7 @@ impl Hub {
                 == receipt.capability_fingerprint,
             "The desired companion capability changed.",
         )?;
-        self.replace_profile_assignment(&mut inner, &desired)
+        self.replace_profile_assignment(&mut inner, receipt.instance_id(), Some(&desired))
     }
     pub fn validate_profile_assignment(&self, receipt: &AssignmentReceipt) -> Result<(), String> {
         let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
@@ -288,56 +361,79 @@ impl Hub {
     ) -> Result<AssignmentRestore, String> {
         shape(receipt)?;
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        if inner
-            .record
-            .instances
-            .iter()
-            .any(|assignment| reference(assignment) == receipt.baseline)
-        {
+        if current(&inner, receipt.instance_id()) == receipt.baseline {
+            if receipt.baseline.is_none() {
+                self.sink.unregister(receipt.instance_id())?;
+            }
             return Ok(AssignmentRestore::AlreadyBaseline);
         }
         if validate_stamp(&inner, receipt).is_err() {
             return Ok(AssignmentRestore::OwnershipLost);
         }
-        validate_owned(&inner, receipt)?;
-        let baseline = reconstruct(&inner, &receipt.baseline)?;
-        publication(&inner, &baseline)?;
-        self.replace_profile_assignment(&mut inner, &baseline)?;
+        let baseline = baseline(&inner, receipt)?;
+        if let Some(baseline) = &baseline {
+            validate_owned(&inner, receipt)?;
+            publication(&inner, baseline)?;
+        } else {
+            ensure(
+                receipt.desired.ownership.as_ref().unwrap().baseline_hash == digest(&baseline)?,
+                "The captured original companion baseline changed.",
+            )?;
+        }
+        self.replace_profile_assignment(&mut inner, receipt.instance_id(), baseline.as_ref())?;
         Ok(AssignmentRestore::Restored)
     }
     fn replace_profile_assignment(
         &self,
         inner: &mut Inner,
-        assignment: &Assignment,
+        instance: &str,
+        assignment: Option<&Assignment>,
     ) -> Result<(), String> {
         let prior = inner
             .record
             .instances
             .iter()
-            .find(|row| row.instance_id == assignment.instance_id)
-            .ok_or("The owned companion assignment disappeared.")?
-            .clone();
+            .find(|row| row.instance_id == instance)
+            .cloned();
         let mut record = inner.record.clone();
-        *record
-            .instances
-            .iter_mut()
-            .find(|row| row.instance_id == assignment.instance_id)
-            .unwrap() = assignment.clone();
+        match (
+            record
+                .instances
+                .iter()
+                .position(|row| row.instance_id == instance),
+            assignment,
+        ) {
+            (Some(index), Some(assignment)) => record.instances[index] = assignment.clone(),
+            (Some(index), None) => {
+                record.instances.remove(index);
+            }
+            (None, Some(assignment)) => {
+                ensure(
+                    record.instances.len() < MAX_INSTANCES,
+                    "The companion assignment limit was reached.",
+                )?;
+                record.instances.push(assignment.clone());
+            }
+            (None, None) => return Err("The owned companion assignment disappeared.".into()),
+        }
         let sessions = inner
             .sessions
             .iter()
-            .filter(|(_, session)| session.token.source_id == assignment.instance_id)
+            .filter(|(_, session)| session.token.source_id == instance)
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         for session in sessions {
             self.disarm(inner, &session, "profile-assignment-changed", true);
         }
-        if let Err(error) = self
-            .sink
-            .register(assignment.definition.clone())
+        if let Err(error) = assignment
+            .map(|assignment| self.sink.register(assignment.definition.clone()))
+            .unwrap_or_else(|| self.sink.unregister(instance))
             .and_then(|_| self.persist(&record))
         {
-            if let Err(restore) = self.sink.register(prior.definition) {
+            let rollback = prior
+                .map(|prior| self.sink.register(prior.definition))
+                .unwrap_or_else(|| self.sink.unregister(instance));
+            if let Err(restore) = rollback {
                 inner.diagnostic = Some(format!("Companion assignment was preserved but descriptor restoration failed: {restore}"));
             }
             return Err(format!(
@@ -345,7 +441,7 @@ impl Hub {
             ));
         }
         inner.record = record;
-        inner.feedback.remove(&assignment.instance_id);
+        inner.feedback.remove(instance);
         Ok(())
     }
     pub fn configure_profile_feedback(

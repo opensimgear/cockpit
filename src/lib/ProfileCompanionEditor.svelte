@@ -19,11 +19,18 @@
   let chosen=$state(untrack(()=>graph.document.companionAssignments.find(item=>item.resourceId===resourceId)?.publicationHash??'')),target=$state(untrack(()=>graph.assignments.find(item=>item.resourceId===resourceId)?.sourceId??'')),clearPorts=$state(false),group=$state<'input'|'output'>('input'),busy=$state(false),error=$state('');
   let mappings=$state.raw<Record<string,{observed:DeepReadonly<ObservedResourcePort>;page:DeepReadonly<ProfileCompanionPage>}>>({});
   let catalogueEpoch=0,portEpoch=0,context='';
+  let catalogueContext='';
   const resource=$derived(graph.document.resources.find(resource=>resource.id===resourceId));
   const assignment=$derived(graph.assignments.find(assignment=>assignment.resourceId===resourceId));
   const captured=$derived(graph.document.companionAssignments.find(item=>item.resourceId===resourceId));
   const choice=$derived(catalogue?.panels.find(panel=>panel.publicationHash===chosen));
   const source=$derived(inventory.find(item=>item.id===target&&item.resourceType==='companion'));
+  function companionInUse(sourceId:string){
+    const companionId=inventory.find(item=>item.id===sourceId)?.attributes.companionId;
+    return graph.assignments.some(other=>other.resourceId!==resourceId&&(other.sourceId===sourceId||!!companionId&&inventory.find(item=>item.id===other.sourceId)?.attributes.companionId===companionId));
+  }
+  const changingToUsedCompanion=$derived(target!==assignment?.sourceId&&companionInUse(target));
+  const companionChoices=$derived(inventory.filter(item=>item.resourceType==='companion'&&(item.attributes.componentKind==='paired-companion'||item.id===assignment?.sourceId||!inventory.some(candidate=>candidate.attributes.componentKind==='paired-companion'))&&(item.id===assignment?.sourceId||!companionInUse(item.id))));
   const mappingOptions=$derived.by(()=>{const seen=new Set<string>();return [...(page?.ports.map(observed=>({observed,page}))??[]),...Object.values(mappings)].filter(item=>{const key=optionKey(item.observed);if(seen.has(key))return false;seen.add(key);return true;});});
   const replacing=$derived(chosen!==captured?.publicationHash&&(resource?.ports.length??0)>0);
   const routeCount=$derived(graph.document.bindings.filter(binding=>binding.from.nodeId===resourceId||binding.to.nodeId===resourceId).length);
@@ -31,6 +38,13 @@
   function currentContext(){return JSON.stringify([resourceId,graph.assignments.find(item=>item.resourceId===resourceId)?.sourceId,graph.document.companionAssignments.find(item=>item.resourceId===resourceId)?.publicationHash,active]);}
   function syncContext(){const key=currentContext();if(key!==context){context=key;catalogueEpoch++;portEpoch++;browser.clear();page=null;chosen=graph.document.companionAssignments.find(item=>item.resourceId===resourceId)?.publicationHash??'';target=graph.assignments.find(item=>item.resourceId===resourceId)?.sourceId??'';mappings={};clearPorts=false;busy=false;error='';}}
   $effect(syncContext);
+  function autoBrowsePanels(){
+    const key=JSON.stringify([resourceId,assignment?.sourceId,active]);
+    if(!active||resource?.kind!=='companion'||catalogueContext===key)return;
+    catalogueContext=key;
+    return untrack(refresh);
+  }
+  $effect(()=>{void autoBrowsePanels();});
   onDestroy(()=>{catalogueEpoch++;portEpoch++;browser.clear();});
   async function refresh(){
     if(!active||busy)return;const epoch=++catalogueEpoch,key=currentContext();busy=true;error='';
@@ -40,7 +54,10 @@
   }
   function clearPage(){clearPorts=false;portEpoch++;browser.clear();page=null;mappings={};error='';}
   function choose(value:string){chosen=value;clearPage();}
-  function chooseTarget(value:string){target=value;clearPage();}
+  function chooseTarget(value:string){
+    if(value!==assignment?.sourceId&&companionInUse(value)){error='This paired companion is already used by another profile block. Choose an unused companion.';return;}
+    target=value;clearPage();
+  }
   async function browse(operation:'open'|'next'|'previous'){
     if(!active||busy||!target||!chosen)return;const epoch=++portEpoch,key=currentContext(),source=target,publication=chosen;busy=true;error='';if(operation==='open'){mappings={};page=null;}
     try{const next=operation==='open'?await browser.open(source,publication):operation==='next'?await browser.next():await browser.previous();if(epoch===portEpoch&&key===currentContext()&&publication===chosen&&next)page=next;}
@@ -52,7 +69,10 @@
   function release(){edit(()=>graphReleaseCompanionPanel(graph,resourceId),'Remove captured companion panel');}
   function optionKey(port:DeepReadonly<ObservedResourcePort>){return JSON.stringify([port.descriptor.id,port.contractHash]);}
   function chooseMapping(portId:string,key:string){const port=mappingOptions.find(item=>optionKey(item.observed)===key),next={...mappings};if(port?.page)next[portId]={observed:port.observed,page:port.page};else delete next[portId];mappings=next;}
-  function reconcile(){if(!choice||!source||!page)return;edit(()=>graphReconcileCompanionPanel(graph,resourceId,source!,choice!,page!,resource!.ports.flatMap(port=>mappings[port.id]?[{profilePortId:port.id,...mappings[port.id]}]:[])),'Reconcile exact companion instance and panel ports');}
+  function reconcile(){if(!choice||!source||!page)return;edit(()=>{
+    if(target!==assignment?.sourceId&&companionInUse(target))throw new Error('This paired companion is already used by another profile block. Choose an unused companion.');
+    return graphReconcileCompanionPanel(graph,resourceId,source!,choice!,page!,resource!.ports.flatMap(port=>mappings[port.id]?[{profilePortId:port.id,...mappings[port.id]}]:[]));
+  },'Reconcile exact companion instance and panel ports');}
   function addPort(port:DeepReadonly<ObservedResourcePort>){if(!page)return;edit(()=>graphSelectCompanionPort(graph,resourceId,page!,port),'Select exact companion panel port');}
   function pin(port:DeepReadonly<ObservedResourcePort>){return assignment?.ports.find(pin=>pin.observedPortId===port.descriptor.id);}
 </script>
@@ -61,7 +81,7 @@
   <div class="panel-heading"><h3>Companion panel</h3><button class="text-button" disabled={!active||busy} onclick={refresh}>{busy?'Reading published panels…':'Browse published panels'}</button></div>
   <p>Choose one published panel for this profile. Browsing and editing leave the companion’s current panel and runtime untouched.</p>
   {#if !assignment}<p class="panel-warning">Choose an exact paired companion and map its prospective ports below. Copied profiles remain unassigned until this explicit reconciliation.</p>{/if}
-  <label>Paired companion resource<select value={target} disabled={readOnly||!active||busy} onchange={event=>chooseTarget(event.currentTarget.value)}><option value="">Choose a companion explicitly</option>{#each inventory.filter(item=>item.resourceType==='companion') as item (item.id)}<option value={item.id}>{item.name} · {item.availability}</option>{/each}{#if assignment&&!inventory.some(item=>item.id===assignment.sourceId)}<option value={assignment.sourceId}>Saved companion · refresh inventory to reassign</option>{/if}</select></label>
+  <label>Paired companion<select value={target} disabled={readOnly||!active||busy} onchange={event=>chooseTarget(event.currentTarget.value)}><option value="">Choose a companion explicitly</option>{#each companionChoices as item (item.id)}<option value={item.id}>{item.name} · {item.availability}</option>{/each}{#if assignment&&!inventory.some(item=>item.id===assignment.sourceId)}<option value={assignment.sourceId}>Saved companion · refresh inventory to reassign</option>{/if}</select></label>
   {#if captured}<p>Selected panel <code>{captured.publicationHash}</code></p><button class="text-button" disabled={readOnly||!active} onclick={release}>Remove selected panel · retain graph ports and routes</button>{:else}<p>No panel is selected for this block.</p>{/if}
   {#if error}<p class="panel-warning" role="alert">{error}</p>{/if}
   {#if catalogue}
@@ -79,7 +99,7 @@
   {#if page}
     <p>Prospective retained contracts · no live baseline or delivery tokens.</p>
     {#if captured?.publicationHash!==page.publicationHash}<p class="panel-warning">Use this panel in the profile before adding its ports to the graph.</p>{/if}
-    {#if source&&choice}<details><summary>Explicit instance and port reconciliation</summary><p>Use this published panel on the selected paired companion, including when it currently displays another panel. Map every saved logical port explicitly; compatible graph routes remain.</p>{#each resource?.ports??[] as logical (logical.id)}<label>Logical {logical.id} → exact published port<select value={mappings[logical.id]?optionKey(mappings[logical.id].observed):''} disabled={readOnly||!active} onchange={event=>chooseMapping(logical.id,event.currentTarget.value)}><option value="">Choose an exact matching contract</option>{#each mappingOptions.filter(item=>item.observed.descriptor.direction===logical.direction) as item (optionKey(item.observed))}<option value={optionKey(item.observed)}>{item.observed.descriptor.name} · {item.observed.descriptor.id}</option>{/each}</select><small>{portContractLabel(logical.contract)}</small></label>{/each}<button class="secondary-button" disabled={readOnly||!active||busy||resource?.ports.some(port=>!mappings[port.id])} onclick={reconcile}>Assign companion and reconcile panel ports</button></details>{/if}
+    {#if source&&choice}<details><summary>Explicit instance and port reconciliation</summary><p>Use this published panel on the selected paired companion, including when it currently displays another panel. Map every saved logical port explicitly; compatible graph routes remain.</p>{#each resource?.ports??[] as logical (logical.id)}<label>Logical {logical.id} → exact published port<select value={mappings[logical.id]?optionKey(mappings[logical.id].observed):''} disabled={readOnly||!active} onchange={event=>chooseMapping(logical.id,event.currentTarget.value)}><option value="">Choose an exact matching contract</option>{#each mappingOptions.filter(item=>item.observed.descriptor.direction===logical.direction) as item (optionKey(item.observed))}<option value={optionKey(item.observed)}>{item.observed.descriptor.name} · {item.observed.descriptor.id}</option>{/each}</select><small>{portContractLabel(logical.contract)}</small></label>{/each}<button class="secondary-button" disabled={readOnly||!active||busy||changingToUsedCompanion||resource?.ports.some(port=>!mappings[port.id])} onclick={reconcile}>Assign companion and reconcile panel ports</button></details>{/if}
     <label>Port group<select bind:value={group}><option value="input">Feedback / widget inputs</option><option value="output">Interactive control outputs</option></select></label>
     <ul class="panel-ports">{#each visiblePorts as port (port.descriptor.id)}<li><strong>{port.descriptor.name}</strong><code>{port.descriptor.id}</code><span>{portContractLabel(port.descriptor.contract)}</span><button class="text-button" disabled={readOnly||!active||assignment?.sourceId!==page.resourceId||captured?.publicationHash!==page.publicationHash||!!pin(port)||(resource?.ports.length??0)>=128} onclick={()=>addPort(port)}>{pin(port)?pin(port)?.expectedContractHash===port.contractHash?'Selected exact port':'Contract changed · reconcile selected port':port.descriptor.direction==='input'?'Add feedback input':'Add control output'}</button></li>{:else}<li>No ports from this group on this page. Browse another page or group.</li>{/each}</ul>
     <p>{page.offset+1}–{page.offset+page.ports.length} of {page.total} declared ports. Only explicitly selected ports are saved.</p>

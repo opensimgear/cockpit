@@ -10,6 +10,26 @@ const inventory=['host-controller','osg-module','companion','game-integration'].
 function harness(){const docs=new Map([[DEFAULT_PROFILE_ID,{...blankProfile(uid(1),'Default'),id:DEFAULT_PROFILE_ID}]]);const calls=[];let id=10;const summary=d=>({id:d.id,name:d.name,revision:d.revision,isDefault:d.id===DEFAULT_PROFILE_ID,semanticHash:hash});const session={selectedProfileId:DEFAULT_PROFILE_ID,selectionMode:'manual',state:'stopped',appliedSnapshot:{profileId:DEFAULT_PROFILE_ID,revision:1,semanticHash:hash},fault:null};const api={async list(){return{profiles:[...docs.values()].map(summary),session};},async getAssignments(id){calls.push(['get',id]);return{document:plain(docs.get(id)),assignments:[],session};},async editorSave(document,expectedRevision,assignments){calls.push(['save',expectedRevision]);const saved={...plain(document),revision:expectedRevision===null?1:expectedRevision+1};docs.set(saved.id,saved);return{document:saved,assignments:plain(assignments),profiles:[...docs.values()].map(summary),session};}};const client={listAll:async()=>({resources:inventory}),inspect:noRequest};return{docs,calls,client,store:new ProfileEditorStore(api,client,()=>uid(id++))};}
 const html=(store,client)=>render(ProfilesPanel,{props:{editorStore:store,resourceClient:client,openGameSettings:noRequest}}).body;
 
+test('component palette offers paired companions by device name, not retained panel instances or transformations',async()=>{
+ const Palette=await component('./ProfileComponentPalette.svelte');
+ const paired={...resource('companion',1),name:'Browser tablet',portCount:0,attributes:{componentKind:'paired-companion',companionId:'tablet'}};
+ const offline={...paired,id:'offline-tablet',name:'Offline tablet',availability:'offline',attributes:{...paired.attributes,companionId:'offline'}};
+ const panel={...paired,id:'old-panel',name:'Flight instruments panel',attributes:{companionId:'tablet',publicationHash:hash}};
+ const body=render(Palette,{props:{inventory:[...inventory.filter(resource=>resource.resourceType!=='companion'),paired,offline,panel],assignedIds:new Set(),resourceCount:0,virtualCount:0,desktopAdded:false,refresh:noRequest,addResource:noRequest,addVirtual:noRequest,addDesktop:noRequest}}).body;
+ for(const name of ['Component palette','Search components','Add Browser tablet','Add Offline tablet','Add virtual controller','Add keyboard and mouse','Controllers','OSG devices','Games'])assert.ok(body.includes(name),name);
+ assert.ok(!body.includes('Flight instruments panel'));assert.ok(!body.includes('Add transformation'));assert.ok(!body.includes('Visible transformation'));assert.ok(!body.includes('type="checkbox"'));
+ assert.ok(!/<button[^>]*aria-label="Add Offline tablet"[^>]*disabled/.test(body),'A paired offline companion remains addable.');
+});
+
+test('palette prevents duplicate physical companions across legacy assignments and respects each component capacity',async()=>{
+ const Palette=await component('./ProfileComponentPalette.svelte'),paired={...resource('companion',1),name:'Browser tablet',attributes:{componentKind:'paired-companion',companionId:'tablet'}},legacy={...paired,id:'old-panel',attributes:{companionId:'tablet'}};
+ const props={inventory:[paired,legacy,resource('host-controller',1)],assignedIds:new Set([legacy.id]),resourceCount:64,virtualCount:8,desktopAdded:true,refresh:noRequest,addResource:noRequest,addVirtual:noRequest,addDesktop:noRequest};
+ const body=render(Palette,{props}).body;
+ for(const label of ['Add Browser tablet','Add host-controller 1','Add virtual controller','Add keyboard and mouse'])assert.match(body,new RegExp(`<button[^>]*aria-label="${label}"[^>]*disabled`),label);
+ const readOnly=render(Palette,{props:{...props,resourceCount:0,virtualCount:0,desktopAdded:false,assignedIds:new Set(),disabled:true}}).body;
+ for(const label of ['Add Browser tablet','Add host-controller 1','Add virtual controller','Add keyboard and mouse'])assert.match(readOnly,new RegExp(`<button[^>]*aria-label="${label}"[^>]*disabled`),label);
+});
+
 test('draft controller effect summary survives save and reopen without claiming applied publication or changing its revision',async()=>{
  const h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();const session=plain(h.store.state.session),{ProfileEditorUndo}=modules.get('./profile-graph-history'),graph=modules.get('./profile-graph'),undo=new ProfileEditorUndo(h.store),devices=h.store.state.editor.document.resources.filter(resource=>resource.kind==='device');
  let value={document:plain(h.store.state.editor.document),assignments:plain(h.store.state.editor.assignments)};value.document.name='Effect choices';value=graph.graphSetRuntimeOverride(value,devices[0].id,true);value=graph.graphSetRuntimeOverride(value,devices[1].id,false);value=graph.graphSetVisibility(value,devices[1].id,'hidden-while-active');value=graph.graphSetVirtual(value,{id:'virtual-one',name:'Requested output',required:false,layout:{buttons:['fire'],axes:[],hats:[]}});undo.edit(value.document,value.assignments,'Edit controller choices');

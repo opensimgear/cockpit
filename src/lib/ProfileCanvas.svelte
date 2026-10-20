@@ -10,12 +10,13 @@
   import {processingSummary} from './profile-processing';
   import type{CompileDiagnostic}from'./profile-compilation';
   import { ProfilePortBrowser } from './profile-port-browser';
-  let { document, assignments, inventory, inventoryClient, selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, highlightedEdges = [], diagnostics = [], undo, redo }: {
+  let { document, assignments, inventory, inventoryClient, selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, highlightedEdges = [], diagnostics = [], undo, redo }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
     inspector?:Snippet<[CanvasNode]>; selectProviderPort?:(nodeId:string,port:DeepReadonly<ObservedResourcePort>)=>void; removeProviderPort?:(nodeId:string,portId:string)=>void;
     connectBlocks?:(fromNodeId:string,toNodeId:string)=>void;connectionFrom?:(nodeId:string)=>void;connectionTo?:(nodeId:string)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
+    editConnection?:(bindingId:string)=>void;
     diagnostics?:readonly DeepReadonly<CompileDiagnostic>[];
   } = $props();
   let stage: HTMLDivElement;
@@ -30,6 +31,8 @@
   let drag: { id?: string; origin: CanvasPoint; start: CanvasPoint; viewport: CanvasViewport; pointer: number; moved: boolean } | null = null;
   const browser = new ProfilePortBrowser(untrack(() => inventoryClient));
   const nodes = $derived(canvasNodes(document, assignments, inventory));
+  let knownNodeIds=new Set(untrack(()=>nodes.map(node=>node.id)));
+  let savedViewportSignature='';
   const controllerEffects=$derived(canvasControllerEffects(document));
   const renderedNodes = $derived(nodes.map(node => node.id === dragged?.id ? { ...node, position: dragged.position } : node));
   const routes=$derived(diagramRoutes(renderedNodes,document.bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT));
@@ -42,7 +45,8 @@
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
-  $effect(() => { view = { ...document.editor.viewport }; });
+  $effect(() => { const signature=JSON.stringify(document.editor.viewport);if(signature!==savedViewportSignature){savedViewportSignature=signature;view = { ...document.editor.viewport };} });
+  $effect(()=>{const added=nodes.find(node=>node.id===selectedId&&!knownNodeIds.has(node.id));knownNodeIds=new Set(nodes.map(node=>node.id));if(added)focusNewNode(added);});
   $effect(()=>{if(!editingGroup){groupSnapshot='';return;}const saved=document.editor.groups?.find(group=>group.id===editingGroup);if(!saved){editingGroup='';groupName='';groupMembers=[];groupSnapshot='';return;}const signature=JSON.stringify(saved);if(signature!==groupSnapshot){groupName=saved.name;groupMembers=[...saved.members];groupSnapshot=signature;}});
   $effect(() => {
     const resourceId = companionAuthoring&&selected?.resource?.kind==='companion'?undefined:observedId;
@@ -56,6 +60,7 @@
   function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2});persist(); }
   function layout() { if(readOnly)return;const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;next.editor.positions=profileAutoLayout(nodes.map(node=>node.id),document.bindings);next.editor.viewport=canvasFit(next.editor.positions.map(position=>({position})),stage?.clientWidth||900,stage?.clientHeight||600);change(next,'Auto-layout'); }
   function choose(id:string,_direction:'input'|'output'='output') { selectedId=id; }
+  function focusNewNode(node:CanvasNode){view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+PROFILE_BLOCK_WIDTH/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+PROFILE_BLOCK_HEIGHT/2)*view.zoom};}
   function slideDetails(_node: HTMLElement) {
     return { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
       css: (t: number) => `transform:translateX(${(1-t)*100}%)` };
@@ -71,7 +76,7 @@
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
-    if(target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
+    if(target.closest('.signal-edge-hit')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
     id ??= target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
     event.preventDefault();stage.setPointerCapture(event.pointerId);
     drag={id,origin:id?{...nodes.find(node=>node.id===id)!.position}:{x:0,y:0},start:{x:event.clientX,y:event.clientY},viewport:{...view},pointer:event.pointerId,moved:false};
@@ -88,6 +93,7 @@
     if(event.key==='+'||event.key==='='){event.preventDefault();zoom(1.2);}else if(event.key==='-'){event.preventDefault();zoom(1/1.2);}else if(event.key==='0'){event.preventDefault();fit();}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();view=canvasPan(view,{x:event.key==='ArrowLeft'?40:event.key==='ArrowRight'?-40:0,y:event.key==='ArrowUp'?40:event.key==='ArrowDown'?-40:0});persist();}
   }
   function lostPointer(event:PointerEvent){if(wire?.pointer===event.pointerId)wire=null;if(drag?.pointer===event.pointerId){view={...drag.viewport};drag=null;dragged=null;}}
+  function connectionKey(event:KeyboardEvent,id:string){if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();editConnection?.(id);}}
   function moveBlock(event:KeyboardEvent,id:string) { if(!event.altKey||readOnly||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();const node=nodes.find(node=>node.id===id)!;const step=event.shiftKey?64:16;change(canvasMove(document,id,{x:node.position.x+(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0),y:node.position.y+(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)})); }
   async function loadPorts(operation:'open'|'next'|'previous',resourceId?:string) {
     const epoch=portEpoch;portsBusy=true;portError='';
@@ -100,13 +106,13 @@
 <section class="profile-graph" aria-label="Profile resource graph">
   <div class="canvas-toolbar"><label class="canvas-search"><Icon name="search" size={14}/><input aria-label="Search profile blocks" placeholder="Find a block, type or transport…" bind:value={search} onkeydown={event=>{if(event.key==='Enter')focusMatch();}}/></label><button class="text-button" onclick={focusMatch} disabled={!matches.length}>{search?`${matches.length} matches`:`${nodes.length} blocks`}</button><button class="secondary-button" onclick={fit}>Fit all</button><button class="secondary-button" disabled={readOnly} onclick={layout}>Auto-layout</button><div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button><output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output><button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div></div>
   <details class="group-editor"><summary>Editor groups · {document.editor.groups?.length??0}</summary><p>Organize blocks into named frames. Each block belongs to at most one group.</p><div class="group-controls"><label>Edit group<select aria-label="Edit editor group" value={editingGroup} onchange={event=>editGroup(event.currentTarget.value)}><option value="">New group</option>{#each document.editor.groups??[] as saved (saved.id)}<option value={saved.id}>{saved.name}</option>{/each}</select></label><button class="text-button" disabled={readOnly} onclick={()=>editGroup('')}>New group</button><label>Group name<input aria-label="Editor group name" maxlength="80" bind:value={groupName} disabled={readOnly}/></label></div><fieldset disabled={readOnly}><legend>Group members</legend><div class="group-members">{#each nodes as node (node.id)}{@const owner=document.editor.groups?.find(saved=>saved.id!==editingGroup&&saved.members.includes(node.id))}<label><input type="checkbox" checked={groupMembers.includes(node.id)} disabled={!!owner} onchange={event=>groupMember(node.id,event.currentTarget.checked)}/>{node.name}{#if owner}<small> · {owner.name}</small>{/if}</label>{/each}</div></fieldset><div class="group-controls"><button class="secondary-button" disabled={readOnly||!groupName.trim()||!groupMembers.length||(!editingGroup&&(document.editor.groups?.length??0)>=32)} onclick={saveGroup}>{editingGroup?'Update group':'Create group'}</button><button class="text-button" disabled={readOnly||!editingGroup} onclick={deleteGroup}>Delete group</button>{#each document.editor.groups??[] as saved (saved.id)}<button class="text-button" onclick={()=>focusGroup(saved.id)}>Focus {saved.name}</button>{/each}</div>{#if layoutError}<p class="port-error" role="alert">{layoutError}</p>{/if}</details>
-  <p class="canvas-help" id="profile-canvas-help">Drag the background to pan. Ctrl/⌘ + wheel zooms. Select a block to inspect ports; Alt + arrow keys move its focused heading.{#if connectBlocks} Drag Outputs onto Inputs / actions to choose an exact mapping. Ctrl/⌘ + Z undoes; Shift + Z redoes.{/if} Every solid line is an explicit signal route.</p>
+  <p class="canvas-help" id="profile-canvas-help">Drag the background to pan. Ctrl/⌘ + wheel zooms. Select a block to inspect ports; Alt + arrow keys move its focused heading.{#if connectBlocks}{' '}Drag Outputs onto Inputs / actions to choose an exact mapping. Ctrl/⌘ + Z undoes; Shift + Z redoes.{/if}{' '}Every solid line is an explicit signal route.{#if editConnection}{' '}Select a connection line to insert a transformation.{/if}</p>
   <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
     <div class="canvas-stage" class:node-dragging={!!dragged} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={move} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard}>
       <div class="canvas-world" style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
         {#each frames as frame (frame.id)}<div class="editor-group-frame" style={`left:${frame.x}px;top:${frame.y}px;width:${frame.width}px;height:${frame.height}px`}><button class="editor-group-heading" onclick={()=>focusGroup(frame.id)} aria-label={`Focus group ${frame.name}`}>{frame.name} <span>{frame.members.length} blocks</span></button></div>{/each}
-        <svg class="signal-edges" width="1" height="1" aria-label="Saved signal routes"><defs><marker id="profile-signal-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" /></marker></defs>{#each routes as route (route.binding.id)}{@const binding=route.binding}<path class="signal-edge" data-binding-id={binding.id} class:highlighted={highlightedEdges.includes(binding.id)} class:problem={diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(binding.id))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{binding.id}: {binding.from.portId} → {binding.to.portId}</title></path>{/each}{#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={`M${from.position.x+PROFILE_BLOCK_WIDTH},${from.position.y+116} L${pending.end.x},${pending.end.y}`}><title>Choose destination, then exact ports</title></path>{/if}{/if}</svg>
+        <svg class="signal-edges" width="1" height="1" aria-label="Saved signal routes"><defs><marker id="profile-signal-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" /></marker></defs>{#each routes as route (route.binding.id)}{@const binding=route.binding}<path class="signal-edge" data-binding-id={binding.id} class:highlighted={highlightedEdges.includes(binding.id)} class:problem={diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(binding.id))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{binding.id}: {binding.from.portId} → {binding.to.portId}</title></path>{#if editConnection}<path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Edit connection ${binding.id}: ${binding.from.portId} to ${binding.to.portId}`} onpointerdown={event=>event.stopPropagation()} onclick={()=>editConnection?.(binding.id)} onkeydown={event=>connectionKey(event,binding.id)}><title>Click to insert a transformation</title></path>{/if}{/each}{#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={`M${from.position.x+PROFILE_BLOCK_WIDTH},${from.position.y+116} L${pending.end.x},${pending.end.y}`}><title>Choose destination, then exact ports</title></path>{/if}{/if}</svg>
         {#each renderedNodes as node (node.id)}
           <article data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${PROFILE_BLOCK_WIDTH}px;height:${PROFILE_BLOCK_HEIGHT}px`} aria-label={`${node.name} · ${node.category}`}>
             <button class="block-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">{node.category}</span><strong>{node.name}</strong><code>{node.id}</code></button>
@@ -139,6 +145,7 @@
 </section>
 
 <style>
+  .signal-edge-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer}.signal-edge-hit:hover,.signal-edge-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none;stroke-width:18}
   .canvas-stage.node-dragging, .canvas-stage.node-dragging :global(*) { cursor: grabbing; }
   .controller-effect-summary{margin:0 16px 16px;padding:12px;border:1px solid var(--line);border-radius:6px;font-size:11px;line-height:1.7;}.controller-effect-summary strong{font-size:11px;color:var(--soft)}.controller-effect-summary p{margin:6px 0;color:var(--soft)}.controller-effect-summary small{font-size:10px;color:var(--muted)}
   .group-editor{margin:0 16px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;}.group-editor summary{cursor:pointer;font-weight:600;}.group-editor p{color:var(--muted);}.group-controls{display:flex;align-items:end;flex-wrap:wrap;gap:12px;margin:10px 0;}.group-controls label{display:grid;gap:5px;}.group-controls input,.group-controls select{padding:7px;background:var(--bg);color:inherit;border:1px solid var(--line);border-radius:4px;}.group-editor fieldset{border:1px solid var(--line);}.group-members{display:flex;flex-wrap:wrap;gap:8px 18px;max-height:180px;overflow:auto;}.group-members label{display:flex;align-items:center;gap:5px;}.group-members small{color:var(--muted);}.editor-group-frame{position:absolute;box-sizing:border-box;border:2px dashed var(--accent);border-radius:14px;background:color-mix(in srgb,var(--accent) 5%,transparent);pointer-events:none;}.editor-group-heading{position:absolute;top:5px;left:12px;pointer-events:auto;border:0;background:transparent;color:inherit;font-weight:600;font-size:12px;cursor:pointer;}.editor-group-heading span{margin-left:12px;font-weight:400;color:var(--muted);}.port-category-toggle{display:block;width:100%;text-align:left;background:transparent;border:0;color:inherit;font-weight:600;padding:10px 0;cursor:pointer;}.port-category-toggle:disabled{cursor:default;}

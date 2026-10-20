@@ -118,8 +118,8 @@ logical graph ports with captured contract hashes. P0's scalar graph schema cann
 represent every structured action yet; P1 rejects lossy assignments. P2 extends
 the graph/compiler contract, and P6/P7 deliver the list, Add flow and editor.
 
-The profile page refreshes inventory when opened, while visible, and when its
-inventory picker opens. Removed entries also leave the picker's pending selection.
+The profile page refreshes inventory when opened and while visible. The component
+palette follows that inventory, including removal of unpaired companions.
 
 Automated contract tests and CI builds are separate from physical acceptance.
 Existing USB/identity issues #3/#4 and Windows/game/companion qualification tickets

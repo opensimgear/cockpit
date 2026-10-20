@@ -541,7 +541,7 @@ impl Registry {
             let keys = batch.observations.iter().map(|item| item.key.as_str()).collect::<BTreeSet<_>>();
             next.entries.retain(|id, entry| {
                 let authoritative = match entry.saved.resource_type {
-                    ResourceType::Companion => batch.scope == "companions",
+                    ResourceType::Companion => matches!(batch.scope.as_str(),"companions"|"paired-companions"),
                     ResourceType::HostController => batch.scope == "host-controllers",
                     ResourceType::OsgModule => batch.scope == "host-controllers" || batch.scope.starts_with("gateway:"),
                     ResourceType::GameIntegration => false,

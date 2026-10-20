@@ -7,10 +7,11 @@ the active profile. There is no separate selected-for-runtime state.
 
 ## Creating and saving
 
-**Add profile** immediately opens an empty draft editor. **Add from inventory**
-lets the user select resource blocks explicitly, up to 64. It adds no routes,
-transformations, virtual controllers or device policies. Offline resources and
-game integrations whose games are closed remain available for authoring.
+**Add profile** immediately opens an empty draft editor. The searchable
+**Components** palette adds individual resource blocks, virtual controllers and
+keyboard/mouse outputs. Resource additions create no routes, transformations or
+device policies. Offline paired resources and closed-game integrations remain
+available, with up to 64 resource blocks.
 Existing blocks and bindings remain when resources disconnect.
 
 The new editor also offers **Copy saved profile**. A copy retains its graph and
@@ -70,8 +71,11 @@ destination input. Different types, units, ranges and state/event delivery need
 an explicit conversion node. An input has one writer; OR or input-priority nodes
 make intentional fan-in visible. Reverse feedback is a separate route.
 
-The bindings table exposes every exact edge. It supports retargeting, removal
-and inserting a compatible transformation. Compatible linear chains can be
+Click a canvas connection line, or its keyboard control, to insert a compatible
+transformation. Transformations are excluded from the component palette. The
+bindings table also exposes exact edges and their editing controls. When two
+ports require conversion, **Connect with transformation** adds the transformation
+and both routes in one edit. Compatible linear chains can be
 reordered. Removing a single-input/output transformation can join its route
 only when the resulting direct contracts fit.
 
@@ -93,15 +97,16 @@ There are eight native targets and up to 128 controls per controller, including
 at most 16 axes and four hats. Remove a control's route before removing the
 control. Use visible range mapping to normalize raw source ranges.
 
-Keyboard/mouse presets add one desktop endpoint and any necessary visible
-processing. Its saved **Output scope** chooses the selected game, a captured
+The palette adds one keyboard/mouse endpoint with a configurable starter action
+and no implicit routes or processing. Its saved **Output scope** chooses the selected game, a captured
 application, or desktop-wide navigation. Captured application references resolve
 through machine-local native identities. Choosing scope or capturing an
 application updates the draft; Save persists the choice with that profile.
 Each profile's choice remains independent of other profiles. See
 [keyboard and mouse mappings](keyboard-mouse.md).
 
-Companion blocks select a paired instance and capture a retained immutable panel
+The palette lists paired companions by device identity, not panel instances.
+Adding one captures no panel. Its inspector then selects a retained immutable panel
 publication. Feedback inputs and control outputs are chosen explicitly from that
 panel's prospective ports. Copies and panel replacements require explicit
 instance/port reconciliation. Authoring leaves the live companion panel alone.

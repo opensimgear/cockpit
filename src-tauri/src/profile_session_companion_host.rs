@@ -35,7 +35,9 @@ pub(super) fn prepare_catalogues(
             .summary
             .connections
             .iter()
-            .filter(|c| matches!(c.route.transport, Transport::Usb | Transport::Network))
+            .filter(|c| matches!(c.route.transport, Transport::Usb | Transport::Network)
+                || (c.route.transport==Transport::Integration && resource.summary.attributes.get("componentKind").is_some_and(|kind|kind=="paired-companion")
+                    && c.route.attributes.get("preparationOnly").is_some_and(|kind|kind=="paired-companion")))
             .filter_map(|c| c.route.id.strip_prefix("companion:"))
             .collect::<BTreeSet<_>>();
         if instances.len() != 1 {
@@ -46,6 +48,9 @@ pub(super) fn prepare_catalogues(
             return Err("A profile cannot assign the same companion instance twice.".into());
         }
         let proof = hub.prepare_profile_assignment(instance, &desired.publication_hash)?;
+        if resource.summary.attributes.get("companionId").is_some_and(|companion|companion!=proof.companion_id()) {
+            return Err("The paired companion changed its native installation identity.".into());
+        }
         let definition = osg_mapping_host::companions::native_definition(proof.definition())?;
         catalogues.push(CompanionCatalogue {
             logical_resource_id: desired.resource_id.clone(),

@@ -58,6 +58,19 @@ fn desired_panel_inspection_preserves_actual_assignment_and_returns_only_exact_p
     assert!(runtime.services.get().is_none());runtime.shutdown();
 }
 #[test]
+fn choosing_a_panel_for_an_unassigned_paired_component_is_passive() {
+    let(runtime,hub,_,panel,_directory)=fixture();
+    hub.command(&json!({"command":"companion_unassign","instanceId":"instance"})).unwrap();
+    let instance=osg_companion_service::profile::profile_instance_id("screen");
+    let page=runtime.profile_authoring_inspect("paired-component",&instance,&panel.publication_hash,0,32).unwrap();
+    assert!(!page.ports.is_empty());assert_eq!(page.publication_hash,panel.publication_hash);
+    assert!(page.ports.iter().all(|port|!port.current&&port.route_ids.is_empty()));
+    assert!(hub.resource_instance_ids().is_empty());
+    assert!(runtime.services.get().is_none());
+    hub.command(&json!({"command":"companion_revoke","companionId":"screen"})).unwrap();
+    assert!(runtime.profile_authoring_inspect("paired-component",&instance,&panel.publication_hash,0,32).is_err());
+}
+#[test]
 fn page_offsets_are_exact_and_identity_fences_change_after_explicit_pair_assignment_changes() {
     let(runtime,hub,a,b,_directory)=fixture();
     let first=runtime.profile_authoring_inspect("r","instance",&b.publication_hash,0,1).unwrap();

@@ -224,6 +224,68 @@ fn desired_companion_capture_never_borrows_current_ports_and_only_binds_actual_m
 }
 
 #[test]
+fn paired_component_delivery_keeps_its_provider_key_and_admits_only_verified_native_baselines() {
+    use osg_profiles::{resources::{EvidenceKind,IdentityEvidence,PortExpectation},store::LocalAssignment};
+    let digest=|c:char|format!("sha256:{}",c.to_string().repeat(64));
+    for (prepared_transport,actual_transport) in [(Transport::Integration,Transport::Network),(Transport::Integration,Transport::Usb),(Transport::Network,Transport::Network)] {
+        let runtime=Runtime::new(None,Arc::new(|_|vec![]),false);
+        let mut current=observed(1);current.key="paired:screen".into();current.resource_type=ResourceType::Companion;
+        current.evidence=vec![IdentityEvidence{kind:EvidenceKind::CompanionInstance,value:"instance".into()}];
+        current.attributes=BTreeMap::from([("componentKind".into(),"paired-companion".into()),("companionId".into(),"screen".into())]);
+        let input=current.ports.as_ref().unwrap().ports[0].clone();
+        let mut feedback=input.clone();feedback.id="feedback:light:indicator".into();feedback.direction=Direction::Input;
+        let route=current.route.as_mut().unwrap();route.id="companion:instance".into();route.transport=prepared_transport;route.baseline_ready=false;
+        if prepared_transport==Transport::Integration {current.ports=None;}
+        runtime.state.lock().unwrap().registry.reconcile(batch("paired-companions","provider",1,vec![current.clone()])).unwrap();
+        let id=runtime.state.lock().unwrap().registry.list(0,1).unwrap().resources[0].id.clone();
+        let catalogue=CompanionCatalogue{logical_resource_id:"panel".into(),inventory_resource_id:id.clone(),instance_id:"instance".into(),publication_hash:digest('a'),capability_fingerprint:digest('b'),ports:vec![input.clone(),feedback.clone()]};
+        let assignment=LocalAssignment{resource_id:"panel".into(),source_id:id.clone(),ports:[("pressed",&input),("light",&feedback)].into_iter().map(|(logical,port)|PortExpectation{profile_port_id:logical.into(),observed_port_id:port.id.clone(),expected_contract_hash:port.contract_hash().unwrap()}).collect()};
+        if prepared_transport==Transport::Integration {
+            let(_,pins)=runtime.snapshot_for_preparation_with_companions(vec![assignment.clone()],std::slice::from_ref(&catalogue)).unwrap();
+            assert!(pins.is_empty(),"An unmarked Integration route cannot prepare companion delivery");
+            current.route.as_mut().unwrap().attributes.insert("preparationOnly".into(),"paired-companion".into());
+            runtime.state.lock().unwrap().registry.reconcile(batch("paired-companions","provider",2,vec![current.clone()])).unwrap();
+        }
+        let(snapshot,pins)=runtime.snapshot_for_preparation_with_companions(vec![assignment.clone()],std::slice::from_ref(&catalogue)).unwrap();
+        assert_eq!(pins.len(),2);
+        let mut document=osg_profiles::new_document("Paired screen").unwrap();
+        document.resources.push(osg_profiles::Resource{id:"panel".into(),name:"Screen".into(),kind:osg_profiles::ResourceKind::Companion,required:true,ports:[("pressed",&input),("light",&feedback)].into_iter().map(|(id,port)|osg_profiles::Port{id:id.into(),name:id.into(),direction:port.direction,contract:port.contract.clone()}).collect()});
+        document.bindings.push(osg_profiles::Binding{id:"light".into(),from:osg_profiles::Endpoint{node_id:"panel".into(),port_id:"pressed".into()},to:osg_profiles::Endpoint{node_id:"panel".into(),port_id:"light".into()}});
+        document.companion_assignments.push(osg_profiles::CompanionAssignment{resource_id:"panel".into(),publication_hash:catalogue.publication_hash.clone()});
+        let prepared=osg_profiles::compiler::compile_for_preparation(&document,&snapshot,&pins);
+        assert_eq!(prepared.readiness,osg_profiles::compiler::PlanReadiness::Ready,"{:?}",prepared.diagnostics);
+        let plan=prepared.plan.unwrap();assert!(runtime.bind_delivery_reads(&plan).is_err());
+        current.ports=Some(PortUpdate::complete(vec![input,feedback]).unwrap());
+        current.attributes.insert("publicationHash".into(),catalogue.publication_hash.clone());current.attributes.insert("capabilityFingerprint".into(),catalogue.capability_fingerprint.clone());
+        let route=current.route.as_mut().unwrap();route.transport=actual_transport;route.attributes.clear();route.provider_generation="2".into();route.baseline_ready=true;route.writable=true;
+        runtime.state.lock().unwrap().registry.reconcile(batch("paired-companions","provider",3,vec![current.clone()])).unwrap();
+        let bound=runtime.bind_delivery_reads(&plan).unwrap();
+        let token=bound.sources[0].token.as_ref().unwrap();assert_eq!(token.resource_id,id);assert_eq!(token.provider_generation,"2");assert_eq!(bound.sources[0].route.as_ref().unwrap().transport,actual_transport);
+        let delivery=osg_profiles::compiler::compile(&document,&runtime.snapshot_for_compile(vec![assignment]).unwrap());
+        assert_eq!(delivery.readiness,osg_profiles::compiler::PlanReadiness::Ready,"{:?}",delivery.diagnostics);
+        assert_eq!(delivery.plan.unwrap().sinks[0].token.as_ref().unwrap().access,Access::Write,"Feedback uses the same actual paired component");
+        for (index,invalid) in ["instance","publication","capability","transport","baseline"].into_iter().enumerate() {
+            let mut changed=current.clone();
+            match invalid {
+                "instance"=>changed.route.as_mut().unwrap().id="companion:other".into(),
+                "publication"=>{changed.attributes.insert("publicationHash".into(),digest('c'));},
+                "capability"=>{changed.attributes.insert("capabilityFingerprint".into(),digest('c'));},
+                "transport"=>changed.route.as_mut().unwrap().transport=Transport::Integration,
+                _=>changed.route.as_mut().unwrap().baseline_ready=false,
+            }
+            let revision=4+index as u64*2;
+            runtime.state.lock().unwrap().registry.reconcile(batch("paired-companions","provider",revision,vec![changed])).unwrap();
+            assert!(runtime.bind_delivery_reads(&plan).is_err(),"Rejected changed {invalid}");
+            runtime.state.lock().unwrap().registry.reconcile(batch("paired-companions","provider",revision+1,vec![current.clone()])).unwrap();
+        }
+        assert!(runtime.state.lock().unwrap().registry.validate_token(token,&token.port_id,Access::Read).is_err(),"A prior native generation never retains authority after replacement");
+        current.key="paired:another".into();
+        runtime.state.lock().unwrap().registry.reconcile(batch("paired-companions","provider",20,vec![current])).unwrap();
+        assert!(runtime.bind_delivery_reads(&plan).is_err(),"A different companion key cannot adopt the prepared resource");
+    }
+}
+
+#[test]
 fn compiler_capture_uses_one_cached_native_snapshot_without_discovery_or_normalization() {
     use osg_profiles::resources::PortExpectation;
     use osg_profiles::store::LocalAssignment;

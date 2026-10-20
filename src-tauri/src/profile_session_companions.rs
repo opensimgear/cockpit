@@ -224,7 +224,7 @@ impl CompanionSources {
                             .filter_map(|s| s.route.as_ref()),
                     )
                     .next()
-                    .map(|route| route.transport),
+                    .map(|route| route.transport).filter(|transport|matches!(transport,Transport::Usb|Transport::Network)),
                 provider_session: plan
                     .sources
                     .iter()

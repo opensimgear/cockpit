@@ -175,6 +175,7 @@ impl Sources {
             .collect();
         batch("host-controllers", &controllers.session, revision, host)
         });
+        let companions=self.companion_observations();
         let mut batches = vec![
             (
                 "host-controllers".into(),
@@ -186,8 +187,13 @@ impl Sources {
             ),
             (
                 "companions".into(),
-                self.companion_observations()
-                    .map(|items| batch("companions", &self.session, revision, items)),
+                companions.clone().map(|items| batch("companions", &self.session, revision, items.into_iter()
+                    .filter(|item|item.attributes.get("componentKind").is_none_or(|kind|kind!="paired-companion")).collect())),
+            ),
+            (
+                "paired-companions".into(),
+                companions.map(|items| batch("paired-companions", &self.session, revision, items.into_iter()
+                    .filter(|item|item.attributes.get("componentKind").is_some_and(|kind|kind=="paired-companion")).collect())),
             ),
         ];
         let gateways = (self.gateways)();
@@ -481,17 +487,40 @@ impl Sources {
         Ok(Some(item))
     }
     fn companion_observations(&self) -> Result<Vec<Observation>, String> {
-        let paired = self.host.resource_instance_ids()?;
-        self.companions
+        let paired = self.host.resource_companions()?;
+        let mut observations = self.companions
             .resource_inventory()
             .into_iter()
-            .filter(|source| paired.contains(&source.definition.source_id))
+            .filter(|source| paired.iter().any(|companion|companion.instances.contains(&source.definition.source_id)))
             .map(|source| {
                 let publication = self.host.resource_publication(&source.definition.source_id);
                 let transport = self.host.resource_transport(&source.definition.source_id);
-                Self::companion_observation(source, publication, transport)
+                let companion=paired.iter().find(|companion|companion.instances.contains(&source.definition.source_id)).unwrap();
+                let mut item=Self::companion_observation(source, publication, transport)?;
+                item.attributes.insert("companionId".into(),companion.companion_id.clone());
+                Ok(item)
             })
-            .collect()
+            .collect::<Result<Vec<_>,String>>()?;
+        let mut components=vec![];
+        for companion in paired {
+            let mut item=observations.iter().find(|item|item.key==companion.instance_id).cloned()
+                .unwrap_or_else(||observation(String::new(),companion.name.clone(),ResourceType::Companion));
+            item.key=format!("paired:{}",companion.companion_id);
+            item.name=companion.name;
+            item.evidence=vec![evidence(EvidenceKind::CompanionInstance,companion.instance_id.clone())];
+            item.attributes.insert("componentKind".into(),"paired-companion".into());
+            item.attributes.insert("companionId".into(),companion.companion_id);
+            item.attributes.insert("companionKind".into(),companion.kind);
+            item.attributes.insert("pairedIdentityFingerprint".into(),companion.identity_fingerprint.clone());
+            if item.route.is_none() && companion.connected {
+                item.route=Some(Route {id:format!("companion:{}",companion.instance_id),transport:Transport::Integration,
+                    provider_generation:companion.identity_fingerprint,attributes:attributes([("preparationOnly","paired-companion".into())]),
+                    baseline_ready:false,writable:false,priority:0});
+            }
+            components.push(item);
+        }
+        observations.extend(components);
+        Ok(observations)
     }
     fn companion_observation(
         source: osg_mapping_host::companions::ResourceDescriptor,

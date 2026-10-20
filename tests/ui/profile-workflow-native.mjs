@@ -113,9 +113,13 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
     await expect(page.getByRole('heading',{name:'New profile',exact:true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Choose resources for new profile'})).toHaveCount(0);
+    const palette=page.getByRole('complementary',{name:'Component palette',exact:true});
+    await expect(palette).toBeVisible();
+    await expect(page.getByRole('button',{name:'Add from inventory',exact:true})).toHaveCount(0);
+    await expect(page.getByLabel('Visible transformation',{exact:true})).toHaveCount(0);
     await expect(page.getByText('0 blocks',{exact:true})).toBeVisible();
     names.add(name);await renameProfile(name);
-    await page.getByRole('button',{name:'Add keyboard and mouse',exact:true}).click();
+    await palette.getByRole('button',{name:'Add keyboard and mouse',exact:true}).click();
     await page.getByLabel('Keyboard and mouse scope',{exact:true}).selectOption('desktop-wide');
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
     await saved();
@@ -124,19 +128,22 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     const first=(await native({command:'profile_list'})).profiles.profiles.find(profile=>profile.name===name);assert.ok(first);
     let document=(await native({command:'profile_get',id:first.id})).profiles.document;
     assert.equal(document.resources.length,0);assert.equal(document.desktopOutputs[0].scope.kind,'desktop-wide');
-    // Connect a neutral constant through the actual editor. This acquires desktop
-    // output during activation without emitting a nonneutral key into another app.
-    await page.getByLabel('Visible transformation',{exact:true}).selectOption('constant');
-    await page.getByRole('button',{name:'Add transformation',exact:true}).click();
-    await page.getByRole('button',{name:'Connect exact ports',exact:true}).click();
-    const composer=page.getByRole('region',{name:'Exact connection editor'});
-    await composer.getByLabel('Source block',{exact:true}).selectOption({label:'Constant value'});
-    await composer.getByLabel('Exact source output',{exact:true}).selectOption('out');
-    await composer.getByLabel('Destination block',{exact:true}).selectOption({label:'Keyboard and mouse'});
-    await composer.getByLabel('Exact destination input / action',{exact:true}).selectOption('action-1');
-    await composer.getByRole('button',{name:'Create exact route',exact:true}).click();
-    await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await saved();
+    assert.equal(document.processingNodes.length,0,'Adding keyboard and mouse must not create preset transformations.');
+    assert.equal(document.bindings.length,0,'The keyboard starter must not infer any signal routes.');
+    assert.deepEqual(document.desktopOutputs[0].actions,[{portId:'action-1',action:{kind:'key-hold',key:44}}]);
+    // The palette deliberately has no Constant adder. Seed this lifecycle-only
+    // neutral route through the actual atomic native editor-save API, then reopen
+    // the saved profile. Real connection insertion is covered separately by
+    // profile-component-palette-native.mjs. False never presses a desktop key.
+    const neutralId='native-neutral',desktop=document.desktopOutputs[0];
+    document.processingNodes.push({id:neutralId,name:'Neutral desktop acceptance',operation:{kind:'constant',value:false},inputs:[],outputs:[{id:'out',name:'Neutral false',direction:'output',contract:{delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false}}]});
+    document.bindings.push({id:'native-neutral-route',from:{nodeId:neutralId,portId:'out'},to:{nodeId:desktop.id,portId:'action-1'}});
+    document.editor.positions.push({nodeId:neutralId,x:100,y:100});
+    const fixtureSaved=(await native({command:'profile_editor_save',document,expectedRevision:document.revision,assignments:[]})).profiles;
+    assert.equal(fixtureSaved.saveApplication.state,'inactive');
+    assert.equal(fixtureSaved.document.processingNodes[0].operation.value,false);
+    await list();await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click();
+    await expect(page.getByRole('heading',{name,exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Activate profile',exact:true})).toBeEnabled();
     await page.getByRole('button',{name:'Activate profile',exact:true}).click();
     await expect.poll(async()=>(await status()).owner?.profileId).toBe(first.id);

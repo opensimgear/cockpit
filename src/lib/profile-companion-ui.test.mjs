@@ -7,7 +7,7 @@ const deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);retu
 async function view(value=draft(),seed={},props={}){
   const filename=new URL('./ProfileCompanionEditor.svelte',import.meta.url);let source=await readFile(filename,'utf8');
   source=source.replace('  const resource=$derived',"  const seeded=seedCompanion();catalogue=seeded.catalogue??catalogue;page=seeded.page??page;chosen=seeded.chosen??chosen;target=seeded.target??target;mappings=seeded.mappings??mappings;clearPorts=seeded.clearPorts??clearPorts;group=seeded.group??group;\n  const resource=$derived");
-  source=source.replace('</script>',"captureCompanion({refresh,choose,chooseTarget,browse,capture,release,reconcile,chooseMapping,addPort,syncContext,setGraph(value){graph=value;syncContext();},get state(){return{catalogue,page,chosen,target,busy,error};}});</script>");
+  source=source.replace('</script>',"captureCompanion({refresh,autoBrowsePanels,choose,chooseTarget,browse,capture,release,reconcile,chooseMapping,addPort,syncContext,setGraph(value){graph=value;syncContext();},get state(){return{catalogue,page,chosen,target,busy,error};}});</script>");
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={},destroyers=[],calls=[],edits=[];let handlers;
   const client=new api.ProfileCompanionAuthoringClient(async request=>{calls.push(plain(request));return request.command==='profile_companion_catalogue'?catalogue():page();});
   vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,seedCompanion:()=>seed,captureCompanion(value){handlers=value;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onDestroy(callback){destroyers.push(callback);}};if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest(){throw new Error('Rendering cannot issue native effects.');}};throw new Error(`Unexpected companion UI dependency ${name}`);}},{filename:filename.pathname});
@@ -17,6 +17,52 @@ async function view(value=draft(),seed={},props={}){
 test('actual panel selector opens passively and captures only a chosen retained revision without adding controls or routes',async()=>{
   let h=await view();assert.ok(h.html.includes('Companion panel'));assert.ok(h.html.includes('Browse published panels'));assert.doesNotMatch(h.html,/revision/i);assert.deepEqual(h.calls,[]);assert.deepEqual(h.edits,[]);await h.handlers.refresh();assert.equal(h.calls[0].command,'profile_companion_catalogue');assert.equal(h.handlers.state.catalogue.panels[0].controlCount,1);
   h=await view(draft(),{catalogue:catalogue(),chosen:hash(1)});assert.ok(h.html.includes('1 actual interactive controls'));assert.ok(h.html.includes('feedback-only graph'));assert.ok(h.html.includes('Use panel in profile'));assert.doesNotMatch(h.html,/revision/i);h.handlers.capture();assert.equal(h.edits.length,1);assert.equal(h.edits[0].next.document.resources[0].ports.length,0);assert.equal(h.edits[0].next.document.bindings.length,0);assert.deepEqual(h.edits[0].next.document.companionAssignments,[{resourceId:'screen',publicationHash:hash(1)}]);assert.deepEqual(h.calls,[]);
+});
+test('paired component configuration automatically browses panels without selecting its current panel or exposing legacy panel names',async()=>{
+  const base={resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:0,cachedPortCount:0,connections:[],diagnostics:[]};
+  const paired={...base,id:'opaque-instance',name:'Paired kitchen display',attributes:{componentKind:'paired-companion',companionId:'screen',publicationHash:hash(6)}};
+  const legacy={...base,id:'legacy-instance',name:'Legacy panel title',attributes:{companionId:'screen',publicationHash:hash(6)}};
+  const h=await view(draft(),{},{inventory:[paired,legacy]});
+  assert.ok(h.html.includes('Paired kitchen display'));assert.ok(!h.html.includes('Legacy panel title'));
+  await h.handlers.autoBrowsePanels();await h.handlers.autoBrowsePanels();
+  assert.deepEqual(h.calls,[{command:'profile_companion_catalogue'}]);
+  assert.equal(h.handlers.state.chosen,'');assert.deepEqual(h.edits,[]);
+  const old=draft();old.assignments[0].sourceId='legacy-instance';
+  const retained=await view(old,{},{inventory:[paired,legacy]});assert.ok(retained.html.includes('Legacy panel title'));
+});
+test('companion choices exclude other blocks by exact source and paired installation aliases while retaining the current legacy assignment',async()=>{
+  const base={resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:0,cachedPortCount:0,connections:[],diagnostics:[]};
+  const inventory=[
+    {...base,id:'opaque-instance',name:'Current paired display',attributes:{componentKind:'paired-companion',companionId:'current'}},
+    {...base,id:'used-paired',name:'Already used paired display',attributes:{componentKind:'paired-companion',companionId:'used'}},
+    {...base,id:'used-legacy',name:'Current legacy assignment',attributes:{companionId:'used'}},
+    {...base,id:'used-exact',name:'Already used exact source',attributes:{componentKind:'paired-companion'}},
+    {...base,id:'available',name:'Unused paired display',attributes:{componentKind:'paired-companion',companionId:'available'}},
+  ];
+  const value=draft();
+  for(const [resourceId,sourceId]of[['other','used-legacy'],['exact','used-exact']]){
+    value.document.resources.push({id:resourceId,name:resourceId,kind:'companion',required:false,ports:[]});value.assignments.push({resourceId,sourceId,ports:[]});
+  }
+  const h=await view(value,{},{inventory});
+  assert.ok(h.html.includes('Current paired display'));assert.ok(h.html.includes('Unused paired display'));
+  assert.ok(!h.html.includes('Already used paired display'));assert.ok(!h.html.includes('Already used exact source'));
+  h.handlers.chooseTarget('used-paired');assert.equal(h.handlers.state.target,'opaque-instance');assert.match(h.handlers.state.error,/already used by another profile block/);
+  h.handlers.chooseTarget('used-exact');assert.equal(h.handlers.state.target,'opaque-instance');assert.deepEqual(h.edits,[]);
+  const duplicated=plain(value);duplicated.assignments[0].sourceId='used-legacy';
+  const retained=await view(duplicated,{},{inventory});assert.ok(retained.html.includes('Current legacy assignment'));assert.ok(retained.html.includes('Unused paired display'));
+});
+test('reconciliation rechecks a stale target against other blocks and cannot bypass alias or exact identity protection',async()=>{
+  const base={resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:0,cachedPortCount:0,connections:[],diagnostics:[]};
+  for(const alias of[false,true]){
+    const value=draft();value.document.resources.push({id:'other',name:'Other screen',kind:'companion',required:false,ports:[]});
+    value.assignments.push({resourceId:'other',sourceId:alias?'used-legacy':'used-paired',ports:[]});
+    const inventory=[{...base,id:'used-paired',name:'Used screen',attributes:{componentKind:'paired-companion',companionId:'used'}},{...base,id:'used-legacy',name:'Old panel instance',attributes:{companionId:'used'}}];
+    const stalePage={...page(),resourceId:'used-paired'};
+    const h=await view(value,{catalogue:catalogue(),chosen:hash(1),target:'used-paired',page:stalePage},{inventory});
+    assert.match(h.html,/<button[^>]*disabled[^>]*>Assign companion and reconcile panel ports<\/button>/);
+    h.handlers.reconcile();assert.equal(h.edits.length,0);assert.match(h.handlers.state.error,/already used by another profile block/);
+    assert.equal(value.assignments[0].sourceId,'opaque-instance');assert.deepEqual(h.calls,[]);
+  }
 });
 test('exact prospective feedback choice authors a feedback-only graph and preserves independent real panel controls',async()=>{
   const captured=api.graphCaptureCompanionPanel(draft(),'screen',panel());let h=await view(captured,{catalogue:catalogue(),chosen:hash(1),page:page()});for(const label of ['Prospective retained contracts','no live baseline','Add feedback input','Declared active state'])assert.ok(h.html.includes(label),label);assert.ok(!h.html.includes('Add control output'));assert.equal(h.edits.length,0);

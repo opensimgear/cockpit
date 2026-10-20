@@ -507,11 +507,18 @@ fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unass
     let hub=osg_companion_service::Hub::with_existing_storage(Arc::new(Memory(Mutex::new(serde_json::to_vec(&record).unwrap()))),sources.companions.clone()).unwrap().unwrap();
     sources.host=Arc::new(crate::companion_host::Runtime::with_profile_metadata(hub.clone(),sources.companions.clone(),temporary.path().into()));
     let items=sources.companion_observations().unwrap();
-    assert_eq!(items.len(),1);assert!(items[0].route.is_none());assert!(items[0].ports.is_none());
+    assert_eq!(items.len(),2);assert!(items.iter().all(|item|item.route.is_none()&&item.ports.is_none()));
+    let component=items.iter().find(|item|item.attributes.get("componentKind").is_some_and(|kind|kind=="paired-companion")).unwrap();
+    assert_eq!(component.name,"Offline screen");assert_eq!(component.key,"paired:paired");
     let request=if removal=="companion_unassign"{json!({"command":removal,"instanceId":"test-companion"})}else{json!({"command":removal,"companionId":"paired"})};
     hub.command(&request).unwrap();
     assert_eq!(sources.companions.resource_inventory().len(),1,"Sink definitions intentionally remain cached.");
-    assert!(sources.companion_observations().unwrap().is_empty());
+    let remaining=sources.companion_observations().unwrap();
+    if removal=="companion_unassign" {
+        assert_eq!(remaining.len(),1);assert_eq!(remaining[0].key,"paired:paired");
+        assert!(remaining[0].ports.is_none());assert!(remaining[0].route.is_none());
+        assert_eq!(remaining[0].evidence[0].value,osg_companion_service::profile::profile_instance_id("paired"));
+    } else { assert!(remaining.is_empty()); }
     }
 }
 

@@ -100,6 +100,16 @@ struct Session {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceTransport { Network, Usb }
+#[derive(Clone, Debug)]
+pub struct ResourceCompanion {
+    pub companion_id: String,
+    pub name: String,
+    pub kind: String,
+    pub instance_id: String,
+    pub instances: Vec<String>,
+    pub connected: bool,
+    pub identity_fingerprint: String,
+}
 struct Inner {
     record: Record,
     publications: BTreeMap<String, Publication>,
@@ -353,6 +363,23 @@ impl Hub {
         inner.record.instances.iter()
             .filter(|assignment| inner.record.credentials.iter().any(|credential| credential.companion_id == assignment.companion_id))
             .map(|assignment| assignment.instance_id.clone()).collect()
+    }
+
+    /// Paired installations are components even before a panel is assigned.
+    /// A stable native default slot is prospective metadata, never an assignment.
+    pub fn resource_companions(&self) -> Vec<ResourceCompanion> {
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        inner.record.credentials.iter().map(|credential| {
+            let mut instances=inner.record.instances.iter().filter(|assignment|assignment.companion_id==credential.companion_id)
+                .map(|assignment|assignment.instance_id.clone()).collect::<Vec<_>>();
+            instances.sort();
+            ResourceCompanion {
+                companion_id:credential.companion_id.clone(),name:credential.name.clone(),kind:credential.kind.clone(),
+                instance_id:instances.first().cloned().unwrap_or_else(||profile::profile_instance_id(&credential.companion_id)),instances,
+                connected:inner.connections.values().any(|id|id==&credential.companion_id),
+                identity_fingerprint:format!("sha256:{}",hash(format!("{}:{}:{}",self.runtime_identity.as_str(),credential.companion_id,credential.token_hash).as_bytes())),
+            }
+        }).collect()
     }
 
     /// Trusted local persistence boundary; never exposed as a wire operation.

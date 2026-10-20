@@ -571,3 +571,307 @@ fn missing_panel_cache_preserves_owned_recovery_intent_and_still_allows_neutrali
         original.publication_hash
     );
 }
+
+#[derive(Default)]
+struct RemovableSink {
+    source: Sink,
+    reject_removal: AtomicBool,
+}
+impl SourceSink for RemovableSink {
+    fn register(&self, definition: SourceDefinition) -> Result<(), String> {
+        self.source.register(definition)
+    }
+    fn unregister(&self, instance: &str) -> Result<(), String> {
+        if self.reject_removal.load(Ordering::SeqCst) {
+            return Err("Descriptor removal failed".into());
+        }
+        self.source.defs.lock().unwrap().remove(instance);
+        self.source.owners.lock().unwrap().remove(instance);
+        Ok(())
+    }
+    fn baseline(
+        &self,
+        token: &SourceToken,
+        sequence: u64,
+        changes: &[SourceChange],
+    ) -> Result<(), String> {
+        self.source.baseline(token, sequence, changes)
+    }
+    fn changes(
+        &self,
+        token: &SourceToken,
+        sequence: u64,
+        changes: &[SourceChange],
+    ) -> Result<(), String> {
+        self.source.changes(token, sequence, changes)
+    }
+    fn loss(&self, token: &SourceToken) -> Result<(), String> {
+        self.source.loss(token)
+    }
+}
+
+fn capture_first(
+    hub: &Hub,
+    panel: &Publication,
+    previous: Option<&profile::AssignmentReceipt>,
+) -> profile::AssignmentReceipt {
+    let proof = hub
+        .prepare_profile_assignment(
+            &profile::profile_instance_id("screen"),
+            &panel.publication_hash,
+        )
+        .unwrap();
+    hub.capture_profile_assignment(&proof, &uuid::Uuid::new_v4().to_string(), previous)
+        .unwrap()
+}
+
+#[test]
+fn first_assignment_preparation_requires_an_unassigned_paired_installation_and_is_passive() {
+    let sink = Arc::new(RemovableSink::default());
+    let hub = Hub::new("profile-host".into(), sink.clone());
+    let panel = publish(&hub, fixture());
+    let instance = profile::profile_instance_id("screen");
+    assert!(id(&instance));
+    assert_ne!(instance, profile::profile_instance_id("peer"));
+    assert!(hub
+        .prepare_profile_assignment(&instance, &panel.publication_hash)
+        .is_err());
+    paired(&hub, "screen");
+    let proof = hub
+        .prepare_profile_assignment(&instance, &panel.publication_hash)
+        .unwrap();
+    let receipt = capture_first(&hub, &panel, None);
+    let encoded = serde_json::to_value(receipt).unwrap();
+    assert!(encoded["expected"].is_null());
+    assert!(encoded["baseline"].is_null());
+    assert_eq!(proof.companion_id(), "screen");
+    assert_eq!(proof.definition(), panel.definition(&instance));
+    assert!(hub.assigned_publication(&instance).is_err());
+    assert!(hub.resource_instance_ids().is_empty());
+    assert!(sink.source.defs.lock().unwrap().is_empty());
+    assert!(sink.source.events.lock().unwrap().is_empty());
+    assign(&hub, "screen", "operator-instance", &panel.publication_hash);
+    assert!(hub.validate_profile_preparation(&proof).is_err());
+    assert!(hub
+        .prepare_profile_assignment(&instance, &panel.publication_hash)
+        .is_err());
+    assert!(hub
+        .prepare_profile_assignment(
+            &profile::profile_instance_id("not-paired"),
+            &panel.publication_hash
+        )
+        .is_err());
+}
+
+#[test]
+fn first_assignment_takeover_preserves_absence_and_removes_only_the_exact_owned_source() {
+    use profile::AssignmentRestore;
+    let sink = Arc::new(RemovableSink::default());
+    let hub = Hub::new("profile-host".into(), sink.clone());
+    let secret = paired(&hub, "screen");
+    paired(&hub, "peer");
+    let panel = publish(&hub, fixture());
+    let other = publish(
+        &hub,
+        mutated(|document| document["ui"]["title"] = json!("Other panel")),
+    );
+    assign(&hub, "peer", "peer-instance", &panel.publication_hash);
+    let first = capture_first(&hub, &panel, None);
+    hub.acquire_profile_assignment(&first).unwrap();
+    hub.acquire_profile_assignment(&first).unwrap();
+    assert!(
+        hub.profile_feedback_token(&first).is_err(),
+        "Prospective assignment is not a live reader"
+    );
+    let opened = connect(&hub, "first-live", &secret, first.instance_id());
+    assert_eq!(baseline(&hub, "first-live", &opened, &panel)["ok"], true);
+    assert!(sink
+        .source
+        .owners
+        .lock()
+        .unwrap()
+        .contains_key(first.instance_id()));
+    let second = capture_first(&hub, &other, Some(&first));
+    assert_eq!(second.revision(), 2);
+    assert!(serde_json::to_value(&second).unwrap()["baseline"].is_null());
+    hub.acquire_profile_assignment(&second).unwrap();
+    assert!(!sink
+        .source
+        .owners
+        .lock()
+        .unwrap()
+        .contains_key(first.instance_id()));
+    assert!(hub.acquire_profile_assignment(&first).is_err());
+    assert_eq!(
+        hub.restore_profile_assignment(&first).unwrap(),
+        AssignmentRestore::OwnershipLost
+    );
+    hub.validate_profile_assignment(&second).unwrap();
+    assert_eq!(
+        hub.restore_profile_assignment(&second).unwrap(),
+        AssignmentRestore::Restored
+    );
+    assert!(hub.assigned_publication(second.instance_id()).is_err());
+    assert!(!sink
+        .source
+        .defs
+        .lock()
+        .unwrap()
+        .contains_key(second.instance_id()));
+    assert!(sink
+        .source
+        .defs
+        .lock()
+        .unwrap()
+        .contains_key("peer-instance"));
+    assert_eq!(
+        hub.assigned_publication("peer-instance")
+            .unwrap()
+            .publication_hash,
+        panel.publication_hash
+    );
+    assert_eq!(
+        hub.restore_profile_assignment(&second).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+    assert_eq!(
+        hub.restore_profile_assignment(&first).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+    assert!(wire(&hub, "first-live", input(&opened, &panel, "1"))["ok"] != true);
+    hub.prepare_profile_assignment(second.instance_id(), &panel.publication_hash)
+        .unwrap();
+}
+
+#[test]
+fn first_assignment_storage_and_descriptor_failures_preserve_durable_authority_for_retry() {
+    use profile::AssignmentRestore;
+    let storage = Arc::new(Memory::default());
+    let sink = Arc::new(RemovableSink::default());
+    let hub = Hub::with_storage(storage.clone(), sink.clone()).unwrap();
+    let secret = paired(&hub, "screen");
+    let panel = publish(&hub, fixture());
+    let receipt = capture_first(&hub, &panel, None);
+    let before = storage.value.lock().unwrap().clone();
+    storage.fail.store(true, Ordering::SeqCst);
+    assert!(hub.acquire_profile_assignment(&receipt).is_err());
+    assert_eq!(*storage.value.lock().unwrap(), before);
+    assert!(hub.assigned_publication(receipt.instance_id()).is_err());
+    assert!(!sink
+        .source
+        .defs
+        .lock()
+        .unwrap()
+        .contains_key(receipt.instance_id()));
+    assert_eq!(
+        hub.restore_profile_assignment(&receipt).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+    storage.fail.store(false, Ordering::SeqCst);
+    hub.acquire_profile_assignment(&receipt).unwrap();
+    let opened = connect(&hub, "live", &secret, receipt.instance_id());
+    baseline(&hub, "live", &opened, &panel);
+    let owned = storage.value.lock().unwrap().clone();
+    storage.fail.store(true, Ordering::SeqCst);
+    assert!(hub.restore_profile_assignment(&receipt).is_err());
+    assert_eq!(*storage.value.lock().unwrap(), owned);
+    assert!(!sink
+        .source
+        .owners
+        .lock()
+        .unwrap()
+        .contains_key(receipt.instance_id()));
+    assert!(sink
+        .source
+        .defs
+        .lock()
+        .unwrap()
+        .contains_key(receipt.instance_id()));
+    hub.validate_profile_assignment(&receipt).unwrap();
+    storage.fail.store(false, Ordering::SeqCst);
+    sink.reject_removal.store(true, Ordering::SeqCst);
+    assert!(hub.restore_profile_assignment(&receipt).is_err());
+    assert_eq!(*storage.value.lock().unwrap(), owned);
+    hub.validate_profile_assignment(&receipt).unwrap();
+    sink.reject_removal.store(false, Ordering::SeqCst);
+    assert_eq!(
+        hub.restore_profile_assignment(&receipt).unwrap(),
+        AssignmentRestore::Restored
+    );
+    assert!(!sink
+        .source
+        .defs
+        .lock()
+        .unwrap()
+        .contains_key(receipt.instance_id()));
+}
+
+#[test]
+fn first_assignment_receipt_is_installation_scoped_and_restart_can_restore_absence_without_panel_cache(
+) {
+    use profile::AssignmentRestore;
+    let storage = Arc::new(Memory::default());
+    let hub = Hub::with_storage(storage.clone(), Arc::new(RemovableSink::default())).unwrap();
+    paired(&hub, "screen");
+    let panel = publish(&hub, fixture());
+    let stale = capture_first(&hub, &panel, None);
+    operator(
+        &hub,
+        json!({"command":"companion_revoke","companionId":"screen"}),
+    );
+    paired(&hub, "screen");
+    assert!(hub.acquire_profile_assignment(&stale).is_err());
+    let receipt = capture_first(&hub, &panel, None);
+    let encoded = serde_json::to_value(&receipt).unwrap();
+    hub.acquire_profile_assignment(&receipt).unwrap();
+    let sink = Arc::new(RemovableSink::default());
+    let restarted = Hub::with_existing_storage(storage, sink.clone())
+        .unwrap()
+        .unwrap();
+    restarted
+        .validate_profile_assignment_owner(&receipt)
+        .unwrap();
+    assert!(restarted.validate_profile_assignment(&receipt).is_err());
+    let decoded: profile::AssignmentReceipt = serde_json::from_value(encoded.clone()).unwrap();
+    let mut tampered = encoded;
+    tampered["desired"]["ownership"]["baselineHash"] = json!(format!("sha256:{}", "0".repeat(64)));
+    let tampered: profile::AssignmentReceipt = serde_json::from_value(tampered).unwrap();
+    assert!(
+        restarted.restore_profile_assignment(&tampered).unwrap()
+            == AssignmentRestore::OwnershipLost
+    );
+    assert_eq!(
+        restarted.restore_profile_assignment(&decoded).unwrap(),
+        AssignmentRestore::Restored
+    );
+    assert!(restarted
+        .assigned_publication(receipt.instance_id())
+        .is_err());
+    assert!(!sink
+        .source
+        .defs
+        .lock()
+        .unwrap()
+        .contains_key(receipt.instance_id()));
+    assert_eq!(
+        restarted.restore_profile_assignment(&decoded).unwrap(),
+        AssignmentRestore::AlreadyBaseline
+    );
+}
+
+#[test]
+fn first_assignment_cannot_overwrite_a_new_operator_assignment_captured_after_preparation() {
+    let hub = Hub::new("profile-host".into(), Arc::new(RemovableSink::default()));
+    paired(&hub, "screen");
+    let panel = publish(&hub, fixture());
+    let receipt = capture_first(&hub, &panel, None);
+    assign(&hub, "screen", "operator-instance", &panel.publication_hash);
+    assert!(hub.acquire_profile_assignment(&receipt).is_err());
+    assert!(hub.assigned_publication(receipt.instance_id()).is_err());
+    assert_eq!(
+        hub.assigned_publication("operator-instance")
+            .unwrap()
+            .publication_hash,
+        panel.publication_hash
+    );
+}

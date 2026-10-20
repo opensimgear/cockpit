@@ -670,6 +670,13 @@ impl Runtime {
         }
         Ok(self.metadata(false)?.hub.resource_instance_ids())
     }
+    pub(crate) fn resource_companions(&self) -> Result<Vec<osg_companion_service::ResourceCompanion>,String> {
+        if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
+        if let Some(metadata)=self.metadata.get(){return Ok(metadata.hub.resource_companions());}
+        let Some(path)=&self.path else{return Ok(vec![])};
+        if !path.join("companion-host-state.dpapi").try_exists().map_err(|error|error.to_string())?{return Ok(vec![])}
+        Ok(self.metadata(false)?.hub.resource_companions())
+    }
     pub(crate) fn resource_publication(&self, instance_id: &str) -> Result<osg_companion_service::Publication, String> {
         self.metadata.get().ok_or("Companion setup is not initialized; no inventory access starts it.")?
             .hub.assigned_publication(instance_id)

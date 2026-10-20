@@ -1060,6 +1060,15 @@ impl osg_companion_service::SourceSink for CompanionProvider {
         self.notify_consumer();
         result
     }
+    fn unregister(&self, source_id: &str) -> Result<(), String> {
+        {
+            let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
+            lose(&mut state,source_id,self.now(),"Companion profile assignment removed.");
+            state.instances.remove(source_id);
+        }
+        self.notify_consumer();
+        Ok(())
+    }
     fn baseline(
         &self,
         token: &osg_companion_service::SourceToken,

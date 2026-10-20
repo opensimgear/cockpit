@@ -52,7 +52,7 @@ async function until(operation, description, timeout = 15000) {
   throw new Error(`${description}${last ? ': ' + redact(last.message) : ''}`);
 }
 
-test('native unpair removes cached companion resources and refreshes an open Profile inventory picker', { timeout: 120000 }, async () => {
+test('native unpair removes paired and assigned companion resources from an open component palette', { timeout: 120000 }, async () => {
   await mkdir(artifacts, { recursive: true });
   const native = await connectNative(), errors = [], instanceId = randomUUID(), checks = [];
   let browser, context, peerPage, companionId, draftOpen = false, before;
@@ -71,12 +71,12 @@ test('native unpair removes cached companion resources and refreshes an open Pro
     return all;
   };
   const click = (label, scope = 'main') => until(() => native.evaluate(`(()=>{const root=document.querySelector(${JSON.stringify(scope)});const button=[...(root?.querySelectorAll('button')??[])].find(button=>(button.getAttribute('aria-label')??button.textContent.replace(/\\s+/g,' ').trim())===${JSON.stringify(label)});if(!button||button.disabled)return false;button.scrollIntoView({block:'center'});button.click();return true;})()`), `Native UI action did not become available: ${label}`);
-  const picker = () => native.evaluate(`(()=>{const picker=document.querySelector('[aria-label="Add resource blocks"]');return picker?{rows:[...picker.querySelectorAll('.inventory-choices label')].map(label=>({name:label.querySelector('strong').textContent,kind:label.querySelector('small').textContent,checked:label.querySelector('input').checked})),selection:picker.querySelector(':scope > button:last-child')?.textContent,disabled:picker.querySelector(':scope > button:last-child')?.disabled}:null;})()`);
+  const palette = () => native.evaluate(`(()=>{const palette=document.querySelector('[aria-label="Component palette"]');return palette?{rows:[...palette.querySelectorAll('button[data-resource-id]')].map(button=>({id:button.dataset.resourceId,name:button.querySelector('strong').textContent,group:button.closest('section').getAttribute('aria-label'),status:button.querySelector('small').textContent.trim(),disabled:button.disabled}))}:null;})()`);
   const capture = async name => { const result = await native.send('Page.captureScreenshot', { format: 'png' }); await writeFile(resolve(artifacts, name), Buffer.from(result.data, 'base64')); };
   const peerId = async () => peerPage?.evaluate(() => { const value = localStorage.getItem('osg-browser-credential-v2'); return value ? JSON.parse(value).companionId : null; });
   try {
     assert.equal(await native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke'), 'function');
-    assert.equal(await native.evaluate('document.visibilityState'), 'visible', 'The native Profile picker must remain visible for its real polling effect.');
+    assert.equal(await native.evaluate('document.visibilityState'), 'visible', 'The native component palette must remain visible for its real polling effect.');
     const profileState = (await request({ command: 'profile_status' })).profiles;
     assert.equal(profileState.profileSession.owner, null, 'Run this acceptance with no profile active.');
     const initial = await companions(), initialResources = await resources(), profilesBefore = (await request({ command: 'profile_list' })).profiles.profiles;
@@ -95,29 +95,29 @@ test('native unpair removes cached companion resources and refreshes an open Pro
     console.info('Temporary production browser companion paired.');
     assert.ok(!before.clients.includes(companionId), 'The disposable context must create a new companion identity.');
     await until(async () => (await companions()).host.clients.some(client => client.companionId === companionId), 'The native host did not retain the temporary paired identity');
+    const component = await until(async () => (await resources()).find(item => item.resourceType === 'companion' && item.attributes.componentKind === 'paired-companion' && item.attributes.companionId === companionId), 'The fresh paired companion did not appear before panel assignment');
+    assert.ok(!(await companions()).host.instances.some(instance => instance.companionId === companionId), 'Paired companion discovery must not create a panel assignment.');
+    checks.push('A fresh production browser appears as a paired companion component before any panel is assigned');
     await request({ command: 'companion_assign', companion: { companionId, instanceId, publicationHash: publication.publicationHash } });
     const resource = await until(async () => {
-      for (const item of (await resources()).filter(item => item.resourceType === 'companion' && !initialResources.some(old => old.id === item.id))) {
+      for (const item of (await resources()).filter(item => item.resourceType === 'companion' && item.id !== component.id && !initialResources.some(old => old.id === item.id))) {
         const details = (await request({ command: 'profile_resources_inspect', resourceId: item.id, offset: 0, limit: 1 })).profileResources;
         if (details.evidence.some(evidence => evidence.kind === 'companion-instance' && evidence.value === instanceId)) return item;
       }
     }, 'The native inventory did not discover the temporary assigned companion');
     await until(async () => (await resources()).find(item => item.id === resource.id)?.availability === 'online', 'The real browser did not establish its neutral native panel session');
     console.info('Temporary assigned companion discovered by native inventory.');
-    checks.push('A fresh production browser pairs and an independent instance of an existing publication is observed by the actual native inventory');
+    checks.push('An independent instance of an existing publication is observed without replacing the paired component identity');
 
     await click('Profiles', 'nav[aria-label="Main navigation"]');
     await until(() => native.evaluate(`!![...document.querySelectorAll('main h1')].find(heading=>heading.textContent==='Profiles')`), 'The native Profile list did not open');
     await click('Add profile'); draftOpen = true;
-    await until(() => native.evaluate(`!![...document.querySelectorAll('main button')].find(button=>button.textContent.trim()==='Add from inventory')`), 'The unsaved native Profile editor did not open');
-    await click('Add from inventory');
-    const current = await resources(), index = current.findIndex(item => item.id === resource.id);
-    const visiblePicker = await until(async () => { const value = await picker(); return value?.rows.length === current.length && value.rows[index]?.name === resource.name ? value : null; }, 'The open native inventory picker did not receive the temporary resource');
-    const originalNames = visiblePicker.rows.filter(row => row.kind.startsWith('Companion ·')).map(row => row.name).sort();
-    const reference = await native.send('Runtime.evaluate', { expression: `document.querySelector('[aria-label="Add resource blocks"]')`, returnByValue: false });
-    const pickerObjectId = reference.result.objectId;
-    await native.evaluate(`(()=>{const input=document.querySelectorAll('[aria-label="Add resource blocks"] .inventory-choices label')[${index}].querySelector('input');input.click();return input.checked;})()`);
-    await until(async () => (await picker())?.selection?.trim() === 'Add 1 selected resources', 'The temporary inventory checkbox did not select');
+    const current = await resources();
+    const visiblePalette = await until(async () => { const value = await palette(); return value?.rows.some(row => row.id === component.id && !row.disabled) ? value : null; }, 'The native component palette did not receive the temporary paired companion');
+    assert.equal(visiblePalette.rows.some(row => row.id === resource.id), false, 'Legacy per-panel instances must remain absent from the companion palette.');
+    const originalIds = visiblePalette.rows.filter(row => row.group === 'Companions').map(row => row.id).sort();
+    const reference = await native.send('Runtime.evaluate', { expression: `document.querySelector('[aria-label="Component palette"]')`, returnByValue: false });
+    const paletteObjectId = reference.result.objectId;
     await capture('paired-inventory.png');
 
     await context.close(); context = null;
@@ -126,24 +126,27 @@ test('native unpair removes cached companion resources and refreshes an open Pro
     const disconnected = await companions();
     assert.ok(disconnected.host.clients.some(client => client.companionId === companionId));
     assert.ok(disconnected.host.instances.some(instance => instance.instanceId === instanceId));
-    checks.push('Closing only the temporary browser retains its paired assignment and offline inventory resource');
+    await until(async () => (await resources()).find(item => item.id === component.id)?.availability === 'offline', 'Disconnect should retain the paired component as offline');
+    const offlineComponent = await until(async () => (await palette())?.rows.find(row => row.id === component.id && row.status === 'Offline'), 'The open palette did not reflect the paired companion going offline');
+    assert.ok(offlineComponent && !offlineComponent.disabled, 'An offline paired companion must remain addable.');
+    checks.push('Closing only the temporary browser retains its assignment and offline paired component, which remains addable');
 
     await request({ command: 'companion_revoke', companion: { companionId } });
     await until(async () => { const state = await companions(); return !state.host.clients.some(client => client.companionId === companionId) && !state.host.instances.some(instance => instance.instanceId === instanceId); }, 'The exact temporary companion did not unpair');
-    await until(async () => !(await resources()).some(item => item.id === resource.id), 'The unpaired companion remained in the native resource cache');
-    const expectedNames = [...originalNames]; expectedNames.splice(expectedNames.indexOf(resource.name), 1);
-    const refreshed = await until(async () => { const value = await picker(); return value && JSON.stringify(value.rows.filter(row => row.kind.startsWith('Companion ·')).map(row => row.name).sort()) === JSON.stringify(expectedNames) && value.selection?.trim() === 'Add 0 selected resources' && value.disabled ? value : null; }, 'The existing open picker did not automatically remove the unpaired resource and stale selection');
-    const connected = await native.send('Runtime.callFunctionOn', { objectId: pickerObjectId, functionDeclaration: `function(){return this.isConnected&&this===document.querySelector('[aria-label="Add resource blocks"]');}`, returnByValue: true });
-    assert.equal(connected.result.value, true, 'The picker must update in place without closing or navigating.');
+    await until(async () => !(await resources()).some(item => item.id === resource.id || item.id === component.id), 'The unpaired companion or its assigned instance remained in the native resource cache');
+    const expectedIds = originalIds.filter(id => id !== component.id);
+    const refreshed = await until(async () => { const value = await palette(); return value && JSON.stringify(value.rows.filter(row => row.group === 'Companions').map(row => row.id).sort()) === JSON.stringify(expectedIds) ? value : null; }, 'The existing open palette did not automatically remove the unpaired companion Add button');
+    const connected = await native.send('Runtime.callFunctionOn', { objectId: paletteObjectId, functionDeclaration: `function(){return this.isConnected&&this===document.querySelector('[aria-label="Component palette"]');}`, returnByValue: true });
+    assert.equal(connected.result.value, true, 'The palette must update in place without closing or navigating.');
     await capture('unpaired-inventory.png');
-    console.info('Unpair removed the native resource and refreshed the same open picker.');
-    checks.push('Unpair removes the exact native resource; the same open Profile picker updates automatically and clears its stale selection');
+    console.info('Unpair removed both native resources and refreshed the same open palette.');
+    checks.push('Unpair removes both exact native resources and its Add button from the same open component palette');
     const final = await companions(), profilesAfter = (await request({ command: 'profile_list' })).profiles.profiles;
     assert.deepEqual(final.host.clients.map(client => client.companionId).sort(), before.clients);
     assert.deepEqual(final.host.instances.map(instance => instance.instanceId).sort(), before.instances);
     assert.deepEqual(profilesAfter, before.profiles);
     assert.deepEqual(errors, []);
-    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, rawCdp: true, productionBrowser: true, companionId, instanceId, resourceId: resource.id, beforeResourceCount: initialResources.length, pairedResourceCount: current.length, finalResourceCount: refreshed.rows.length, pickerUpdatedInPlace: true, staleSelectionCleared: true, preservedExistingIdentities: before, checks, errors }, null, 2) + '\n');
+    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, rawCdp: true, productionBrowser: true, companionId, instanceId, resourceId: resource.id, componentResourceId: component.id, pairedBeforeAssignment: true, legacyInstanceHiddenFromPalette: true, offlineComponentAddable: true, beforeResourceCount: initialResources.length, pairedResourceCount: current.length, finalPaletteResourceCount: refreshed.rows.length, paletteUpdatedInPlace: true, preservedExistingIdentities: before, checks, errors }, null, 2) + '\n');
   } catch (error) { await capture('failure.png').catch(() => {}); throw error; }
   finally {
     try {

@@ -7,9 +7,9 @@ and scope in each profile's keyboard/mouse block.
 
 ## Author actions
 
-Open a profile, choose a **Keyboard and mouse preset**, then **Add keyboard and
-mouse**. Presets create an endpoint and any required visible processing blocks.
-Connect exact source ports to those blocks or the endpoint's action ports.
+Open a profile and choose **Keyboard and mouse** in the **Components** palette.
+Configure the starter action in the block, then connect exact source ports to its
+action ports. Add transformations through connection lines when needed.
 A desktop-only profile needs no virtual controller.
 
 The inspector supports physical key holds, timed taps, modifier chords, mouse

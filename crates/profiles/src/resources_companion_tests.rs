@@ -62,6 +62,26 @@ fn batch(revision: u64, generation: &str, desired: bool) -> ProviderBatch {
         }],
     }
 }
+#[test]
+fn paired_component_can_prepare_explicit_panel_contracts_without_claiming_live_delivery() {
+    let mut registry=Registry::new();
+    let mut metadata=batch(1,"paired-metadata",false);metadata.scope="paired-companions".into();
+    let item=&mut metadata.observations[0];item.key="paired:screen".into();item.ports=None;
+    item.attributes.clear();item.attributes.insert("componentKind".into(),"paired-companion".into());
+    let route=item.route.as_mut().unwrap();route.transport=Transport::Integration;route.baseline_ready=false;route.writable=false;
+    route.attributes.insert("preparationOnly".into(),"paired-companion".into());
+    registry.reconcile(metadata).unwrap();let id=registry.list(0,1).unwrap().resources[0].id.clone();
+    assert!(registry.token(&id,"pressed",Access::Read).is_err());
+    let prepared=registry.prepare_companion_port(&id,"panel-one",&digest('b'),&digest('c'),descriptor("pressed",Direction::Output),Access::Read).unwrap();
+    registry.validate_preparation(&prepared).unwrap();
+    let mut actual=batch(2,"actual-native-baseline",true);actual.scope="paired-companions".into();
+    actual.observations[0].key="paired:screen".into();actual.observations[0].attributes.insert("componentKind".into(),"paired-companion".into());
+    registry.reconcile(actual).unwrap();
+    assert!(registry.validate_preparation(&prepared).is_err());
+    assert!(registry.token(&id,"pressed",Access::Read).is_ok());
+    registry.reconcile(ProviderBatch{scope:"paired-companions".into(),session:"provider-session".into(),revision:3,complete:true,observations:vec![]}).unwrap();
+    assert!(registry.list(0,1).unwrap().resources.is_empty());
+}
 fn fixture() -> (
     Registry,
     ProfileDocument,

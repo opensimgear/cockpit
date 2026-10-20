@@ -82,6 +82,18 @@ fn resource_inventory_retains_descriptors_and_expires_live_authority_without_ui_
     assert!(expired[0].fault.as_deref().unwrap().contains("expired"));
     assert!(connected[0].online);
 }
+#[test]
+fn explicit_profile_descriptor_removal_revokes_a_live_source_without_leaving_inventory_rows() {
+    use osg_companion_service::SourceSink;
+    let (provider,_)=provider();
+    provider.register_definition(definition("left")).unwrap();
+    let old=token("left",1);provider.baseline_native(&old,0,&baseline()).unwrap();
+    assert!(provider.resource_inventory()[0].online);
+    provider.unregister("left").unwrap();
+    assert!(provider.resource_inventory().is_empty());
+    assert!(provider.heartbeat_native(&old).is_err());
+    provider.unregister("left").unwrap();
+}
 fn change(control: &str, value: Value) -> Change {
     Change {
         control: control.into(),

@@ -268,8 +268,17 @@ impl Runtime {
                 }
             } else if let Some((instance, publication, capability))=pin.companion_publication() {
                 let summary=state.registry.inspect(&expected.resource_id,0,1)?.resource;
-                if current.scope!=expected.scope || current.key!=instance || expected.key!=instance
-                    || current.route.id!=format!("companion:{instance}") || current.route.transport!=expected.route.transport
+                // A paired installation keeps its authoring key when its first
+                // assignment gains a real native transport. Only the marked
+                // metadata route may make that transition; existing native
+                // routes remain pinned to their prepared transport.
+                let metadata=expected.route.transport==Transport::Integration
+                    && expected.route.attributes.get("preparationOnly").map(String::as_str)==Some("paired-companion")
+                    && summary.attributes.get("componentKind").map(String::as_str)==Some("paired-companion");
+                if current.scope!=expected.scope || current.key!=expected.key
+                    || current.route.id!=format!("companion:{instance}") || expected.route.id!=current.route.id
+                    || !matches!(current.route.transport,Transport::Usb|Transport::Network)
+                    || (!metadata && current.route.transport!=expected.route.transport)
                     || token.provider_session!=pin.provider_session()
                     || summary.attributes.get("publicationHash").map(String::as_str)!=Some(publication)
                     || summary.attributes.get("capabilityFingerprint").map(String::as_str)!=Some(capability) {
