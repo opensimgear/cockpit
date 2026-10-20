@@ -331,6 +331,21 @@ fn declaration_reordering_keeps_program_order_hash_and_capture_fingerprint() {
 }
 
 #[test]
+fn stable_panel_identity_survives_compilation_with_its_exact_publication_snapshot() {
+    let mut document = mixed();
+    let capture = snapshot(&document);
+    let legacy = compile(&document, &capture);
+    let publication = document.companion_assignments[0].publication_hash.clone();
+    document.companion_assignments[0].panel_id = Some("12345678-abcd-4000-8000-123456789abc".into());
+    let linked = compile(&document, &capture);
+    assert_ne!(linked.program_hash, legacy.program_hash);
+    let plan = linked.plan.unwrap();
+    assert_eq!(plan.companion_assignments, document.companion_assignments);
+    assert_eq!(plan.companion_assignments[0].publication_hash, publication);
+    assert_eq!(plan.companion_assignments[0].panel_id.as_deref(), Some("12345678-abcd-4000-8000-123456789abc"));
+}
+
+#[test]
 fn policy_changes_invalidate_portable_hash_while_capture_generations_do_not() {
     let document = mixed();
     let captured = snapshot(&document);

@@ -433,7 +433,7 @@ impl DcsLive {
                 .collect();
             document
                 .companion_assignments
-                .push(osg_profiles::CompanionAssignment {
+                .push(osg_profiles::CompanionAssignment { panel_id: None,
                     resource_id: "companion-panel".into(),
                     publication_hash: self.publication.publication_hash.clone(),
                 });

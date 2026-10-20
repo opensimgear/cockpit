@@ -1,4 +1,5 @@
 pub mod feedback;
+pub mod operation;
 pub use feedback::*;
 mod hub;
 pub mod pairing_code;

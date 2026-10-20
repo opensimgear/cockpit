@@ -74,6 +74,7 @@ struct NativeRun {
     companions: crate::profile_session_companions::CompanionSources,
     companion_catalogues: Vec<crate::profile_resources::CompanionCatalogue>,
     companion_retry: Option<u64>,
+    companion_initial_operations: BTreeMap<String,serde_json::Value>,
     visibility: crate::profile_session_visibility::Visibility,
     publication: crate::profile_session_overrides::Overrides,
     dcs_hid: dcs_hid::Guard,
@@ -657,7 +658,7 @@ impl Host for NativeProfileHost {
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
             child_game_owner: None, launch_epoch_bound: false, launch_context_installed: false,
-            companions, companion_catalogues, companion_retry: None, visibility,
+            companions, companion_catalogues, companion_retry: None, companion_initial_operations:BTreeMap::new(), visibility,
             actions,
             publication, dcs_hid, acquisition_plan: None,
         });
@@ -840,10 +841,17 @@ impl Host for NativeProfileHost {
                 let receipts = companion::receipts(&run.receipts)?;
                 let runtime = self.companions.clone();
                 if receipts.iter().any(|(release,_)|*release) {
-                    companion::restore(&runtime.profile_metadata()?, &receipts, true)?;
+                    companion::restore_latest(&runtime, &receipts, true)?;
                 }
                 let selected = receipts.into_iter().filter_map(|(release,receipt)|(!release).then_some(receipt)).collect::<Vec<_>>();
+                let initial_operations=self.run(&run.owner)?.companion_catalogues.iter().filter_map(|catalogue|
+                    runtime.profile_panel_operation_history(&catalogue.instance_id)
+                        .map(|operation|(catalogue.instance_id.clone(),operation))).collect();
+                self.run(&run.owner)?.companion_initial_operations=initial_operations;
                 self.run(&run.owner)?.companions.acquire(&runtime, &selected)?;
+                for catalogue in &self.run(&run.owner)?.companion_catalogues {
+                    runtime.profile_retry_panel(&catalogue.instance_id,&catalogue.publication_hash)?;
+                }
                 self.acquire_actions(&run.owner)
             }
             ApplyPhase::Baseline => {
@@ -1024,7 +1032,7 @@ impl Host for NativeProfileHost {
                 }
                 crate::profile_session_virtual::recover(&run.owner)?;
             }
-            if !captured.is_empty() { companion::restore(&self.companions.profile_metadata()?, &captured, false)?; }
+            if !captured.is_empty() { companion::restore_latest(&self.companions, &captured, false)?; }
         }
         self.prepared.remove(&key(&run.owner));
         Ok(())

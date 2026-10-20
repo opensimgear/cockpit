@@ -95,7 +95,9 @@ static void publication_tests(cJSON *p){
     cJSON *bitmap=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(pr,"widgets"),0);string(bitmap,"kind","image");cJSON_ReplaceItemInObjectCaseSensitive(bitmap,"config",json("{\"assetId\":\"picture\"}"));cJSON_ReplaceItemInObjectCaseSensitive(bitmap,"controlIds",json("[]"));cJSON_ReplaceItemInObjectCaseSensitive(ui,"controls",json("[]"));
     cJSON_AddItemToArray(cJSON_GetObjectItemCaseSensitive(ui,"assets"),json("{\"id\":\"picture\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mime\":\"image/png\",\"sizeBytes\":100}"));
     dump(copy,document,sizeof(document));sha(document,strlen(document),new_hash);display=cJSON_Duplicate(p,true);string(display,"canonicalDocument",document);string(display,"publicationHash",new_hash);
-    assert(osg_decode_publication(display,new_hash,crypto,&image,800,480));assert(image.widgets[0].kind==OSG_IMAGE&&!image.widgets[0].pixels);cJSON_Delete(display);cJSON_Delete(copy);
+    assert(osg_decode_publication(display,new_hash,crypto,&image,800,480));assert(image.widgets[0].kind==OSG_IMAGE&&!image.widgets[0].pixels);
+    assert(!strcmp(image.image_hashes[0],"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    cJSON_Delete(display);cJSON_Delete(copy);
     cJSON_Delete(doc);assert(osg_decode_publication(p,hash,crypto,&image,800,480));
 }
 static void transfer_tests(cJSON *p){

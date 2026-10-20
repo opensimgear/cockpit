@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/companion-esp32"
 OUT = ROOT / ".research/esp32-network"
 OUT.mkdir(parents=True, exist_ok=True)
-for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda", "serial-wire-test-*.gcda"):
+for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda", "serial-wire-test-*.gcda", "pixels-test-*.gcda"):
     for counter in OUT.glob(pattern):
         counter.unlink()
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g", "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048"]
@@ -22,9 +22,9 @@ for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.
     print(binary, "passed")
 subprocess.run([*flags, str(APP / "test/pixels_test.c"), "-o", str(OUT / "pixels-test")], check=True, cwd=ROOT)
 subprocess.run([str(OUT / "pixels-test")], check=True, cwd=ROOT)
-subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "input-test-input.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
+subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "input-test-input.gcno", "pixels-test-pixels_test.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
 report = {}
-for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("input", "input-test-input")):
+for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):
     data = json.loads(gzip.decompress((OUT / (artifact + ".gcov.json.gz")).read_bytes()))
     source = next(f for f in data["files"] if f["file"].replace("/../", "/").endswith("/network/" + module + ".c"))
     lines, functions = source["lines"], source["functions"]

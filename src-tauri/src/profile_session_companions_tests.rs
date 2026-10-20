@@ -112,7 +112,7 @@ impl Fixture {
             .clone();
         let mut plan = empty();
         plan.companion_assignments
-            .push(osg_profiles::CompanionAssignment {
+            .push(osg_profiles::CompanionAssignment { panel_id: None,
                 resource_id: "companion".into(),
                 publication_hash: publication.publication_hash.clone(),
             });
@@ -857,7 +857,7 @@ fn one_offline_peer_cannot_block_another_companions_fresh_reconnect_baseline() {
     sink.from.node_id = "second".into();
     plan.program.sinks.push(sink);
     plan.companion_assignments
-        .push(osg_profiles::CompanionAssignment {
+        .push(osg_profiles::CompanionAssignment { panel_id: None,
             resource_id: "second".into(),
             publication_hash: fixture.publication.publication_hash.clone(),
         });

@@ -16,6 +16,7 @@ typedef struct {
     osg_panel panel;
     osg_page pages[OSG_MAX_PAGES];
     osg_widget widgets[OSG_MAX_WIDGETS];
+    const char *image_hashes[OSG_MAX_WIDGETS];
     char strings[OSG_IMAGE_TEXT_BYTES];
     size_t used;
 } osg_image;

@@ -4,14 +4,18 @@
 #include <sys/time.h>
 #include <time.h>
 static int fake_settimeofday(const struct timeval *,const struct timezone *);
+static int fake_getchar(void);
 #define settimeofday fake_settimeofday
+#define getchar fake_getchar
 #include "../network/client.c"
 #undef settimeofday
+#undef getchar
 #include <assert.h>
 #include <stdlib.h>
 #include <openssl/sha.h>
 
-cJSON *osg_serial_take_command(void){return NULL;}
+static cJSON *mock_pending_command;
+cJSON *osg_serial_take_command(void){cJSON *v=mock_pending_command;mock_pending_command=NULL;return v;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
 static uint64_t fake_ms;
@@ -31,6 +35,10 @@ static osg_runtime test_runtime;
 static bool test_dirty;
 static const osg_panel *test_drawing;
 static cJSON *fixture;
+static const char *mock_serial_input;
+static size_t mock_serial_at;
+static bool serial_during_finish,serial_during_baseline,serial_during_image;
+static int fake_getchar(void){if(!mock_serial_input)return EOF;int c=(unsigned char)mock_serial_input[mock_serial_at++];if(!mock_serial_input[mock_serial_at]){mock_serial_input=NULL;mock_serial_at=0;}return c;}
 static int fake_settimeofday(const struct timeval *v,const struct timezone *zone){(void)zone;return clock_ok&&v->tv_sec>0?0:-1;}
 int64_t esp_timer_get_time(void){return (int64_t)fake_ms*1000;}
 void vTaskDelay(unsigned ms){fake_ms+=ms;}
@@ -55,10 +63,26 @@ bool osg_store_save(const osg_settings *s){(void)s;return store_ok;}
 bool osg_store_load(osg_settings *s){if(load_ok)*s=saved_settings;return load_ok;}
 static unsigned forgets;
 bool osg_store_forget(void){forgets++;return store_ok;}
-static unsigned char *pixel_store[2];
-bool osg_pixels_begin(unsigned slot,const char *hash,size_t bytes,bool *cached){(void)hash;free(pixel_store[slot]);pixel_store[slot]=malloc(bytes);*cached=false;return pixel_store[slot]!=NULL;}
-bool osg_pixels_write(unsigned slot,size_t offset,const void *bytes,size_t count){memcpy(pixel_store[slot]+offset,bytes,count);return true;}
-const unsigned char *osg_pixels_finish(unsigned slot,const char *hash,size_t bytes){(void)hash;(void)bytes;return pixel_store[slot];}
+static struct {char hash[72];unsigned width,height,pins;size_t bytes,written;bool complete;unsigned char *pixels;} pixel_store[128];
+static bool cache_fail,write_fail,finish_fail,image_request_ok=true;
+static const char *pixel_error="cache_io";
+static unsigned chunk_requests;
+void osg_pixels_panel_release(unsigned owner){for(unsigned i=0;i<128;i++){pixel_store[i].pins&=~(1u<<owner);if(!pixel_store[i].pins&&!pixel_store[i].complete){free(pixel_store[i].pixels);memset(&pixel_store[i],0,sizeof(pixel_store[i]));}}}
+bool osg_pixels_panel_begin(unsigned owner){osg_pixels_panel_release(owner);return true;}
+static int pixel_find(const char *hash,unsigned width,unsigned height,size_t bytes){for(unsigned i=0;i<128;i++)if(pixel_store[i].pixels&&!strcmp(hash,pixel_store[i].hash)&&width==pixel_store[i].width&&height==pixel_store[i].height&&bytes==pixel_store[i].bytes)return (int)i;return -1;}
+bool osg_pixels_contains(const char *hash,unsigned width,unsigned height,size_t bytes){int i=pixel_find(hash,width,height,bytes);return i>=0&&pixel_store[i].complete;}
+bool osg_pixels_acquire(unsigned owner,const char *hash,unsigned width,unsigned height,size_t bytes,unsigned *asset,bool *cached){
+    if(cache_fail)return false;
+    int found=pixel_find(hash,width,height,bytes);*cached=found>=0&&pixel_store[found].complete;
+    if(found<0){for(unsigned i=0;i<128;i++)if(!pixel_store[i].pixels){found=(int)i;break;}}
+    if(found<0)return false;
+    *asset=(unsigned)found;pixel_store[found].pins|=1u<<owner;
+    if(!pixel_store[found].pixels){pixel_store[found].pixels=malloc(bytes);assert(pixel_store[found].pixels);osg_copy(pixel_store[found].hash,72,hash);pixel_store[found].width=width;pixel_store[found].height=height;pixel_store[found].bytes=bytes;}
+    return true;
+}
+bool osg_pixels_write(unsigned asset,size_t offset,const void *bytes,size_t count){if(write_fail)return false;assert(offset==pixel_store[asset].written&&offset+count<=pixel_store[asset].bytes);memcpy(pixel_store[asset].pixels+offset,bytes,count);pixel_store[asset].written+=count;return true;}
+const unsigned char *osg_pixels_finish(unsigned asset){if(finish_fail)return NULL;assert(pixel_store[asset].written==pixel_store[asset].bytes);pixel_store[asset].complete=true;if(serial_during_finish)mock_serial_input="{\"command\":\"stop\"}\n";return pixel_store[asset].pixels;}
+const char *osg_pixels_error(void){return cache_fail?"cache_full":pixel_error;}
 bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
     (void)s;(void)timeout;requests++;const char *type=osg_string(v,"type");assert(type);osg_copy(requested_type,sizeof(requested_type),type);
     if(!permit_inputs)assert(strcmp(type,"baseline")&&strcmp(type,"input"));
@@ -86,18 +110,21 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         cJSON_AddStringToObject(*out,"sessionId",mock_session);cJSON_AddStringToObject(*out,"generation","1");
         cJSON_AddStringToObject(*out,"publicationHash",osg_string(fixture,"publicationHash"));cJSON_AddItemToObject(*out,"publication",cJSON_Duplicate(fixture,true));
     }else if(!strcmp(type,"image-chunk")){
+        chunk_requests++;
+        if(serial_during_image)mock_serial_input="{\"command\":\"stop\"}\n";
         size_t width=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"width")),height=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"height")),offset=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"offset")),total=width*height*3,count=total-offset;if(count>6144)count=6144;
         unsigned char pixels[6144];memset(pixels,255,count);unsigned char encoded[8193];EVP_EncodeBlock(encoded,pixels,(int)count);
         cJSON_AddStringToObject(*out,"type","image-chunk");cJSON_AddStringToObject(*out,"widgetId",osg_string(v,"widgetId"));cJSON_AddStringToObject(*out,"publicationHash",session.publication);cJSON_AddNumberToObject(*out,"width",(double)width);cJSON_AddNumberToObject(*out,"height",(double)height);cJSON_AddNumberToObject(*out,"offset",(double)offset);cJSON_AddNumberToObject(*out,"total",(double)total);cJSON_AddStringToObject(*out,"base64",(char *)encoded);
     }else if(!strcmp(type,"heartbeat")||!strcmp(type,"baseline")||!strcmp(type,"input")||!strcmp(type,"close")){
         if(!strcmp(type,"baseline")){baseline_requests++;assert(!mock_host_armed);assert(!strcmp(osg_string(v,"sequence"),"0"));cJSON *values=cJSON_GetObjectItemCaseSensitive(v,"values");assert(cJSON_IsObject(values)&&cJSON_GetArraySize(values)==1&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(values,"master")));mock_host_armed=true;mock_button=false;if(touch_during_baseline){osg_network_touch(true,true,100,100);osg_network_touch(true,false,0,0);}}
+        if(!strcmp(type,"baseline")&&serial_during_baseline)mock_serial_input="{\"command\":\"stop\"}\n";
         if(!strcmp(type,"input")){input_requests++;assert(mock_host_armed);uint64_t sequence;assert(osg_counter(osg_string(v,"sequence"),&sequence)&&sequence==mock_input_sequence+1);mock_input_sequence=sequence;cJSON *changes=cJSON_GetObjectItemCaseSensitive(v,"changes");assert(cJSON_IsArray(changes)&&cJSON_GetArraySize(changes)>0&&cJSON_GetArraySize(changes)<=OSG_INPUT_BATCH_EDGES);for(cJSON *change=changes->child;change;change=change->next){assert(!strcmp(osg_string(change,"controlId"),"master"));mock_button=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(change,"value"));}if(cancel_during_input)osg_network_touch(false,false,0,0);fake_ms+=input_ack_delay;}
         if(!strcmp(type,"close")){close_requests++;mock_host_armed=false;mock_button=false;}
-        cJSON_AddStringToObject(*out,"publicationHash",osg_string(fixture,"publicationHash"));cJSON_AddStringToObject(*out,"type",!strcmp(type,"close")?"closed":"ack");cJSON_AddStringToObject(*out,"clientId","client");cJSON_AddStringToObject(*out,"sessionId",wrong_session?"old":mock_session);cJSON_AddStringToObject(*out,"generation","1");
+        cJSON_AddStringToObject(*out,"publicationHash",session.publication);cJSON_AddStringToObject(*out,"type",!strcmp(type,"close")?"closed":"ack");cJSON_AddStringToObject(*out,"clientId","client");cJSON_AddStringToObject(*out,"sessionId",wrong_session?"old":mock_session);cJSON_AddStringToObject(*out,"generation","1");
         if(!strcmp(type,"close"))cJSON_AddNullToObject(*out,"sequence");else cJSON_AddStringToObject(*out,"sequence",osg_string(v,"sequence"));cJSON_AddStringToObject(*out,"ackStage","source-accepted");cJSON_AddBoolToObject(*out,"submitted",false);cJSON_AddNullToObject(*out,"feedbackSequence");cJSON_AddNullToObject(*out,"feedback");
     }else assert(false);
     if(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(v,"panelError"))){mock_host_armed=false;mock_button=false;}
-    cJSON_Delete(v);return request_ok;
+    bool result=request_ok&&(strcmp(type,"image-chunk")||image_request_ok);cJSON_Delete(v);return result;
 }
 static void fill(void *p,int x,int y,int w,int h,uint16_t c){(void)p;(void)x;(void)y;(void)w;(void)h;(void)c;}
 static void label(void *p,int x,int y,int w,int h,const char *s,uint16_t c){(void)s;fill(p,x,y,w,h,c);}
@@ -111,12 +138,13 @@ static void setup(void){
 static void live_ready(void){
     setup();state=AUTH;osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     advance();assert(state==OPEN);advance();assert(state==LIVE&&!remote_armed&&!test_runtime.armed);
+    assert(!strcmp(operation.phase,"rendering")&&!strcmp(operation.instance,"instance")&&!strcmp(operation.session,session.session));
     osg_network_render(test_runtime.panel,true,true);osg_network_touch(true,false,0,0);
 }
 static void arm_text(char out[1024]){
     snprintf(out,1024,"{\"command\":\"arm\",\"sessionId\":\"%s\",\"generation\":\"%s\",\"publicationHash\":\"%s\",\"armEpoch\":\"%" PRIu64 "\"}",session.session,session.generation,session.publication,input.epoch);
 }
-static void live_arm(void){char out[1024];arm_text(out);cmd(out);assert(remote_armed&&test_runtime.armed&&input.mode==OSG_INPUT_ARMED);advance();}
+static void live_arm(void){char out[1024];arm_text(out);cmd(out);assert(remote_armed&&test_runtime.armed&&input.mode==OSG_INPUT_ARMED&&!strcmp(operation.phase,"ready"));advance();}
 static void live_input_tests(void){
     permit_inputs=true;live_ready();int baselines=baseline_requests;cmd("{\"command\":\"arm\"}");assert(baseline_requests==baselines);
     char stale[1024];arm_text(stale);input.epoch++;cmd(stale);assert(baseline_requests==baselines);
@@ -259,6 +287,9 @@ int main(int argc,char **argv){
     arm_when_ready();assert(baseline_requests==automatic_baselines+1);
     live_ready();touch_during_baseline=true;arm_when_ready();touch_during_baseline=false;
     assert(state==FAULT&&!remote_armed&&!mock_host_armed);
+    live_ready();serial_during_baseline=true;arm_when_ready();serial_during_baseline=false;
+    assert(state==OFF&&!remote_armed&&!mock_host_armed&&!test_runtime.armed&&interrupted_command&&!strcmp(operation.error,"cancelled"));
+    cJSON_Delete(interrupted_command);interrupted_command=NULL;
     live_ready();arm_when_ready();assert(remote_armed);
     obsolete_session=true;fake_ms+=250;osg_network_touch(true,false,0,0);advance();obsolete_session=false;
     assert(state==AUTH&&!remote_armed);fake_ms+=500;advance();advance();
@@ -287,8 +318,35 @@ int main(int argc,char **argv){
     const char *reasons[]={"wifi-connection-failed","host-tls-or-connection-failed","pairing-offer-expired","pairing-approval-expired","baseline-not-confirmed-or-touch-changed-reconnect-required","input-cancelled-or-lease-expired-reconnect-required","input-backlog-or-counter-invalid-reconnect-required","session-counter-exhausted","trusted-clock-invalid","setup-storage-unavailable","setup-save-failed-repair-required","setup-delete-failed","invalid-installation-id","host-rejected-or-invalid-reply-stop-and-reconnect"};
     for(size_t i=0;i<sizeof(reasons)/sizeof(*reasons);i++){fail(reasons[i]);update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&test_runtime.screen_message[0]);}
     osg_image image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
+    image.image_hashes[0]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     assert(load_images(&image,0));assert(image.widgets[0].pixels && image.widgets[0].pixels[0]==255);assert(image.widgets[0].image_width>0);
-    request_ok=false;assert(!load_images(&image,1));assert(!strcmp(detail,"Image download: No valid response received"));request_ok=true;
-    image.widgets[0].bounds.width=0;assert(!load_images(&image,1));assert(!strcmp(detail,"Invalid image dimensions"));free(pixel_store[0]);free(pixel_store[1]);
+    assert(operation.completed==operation.total&&operation.misses==1&&operation.hits==0);
+    const unsigned char *active_pixels=image.widgets[0].pixels;unsigned downloaded=chunk_requests;
+    osg_copy(session.publication,sizeof(session.publication),"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    assert(load_images(&image,1));assert(chunk_requests==downloaded&&operation.hits==1&&operation.misses==0&&image.widgets[0].pixels==active_pixels);
+    int active_asset=pixel_find(image.image_hashes[0],image.widgets[0].image_width,image.widgets[0].image_height,(size_t)image.widgets[0].image_width*image.widgets[0].image_height*3);
+    assert(active_asset>=0&&pixel_store[active_asset].pins==3);
+    serial_during_finish=true;assert(!load_images(&image,0)&&load_interrupted&&interrupted_command&&chunk_requests==downloaded);serial_during_finish=false;
+    assert(pixel_store[active_asset].pins==2&&active_pixels[0]==255);cJSON_Delete(interrupted_command);interrupted_command=NULL;
+    mock_serial_input="{\"command\":\"serial-reply\",\"linkId\":\"stale\",\"requestId\":\"1\",\"frame\":{}}\n{\"command\":\"unknown\"}\n{\"command\":\"arm\"}\n{\"command\":\"status\",\"requestId\":\"cache-status\"}\n";
+    assert(load_images(&image,0)&&!interrupted_command&&chunk_requests==downloaded);
+    image.panel.widget_count=2;image.widgets[1]=image.widgets[0];image.widgets[1].id="same-image-again";image.image_hashes[1]=image.image_hashes[0];
+    assert(load_images(&image,0));assert(operation.hits==1&&operation.completed==operation.total&&chunk_requests==downloaded);image.panel.widget_count=1;
+    image.image_hashes[0]="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    request_ok=false;assert(!load_images(&image,0));assert(!strcmp(detail,"Heartbeat: No valid response received")&&!strcmp(operation.error,"preparation-heartbeat-failed"));request_ok=true;
+    image_request_ok=false;assert(!load_images(&image,0));assert(!strcmp(detail,"Image download: No valid response received")&&!strcmp(operation.error,"image-download-failed"));image_request_ok=true;
+    serial_during_image=true;assert(!load_images(&image,0)&&load_interrupted&&interrupted_command);serial_during_image=false;
+    assert(pixel_store[active_asset].pins==2&&active_pixels[0]==255);cJSON_Delete(interrupted_command);interrupted_command=NULL;
+    assert(pixel_store[active_asset].pins==2&&active_pixels[0]==255);
+    write_fail=true;assert(!load_images(&image,0));assert(!strcmp(operation.error,"cache_io"));write_fail=false;
+    finish_fail=true;assert(!load_images(&image,0));assert(!strcmp(operation.error,"cache_io"));finish_fail=false;
+    mock_pending_command=osg_json_parse("{\"command\":\"stop\"}",18);assert(mock_pending_command);
+    downloaded=chunk_requests;assert(!load_images(&image,0)&&load_interrupted&&interrupted_command&&chunk_requests==downloaded);
+    assert(!strcmp(operation.error,"cancelled")&&pixel_store[active_asset].pins==2);cJSON_Delete(interrupted_command);interrupted_command=NULL;
+    cache_fail=true;assert(!load_images(&image,0));assert(!strcmp(operation.error,"cache_full")&&!operation.retryable&&pixel_store[active_asset].pins==2&&active_pixels[0]==255);cache_fail=false;
+    pixel_error="cache_active_corrupt";assert(!cache_failure());assert(!operation.retryable&&strstr(detail,"restart the companion")&&active_pixels[0]==255);pixel_error="cache_io";
+    image.panel.widget_count=0;cache_fail=true;assert(load_images(&image,0));assert(operation.total==0&&operation.completed==0);cache_fail=false;image.panel.widget_count=1;
+    image.widgets[0].bounds.width=0;assert(!load_images(&image,0));assert(!strcmp(detail,"Invalid image dimensions"));
+    for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

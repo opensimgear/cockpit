@@ -51,6 +51,70 @@ fn saved_companion_references_follow_all_documents_without_editor_or_runtime_eff
     assert_eq!(Service::new(Some(root)).companion_references().unwrap(), remaining);
 }
 
+fn save_panel_profile(service: &mut Service, name: &str, panel_id: Option<&str>, publication: &str) -> String {
+    let mut document = create(service, name);
+    document["resources"] = json!([{"id":"screen","name":"Screen","kind":"companion","required":false,"ports":[]}]);
+    document["companionAssignments"] = json!([{"resourceId":"screen","publicationHash":publication}]);
+    if let Some(panel_id) = panel_id { document["companionAssignments"][0]["panelId"] = json!(panel_id); }
+    service.request(&json!({"command":"profile_save","document":document,"expectedRevision":1})).unwrap()["document"]["id"].as_str().unwrap().into()
+}
+
+#[test]
+fn saved_panel_refresh_updates_all_followers_and_legacy_hashes_atomically_once() {
+    let temp = crate::test_directory(); let root = temp.path().join("profiles");
+    let mut service = Service::new(Some(root.clone()));
+    let old = format!("sha256:{}", "a".repeat(64)); let latest = format!("sha256:{}", "b".repeat(64));
+    let stable = save_panel_profile(&mut service, "Stable", Some("panel-one"), &old);
+    let legacy = save_panel_profile(&mut service, "Legacy", None, &old);
+    let other = save_panel_profile(&mut service, "Explicit other identity", Some("panel-other"), &old);
+    let current = save_panel_profile(&mut service, "Current hash", None, &latest);
+    // Two companion blocks in one profile still advance its saved version once.
+    let document = service.library.profiles.iter_mut().find(|document|document.id == stable).unwrap();
+    let mut resource = document.resources[0].clone(); resource.id = "second-screen".into(); document.resources.push(resource);
+    let mut assignment = document.companion_assignments[0].clone(); assignment.resource_id = "second-screen".into(); document.companion_assignments.push(assignment);
+    let status = service.status();
+    let changed = service.refresh_companion_panel("panel-one", &latest, &std::collections::BTreeSet::from([old.clone()])).unwrap();
+    assert_eq!(changed, vec![stable.clone(), legacy.clone(), current.clone()]);
+    for id in [&stable, &legacy, &current] {
+        let document = service.document(id).unwrap(); assert_eq!(document.revision, 3);
+        assert!(document.companion_assignments.iter().all(|assignment|assignment.panel_id.as_deref() == Some("panel-one") && assignment.publication_hash == latest));
+    }
+    assert_eq!(service.document(&other).unwrap().revision, 2);
+    assert_eq!(service.document(&other).unwrap().companion_assignments[0].panel_id.as_deref(), Some("panel-other"));
+    assert_eq!(service.status(), status); // No editor selection or runtime authority changes.
+    let saved = std::fs::read(root.join("library.json")).unwrap();
+    assert!(service.refresh_companion_panel("panel-one", &latest, &std::collections::BTreeSet::from([old])).unwrap().is_empty());
+    assert_eq!(std::fs::read(root.join("library.json")).unwrap(), saved);
+    let restarted = Service::new(Some(root));
+    for id in [&stable, &legacy, &current, &other] { assert_eq!(restarted.document(id).unwrap(), service.document(id).unwrap()); }
+    assert_eq!(service.companion_references().unwrap()["hashes"], json!([format!("sha256:{}", "a".repeat(64)), latest]));
+}
+
+#[test]
+fn saved_panel_refresh_preserves_every_profile_on_storage_or_revision_failure() {
+    let temp = crate::test_directory(); let root = temp.path().join("profiles");
+    let mut service = Service::new(Some(root.clone()));
+    let old = format!("sha256:{}", "a".repeat(64)); let latest = format!("sha256:{}", "b".repeat(64));
+    let first = save_panel_profile(&mut service, "First", Some("panel-one"), &old);
+    let second = save_panel_profile(&mut service, "Second", Some("panel-one"), &old);
+    let aliases = std::collections::BTreeSet::from([old]);
+    let original = serde_json::to_value(&service.library).unwrap();
+    std::fs::remove_file(root.join("library.json")).unwrap(); std::fs::create_dir(root.join("library.json")).unwrap();
+    assert!(service.refresh_companion_panel("panel-one", &latest, &aliases).is_err());
+    assert_eq!(serde_json::to_value(&service.library).unwrap(), original);
+    service.library.profiles.iter_mut().find(|document|document.id == second).unwrap().revision = MAX_REVISION;
+    let original = serde_json::to_value(&service.library).unwrap();
+    assert!(service.refresh_companion_panel("panel-one", &latest, &aliases).unwrap_err().contains("limit"));
+    assert_eq!(serde_json::to_value(&service.library).unwrap(), original);
+    assert_eq!(service.document(&first).unwrap().revision, 2);
+    assert!(service.refresh_companion_panel("bad panel", &latest, &aliases).is_err());
+    assert!(service.refresh_companion_panel("panel-one", "sha256:bad", &aliases).is_err());
+    assert!(service.refresh_companion_panel("panel-one", &latest, &std::collections::BTreeSet::from(["bad".into()])).is_err());
+    service.read_only = true;
+    assert!(service.refresh_companion_panel("panel-one", &latest, &aliases).unwrap_err().contains("read-only"));
+    assert!(service.request(&json!({"command":"profile_refresh_companion_panel","panelId":"panel-one","publicationHash":latest})).is_err());
+}
+
 #[test]
 fn companion_reference_reads_refuse_corrupt_storage_and_browser_authority() {
     let temp = crate::test_directory();

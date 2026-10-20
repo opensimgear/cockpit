@@ -15,8 +15,18 @@ async function view(value=draft(),seed={},props={}){
   return{html,handlers,calls,edits,destroy(){destroyers.forEach(callback=>callback());}};
 }
 test('actual panel selector opens passively and captures only a chosen retained revision without adding controls or routes',async()=>{
-  let h=await view();assert.ok(h.html.includes('Companion panel'));assert.ok(h.html.includes('Browse published panels'));assert.doesNotMatch(h.html,/revision/i);assert.deepEqual(h.calls,[]);assert.deepEqual(h.edits,[]);await h.handlers.refresh();assert.equal(h.calls[0].command,'profile_companion_catalogue');assert.equal(h.handlers.state.catalogue.panels[0].controlCount,1);
+  let h=await view();assert.ok(h.html.includes('Companion panel'));assert.ok(h.html.includes('Refresh panels'));assert.doesNotMatch(h.html,/revision/i);assert.deepEqual(h.calls,[]);assert.deepEqual(h.edits,[]);await h.handlers.refresh();assert.equal(h.calls[0].command,'profile_companion_catalogue');assert.equal(h.handlers.state.catalogue.panels[0].controlCount,1);
   h=await view(draft(),{catalogue:catalogue(),chosen:hash(1)});assert.ok(h.html.includes('1 actual interactive controls'));assert.ok(h.html.includes('feedback-only graph'));assert.ok(h.html.includes('Use panel in profile'));assert.doesNotMatch(h.html,/revision/i);h.handlers.capture();assert.equal(h.edits.length,1);assert.equal(h.edits[0].next.document.resources[0].ports.length,0);assert.equal(h.edits[0].next.document.bindings.length,0);assert.deepEqual(h.edits[0].next.document.companionAssignments,[{resourceId:'screen',publicationHash:hash(1)}]);assert.deepEqual(h.calls,[]);
+});
+
+test('selector shows one latest saved state per panel and resolves old selected snapshots by stable identity',async()=>{
+  const old={...panel(),panelId:'screen-panel',title:'Old panel title'},latest={...panel(6),panelId:'screen-panel',publicationHashes:[hash(1),hash(6)],title:'Current panel title'};
+  const value=api.graphCaptureCompanionPanel(draft(),'screen',old);
+  const h=await view(value,{catalogue:{...catalogue(),panels:[old,latest]},chosen:hash(1)});
+  assert.ok(h.html.includes('Current panel title'));assert.ok(!h.html.includes('Old panel title'));
+  assert.doesNotMatch(h.html,/<code>sha256:|<dt>Publication|<dt>Capabilities|Published panel/);
+  assert.equal((h.html.match(/Current panel title · 1 controls/g)??[]).length,1);
+  h.handlers.capture();assert.deepEqual(h.edits[0].next.document.companionAssignments,[{resourceId:'screen',panelId:'screen-panel',publicationHash:hash(6)}]);
 });
 test('paired component configuration automatically browses panels without selecting its current panel or exposing legacy panel names',async()=>{
   const base={resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:0,cachedPortCount:0,connections:[],diagnostics:[]};

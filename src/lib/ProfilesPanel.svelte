@@ -74,7 +74,7 @@
   $effect(()=>{if(paletteDrag&&(!active||debugOpen||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
-    const refresh=()=>{if(!document.hidden&&!store.state.inventoryBusy)void store.refreshInventory();};
+    const refresh=()=>{if(!document.hidden){if(!store.state.inventoryBusy)void store.refreshInventory();if(!libraryBusy&&!editingName)void store.refreshSaved();}};
     refresh();const timer=setInterval(refresh,3000);return()=>clearInterval(timer);
   });
   function report(operation:()=>void) { notice='';const previous=getNavigation();try{operation();workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());}catch(error){notice=error instanceof Error?error.message:String(error);} }

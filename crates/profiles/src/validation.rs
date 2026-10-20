@@ -20,6 +20,20 @@ pub fn identifier(id: &str) -> bool {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
 }
+/// Panel identities use the companion protocol grammar, including UUIDs whose
+/// first character may be a digit. They are distinct from logical node IDs.
+pub fn companion_panel_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+}
+pub fn companion_publication_hash(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
 /// Port identities are protocol names, not node IDs or machine assignments.
 /// Keep every legal native action argument representable without renaming it.
 pub fn port_identifier(value: &str) -> bool {
@@ -359,6 +373,10 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
     seen.clear();
     for assignment in &document.companion_assignments {
         check(
+            assignment.panel_id.as_deref().is_none_or(companion_panel_identifier),
+            "Invalid portable companion panel identity.",
+        )?;
+        check(
             resources
                 .get(assignment.resource_id.as_str())
                 .is_some_and(|r| r.kind == ResourceKind::Companion),
@@ -369,14 +387,7 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
             "Duplicate companion assignment.",
         )?;
         check(
-            assignment
-                .publication_hash
-                .strip_prefix("sha256:")
-                .is_some_and(|v| {
-                    v.len() == 64
-                        && v.bytes()
-                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-                }),
+            companion_publication_hash(&assignment.publication_hash),
             "Invalid portable companion publication hash.",
         )?;
     }

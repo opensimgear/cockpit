@@ -11,6 +11,10 @@ use std::{
 };
 #[path = "profile_tests.rs"]
 mod profile_tests;
+#[path = "operation_tests.rs"]
+mod operation_tests;
+#[path = "profile_latest_tests.rs"]
+mod profile_latest_tests;
 
 #[derive(Default)]
 struct Sink {

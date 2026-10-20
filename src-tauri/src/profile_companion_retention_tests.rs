@@ -18,7 +18,7 @@ fn publish(hub: &Hub, title: &str) -> Publication {
 fn saved_panel(service: &mut osg_profiles::service::Service, publication: &str) {
     let mut document = osg_profiles::default_document();
     document.resources.push(osg_profiles::Resource { id: "panel".into(), name: "Panel".into(), kind: osg_profiles::ResourceKind::Companion, required: false, ports: vec![] });
-    document.companion_assignments.push(osg_profiles::CompanionAssignment { resource_id: "panel".into(), publication_hash: publication.into() });
+    document.companion_assignments.push(osg_profiles::CompanionAssignment { panel_id: None, resource_id: "panel".into(), publication_hash: publication.into() });
     service.request(&json!({"command":"profile_save","document":document,"expectedRevision":1})).unwrap();
 }
 
@@ -94,7 +94,7 @@ fn too_many_genuine_saved_references_preserve_publications_instead_of_truncating
         for index in 0..64 {
             let id = format!("panel-{index}");
             document.resources.push(osg_profiles::Resource { id: id.clone(), name: id.clone(), kind: osg_profiles::ResourceKind::Companion, required: false, ports: vec![] });
-            document.companion_assignments.push(osg_profiles::CompanionAssignment { resource_id: id, publication_hash: format!("sha256:{:064x}",batch*64+index) });
+            document.companion_assignments.push(osg_profiles::CompanionAssignment { panel_id: None, resource_id: id, publication_hash: format!("sha256:{:064x}",batch*64+index) });
         }
         service.request(&json!({"command":"profile_save","document":document,"expectedRevision":1})).unwrap();
     }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { newDocument, publishDocument, importAsset } from '../../packages/companion-designer/src/index.ts';
-import { CompanionLibraryStore, COMPANION_LIBRARY_LIMITS, indexedDbStorage } from './companion-library.ts';
+import { CompanionLibraryStore, COMPANION_LIBRARY_LIMITS, indexedDbStorage, latestSavedPanels } from './companion-library.ts';
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
 function memory(initial) {
@@ -80,6 +80,20 @@ test('new immutable publications append without replacing or duplicating prior r
   const saved = await store.save(input);
   assert.deepEqual(saved.publications['draft-0'].map(revision => revision.publicationHash), [first.publicationHash, second.publicationHash]);
   assert.equal(saved.publications['draft-0'][0].document.ui.title, 'Panel');
+});
+
+test('saving an older document state makes it the sole current choice without duplicating its transport payload', async () => {
+  const storage=memory(),store=new CompanionLibraryStore(storage),input=snapshot('Original');
+  const first=await publishDocument(input.library.drafts[0].document,[]);
+  input.publications['draft-0']=[first];await store.save(input);
+  input.library.drafts[0].document.ui.title='Changed';
+  const second=await publishDocument(input.library.drafts[0].document,[]);
+  input.publications['draft-0']=[second];await store.save(input);
+  input.library.drafts[0].document=structuredClone(first.document);input.publications['draft-0']=[first];
+  const saved=await store.save(input);
+  assert.deepEqual(saved.publications['draft-0'].map(panel=>panel.publicationHash),[second.publicationHash,first.publicationHash]);
+  assert.deepEqual(latestSavedPanels(saved.library,saved.publications).map(panel=>panel.publicationHash),[first.publicationHash]);
+  assert.deepEqual(latestSavedPanels({schemaVersion:1,drafts:[]},saved.publications),[]);
 });
 
 test('failed input validation and failed atomic writes preserve the last committed snapshot', async () => {

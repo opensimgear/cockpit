@@ -269,6 +269,10 @@ pub struct RuntimeOverride {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompanionAssignment {
     pub resource_id: String,
+    /// Stable saved panel identity. Legacy imports may only have an immutable
+    /// publication hash; native panel resolution upgrades those references.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_id: Option<String>,
     pub publication_hash: String,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

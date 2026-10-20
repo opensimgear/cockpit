@@ -359,6 +359,17 @@ impl Hub {
         &self,
         receipt: &AssignmentReceipt,
     ) -> Result<AssignmentRestore, String> {
+        self.restore_profile_assignment_latest(receipt, &std::collections::BTreeMap::new())
+    }
+    /// Release an exact protected profile owner, restoring the latest saved
+    /// publication of its original panel identity when native saved heads exist.
+    /// The immutable receipt still proves the original baseline; replacement
+    /// metadata never weakens its owner, installation or source comparisons.
+    pub fn restore_profile_assignment_latest(
+        &self,
+        receipt: &AssignmentReceipt,
+        latest_by_panel: &std::collections::BTreeMap<String, String>,
+    ) -> Result<AssignmentRestore, String> {
         shape(receipt)?;
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if current(&inner, receipt.instance_id()) == receipt.baseline {
@@ -370,10 +381,20 @@ impl Hub {
         if validate_stamp(&inner, receipt).is_err() {
             return Ok(AssignmentRestore::OwnershipLost);
         }
-        let baseline = baseline(&inner, receipt)?;
-        if let Some(baseline) = &baseline {
+        let mut baseline = baseline(&inner, receipt)?;
+        if let Some(baseline) = &mut baseline {
             validate_owned(&inner, receipt)?;
             publication(&inner, baseline)?;
+            let original = inner.publications.get(&baseline.publication_hash)
+                .ok_or("The immutable original companion panel is no longer retained.")?;
+            if let Some(latest_hash) = latest_by_panel.get(&original.ui_id) {
+                ensure(digest_id(latest_hash), "Invalid latest saved companion publication hash.")?;
+                let latest = inner.publications.get(latest_hash)
+                    .ok_or("The latest saved companion panel is no longer retained; restore its publication before recovery.")?;
+                ensure(latest.ui_id == original.ui_id, "The latest saved companion panel has a different stable identity.")?;
+                baseline.publication_hash = latest.publication_hash.clone();
+                baseline.definition = latest.definition(&baseline.instance_id);
+            }
         } else {
             ensure(
                 receipt.desired.ownership.as_ref().unwrap().baseline_hash == digest(&baseline)?,

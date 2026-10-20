@@ -8,6 +8,7 @@ import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import * as designer from '../../packages/companion-designer/src/index.ts';
+import {latestSavedPanels} from './companion-library.ts';
 import * as companionScreen from './companion-screen.ts';
 import {loadModules} from './test-module-loader.mjs';
 
@@ -109,6 +110,7 @@ async function companionCompactor(send){
  const Designer=evaluate(js.code,filename.pathname,name=>{
   if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name.endsWith('.svelte'))return{default:()=>{}};if(modules.has(name))return modules.get(name);
   if(name==='./companion-screen')return companionScreen;if(name==='@opensimgear/companion-designer')return designer;if(name==='@opensimgear/companion-ui')return{PanelCanvas:()=>{}};
+  if(name==='./companion-library')return{latestSavedPanels};
   if(name==='./gateway')return{gatewayRequest:send};if(name==='./companions')return{sendPublication:noRequest};if(name==='./panel-actions')return{synchronizePanel:noRequest,removePanelAssignments:noRequest};if(name==='./companion-startup')return{restoreCompanionPanels:noRequest};if(name==='./firmware-widgets')return{firmwareWidgetPresets:[],simplifyFirmwareWidgets:document=>({document,removed:0})};throw new Error(`Unexpected compactor dependency ${name}`);
  },{crypto:{randomUUID:()=>id},captureCompactor(value){handlers=value;}});render(Designer,{props:{openSettings:noRequest}}).body;return handlers;
 }

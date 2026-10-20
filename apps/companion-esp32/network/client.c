@@ -34,8 +34,53 @@ static char pending[65], assigned[65], publication[72];
 static uint64_t next_request, pair_deadline;
 static char serial_line[OSG_PROVISION_BYTES+1];
 static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error","panel-error"};
+typedef struct {
+    char instance[65],publication[72],session[65],generation[21];
+    const char *phase,*error;
+    size_t completed,total;
+    unsigned hits,misses;
+    uint32_t attempt;
+    bool retryable;
+} panel_operation;
+static panel_operation operation;
+static uint32_t operation_attempt;
+static uint64_t operation_reported;
+static cJSON *interrupted_command;
+static bool load_interrupted;
+static unsigned loading_owner;
+static bool capture_command;
+static void serial_byte(int);
 static uint64_t millis(void){return (uint64_t)(esp_timer_get_time()/1000);}
-static void report(const char *status){printf("{\"status\":\"%s\"}\n",status);fflush(stdout);}
+static void add_operation(cJSON *v){
+    if(!operation.phase)return;
+    cJSON *o=cJSON_AddObjectToObject(v,"operation");
+    cJSON_AddStringToObject(o,"instanceId",operation.instance);cJSON_AddStringToObject(o,"publicationHash",operation.publication);
+    cJSON_AddStringToObject(o,"phase",operation.phase);cJSON_AddNumberToObject(o,"attemptId",operation.attempt);
+    cJSON_AddNumberToObject(o,"completedBytes",(double)operation.completed);cJSON_AddNumberToObject(o,"totalBytes",(double)operation.total);
+    cJSON_AddNumberToObject(o,"cacheHits",operation.hits);cJSON_AddNumberToObject(o,"cacheMisses",operation.misses);
+    if(operation.session[0]){cJSON_AddStringToObject(o,"sessionId",operation.session);cJSON_AddStringToObject(o,"generation",operation.generation);}
+    if(operation.error){cJSON_AddStringToObject(o,"errorCode",operation.error);cJSON_AddBoolToObject(o,"retryable",operation.retryable);}
+    if(detail)cJSON_AddStringToObject(o,"message",detail);
+}
+static void report(const char *status){
+    cJSON *v=cJSON_CreateObject();char encoded[1536];cJSON_AddStringToObject(v,"status",status);
+    if(detail)cJSON_AddStringToObject(v,"statusMessage",detail);
+    add_operation(v);
+    if(cJSON_PrintPreallocated(v,encoded,sizeof(encoded),false)){puts(encoded);fflush(stdout);}cJSON_Delete(v);operation_reported=millis();
+}
+static void operation_phase(const char *value){
+    if(!operation.phase||strcmp(operation.phase,value)){operation.phase=value;operation.error=NULL;operation.retryable=false;report(phases[state]);}
+}
+static void operation_failed(const char *code,bool retryable){
+    if(!operation.phase)return;
+    operation.phase="failed";operation.error=code;operation.retryable=retryable;
+}
+static void operation_begin(void){
+    memset(&operation,0,sizeof(operation));memset(&session,0,sizeof(session));
+    osg_copy(operation.instance,sizeof(operation.instance),assigned);osg_copy(operation.publication,sizeof(operation.publication),publication);
+    operation.attempt=operation_attempt<UINT32_MAX?++operation_attempt:operation_attempt;operation.phase="opening";
+    report(phases[state]);
+}
 static void disconnected(void){xSemaphoreTake(ui.mutex,portMAX_DELAY);osg_input_cancel(&input,OSG_INPUT_CANCELLED);osg_connected(ui.runtime,false);*ui.dirty=true;xSemaphoreGive(ui.mutex);}
 static void stop(void);
 static void abort_connection(void){osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
@@ -54,7 +99,7 @@ static const char *failure_message(const char *reason){
     if(!strcmp(reason,"invalid-installation-id"))return "Invalid companion identity";
     return "Unrecognized device failure";
 }
-static void fail(const char *reason){abort_connection();state=FAULT;detail=failure_message(reason);mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));report(reason);}
+static void fail(const char *reason){abort_connection();state=FAULT;detail=failure_message(reason);operation_failed(reason,true);mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));report(reason);}
 static cJSON *message(const char *type){cJSON *v=cJSON_CreateObject();if(v)cJSON_AddStringToObject(v,"type",type);return v;}
 static const char *request_operation(const char *type){
     if(!type)return "Request";
@@ -82,7 +127,7 @@ static bool request(cJSON *v,cJSON **reply,unsigned timeout){
 }
 static void fail_request(void){
     osg_copy(fault_detail,sizeof(fault_detail),request_detail);
-    abort_connection();state=FAULT;detail=fault_detail;report("cockpit-request-failed");
+    abort_connection();state=FAULT;detail=fault_detail;operation_failed("request-failed",true);report("cockpit-request-failed");
 }
 static bool request_problem(const char *reason){snprintf(request_detail,sizeof(request_detail),"%s: %s",request_label,reason);return false;}
 static bool equal(const char *a,const char *b){return a&&b&&!strcmp(a,b);}
@@ -99,46 +144,123 @@ static cJSON *session_message(const char *type,const char *sequence){
     cJSON_AddStringToObject(v,"publicationHash",session.publication);
     if(sequence)cJSON_AddStringToObject(v,"sequence",sequence);
     if(state==PANEL_ERROR&&!strcmp(type,"heartbeat"))cJSON_AddBoolToObject(v,"panelError",true);
+    if(!strcmp(type,"heartbeat")||!strcmp(type,"image-chunk")||!strcmp(type,"baseline"))add_operation(v);
     return v;
 }
-static bool image_failure(const char *reason){osg_copy(fault_detail,sizeof(fault_detail),reason);detail=fault_detail;return false;}
+static bool image_failure(const char *code,const char *reason,bool retryable){osg_copy(fault_detail,sizeof(fault_detail),reason);detail=fault_detail;operation_failed(code,retryable);osg_pixels_panel_release(loading_owner);return false;}
+static bool cache_failure(void){
+    const char *code=osg_pixels_error();
+    if(equal(code,"cache_full"))return image_failure(code,"Image cache is full while the displayed panel is protected; reduce image sizes or reuse images",false);
+    if(equal(code,"cache_unavailable"))return image_failure(code,"Image cache storage is unavailable",false);
+    if(equal(code,"cache_active_corrupt"))return image_failure(code,"A displayed image is damaged; restart the companion to reload it safely",false);
+    if(equal(code,"cache_corrupt"))return image_failure(code,"Saved image verification failed",true);
+    if(equal(code,"cache_invalid"))return image_failure(code,"Panel image cache request is invalid",false);
+    return image_failure(code,"Could not read or write image cache storage",true);
+}
+static bool pending_mutation(void){
+    if(!interrupted_command)interrupted_command=osg_serial_take_command();
+    /* A command can arrive during synchronous flash work, outside any serial
+     * request. Drain complete records without executing mutations on this stack. */
+    capture_command=true;
+    int c;size_t read=0;
+    while(!interrupted_command&&read++<OSG_PROVISION_BYTES+2u&&(c=getchar())!=EOF)serial_byte(c);
+    clearerr(stdin);capture_command=false;
+    return interrupted_command!=NULL;
+}
+static bool image_cancelled(void){
+    if(!pending_mutation())return false;
+    load_interrupted=true;image_failure("cancelled","Panel loading cancelled",true);return true;
+}
+static bool panel_error_ack(const cJSON *,const char *);
+static bool preparation_heartbeat(void){
+    if(image_cancelled())return false;
+    if(session.heartbeat>=UINT64_MAX-1)return image_failure("session-counter-exhausted","Session counter exhausted",true);
+    char sequence[21];snprintf(sequence,sizeof(sequence),"%" PRIu64,++session.heartbeat);
+    cJSON *reply=NULL;
+    bool received=request(session_message("heartbeat",sequence),&reply,700);
+    bool ok=received&&panel_error_ack(reply,sequence);cJSON_Delete(reply);
+    if(!ok)return image_failure("preparation-heartbeat-failed",received?"Cockpit rejected panel preparation heartbeat":request_detail,true);
+    return !image_cancelled();
+}
 static bool load_images(osg_image *image,unsigned slot){
-    detail="Downloading panel images";update_screen();
-    osg_runtime layout={.panel=&image->panel,.display=ui.runtime->display};size_t total=0,offsets[OSG_MAX_WIDGETS]={0};
+    loading_owner=slot;load_interrupted=false;detail="Checking saved images";operation_phase("checking-cache");update_screen();
+    osg_runtime layout={.panel=&image->panel,.display=ui.runtime->display};size_t total=0;
+    unsigned assets[OSG_MAX_WIDGETS]={0};bool acquired[OSG_MAX_WIDGETS]={false},cached[OSG_MAX_WIDGETS]={false};
+    /* The caller has fenced the inactive panel against the renderer. Keep the
+     * displayed owner's pins until it is itself safely reusable on a later switch. */
+    if(!osg_pixels_panel_begin(slot))return cache_failure();
     for(size_t i=0;i<image->panel.widget_count;i++){
         osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
         layout.page=w->page;int x,y,width,height;osg_widget_rect(&layout,i,&x,&y,&width,&height);
-        if(width<1||height<1||width>800||height>800)return image_failure("Invalid image dimensions");
-        offsets[i]=total;total+=(size_t)width*height*3;if(total>1200*1024)return image_failure("Panel images exceed storage limit");
+        if(width<1||height<1||width>800||height>800)return image_failure("image-dimensions","Invalid image dimensions",false);
+        if(!osg_hash_id(image->image_hashes[i]))return image_failure("image-identity","Invalid image content identity",false);
         w->image_width=(uint16_t)width;w->image_height=(uint16_t)height;
+        bool alias=false;
+        for(size_t before=0;before<i;before++)if(image->widgets[before].kind==OSG_IMAGE&&
+            image->widgets[before].image_width==w->image_width&&image->widgets[before].image_height==w->image_height&&
+            equal(image->image_hashes[before],image->image_hashes[i])){alias=true;break;}
+        if(!alias)total+=(size_t)width*height*3;
+        if(total>1200*1024)return image_failure("image-budget","Panel images exceed storage limit",false);
     }
-    if(!total)return true;
-    bool cached=false;if(!osg_pixels_begin(slot,session.publication,total,&cached))return image_failure("Image storage unavailable");
+    operation.total=total;operation.completed=0;operation.hits=operation.misses=0;
+    if(!total)return !image_cancelled();
+    /* Tell the host this exact unarmed session is preparing before flash erase
+     * or CRC work can block. Input leases remain strict after baseline admission. */
+    if(!preparation_heartbeat())return false;
+    /* Pin every existing candidate asset before reserving misses, so allocation
+     * cannot evict a reusable image that occurs later in the new panel. */
+    for(unsigned pass=0;pass<2;pass++)for(size_t i=0;i<image->panel.widget_count;i++){
+        osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE||acquired[i])continue;
+        const size_t bytes=(size_t)w->image_width*w->image_height*3;
+        for(size_t before=0;before<i;before++)if(acquired[before]&&image->widgets[before].kind==OSG_IMAGE&&
+            image->widgets[before].image_width==w->image_width&&image->widgets[before].image_height==w->image_height&&
+            equal(image->image_hashes[before],image->image_hashes[i])){
+            assets[i]=assets[before];cached[i]=cached[before];acquired[i]=true;break;
+        }
+        if(acquired[i])continue;
+        if(!pass&&!osg_pixels_contains(image->image_hashes[i],w->image_width,w->image_height,bytes))continue;
+        if(image_cancelled())return false;
+        if(pass&&!preparation_heartbeat())return false;
+        if(!osg_pixels_acquire(slot,image->image_hashes[i],w->image_width,w->image_height,bytes,&assets[i],&cached[i]))
+            return cache_failure();
+        acquired[i]=true;
+        if(cached[i]){operation.hits++;operation.completed+=bytes;}else operation.misses++;
+    }
     static unsigned char chunk[6144];
-    for(size_t i=0;!cached&&i<image->panel.widget_count;i++){
+    for(size_t i=0;i<image->panel.widget_count;i++){
         osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
         const size_t bytes=(size_t)w->image_width*w->image_height*3;
-        for(size_t offset=0;offset<bytes;){
+        /* The same image may occur more than once in a panel. Once its first
+         * widget finishes, later aliases map that entry without another transfer. */
+        if(!cached[i])for(size_t before=0;before<i;before++)if(image->widgets[before].kind==OSG_IMAGE&&assets[before]==assets[i]){
+            cached[i]=true;break;
+        }
+        for(size_t offset=0;!cached[i]&&offset<bytes;){
+            if(image_cancelled())return false;
+            detail="Downloading missing images";operation_phase("downloading");
             cJSON *v=session_message("image-chunk",NULL),*reply=NULL;
             cJSON_AddStringToObject(v,"widgetId",w->id);cJSON_AddNumberToObject(v,"width",w->image_width);cJSON_AddNumberToObject(v,"height",w->image_height);cJSON_AddNumberToObject(v,"offset",(double)offset);
             bool received=request(v,&reply,3000);
             bool ok=received&&cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok"))&&equal(osg_string(reply,"type"),"image-chunk")&&equal(osg_string(reply,"widgetId"),w->id)&&equal(osg_string(reply,"publicationHash"),session.publication);
             size_t count=0;const char *encoded=osg_string(reply,"base64");
             ok=ok && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==(double)offset && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"total"))==(double)bytes && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"width"))==w->image_width && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"height"))==w->image_height && encoded && osg_platform_crypto.base64(encoded,chunk,sizeof(chunk),&count) && count && count<=bytes-offset && count%3==0;
-            cJSON_Delete(reply);if(!ok)return image_failure(received?"Image download: Invalid image data":request_detail);
-            if(!osg_pixels_write(slot,offsets[i]+offset,chunk,count))return image_failure("Could not save panel images");
-            offset+=count;
+            cJSON_Delete(reply);if(!ok)return image_failure(received?"image-download-invalid":"image-download-failed",received?"Image download: Invalid image data":request_detail,!received);
+            if(image_cancelled())return false;
+            if(!osg_pixels_write(assets[i],offset,chunk,count))return cache_failure();
+            offset+=count;operation.completed+=count;
+            static char progress[64];snprintf(progress,sizeof(progress),"Loading images %u%%",(unsigned)(operation.completed*100/total));detail=progress;update_screen();
+            if(millis()-operation_reported>=500)report(phases[state]);
         }
+        w->pixels=osg_pixels_finish(assets[i]);if(!w->pixels)return cache_failure();
     }
-    const unsigned char *pixels=osg_pixels_finish(slot,session.publication,total);if(!pixels)return image_failure("Could not read panel images");
-    for(size_t i=0;i<image->panel.widget_count;i++)if(image->widgets[i].kind==OSG_IMAGE)image->widgets[i].pixels=pixels+offsets[i];
-    return true;
+    return !image_cancelled();
 }
 static void stop(void){
     const bool close=(state==LIVE||state==PANEL_ERROR)&&(connection.ws||connection.direct);
     disconnected(); /* Stop local input before any potentially blocking I/O. */
     if(close){cJSON *reply=NULL;(void)request(session_message("close",NULL),&reply,300);cJSON_Delete(reply);}
     abort_connection();
+    memset(&operation,0,sizeof(operation));memset(&session,0,sizeof(session));detail=NULL;
 }
 static bool panel_error_ack(const cJSON *v,const char *sequence){
     return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(v,"ok"))&&equal(osg_string(v,"type"),"ack")&&
@@ -158,7 +280,7 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
     xSemaphoreGive(ui.mutex);return ok?true:request_problem("Input lease or acknowledgement invalid");
 }
 void osg_network_status(const char *request_id){
-    cJSON *v=cJSON_CreateObject();char encoded[1024],epoch[21];
+    cJSON *v=cJSON_CreateObject();char encoded[2048],epoch[21];
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const char *status=state==LIVE&&input.mode==OSG_INPUT_ARMED?"live-armed":phases[state];
     cJSON_AddStringToObject(v,"status",status);
@@ -176,11 +298,12 @@ void osg_network_status(const char *request_id){
     cJSON_AddStringToObject(v,"ssid",settings.ssid);
     cJSON_AddBoolToObject(v,"wifiPasswordSaved",settings.password[0]!=0);
     cJSON_AddBoolToObject(v,"readyForArm",state==LIVE&&!remote_armed&&osg_input_can_arm(&input,millis()));
-    if(state==LIVE){
+    if((state==LIVE||state==OPEN||state==PANEL_ERROR||state==FAULT)&&session.session[0]){
         snprintf(epoch,sizeof(epoch),"%" PRIu64,input.epoch);
         cJSON_AddStringToObject(v,"sessionId",session.session);cJSON_AddStringToObject(v,"generation",session.generation);
         cJSON_AddStringToObject(v,"publicationHash",session.publication);cJSON_AddStringToObject(v,"armEpoch",epoch);
     }
+    add_operation(v);
     xSemaphoreGive(ui.mutex);
     if(v&&cJSON_PrintPreallocated(v,encoded,sizeof(encoded),false)){puts(encoded);fflush(stdout);}cJSON_Delete(v);
 }
@@ -196,7 +319,7 @@ static void arm(const cJSON *command){
     if(prepared)*ui.dirty=true;
     xSemaphoreGive(ui.mutex);
     if(!prepared){report("arm-rejected-release-touch-check-display-and-leases");return;}
-    report("arming");
+    operation_phase("awaiting-neutral");report("arming");
     cJSON *v=session_message("baseline","0"),*values=cJSON_AddObjectToObject(v,"values"),*reply=NULL;
     for(size_t i=0;i<ui.runtime->panel->widget_count;i++){
         const osg_widget *w=&ui.runtime->panel->widgets[i];if(w->kind==OSG_BUTTON)cJSON_AddBoolToObject(values,w->reference,false);
@@ -207,18 +330,25 @@ static void arm(const cJSON *command){
     bool received=request(v,&reply,700);
     bool ok=received&&acknowledgement(reply,"0",started);
     cJSON_Delete(reply);
+    if(pending_mutation()){
+        abort_connection();state=OFF;detail="Input activation cancelled";operation_failed("cancelled",true);report("panel-load-cancelled");return;
+    }
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(ok)ok=osg_input_commit(&input,epoch,started,millis());
     *ui.dirty=true;xSemaphoreGive(ui.mutex);
     if(!ok){if(!received)fail_request();else fail("baseline-not-confirmed-or-touch-changed-reconnect-required");return;}
-    input_sequence=0;next_input_request=next_request=millis();report("live-armed");
+    input_sequence=0;next_input_request=next_request=millis();detail=NULL;operation_phase("ready");report("live-armed");
 }
 /* Connection alone is insufficient until the rendered panel and released touch
  * are healthy. Reuse the same session/epoch-bound neutral-baseline handshake. */
 static void arm_when_ready(void){
     if(state!=LIVE||remote_armed)return;
+    if(pending_mutation())return;
     char epoch[21];cJSON *ticket=NULL;
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    const bool display_ready=input.display_ready;
+    const bool touch_capable=input.touch_capable;
+    const bool touch_valid=input.touch_valid;
     if(osg_input_can_arm(&input,millis())){
         ticket=cJSON_CreateObject();
         snprintf(epoch,sizeof(epoch),"%" PRIu64,input.epoch);
@@ -228,6 +358,12 @@ static void arm_when_ready(void){
         cJSON_AddStringToObject(ticket,"armEpoch",epoch);
     }
     xSemaphoreGive(ui.mutex);
+    if(!touch_capable){
+        if(!equal(operation.error,"touch-unavailable")){detail="Touch input is unavailable";operation_failed("touch-unavailable",false);report("panel-input-unavailable");}
+        return;
+    }
+    if(!display_ready){detail="Rendering panel";operation_phase("rendering");}
+    else {detail=touch_valid?"Release touch to activate inputs":"Waiting for healthy touch input";operation_phase("awaiting-neutral");}
     if(ticket){arm(ticket);cJSON_Delete(ticket);}
 }
 static bool choose(const cJSON *reply){
@@ -238,8 +374,9 @@ static bool choose(const cJSON *reply){
         if(!osg_stable_id(osg_string(v,"instanceId"))||!osg_hash_id(osg_string(v,"publicationHash")))return false;
     }
     if(cJSON_GetArraySize(list)==1)selected=list->child;
-    if(!selected){state=WAIT_ASSIGNMENT;next_request=millis()+2000;report("choose-or-assign-one-instance-in-cockpit");return true;}
-    return osg_copy(assigned,sizeof(assigned),osg_string(selected,"instanceId"))&&osg_copy(publication,sizeof(publication),osg_string(selected,"publicationHash"))&&(state=OPEN,true);
+    if(!selected){memset(&operation,0,sizeof(operation));memset(&session,0,sizeof(session));detail=NULL;state=WAIT_ASSIGNMENT;next_request=millis()+2000;report("choose-or-assign-one-instance-in-cockpit");return true;}
+    if(!osg_copy(assigned,sizeof(assigned),osg_string(selected,"instanceId"))||!osg_copy(publication,sizeof(publication),osg_string(selected,"publicationHash")))return false;
+    state=OPEN;detail="Opening assigned panel";operation_begin();return true;
 }
 static bool open_socket(void){return connection.ws||connection.direct||osg_socket_open(&connection,&settings);}
 static void advance(void){
@@ -253,7 +390,7 @@ static void advance(void){
         bool render_failed=panel_render_failed;
         xSemaphoreGive(ui.mutex);
         if(!healthy||render_failed){
-            if(render_failed||fault==OSG_INPUT_DISPLAY_FAILED){disconnected();state=PANEL_ERROR;detail="Panel could not render correctly";next_request=millis();report("panel-render-failed");return;}
+            if(render_failed||fault==OSG_INPUT_DISPLAY_FAILED){disconnected();state=PANEL_ERROR;detail="Panel could not render correctly";operation_failed("render-failed",true);next_request=millis();report("panel-render-failed");return;}
             fail("input-cancelled-or-lease-expired-reconnect-required");
             if(fault==OSG_INPUT_TOUCH_FAILED)detail="Touch input failed";
             else if(fault==OSG_INPUT_UI_EXPIRED)detail="Touch update timed out";
@@ -287,7 +424,7 @@ static void advance(void){
         /* Refresh through a new authenticated connection, never authenticate twice. */
         osg_socket_close(&connection);state=AUTH;next_request=millis();return;
     }else if(state==OPEN){
-        detail=NULL;update_screen();
+        load_interrupted=false;detail="Opening assigned panel";update_screen();
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
         bool busy=*ui.drawing_panel==&images[1-image_index].panel;
         xSemaphoreGive(ui.mutex);if(busy)return;
@@ -297,19 +434,23 @@ static void advance(void){
         if(ok&&!equal(osg_string(reply,"publicationHash"),publication))ok=request_problem("Reply uses another panel revision");
         if(ok&&!osg_open_identity(reply,settings.host,settings.companion,assigned,publication,&session))ok=request_problem("Invalid session identifiers");
         if(ok){
+            osg_copy(operation.session,sizeof(operation.session),session.session);osg_copy(operation.generation,sizeof(operation.generation),session.generation);
             osg_image *candidate=&images[1-image_index];
             const cJSON *p=cJSON_GetObjectItemCaseSensitive(reply,"publication");
             ok=osg_decode_publication(p,publication,osg_platform_crypto,candidate,ui.runtime->display.width,ui.runtime->display.height);
             cJSON_Delete(reply);reply=NULL;
             if(ok)ok=load_images(candidate,1-image_index);
-            else detail="Panel data invalid or unsupported";
-            if(!ok){disconnected();state=PANEL_ERROR;next_request=millis();report("panel-load-failed");update_screen();return;}
+            else {detail="Panel data invalid or unsupported";operation_failed("invalid-panel",false);osg_pixels_panel_release(1-image_index);}
+            if(!ok){
+                if(load_interrupted){abort_connection();state=OFF;report("panel-load-cancelled");update_screen();return;}
+                disconnected();state=PANEL_ERROR;next_request=millis();report("panel-load-failed");update_screen();return;
+            }
             if(ok){xSemaphoreTake(ui.mutex,portMAX_DELAY);
                 ok=osg_init(ui.runtime,&candidate->panel,ui.runtime->display,NULL,NULL);
                 if(ok){image_index=1-image_index;panel_render_failed=false;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;}
                 xSemaphoreGive(ui.mutex);}
-            if(ok){detail=NULL;state=LIVE;next_request=millis();report("live-disarmed");}
-            else {disconnected();state=PANEL_ERROR;detail="Panel layout is invalid";next_request=millis();report("panel-load-failed");return;}
+            if(ok){detail="Rendering panel";state=LIVE;next_request=millis();operation_phase("rendering");report("live-disarmed");}
+            else {osg_pixels_panel_release(1-image_index);disconnected();state=PANEL_ERROR;detail="Panel layout is invalid";operation_failed("invalid-layout",false);next_request=millis();report("panel-load-failed");return;}
         }
     }else if(state==LIVE||state==PANEL_ERROR){
         if(millis()>=next_request){
@@ -342,7 +483,7 @@ static void advance(void){
     bool assignment_refresh=!ok&&(state==LIVE||state==PANEL_ERROR)&&equal(osg_string(reply,"type"),"error")&&
         equal(osg_string(reply,"error"),"Session is obsolete; explicitly reconnect.");
     cJSON_Delete(reply);
-    if(assignment_refresh){abort_connection();state=AUTH;next_request=millis()+500;report("refreshing-cockpit-assignment-disarmed");}
+    if(assignment_refresh){abort_connection();state=AUTH;detail="Assignment changed; reconnecting safely";operation_failed("cancelled",true);next_request=millis()+500;report("refreshing-cockpit-assignment-disarmed");}
     else if(!ok)fail_request();
 }
 static bool clock_from(const cJSON *command){
@@ -431,10 +572,25 @@ static void command(cJSON *v){
 }
 static size_t serial_used;
 static bool serial_overflow;
+static bool command_mutates(const char *type){
+    return equal(type,"stop")||equal(type,"disarm")||equal(type,"page")||equal(type,"forget")||equal(type,"connect")||
+        equal(type,"provision-direct")||equal(type,"provision")||equal(type,"resume")||equal(type,"scan-wifi")||
+        (equal(type,"arm")&&state==LIVE&&!remote_armed);
+}
 static void serial_byte(int c){
     if(c=='\n'||c=='\r'){
         if(serial_overflow){report("provisioning-line-too-large");serial_overflow=false;}
-        else if(serial_used){serial_line[serial_used]=0;cJSON *v=osg_json_parse(serial_line,serial_used);if(v){command(v);cJSON_Delete(v);}else report("invalid-command-json");}
+        else if(serial_used){
+            serial_line[serial_used]=0;cJSON *v=osg_json_parse(serial_line,serial_used);
+            if(v){
+                const char *type=osg_string(v,"command");
+                /* Duplicate transport replies and rejected/no-op commands do
+                 * not cancel panel work. Status stays responsive throughout. */
+                if(capture_command&&equal(type,"serial-reply"))cJSON_Delete(v);
+                else if(capture_command&&command_mutates(type))interrupted_command=v;
+                else {command(v);cJSON_Delete(v);}
+            }else report("invalid-command-json");
+        }
         mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;
     }else if(!serial_overflow){if(serial_used<OSG_PROVISION_BYTES)serial_line[serial_used++]=(char)c;else serial_overflow=true;}
 }
@@ -461,7 +617,12 @@ static void network_task(void *arg){
         else {state=AUTH;next_request=millis();report("restoring-saved-setup");}
     }
     (void)fcntl(fileno(stdin),F_SETFL,O_NONBLOCK);report("serial-provisioning-ready");
-    for(;;){cJSON *pending_command=osg_serial_take_command();if(pending_command){command(pending_command);cJSON_Delete(pending_command);}int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);update_screen();advance();update_screen();arm_when_ready();vTaskDelay(pdMS_TO_TICKS(10));}
+    for(;;){
+        cJSON *pending_command=interrupted_command?interrupted_command:osg_serial_take_command();interrupted_command=NULL;
+        if(pending_command){command(pending_command);cJSON_Delete(pending_command);}
+        int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
+        update_screen();advance();update_screen();arm_when_ready();vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 void osg_network_touch(bool valid,bool down,int x,int y){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);

@@ -40,7 +40,7 @@ From the repository root, stage firmware before rebuilding Cockpit:
 
     python3 scripts/package-companion-firmware.py apps/companion-esp32/build-sunton-3248s035r
 
-Build success proves link/flash fit, not runtime heap headroom under Wi-Fi/TLS load. The tested image is approximately 876 KB; the configured app partition is 0x177000 bytes.
+Build success proves link/flash fit, not runtime heap headroom under Wi-Fi/TLS load. The configured app partition is 0x180000 bytes (1.5 MiB); the shared image cache uses the existing 0x260000-byte partition (2.375 MiB).
 
 ## References
 

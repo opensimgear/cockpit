@@ -48,6 +48,33 @@ fn fixtures_roundtrip_and_default_is_stable_without_activation() {
 }
 
 #[test]
+fn companion_panel_identity_is_optional_portable_and_validated_separately_from_node_ids() {
+    let legacy = fixture("mixed");
+    assert!(legacy.companion_assignments.iter().all(|assignment| assignment.panel_id.is_none()));
+    let legacy_value = serde_json::to_value(&legacy).unwrap();
+    assert!(legacy_value["companionAssignments"][0].get("panelId").is_none());
+    let legacy_hash = legacy.semantic_hash().unwrap();
+    let mut linked = legacy.clone();
+    linked.companion_assignments[0].panel_id = Some("12345678-abcd-4000-8000-123456789abc".into());
+    validate_document(&linked).unwrap();
+    assert_eq!(ProfileDocument::parse(&linked.export().unwrap()).unwrap(), linked);
+    assert_ne!(linked.semantic_hash().unwrap(), legacy_hash);
+    for panel_id in ["", " panel", "panel.id", "_panel", "panel/id", "panel\n", "écran"] {
+        let mut invalid = legacy_value.clone();
+        invalid["companionAssignments"][0]["panelId"] = json!(panel_id);
+        rejected(invalid);
+    }
+    for panel_id in [json!("p".repeat(65)), json!(42), json!({"id":"panel"})] {
+        let mut invalid = legacy_value.clone();
+        invalid["companionAssignments"][0]["panelId"] = panel_id;
+        rejected(invalid);
+    }
+    let mut valid = legacy_value;
+    valid["companionAssignments"][0]["panelId"] = json!("p".repeat(64));
+    ProfileDocument::parse(&serde_json::to_vec(&valid).unwrap()).unwrap();
+}
+
+#[test]
 fn version_revision_uuid_and_missing_fields_are_strict() {
     let mut value = document_value();
     value["schemaVersion"] = json!(1);

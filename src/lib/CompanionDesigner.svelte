@@ -7,6 +7,7 @@
   import CompanionConnections from './CompanionConnections.svelte';
   import { gatewayRequest } from './gateway';
   import { ProfilesClient } from './profiles';
+  import { latestSavedPanels } from './companion-library';
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
   import { companionScreenSize, panelScreenReason, knownPanelScreenChoices, panelScreenSizeReason, PANEL_SCREEN_MIN, PANEL_SCREEN_MAX } from './companion-screen';
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
@@ -91,7 +92,7 @@
   const maxMargin = $derived(Math.ceil(Math.min(viewport.width, viewport.height) / 4) - 1);
   const activeAssets = $derived(assets.filter(payload => document.ui.assets.some(a => a.id === payload.assetId)));
   const imageAssets = $derived(Object.fromEntries(activeAssets.map(payload => [payload.assetId, `data:${document.ui.assets.find(a => a.id === payload.assetId)?.mime};base64,${payload.base64}`])));
-  const currentPublications = $derived(library.drafts.flatMap(d => publications[d.id]?.slice(-1) ?? []));
+  const currentPublications = $derived(latestSavedPanels(library,publications));
   function panelHashes(id: string) { return (publications[id] ?? []).map(p => p.publicationHash); }
   function panelAssignments(id: string) {
     const hashes = new Set(panelHashes(id));
@@ -330,6 +331,7 @@
   async function save() {
     if (panelInvalidReason) { error=panelInvalidReason;return; }
     await operation(async () => {
+      message='';
       const previousHashes=panelHashes(draftId);
       const simplified=simplifyFirmwareWidgets(document);
       if(simplified.removed)history=createDesignerHistory(simplified.document);
@@ -337,13 +339,12 @@
       const panel=await publishDocument(document,activeAssets);
       const next=await saveDraft(library,{id:draftId,name:document.ui.title,document,assets:activeAssets});
       await persist(next,{...publications,[draftId]:[panel]});dirty=false;
-      message='Panel saved';
       try {
         await compactSnapshots(await send('companion_status'),true);
         const state=await synchronizePanel(panel,previousHashes,send);
         await compactSnapshots(state);
         message='Panel saved and assigned companions updated';
-      } catch(e) { error='Panel saved locally. Companion update failed: '+String(e); }
+      } catch(e) { error='Panel saved locally. Companion update failed: '+(e instanceof Error?e.message:String(e)); }
     });
   }
   async function removeDraft(id: string) {

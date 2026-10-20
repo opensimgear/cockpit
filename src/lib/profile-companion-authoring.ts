@@ -2,7 +2,7 @@ import { graphAssignResource, graphDraft, graphRemovePort, graphSelectProviderPo
 import { resourcePortError, type ObservedResourcePort, type ResourceSummary } from './profile-inventory';
 import type { DeepReadonly } from './profiles';
 
-export type ProfileCompanionPanel = { publicationHash:string;capabilityFingerprint:string;title:string;controlCount:number;assetCount:number };
+export type ProfileCompanionPanel = { panelId?:string;publicationHashes?:string[];publicationHash:string;capabilityFingerprint:string;title:string;controlCount:number;assetCount:number };
 export type ProfileCompanionCatalogue = {schemaVersion:1;revision:string;panels:ProfileCompanionPanel[];diagnostics:string[]};
 export type ProfileCompanionPage = {schemaVersion:1;resourceId:string;publicationHash:string;capabilityFingerprint:string;identityFingerprint:string;offset:number;total:number;ports:ObservedResourcePort[];diagnostics:string[]};
 export type ProfileCompanionPortSelection = ProfileGraphSelection & {page:DeepReadonly<ProfileCompanionPage>};
@@ -19,11 +19,20 @@ const diagnostics=(value:unknown)=>Array.isArray(value)&&value.length<=32&&value
 const freeze=<T>(value:T):DeepReadonly<T>=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value as DeepReadonly<T>;};
 const capture=<T>(value:T):T=>JSON.parse(JSON.stringify(value));
 export function companionPanelValid(value:unknown):value is ProfileCompanionPanel {
-  return exact(value,['publicationHash','capabilityFingerprint','title','controlCount','assetCount'])&&hash(value.publicationHash)&&hash(value.capabilityFingerprint)&&text(value.title,1024)&&integer(value.controlCount,1,128)&&integer(value.assetCount,0,64);
+  return exact(value,['publicationHash','capabilityFingerprint','title','controlCount','assetCount',...(object(value)&&Object.hasOwn(value,'panelId')?['panelId']:[]),...(object(value)&&Object.hasOwn(value,'publicationHashes')?['publicationHashes']:[])])&&(!Object.hasOwn(value,'panelId')||typeof value.panelId==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value.panelId))&&(!Object.hasOwn(value,'publicationHashes')||Array.isArray(value.publicationHashes)&&value.publicationHashes.length<=100&&value.publicationHashes.every(hash)&&new Set(value.publicationHashes).size===value.publicationHashes.length)&&hash(value.publicationHash)&&hash(value.capabilityFingerprint)&&text(value.title,1024)&&integer(value.controlCount,1,128)&&integer(value.assetCount,0,64);
+}
+export function latestCompanionPanels(panels:readonly DeepReadonly<ProfileCompanionPanel>[]):DeepReadonly<ProfileCompanionPanel>[] {
+  const latest=new Map<string,DeepReadonly<ProfileCompanionPanel>>();
+  for(const panel of panels)latest.set(panel.panelId??panel.publicationHash,panel);
+  return [...latest.values()];
+}
+export function selectedCompanionPanel(panels:readonly DeepReadonly<ProfileCompanionPanel>[],captured:{panelId?:string;publicationHash:string}|undefined):DeepReadonly<ProfileCompanionPanel>|undefined {
+  if(!captured)return undefined;
+  return captured.panelId?panels.find(panel=>panel.panelId===captured.panelId):panels.find(panel=>panel.publicationHash===captured.publicationHash||panel.publicationHashes?.includes(captured.publicationHash));
 }
 function catalogue(value:unknown):ProfileCompanionCatalogue {
   if(!exact(value,['schemaVersion','revision','panels','diagnostics'])||value.schemaVersion!==1||!hash(value.revision)||!diagnostics(value.diagnostics)||!Array.isArray(value.panels)||value.panels.length>32||!value.panels.every(companionPanelValid)||new Set(value.panels.map(panel=>panel.publicationHash)).size!==value.panels.length)throw new Error('The native retained companion panel catalogue is malformed or exceeds its bounds.');
-  return value as ProfileCompanionCatalogue;
+  return {...value,panels:latestCompanionPanels(value.panels)} as ProfileCompanionCatalogue;
 }
 function page(value:unknown,request:Extract<ProfileCompanionAuthoringRequest,{command:'profile_companion_inspect'}>):ProfileCompanionPage {
   if(!exact(value,['schemaVersion','resourceId','publicationHash','capabilityFingerprint','identityFingerprint','offset','total','ports','diagnostics'])||value.schemaVersion!==1||value.resourceId!==request.resourceId||value.publicationHash!==request.publicationHash||!hash(value.capabilityFingerprint)||!hash(value.identityFingerprint)||value.offset!==request.offset||!integer(value.total,1,1024)||!Array.isArray(value.ports)||value.ports.length>request.limit||value.offset+value.ports.length>value.total||(value.offset<value.total&&!value.ports.length)||!diagnostics(value.diagnostics))throw new Error('The native companion port page changed identity or exceeds its bounds.');
@@ -68,12 +77,13 @@ export function graphCaptureCompanionPanel(value:DeepReadonly<ProfileGraphDraft>
   const current=next.document.companionAssignments.find(item=>item.resourceId===resourceId);
   if(next.document.companionAssignments.some(item=>item.resourceId!==resourceId&&next.assignments.find(assigned=>assigned.resourceId===item.resourceId)?.sourceId===assignment.sourceId))throw new Error('This paired companion already belongs to another captured panel block.');
   if(!current&&next.document.companionAssignments.length>=8)throw new Error('One profile can own at most eight companion panel instances.');
-  if(current?.publicationHash!==panel.publicationHash&&resource.ports.length){
+  const samePanel=current?.panelId?current.panelId===panel.panelId:!!current&&!!panel.publicationHashes?.includes(current.publicationHash);
+  if(current?.publicationHash!==panel.publicationHash&&!samePanel&&resource.ports.length){
     if(!clearPorts)throw new Error('Changing the panel requires explicit removal of this companion’s selected ports and routes before selecting replacement contracts.');
     for(const port of resource.ports)next=graphRemovePort(next,resourceId,port.id);
   }
   next.document.companionAssignments=next.document.companionAssignments.filter(item=>item.resourceId!==resourceId);
-  next.document.companionAssignments.push({resourceId,publicationHash:panel.publicationHash});return graphDraft(next);
+  next.document.companionAssignments.push({resourceId,...(panel.panelId?{panelId:panel.panelId}:{}),publicationHash:panel.publicationHash});return graphDraft(next);
 }
 export function graphReleaseCompanionPanel(value:DeepReadonly<ProfileGraphDraft>,resourceId:string):ProfileGraphDraft {
   const next=graphDraft(value);if(!next.document.resources.some(resource=>resource.id===resourceId&&resource.kind==='companion'))throw new Error('Choose an existing companion block.');
@@ -90,7 +100,7 @@ export function graphReconcileCompanionPanel(value:DeepReadonly<ProfileGraphDraf
   const next=graphAssignResource(value,resourceId,source,selections);
   if(next.document.companionAssignments.some(item=>item.resourceId!==resourceId&&next.assignments.find(local=>local.resourceId===item.resourceId)?.sourceId===source.id))throw new Error('This paired companion already belongs to another captured panel block.');
   if(!next.document.companionAssignments.some(item=>item.resourceId===resourceId)&&next.document.companionAssignments.length>=8)throw new Error('One profile can own at most eight companion panel instances.');
-  next.document.companionAssignments=next.document.companionAssignments.filter(item=>item.resourceId!==resourceId);next.document.companionAssignments.push({resourceId,publicationHash:panel.publicationHash});return graphDraft(next);
+  next.document.companionAssignments=next.document.companionAssignments.filter(item=>item.resourceId!==resourceId);next.document.companionAssignments.push({resourceId,...(panel.panelId?{panelId:panel.panelId}:{}),publicationHash:panel.publicationHash});return graphDraft(next);
 }
 export function graphSelectCompanionPort(value:DeepReadonly<ProfileGraphDraft>,resourceId:string,observedPage:DeepReadonly<ProfileCompanionPage>,port:DeepReadonly<ObservedResourcePort>):ProfileGraphDraft {
   const assignment=value.assignments.find(item=>item.resourceId===resourceId),captured=value.document.companionAssignments.find(item=>item.resourceId===resourceId);

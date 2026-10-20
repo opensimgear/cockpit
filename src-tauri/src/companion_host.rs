@@ -11,11 +11,36 @@ use std::{
     time::{Duration, Instant},
 };
 
-
 include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
 
 const MAX_UPLOAD: usize = 13 * 1024 * 1024;
+pub(crate) struct ProfilePanelOperation {
+    pub operation: Value,
+    pub live_session: bool,
+    pub fresh: bool,
+}
+fn usb_panel_snapshot(companion: &str, devices: &[Value]) -> Option<ProfilePanelOperation> {
+    let mut matching = devices.iter().filter(|usb|usb["connected"] == true && usb["ready"] == true
+        && usb["device"]["companionId"] == companion);
+    let usb = matching.next()?;
+    if matching.next().is_some() { return None; }
+    let reported=&usb["device"]["operation"];
+    let operation = osg_companion_service::operation::validate_panel_operation(
+        reported,reported["instanceId"].as_str()?,reported["publicationHash"].as_str()?).ok()?;
+    if operation["attemptId"].as_u64().is_none_or(|attempt|attempt == 0)
+        || operation.get("sessionId").is_some_and(|session|session != &usb["device"]["sessionId"])
+        || operation.get("generation").is_some_and(|generation|generation != &usb["device"]["generation"]) { return None; }
+    Some(ProfilePanelOperation { operation, live_session:false,
+        fresh:usb["statusAgeMs"].as_u64().is_some_and(|age|age < 1500) })
+}
+fn usb_panel_operation(assignment: &Value, devices: &[Value]) -> Option<ProfilePanelOperation> {
+    let report=usb_panel_snapshot(assignment["companionId"].as_str()?,devices)?;
+    osg_companion_service::operation::validate_panel_operation(&report.operation,
+        assignment["instanceId"].as_str()?,assignment["publicationHash"].as_str()?).ok()?;
+    Some(report)
+}
 fn describe_usb_presence(host:&mut Value,devices:&[Value]){
+    let assignments=host["instances"].as_array().cloned().unwrap_or_default();
     if let Some(clients)=host["clients"].as_array_mut(){for client in clients{
         let Some(usb)=devices.iter().find(|usb|usb["connected"]==true && usb["ready"]==true && usb["device"]["companionId"]==client["companionId"])else{continue};
         client["sessionConnected"]=client["connected"].clone();
@@ -30,6 +55,12 @@ fn describe_usb_presence(host:&mut Value,devices:&[Value]){
             Some("awaiting-assignment")=>"No panel assigned",
             _=>"",
         }));
+        if client["operation"].is_null() && usb["device"]["operation"].is_object()
+            && assignments.iter().any(|assignment|assignment["companionId"]==client["companionId"]
+                && assignment["instanceId"]==usb["device"]["operation"]["instanceId"]
+                && assignment["publicationHash"]==usb["device"]["operation"]["publicationHash"]) {
+            client["operation"]=usb["device"]["operation"].clone();
+        }
         if usb["device"]["status"]=="panel-error"{
             client["panelError"]=json!(usb["device"]["statusMessage"].as_str().unwrap_or("The screen could not load or render this panel."));
         }
@@ -252,6 +283,61 @@ impl Runtime {
     pub(crate) fn profile_metadata(&self) -> Result<Hub, String> {
         Ok(self.metadata(false)?.hub.clone())
     }
+    pub(crate) fn saved_panel_updates(&self) -> Result<Vec<crate::companion_panels::SavedPanel>,String> {
+        let metadata=self.metadata(false)?;
+        crate::companion_panels::latest(&metadata.hub,&metadata.directory)
+    }
+    pub(crate) fn saved_panel_heads(&self) -> Result<std::collections::BTreeMap<String,String>,String> {
+        let metadata=self.metadata(false)?;
+        crate::companion_panels::saved_heads(&metadata.hub,&metadata.directory)
+    }
+    pub(crate) fn saved_panel_references(&self) -> Result<Vec<crate::companion_panels::SavedPanel>,String> {
+        let heads=self.saved_panel_heads()?;
+        Ok(self.saved_panel_updates()?.into_iter().filter(|saved|heads.get(&saved.panel_id)==Some(&saved.publication_hash)).collect())
+    }
+    /// Read-only preparation diagnostics. A recent nonce-verified USB report
+    /// can explain failures before session-open; it never supplies a baseline.
+    /// Stale snapshots are returned only so a wait can fence its initial retry.
+    pub(crate) fn profile_panel_operation(&self, instance: &str, publication: &str) -> Option<ProfilePanelOperation> {
+        let hub = &self.metadata.get()?.hub;
+        if let Some(operation) = hub.panel_operation(instance,publication) {
+            return Some(ProfilePanelOperation { operation, live_session:true, fresh:true });
+        }
+        let services = self.services.get()?.as_ref().ok()?;
+        let snapshot = hub.assignment_snapshot(&[instance.into()]).ok()?;
+        let assignment = snapshot["assignments"].as_array()?.iter().find(|row|
+            row["instanceId"] == instance && row["publicationHash"] == publication)?;
+        usb_panel_operation(assignment,&services.usb.statuses())
+    }
+    /// Capture before assignment mutation. The previous panel's attempt is
+    /// retained only as a retry fence, never as diagnostics for the new target.
+    pub(crate) fn profile_panel_operation_history(&self, instance: &str) -> Option<Value> {
+        let hub=&self.metadata.get()?.hub;
+        let snapshot=hub.assignment_snapshot(&[instance.into()]).ok()?;
+        let assignment=snapshot["assignments"].as_array()?.iter().find(|row|row["instanceId"] == instance)?;
+        if let Some(Ok(services))=self.services.get() {
+            if let Some(report)=usb_panel_snapshot(assignment["companionId"].as_str()?,&services.usb.statuses()) {
+                return Some(report.operation);
+            }
+        }
+        hub.panel_operation(instance,assignment["publicationHash"].as_str()?)
+    }
+    /// Activation is an explicit retry; a stopped/faulted USB companion gets
+    /// one reconnect request after its journaled assignment has been acquired.
+    pub(crate) fn profile_retry_panel(&self,instance:&str,publication:&str)->Result<(),String>{
+        let Some(Ok(services))=self.services.get() else{return Ok(());};
+        let snapshot=services.hub.assignment_snapshot(&[instance.into()])?;
+        let assignment=snapshot["assignments"].as_array().and_then(|rows|rows.iter().find(|row|row["instanceId"]==instance&&row["publicationHash"]==publication))
+            .ok_or("The companion assignment changed before its explicit panel retry.")?;
+        let Some(companion)=assignment["companionId"].as_str() else{return Ok(());};
+        let faulted=services.usb.statuses().iter().any(|usb|usb["connected"]==true&&usb["ready"]==true&&usb["device"]["companionId"]==companion
+            &&matches!(usb["device"]["status"].as_str(),Some("error"|"offline"|"panel-error")));
+        if faulted{
+            let ms=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"System clock is invalid.")?.as_millis() as u64;
+            services.usb.record_for(Some(companion),json!({"command":"connect","unixMs":ms}))?;
+        }
+        Ok(())
+    }
     /// Call only from the journaled acquisition phase.
     pub(crate) fn profile_acquire_transports(&self) -> Result<Hub, String> {
         // Supplied-Hub fixtures already drive the real wire protocol and native
@@ -382,12 +468,20 @@ impl Runtime {
                     return Err("Unexpected panel upload fields.".into());
                 }
                 object.insert("command".into(), json!("companion_publish"));
+                if payload.get("saveAsLatest").is_some_and(|value|!value.is_boolean()) {
+                    return Err("saveAsLatest must be a boolean.".into());
+                }
                 let services = self.services()?;
                 let _cache=services.panel_cache.lock().unwrap_or_else(|p|p.into_inner());
                 services.hub.command(&value)?;
                 crate::companion_panels::save(&services.hub,&services.directory)?;
+                let saved=if payload["saveAsLatest"]!=false {
+                    Some(crate::companion_panels::mark_saved(&services.hub,&services.directory,value["publicationHash"].as_str().ok_or("The saved panel has no content identity.")?)?)
+                } else {None};
                 Self::start_saved_listener(services);
-                return self.status(services);
+                let mut response=self.status(services)?;
+                if let Some(saved)=saved {response["panelSaved"]=serde_json::to_value(saved).map_err(|error|error.to_string())?;}
+                return Ok(response);
             }
             _ => {}
         }
@@ -479,7 +573,7 @@ impl Runtime {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_err(|_| "System clock is invalid.")?
                     .as_millis() as u64;
-                services.usb.record(json!({"command":op,"unixMs":ms}))?;
+                services.usb.record_for(payload["companionId"].as_str(),json!({"command":op,"unixMs":ms}))?;
                 Ok(json!({"usb":services.usb.status()}))
             }
             "companion_usb_provision" => {
@@ -727,6 +821,29 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pre_open_usb_diagnostics_require_current_assignment_identity_and_nonce_freshness() {
+        let hash=format!("sha256:{}","a".repeat(64));
+        let assignment=json!({"instanceId":"instance","publicationHash":hash,"companionId":"sunton"});
+        let mut usb=json!({"connected":true,"ready":true,"statusAgeMs":100,"device":{"companionId":"sunton",
+            "operation":{"instanceId":"instance","publicationHash":hash,"attemptId":2,"phase":"failed",
+                "errorCode":"open-panel-rejected","retryable":true,"message":"Assigned panel was removed"}}});
+        let report=usb_panel_operation(&assignment,&[usb.clone()]).unwrap();
+        assert!(!report.live_session); assert!(report.fresh); assert_eq!(report.operation["errorCode"],"open-panel-rejected");
+        usb["statusAgeMs"]=json!(1500);
+        assert!(!usb_panel_operation(&assignment,&[usb.clone()]).unwrap().fresh,"Stale nonce status is retry context only");
+        for (path,value) in [("connected",json!(false)),("ready",json!(false))] {
+            let mut invalid=usb.clone(); invalid[path]=value;
+            assert!(usb_panel_operation(&assignment,&[invalid]).is_none());
+        }
+        let mut other=usb.clone(); other["device"]["companionId"]=json!("waveshare");
+        assert!(usb_panel_operation(&assignment,&[other]).is_none());
+        let mut other=usb.clone(); other["device"]["operation"]["instanceId"]=json!("other-instance");
+        assert!(usb_panel_operation(&assignment,&[other]).is_none());
+        let mut other=usb.clone(); other["device"]["operation"]["publicationHash"]=json!(format!("sha256:{}","b".repeat(64)));
+        assert!(usb_panel_operation(&assignment,&[other]).is_none());
+        assert!(usb_panel_operation(&assignment,&[usb.clone(),usb]).is_none(),"Ambiguous USB identities cannot explain a switch");
+    }
     #[test]
     fn usb_presence_is_independent_of_panel_session_errors(){
         let mut host=json!({"clients":[{"companionId":"screen","connected":false}]});

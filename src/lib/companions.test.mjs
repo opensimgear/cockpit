@@ -18,6 +18,14 @@ test('failed native upload is aborted; abort failure preserves original diagnosi
   await assert.rejects(sendPublication(publication, async command => { calls.push(command); if (command.endsWith('_begin')) return { uploadId: 'u' }; throw new Error(command.endsWith('_abort') ? 'abort failed' : 'original chunk error'); }), /original chunk error/);
   assert.equal(calls.at(-1), 'companion_publish_abort');
 });
+
+test('restoring transport content preserves the current saved panel state and returns native application feedback',async()=>{
+  const panel=await publishDocument(newDocument('Retained transport'),[]),calls=[];
+  const feedback={panelSaveApplication:{state:'inactive',error:null}};
+  const result=await sendPublication(panel,async(command,payload)=>{calls.push({command,payload});return command.endsWith('_begin')?{uploadId:'restore-upload'}:feedback;},{saveAsLatest:false});
+  assert.deepEqual(calls.at(-1),{command:'companion_publish_commit',payload:{uploadId:'restore-upload',saveAsLatest:false}});
+  assert.deepEqual(result,feedback);
+});
 test('missing upload and oversized payload fail before subsequent chunks', async () => {
   const publication = await publishDocument(newDocument(), []); let count = 0;
   await assert.rejects(sendPublication(publication, async () => { count++; return {}; }), /did not start/); assert.equal(count, 1);

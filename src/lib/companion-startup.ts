@@ -1,5 +1,6 @@
 import type { Publication } from '@opensimgear/companion-designer';
 import type { CompanionHostState } from './companions';
+import {latestSavedPanels,type CompanionLibrarySnapshot} from './companion-library.ts';
 
 export async function restoreAssignedPanels(state: CompanionHostState, load: () => Promise<Publication[]>, publish: (panel: Publication) => Promise<unknown>) {
   const available = new Set((state.host?.publications ?? []).map(p => p.publicationHash));
@@ -13,6 +14,11 @@ export async function restoreAssignedPanels(state: CompanionHostState, load: () 
   });
   for (const panel of panels) await publish(panel);
 }
+/** Transport-only restoration never changes a panel's saved state. */
+export async function restoreSavedPanelLibrary(state:CompanionHostState,snapshot:CompanionLibrarySnapshot,publish:(panel:Publication,options:{saveAsLatest?:boolean})=>Promise<unknown>){
+  await restoreAssignedPanels(state,async()=>Object.values(snapshot.publications).flat(),panel=>publish(panel,{saveAsLatest:false}));
+  for(const panel of latestSavedPanels(snapshot.library,snapshot.publications))await publish(panel,{saveAsLatest:true});
+}
 let restoring: Promise<void> | undefined;
 /** Shared by app startup and the designer; a single upload owns native IPC. */
 export function restoreCompanionPanels(): Promise<void> {
@@ -25,10 +31,8 @@ export function restoreCompanionPanels(): Promise<void> {
       return result;
     };
     const state = await send('companion_status');
-    await restoreAssignedPanels(state, async () => {
-      const { CompanionLibraryStore, indexedDbStorage } = await import('./companion-library');
-      const snapshot = await new CompanionLibraryStore(indexedDbStorage()).load();
-      return Object.values(snapshot.publications).flat();
-    }, panel => sendPublication(panel, send));
+    const { CompanionLibraryStore, indexedDbStorage } = await import('./companion-library');
+    const snapshot = await new CompanionLibraryStore(indexedDbStorage()).load();
+    await restoreSavedPanelLibrary(state,snapshot,(panel,options)=>sendPublication(panel,send,options));
   })().catch(error => { restoring = undefined; throw error; });
 }

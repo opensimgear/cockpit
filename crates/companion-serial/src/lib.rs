@@ -12,7 +12,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     sync::{
         mpsc::{self, Receiver, SyncSender},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant},
@@ -51,6 +51,26 @@ fn refresh_panel_recovery(state:&mut Value,device:&Value,blocked:&mut Option<Str
 }
 fn same_usb_candidate(candidate: &Value, current: &Value) -> bool {
     ["port", "vid", "pid", "serial"].iter().all(|key| candidate[key] == current[key])
+}
+fn safe_panel_operation(device: &Value) -> Option<Value> {
+    let operation = device.get("operation")?;
+    let safe = osg_companion_service::operation::validate_panel_operation(operation,
+        operation["instanceId"].as_str()?, operation["publicationHash"].as_str()?).ok()?;
+    if safe.get("sessionId").is_some_and(|session| session != &device["sessionId"])
+        || safe.get("generation").is_some_and(|generation| generation != &device["generation"]) { return None; }
+    Some(safe)
+}
+fn block_failed_panel(host: &Value, device: &Value, blocked: &mut Option<String>) {
+    let Some(operation) = safe_panel_operation(device).filter(|operation| operation["phase"] == "failed") else { return; };
+    if host["instances"].as_array().is_some_and(|rows| rows.iter().any(|row|
+        row["companionId"] == device["companionId"] && row["instanceId"] == operation["instanceId"]
+            && row["publicationHash"] == operation["publicationHash"])) {
+        *blocked = operation["publicationHash"].as_str().map(str::to_owned);
+    }
+}
+fn status_clock_ms() -> u64 {
+    static STARTED: OnceLock<Instant> = OnceLock::new();
+    STARTED.get_or_init(Instant::now).elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 enum Action {
     Record(Value),
@@ -95,7 +115,12 @@ impl Manager {
         status["devices"]=json!(devices);status
     }
     pub fn statuses(&self)->Vec<Value>{
-        self.links.lock().unwrap_or_else(|p|p.into_inner()).values().map(|link|link.state.lock().unwrap_or_else(|p|p.into_inner()).clone()).collect()
+        self.links.lock().unwrap_or_else(|p|p.into_inner()).values().map(|link| {
+            let mut status = link.state.lock().unwrap_or_else(|p|p.into_inner()).clone();
+            let observed = status.as_object_mut().and_then(|state|state.remove("_statusObservedMs")).and_then(|value|value.as_u64());
+            status["statusAgeMs"] = observed.map(|at|json!(status_clock_ms().saturating_sub(at))).unwrap_or(Value::Null);
+            status
+        }).collect()
     }
     fn selected_link(&self)->Option<(String,Arc<Mutex<Value>>)>{
         let selected=self.selected.lock().unwrap_or_else(|p|p.into_inner()).clone()?;
@@ -332,6 +357,17 @@ impl Manager {
     pub fn record(&self, v: Value) -> Result<(), String> {
         self.enqueue(Action::Record(v))
     }
+    pub fn record_for(&self, companion: Option<&str>, v: Value) -> Result<(), String> {
+        let Some(companion) = companion else { return self.record(v); };
+        let links = self.links.lock().unwrap_or_else(|p|p.into_inner());
+        let mut matching = links.values().filter(|link| {
+            let state = link.state.lock().unwrap_or_else(|p|p.into_inner());
+            state["connected"] == true && state["ready"] == true && state["device"]["companionId"] == companion
+        });
+        let link = matching.next().ok_or("The selected companion is not connected by USB.")?;
+        if matching.next().is_some() { return Err("The companion appears on multiple USB ports. Reconnect the exact device.".into()); }
+        link.tx.try_send(Action::Record(v)).map_err(|_|"USB device is busy or disconnected.".into())
+    }
     pub fn provision(&self, v: Value, companion: String) -> Result<(), String> {
         let result = self.enqueue(Action::Provision(v, companion));
         if result.is_ok() {
@@ -494,6 +530,7 @@ fn worker(
         let mut scan_started:Option<Instant>=None;
         let mut last_connect: Option<Instant> = None;
         let mut blocked_panel:Option<String>=None;
+        let mut stopped_panel:Option<String>=None;
         let mut ready = false;
         let mut nonce = String::new();
         let mut provision: Option<(String, Instant, Option<Value>)> = None;
@@ -506,7 +543,9 @@ fn worker(
                 scan_started=None;set(public,"scanning",json!(false));set(public,"scanError",json!("Wi-Fi scan timed out. Try again."));
                 last_status=Some(Instant::now());
             }
-            if ready && scan_started.is_none() && last_status.is_some_and(|at: Instant| at.elapsed() > Duration::from_secs(5))
+            let preparing=ready && hub.serial_panel_preparing(public.lock().unwrap_or_else(|p|p.into_inner())["device"]["companionId"].as_str().unwrap_or(""), &wire.connection);
+            let response_timeout=Duration::from_millis(if preparing { osg_companion_service::PANEL_PREPARATION_LEASE_MS } else { 5000 });
+            if ready && scan_started.is_none() && last_status.is_some_and(|at: Instant| at.elapsed() > response_timeout)
             {
                 return Err("USB companion stopped responding.".into());
             }
@@ -549,6 +588,14 @@ fn worker(
                     }
                     match action {
                         Action::Record(v) => {
+                            if v["command"] == "connect" {
+                                // One explicit retry; a later terminal report blocks further retries.
+                                blocked_panel = None; stopped_panel = None; last_connect = Some(Instant::now());
+                            } else if matches!(v["command"].as_str(), Some("stop" | "disarm")) {
+                                let host = hub.command(&json!({"command":"companion_status"}))?;
+                                let device = public.lock().unwrap_or_else(|p|p.into_inner())["device"].clone();
+                                stopped_panel = assignment_hash(&host,device["companionId"].as_str().unwrap_or(""));
+                            }
                             if v["command"]=="scan-wifi"{
                                 scan_started=Some(Instant::now());set(public,"scanning",json!(true));set(public,"scanError",Value::Null);set(public,"networks",json!([]));
                             }
@@ -670,8 +717,13 @@ fn worker(
                                             let paired = host["clients"].as_array().is_some_and(|rows| rows.iter().any(|c|c["companionId"]==v["companionId"]));
                                             let assigned=assignment_hash(&host,v["companionId"].as_str().unwrap_or(""));
                                             refresh_panel_recovery(&mut public.lock().unwrap_or_else(|p|p.into_inner()),&v,&mut blocked_panel);
-                                            let retry_allowed=panel_retry_allowed(blocked_panel.as_deref(),assigned.as_deref());
-                                            if v["setupSaved"] == true && (!ready || (paired && retry_allowed && v["connectionMode"]=="serial" && matches!(v["status"].as_str(),Some("offline"|"error")) && last_connect.is_none_or(|at|at.elapsed()>Duration::from_secs(3)))) {
+                                            // A newly attached device may retain the previous
+                                            // host's shutdown error. Allow one initial connect;
+                                            // failures observed by this ready link block retries.
+                                            if ready { block_failed_panel(&host,&v,&mut blocked_panel); }
+                                            let retry_allowed=panel_retry_allowed(blocked_panel.as_deref(),assigned.as_deref())
+                                                && panel_retry_allowed(stopped_panel.as_deref(),assigned.as_deref());
+                                            if v["setupSaved"] == true && retry_allowed && (!ready || (paired && v["connectionMode"]=="serial" && matches!(v["status"].as_str(),Some("offline"|"error")) && last_connect.is_none_or(|at|at.elapsed()>Duration::from_secs(3)))) {
                                                 last_connect=Some(Instant::now());
                                                 let unix = std::time::SystemTime::now()
                                                     .duration_since(std::time::UNIX_EPOCH)
@@ -709,7 +761,22 @@ fn worker(
                                                     safe[key] = value.clone();
                                                 }
                                             }
-                                            set(public, "device", safe);
+                                            if let Some(operation) = safe_panel_operation(&v) {
+                                                // Only nonce-bound status reaches this path. Events
+                                                // may be delayed and never update session metadata.
+                                                let _ = hub.record_serial_panel_operation(
+                                                    v["companionId"].as_str().unwrap_or(""),
+                                                    v["sessionId"].as_str().unwrap_or(""),
+                                                    v["generation"].as_str().unwrap_or(""), &operation);
+                                                safe["operation"] = operation;
+                                            }
+                                            {
+                                                let mut state = public.lock().unwrap_or_else(|p|p.into_inner());
+                                                state["device"] = safe;
+                                                // This stamp advances only for a nonce-matched full
+                                                // status, never for an unverified progress event.
+                                                state["_statusObservedMs"] = json!(status_clock_ms());
+                                            }
                                             set(
                                                 public,
                                                 "stage",
@@ -785,6 +852,25 @@ fn worker(
 mod tests {
     use super::*;
     #[test]
+    fn terminal_operation_blocks_automatic_retry_only_for_its_exact_assignment() {
+        let hash=format!("sha256:{}","a".repeat(64));
+        let host=json!({"instances":[{"companionId":"screen","instanceId":"panel","publicationHash":hash}]});
+        let device=json!({"companionId":"screen","sessionId":"session","generation":"1","operation":{
+            "instanceId":"panel","publicationHash":hash,"sessionId":"session","generation":"1",
+            "phase":"failed","errorCode":"baseline-failed","retryable":true,"attemptId":1}});
+        let mut blocked=None;
+        block_failed_panel(&host,&device,&mut blocked);
+        assert!(!panel_retry_allowed(blocked.as_deref(),Some(&hash)));
+        assert!(panel_retry_allowed(blocked.as_deref(),Some("different-panel")));
+        for (field,value) in [("instanceId","other-panel"),("sessionId","old-session")] {
+            let mut stale=device.clone();stale["operation"][field]=json!(value);
+            let mut untouched=None;block_failed_panel(&host,&stale,&mut untouched);
+            assert!(untouched.is_none());
+        }
+        let mut other=device;other["companionId"]=json!("another-screen");
+        let mut untouched=None;block_failed_panel(&host,&other,&mut untouched);assert!(untouched.is_none());
+    }
+    #[test]
     fn recovered_panel_and_updated_firmware_release_stale_rejection(){
         for status in ["live-armed","live-disarmed","awaiting-assignment"]{
             let mut state=json!({"device":{"firmwareVersion":"old"},"deviceStatus":"panel-unsupported-corrupt-or-over-budget","lastHostError":"Old error"});
@@ -841,6 +927,35 @@ mod tests {
         assert!(matches!(rx6.try_recv(),Ok(Action::Stop)));assert!(rx5.try_recv().is_err());
         assert_eq!(manager.statuses().len(),1);assert_eq!(manager.statuses()[0]["port"],"COM5");
         manager.shutdown();assert!(matches!(rx5.try_recv(),Ok(Action::Stop)));
+    }
+    #[test]
+    fn companion_targeting_never_uses_another_selected_usb_device() {
+        let manager=Manager::default(); let (tx5,rx5)=mpsc::sync_channel(8); let (tx8,rx8)=mpsc::sync_channel(8);
+        for (port,companion,tx) in [("COM5","waveshare",tx5),("COM8","sunton",tx8)] {
+            manager.links.lock().unwrap().insert(port.into(),Link{port:port.into(),tx,state:Arc::new(Mutex::new(json!({"connected":true,"ready":true,"device":{"companionId":companion}}))),join:None});
+        }
+        *manager.selected.lock().unwrap()=Some("COM5".into());
+        manager.record_for(Some("sunton"),json!({"command":"disarm"})).unwrap();
+        assert!(matches!(rx8.try_recv(),Ok(Action::Record(value)) if value["command"]=="disarm"));
+        assert!(rx5.try_recv().is_err());
+        assert!(manager.record_for(Some("missing"),json!({"command":"connect"})).is_err());
+        assert!(rx5.try_recv().is_err()); assert!(rx8.try_recv().is_err());
+        let link=manager.links.lock().unwrap().get("COM8").unwrap().state.clone(); link.lock().unwrap()["connected"]=json!(false);
+        assert!(manager.record_for(Some("sunton"),json!({"command":"connect"})).is_err());
+        assert!(rx5.try_recv().is_err()); assert!(rx8.try_recv().is_err());
+    }
+    #[test]
+    fn panel_diagnostics_are_bounded_and_exact_session_bound() {
+        let hash=format!("sha256:{}","a".repeat(64));
+        let mut device=json!({"sessionId":"session","generation":"1","operation":{"instanceId":"instance","publicationHash":hash,
+            "sessionId":"session","generation":"1","phase":"downloading","completedBytes":12,"totalBytes":24,"cacheHits":1,"cacheMisses":1}});
+        assert!(safe_panel_operation(&device).is_some());
+        device["operation"]["sessionId"]=json!("old-session"); assert!(safe_panel_operation(&device).is_none());
+        device["operation"]["sessionId"]=json!("session"); device["operation"]["phase"]=json!("failed");
+        assert!(safe_panel_operation(&device).is_none());
+        device["operation"]["errorCode"]=json!("cache_full"); device["operation"]["retryable"]=json!(false);
+        assert!(safe_panel_operation(&device).is_some());
+        device["operation"]["completedBytes"]=json!(25); assert!(safe_panel_operation(&device).is_none());
     }
     #[test]
     fn flash_selection_requires_the_same_enumerated_usb_device() {

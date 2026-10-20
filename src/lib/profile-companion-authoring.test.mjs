@@ -35,6 +35,19 @@ test('explicit real panel capture adds no controls or routes; feedback-only grap
   const retained=api.graphCaptureCompanionPanel(next,'screen',panel());assert.deepEqual(plain(retained.document.bindings),plain(next.document.bindings));
   const released=api.graphReleaseCompanionPanel(next,'screen');assert.equal(released.document.companionAssignments.length,0);assert.deepEqual(plain(released.document.bindings),plain(next.document.bindings));
 });
+
+test('a saved panel keeps its stable identity and exact graph ports when its latest contents change',()=>{
+  const first={...panel(),panelId:'123-panel'},latest={...panel(6),panelId:'123-panel',publicationHashes:[hash(1),hash(6)]};
+  let value=api.graphCaptureCompanionPanel(draft(),'screen',first);value=api.graphSelectCompanionPort(value,'screen',page(),observed());
+  const next=api.graphCaptureCompanionPanel(value,'screen',latest);
+  assert.deepEqual(plain(next.document.resources[0].ports),plain(value.document.resources[0].ports));
+  assert.deepEqual(plain(next.assignments),plain(value.assignments));
+  assert.deepEqual(plain(next.document.companionAssignments),[{resourceId:'screen',panelId:'123-panel',publicationHash:hash(6)}]);
+  assert.equal(api.selectedCompanionPanel([latest],{publicationHash:hash(1)}).panelId,'123-panel');
+  assert.equal(api.selectedCompanionPanel([latest],{panelId:'123-panel',publicationHash:hash(1)}).publicationHash,hash(6));
+  assert.equal(api.selectedCompanionPanel([latest],undefined),undefined);
+  assert.deepEqual(plain(api.latestCompanionPanels([first,latest]).map(panel=>panel.publicationHash)),[hash(6)]);
+});
 test('changing a panel requires explicit port/route removal and never deletes unrelated graph work',()=>{
   let value=api.graphCaptureCompanionPanel(draft(),'screen',panel());value=api.graphSelectCompanionPort(value,'screen',page(),observed());value=graph.graphConnect(value,{nodeId:'telemetry',portId:'condition'},{nodeId:'screen',portId:value.document.resources[0].ports[0].id});
   assert.throws(()=>api.graphCaptureCompanionPanel(value,'screen',panel(6)),/explicit removal/);assert.equal(value.document.bindings.length,1);

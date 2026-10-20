@@ -9,6 +9,8 @@ impl GatewayManager {
         // later Stop or replacement owner must never be rearmed by Save.
         let (mut response, owner, candidate) = {
             let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+            let normalized=self.normalize_editor_panels(request)?;
+            let request=&normalized;
             let status = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
             let owner = status.owner.filter(|owner| {
                 matches!(status.state, State::Running | State::Degraded)
@@ -39,7 +41,7 @@ impl GatewayManager {
         Ok(response)
     }
 
-    fn apply_saved_editor(&self, mut candidate: Candidate, previous: &RunOwner, arrival: Option<u64>) -> Result<(), String> {
+    pub(super) fn apply_saved_editor(&self, mut candidate: Candidate, previous: &RunOwner, arrival: Option<u64>) -> Result<(), String> {
         let epoch = arrival.filter(|epoch| *epoch == self.profile_admission_epoch.load(Ordering::Acquire))
             .ok_or("Applying the saved changes was cancelled by a newer profile control.")?;
         if candidate.game_id.as_ref().is_some_and(|game| !candidate.document.eligibility.game_ids.is_empty()

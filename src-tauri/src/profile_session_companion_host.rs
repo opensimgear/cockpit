@@ -4,6 +4,7 @@ use crate::profile_resources::CompanionCatalogue;
 use crate::profile_session_companions::{CompanionPoll, CompanionSources, PreparedCompanion};
 use osg_companion_service::{profile::AssignmentReceipt, Hub};
 use osg_profiles::compiler_models::CompileSnapshot;
+use serde_json::Value;
 use std::collections::BTreeSet;
 
 const ASSIGNMENT: &str = "companion-assignment";
@@ -11,7 +12,38 @@ const RELEASE: &str = "companion-release";
 // USB companions may need to transfer panel images, persist them, render the
 // replacement, and confirm released touch before a neutral baseline exists.
 // Keep this bounded while renewing neutral outputs and checking cancellation.
-const PANEL_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const PANEL_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const PANEL_LOAD_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const PANEL_LOAD_LEGACY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn panel_operation_failure(operation: &Value) -> Option<String> {
+    if operation["phase"] != "failed" { return None; }
+    let code = operation["errorCode"].as_str().unwrap_or("panel-load-failed");
+    let message = operation["message"].as_str().unwrap_or("The screen could not finish loading the assigned panel");
+    let action = if operation["retryable"] == true { "Recover outputs, then retry activation." }
+        else { "Check the panel and companion before retrying activation." };
+    Some(format!("Companion panel failed: {message} ({code}). {action}"))
+}
+fn panel_operation_progress(operation: &Value) -> Value {
+    json!([operation["sessionId"], operation["attemptId"], operation["phase"], operation["completedBytes"], operation["totalBytes"]])
+}
+fn diagnostic_failure(report: &crate::companion_host::ProfilePanelOperation, initial: Option<&Value>) -> Option<String> {
+    // A retained failure is useful context, but cannot reject an explicit
+    // retry before the device has reported a new attempt or state transition.
+    if !report.fresh || (!report.live_session && initial.is_none_or(|initial|initial == &report.operation)) { return None; }
+    panel_operation_failure(&report.operation)
+}
+fn panel_load_timeout(operation: Option<&Value>, hard_limit: bool) -> String {
+    let reason = if hard_limit { "exceeded the five-minute loading limit" } else { "stopped making progress" };
+    match operation {
+        Some(operation) => format!("The companion {reason} during {} ({} of {} image bytes). {}",
+            operation["phase"].as_str().unwrap_or("panel loading"),
+            operation["completedBytes"].as_u64().unwrap_or(0), operation["totalBytes"].as_u64().unwrap_or(0),
+            if operation["phase"] == "awaiting-neutral" { "Release the screen's touch controls, recover outputs, and retry." }
+            else { "Check its connection, recover outputs, and retry activation." }),
+        None => "The assigned companion did not finish loading its panel and supply its actual publication, capabilities and fresh neutral baseline within 60 seconds. Check its connection and firmware, recover outputs, and retry activation.".into(),
+    }
+}
 
 pub(super) fn prepare_catalogues(
     hub: &Hub,
@@ -52,6 +84,10 @@ pub(super) fn prepare_catalogues(
             return Err("A profile cannot assign the same companion instance twice.".into());
         }
         let proof = hub.prepare_profile_assignment(instance, &desired.publication_hash)?;
+        if desired.panel_id.as_ref().is_some_and(|panel_id|!hub.publication_summaries().iter().any(|panel|
+            panel["publicationHash"]==proof.publication_hash()&&panel["uiId"]==*panel_id)) {
+            return Err("The selected companion panel identity does not match its saved view. Select the panel again before activating this profile.".into());
+        }
         if resource.summary.attributes.get("companionId").is_some_and(|companion|companion!=proof.companion_id()) {
             return Err("The paired companion changed its native installation identity.".into());
         }
@@ -148,16 +184,33 @@ pub(super) fn capture(
     }
     Ok(result)
 }
+#[cfg(test)]
 pub(super) fn restore(
     hub: &Hub,
     captured: &[(bool, AssignmentReceipt)],
     release_only: bool,
 ) -> Result<(), String> {
+    restore_with_heads(hub,captured,release_only,&Default::default())
+}
+pub(super) fn restore_latest(
+    runtime:&crate::companion_host::Runtime,
+    captured:&[(bool,AssignmentReceipt)],
+    release_only:bool,
+) -> Result<(),String> {
+    let heads=runtime.saved_panel_heads()?;
+    restore_with_heads(&runtime.profile_metadata()?,captured,release_only,&heads)
+}
+fn restore_with_heads(
+    hub:&Hub,
+    captured:&[(bool,AssignmentReceipt)],
+    release_only:bool,
+    heads:&std::collections::BTreeMap<String,String>,
+) -> Result<(),String> {
     for (release, receipt) in captured {
         if !release_only || *release {
             // Exact protected owner comparison preserves operator edits and a
-            // newer run. This only restores the original retained baseline.
-            hub.restore_profile_assignment(receipt)?;
+            // newer run before choosing the original panel's latest saved view.
+            hub.restore_profile_assignment_latest(receipt,heads)?;
         }
     }
     Ok(())
@@ -208,9 +261,15 @@ impl NativeProfileHost {
             return Ok((self.resources.bind_delivery_reads(prepared)?, vec![]));
         }
         let hub = self.companions.profile_metadata()?;
+        let runtime = self.companions.clone();
         let provider = self.companions.profile_provider();
         let resources = self.resources.clone();
         let deadline = Instant::now() + PANEL_LOAD_TIMEOUT;
+        let legacy_deadline = Instant::now() + PANEL_LOAD_LEGACY_TIMEOUT;
+        let mut initial_operations = self.run(owner)?.companion_initial_operations.clone();
+        let mut progress = std::collections::BTreeMap::<String, (Value, Instant, Value)>::new();
+        let mut live_seen = BTreeSet::new();
+        let mut latest_operation = None;
         loop {
             self.check_transition(owner)?;
             if let Some(output) = self.run(owner)?.output.as_mut() {
@@ -225,6 +284,31 @@ impl NativeProfileHost {
             let native = provider.resource_inventory();
             let now = self.controllers.stream_page("", 0).captured_us;
             let state = self.run(owner)?;
+            for catalogue in &state.companion_catalogues {
+                let report = runtime.profile_panel_operation(&catalogue.instance_id, &catalogue.publication_hash);
+                if let Some(report) = &report {
+                    if !report.live_session {
+                        initial_operations.entry(catalogue.instance_id.clone()).or_insert_with(||report.operation.clone());
+                    }
+                    if let Some(error) = diagnostic_failure(report,initial_operations.get(&catalogue.instance_id)) { return Err(error); }
+                    if report.live_session { live_seen.insert(catalogue.instance_id.clone()); }
+                    if report.fresh && report.operation["phase"] != "failed" {
+                        let signature = panel_operation_progress(&report.operation);
+                        if progress.get(&catalogue.instance_id).is_none_or(|(previous,_,_)|previous != &signature) {
+                            progress.insert(catalogue.instance_id.clone(), (signature, Instant::now() + PANEL_LOAD_IDLE_TIMEOUT,report.operation.clone()));
+                        }
+                        latest_operation = Some(report.operation.clone());
+                    }
+                }
+                if live_seen.contains(&catalogue.instance_id) && report.as_ref().is_none_or(|report|!report.live_session) {
+                    return Err("The companion disconnected while loading the assigned panel. Check its connection, recover outputs, and retry activation.".into());
+                }
+                if let Some((_,until,operation)) = progress.get(&catalogue.instance_id) {
+                    if Instant::now() >= *until { return Err(panel_load_timeout(Some(operation),false)); }
+                } else if Instant::now() >= legacy_deadline {
+                    return Err(panel_load_timeout(None, false));
+                }
+            }
             if state.companions.baseline_ready(&hub)?
                 && state
                     .companion_catalogues
@@ -248,7 +332,7 @@ impl NativeProfileHost {
                 }
             }
             if Instant::now() >= deadline {
-                return Err("The assigned companion did not finish loading its panel and supply its actual publication, capabilities and fresh neutral baseline within 60 seconds".into());
+                return Err(panel_load_timeout(latest_operation.as_ref(), true));
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }

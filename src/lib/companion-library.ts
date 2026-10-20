@@ -21,6 +21,11 @@ const encoder = new TextEncoder();
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const emptySnapshot = (): CompanionLibrarySnapshot => ({ schemaVersion: 1, library: { schemaVersion: 1, drafts: [] }, publications: {} });
 
+/** One saved state per library panel; retained transport snapshots stay internal. */
+export function latestSavedPanels(library: DesignerLibrary, publications: Record<string, Publication[]>): Publication[] {
+  return library.drafts.flatMap(draft => publications[draft.id]?.slice(-1) ?? []);
+}
+
 function capture(input: unknown): unknown {
   const json = JSON.stringify(input);
   if (!json || encoder.encode(json).length > COMPANION_LIBRARY_LIMITS.bytes) throw new Error('Companion library exceeds its 64 MiB storage budget.');
@@ -119,11 +124,10 @@ export class CompanionLibraryStore {
       const publications: Record<string, Publication[]> = { ...previous.publications };
       for (const [draftId, revisions] of Object.entries(incoming.publications)) {
         const existing = Object.hasOwn(publications, draftId) ? publications[draftId] : [];
-        const hashes = new Set(existing.map(revision => revision.publicationHash));
-        publications[draftId] = [...existing, ...revisions.filter(revision => {
-          if (hashes.has(revision.publicationHash)) return false;
-          hashes.add(revision.publicationHash); return true;
-        })];
+        const hashes = new Set(revisions.map(revision => revision.publicationHash));
+        // Saving a previous document state must make it current again, even
+        // when its immutable payload is already retained for a device.
+        publications[draftId] = [...existing.filter(revision => !hashes.has(revision.publicationHash)), ...revisions];
       }
       const merged = { schemaVersion: 1 as const, library: incoming.library, publications };
       // Enforce the aggregate archive and byte limits after preserving old publications.

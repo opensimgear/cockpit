@@ -27,6 +27,7 @@
   let preview=$state.raw<DeepReadonly<CompilationSummary>|null>(null),signature=$state(''),environment=$state(''),busy=$state(false);
   let diagnostics=$state.raw<readonly DeepReadonly<CompileDiagnostic>[]>([]),offset=$state(0),offsets=$state([0]);
   let desktop=$state.raw<unknown>(null);
+  let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false;
   const draft=$derived(source==='draft'?editor:saved);
   const graphSignature=$derived(JSON.stringify(draft?{document:draft.document,assignments:draft.assignments}:null));
   const inventorySignature=$derived(`${inventoryRevision}/${graphInventorySignature(inventory)}`);
@@ -34,10 +35,11 @@
   const current=$derived(!!preview&&signature===graphSignature&&environment===inventorySignature&&savedCurrent);
   const owner=$derived(runtimeState.stale?null:runtimeState.status?.owner??null);
   const requirements=$derived(preview?.requirements?[preview.requirements.desktopInput?'keyboard and mouse':'',preview.requirements.virtualDevices?'virtual controllers':'',preview.requirements.visibility?'device visibility':''].filter(Boolean):[]);
-  onMount(()=>{if(source!=='draft')void read();void readDesktop();});
+  onMount(()=>{if(source!=='draft')void read();void readDesktop();const timer=setInterval(()=>{if(active&&companionDetailsOpen)void readCompanions();},1000);return()=>clearInterval(timer);});
   onDestroy(()=>{epoch++;});
   async function read(){const captured=++epoch;preview=null;error='';saved=null;if(source==='draft')return;loading=true;try{const result=await loadProfile(source);if(captured!==epoch)return;if(!result.document||!result.assignments)throw Error('The saved profile and its assignments are unavailable.');saved={document:result.document,assignments:result.assignments};}catch(reason){if(captured===epoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(captured===epoch)loading=false;}}
   async function readDesktop(){try{desktop=(await gatewayRequest({command:'profile_desktop_status'})).desktop;}catch(reason){desktop={error:reason instanceof Error?reason.message:String(reason)};}}
+  async function readCompanions(){if(companionLoading)return;companionLoading=true;try{companions=(await gatewayRequest({command:'companion_status'})).companions;}catch(reason){companions={error:reason instanceof Error?reason.message:String(reason)};}finally{companionLoading=false;}}
   async function compile(){if(!draft||busy||loading)return;if(source!=='draft'){await read();if(!draft||error)return;}const captured=++epoch,graph=JSON.parse(JSON.stringify(draft)),key=graphSignature,env=inventorySignature;busy=true;error='';try{const result=await compiler.compile(graph.document,graph.assignments);if(captured!==epoch)return;preview=result;signature=key;environment=env;diagnostics=result.diagnostics;offset=0;offsets=[0];}catch(reason){if(captured===epoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(captured===epoch)busy=false;}}
   async function page(direction:'next'|'previous'){if(!preview||busy)return;const next=direction==='next'?offset+diagnostics.length:offsets[offsets.length-2];if(next===undefined)return;const captured=++epoch;busy=true;try{const result=await compiler.inspect(preview,'diagnostics',next,32);if(captured!==epoch)return;diagnostics=result.items;offset=result.offset;offsets=direction==='next'?[...offsets,offset]:offsets.slice(0,-1);}catch(reason){if(captured===epoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(captured===epoch)busy=false;}}
 </script>
@@ -62,6 +64,7 @@
   <ProfileLiveInspector controller={inspection} {owner} {active} {selectedId} editorProfileId={editor?.document.id} editorRevision={editor?.document.revision} editorDirty={!!editor&&(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments))} {profileName}/>
   <ProfilePathActivity controller={activity} {owner} {active} {selectedId} editorProfileId={editor?.document.id}/>
   <details class="panel native-details"><summary>Native runtime and desktop output details</summary><button class="text-button" onclick={readDesktop}>Refresh desktop details</button><pre>{JSON.stringify({profile:runtimeState.status,desktop},null,2)}</pre></details>
+  <details class="panel native-details" ontoggle={event=>{companionDetailsOpen=event.currentTarget.open;if(companionDetailsOpen)void readCompanions();}}><summary>Companion loading and image cache details</summary><button class="text-button" onclick={readCompanions}>Refresh companion details</button><pre>{JSON.stringify(companions,null,2)}</pre></details>
   <ProfileRetiredRecovery {active}/>
 </section>
 

@@ -44,7 +44,7 @@ test('actual canvas controls create, rename, select members, focus and delete gr
 test('selected companion uses its profile-owned immutable panel picker rather than the currently installed generic catalogue',()=>{
   const value=draft(),hash=`sha256:${'1'.repeat(64)}`,source={id:'native-paired-instance',name:'Explicit companion',resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash,portCount:3,cachedPortCount:3,connections:[],attributes:{publicationHash:hash},diagnostics:[]};
   value.assignments=[{resourceId:'companion',sourceId:source.id,ports:[{profilePortId:'indicator',observedPortId:'current-indicator',expectedContractHash:hash}]}];
-  const body=renderRouting(value,{selectedId:'companion',inventory:[source],companionClient:{catalogue:noRequest,inspect:noRequest}});assert.ok(body.includes('Profile companion panel selection'));assert.ok(body.includes('Paired companion'));assert.ok(body.includes('Browse published panels'));assert.ok(!body.includes('Provider catalogue ·'));assert.ok(body.includes('Connection metadata'));
+  const body=renderRouting(value,{selectedId:'companion',inventory:[source],companionClient:{catalogue:noRequest,inspect:noRequest}});assert.ok(body.includes('Profile companion panel selection'));assert.ok(body.includes('Paired companion'));assert.ok(body.includes('Refresh panels'));assert.ok(!body.includes('Provider catalogue ·'));assert.ok(body.includes('Connection metadata'));
 });
 
 test('companion assignment uses its panel inspector and cannot bypass installation guards through generic resource assignment',async()=>{

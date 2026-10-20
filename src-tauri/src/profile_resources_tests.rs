@@ -207,7 +207,7 @@ fn desired_companion_capture_never_borrows_current_ports_and_only_binds_actual_m
     document.resources.push(osg_profiles::Resource{id:"panel".into(),name:"Panel".into(),kind:osg_profiles::ResourceKind::Companion,required:true,ports:vec![osg_profiles::Port{id:"pressed".into(),name:"Pressed".into(),direction:Direction::Output,contract:future.contract.clone()}]});
     document.processing_nodes.push(osg_profiles::ProcessingNode{id:"invert".into(),name:"Invert".into(),operation:osg_mapping::program::Operation::Not{},inputs:vec![osg_profiles::Port{id:"input".into(),name:"Input".into(),direction:Direction::Input,contract:future.contract.clone()}],outputs:vec![osg_profiles::Port{id:"output".into(),name:"Output".into(),direction:Direction::Output,contract:future.contract.clone()}]});
     document.bindings.push(osg_profiles::Binding{id:"to-invert".into(),from:osg_profiles::Endpoint{node_id:"panel".into(),port_id:"pressed".into()},to:osg_profiles::Endpoint{node_id:"invert".into(),port_id:"input".into()}});
-    document.companion_assignments.push(osg_profiles::CompanionAssignment{resource_id:"panel".into(),publication_hash:catalogue.publication_hash.clone()});
+    document.companion_assignments.push(osg_profiles::CompanionAssignment{ panel_id: None,resource_id:"panel".into(),publication_hash:catalogue.publication_hash.clone()});
     let report=osg_profiles::compiler::compile_for_preparation(&document,&snapshot,&pins);
     assert_eq!(report.readiness,osg_profiles::compiler::PlanReadiness::Ready,"{:?}",report.diagnostics);let plan=report.plan.unwrap();
     assert!(runtime.bind_delivery_reads(&plan).is_err());
@@ -251,7 +251,7 @@ fn paired_component_delivery_keeps_its_provider_key_and_admits_only_verified_nat
         let mut document=osg_profiles::new_document("Paired screen").unwrap();
         document.resources.push(osg_profiles::Resource{id:"panel".into(),name:"Screen".into(),kind:osg_profiles::ResourceKind::Companion,required:true,ports:[("pressed",&input),("light",&feedback)].into_iter().map(|(id,port)|osg_profiles::Port{id:id.into(),name:id.into(),direction:port.direction,contract:port.contract.clone()}).collect()});
         document.bindings.push(osg_profiles::Binding{id:"light".into(),from:osg_profiles::Endpoint{node_id:"panel".into(),port_id:"pressed".into()},to:osg_profiles::Endpoint{node_id:"panel".into(),port_id:"light".into()}});
-        document.companion_assignments.push(osg_profiles::CompanionAssignment{resource_id:"panel".into(),publication_hash:catalogue.publication_hash.clone()});
+        document.companion_assignments.push(osg_profiles::CompanionAssignment{ panel_id: None,resource_id:"panel".into(),publication_hash:catalogue.publication_hash.clone()});
         let prepared=osg_profiles::compiler::compile_for_preparation(&document,&snapshot,&pins);
         assert_eq!(prepared.readiness,osg_profiles::compiler::PlanReadiness::Ready,"{:?}",prepared.diagnostics);
         let plan=prepared.plan.unwrap();assert!(runtime.bind_delivery_reads(&plan).is_err());

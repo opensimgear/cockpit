@@ -61,7 +61,7 @@ export type ProfileDocument = {
   resources: ProfileResource[]; bindings: ProfileBinding[]; processingNodes: ProfileProcessingNode[]; desktopOutputs?: ProfileDesktopOutput[];
   virtualOutputs: ProfileVirtualOutput[]; visibility: { resourceId: string; mode: 'visible' | 'hidden-while-active' }[];
   overrides: { resourceId: string; enabled: boolean }[];
-  companionAssignments: { resourceId: string; publicationHash: string }[];
+  companionAssignments: { resourceId: string; panelId?: string; publicationHash: string }[];
   editor: { positions: { nodeId: string; x: number; y: number }[]; viewport: { x: number; y: number; zoom: number }; groups?: ProfileEditorGroup[]; collapsedPortGroups?: { nodeId: string; group: ProfilePortGroup }[] };
 };
 export type ProfilePortExpectation = { profilePortId: string; observedPortId: string; expectedContractHash: string };
@@ -231,7 +231,7 @@ export function profileDocumentError(value: unknown): string {
   if (!list(value.bindings, 512) || !value.bindings.every(row => exact(row, ['id', 'from', 'to']) && identifier(row.id) && endpoint(row.from) && endpoint(row.to)) || new Set(value.bindings.map(row => (row as ProfileBinding).id)).size !== value.bindings.length) return 'Use unique bindings with logical graph endpoints.';
   if (!list(value.visibility, 64) || !value.visibility.every(row => exact(row, ['resourceId', 'mode']) && identifier(row.resourceId) && ['visible', 'hidden-while-active'].includes(String(row.mode)))) return 'Use logical visibility policies.';
   if (!list(value.overrides, 64) || !value.overrides.every(row => exact(row, ['resourceId', 'enabled']) && identifier(row.resourceId) && typeof row.enabled === 'boolean')) return 'Use bounded logical runtime overrides.';
-  if (!list(value.companionAssignments, 64) || !value.companionAssignments.every(row => exact(row, ['resourceId', 'publicationHash']) && identifier(row.resourceId) && typeof row.publicationHash === 'string' && /^sha256:[0-9a-f]{64}$/.test(row.publicationHash))) return 'Use logical companion publication assignments.';
+  if (!list(value.companionAssignments, 64) || !value.companionAssignments.every(row => exact(row, ['resourceId', 'publicationHash',...(object(row)&&Object.hasOwn(row,'panelId')?['panelId']:[])]) && identifier(row.resourceId) && (!Object.hasOwn(row,'panelId')||typeof row.panelId==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(row.panelId)) && typeof row.publicationHash === 'string' && /^sha256:[0-9a-f]{64}$/.test(row.publicationHash))) return 'Use logical companion panel assignments.';
   const nodeIds = new Set(nodes.map(row => row.id));
   if (!object(value.editor) || !Object.hasOwn(value.editor, 'positions') || !Object.hasOwn(value.editor, 'viewport') || Object.keys(value.editor).some(key => !['positions', 'viewport', 'groups', 'collapsedPortGroups'].includes(key)) || !list(value.editor.positions, 336) || !value.editor.positions.every(row => exact(row, ['nodeId', 'x', 'y']) && identifier(row.nodeId) && nodeIds.has(row.nodeId) && coordinate(row.x) && coordinate(row.y)) || new Set(value.editor.positions.map(row => (row as {nodeId:string}).nodeId)).size !== value.editor.positions.length || !exact(value.editor.viewport, ['x', 'y', 'zoom']) || !coordinate(value.editor.viewport.x) || !coordinate(value.editor.viewport.y) || !finite(value.editor.viewport.zoom) || value.editor.viewport.zoom < 0.1 || value.editor.viewport.zoom > 4) return 'Use bounded editor positions and viewport.';
   const groups = Object.hasOwn(value.editor, 'groups') ? value.editor.groups : [];

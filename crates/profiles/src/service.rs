@@ -168,6 +168,55 @@ impl Service {
         Ok(json!({"schemaVersion":1,"libraryFingerprint":format!("sha256:{:x}",Sha256::digest(bytes)),"hashes":hashes}))
     }
 
+    /// Native saved-panel propagation. This is intentionally absent from the
+    /// browser command allowlist: only the verified panel save supplies aliases.
+    /// Stage the entire library so validation, revision or storage failure cannot
+    /// leave some profiles following a different saved panel than the others.
+    pub fn refresh_companion_panel(
+        &mut self,
+        panel_id: &str,
+        publication_hash: &str,
+        previous_hashes: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<String>, String> {
+        if self.read_only {
+            return Err("Profile storage is read-only; the saved panel cannot update its profile references.".into());
+        }
+        if !crate::validation::companion_panel_identifier(panel_id)
+            || !crate::validation::companion_publication_hash(publication_hash)
+            || previous_hashes.iter().any(|hash| !crate::validation::companion_publication_hash(hash))
+        {
+            return Err("A valid saved panel identity and immutable publication hashes are required.".into());
+        }
+        let mut library = self.library.clone();
+        let mut changed = vec![];
+        for document in &mut library.profiles {
+            let mut updated = false;
+            for assignment in &mut document.companion_assignments {
+                let follows_panel = assignment.panel_id.as_deref() == Some(panel_id)
+                    || (assignment.panel_id.is_none()
+                        && (previous_hashes.contains(&assignment.publication_hash)
+                            || assignment.publication_hash == publication_hash));
+                if follows_panel && (assignment.panel_id.as_deref() != Some(panel_id)
+                    || assignment.publication_hash != publication_hash)
+                {
+                    assignment.panel_id = Some(panel_id.into());
+                    assignment.publication_hash = publication_hash.into();
+                    updated = true;
+                }
+            }
+            if updated {
+                document.revision = next_revision(document.revision)?;
+                crate::validate_document(document)?;
+                changed.push(document.id.clone());
+            }
+        }
+        if !changed.is_empty() {
+            self.persist(&library)?;
+            self.library = library;
+        }
+        Ok(changed)
+    }
+
     fn mutate(&mut self, command: &str, request: &Value) -> Result<Value, String> {
         let mut library = self.library.clone();
         let output = match command {

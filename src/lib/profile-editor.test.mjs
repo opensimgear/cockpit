@@ -21,6 +21,29 @@ function harness(){
   return{api,provider,calls,docs,store:new ProfileEditorStore(api,provider,()=>uid(serial++))};
 }
 
+test('passive saved changes refresh a clean editor without saving or replaying notifications',async()=>{
+  const h=harness();await h.store.open(DEFAULT_PROFILE_ID);const before=h.store.editorEpoch;
+  const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));
+  const current=plain(h.docs.get(DEFAULT_PROFILE_ID));current.revision=2;current.name='Latest saved view';h.docs.set(DEFAULT_PROFILE_ID,current);
+  await h.store.refreshSaved();
+  assert.equal(h.store.state.editor.document.name,'Latest saved view');assert.equal(h.store.state.editor.baseRevision,2);
+  assert.equal(profileEditorDirty(h.store.state.editor),false);assert.ok(h.store.editorEpoch>before);
+  assert.deepEqual(notifications,[]);assert.ok(!h.calls.some(call=>Array.isArray(call)&&call[0]==='save'));
+});
+test('passive saved changes preserve dirty drafts and fence edits made during an outstanding reload',async()=>{
+  const h=harness();await h.store.open(DEFAULT_PROFILE_ID);
+  const latest=plain(h.docs.get(DEFAULT_PROFILE_ID));latest.revision=2;latest.name='External edit';h.docs.set(DEFAULT_PROFILE_ID,latest);
+  let local=plain(h.store.state.editor.document);local.name='My draft';h.store.update(local);
+  await h.store.refreshSaved();assert.equal(h.store.state.editor.document.name,'My draft');assert.equal(h.store.state.editor.baseRevision,1);
+  await h.store.open(DEFAULT_PROFILE_ID);
+  const next=plain(latest);next.revision=3;h.docs.set(DEFAULT_PROFILE_ID,next);
+  const pending=deferred();h.api.getAssignments=()=>pending.promise;
+  const refreshing=h.store.refreshSaved();await new Promise(resolve=>setImmediate(resolve));
+  local=plain(h.store.state.editor.document);local.name='Typing during refresh';h.store.update(local);
+  pending.resolve({document:next,assignments:[],session:session()});await refreshing;
+  assert.equal(h.store.state.editor.document.name,'Typing during refresh');assert.equal(h.store.state.editor.baseRevision,2);
+});
+
 test('blank seeding includes every resource category and closed game, with no selected ports, routes or effects',()=>{
   const input=inventory();const seeded=seedProfile(uid(1),input);
   assert.equal(seeded.document.resources.length,8);assert.equal(seeded.assignments.length,8);

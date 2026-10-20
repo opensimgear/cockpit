@@ -50,6 +50,8 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
     for(const cJSON *asset=get(ui,"assets")->child;asset;asset=asset->next){
         const char *digest=osg_string(asset,"sha256"),*mime=osg_string(asset,"mime");
         if(!osg_stable_id(osg_string(asset,"id")) || !digest || strlen(digest)!=64 || !mime || (!same(mime,"image/png")&&!same(mime,"image/jpeg")&&!same(mime,"image/webp")) || !isfinite(number(asset,"sizeBytes")) || number(asset,"sizeBytes")<1 || number(asset,"sizeBytes")>2097152)goto done;
+        for(size_t i=0;i<64;i++)if(!((digest[i]>='0'&&digest[i]<='9')||(digest[i]>='a'&&digest[i]<='f')))goto done;
+        for(const cJSON *before=get(ui,"assets")->child;before!=asset;before=before->next)if(same(osg_string(before,"id"),osg_string(asset,"id")))goto done;
     }
     image->panel = (osg_panel){save(image, osg_string(ui, "id")), save(image, hash), image->pages, image->widgets,
         (size_t)cJSON_GetArraySize(pages), (size_t)cJSON_GetArraySize(widgets)};
@@ -80,7 +82,12 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
             !single_ref(get(v, "feedbackIds"), &output, button || bitmap ? 0 : 1)) goto done;
         const cJSON *primitive = find_id(button ? controls : feedback, button ? control : output);
         if (!bitmap && (!primitive || !same(osg_string(primitive, "kind"), button ? "button" : w->kind == OSG_INDICATOR ? "indicator" : w->kind == OSG_TEXT ? "text" : "gauge"))) goto done;
-        if(bitmap && !find_id(get(ui,"assets"),osg_string(config,"assetId")))goto done;
+        if(bitmap){
+            const cJSON *asset=find_id(get(ui,"assets"),osg_string(config,"assetId"));
+            char digest[72];if(!asset)goto done;
+            memcpy(digest,"sha256:",7);memcpy(digest+7,osg_string(asset,"sha256"),65);
+            image->image_hashes[i]=save(image,digest);if(!image->image_hashes[i])goto done;
+        }
         if (button) { if (!same(osg_string(config, "buttonMode"), "momentary") || number(config, "pulseMs") != 0 || number(config, "repeatMs") != 0 || get(config, "iconAssetId")) goto done; buttons++; }
         else if(!bitmap) outputs++;
         w->id = save(image, osg_string(v, "id")); w->reference = save(image, bitmap ? "" : button ? control : osg_string(primitive, "channelId"));

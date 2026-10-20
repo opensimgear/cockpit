@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::Value;
 use osg_companion_service::{NullSourceSink, Publication, PublicationUpload};
 use osg_mapping::signal::ScalarSchema;
 use osg_profiles::compiler_models::{BackendCapabilities, CapturedResource};
@@ -61,6 +62,7 @@ fn sources(hub: &Hub, publication: &Publication) -> CompanionSources {
         .unwrap();
     plan.companion_assignments
         .push(osg_profiles::CompanionAssignment {
+            panel_id: None,
             resource_id: "panel".into(),
             publication_hash: publication.publication_hash.clone(),
         });
@@ -183,6 +185,7 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
         .document
         .companion_assignments
         .push(osg_profiles::CompanionAssignment {
+            panel_id: None,
             resource_id: "panel".into(),
             publication_hash: desired.publication_hash.clone(),
         });
@@ -245,6 +248,12 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
         hub.assignment_snapshot(&["instance".into()]).unwrap(),
         before
     );
+    candidate.document.companion_assignments[0].panel_id=Some("different-panel".into());
+    let error=prepare_catalogues(&hub,&captured,&candidate).err().unwrap();
+    assert!(error.contains("panel identity does not match"),"{error}");
+    assert_eq!(hub.assignment_snapshot(&["instance".into()]).unwrap(),before,"Mismatched stable identity is rejected during read-only preparation");
+    candidate.document.companion_assignments[0].panel_id=Some(desired.ui_id.clone());
+    assert!(prepare_catalogues(&hub,&captured,&candidate).is_ok());
     captured.resources[0].summary.connections.clear();
     assert!(prepare_catalogues(&hub, &captured, &candidate).is_err());
     candidate.document.companion_assignments[0].publication_hash =
@@ -260,7 +269,7 @@ fn unassigned_paired_component_prepares_and_journals_its_first_panel_without_a_c
     hub.command(&json!({"command":"companion_unassign","instanceId":"instance"})).unwrap();
     let instance=osg_companion_service::profile::profile_instance_id("screen");
     let mut candidate=Candidate{launch_preparation:false,document:osg_profiles::default_document(),assignments:vec![],read_only:false,game_id:None,admission_epoch:Some(1),stage:None};
-    candidate.document.companion_assignments.push(osg_profiles::CompanionAssignment{resource_id:"screen".into(),publication_hash:panel.publication_hash.clone()});
+    candidate.document.companion_assignments.push(osg_profiles::CompanionAssignment{panel_id:None,resource_id:"screen".into(),publication_hash:panel.publication_hash.clone()});
     let mut captured=snapshot();
     captured.assignments.push(osg_profiles::store::LocalAssignment{resource_id:"screen".into(),source_id:"paired-inventory".into(),ports:vec![]});
     captured.resources.push(CapturedResource{summary:ResourceSummary{
@@ -302,6 +311,7 @@ pub(crate) struct NativeFixture {
     inventory_boundary: InventoryBoundary,
     baseline_delay_ms: Arc<AtomicU64>,
     baseline_waiting: Arc<std::sync::atomic::AtomicBool>,
+    peer_session: Arc<std::sync::Mutex<Value>>,
 }
 impl NativeFixture {
     pub(crate) fn new() -> Self {
@@ -435,6 +445,8 @@ impl NativeFixture {
         let peer_delay = baseline_delay_ms.clone();
         let baseline_waiting = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let peer_waiting = baseline_waiting.clone();
+        let peer_session = Arc::new(std::sync::Mutex::new(Value::Null));
+        let session_capture = peer_session.clone();
         let peer = std::thread::spawn(move || {
             let mut opened: Option<serde_json::Value> = None;
             let mut sequence = 0u64;
@@ -451,6 +463,7 @@ impl NativeFixture {
                         peer_hub.now_ms(),
                     );
                     if current["ok"] == true {
+                        *session_capture.lock().unwrap() = current.clone();
                         let delay = peer_delay.swap(0, Ordering::AcqRel);
                         if delay > 0 {
                             // A genuine peer remains connected while loading its
@@ -550,6 +563,7 @@ impl NativeFixture {
             inventory_boundary,
             baseline_delay_ms,
             baseline_waiting,
+            peer_session,
         }
     }
     pub(crate) fn host(&self) -> NativeProfileHost {
@@ -641,6 +655,7 @@ impl NativeFixture {
                 .document
                 .companion_assignments
                 .push(osg_profiles::CompanionAssignment {
+            panel_id: None,
                     resource_id: "panel".into(),
                     publication_hash: self.desired.publication_hash.clone(),
                 });
@@ -789,6 +804,54 @@ fn native_control_cancels_a_loading_companion_without_waiting_for_its_deadline()
     assert_eq!(fixture.hub.assignment_snapshot(&["instance".into()]).unwrap()["assignments"][0]["publicationHash"], fixture.original.publication_hash);
     coordinator.recover().unwrap();
     assert_eq!(coordinator.status().state, crate::profile_session::State::Stopped);
+}
+
+#[test]
+fn native_activation_reports_the_devices_exact_load_failure_without_waiting_for_timeout() {
+    let fixture = NativeFixture::new(); let candidate = fixture.candidate(false);
+    fixture.baseline_delay_ms.store(10_000, Ordering::Release);
+    let waiting = fixture.baseline_waiting.clone(); let hub = fixture.hub.clone(); let peer_session = fixture.peer_session.clone();
+    let reporter = std::thread::spawn(move || {
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        while !waiting.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline,"The target never began loading");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let actual = peer_session.lock().unwrap().clone();
+        let reply=hub.handle_wire(json!({"version":1,"type":"heartbeat","clientId":actual["clientId"],
+            "sessionId":actual["sessionId"],"generation":actual["generation"],"publicationHash":actual["publicationHash"],
+            "sequence":"1000000","panelError":true,"operation":{"instanceId":"instance","publicationHash":actual["publicationHash"],
+            "sessionId":actual["sessionId"],"generation":actual["generation"],"phase":"failed","errorCode":"cache_full", "retryable":false,
+            "message":"Active and incoming images do not fit in flash","completedBytes":0,"totalBytes":65536}}),"peer",hub.now_ms());
+        assert_eq!(reply["ok"],true,"{reply}");
+    });
+    let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(),None);
+    let started=Instant::now(); let error=coordinator.apply(candidate).unwrap_err();
+    reporter.join().unwrap();
+    assert!(started.elapsed()<std::time::Duration::from_secs(2),"Terminal failures must not wait for the loading deadline");
+    assert!(error.contains("cache_full")&&error.contains("Active and incoming images do not fit in flash"),"{error}");
+    assert!(coordinator.status().owner.is_none());
+    assert_eq!(fixture.hub.assignment_snapshot(&["instance".into()]).unwrap()["assignments"][0]["publicationHash"],fixture.original.publication_hash);
+    coordinator.recover().unwrap();
+}
+
+#[test]
+fn pre_open_failure_feedback_waits_for_a_new_report_and_never_rejects_a_retry_from_retained_error() {
+    let initial=json!({"instanceId":"instance","publicationHash":"hash","attemptId":1,"phase":"failed","errorCode":"open-panel-rejected","retryable":true});
+    let mut report=crate::companion_host::ProfilePanelOperation { operation:initial.clone(),live_session:false,fresh:true };
+    assert!(diagnostic_failure(&report,None).is_none(),"The first status on a newly detected link may still describe a prior failure");
+    assert!(diagnostic_failure(&report,Some(&initial)).is_none(),"Retained failure cannot reject an explicit retry");
+    report.operation["attemptId"]=json!(2);
+    assert!(diagnostic_failure(&report,Some(&initial)).unwrap().contains("open-panel-rejected"),"A new exact-target attempt can fail before session-open");
+    let mut previous_panel=initial.clone(); previous_panel["publicationHash"]=json!("previous-panel"); previous_panel["phase"]=json!("ready");
+    assert!(diagnostic_failure(&report,Some(&previous_panel)).is_some(),"Pre-acquisition history distinguishes a fast new failure that arrived before the baseline wait started");
+    report.fresh=false;
+    assert!(diagnostic_failure(&report,Some(&initial)).is_none(),"Only current nonce-verified status can terminate the wait");
+    report.fresh=true; report.operation["attemptId"]=json!(1);
+    let mut opening=initial.clone(); opening["phase"]=json!("opening");
+    assert!(diagnostic_failure(&report,Some(&opening)).is_some(),"An observed opening attempt can report its terminal failure");
+    report.live_session=true;
+    assert!(diagnostic_failure(&report,Some(&initial)).is_some(),"A current validated host session retains immediate failure handling");
 }
 
 #[test]

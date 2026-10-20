@@ -1,7 +1,7 @@
 use super::*;
 use osg_companion_service::{Hub, Publication, PublicationUpload};
 use osg_mapping_host::companions::CompanionProvider;
-use serde_json::{json,Value};
+use serde_json::json;
 use std::sync::Arc;
 
 fn publish(hub:&Hub,changed:bool)->Publication {
@@ -30,7 +30,9 @@ fn fixture()->(Runtime,Hub,Publication,Publication,tempfile::TempDir) {
 fn passive_catalogue_has_bounded_real_metadata_no_assets_and_stable_content_fingerprint() {
     let(runtime,hub,_,_,directory)=fixture();
     let first=runtime.profile_authoring_catalogue().unwrap();
-    assert_eq!(first.schema_version,1);assert_eq!(first.panels.len(),2);assert!(digest(&first.revision));
+    assert_eq!(first.schema_version,1);assert_eq!(first.panels.len(),1);assert!(digest(&first.revision));
+    assert_eq!(first.panels[0].publication_hashes.len(),2);
+    assert_eq!(first.panels[0].panel_id,"flight-panel");
     assert!(first.panels.iter().all(|panel|(1..=128).contains(&panel.control_count)));
     assert_eq!(first.revision,runtime.profile_authoring_catalogue().unwrap().revision);
     assert!(runtime.services.get().is_none());assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(),0);

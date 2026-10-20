@@ -12,7 +12,9 @@ const MAX_REPLY: usize = 1_900_000;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PanelSummary {
+    pub panel_id: String,
     pub publication_hash: String,
+    pub publication_hashes: Vec<String>,
     pub capability_fingerprint: String,
     pub title: String,
     pub control_count: usize,
@@ -46,7 +48,14 @@ fn digest(value: &str) -> bool {
 impl Runtime {
     pub(crate) fn profile_authoring_catalogue(&self) -> Result<Catalogue, String> {
         let hub = self.profile_metadata()?;
-        let raw = hub.publication_summaries();
+        let updates=self.saved_panel_updates()?;
+        let raw = hub.publication_summaries().into_iter().filter_map(|mut value|{
+            let saved=updates.iter().find(|saved|value["publicationHash"]==saved.publication_hash)?;
+            value.as_object_mut()?.remove("uiId");
+            value["panelId"]=serde_json::json!(saved.panel_id);
+            value["publicationHashes"]=serde_json::json!(saved.previous_hashes);
+            Some(value)
+        }).collect::<Vec<_>>();
         if raw.len() > MAX_PANELS { return Err("The retained panel library exceeds its 32-publication budget.".into()); }
         let mut panels = raw.into_iter().map(|value| serde_json::from_value::<PanelSummary>(value)
             .map_err(|_| "The retained native panel summary is malformed.".to_owned()))

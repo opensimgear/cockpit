@@ -112,7 +112,7 @@ fn fixture() -> (
             })
             .collect(),
     });
-    document.companion_assignments.push(CompanionAssignment {
+    document.companion_assignments.push(CompanionAssignment { panel_id: None,
         resource_id: "companion".into(),
         publication_hash: digest('b'),
     });

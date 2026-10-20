@@ -89,3 +89,22 @@ test('deriving messages leaves shared host and client snapshots unchanged and re
   assert.deepEqual(companionMessages(state, client), expected);
   assert.deepEqual({ state, client }, before);
 });
+
+test('panel preparation replaces inline status with one progress message for USB and network companions', () => {
+  const operation={instanceId:'instance',publicationHash:'hash',phase:'downloading',message:'Loading images 50%',completedBytes:65536,totalBytes:131072,cacheHits:2,cacheMisses:1};
+  const client={companionId:'screen',connectionStatus:'Opening panel',operation};
+  assert.deepEqual(companionMessages({},client),[
+    {source:'connection',kind:'info',message:'Preparing panel images · 50% (64 / 128 KiB) · 2 cached, 1 to download'},
+  ]);
+  const state={host:{instances:[{companionId:'screen',instanceId:'instance',publicationHash:'hash'}]},usb:{connected:true,device:{companionId:'screen',operation}}};
+  assert.deepEqual(companionMessages(state,{...client,operation:undefined}),companionMessages({},client));
+  state.host.instances[0].publicationHash='new-hash';
+  assert.deepEqual(companionMessages(state,{...client,operation:undefined}),[{source:'connection',kind:'info',message:'Opening panel'}]);
+});
+
+test('structured panel failures preserve action and error code without duplicating panel errors', () => {
+  const client={companionId:'screen',panelError:'Old generic error',connectionStatus:'Old error',operation:{phase:'failed',message:'Active and incoming images do not fit in flash',errorCode:'cache_full',retryable:false}};
+  assert.deepEqual(companionMessages({},client),[{source:'connection',kind:'error',message:'Active and incoming images do not fit in flash (cache_full). Check the panel and companion before retrying.'}]);
+  client.operation={phase:'failed',message:'Panel image download timed out',errorCode:'image-download-timeout',retryable:true};
+  assert.deepEqual(companionMessages({},client),[{source:'connection',kind:'error',message:'Panel image download timed out (image-download-timeout). Check the connection and retry.'}]);
+});

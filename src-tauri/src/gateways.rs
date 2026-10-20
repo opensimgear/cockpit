@@ -36,6 +36,8 @@ mod retired_game_io;
 pub(crate) mod recovery_transport;
 #[path = "profile_editor_save.rs"]
 mod profile_editor_save;
+#[path = "profile_panel_save.rs"]
+mod profile_panel_save;
 
 trait Adapter: Send + Sync {
     fn publication(&self,_request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{Err("This transport does not support native controller publication overrides.".into())}
@@ -133,6 +135,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
     if command.starts_with("profile_retired_recovery_") { return Some("claim"); }
     if matches!(command,
         "companion_status" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
+        | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_integration_settings_save"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
@@ -150,7 +153,8 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate");
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
 }
@@ -395,6 +399,7 @@ impl GatewayManager {
             "profile_game_launch" => return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).ok_or("Choose a supported native game installation to launch.")?, staged_epoch()?, expected_owner.as_ref()),
             "profile_apply" => {
                 let admission_epoch = staged_epoch()?;
+                self.refresh_saved_panel_references()?;
                 let id = request["id"].as_str().ok_or("Choose a saved profile to activate.")?;
                 let expected = request["expectedRevision"].as_u64().filter(|revision| *revision > 0 && *revision <= osg_profiles::MAX_REVISION).ok_or("Activation requires the current saved profile version.")?;
                 let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
@@ -549,14 +554,16 @@ impl GatewayManager {
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.
+        let publication_transport=matches!(command,"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
         let editor_save = request["command"] == "profile_editor_save";
+        let panel_save=request["command"]=="companion_publish_commit"&&request["companion"]["saveAsLatest"]!=false;
         let save_running = editor_save && {
             let session = self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
             let status = session.status();
             matches!(status.state, crate::profile_session::State::Running | crate::profile_session::State::Degraded)
                 && status.owner.as_ref().is_some_and(|owner| request["document"]["id"] == owner.profile_id)
         };
-        let profile_mutation = editor_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = editor_save || panel_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         // Created before admission guards so notification follows their release,
         // including staged Apply's early-return paths.
         let _wake = profile_mutation.then(|| WakeProfileOnDrop(&self.profile_wake));
@@ -567,16 +574,16 @@ impl GatewayManager {
         };
         let _policy=self.profile_automatic.begin_control(automatic_control);
         self.profile_automatic.control(automatic_control);
-        let staging = editor_save || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch"));
+        let staging = editor_save || panel_save || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch"));
         let learning_start=request["command"]=="profile_input_learn_start";
         let learning_passive=matches!(request["command"].as_str(),Some("profile_input_learn_status"|"profile_input_learn_cancel"));
-        let _pending=if staging{self.profile_pending.fetch_add(1,Ordering::AcqRel);Some(PendingProfileApply(&self.profile_pending))}else{None};
+        let _pending=if staging&&!panel_save{self.profile_pending.fetch_add(1,Ordering::AcqRel);Some(PendingProfileApply(&self.profile_pending))}else{None};
         let interrupt=save_running || learning_interrupt(&request);
-        let arrival_epoch=if interrupt {Some(self.invalidate_learning())} else if editor_save {Some(self.profile_admission_epoch.load(Ordering::Acquire))} else {None};
-        if staging && !editor_save {let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)){return self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);}}
+        let arrival_epoch=if interrupt {Some(self.invalidate_learning())} else if editor_save||panel_save {Some(self.profile_admission_epoch.load(Ordering::Acquire))} else {None};
+        if staging && !editor_save&&!panel_save {let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)){return self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);}}
         if learning_start||learning_passive{return self.request_inner(request);}
         let _profile_write = (profile_mutation && !staging).then(|| self.profile_admission.write().unwrap_or_else(|p| p.into_inner()));
-        let _profile_read = (!profile_mutation).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
+        let _profile_read = (!profile_mutation&&!publication_transport).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
         if interrupt&&!staging{self.invalidate_learning();}
         // Slow read-only staging holds neither admission lock. Final takeover
         // acquires profile then game admission together in the established order.
@@ -744,6 +751,9 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if matches!(command.as_str(),"profile_get"|"profile_assignments_get"|"profile_list") {
+                if let Err(error)=self.refresh_saved_panel_references(){return json!({"ok":false,"error":error});}
+            }
             if command == "profile_editor_save" {
                 return match self.save_profile_editor(&request, native_arrival_epoch) {
                     Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
@@ -775,6 +785,13 @@ impl GatewayManager {
                 .request(&request);
             return match result {
                 Ok(mut profiles) => {
+                    if matches!(command.as_str(),"profile_import"|"profile_duplicate"|"profile_save") {
+                        if let Err(error)=self.refresh_saved_panel_references(){return json!({"ok":false,"error":error});}
+                        if let Some(id)=profiles["document"]["id"].as_str().map(str::to_owned) {
+                            if let Ok((document,_,_))=self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(&id){profiles["document"]=serde_json::to_value(document).unwrap();}
+                        }
+                        if let Ok(list)=self.profiles.lock().unwrap_or_else(|p|p.into_inner()).request(&json!({"command":"profile_list"})){profiles["profiles"]=list["profiles"].clone();}
+                    }
                     if command=="profile_select"&&request["selectionSource"]=="manual"{
                         if let Err(error)=self.automatic_manual_pin(request["id"].as_str().unwrap_or("")){return json!({"ok":false,"error":error});}
                     }
@@ -787,7 +804,10 @@ impl GatewayManager {
             if let Err(error) = self.games.guard_request(&request) {
                 return json!({"ok":false,"error":error});
             }
-            let result = self.companion_request(&request);
+            let result = self.companion_request(&request).map(|mut state|{
+                if command=="companion_publish_commit"&&state["panelSaved"].is_object(){self.apply_saved_panel(&mut state,native_arrival_epoch);}
+                state
+            });
             return match result {
                 Ok(state) => json!({"ok":true,"state":{"companions":state}}),
                 Err(error) => {
@@ -1352,6 +1372,7 @@ mod tests {
         )
     }
     include!("profile_editor_save_tests.rs");
+    include!("profile_panel_save_tests.rs");
     include!("profile_activation_tests.rs");
     fn request(manager: &GatewayManager, command: &str, id: Option<&str>, fields: Value) -> Value {
         let mut request = json!({"command":command,"clientId":CLIENT});

@@ -26,6 +26,29 @@ test('saving updates all assigned companions while leaving unrelated panels alon
  assert.equal(h.state.host.instances.find(i=>i.instanceId==='other').publicationHash,'other');
  assert.equal(h.state.host.instances.find(i=>i.instanceId==='one').publicationHash,next.publicationHash);
 });
+
+test('profile-owned companion updates belong to the native profile transition and are never directly assigned',async()=>{
+ const {first,next}=await fixture();
+ const h=host([{instanceId:'profile-screen',companionId:'a',publicationHash:first.publicationHash,profileOwned:true},{instanceId:'direct-screen',companionId:'b',publicationHash:first.publicationHash}]);
+ await synchronizePanel(next,[first.publicationHash],h.send);
+ assert.deepEqual(h.calls.filter(call=>call.command==='companion_assign').map(call=>call.payload.instanceId),['direct-screen']);
+ assert.equal(h.calls.filter(call=>call.command==='companion_unassign').length,0);
+ const failed=host([{instanceId:'profile-screen',companionId:'a',publicationHash:first.publicationHash,profileOwned:true}]);
+ const send=async(command,payload)=>{const result=await failed.send(command,payload);return command==='companion_publish_commit'?{...result,panelSaveApplication:{state:'failed',error:'Release touch before activating the updated panel'}}:result;};
+ await assert.rejects(synchronizePanel(next,[first.publicationHash],send),/Release touch/);
+ assert.equal(failed.calls.filter(call=>call.command==='companion_assign'||call.command==='companion_unassign').length,0);
+});
+
+test('after native commit, refreshed assignments prevent duplicate writes and preserve concurrent ownership changes',async()=>{
+ const {first,next}=await fixture();
+ for(const changed of [{publicationHash:next.publicationHash},{publicationHash:'another-panel'},{publicationHash:first.publicationHash,profileOwned:true}]){
+  const h=host([{instanceId:'screen',companionId:'a',publicationHash:first.publicationHash}]);
+  const send=async(command,payload)=>{const result=await h.send(command,payload);if(command==='companion_publish_commit')Object.assign(h.state.host.instances[0],changed);return result;};
+  await synchronizePanel(next,[first.publicationHash],send);
+  assert.equal(h.calls.filter(call=>call.command==='companion_assign'||call.command==='companion_unassign').length,0);
+  assert.equal(h.state.host.instances[0].publicationHash,changed.publicationHash);
+ }
+});
 test('selection removes assignments, reuses a companion controller and assigns a new companion',async()=>{
  const {first,next}=await fixture();
  const h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash},{instanceId:'two',companionId:'b',publicationHash:'other'}]);

@@ -132,6 +132,7 @@ export class ProfileEditorStore {
     private inventoryEpoch = 0;
     private inventoryVersion = 0;
     private inventorySignature = '';
+    private savedRefreshing = false;
     constructor(private api: ProfileEditorApi, private inventory: Pick<ProfileInventoryClient, 'listAll'>, private newId: () => string = () => globalThis.crypto.randomUUID()) { }
     get state(): DeepReadonly<ProfileWorkspaceState> { return freeze(this.value); }
     get editorEpoch(): number { return this.epoch; }
@@ -178,6 +179,28 @@ export class ProfileEditorStore {
         if (epoch === this.inventoryEpoch)
             this.set({ inventoryBusy: false });
     } }
+    /** Panel saves can refresh a clean profile externally. Never replace local
+     * edits or replay a Save completion while observing those saved changes. */
+    async refreshSaved(): Promise<void> {
+        if(this.savedRefreshing||this.value.busy)return;
+        this.savedRefreshing=true;const epoch=this.epoch,captured=this.value.editor;
+        try{
+            const result=await this.api.list();
+            if(epoch!==this.epoch||this.value.busy)return;
+            if(!result.profiles)throw new Error('The profile list response is missing its profiles.');
+            this.set({profiles:clone(result.profiles),session:this.session(result),diagnostics:clone(result.diagnostics??[]),readOnly:result.readOnly===true});
+            const latest=captured&&result.profiles.find(profile=>profile.id===captured.document.id);
+            if(!captured||captured.baseRevision===null||!latest||latest.revision===captured.baseRevision
+                ||this.value.editor!==captured||profileEditorDirty(captured))return;
+            const saved=await this.api.getAssignments(captured.document.id);
+            if(epoch!==this.epoch||this.value.busy||this.value.editor!==captured||profileEditorDirty(this.value.editor))return;
+            if(!saved.document||!saved.assignments)throw new Error('The saved profile and assignments are unavailable.');
+            const refreshed=draft(saved.document,saved.assignments,saved.document.revision);
+            this.epoch++;
+            this.set({editor:refreshed,session:this.session(saved),error:''});
+        }catch(error){if(epoch===this.epoch&&!this.value.busy)this.set({error:error instanceof Error?error.message:String(error)});}
+        finally{this.savedRefreshing=false;}
+    }
     async open(id: string): Promise<void> { const epoch = ++this.epoch; this.set({ busy: true, error: '' }); try {
         const result = await this.api.getAssignments(id);
         if (epoch !== this.epoch)

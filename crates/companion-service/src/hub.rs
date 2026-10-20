@@ -16,6 +16,7 @@ use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const LEASE_MS: u64 = 1500;
+pub const PANEL_PREPARATION_LEASE_MS: u64 = 30_000;
 pub const PAIRING_MS: u64 = 60_000;
 pub const MAX_CLIENTS: usize = 8;
 pub const MAX_SESSIONS: usize = 512;
@@ -89,6 +90,7 @@ struct Session {
     token: SourceToken,
     armed: bool,
     panel_error: bool,
+    operation: Option<Value>,
     exhausted: bool,
     sequence: u64,
     heartbeat: u64,
@@ -96,6 +98,28 @@ struct Session {
     batches: VecDeque<u64>,
     values: BTreeMap<String, InputValue>,
     feedback_cursor: crate::feedback::FeedbackCursor,
+}
+fn preparing_panel(session: &Session) -> bool {
+    !session.armed && !session.panel_error && session.operation.as_ref().is_some_and(|operation|
+        matches!(operation["phase"].as_str(),Some("checking-cache"|"downloading"|"rendering")))
+}
+fn operation_for_session(frame: &Value, session: &Session) -> Result<Option<Value>, String> {
+    let Some(operation) = frame.get("operation") else { return Ok(None); };
+    let operation = crate::operation::validate_panel_operation(operation,
+        &session.token.source_id, &session.token.publication_hash)?;
+    ensure(operation.get("sessionId").is_none_or(|v|v == &session.token.session_id)
+        && operation.get("generation").is_none_or(|v|v.as_str() == Some(session.token.generation.to_string().as_str())), "Panel operation belongs to another session.")?;
+    if let Some(previous) = &session.operation {
+        let attempt = |value: &Value|value.as_u64().or_else(||value.as_str().and_then(|s|s.parse::<u64>().ok()));
+        if let (Some(old), Some(new)) = (attempt(&previous["attemptId"]), attempt(&operation["attemptId"])) {
+            ensure(new >= old, "Obsolete panel operation attempt.")?;
+            if new == old {
+                ensure(operation["completedBytes"].as_u64().unwrap_or(0) >= previous["completedBytes"].as_u64().unwrap_or(0)
+                    && operation["totalBytes"].as_u64().unwrap_or(0) >= previous["totalBytes"].as_u64().unwrap_or(0), "Obsolete panel operation progress.")?;
+            }
+        }
+    }
+    Ok(Some(operation))
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -388,7 +412,7 @@ impl Hub {
     pub fn publication_summaries(&self) -> Vec<Value> {
         self.inner.lock().unwrap_or_else(|p|p.into_inner()).publications.values().map(|p|json!({
             "publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,
-            "title":p.title,"controlCount":p.controls.len(),"assetCount":p.assets.len()
+            "uiId":p.ui_id,"title":p.title,"controlCount":p.controls.len(),"assetCount":p.assets.len()
         })).collect()
     }
 
@@ -465,7 +489,9 @@ impl Hub {
         let expired: Vec<_> = inner
             .sessions
             .iter()
-            .filter(|(_, s)| now.saturating_sub(s.last_seen) >= LEASE_MS)
+            .filter(|(_, s)| {
+                now.saturating_sub(s.last_seen) >= if preparing_panel(s) { PANEL_PREPARATION_LEASE_MS } else { LEASE_MS }
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in expired {
@@ -713,6 +739,14 @@ impl Hub {
                 let instance = field(request, "instanceId")?;
                 let companion = field(request, "companionId")?;
                 let publication = field(request, "publicationHash")?;
+                if let Some(expected) = request.get("expectedUnownedPublicationHash") {
+                    let expected = expected.as_str().filter(|hash| digest_id(hash))
+                        .ok_or("A valid expected unowned companion publication hash is required.")?;
+                    ensure(inner.record.instances.iter().any(|assignment|
+                        assignment.instance_id == instance && assignment.companion_id == companion
+                            && assignment.publication_hash == expected && assignment.ownership.is_none()),
+                        "The companion assignment changed or is owned by a profile; the saved panel update was rejected.")?;
+                }
                 ensure(
                     id(instance)
                         && inner
@@ -833,16 +867,18 @@ impl Hub {
                     .map(|session|session.transport).collect::<BTreeSet<_>>();
                 json!({"companionId":client.companion_id,"name":client.name,"kind":client.kind,
                     "connected":inner.connections.values().any(|value|value==&client.companion_id),"transports":transports,
-                    "panelError":if inner.sessions.values().any(|s|s.companion_id==client.companion_id&&s.panel_error){Some("The screen cannot display the assigned panel. Remove unsupported content in the panel editor.")}else{None}})
+                    "operation":inner.sessions.values().filter(|s|s.companion_id==client.companion_id).find_map(|s|s.operation.as_ref()),
+                    "panelError":inner.sessions.values().filter(|s|s.companion_id==client.companion_id&&s.panel_error).map(|s|s.operation.as_ref().and_then(|o|o["message"].as_str()).unwrap_or("The screen cannot display the assigned panel. Remove unsupported content in the panel editor.")).next()})
             }).collect::<Vec<_>>(),
             "pending":inner.pending.iter().map(|(id,pending)|json!({"requestId":id,"companionId":pending.companion_id,"name":pending.name,"expiresAtMs":pending.expires,"approved":pending.token.is_some()})).collect::<Vec<_>>(),
             "instances":inner.record.instances.iter().map(|assignment| {
                 let session=inner.sessions.values().find(|session|session.token.source_id==assignment.instance_id);
                 json!({"instanceId":assignment.instance_id,"sourceId":assignment.instance_id,"companionId":assignment.companion_id,
                     "publicationHash":assignment.publication_hash,"name":assignment.definition.name,
+                    "profileOwned":assignment.ownership.is_some(),
                     "connected":session.is_some(),"transport":session.map(|session|session.transport),
                     "armed":session.is_some_and(|session|session.armed),"generation":session.map(|session|session.token.generation.to_string()),
-                    "sessionId":session.map(|session|&session.token.session_id),"values":session.map(|session|&session.values)})
+                    "sessionId":session.map(|session|&session.token.session_id),"operation":session.and_then(|session|session.operation.as_ref()),"values":session.map(|session|&session.values)})
             }).collect::<Vec<_>>(),
             "publications":inner.publications.values().map(|publication|json!({"publicationHash":publication.publication_hash,"capabilityFingerprint":publication.capability_fingerprint,"uiId":publication.ui_id,"title":publication.title,"controlCount":publication.controls.len(),"assetCount":publication.assets.len()})).collect::<Vec<_>>()})
     }
@@ -857,6 +893,32 @@ impl Hub {
     pub fn source_transport(&self, source_id: &str) -> Option<SourceTransport> {
         self.inner.lock().unwrap_or_else(|p| p.into_inner()).sessions.values()
             .find(|session| session.armed && session.token.source_id == source_id).map(|session| session.transport)
+    }
+    /// Diagnostic only. A reported ready phase never supplies input authority.
+    pub fn panel_operation(&self, instance: &str, publication: &str) -> Option<Value> {
+        let inner = self.inner.lock().unwrap_or_else(|p|p.into_inner());
+        if !inner.record.instances.iter().any(|a|a.instance_id == instance && a.publication_hash == publication) { return None; }
+        inner.sessions.values().find(|s|s.token.source_id == instance && s.token.publication_hash == publication)
+            .and_then(|s|s.operation.clone())
+    }
+    pub fn serial_panel_preparing(&self, companion: &str, connection: &str) -> bool {
+        let inner=self.inner.lock().unwrap_or_else(|p|p.into_inner());
+        inner.sessions.values().any(|session| session.transport == SourceTransport::Usb
+            && session.connection == connection && session.companion_id == companion && preparing_panel(session)
+            && inner.record.instances.iter().any(|assignment|assignment.instance_id == session.token.source_id
+                && assignment.companion_id == companion && assignment.publication_hash == session.token.publication_hash))
+    }
+    /// Only nonce-verified local serial status may enter here. Session and
+    /// assignment comparisons discard delayed reports from a previous switch.
+    pub fn record_serial_panel_operation(&self, companion: &str, session_id: &str, generation: &str, operation: &Value) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap_or_else(|p|p.into_inner());
+        let session = inner.sessions.get(session_id).ok_or("Obsolete serial panel operation.")?;
+        ensure(session.transport == SourceTransport::Usb && session.companion_id == companion
+            && session.token.generation.to_string() == generation
+            && inner.record.instances.iter().any(|a|a.instance_id == session.token.source_id && a.publication_hash == session.token.publication_hash), "Serial panel operation identity changed.")?;
+        let operation = operation_for_session(&json!({"operation":operation}), session)?.unwrap();
+        inner.sessions.get_mut(session_id).unwrap().operation = Some(operation);
+        Ok(())
     }
     fn handle_native_wire(&self, frame: Value, connection_id: &str, now_ms: u64, transport: SourceTransport) -> Value {
         let result = self.wire(&frame, connection_id, now_ms, transport);
@@ -1099,6 +1161,7 @@ impl Hub {
                             sequence: 0,
                             heartbeat: 0,
                             panel_error: false,
+                            operation: None,
                             last_seen: now,
                             batches: VecDeque::new(),
                             values: BTreeMap::new(),
@@ -1112,9 +1175,10 @@ impl Hub {
                     );
                 }
                 if frame["type"]=="image-chunk" {
-                    exact(frame,&["type","sessionId","clientId","generation","publicationHash","widgetId","width","height","offset"],&["version"])?;
+                    exact(frame,&["type","sessionId","clientId","generation","publicationHash","widgetId","width","height","offset"],&["version","operation"])?;
                     let session=inner.sessions.get_mut(field(frame,"sessionId")?).ok_or("Unknown session.")?;
                     ensure(session.connection==connection_id && session.companion_id==companion && frame["clientId"]==session.client_id && frame["generation"]==session.token.generation.to_string() && frame["publicationHash"]==session.token.publication_hash && !session.armed,"Image transfer requires the current disarmed session.")?;
+                    if let Some(operation) = operation_for_session(frame, session)? { session.operation = Some(operation); }
                     session.last_seen=now;
                     let hash=session.token.publication_hash.clone();
                     let p=inner.publications.get(&hash).ok_or("Publication unavailable.")?;
@@ -1206,10 +1270,11 @@ impl Hub {
                     "publicationHash",
                     "sequence",
                 ],
-                &["panelError"],
+                &["panelError", "operation"],
             )?;
             ensure(frame.get("panelError").is_none_or(Value::is_boolean),"Invalid panel error status.")?;
             ensure(frame["panelError"]!=true || !session.armed,"Disarm inputs before reporting a panel error.")?;
+            let operation = operation_for_session(frame, &session)?;
             let seq = counter(&frame["sequence"])?;
             ensure(seq > session.heartbeat, "Stale heartbeat sequence.")?;
             if seq == u64::MAX {
@@ -1223,6 +1288,7 @@ impl Hub {
                 }
             }
             let s = inner.sessions.get_mut(session_id).unwrap();
+            if let Some(operation) = operation { s.operation = Some(operation); }
             s.heartbeat = seq;
             s.panel_error = frame["panelError"]==true;
             s.last_seen = now;
@@ -1242,8 +1308,9 @@ impl Hub {
                     "sequence",
                     "values",
                 ],
-                &[],
+                &["operation"],
             )?;
+            let operation = operation_for_session(frame, &session)?;
             ensure(
                 counter(&frame["sequence"])? == 0 && !session.armed && !session.exhausted,
                 "Baseline requires a disarmed session and sequence zero.",
@@ -1270,6 +1337,7 @@ impl Hub {
                 return Err(error);
             }
             let s = inner.sessions.get_mut(session_id).unwrap();
+            if let Some(operation) = operation { s.operation = Some(operation); }
             s.armed = true;
             s.values = values;
             s.sequence = 0;
