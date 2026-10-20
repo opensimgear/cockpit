@@ -74,7 +74,7 @@
         <table aria-label="Aircraft mod export hooks">
           <thead><tr><th scope="col">Name</th><th scope="col">Available</th><th scope="col">Status</th></tr></thead>
           <tbody>{#each game.integrationSetup.aircraftExports as hook (hook.aircraft)}
-            <tr><th scope="row">{hook.aircraft==='OH-6A'?'OH-6A Cayuse':hook.aircraft}</th><td>{hook.capability==='common-data-only'?'Common flight telemetry':'Controls and cockpit instruments'}</td><td><span class="hook-status" class:installed={hook.installed}><Icon name={hook.installed?'check':hook.compatible?'info':'alert'} size={14}/><span>{hook.message}</span></span></td></tr>
+            <tr><th scope="row">{hook.aircraft==='OH-6A'?'OH-6A Cayuse':hook.aircraft}</th><td>{hook.capability==='common-data-only'?'Common flight telemetry':'Controls and cockpit instruments'}</td><td><span class="hook-status" class:installed={hook.installed} class:attention={hook.detected&&!hook.installed} title={hook.message}><Icon name={hook.installed?'check':hook.detected?'alert':'info'} size={14}/><span>{hook.installed?'Installed':!hook.detected?'Not detected':hook.compatible?'Not installed':'Needs review'}</span></span></td></tr>
           {/each}</tbody>
         </table>
       {:else}<p class="help">No aircraft mod export hooks detected.</p>{/if}
@@ -113,7 +113,7 @@
   .aircraft-hooks thead th{color:var(--muted);font-weight:500;background:var(--surface-raised)}
   .aircraft-hooks thead th:first-child{width:22%}.aircraft-hooks thead th:nth-child(2){width:34%}
   .aircraft-hooks tbody th{color:var(--soft);font-weight:500}.aircraft-hooks td{color:var(--muted)}
-  .hook-status{display:flex;align-items:flex-start;gap:7px}.hook-status :global(svg){margin-top:3px}.hook-status.installed{color:var(--accent)}
+  .hook-status{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:2px 7px;border:1px solid var(--line);border-radius:999px;background:var(--surface-raised);color:var(--soft);line-height:1.5}.hook-status>span{min-width:0;overflow-wrap:normal}.hook-status.installed{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,var(--line));background:var(--accent-bg)}.hook-status.attention{color:var(--warn,#e2b76a);border-color:color-mix(in srgb,var(--warn,#e2b76a) 35%,var(--line));background:color-mix(in srgb,var(--warn,#e2b76a) 8%,var(--surface))}
   @media(max-width:650px){.aircraft-hooks th,.aircraft-hooks td{padding:8px 5px}}
   .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.help{font-size:var(--game-detail-text-size,12px);color:var(--muted);line-height:var(--game-detail-line-height,1.6);overflow-wrap:anywhere}.saving{display:inline-flex;align-items:center;gap:6px;color:var(--muted);white-space:nowrap}.warning{display:flex;align-items:flex-start;gap:7px;color:var(--warn,#e2b76a)}.warning span{min-width:0;overflow-wrap:anywhere}.provider-settings :global(svg){flex-shrink:0}@media(max-width:650px){.fields{grid-template-columns:1fr}}
 </style>

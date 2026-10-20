@@ -108,6 +108,7 @@
           <div class="integration-heading">
             <div class="sidebar-title"><Icon name="link" size={18} /><h3>Integration setup</h3></div>
             <div class="integration-actions">
+              <button class="secondary-button" disabled={locked|| (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={14}/>Refresh state</button>
               {#if selected.integrationSetup?.state === 'setting-up'}
                 <button class="secondary-button" disabled={busy||pending} onclick={()=>integrationCommand('game_integration_cancel')}><Icon name="close" size={14}/>Cancel setup</button>
               {:else if selected.integrationSetup?.recoveryNeeded}
@@ -145,7 +146,6 @@
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
           {/if}
           {#key selected.id}<GameProviderSettings game={selected} busy={busy||pending||occupied||setupRunning||!!profileBlockedReason} bind:userFolder={integrationFolder} request={saveSettings} onBusyChange={value=>{providerBusy=value;}} />{/key}
-          <button class="text-button setup-recheck" disabled={locked|| (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={14} /> Recheck readiness</button>
           {#if selectedLiveLabel}<div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{selectedLiveLabel}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>{/if}
         </section>
     </div>
@@ -316,7 +316,6 @@
   .telemetry-channel-details dt { text-transform: capitalize; }
   .telemetry-channel-details dd { text-align: right; margin: 0; }
   .setup-warning {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:12px;}
-  .setup-recheck {padding-left:0;font-size:var(--game-detail-text-size);margin-top:13px;}
   .setup-progress {display:flex;align-items:center;gap:8px;color:var(--accent);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:15px;}
   .setup-live { border-top: 1px solid var(--line); padding-top: 17px; margin-top: 15px; display: flex; align-items: start; gap: 8px; }
   .setup-live .live-dot { margin-top: 4px; }
