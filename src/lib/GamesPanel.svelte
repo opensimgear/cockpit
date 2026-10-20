@@ -135,14 +135,14 @@
         </section>
       </div>
       <aside class="game-sidebar">
-        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={17} /><h3>Installation</h3></div><span class={['installation-status', { found: selected.installed }]}><span></span>{selected.installed ? 'Found on this computer' : 'Not found'}</span>
+        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={17} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><span></span>{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={12} /> Rescan</button></div>
           {#if selected.source}<p class="field-help">Source: {selected.source}</p>{/if}
           {#if selected.provider === 'x-plane' && selected.installations?.length}
             <label class="editor-label">Detected installations<select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
           {/if}
           <div class="editor-label"><span id="game-executable-label">Game executable</span><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={15}/></button></div>
           <p class="field-help">Choose {gameExecutableName(selected.id)} in your installation folder.</p>
-          <div class="installation-actions">{#if executablePath && executablePath !== selected.executable}<button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}>Use this path</button>{/if}<button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={12} /> Rescan</button></div>
+          {#if executablePath && executablePath !== selected.executable}<div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}>Use this path</button></div>{/if}
           {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         </section>
@@ -278,7 +278,9 @@
   .game-sidebar { min-width: 0; }
   .installation-panel { padding: 21px; }
   .sidebar-title { display: flex; gap: 9px; align-items: center; color: var(--soft); }
-  .installation-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; margin-top: 20px; }
+  .installation-status-row {display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:20px;}
+  .installation-status-row>button {flex-shrink:0;font-size:9px;padding:8px 10px;}
+  .installation-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
   .installation-status.found { color: var(--accent); }
   .installation-actions { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
   .installation-actions button, .automatic-discovery { font-size: 9px; }
