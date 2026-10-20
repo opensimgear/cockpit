@@ -69,7 +69,7 @@ test('actual App Games tiles expose unified launch without injecting hardware ta
 
 test('actual App game details retain provider setup and native rule selection without the retired per-game hardware editor',async()=>{
   const{body,props}=await appGames('dcs');
-  for(const label of ['Automatic profile rule','Saved unified profile','DCS-BIOS connection and catalogue','Save game settings','aria-label="Launch DCS World"','Stop'])assert.ok(body.includes(label),label);
+  for(const label of ['Automatic profile rule','Saved unified profile','DCS-BIOS connection and catalogue','Save game settings','aria-label="Launch DCS World"','Deactivate'])assert.ok(body.includes(label),label);
   for(const label of ['Capture current mappings','Capture current companion','Add hardware profile','Use default profile','Accept binding changes'])assert.ok(!body.includes(label),label);
   assert.equal(props.selectedGameId,'dcs');assert.equal('targets' in props,false);assert.equal('readConfig' in props,false);
 });

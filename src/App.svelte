@@ -232,7 +232,7 @@
   let tab = $state('setup');
   let sessionId = $state<string | null>(null);
   let sessionTransition = $state(false);
-  let modal = $state<'help' | 'remove' | 'controller' | null>(null);
+  let modal = $state<'remove' | 'controller' | null>(null);
   let removeTarget = $state({ key: '', id: '', label: '', gatewayId: '' });
   let controllerTarget = $state({ key: '', id: '', label: '', gatewayId: '', action: 'disable' as ControllerAction });
   let disposed = false;
@@ -521,7 +521,7 @@
     </aside>
 
     <div class="main-shell">
-      <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} {profileMode} {profileModeStale} {profileModeError} profiles={profileSummaries} /><button class="icon-button" aria-label="About Cockpit" onclick={() => { modal = 'help'; }}><Icon name="help" size={18} /></button></div></header>
+      <header class="topbar"><div class="breadcrumb" role="navigation" aria-label="Breadcrumb"><button onclick={() => navigate('overview')}>Cockpit</button><Icon name="chevron" size={13} />{#if view === 'device' || (view === 'games' && selectedGameName)}<button onclick={() => navigate(section)}>{sectionLabel}</button><Icon name="chevron" size={13} /><strong aria-current="page">{view === 'device' ? selected?.settings.label || selected?.name || 'Device' : selectedGameName}</strong>{:else}<strong aria-current="page">{sectionLabel}</strong>{/if}</div><div class="topbar-actions"><HeaderStatus {games} {gamesStale} {profileState} {profileMode} {profileModeStale} {profileModeError} profiles={profileSummaries} /></div></header>
       <main>
         <div class="main-content">
         <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={openCompanion} openIntegration={openGameSettings} onNavigate={() => {if(view==='devices')recordRoute();}} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
@@ -607,9 +607,7 @@
   {#if modal}
     <div class="modal-backdrop"><dialog class="modal" aria-labelledby="modal-title" {@attach showDialog} onclose={() => { modal = null; }}>
       <button class="modal-close icon-button" aria-label="Close dialog" onclick={() => { modal = null; }}><Icon name="close" /></button>
-      {#if modal === 'help'}
-        <span class="modal-icon"><Icon name="wheel" size={30} /></span><span class="eyebrow">WELCOME TO YOUR COCKPIT</span><h2 id="modal-title">Built around your hardware.</h2><p>Plug in your CAN gateway. New devices automatically appear and enable as USB controllers. Enabled offline devices remain as neutral controllers until disabled or removed.</p><div class="notice"><Icon name="info" size={18} /><p>Disable hides a USB controller while remembering its device. Enable appends it to the controller order. Removing a controller can require rebinding your games. Older gateway firmware uses manual registration and layout Apply.</p></div><a class="primary-button" href="https://github.com/opensimgear/device-gateway/tree/main/simulation/pico" target="_blank" rel="noreferrer" onclick={openLink}>Flashing instructions<Icon name="external" size={16} /></a>
-      {:else if modal === 'controller'}
+      {#if modal === 'controller'}
         <span class="modal-icon"><Icon name="alert" size={30} /></span><span class="eyebrow">USB CONTROLLER</span><h2 id="modal-title">{controllerTarget.action === 'forget' ? 'Remove' : controllerTarget.action === 'disable' ? 'Disable' : 'Update profile for'} {controllerTarget.label}?</h2>
         <p>{controllerTarget.action === 'forget' ? 'Forget this offline device. If it returns later, the gateway will enable it as a new controller at the end of the order. On-device settings remain on the module.' : controllerTarget.action === 'disable' ? 'Remove its USB controller while remembering the device and its configuration. Announcements will not enable it again. You can enable it explicitly later.' : 'Publish the device’s current controls in its existing controller position. Changed controls may affect existing bindings.'}</p>
         {#if controllerWarning(controllerModule, controllerTarget.action)}<div class="notice amber-notice"><Icon name="alert" size={18} /><p>{controllerWarning(controllerModule, controllerTarget.action)}</p></div>{/if}

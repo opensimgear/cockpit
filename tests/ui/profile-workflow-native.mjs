@@ -67,18 +67,28 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     if((await status()).state==='recovery-needed')await page.getByRole('button',{name:'Recover outputs',exact:true}).click();
     await native({command:'profile_stop'});
     const modeSwitch=pageActions.getByRole('switch',{name:'Automatic profile selection',exact:true});
-    const profileBadge=page.locator('.topbar .profile-status'),modeBadge=profileBadge.locator('.mode-badge');
+    const profileBadge=page.locator('.topbar .profile-status'),modeCard=page.locator('.topbar .profile-mode-status'),modeBadge=modeCard.locator('.mode-value');
     await expect(modeSwitch).toBeEnabled();
     if(await modeSwitch.getAttribute('aria-checked')==='true')await modeSwitch.click();
     await expect(modeSwitch).toHaveAttribute('aria-checked','false');
     await expect(profileBadge.getByText('No profile active',{exact:true})).toBeVisible();
+    await expect(page.locator('.topbar .header-status')).toHaveCount(3);
+    await expect(page.locator('.topbar .header-status').nth(2)).toHaveClass(/\bprofile-mode-status\b/);
+    await expect(page.locator('.topbar .profile-status + .profile-mode-status')).toHaveCount(1);
+    await expect(modeCard.getByText('Profile mode',{exact:true})).toBeVisible();
+    await expect(profileBadge.locator('.mode-badge,.mode-value,.profile-mode-status')).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'About Cockpit',exact:true,includeHidden:true})).toHaveCount(0);
+    await expect(page.getByRole('heading',{name:'Built around your hardware.',exact:true,includeHidden:true})).toHaveCount(0);
+    await expect(page.getByText('WELCOME TO YOUR COCKPIT',{exact:true})).toHaveCount(0);
     await expect(runtime.getByRole('button',{name:'Deactivate current profile',exact:true})).toHaveCount(0);
     await healthyList();
     await noSelectedBadge();
     await expect(page.getByRole('region',{name:'Automatic profile selection',exact:true})).toHaveCount(0);
     await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
+    await page.locator('.topbar .header-statuses').screenshot({path:resolve(artifacts,'header-mode-manual.png')});
     await modeSwitch.click();await expect(modeSwitch).toHaveAttribute('aria-checked','true');
     await expect(modeBadge).toHaveText('Automatic');
+    await page.locator('.topbar .header-statuses').screenshot({path:resolve(artifacts,'header-mode-automatic.png')});
     await modeSwitch.click();await expect(modeSwitch).toHaveAttribute('aria-checked','false');
     await expect.poll(async()=>(await native({command:'profile_status'})).profiles.automatic.mode).toBe('manual');
     await native({command:'profile_stop'});
@@ -202,7 +212,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(page.getByRole('button',{name:/^Deactivate /})).toHaveCount(0);
     assert.ok(!/\b(running|stopped)\b/i.test(await profileList.innerText()),'The profile tiles must use activation terminology.');
     assert.deepEqual(errors,[]);
-    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,modeInPageActions:true,healthyRuntimeCardHidden:true,debugIcon:true,activeTileFirst:true,remainingTilesMutedAndEnabled:true,deactivationRestoredOrder:normalOrder,headerModeBadge:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,saveNotifications:true,savedBannerAbsent:true,selectedBadgeAbsent:true,activeSave:{before:activated.owner,after:changed.owner},desktopQualified:desktopActive.qualified,desktopRuntimeAcquired:!!desktopActive.runtime,debugSeparated:true,activation:{cancelPreservedOwner:changed.owner,switchedOwner:switched.owner,deactivated:inactiveStatus},pageErrors:errors},null,2)+'\n');
+    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,modeInPageActions:true,healthyRuntimeCardHidden:true,debugIcon:true,activeTileFirst:true,remainingTilesMutedAndEnabled:true,deactivationRestoredOrder:normalOrder,headerModeCard:true,headerModeIsAdjacentThirdCard:true,headerAboutRemoved:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,saveNotifications:true,savedBannerAbsent:true,selectedBadgeAbsent:true,activeSave:{before:activated.owner,after:changed.owner},desktopQualified:desktopActive.qualified,desktopRuntimeAcquired:!!desktopActive.runtime,debugSeparated:true,activation:{cancelPreservedOwner:changed.owner,switchedOwner:switched.owner,deactivated:inactiveStatus},pageErrors:errors},null,2)+'\n');
   }catch(error){await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true});throw error;}
   finally{
     try{await native({command:'profile_stop'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();}

@@ -34,7 +34,9 @@
   <span class="header-status profile-status" title={profileTitle}>
     <span class="badge-dot" class:active={status?.state === 'running'} class:attention={!!status && ['degraded', 'faulted', 'recovery-needed', 'awaiting-game'].includes(status.state)}></span>
     <span class="badge-copy"><span class="badge-label">{profileStatus ? `Active profile · ${profileStatus}` : 'Active profile'}</span><strong>{profileLabel}</strong></span>
-    <span class="mode-badge" title={profileModeStale || !profileMode ? profileModeError || 'Current native profile selection mode is unavailable.' : `${modeLabel} profile selection`}>{modeLabel}</span>
+  </span>
+  <span class="header-status profile-mode-status" title={profileModeStale || !profileMode ? profileModeError || 'Current native profile selection mode is unavailable.' : `${modeLabel} profile selection`}>
+    <span class="badge-copy"><span class="badge-label">Profile mode</span><strong class="mode-value">{modeLabel}</strong></span>
   </span>
 </div>
 
@@ -47,7 +49,6 @@
   .badge-dot.attention { background: #d8ad65; }
   .badge-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .badge-label { color: var(--muted); font-size: 8px; white-space: nowrap; }
-  .mode-badge { flex-shrink: 0; border: 1px solid var(--line); border-radius: 999px; padding: 3px 6px; color: var(--soft); font-size: 8px; white-space: nowrap; }
   strong { color: var(--soft); font-size: 10px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 800px) { .header-status { max-width: 145px; } .profile-status { max-width: 190px; } }
   @media (max-width: 520px) { .header-statuses { gap: 4px; } .header-status { padding: 5px 6px; gap: 5px; max-width: 100px; } .profile-status { max-width: 125px; } .badge-label { font-size: 7px; } strong { font-size: 9px; } }
