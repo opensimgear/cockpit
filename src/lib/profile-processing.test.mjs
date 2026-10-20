@@ -34,6 +34,34 @@ test('numeric presets preserve raw ranges and expose every conversion, condition
   const independent=make('range-map','independent',state(number(0,10)));independent.outputs[0].contract.schema.unit='m';assert.equal(independent.inputs[0].contract.schema.unit,null);assert.equal(make('constant','next').outputs[0].contract.schema.type,'boolean');
 });
 
+test('ratio percentage preset uses explicit saturating unit conversion rather than normalizing the advertised source range',()=>{
+  const input=state(number(0,100000,'ratio')),target=state(number(0,100,'%')),before=plain(input);
+  const node=make('ratio-to-percent','rpm-percentage',input,target);assertValid(node);
+  assert.deepEqual(plain(node.operation),{kind:'unit-convert',from:'ratio',to:'%',rounding:'none',clamp:true});
+  assert.deepEqual(plain(node.inputs[0].contract),input);assert.deepEqual(plain(node.outputs[0].contract),target);
+  assert.deepEqual(plain(input),before);assert.match(summary(node),/ratio → %.*clamp 0–100%/);
+  const wider=make('ratio-to-percent','wide-gauge',input,state(number(-20,120,'%')));assert.deepEqual(plain(wider.outputs[0].contract.schema),number(0,100,'%'));assertValid(wider);
+  const eventNode=make('ratio-to-percent','event-ratio',event(number(-2,4,'ratio')));assert.equal(eventNode.outputs[0].contract.delivery,'event');assertValid(eventNode);
+  const integerRatio=make('ratio-to-percent','integer-ratio',state({...integer(0,2),unit:'ratio'}));assert.equal(integerRatio.outputs[0].contract.schema.type,'number');assertValid(integerRatio);
+  assert.throws(()=>make('ratio-to-percent','raw-rpm',state(number(0,100000,'rpm')),target),/ratio source/);
+  for(const schema of [number(1,100,'%'),number(0,99,'%'),number(0,100,'ratio'),{...integer(0,100),unit:'%'},bool])assert.throws(()=>make('ratio-to-percent','wrong-gauge',input,state(schema)),/full 0–100% range/);
+  assert.throws(()=>make('ratio-to-percent','boolean',state()),/integer or number/);
+});
+
+test('unit conversion clamping is opt in, shape checked and does not bypass units, numeric safety or rounding requirements',()=>{
+  assert.deepEqual(plain(conversion('ratio','%')),[100,0]);assert.deepEqual(plain(conversion('%','ratio')),[.01,0]);
+  const input=state(number(-1,100000,'ratio')),target=state(number(0,100,'%'));
+  assert.throws(()=>make('unit-convert','unbounded',input,target),/output range/);
+  const node=make('ratio-to-percent','saturated',input,target);assertValid(node);
+  for(const clamp of [false,undefined]){const edited=plain(node);if(clamp===undefined)delete edited.operation.clamp;else edited.operation.clamp=clamp;assert.match(error(edited),/output range/);}
+  for(const clamp of [null,'true',1]){const edited=plain(node);edited.operation.clamp=clamp;assert.match(error(edited),/supported processing nodes/);}
+  const wrongUnits=plain(node);wrongUnits.outputs[0].contract.schema.unit='rpm';assert.match(error(wrongUnits),/units/);
+  const unsafe=plain(node);unsafe.inputs[0].contract.schema.max=Number.MAX_SAFE_INTEGER;assert.match(error(unsafe),/output range/);
+  const lossy=plain(node);lossy.outputs[0].contract.schema.type='integer';assert.match(error(lossy),/rounding/);lossy.operation.rounding='nearest';assertValid(lossy);
+  const changedDelivery=plain(node);changedDelivery.outputs[0].contract.delivery='event';delete changedDelivery.outputs[0].contract.freshnessMs;delete changedDelivery.outputs[0].contract.fallback;assert.ok(error(changedDelivery));
+  const unchanged=make('unit-convert','plain-ratio',state(number(0,1,'ratio')),target);assert.equal(Object.hasOwn(unchanged.operation,'clamp'),false);assertValid(unchanged);assert.doesNotMatch(summary(unchanged),/clamp/);
+});
+
 test('quantity declaration is explicit and preserves raw numeric type, bounds and delivery without inferring a physical unit',()=>{
   for(const schema of [integer(0,65535),number(-123.5,30000.25)])for(const contract of [state(schema),event(schema)]){
     const before=plain(contract),node=make('declare-quantity','declared',contract,state(number(0,100,'ft')));
@@ -97,7 +125,7 @@ test('declared port and builtin bounds remain consistent with native validation'
   const pulse=make('pulse','pulse');pulse.operation.rule.repeatUs=pulse.operation.rule.durationUs;assert.ok(error(pulse));pulse.operation.rule.repeatUs=200000;assertValid(pulse);
   const macro=make('macro','macro');macro.operation.rule.steps[1].pressed=true;assert.ok(error(macro));
   const enumNode=make('event-to-state','enum',event({type:'enum',values:['one','two']}));enumNode.outputs[0].contract.schema.values.reverse();assert.ok(error(enumNode));
-  assert.equal(PROCESSING_PRESETS.length,28);
+  assert.equal(PROCESSING_PRESETS.length,29);
 });
 test('native-validated fixed authoring fixture retains the exact generated preset and atomic invocation contracts',async()=>{
   const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profile-authoring/visible-presets.json',import.meta.url),'utf8'));

@@ -140,6 +140,8 @@ pub(crate) fn conversion(from: &str, to: &str) -> Option<(f64, f64)> {
         ("rad", "deg") => Some((180.0 / std::f64::consts::PI, 0.0)),
         ("degC", "degF") => Some((1.8, 32.0)),
         ("degF", "degC") => Some((1.0 / 1.8, -32.0 / 1.8)),
+        ("ratio", "%") => Some((100.0, 0.0)),
+        ("%", "ratio") => Some((0.01, 0.0)),
         _ if from == to => Some((1.0, 0.0)),
         _ => None,
     }
@@ -309,7 +311,7 @@ pub fn validate_operation(
             Ok(())
         }
         Operation::Scale { factor, offset } if same_delivery && finite(&[*factor, *offset]) => {
-            numeric_operation(input, output, *factor, *offset, Rounding::None, None)
+            numeric_operation(input, output, *factor, *offset, Rounding::None, None, false)
         }
         Operation::RangeMap {
             input_min,
@@ -335,13 +337,27 @@ pub fn validate_operation(
                 output_min - input_min * factor,
                 *rounding,
                 None,
+                false,
             )
         }
-        Operation::UnitConvert { from, to, rounding } if same_delivery => {
+        Operation::UnitConvert {
+            from,
+            to,
+            rounding,
+            clamp,
+        } if same_delivery => {
             let Some((factor, offset)) = conversion(from, to) else {
                 return fail();
             };
-            numeric_operation(input, output, factor, offset, *rounding, Some((from, to)))
+            numeric_operation(
+                input,
+                output,
+                factor,
+                offset,
+                *rounding,
+                Some((from, to)),
+                *clamp,
+            )
         }
         Operation::Invert {} if same && input.and_then(numeric).is_some() => Ok(()),
         Operation::Deadzone {
@@ -510,6 +526,7 @@ fn numeric_operation(
     offset: f64,
     rounding: Rounding,
     units: Option<(&String, &String)>,
+    clamp: bool,
 ) -> Result<(), String> {
     let (Some((min, max, unit)), Some((out_min, out_max, out_unit))) =
         (input.and_then(numeric), output.and_then(numeric))
@@ -519,12 +536,20 @@ fn numeric_operation(
     let valid_units = units.map_or(unit == out_unit, |(from, to)| {
         unit == Some(from.as_str()) && out_unit == Some(to.as_str())
     });
-    let (a, b) = (
-        rounded(min * factor + offset, rounding),
-        rounded(max * factor + offset, rounding),
-    );
+    let (raw_a, raw_b) = (min * factor + offset, max * factor + offset);
+    let converted = |value: f64| {
+        rounded(
+            if clamp {
+                value.clamp(out_min, out_max)
+            } else {
+                value
+            },
+            rounding,
+        )
+    };
+    let (a, b) = (converted(raw_a), converted(raw_b));
     if !valid_units
-        || !finite(&[factor, offset, a, b])
+        || !finite(&[factor, offset, raw_a, raw_b, a, b])
         || a.min(b) < out_min - 1e-9
         || a.max(b) > out_max + 1e-9
         || matches!(output, Some(ScalarSchema::Integer { .. }))

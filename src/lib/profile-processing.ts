@@ -2,7 +2,7 @@ import { profileContractError, profileDocumentError, profilePortIdValid, profile
 import { graphContractError, graphScalarFits } from './profile-graph';
 
 export const PROCESSING_PRESETS = [
-  ['identity','Identity'],['declare-quantity','Interpret raw quantity'],['not','Boolean NOT'],['invert','Invert numeric value'],['scale','Scale and offset'],['range-map','Map numeric range'],['unit-convert','Convert units'],['deadzone','Deadzone'],['curve','Curve'],['compare','Compare'],['hysteresis','Condition with hysteresis'],['gate','Gate'],['any','Boolean OR'],['all','Boolean AND'],['priority','Explicit input priority'],['event-edge','State to event edge'],['event-to-state','Event to state'],['select','Choose values'],['format','Format text'],['fallback','Explicit unknown/stale fallback'],['constant','Constant value'],['toggle','Toggle'],['pulse','Pulse'],['tap','Tap'],['hold','Hold'],['double-tap','Double tap'],['macro','Timed macro'],['script','Script with declared ports'],
+  ['identity','Identity'],['declare-quantity','Interpret raw quantity'],['not','Boolean NOT'],['invert','Invert numeric value'],['scale','Scale and offset'],['range-map','Map numeric range'],['unit-convert','Convert units'],['ratio-to-percent','Ratio to percentage (0–100%)'],['deadzone','Deadzone'],['curve','Curve'],['compare','Compare'],['hysteresis','Condition with hysteresis'],['gate','Gate'],['any','Boolean OR'],['all','Boolean AND'],['priority','Explicit input priority'],['event-edge','State to event edge'],['event-to-state','Event to state'],['select','Choose values'],['format','Format text'],['fallback','Explicit unknown/stale fallback'],['constant','Constant value'],['toggle','Toggle'],['pulse','Pulse'],['tap','Tap'],['hold','Hold'],['double-tap','Double tap'],['macro','Timed macro'],['script','Script with declared ports'],
 ] as const;
 export type ProcessingPreset = typeof PROCESSING_PRESETS[number][0];
 type ScalarContract = Extract<ProfilePortContract,{delivery:'state'|'event'}>;
@@ -14,7 +14,7 @@ const scalar=(contract:DeepReadonly<ProfilePortContract>):DeepReadonly<ProfileSc
 const numeric=(schema:DeepReadonly<ProfileScalarSchema>|null):schema is DeepReadonly<Numeric>=>schema?.type==='number'||schema?.type==='integer';
 const port=(id:string,direction:'input'|'output',contract:ProfilePortContract):ProfilePort=>({id,name:id,direction,contract});
 const sample=(schema:DeepReadonly<ProfileScalarSchema>):Exclude<ProfileValue,null>=>schema.type==='boolean'?false:schema.type==='rgb'?'000000':schema.type==='text'?'':schema.type==='enum'?schema.values[0]:schema.min;
-const conversionTable:Record<string,Record<string,[number,number]>>={m:{ft:[1250/381,0],km:[.001,0]},ft:{m:[381/1250,0]},km:{m:[1000,0]},s:{ms:[1000,0]},ms:{s:[.001,0]},'m/s':{kn:[900/463,0]},kn:{'m/s':[463/900,0]},deg:{rad:[Math.PI/180,0]},rad:{deg:[180/Math.PI,0]},degC:{degF:[1.8,32]},degF:{degC:[1/1.8,-32/1.8]}};
+const conversionTable:Record<string,Record<string,[number,number]>>={m:{ft:[1250/381,0],km:[.001,0]},ft:{m:[381/1250,0]},km:{m:[1000,0]},s:{ms:[1000,0]},ms:{s:[.001,0]},'m/s':{kn:[900/463,0]},kn:{'m/s':[463/900,0]},deg:{rad:[Math.PI/180,0]},rad:{deg:[180/Math.PI,0]},degC:{degF:[1.8,32]},degF:{degC:[1/1.8,-32/1.8]},ratio:{'%':[100,0]},'%':{ratio:[.01,0]}};
 export function processingUnitConversion(from:string,to:string):[number,number]|null{if(from===to)return[1,0];if(!Object.hasOwn(conversionTable,from)||!Object.hasOwn(conversionTable[from],to))return null;return[...conversionTable[from][to]];}
 function boundedSummary(value:string):string{
   const encoder=new TextEncoder();if(encoder.encode(value).length<=255)return value;
@@ -40,7 +40,7 @@ export function processingSummary(node:DeepReadonly<ProfileProcessingNode>):stri
   if(op.kind==='script')return `Script · ${node.inputs.length} declared inputs → ${node.outputs.length} outputs`;
   if(op.kind==='action-pack'||op.kind==='set-on-change')return `${op.kind==='action-pack'?'On explicit event':'On argument change'} · ${op.arguments.length} ordered arguments`;
   if(op.kind==='declare-quantity')return boundedSummary(`${op.quantity} · declared ${op.unit} · value unchanged`);
-  if(op.kind==='unit-convert')return `${op.from} → ${op.to} · ${op.rounding}`;
+  if(op.kind==='unit-convert'){const output=node.outputs[0]?.contract,schema=output&&scalar(output);return `${op.from} → ${op.to} · ${op.rounding}${op.clamp&&numeric(schema)?` · clamp ${schema.min}–${schema.max}${schema.unit??''}`:''}`;}
   if(op.kind==='range-map')return `${op.inputMin}…${op.inputMax} → ${op.outputMin}…${op.outputMax} · ${op.rounding}`;
   if(op.kind==='scale')return `× ${op.factor} + ${op.offset}`;
   if(op.kind==='priority')return `Priority: ${op.order.join(' → ')}`;
@@ -65,6 +65,7 @@ export function processingTemplate(preset:ProcessingPreset,id:string,input:DeepR
     case 'scale':requireNumeric();operation={kind:'scale',factor:1,offset:0};break;
     case 'range-map':{const from=requireNumeric(),to=target&&numeric(scalar(target))?clone<Numeric>(scalar(target)! as DeepReadonly<Numeric>):from;operation={kind:'range-map',inputMin:from.min,inputMax:from.max,outputMin:to.min,outputMax:to.max,rounding:to.type==='integer'?'nearest':'none'};output=sameDelivery(to);break;}
     case 'unit-convert':{const from=requireNumeric();if(!from.unit)throw new Error('Unit conversion requires a declared source unit.');const to=target&&numeric(scalar(target))?clone<Numeric>(scalar(target)! as DeepReadonly<Numeric>):null;const unit=to?.unit??Object.keys(conversionTable[from.unit]??{})[0];const conversion=unit&&processingUnitConversion(from.unit,unit);if(!unit||!conversion)throw new Error('Choose a supported explicit unit conversion.');const [factor,offset]=conversion;const a=from.min*factor+offset,b=from.max*factor+offset;output=sameDelivery(to??{type:'number',min:Math.min(a,b),max:Math.max(a,b),unit});operation={kind:'unit-convert',from:from.unit,to:unit,rounding:to?.type==='integer'?'nearest':'none'};break;}
+    case 'ratio-to-percent':{const from=requireNumeric();if(from.unit!=='ratio')throw new Error('Ratio to percentage requires a ratio source.');const to=target?scalar(target):null;if(target&&(!numeric(to)||to.type!=='number'||to.unit!=='%'||to.min>0||to.max<100))throw new Error('Ratio to percentage requires a number target accepting the full 0–100% range.');output=sameDelivery({type:'number',min:0,max:100,unit:'%'});operation={kind:'unit-convert',from:'ratio',to:'%',rounding:'none',clamp:true};break;}
     case 'deadzone':{const from=requireNumeric();operation={kind:'deadzone',center:from.min<=0&&from.max>=0?0:(from.min+from.max)/2,radius:0,rounding:from.type==='integer'?'nearest':'none'};break;}
     case 'curve':{const from=requireNumeric();operation={kind:'curve',points:[{input:from.min,output:from.min},{input:from.max,output:from.max}],rounding:from.type==='integer'?'nearest':'none'};break;}
     case 'compare':{const from=requireNumeric();operation={kind:'compare',comparison:'greater-equal',threshold:(from.min+from.max)/2};output=sameDelivery(bool);break;}
@@ -99,11 +100,13 @@ export function processingActionPack(id:string,action:DeepReadonly<ProfilePortCo
   const error=processingNodeError(node);if(error)throw new Error(error);return node;
 }
 const equalSchema=(a:DeepReadonly<ProfileScalarSchema>|null,b:DeepReadonly<ProfileScalarSchema>|null)=>!!a&&!!b&&graphScalarFits(a,b)&&graphScalarFits(b,a)&&(a.type!=='enum'||b.type==='enum'&&a.values.every((value,index)=>value===b.values[index]));
-const numericError=(input:DeepReadonly<ProfileScalarSchema>|null,output:DeepReadonly<ProfileScalarSchema>|null,factor:number,offset:number,rounding:string,units?:[string,string]):string=>{
+const numericError=(input:DeepReadonly<ProfileScalarSchema>|null,output:DeepReadonly<ProfileScalarSchema>|null,factor:number,offset:number,rounding:string,units?:[string,string],clamp=false):string=>{
   if(!numeric(input)||!numeric(output))return 'Numeric conversion requires numeric input and output ports.';
   const round=(value:number)=>rounding==='nearest'?(value<0?-Math.round(-value):Math.round(value)):rounding==='floor'?Math.floor(value):rounding==='ceil'?Math.ceil(value):rounding==='truncate'?Math.trunc(value):value;
-  const a=round(input.min*factor+offset),b=round(input.max*factor+offset);
-  if(![factor,offset,a,b].every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER)||(units?input.unit!==units[0]||output.unit!==units[1]:input.unit!==output.unit)||Math.min(a,b)<output.min-1e-9||Math.max(a,b)>output.max+1e-9||output.type==='integer'&&rounding==='none'&&(input.type!=='integer'||!Number.isInteger(factor)||!Number.isInteger(offset)))return 'Conversion output range, rounding or units do not fit the declared ports.';
+  const rawA=input.min*factor+offset,rawB=input.max*factor+offset;
+  const bounded=(value:number)=>clamp?Math.min(output.max,Math.max(output.min,value)):value;
+  const a=round(bounded(rawA)),b=round(bounded(rawB));
+  if(![factor,offset,rawA,rawB,a,b].every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER)||(units?input.unit!==units[0]||output.unit!==units[1]:input.unit!==output.unit)||Math.min(a,b)<output.min-1e-9||Math.max(a,b)>output.max+1e-9||output.type==='integer'&&rounding==='none'&&(input.type!=='integer'||!Number.isInteger(factor)||!Number.isInteger(offset)))return 'Conversion output range, rounding or units do not fit the declared ports.';
   return '';
 };
 const controllerKind=(schema:DeepReadonly<ProfileScalarSchema>|null):string|null=>schema?.type==='boolean'?'button':schema?.type==='integer'&&schema.unit===null?(schema.min===0&&schema.max===32767?'unipolar':schema.min===-32768&&schema.max===32767?'bipolar':schema.min===-1&&schema.max===7?'hat':null):null;
@@ -150,7 +153,7 @@ export function processingNodeError(node:DeepReadonly<ProfileProcessingNode>):st
     case 'select':return sameDelivery&&booleanInputs&&!!b&&[op.whenTrue,op.whenFalse].every(value=>profileScalarAccepts(b as ProfileScalarSchema,value))?'':fail;
     case 'scale':return sameDelivery?numericError(a,b,op.factor,op.offset,'none'):fail;
     case 'range-map':return sameDelivery&&numeric(a)&&op.inputMin<op.inputMax&&a.min>=op.inputMin&&a.max<=op.inputMax?numericError(a,b,(op.outputMax-op.outputMin)/(op.inputMax-op.inputMin),op.outputMin-op.inputMin*(op.outputMax-op.outputMin)/(op.inputMax-op.inputMin),op.rounding):fail;
-    case 'unit-convert':{const conversion=processingUnitConversion(op.from,op.to);return sameDelivery&&conversion?numericError(a,b,...conversion,op.rounding,[op.from,op.to]):fail;}
+    case 'unit-convert':{const conversion=processingUnitConversion(op.from,op.to);return sameDelivery&&conversion?numericError(a,b,...conversion,op.rounding,[op.from,op.to],op.clamp):fail;}
     case 'deadzone':return same&&numeric(a)&&Number.isFinite(op.center)&&Number.isFinite(op.radius)&&op.radius>=0&&op.center>=a.min&&op.center<=a.max&&op.radius<=Math.max(a.max-op.center,op.center-a.min)&&(b?.type!=='integer'||op.rounding!=='none'||op.radius===0)?'':fail;
     case 'curve':return sameDelivery&&numeric(a)&&numeric(b)&&a.unit===b.unit&&op.points.length>=2&&op.points.length<=32&&a.min>=op.points[0].input&&a.max<=op.points[op.points.length-1].input&&op.points.every((point,index)=>Number.isFinite(point.input)&&Number.isFinite(point.output)&&point.output>=b.min&&point.output<=b.max&&(index===0||point.input>op.points[index-1].input))&&(b.type!=='integer'||op.rounding!=='none')?'':fail;
     case 'compare':return sameDelivery&&numeric(a)&&b?.type==='boolean'&&Number.isFinite(op.threshold)?'':fail;

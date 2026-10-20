@@ -39,7 +39,7 @@ export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 
   | { kind: 'constant'; value: Exclude<ProfileValue, null> }
   | { kind: 'scale'; factor: number; offset: number }
   | { kind: 'range-map'; inputMin: number; inputMax: number; outputMin: number; outputMax: number; rounding: ProfileRounding }
-  | { kind: 'unit-convert'; from: string; to: string; rounding: ProfileRounding }
+  | { kind: 'unit-convert'; from: string; to: string; rounding: ProfileRounding; clamp?: boolean }
   | { kind: 'deadzone'; center: number; radius: number; rounding: ProfileRounding }
   | { kind: 'curve'; points: { input: number; output: number }[]; rounding: ProfileRounding }
   | { kind: 'compare'; comparison: ProfileComparison; threshold: number }
@@ -189,7 +189,7 @@ function operation(value: unknown): boolean {
   if (kind === 'constant') return exact(value, ['kind', 'value']) && scalarValue(value.value);
   if (kind === 'scale') return exact(value, ['kind', 'factor', 'offset']) && coefficient(value.factor) && coefficient(value.offset);
   if (kind === 'range-map') return exact(value, ['kind', 'inputMin', 'inputMax', 'outputMin', 'outputMax', 'rounding']) && [value.inputMin, value.inputMax, value.outputMin, value.outputMax].every(coefficient) && rounding(value.rounding);
-  if (kind === 'unit-convert') return exact(value, ['kind', 'from', 'to', 'rounding']) && boundedText(value.from, 128) && boundedText(value.to, 128) && rounding(value.rounding);
+  if (kind === 'unit-convert') return exact(value, ['kind', 'from', 'to', 'rounding', ...(Object.hasOwn(value, 'clamp') ? ['clamp'] : [])]) && boundedText(value.from, 128) && boundedText(value.to, 128) && rounding(value.rounding) && (!Object.hasOwn(value, 'clamp') || typeof value.clamp === 'boolean');
   if (kind === 'deadzone') return exact(value, ['kind', 'center', 'radius', 'rounding']) && coefficient(value.center) && coefficient(value.radius) && (value.radius as number) >= 0 && rounding(value.rounding);
   if (kind === 'curve') return exact(value, ['kind', 'points', 'rounding']) && list(value.points, 32) && value.points.length >= 2 && value.points.every(p => exact(p, ['input', 'output']) && coefficient(p.input) && coefficient(p.output)) && rounding(value.rounding);
   if (kind === 'compare') return exact(value, ['kind', 'comparison', 'threshold']) && comparison(value.comparison) && coefficient(value.threshold);

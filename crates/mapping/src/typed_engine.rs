@@ -1338,9 +1338,21 @@ impl Phase {
                             + output_min,
                         *rounding,
                     ),
-                    Operation::UnitConvert { from, to, rounding } => {
+                    Operation::UnitConvert {
+                        from,
+                        to,
+                        rounding,
+                        clamp,
+                    } => {
                         let (factor, offset) = conversion(from, to).unwrap();
-                        rounded(value * factor + offset, *rounding)
+                        let converted = value * factor + offset;
+                        let converted = if *clamp {
+                            let (min, max, _) = schema(&output.contract).and_then(numeric).unwrap();
+                            converted.clamp(min, max)
+                        } else {
+                            converted
+                        };
+                        rounded(converted, *rounding)
                     }
                     Operation::Invert {} => min + max - value,
                     Operation::Deadzone {

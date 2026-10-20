@@ -108,6 +108,8 @@ pub enum Operation {
         from: String,
         to: String,
         rounding: Rounding,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clamp: bool,
     },
     Deadzone {
         center: f64,

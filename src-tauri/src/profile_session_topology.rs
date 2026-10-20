@@ -242,7 +242,7 @@ fn summary(operation: &Operation) -> String {
         Operation::HatDirection{direction,diagonals}=>format!("Hat {direction:?} · {diagonals:?}"),
         Operation::Scale{factor,offset}=>format!("Scale × {} + {}",number(*factor),number(*offset)),
         Operation::RangeMap{input_min,input_max,output_min,output_max,rounding}=>format!("Map {}…{} → {}…{} · {rounding:?}",number(*input_min),number(*input_max),number(*output_min),number(*output_max)),
-        Operation::UnitConvert{from,to,rounding}=>format!("Units {from} → {to} · {rounding:?}"),
+        Operation::UnitConvert{from,to,rounding,clamp}=>format!("Units {from} → {to} · {rounding:?}{}", if *clamp { " · clamp to output range" } else { "" }),
         Operation::Deadzone{center,radius,rounding}=>format!("Deadzone center {}, radius {} · {rounding:?}",number(*center),number(*radius)),
         Operation::Curve{points,rounding}=>format!("Curve · {} explicit points · {rounding:?}",points.len()),
         Operation::Compare{comparison,threshold}=>format!("Compare {comparison:?} {}",number(*threshold)),

@@ -34,6 +34,21 @@ control characters, and contain at most 128 UTF-8 bytes. Existing unit-bearing
 ports use **Convert units**. Scale and range mapping retain their existing unit
 checks.
 
+## RPM ratio to a percentage gauge
+
+Connect ACR's **RPM / maximum RPM** output to the companion's percentage gauge
+using **Connect with transformation**, then choose **Ratio to percentage
+(0–100%)**. The visible node multiplies the ratio by 100 and clamps the result
+to the gauge's 0–100% range: `0.75` becomes `75`, and `1.1` becomes `100`.
+It does not normalize against the source's full declared range.
+
+**Convert units** also supports `ratio` and `%` in either direction. Its
+**Clamp to output range** option explicitly limits the converted value to the
+output contract before rounding. Without that option, the whole converted
+source range must fit the output. Unknown, stale and unavailable telemetry
+remains unknown, stale or unavailable; a missing maximum RPM is not treated as
+zero.
+
 ## DCS-BIOS reported MSL altitude
 
 In DCS game details, choose the installed aircraft catalogue. When that

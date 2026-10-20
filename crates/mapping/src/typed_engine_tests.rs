@@ -434,6 +434,7 @@ fn unit_conversion_hysteresis_and_missing_status_replay() {
             from: "ft".into(),
             to: "m".into(),
             rounding: Rounding::None,
+            clamp: false,
         },
         ft,
         metres.clone(),
@@ -476,6 +477,128 @@ fn unit_conversion_hysteresis_and_missing_status_replay() {
 }
 
 #[test]
+fn clamped_ratio_percentage_conversion_keeps_scale_boundaries_and_missing_status() {
+    let mut engine = phase(unary(
+        Operation::UnitConvert {
+            from: "ratio".into(),
+            to: "%".into(),
+            rounding: Rounding::None,
+            clamp: true,
+        },
+        number_contract(-1.0, 100000.0, Some("ratio")),
+        number_contract(0.0, 100.0, Some("%")),
+    ));
+    for (index, (ratio, percentage)) in [
+        (-1.0, 0.0),
+        (0.0, 0.0),
+        (0.75, 75.0),
+        (1.0, 100.0),
+        (1.25, 100.0),
+        (100000.0, 100.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let sequence = index as u64 + 1;
+        feed(&mut engine, sequence, sequence, sample(ratio));
+        assert_eq!(output(&engine), sample(percentage));
+    }
+    engine.advance(Counter(1_000_006)).unwrap();
+    assert_eq!(output(&engine), SignalSample::Stale);
+    feed(&mut engine, 7, 1_000_007, SignalSample::Unknown);
+    assert_eq!(output(&engine), SignalSample::Unknown);
+    engine
+        .accept(frame("source", 1, 8, 1_000_008, Reason::Disconnect, vec![]))
+        .unwrap();
+    assert_eq!(output(&engine), SignalSample::Unavailable);
+
+    let mut reverse = phase(unary(
+        Operation::UnitConvert {
+            from: "%".into(),
+            to: "ratio".into(),
+            rounding: Rounding::None,
+            clamp: false,
+        },
+        number_contract(0.0, 100.0, Some("%")),
+        number_contract(0.0, 1.0, Some("ratio")),
+    ));
+    feed(&mut reverse, 1, 0, sample(75.0));
+    assert_eq!(output(&reverse), sample(0.75));
+}
+
+#[test]
+fn unit_conversion_clamp_is_explicit_and_preserves_type_range_and_rounding_checks() {
+    let operation = |clamp, rounding| Operation::UnitConvert {
+        from: "ratio".into(),
+        to: "%".into(),
+        rounding,
+        clamp,
+    };
+    let ratio = number_contract(0.0, 100000.0, Some("ratio"));
+    let percentage = number_contract(0.0, 100.0, Some("%"));
+    assert!(!operation_valid(
+        operation(false, Rounding::None),
+        vec![ratio.clone()],
+        percentage.clone(),
+    ));
+    assert!(operation_valid(
+        operation(true, Rounding::None),
+        vec![ratio.clone()],
+        percentage.clone(),
+    ));
+    assert!(!operation_valid(
+        operation(true, Rounding::None),
+        vec![number_contract(0.0, 1.0, Some("rpm"))],
+        percentage.clone(),
+    ));
+    assert!(!operation_valid(
+        operation(true, Rounding::None),
+        vec![ratio.clone()],
+        number_contract(0.0, 100.0, Some("ratio")),
+    ));
+    assert!(!operation_valid(
+        operation(true, Rounding::None),
+        vec![number_contract(0.0, crate::signal::MAX_SAFE_INTEGER as f64, Some("ratio"))],
+        percentage,
+    ));
+    let integer_percentage = state(ScalarSchema::Integer {
+        min: 0,
+        max: 100,
+        unit: Some("%".into()),
+    });
+    assert!(!operation_valid(
+        operation(true, Rounding::None),
+        vec![ratio.clone()],
+        integer_percentage.clone(),
+    ));
+    let mut rounded = phase(unary(
+        operation(true, Rounding::Nearest),
+        ratio,
+        integer_percentage,
+    ));
+    feed(&mut rounded, 1, 0, sample(0.756));
+    assert_eq!(output(&rounded), sample(76.0));
+    feed(&mut rounded, 2, 1, sample(1.1));
+    assert_eq!(output(&rounded), sample(100.0));
+}
+
+#[test]
+fn unit_conversion_clamp_defaults_off_for_existing_documents() {
+    let legacy = serde_json::json!({
+        "kind": "unit-convert", "from": "ft", "to": "m", "rounding": "none"
+    });
+    let operation: Operation = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(matches!(operation, Operation::UnitConvert { clamp: false, .. }));
+    assert_eq!(serde_json::to_value(&operation).unwrap(), legacy);
+    let clamped = serde_json::json!({
+        "kind": "unit-convert", "from": "ratio", "to": "%", "rounding": "none", "clamp": true
+    });
+    let operation: Operation = serde_json::from_value(clamped.clone()).unwrap();
+    assert!(matches!(operation, Operation::UnitConvert { clamp: true, .. }));
+    assert_eq!(serde_json::to_value(&operation).unwrap(), clamped);
+}
+
+#[test]
 fn declared_raw_quantity_keeps_values_and_missing_status_through_explicit_conversion() {
     let raw = integer_contract(0, 65535);
     let feet = state(ScalarSchema::Integer {
@@ -500,6 +623,7 @@ fn declared_raw_quantity_keeps_values_and_missing_status_through_explicit_conver
             from: "ft".into(),
             to: "m".into(),
             rounding: Rounding::None,
+            clamp: false,
         },
     });
     program.nodes.push(Node {
@@ -2034,7 +2158,8 @@ fn operation_contracts_reject_lossy_rounding_units_and_implicit_policies() {
         Operation::UnitConvert {
             from: "ft".into(),
             to: "m".into(),
-            rounding: Rounding::None
+            rounding: Rounding::None,
+            clamp: false,
         },
         vec![number_contract(0.0, 10.0, Some("m"))],
         number_contract(0.0, 10.0, Some("m"))
@@ -2043,7 +2168,8 @@ fn operation_contracts_reject_lossy_rounding_units_and_implicit_policies() {
         Operation::UnitConvert {
             from: "ft".into(),
             to: "kg".into(),
-            rounding: Rounding::None
+            rounding: Rounding::None,
+            clamp: false,
         },
         vec![number_contract(0.0, 10.0, Some("ft"))],
         number_contract(0.0, 10.0, Some("kg"))
