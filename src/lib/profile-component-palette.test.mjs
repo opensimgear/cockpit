@@ -24,28 +24,12 @@ const controller={id:'controller:1',name:'Stick',resourceType:'host-controller',
 const props={inventory:[game('dcs','DCS World'),game('x-plane-12','X-Plane 12'),controller],assignedIds:new Set(),resourceCount:0,virtualCount:0,desktopAdded:false,refresh:never,addResource:never,addVirtual:never,addDesktop:never,addGroup:never,focusGroup:never,renameGroup:never,deleteGroup:never};
 const body=patch=>render(Palette,{props:{...props,...patch}}).body;
 
-test('None hides integrations and a game context exposes only that game',()=>{
-  const none=body({});
-  assert.ok(!none.includes('aria-label="Integrations"'));
-  assert.ok(!none.includes('Add DCS World'));
-  assert.ok(!none.includes('Add X-Plane 12'));
-  const dcs=body({selectedGame:'dcs'});
-  assert.ok(dcs.includes('Add DCS World'));
-  assert.ok(!dcs.includes('Add X-Plane 12'));
-  const xplane=body({selectedGame:'x-plane-12'});
-  assert.ok(xplane.includes('Add X-Plane 12'));
-  assert.ok(!xplane.includes('Add DCS World'));
+test('game integrations are managed by the saved context and never offered as palette components',()=>{
+  const html=body({});assert.ok(!html.includes('aria-label="Integrations"'));assert.ok(!html.includes('Add DCS World'));assert.ok(!html.includes('Add X-Plane 12'));
 });
 
-test('groups lead independent native accordions, then integrations and output components',()=>{
-  const html=body({selectedGame:'dcs'});
-  const labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);
-  assert.deepEqual(labels,['Profile groups','Integrations','Output components','Controllers']);
-  assert.equal((html.match(/class="editor-accordion\b/g)||[]).length,4);
-  assert.ok(!/<details[^>]*\bname=/.test(html),'Sections can stay open independently.');
-  assert.match(html,/<details[^>]*aria-label="Profile groups"[^>]* open/);
-  assert.match(html,/<details[^>]*aria-label="Integrations"[^>]* open/);
-  assert.ok(!/<details[^>]*aria-label="Controllers"[^>]* open/.test(html));
+test('groups lead independent native accordions, followed by outputs and devices',()=>{
+  const html=body({}),labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);assert.deepEqual(labels,['Profile groups','Output components','Controllers']);assert.ok(!/<details[^>]*\bname=/.test(html));assert.match(html,/<details[^>]*aria-label="Profile groups"[^>]* open/);assert.match(html,/<details[^>]*aria-label="Output components"[^>]* open/);assert.ok(!/<details[^>]*aria-label="Controllers"[^>]* open/.test(html));
 });
 
 test('groups list focuses and renames each frame, with removal explicitly preserving components',()=>{

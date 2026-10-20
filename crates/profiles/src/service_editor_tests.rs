@@ -38,6 +38,7 @@ fn new_and_existing_editor_saves_commit_graph_and_all_pins_in_one_revision() {
     let root = temp.path().join("profiles-v2");
     let mut service = Service::new(Some(root.clone()));
     let mut document = draft();
+    document.eligibility.game_ids = vec!["dcs".into()];
     let pins = assignments(&document);
     let session = service.status()["session"].clone();
     let created = save(&mut service, &document, Value::Null, pins.clone()).unwrap();
@@ -53,6 +54,7 @@ fn new_and_existing_editor_saves_commit_graph_and_all_pins_in_one_revision() {
     assert_eq!(summary["revision"], 1);
     assert_eq!(summary["name"], document.name);
     assert_eq!(summary["isDefault"], false);
+    assert_eq!(summary["gameIds"], json!(["dcs"]));
     assert_eq!(created["session"], session);
     document.name = "Edited graph".into();
     document.editor.viewport.zoom = 2.0;
@@ -74,6 +76,7 @@ fn new_and_existing_editor_saves_commit_graph_and_all_pins_in_one_revision() {
     assert_eq!(summary["revision"], 2);
     assert_eq!(summary["name"], document.name);
     assert_eq!(saved["session"], session);
+    assert_eq!(summary["gameIds"], json!(["dcs"]));
     let mut restarted = Service::new(Some(root));
     let loaded = restarted
         .request(&json!({"command":"profile_assignments_get","id":document.id}))

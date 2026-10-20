@@ -482,8 +482,8 @@ impl NativeProfileHost {
             resources.validate_preparation(pin)?;
         }
         state.child_game_owner =
-            payload
-                .proof
+            candidate
+                .game_id
                 .as_ref()
                 .map(|_| crate::game_context::ProfileOwner {
                     session: run.owner.session.clone(),

@@ -168,6 +168,12 @@ fn create(manager: &GatewayManager, name: &str) -> String {
         .into()
 }
 fn rule(manager: &GatewayManager, game: &str, id: &str, priority: i16) {
+    let mut document = ok(manager,"profile_get",json!({"id":id}))["document"].clone();
+    if document["eligibility"]["gameIds"] != json!([game]) {
+        let revision = document["revision"].clone();
+        document["eligibility"]["gameIds"] = json!([game]);
+        ok(manager,"profile_save",json!({"document":document,"expectedRevision":revision}));
+    }
     ok(
         manager,
         "profile_game_rule_save",
@@ -258,17 +264,17 @@ fn automatic_apply_is_idempotent_and_editor_save_preserves_game_and_automatic_po
     ok(
         manager,
         "profile_rename",
-        json!({"id":id,"expectedRevision":1,"name":"Edited saved profile"}),
+        json!({"id":id,"expectedRevision":2,"name":"Edited saved profile"}),
     );
     manager.poll_automatic();
     assert_eq!(owner(manager), Some(first.clone()));
     let policy = manager.profile_automatic.config();
     let document = ok(manager,"profile_get",json!({"id":id}))["document"].clone();
-    let saved = ok(manager,"profile_editor_save",json!({"document":document,"expectedRevision":2,"assignments":[]}));
+    let saved = ok(manager,"profile_editor_save",json!({"document":document,"expectedRevision":3,"assignments":[]}));
     assert_eq!(saved["saveApplication"],json!({"state":"applied","error":null}));
     let current = owner(manager).unwrap();
     assert_ne!(current,first);
-    assert_eq!(current.profile_revision,3);
+    assert_eq!(current.profile_revision,4);
     assert_eq!(current.game_id,first.game_id);
     assert_eq!(manager.profile_automatic.config(),policy);
     for _ in 0..4 {manager.poll_automatic();}
@@ -285,10 +291,7 @@ fn automatic_apply_is_idempotent_and_editor_save_preserves_game_and_automatic_po
         std::thread::sleep(Duration::from_millis(10));
     }
     manager.poll_automatic();
-    assert_eq!(
-        owner(manager).unwrap().profile_id,
-        osg_profiles::DEFAULT_PROFILE_ID
-    );
+    assert_eq!(owner(manager).unwrap().profile_id,id);
 }
 #[test]
 fn ties_manual_pin_emergency_stop_and_explicit_automatic_resume_are_authoritative() {
@@ -318,7 +321,7 @@ fn ties_manual_pin_emergency_stop_and_explicit_automatic_resume_are_authoritativ
     ok(
         manager,
         "profile_apply",
-        json!({"id":a,"expectedRevision":1}),
+        json!({"id":a,"expectedRevision":2}),
     );
     let manual = owner(manager).unwrap();
     fixture.process("dcs", 2);
@@ -553,7 +556,7 @@ fn pending_operator_policy_cannot_be_overtaken_by_a_prepared_automatic_run() {
     manager.shutdown();
 }
 #[test]
-fn actual_background_worker_switches_on_external_start_and_exit_without_ui_requests() {
+fn actual_background_worker_activates_on_external_start_and_retains_hardware_after_exit() {
     let fixture = Fixture::new();
     let id = create(&fixture.manager, "A");
     rule(&fixture.manager, "dcs", &id, 0);
@@ -581,12 +584,8 @@ fn actual_background_worker_switches_on_external_start_and_exit_without_ui_reque
     std::thread::sleep(Duration::from_millis(550));
     assert_eq!(owner(&manager), Some(applied));
     fixture.games.processes.lock().unwrap().clear();
-    let deadline = Instant::now() + Duration::from_secs(4);
-    while !owner(&manager).is_some_and(|owner| owner.profile_id == osg_profiles::DEFAULT_PROFILE_ID)
-    {
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(owner(&manager).as_ref().map(|owner| owner.profile_id.as_str()),Some(id.as_str()));
     manager.shutdown();
 }
 
@@ -734,4 +733,22 @@ fn desktop_stop_persists_manual_even_when_owned_cleanup_fails() {
     ok(&fixture.manager, "profile_recover", json!({}));
     fixture.manager.poll_automatic();
     assert!(owner(&fixture.manager).is_none());
+}
+#[test]
+fn saved_context_alone_is_a_candidate_and_ambiguity_waits_for_a_remembered_choice() {
+    let fixture = Fixture::new();let manager=&fixture.manager;
+    let a=create(manager,"DCS A");let b=create(manager,"DCS B");
+    for id in [&a,&b] {
+        let mut document=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
+        document["eligibility"]["gameIds"]=json!(["dcs"]);
+        ok(manager,"profile_save",json!({"document":document,"expectedRevision":1}));
+    }
+    assert!(manager.profile_automatic.config().0.rules.is_empty());
+    fixture.process("dcs",1);fixture.wait_game("dcs");mode(manager,"automatic");
+    manager.poll_automatic();assert!(owner(manager).is_none());
+    assert!(manager.profile_automatic.view()["message"].as_str().unwrap().contains("Several profiles"));
+    ok(manager,"profile_game_preference_save",json!({"gameId":"dcs","profileId":b}));
+    manager.poll_automatic();let selected=owner(manager).unwrap();assert_eq!(selected.profile_id,b);
+    ok(manager,"profile_game_preference_remove",json!({"gameId":"dcs"}));
+    manager.poll_automatic();assert_eq!(owner(manager),Some(selected));
 }

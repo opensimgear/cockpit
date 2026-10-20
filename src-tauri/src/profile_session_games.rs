@@ -118,6 +118,21 @@ fn semantic_contract(mut contract: PortContract) -> PortContract {
     contract
 }
 impl GameSources {
+    pub(crate) fn needs_context(&self) -> bool { self.game.is_none() || self.lost }
+    pub(crate) fn preparation_session(&self)->Option<&str>{self.game.as_ref().map(|game|game.proof.session.as_str())}
+    pub(crate) fn accepts_replacement(&self, game: &PreparedGame) -> bool {
+        self.game.as_ref().is_none_or(|old| old.proof.session != game.proof.session)
+    }
+    pub(crate) fn inherit_source_counters(&mut self, previous: &Self) {
+        for (id, source) in &mut self.sources {
+            if let Some(old)=previous.sources.get(id) {
+                source.generation=old.generation.saturating_add(1);
+                source.sequence=old.sequence;
+            }
+        }
+    }
+    pub(crate) fn can_command(&self) -> bool { !self.lost && self.fresh && self.context.is_some() }
+    pub(crate) fn has_delivery_publication(&self)->bool{self.revision>0}
     pub(crate) fn prepare(
         plan: &ExecutionPlan,
         game: Option<PreparedGame>,

@@ -395,6 +395,52 @@ fn real_native_process_proof_installs_child_then_final_start_keeps_hardware_owne
     assert!(f.host.install_launch_context(&f.run, &c).is_err());
 }
 #[test]
+fn newly_opened_game_reader_can_wait_for_a_baseline_before_inventory_publication() {
+    let mut f=Fixture::new();
+    let (reader,_address,_catalogue)=crate::profile_session_games::test_baseline_reader();
+    let resources=f.host.resources.clone();let games=f.host.games.clone();
+    let state=f.host.run(&f.run.owner).unwrap();state.game=reader;
+    let pending=NativeProfileHost::game_poll(&resources,&games,state,1_000_000).unwrap();
+    assert!(!pending.context_lost,"Waiting for advancing telemetry must not retire the fresh reader: {:?}",pending.diagnostics);
+    assert!(!pending.fresh);
+    assert!(!state.game.can_command());
+    assert!(!state.game.has_delivery_publication());
+}
+#[test]
+fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_run() {
+    let mut f=Fixture::new();f.bind();
+    let candidate=f.stage();
+    let prepared=f.host.install_launch_context(&f.run,&candidate).unwrap();
+    f.host.set_authority(Some(&f.run.owner)).unwrap();
+    f.host.enter(ApplyPhase::Start,&prepared,&f.run).unwrap();
+    let original=f.host.games.profile_game_context("x-plane-12").unwrap();
+    let process=f.process.0.lock().unwrap().clone().unwrap();
+    *f.process.0.lock().unwrap()=None;
+    let resources=f.host.resources.clone();let games=f.host.games.clone();
+    let state=f.host.run(&f.run.owner).unwrap();
+    let closed=NativeProfileHost::game_poll(&resources,&games,state,1_000_000).unwrap();
+    assert!(closed.context_lost);
+    assert!(state.reducer.is_some(),"Game loss must preserve the active hardware reducer");
+    assert_eq!(state.owner,f.run.owner);
+    let mut restarted=process;restarted.epoch+=1;
+    *f.process.0.lock().unwrap()=Some(restarted.clone());
+    let state=f.host.run(&f.run.owner).unwrap();
+    let deadline=Instant::now()+Duration::from_secs(3);
+    let returned=loop {
+        let sample=NativeProfileHost::game_poll(&resources,&games,state,2_000_000).unwrap();
+        if !sample.context_lost{break sample;}
+        assert!(Instant::now()<deadline,"{:?}",sample.diagnostics);
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(!returned.context_lost,"{:?}",returned.diagnostics);
+    assert!(state.reducer.is_some());
+    assert_eq!(state.owner,f.run.owner);
+    let current=games.profile_game_context("x-plane-12").unwrap();
+    assert_eq!(current.process,restarted);
+    assert_ne!(current.session,original.session);
+    assert!(games.validate_profile_game_context(&original).is_err(),"Retired process authority remains revoked");
+}
+#[test]
 fn replaced_process_late_candidate_or_changed_document_cannot_install_or_arm() {
     let mut f = Fixture::new();
     f.bind();
@@ -469,7 +515,7 @@ fn hardware_launch_completes_with_no_selected_context_or_no_optional_provider() 
             .unwrap(),
         );
         let prepared = f.host.install_launch_context(&f.run, &candidate).unwrap();
-        assert!(f.host.run(&f.run.owner).unwrap().child_game_owner.is_none());
+        assert_eq!(f.host.run(&f.run.owner).unwrap().child_game_owner.is_some(),select_context,"The selected context remains available for keyboard scope and later integration readiness");
         assert!(f.host.run(&f.run.owner).unwrap().game_preparation.is_none());
         f.host.validate_prepared(&prepared, &f.run.owner).unwrap();
         f.host

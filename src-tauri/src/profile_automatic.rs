@@ -120,6 +120,8 @@ impl Runtime {
                 | "profile_selection_mode"
                 | "profile_game_rule_save"
                 | "profile_game_rule_remove"
+                | "profile_game_preference_save"
+                | "profile_game_preference_remove"
                 | "profile_recover"
                 | "profile_stop"
         ) {
@@ -430,12 +432,13 @@ impl GatewayManager {
                 epoch,
             ));
         }
-        let status = self
-            .profile_session
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .status()
-            .clone();
+        let (status, active_game_context) = {
+            let session = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
+            (
+                session.status().clone(),
+                session.active_game_context().map(str::to_owned),
+            )
+        };
         let locks = Locks {
             emergency_stopped: self.profile_automatic.emergency.load(Ordering::Acquire),
             recovery_needed: status.state == crate::profile_session::State::RecoveryNeeded,
@@ -456,31 +459,43 @@ impl GatewayManager {
             Ok(observed) => observed,
             Err(error) => return Ok((Decision::Hold(error), vec![], epoch)),
         };
-        let profiles = {
-            let profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
-            settings
-                .rules
-                .iter()
-                .filter(|rule| rule.enabled)
-                .filter_map(|rule| {
-                    profiles
-                        .compile_source(&rule.profile_id)
-                        .ok()
-                        .map(|(document, _, _)| document)
-                })
-                .collect::<Vec<_>>()
-        };
-        Ok((
-            osg_profiles::activation::select(
-                settings.mode,
-                locks,
-                &settings.rules,
-                &observed,
-                &profiles,
-            )?,
-            observed,
-            epoch,
-        ))
+        let profiles = self.context_documents()?;
+        let mut rules = vec![];
+        for game in &observed {
+            match launch::context_choice(&settings, &game.identity.game_id, &profiles, None) {
+                Ok(Some(profile)) => rules.push(Rule {
+                    identity: game.identity.clone(),
+                    profile_id: profile.id.clone(),
+                    priority: settings.rules.iter()
+                        .find(|rule| rule.enabled && rule.identity == game.identity && rule.profile_id == profile.id)
+                        .map(|rule| rule.priority).unwrap_or(0),
+                    enabled: true,
+                }),
+                Ok(None) => {}
+                Err(error) => return Ok((Decision::Hold(error), observed, epoch)),
+            }
+        }
+        if rules.is_empty() {
+            return Ok((
+                Decision::Hold("Waiting for a running game with a saved profile context; the active hardware profile is retained.".into()),
+                observed,
+                epoch,
+            ));
+        }
+        let decision = osg_profiles::activation::select(settings.mode, locks, &rules, &observed, &profiles)?;
+        if let Decision::Select(target) = &decision {
+            if matches!(status.state, crate::profile_session::State::Running | crate::profile_session::State::Degraded)
+                && status.owner.as_ref().is_some_and(|owner| owner.profile_id == target.profile_id)
+                && active_game_context == target.game_id
+            {
+                return Ok((
+                    Decision::Hold("The matching profile is active; game routes follow the current verified process.".into()),
+                    observed,
+                    epoch,
+                ));
+            }
+        }
+        Ok((decision, observed, epoch))
     }
     pub(super) fn poll_automatic(&self) {
         if self.closed.load(Ordering::Acquire)

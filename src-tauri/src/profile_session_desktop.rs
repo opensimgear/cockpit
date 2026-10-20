@@ -55,14 +55,15 @@ pub(crate) fn prepare_scope(
         }
         Some(DesktopScope::Application { application_reference: None }) => Err("Choose an application in this profile's keyboard and mouse block, then save the profile.".into()),
         Some(DesktopScope::SelectedGame) => {
-            let process = game.ok_or("Choose a game context for this profile's keyboard and mouse block, or select an application or desktop-wide scope.")?;
-            if launch { Ok(None) } else { selected_game_scope(process).map(Some) }
+            if launch { return Ok(None); }
+            let process = game.ok_or("Choose a game context for this profile's keyboard and mouse block, or select Global scope.")?;
+            if process.is_none() { Ok(None) } else { selected_game_scope(process).map(Some) }
         }
         None => {
             // Older profiles retain an application-only default. A legacy
             // machine-wide desktop scope cannot silently broaden their output.
             if let Some(process) = game {
-                if launch { Ok(None) } else { selected_game_scope(process).map(Some) }
+                if launch || process.is_none() { Ok(None) } else { selected_game_scope(process).map(Some) }
             } else {
                 application(preferences.application.as_ref().ok_or("Choose an application or game context in this profile's keyboard and mouse block before applying.")?)
             }
@@ -74,24 +75,52 @@ pub(crate) fn journal_name(owner: &RunOwner) -> Result<String, String> {
     Ok(format!("profile-desktop-{}-{}.json", owner.session, owner.generation))
 }
 /// Thin installation/game adapter around the shared native mapping host.
-pub(crate) struct Desktop(osg_mapping_host::desktop::Desktop);
+pub(crate) struct Desktop {
+    inner: Option<osg_mapping_host::desktop::Desktop>,
+    owner: RunOwner,
+    program: Program,
+    scope: Option<Scope>,
+    started: bool,
+}
 impl Desktop {
     pub(crate) fn acquire(owner:&RunOwner,program:&Program,scope:Option<Scope>)->Result<Self,String>{
         let preferences=settings::Settings::native();
         if let Some(error)=preferences.error{return Err(error);}
         let run=RunToken{session:owner.session.clone(),generation:Counter(owner.generation)};
-        osg_mapping_host::desktop::Desktop::acquire(run,program,preferences.value.enabled,settings::qualified(),
-            crate::config_paths::config_path().with_file_name(journal_name(owner)?),scope).map(Self)
+        let inner=osg_mapping_host::desktop::Desktop::acquire(run,program,preferences.value.enabled,settings::qualified(),
+            crate::config_paths::config_path().with_file_name(journal_name(owner)?),scope.clone())?;
+        Ok(Self { inner:Some(inner), owner:owner.clone(), program:program.clone(), scope, started:false })
     }
     pub(crate) fn start(&mut self,reducer:&Phase,_game:Option<&crate::games::PreparedGame>,captured:Option<Scope>)->Result<(),String>{
-        if let Some(captured)=captured { self.0.bind_scope_before_start(captured)?; }
-        if self.0.scope().is_none(){return Err("The saved keyboard and mouse scope has not been prepared.".into());}
-        self.0.start(reducer,None)
+        if let Some(captured)=captured { self.inner.as_mut().ok_or("The desktop adapter is stopped.")?.bind_scope_before_start(captured.clone())?;self.scope=Some(captured); }
+        self.started=true;
+        if self.scope.is_none(){return Ok(());}
+        self.inner.as_mut().ok_or("The desktop adapter is stopped.")?.start(reducer,None)
     }
-    pub(crate) fn poll(&mut self,frames:&[Frame],reducer:&Phase)->Result<Vec<String>,String>{self.0.poll(frames,reducer)}
-    pub(crate) fn keep_alive(&mut self)->Result<(),String>{self.0.keep_alive()}
-    pub(crate) fn stop(&mut self)->Result<(),String>{self.0.stop()}
-    pub(crate) fn status(&self)->Value{self.0.status()}
+    pub(crate) fn refresh_context(&mut self,scope:Option<Scope>)->Result<(),String>{
+        if self.scope==scope{return Ok(());}
+        // Complete release before replacing the immutable native process scope.
+        if let Some(inner)=self.inner.as_mut(){inner.stop()?;}
+        self.inner=None;
+        // Inspect the clean journal using its immutable run identity. Its old
+        // process scope is retired, then the replacement is durably bound.
+        let mut replacement=Self::acquire(&self.owner,&self.program,None)?;
+        if let Some(scope)=scope.as_ref(){replacement.inner.as_mut().unwrap().bind_scope_before_start(scope.clone())?;}
+        if self.started&&scope.is_some(){replacement.inner.as_mut().unwrap().start_waiting_for_neutral()?;}
+        self.inner=replacement.inner.take();self.scope=scope;
+        Ok(())
+    }
+    pub(crate) fn poll(&mut self,frames:&[Frame],reducer:&Phase)->Result<Vec<String>,String>{
+        if self.started&&self.scope.is_none(){return Ok(vec!["Context scoped bindings are waiting for the game to open.".into()]);}
+        self.inner.as_mut().ok_or("The desktop adapter is stopped.")?.poll(frames,reducer)
+    }
+    pub(crate) fn keep_alive(&mut self)->Result<(),String>{self.inner.as_mut().map_or(Ok(()),|inner|inner.keep_alive())}
+    pub(crate) fn stop(&mut self)->Result<(),String>{self.started=false;self.inner.as_mut().map_or(Ok(()),|inner|inner.stop())}
+    pub(crate) fn status(&self)->Value{
+        let mut status=self.inner.as_ref().map_or(serde_json::json!({"state":"stopped"}),|inner|inner.status());
+        if self.started&&self.scope.is_none(){status["state"]=serde_json::json!("waiting");status["scopeError"]=serde_json::json!("Waiting for the profile's game to open.");}
+        status
+    }
 }
 #[cfg(test)]
 mod tests{
@@ -127,16 +156,17 @@ mod tests{
         assert!(prepare_scope(Some(&first_scope),false,None,&preferences).is_err(),"foreign/imported app references remain unavailable");
     }
     #[test]
-    fn selected_game_scope_defers_only_for_launch_and_never_inherits_an_unrelated_application(){
+    fn selected_game_scope_waits_for_closed_game_and_never_inherits_an_unrelated_application(){
         use osg_profiles::DesktopScope;
         let mut preferences=settings::Preferences::default();
         let game=crate::game_discovery::ProcessIdentity{pid:42,path:"C:\\Fixture\\Game.exe".into(),epoch:10};
         preferences.application=Some(crate::game_discovery::ProcessIdentity{pid:99,path:"C:\\Fixture\\Other.exe".into(),epoch:88}.value());
         assert_eq!(prepare_scope(Some(&DesktopScope::SelectedGame),true,Some(None),&preferences).unwrap(),None);
+        assert_eq!(prepare_scope(Some(&DesktopScope::SelectedGame),true,None,&preferences).unwrap(),None,"Hardware-first launch has no process context yet");
         assert_eq!(prepare_scope(Some(&DesktopScope::SelectedGame),false,Some(Some(game.clone())),&preferences).unwrap(),Some(Scope::Application{identity:identity(&game)}));
-        assert!(prepare_scope(Some(&DesktopScope::SelectedGame),false,Some(None),&preferences).is_err());
+        assert_eq!(prepare_scope(Some(&DesktopScope::SelectedGame),false,Some(None),&preferences).unwrap(),None);
         assert!(prepare_scope(Some(&DesktopScope::SelectedGame),false,None,&preferences).is_err());
-        assert!(prepare_scope(None,false,Some(None),&preferences).is_err());
+        assert_eq!(prepare_scope(None,false,Some(None),&preferences).unwrap(),None);
         assert!(matches!(prepare_scope(None,false,None,&preferences).unwrap(),Some(Scope::Application{..})),"legacy captured applications retain application-only scope");
     }
 }

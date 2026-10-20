@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices','./system-inventory',]);
+const modules=await loadModules(['./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices','./system-inventory',]);
 const noRequest=()=>{throw new Error('Opening Games must not acquire hardware, read configurations or start a runtime.');};
 const components=new Map();
 function evaluate(code,filename,require,extra={}){
@@ -69,7 +69,7 @@ test('actual App Games tiles expose unified launch without injecting hardware ta
 
 test('actual App game details retain provider setup and native rule selection without the retired per-game hardware editor',async()=>{
   const{body,props}=await appGames('dcs');
-  for(const label of ['Automatic profile rule','Saved unified profile','DCS-BIOS connection and catalogue','Save game settings','aria-label="Launch DCS World"','Deactivate'])assert.ok(body.includes(label),label);
+  for(const label of ['Matching profiles','Matching profiles will appear here.','DCS-BIOS connection and catalogue','Save game settings','aria-label="Launch DCS World"','Deactivate'])assert.ok(body.includes(label),label);
   for(const label of ['Capture current mappings','Capture current companion','Add hardware profile','Use default profile','Accept binding changes'])assert.ok(!body.includes(label),label);
   assert.equal(props.selectedGameId,'dcs');assert.equal('targets' in props,false);assert.equal('readConfig' in props,false);
 });

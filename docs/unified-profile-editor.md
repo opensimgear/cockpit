@@ -14,10 +14,11 @@ and drop it at that position, or click its palette entry to add it. Neither meth
 changes the current selection; select the new block when ready to configure it.
 Resource additions create no routes, transformations or device policies. Offline
 paired resources and closed-game integrations remain available, with up to 64
-resource blocks. Sections collapse independently, with **Groups** first and
-**Integrations** next. The header's **Game context** selector filters integrations
-to one supported game; **None** hides them. It leaves existing graph components
-and eligibility unchanged.
+resource blocks. Sections collapse independently, with **Groups** first. The
+header's **Game context** is saved with the profile and automatically places
+that game's integration. **None** removes it. Changing context replaces the
+integration and its routes, with Undo available. Integrations are managed by the
+context rather than offered in the palette.
 Existing blocks and bindings remain when resources disconnect.
 
 The new editor also offers **Copy saved profile**. A copy retains its graph and
@@ -27,10 +28,15 @@ draft with a blank graph or copy requires confirmation.
 
 **Save profile** commits the graph and local assignments together. If that
 profile is active, Save also prepares and applies the saved changes using the
-same game context and selection mode. If another profile is active, or no
+newly saved game context and existing selection mode. If another profile is active, or no
 profile is active, Save only stores the edited profile. Successful saves appear
 as notifications, without a persistent saved-feedback banner. **Activate** on a
-profile tile activates an inactive saved profile; the editor has no activation card.
+profile tile activates an inactive saved profile using its saved context; the
+editor has no activation card. Game settings list matching profiles. Launch
+chooses the sole match or asks among multiple matches, with a remembered choice
+that can be changed or removed in game settings. No matches use Default for
+hardware only. Game exit suspends game routes and context scoped bindings; a
+fresh verified game session can resume them without deactivating the profile.
 
 A failed storage write keeps the draft open. A successful Save with a failed
 runtime update reports that the profile was saved and its changes could not be

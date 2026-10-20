@@ -3,6 +3,10 @@
 use super::*;
 use crate::profile_session::{Candidate, RunOwner, State};
 
+fn saved_game_context(document:&osg_profiles::ProfileDocument)->Option<String> {
+    document.eligibility.game_ids.first().filter(|id|matches!(id.as_str(),"dcs"|"assetto-corsa-rally"|"x-plane-11"|"x-plane-12")).cloned()
+}
+
 impl GatewayManager {
     pub(super) fn save_profile_editor(&self, request: &Value, arrival: Option<u64>) -> Result<Value, String> {
         // Capture the run and commit storage under the same admission guard. A
@@ -20,7 +24,8 @@ impl GatewayManager {
             let response = profiles.request(request)?;
             let candidate = owner.as_ref().map(|owner| {
                 let (document, assignments, read_only) = profiles.compile_source(&owner.profile_id)?;
-                Ok::<_, String>(Candidate { document, assignments, read_only, game_id: owner.game_id.clone(),
+                let game_id=saved_game_context(&document);
+                Ok::<_, String>(Candidate { document, assignments, read_only, game_id,
                     launch_preparation: false, admission_epoch: arrival, stage: None })
             }).transpose();
             (response, owner, candidate)
@@ -65,7 +70,8 @@ impl GatewayManager {
             }
             self.guard_retired_recovery()?;
             let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(&previous.profile_id)?;
-            let saved = Candidate { document, assignments, read_only, game_id: previous.game_id.clone(),
+            let game_id=saved_game_context(&document);
+            let saved = Candidate { document, assignments, read_only, game_id,
                 launch_preparation: false, admission_epoch: Some(epoch), stage: None };
             candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
             // Health can retire a run without an operator epoch change. Check its

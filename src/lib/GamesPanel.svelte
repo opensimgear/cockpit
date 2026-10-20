@@ -142,7 +142,7 @@
           {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         </section>
-        <section class="session-explainer"><Icon name="zap" size={20} /><h3>One click, your setup</h3><p>Launching prepares the selected saved unified profile before opening the game. Manual selection stays pinned; Automatic mode uses its native rule or Default.</p><p>Live game branches wait for the matching verified process and provider setup. Game exit invalidates that context; native ownership determines cleanup and recovery.</p><p>Edit devices, routing, virtual controllers and companion assignments in Profiles. Keep Cockpit open while its native profile is active.</p></section>
+        <section class="session-explainer"><Icon name="zap" size={20} /><h3>One click, your setup</h3><p>Launching prepares the selected saved unified profile before opening the game. Game launch uses matching profile contexts and remembered choices. Automatic mode also activates matching profiles when games are detected.</p><p>Live game branches wait for the matching verified process and provider setup. Game exit invalidates that context; native ownership determines cleanup and recovery.</p><p>Edit devices, routing, virtual controllers and companion assignments in Profiles. Keep Cockpit open while its native profile is active.</p></section>
       </aside>
     </div>
   {:else}
@@ -163,7 +163,7 @@
         </article>
       {/each}
     </div>
-    {#if games.length}<p class="library-help"><Icon name="info" size={13} /> Open game details for installation, integration settings and Automatic profile rules. Author hardware and routes in Profiles.</p>{/if}
+    {#if games.length}<p class="library-help"><Icon name="info" size={13} /> Open game details for installation, integration settings and matching profiles and remembered launch choices. Author hardware and routes in Profiles.</p>{/if}
   {/if}
 </section>
 

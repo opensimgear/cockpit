@@ -124,7 +124,7 @@ impl Desktop {
     pub fn bind_scope_before_start(&mut self, scope: Scope) -> Result<(), String> {
         if self.started || self.registered {
             return Err(
-                "A running desktop scope is immutable; apply a fresh profile revision.".into(),
+                "A running desktop scope is immutable; reactivate the profile to change it.".into(),
             );
         }
         self.output.bind_scope_before_activate(&self.run,&scope)?;
@@ -210,6 +210,18 @@ impl Desktop {
         }
         let focused = eligible(self.scope.as_ref().unwrap())?;
         self.start_focused(reducer, focused)
+    }
+    /// A replacement process never inherits actions held before it existed.
+    /// Register its verified scope without replaying the current baseline;
+    /// the usual focus-return path then requires fresh neutral observations.
+    pub fn start_waiting_for_neutral(&mut self) -> Result<(), String> {
+        let scope = self.scope.clone().ok_or("A verified desktop scope is required before rearming.")?;
+        self.output.activate(self.run.clone(), scope)?;
+        self.registered = true;
+        self.started = true;
+        self.focused = false;
+        self.shadow = None;
+        Ok(())
     }
     fn start_focused(&mut self, reducer: &Phase, focused: bool) -> Result<(), String> {
         let shadow = reducer.fork_desktop()?;

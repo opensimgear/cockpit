@@ -178,6 +178,12 @@ fn ok(manager: &GatewayManager, command: &str, fields: Value) -> Value {
     assert_eq!(reply["ok"], true, "{reply}");
     reply["state"]["profiles"].clone()
 }
+fn save_context(manager: &GatewayManager, id: &str, game: &str) {
+    let mut document = ok(manager,"profile_get",json!({"id":id}))["document"].clone();
+    let revision = document["revision"].clone();
+    document["eligibility"]["gameIds"] = json!([game]);
+    ok(manager,"profile_save",json!({"document":document,"expectedRevision":revision}));
+}
 fn launch(manager: &GatewayManager, id: &str) -> Result<Value, String> {
     let response = request(manager, "profile_game_launch", json!({"gameId":id}));
     if response["ok"] == true {
@@ -322,7 +328,7 @@ fn explicit_game_launch_only_replaces_the_confirmed_owner() {
     let current = confirmed["profileSession"]["owner"].clone();
     assert_ne!(current,owner);
     assert_eq!(current["profileId"],osg_profiles::DEFAULT_PROFILE_ID);
-    assert_eq!(confirmed["launch"]["selectedGameId"],"dcs");
+    assert!(confirmed["launch"]["selectedGameId"].is_null());
 
     let stale = request(&fixture.manager,"profile_game_launch",json!({
         "gameId":"x-plane-12","expectedActiveOwner":owner
@@ -366,11 +372,12 @@ fn game_launch_rechecks_confirmed_owner_after_slow_preparation() {
 }
 
 #[test]
-fn manual_game_launch_uses_active_profile_and_defaults_after_deactivation() {
+fn manual_game_launch_uses_saved_context_and_defaults_for_an_unmatched_game() {
     let fixture = Fixture::new();
     let selected = ok(&fixture.manager,"profile_create",json!({"name":"Only when active"}))["document"]["id"].clone();
+    save_context(&fixture.manager,selected.as_str().unwrap(),"dcs");
     let active = ok(&fixture.manager,"profile_apply",json!({
-        "id":selected,"expectedRevision":1,"expectedActiveOwner":null
+        "id":selected,"expectedRevision":2,"expectedActiveOwner":null
     }));
     let with_active = ok(&fixture.manager,"profile_game_launch",json!({
         "gameId":"dcs","expectedActiveOwner":active["profileSession"]["owner"]
@@ -546,7 +553,7 @@ fn manual_launch_holds_then_starts_once_with_real_watcher_and_optional_integrati
     let result = launch(manager, "dcs").unwrap();
     assert_eq!(
         result["launch"],
-        json!({"gameId":"dcs","profileId":osg_profiles::DEFAULT_PROFILE_ID,"selectedGameId":"dcs","state":"started"})
+        json!({"gameId":"dcs","profileId":osg_profiles::DEFAULT_PROFILE_ID,"selectedGameId":null,"state":"started"})
     );
     let coordinator = manager.profile_session.lock().unwrap();
     assert_eq!(coordinator.status().state, SessionState::Running);
@@ -599,18 +606,14 @@ fn automatic_no_matching_rule_launches_default_without_claiming_a_game_context()
     assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 1);
 }
 #[test]
-fn automatic_matching_rule_adopts_the_actual_started_process_without_reapply() {
+fn automatic_matching_context_adopts_the_actual_started_process_without_reapply() {
     let fixture = Fixture::new();
     let manager = &fixture.manager;
     let selected = ok(manager, "profile_create", json!({"name":"Cockpit"}))["document"]["id"]
         .as_str()
         .unwrap()
         .to_owned();
-    ok(
-        manager,
-        "profile_game_rule_save",
-        json!({"gameId":"dcs","profileId":selected,"priority":3,"enabled":true}),
-    );
+    save_context(manager,&selected,"dcs");
     ok(
         manager,
         "profile_selection_mode",
@@ -637,6 +640,18 @@ fn automatic_matching_rule_adopts_the_actual_started_process_without_reapply() {
         before
     );
     assert_eq!(result["automatic"]["mode"], "automatic");
+    // Hardware-first launch owns one immutable parent identity with a later
+    // child context. A new process session must rearm that context, not replay
+    // the whole profile or recreate its hardware.
+    let initial = manager.games.profile_activation_observations().unwrap().into_iter().find(|game| game.identity.game_id == "dcs").unwrap();
+    fixture.games.processes.lock().unwrap().insert("dcs".into(), ProcessIdentity { pid:43,path:executable("dcs"),epoch:2 });
+    let deadline=Instant::now()+Duration::from_secs(3);
+    while !manager.games.profile_activation_observations().unwrap().iter().any(|game| game.identity.game_id == "dcs" && game.process_session != initial.process_session) {
+        assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(10));
+    }
+    manager.poll_automatic();
+    assert_eq!(manager.profile_session.lock().unwrap().status().owner,before);
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),1);
 }
 #[test]
 fn uncertain_spawn_restores_only_profile_hardware_and_inhibits_poll_replay() {
@@ -661,18 +676,16 @@ fn uncertain_spawn_restores_only_profile_hardware_and_inhibits_poll_replay() {
     assert!(manager.profile_automatic.emergency.load(Ordering::Acquire));
 }
 #[test]
-fn higher_priority_running_game_remains_selected_when_launching_another_game() {
+fn explicit_launch_selects_the_requested_game_instead_of_a_different_running_game() {
     let fixture = Fixture::new();
     let manager = &fixture.manager;
     let selected = ok(manager, "profile_create", json!({"name":"Flight"}))["document"]["id"]
         .as_str()
         .unwrap()
         .to_owned();
-    ok(
-        manager,
-        "profile_game_rule_save",
-        json!({"gameId":"x-plane-12","profileId":selected,"priority":9,"enabled":true}),
-    );
+    save_context(manager,&selected,"x-plane-12");
+    let requested = ok(manager,"profile_create",json!({"name":"Requested DCS"}))["document"]["id"].as_str().unwrap().to_owned();
+    save_context(manager,&requested,"dcs");
     fixture.games.processes.lock().unwrap().insert(
         "x-plane-12".into(),
         ProcessIdentity {
@@ -688,8 +701,8 @@ fn higher_priority_running_game_remains_selected_when_launching_another_game() {
         json!({"mode":"automatic"}),
     );
     let result = launch(manager, "dcs").unwrap();
-    assert_eq!(result["launch"]["profileId"], selected);
-    assert_eq!(result["launch"]["selectedGameId"], "x-plane-12");
+    assert_eq!(result["launch"]["profileId"], requested);
+    assert_eq!(result["launch"]["selectedGameId"], "dcs");
     let before = manager
         .profile_session
         .lock()
@@ -704,7 +717,7 @@ fn higher_priority_running_game_remains_selected_when_launching_another_game() {
     );
 }
 #[test]
-fn stopped_manual_launch_can_resume_but_automatic_inhibition_requires_explicit_resume() {
+fn explicit_game_launch_can_resume_a_stop_in_both_modes() {
     let fixture = Fixture::new();
     let manager = &fixture.manager;
     ok(manager, "profile_stop", json!({}));
@@ -723,8 +736,10 @@ fn stopped_manual_launch_can_resume_but_automatic_inhibition_requires_explicit_r
         state.settings.mode = SelectionMode::Automatic;
         state.read_only = false;
     }
-    assert!(launch(manager, "dcs").is_err());
-    assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 2);
+    fixture.games.processes.lock().unwrap().clear();
+    launch(manager, "dcs").unwrap();
+    assert!(!manager.profile_automatic.emergency.load(Ordering::Acquire));
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 3);
 }
 #[test]
 fn stop_during_process_wait_cancels_only_the_exact_hold_without_killing_or_replaying() {
@@ -816,4 +831,38 @@ fn corrupt_installation_metadata_blocks_game_launch_and_auto_but_keeps_hardware_
     assert_eq!(manager.profile_session.lock().unwrap().status().owner,owner);
     assert_eq!(fixture.games.spawns.load(Ordering::Acquire),0);
     assert_eq!(std::fs::read(fixture._directory.path().join("games.installations-v1.json")).unwrap(),b"interrupted pinned executable metadata");
+}
+#[test]
+fn matching_profile_choices_are_strict_remembered_and_revalidated_against_saved_context() {
+    let mut fixture = Fixture::new();
+    let manager = Arc::get_mut(&mut fixture.manager).unwrap();
+    let policy = fixture._directory.path().join("remembered-profiles.json");
+    manager.profile_automatic = crate::gateways::automatic::Runtime::new(Some(policy.clone()));
+    let a = ok(manager,"profile_create",json!({"name":"DCS A"}))["document"]["id"].as_str().unwrap().to_owned();
+    let b = ok(manager,"profile_create",json!({"name":"DCS B"}))["document"]["id"].as_str().unwrap().to_owned();
+    let unscoped = ok(manager,"profile_create",json!({"name":"Hardware"}))["document"]["id"].as_str().unwrap().to_owned();
+    save_context(manager,&a,"dcs");save_context(manager,&b,"dcs");
+    let choices = ok(manager,"profile_game_candidates",json!({"gameId":"dcs"}));
+    assert_eq!(choices["profiles"].as_array().unwrap().len(),2);
+    assert_eq!(choices["profiles"][0]["name"],"DCS A");
+    assert!(choices["preferredProfileId"].is_null());
+    assert_eq!(request(manager,"profile_game_preference_save",json!({"gameId":"dcs","profileId":unscoped}))["ok"],false);
+    assert_eq!(request(manager,"profile_game_launch",json!({"gameId":"dcs"}))["ok"],false);
+    assert_eq!(request(manager,"profile_game_launch",json!({"gameId":"dcs","profileId":unscoped,"rememberChoice":true}))["ok"],false);
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire),0);
+    assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
+    let launched = ok(manager,"profile_game_launch",json!({"gameId":"dcs","profileId":b,"rememberChoice":true}));
+    assert_eq!(launched["launch"]["profileId"],b);
+    assert_eq!(ok(manager,"profile_game_candidates",json!({"gameId":"dcs"}))["preferredProfileId"],b);
+    assert_eq!(crate::profile_automatic_store::Store::new(Some(policy)).load().unwrap().unwrap().preferred_profiles.get("dcs"),Some(&b));
+    ok(manager,"profile_stop",json!({}));fixture.games.processes.lock().unwrap().clear();
+    assert_eq!(launch(manager,"dcs").unwrap()["launch"]["profileId"],b);
+    ok(manager,"profile_stop",json!({}));fixture.games.processes.lock().unwrap().clear();
+    save_context(manager,&b,"x-plane-12");
+    let changed = ok(manager,"profile_game_candidates",json!({"gameId":"dcs"}));
+    assert!(changed["preferredProfileId"].is_null());assert_eq!(changed["profiles"].as_array().unwrap().len(),1);
+    assert_eq!(launch(manager,"dcs").unwrap()["launch"]["profileId"],a);
+    let removed = ok(manager,"profile_game_preference_remove",json!({"gameId":"dcs"}));
+    assert!(removed["preferredProfileId"].is_null());
+    assert!(!manager.profile_automatic.config().0.preferred_profiles.contains_key("dcs"));
 }

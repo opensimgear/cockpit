@@ -447,6 +447,30 @@ impl crate::game_discovery::Platform for ProcessFixture {
     }
 }
 #[test]
+fn replacement_reader_requires_fresh_native_context_and_advances_source_identity() {
+    let fixture=Dcs::new();
+    let mut old=fixture.sources();
+    feed(&mut old,1,false,0);
+    let prior=feed(&mut old,2,true,10_000);
+    assert!(prior.fresh);
+    let disconnected=old.lose(20_000,"Game closed".into());
+    assert!(old.needs_context()&&!old.can_command());
+    assert!(!old.accepts_replacement(&fixture.game),"The same retired proof cannot rearm a reader");
+    let mut next_game=fixture.game.clone();
+    next_game.proof.session=uuid::Uuid::new_v4().to_string();
+    next_game.proof.process.epoch+=1;
+    assert!(old.accepts_replacement(&next_game));
+    let mut replacement=GameSources::prepare(&fixture.plan,Some(next_game)).unwrap();
+    replacement.inherit_source_counters(&old);
+    assert!(!feed(&mut replacement,1,true,30_000).fresh,"A single old counter cannot authorize resumed commands");
+    let baseline=feed(&mut replacement,2,false,40_000);
+    assert!(baseline.fresh);
+    assert_eq!(baseline.frames[0].reason,Reason::Baseline);
+    assert!(baseline.frames[0].generation>prior.frames[0].generation);
+    assert!(baseline.frames[0].sequence>disconnected.frames[0].sequence);
+    assert!(!replacement.can_command(),"Telemetry alone cannot mint applied command authority");
+}
+#[test]
 fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline() {
     let folder = crate::test_directory();
     let platform = Arc::new(ProcessFixture {

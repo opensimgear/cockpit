@@ -8,6 +8,7 @@ use osg_profiles::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
@@ -19,6 +20,10 @@ pub(crate) struct Settings {
     pub mode: SelectionMode,
     pub manual_profile_id: String,
     pub rules: Vec<Rule>,
+    /// User choice among profiles sharing a saved game context. Contexts are
+    /// revalidated against profile storage on every read and launch.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub preferred_profiles: BTreeMap<String, String>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -27,6 +32,7 @@ impl Default for Settings {
             mode: SelectionMode::Manual,
             manual_profile_id: DEFAULT_PROFILE_ID.into(),
             rules: vec![],
+            preferred_profiles: BTreeMap::new(),
         }
     }
 }
@@ -39,6 +45,19 @@ impl Settings {
             return Err("Invalid native automatic profile settings identity/version.".into());
         }
         validate_rules(&self.rules)?;
+        if self.preferred_profiles.len() > osg_profiles::activation::MAX_RULES
+            || self.preferred_profiles.iter().any(|(game, profile)| {
+                !matches!(
+                    game.as_str(),
+                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+                ) || !uuid::Uuid::parse_str(profile).is_ok_and(|id| id.to_string() == *profile)
+            })
+        {
+            return Err(
+                "Remembered launch choices need supported games and saved profile identities."
+                    .into(),
+            );
+        }
         if serde_json::to_vec(self).map_err(|e| e.to_string())?.len() > MAX_BYTES {
             return Err("Automatic profile settings exceed their native storage bound.".into());
         }

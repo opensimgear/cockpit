@@ -8,7 +8,7 @@ const require=createRequire(import.meta.url),modulePath=process.env.OSG_PLAYWRIG
 const {chromium}=require(modulePath),{expect}=require(modulePath+'/test');
 const artifacts=resolve('.research/profile-groups-native');
 
-test('profile palette filters integrations and canvas groups accept drops without losing components',{timeout:180000},async()=>{
+test('saved profile context manages integration and canvas groups accept drops without losing components',{timeout:180000},async()=>{
   const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
   const page=browser.contexts().flatMap(context=>context.pages()).find(page=>/:1420\/(?!.*profile-activation-window)/.test(page.url()));
   assert.ok(page,'Start the native dev Cockpit before this test.');
@@ -30,8 +30,8 @@ test('profile palette filters integrations and canvas groups accept drops withou
     await page.getByRole('button',{name:'Edit profile name',exact:true}).click();const profileName=page.getByLabel('Profile name',{exact:true});await profileName.fill(name);await profileName.press('Enter');
     await expect(stage).toBeVisible();await expect(page.getByRole('button',{name:'Activate profile',exact:true})).toHaveCount(0);await expect(page.locator('.profile-runtime.panel,.group-editor')).toHaveCount(0);
     const context=page.getByLabel('Game context',{exact:true});await expect(context.locator('option')).toHaveCount(5);await expect(context).toHaveValue('');await expect(palette.getByLabel('Integrations',{exact:true})).toHaveCount(0);
-    for(const [id,label]of [['dcs','DCS World'],['assetto-corsa-rally','Assetto Corsa Rally'],['x-plane-11','X-Plane 11'],['x-plane-12','X-Plane 12']]){await context.selectOption(id);await expect(palette.getByRole('button',{name:`Add ${label}`,exact:true})).toBeVisible();await expect(palette.locator('[data-resource-id]').filter({has:page.locator('strong')})).not.toHaveCount(0);}
-    await context.selectOption('');await expect(palette.getByLabel('Integrations',{exact:true})).toHaveCount(0);
+    for(const [id,label]of [['dcs','DCS World'],['assetto-corsa-rally','Assetto Corsa Rally'],['x-plane-11','X-Plane 11'],['x-plane-12','X-Plane 12']]){await context.selectOption(id);await expect(blocks).toHaveCount(1);await expect(blocks.first()).toHaveAttribute('aria-label',`${label} · Game integration`);await expect(palette.getByLabel('Integrations',{exact:true})).toHaveCount(0);}
+    await context.selectOption('');await expect(blocks).toHaveCount(0);await expect(palette.getByLabel('Integrations',{exact:true})).toHaveCount(0);
     const outputs=palette.getByLabel('Output components',{exact:true});await outputs.locator('summary').click();await expect(outputs).not.toHaveAttribute('open');await outputs.locator('summary').click();await expect(outputs).toHaveAttribute('open');
     await palette.getByRole('button',{name:'Add group',exact:true}).click();await renameGroup('Controls');await palette.getByRole('button',{name:'Add group',exact:true}).click();await renameGroup('Outputs');await page.getByRole('button',{name:'Fit all',exact:true}).click();
     await expect(frames).toHaveCount(2);const rects=await frames.evaluateAll(elements=>elements.map(element=>({x:parseFloat(element.style.left),y:parseFloat(element.style.top),width:parseFloat(element.style.width),height:parseFloat(element.style.height)})));assert.ok(rects[0].x+rects[0].width<=rects[1].x||rects[1].x+rects[1].width<=rects[0].x||rects[0].y+rects[0].height<=rects[1].y||rects[1].y+rects[1].height<=rects[0].y);

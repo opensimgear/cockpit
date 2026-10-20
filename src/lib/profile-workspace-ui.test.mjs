@@ -1,6 +1,6 @@
 import {webcrypto} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser']);
+const modules=await loadModules(['./profile-game-context','./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser']);
 modules.set('./notifications',{notify:()=>{throw new Error('Rendering must not replay save notifications.');}});
 modules.set('./profile-palette',(await loadModules(['./profile-palette'])).get('./profile-palette'));
 const noRequest=()=>{throw new Error('Rendering/navigation must not send a native request.');};
@@ -17,8 +17,8 @@ test('component palette offers paired companions by device name, not retained pa
  const paired={...resource('companion',1),name:'Browser tablet',portCount:0,attributes:{componentKind:'paired-companion',companionId:'tablet'}};
  const offline={...paired,id:'offline-tablet',name:'Offline tablet',availability:'offline',attributes:{...paired.attributes,companionId:'offline'}};
  const panel={...paired,id:'old-panel',name:'Flight instruments panel',attributes:{companionId:'tablet',publicationHash:hash}};
- const body=render(Palette,{props:{inventory:[...inventory.filter(resource=>resource.resourceType!=='companion'),paired,offline,panel],assignedIds:new Set(),selectedGame:'dcs',resourceCount:0,virtualCount:0,desktopAdded:false,refresh:noRequest,addResource:noRequest,addVirtual:noRequest,addDesktop:noRequest}}).body;
- for(const name of ['Component palette','Search components','Add Browser tablet','Add Offline tablet','Add virtual controller','Add keyboard and mouse','Controllers','OSG devices','Integrations'])assert.ok(body.includes(name),name);
+ const body=render(Palette,{props:{inventory:[...inventory.filter(resource=>resource.resourceType!=='companion'),paired,offline,panel],assignedIds:new Set(),resourceCount:0,virtualCount:0,desktopAdded:false,refresh:noRequest,addResource:noRequest,addVirtual:noRequest,addDesktop:noRequest}}).body;
+ for(const name of ['Component palette','Search components','Add Browser tablet','Add Offline tablet','Add virtual controller','Add keyboard and mouse','Controllers','OSG devices','Groups'])assert.ok(body.includes(name),name);
  assert.ok(!body.includes('Flight instruments panel'));assert.ok(!body.includes('Add transformation'));assert.ok(!body.includes('Visible transformation'));assert.ok(!body.includes('type="checkbox"'));
  assert.ok(!/<button[^>]*aria-label="Add Offline tablet"[^>]*disabled/.test(body),'A paired offline companion remains addable.');
  assert.match(body,/<button[^>]*aria-label="Add Offline tablet"[^>]*draggable="true"/);
@@ -239,7 +239,7 @@ test('profile mode switch shares the Debug and Add action bar and appears only o
  await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(!editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
 });
 
-test('profile editor has an independent game context filter, a top history toolbar, and no activation card',async()=>{
+test('profile editor has a saved game context selector, a top history toolbar, and no activation card',async()=>{
  const h=harness();await h.store.refresh();await h.store.open(DEFAULT_PROFILE_ID);const body=html(h.store,h.client).replace(/<!--[\s\S]*?-->/g,'');
  const context=body.match(/<select[^>]*aria-label="Game context"[^>]*>([^]*?)<\/select>/)?.[1];assert.ok(context);assert.match(context,/<option value=""[^>]*>None<\/option>/);
  for(const game of modules.get('./games').supportedGames)assert.ok(context.includes(`value="${game.id}"`),game.name);

@@ -11,7 +11,7 @@ export function profilePaletteCanAdd(component:ProfilePaletteComponent,document:
   if(component.kind==='virtual')return document.virtualOutputs.length<8;
   if(component.kind==='desktop')return !document.desktopOutputs?.length;
   const source=inventory.find(resource=>resource.id===component.sourceId);
-  if(!source||document.resources.length>=64||source.resourceType==='companion'&&source.attributes.componentKind!=='paired-companion')return false;
+  if(!source||source.resourceType==='game-integration'||document.resources.length>=64||source.resourceType==='companion'&&source.attributes.componentKind!=='paired-companion')return false;
   return !assignments.some(assignment=>assignment.sourceId===source.id||!!source.attributes.companionId&&inventory.find(resource=>resource.id===assignment.sourceId)?.attributes.companionId===source.attributes.companionId);
 }
 

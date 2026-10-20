@@ -95,7 +95,7 @@
   function actionPack(mode:'action-pack'|'set-on-change'){if(targetAction?.delivery!=='action')return;apply(()=>{const input=sourcePorts.find(port=>port.id===fromPort)?.contract,node=processingActionPack(graphFreshId(document,'transform'),targetAction,mode,input?.delivery==='event'?input:undefined),next=graphSetProcessing(graph,node);selectedId=node.id;return next;},'Add explicit action arguments');}
   function updateProcessing(node:ProfileProcessingNode){apply(()=>{const error=processingNodeError(node);if(error)throw new Error(error);return graphSetProcessing(graph,node);},'Edit visible transformation');}
   function updateVirtual(output:Omit<ProfileVirtualOutput,'ports'>){apply(()=>graphSetVirtual(graph,output),'Edit virtual controller layout');}
-  function removeNode(id:string){apply(()=>graphRemoveNode(graph,id),'Remove block and its routes');selectedId='';}
+  function removeNode(id:string){apply(()=>{const next=graphRemoveNode(graph,id);if(document.resources.some(resource=>resource.id===id&&resource.kind==='game')&&!next.document.resources.some(resource=>resource.kind==='game'))next.document.eligibility.gameIds=[];return next;},'Remove block and its routes');selectedId='';}
   function optionKey(port:DeepReadonly<ObservedResourcePort>):string{return JSON.stringify([port.descriptor.id,port.contractHash]);}
   function chooseMapping(portId:string,key:string){const observed=mappingOptions.find(port=>optionKey(port)===key);const next={...selectedMappings};if(observed)next[portId]=observed;else delete next[portId];selectedMappings=next;}
   async function browseAssignment(operation:'open'|'next'|'previous'){

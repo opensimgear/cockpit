@@ -1,21 +1,20 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import type {DeepReadonly, ProfileEditorGroup} from './profiles';
-  import type {GameId} from './games';
   import type {ResourceSummary, ResourceType} from './profile-inventory';
   import {profileCategory} from './profile-editor';
   import {PROFILE_PALETTE_MIME,type ProfilePaletteDrag} from './profile-palette';
 
-  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, selectedGame='', editorGroups=[], disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, editorGroups=[], disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
     inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; desktopAdded:boolean;
-    selectedGame?:GameId|'';editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];
+    editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];
     disabled?:boolean; refreshing?:boolean; error?:string; refresh:()=>void;
     addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDesktop:()=>void;
     addGroup?:()=>void;focusGroup?:(id:string)=>void;renameGroup?:(id:string,name:string)=>void;deleteGroup?:(id:string)=>void;
     startDrag?:(drag:ProfilePaletteDrag)=>void;endDrag?:()=>void;
   }=$props();
   let search=$state('');
-  let expanded=$state<Record<string,boolean>>({groups:true,'game-integration':true,outputs:true});
+  let expanded=$state<Record<string,boolean>>({groups:true,outputs:true});
   let editingGroup=$state<string|null>(null), groupName=$state('');
   let dragImage:HTMLSpanElement;
   function beginDrag(event:DragEvent,drag:ProfilePaletteDrag){
@@ -25,15 +24,13 @@
     startDrag(drag);
   }
   const categories:readonly {type:ResourceType;label:string;icon:string}[]=[
-    {type:'game-integration',label:'Integrations',icon:'gamepad'},
     {type:'host-controller',label:'Controllers',icon:'gamepad'},
     {type:'osg-module',label:'OSG devices',icon:'chip'},
     {type:'companion',label:'Companions',icon:'monitor'},
   ];
   const query=$derived(search.trim().toLocaleLowerCase());
   const companionsInProfile=$derived(new Set(inventory.filter(resource=>assignedIds.has(resource.id)).map(resource=>resource.attributes.companionId).filter(Boolean)));
-  const components=$derived(inventory.filter(resource=>resource.resourceType!=='companion'||resource.attributes.componentKind==='paired-companion')
-    .filter(resource=>resource.resourceType!=='game-integration'||!!selectedGame&&resource.attributes.gameId===selectedGame)
+  const components=$derived(inventory.filter(resource=>resource.resourceType!=='game-integration').filter(resource=>resource.resourceType!=='companion'||resource.attributes.componentKind==='paired-companion')
     .filter(resource=>!query||`${resource.name} ${categories.find(category=>category.type===resource.resourceType)?.label}`.toLocaleLowerCase().includes(query))
     .slice().sort((a,b)=>a.name.localeCompare(b.name)));
   const visibleGroups=$derived(editorGroups.filter(group=>!query||`${group.name} groups`.toLocaleLowerCase().includes(query)));
@@ -74,7 +71,11 @@
         </div>
       </details>
     {/if}
-    {#each categories as category, index (category.type)}
+      {#if showVirtual||showDesktop}<details class="editor-accordion" aria-label="Output components" open={isOpen('outputs')} ontoggle={event=>rememberOpen(event,'outputs')}><summary>Outputs<span class="category-count">{Number(showVirtual)+Number(showDesktop)}</span></summary><div class="accordion-content">
+        {#if showVirtual}<button class="component" aria-label="Add virtual controller" disabled={disabled||virtualCount>=8} draggable={!disabled&&virtualCount<8} ondragstart={event=>beginDrag(event,{component:{kind:'virtual'},name:'Virtual controller',category:'Virtual controller'})} ondragend={endDrag} onclick={addVirtual}><span class="component-icon"><Icon name="gamepad" size={17}/></span><span class="component-copy"><strong>Virtual controller</strong><small>Buttons, axes and hats</small></span><Icon name="plus" size={14}/></button>{/if}
+        {#if showDesktop}<button class="component" aria-label="Add keyboard and mouse" disabled={disabled||desktopAdded} draggable={!disabled&&!desktopAdded} ondragstart={event=>beginDrag(event,{component:{kind:'desktop'},name:'Keyboard and mouse',category:'Keyboard and mouse'})} ondragend={endDrag} onclick={addDesktop}><span class="component-icon"><Icon name="devices" size={17}/></span><span class="component-copy"><strong>Keyboard and mouse</strong><small>{desktopAdded?'Added to profile':'Keys, pointer and buttons'}</small></span><Icon name={desktopAdded?'check':'plus'} size={14}/></button>{/if}
+      </div></details>{/if}
+    {#each categories as category (category.type)}
       {@const items=components.filter(resource=>resource.resourceType===category.type)}
       {#if items.length}<details class="editor-accordion" aria-label={category.label} open={isOpen(category.type)} ontoggle={event=>rememberOpen(event,category.type)}><summary>{category.label}<span class="category-count">{items.length}</span></summary><div class="accordion-content">
         {#each items as resource (resource.id)}
@@ -86,10 +87,7 @@
           </button>
         {/each}
       </div></details>{/if}
-      {#if index===0&&(showVirtual||showDesktop)}<details class="editor-accordion" aria-label="Output components" open={isOpen('outputs')} ontoggle={event=>rememberOpen(event,'outputs')}><summary>Outputs<span class="category-count">{Number(showVirtual)+Number(showDesktop)}</span></summary><div class="accordion-content">
-        {#if showVirtual}<button class="component" aria-label="Add virtual controller" disabled={disabled||virtualCount>=8} draggable={!disabled&&virtualCount<8} ondragstart={event=>beginDrag(event,{component:{kind:'virtual'},name:'Virtual controller',category:'Virtual controller'})} ondragend={endDrag} onclick={addVirtual}><span class="component-icon"><Icon name="gamepad" size={17}/></span><span class="component-copy"><strong>Virtual controller</strong><small>Buttons, axes and hats</small></span><Icon name="plus" size={14}/></button>{/if}
-        {#if showDesktop}<button class="component" aria-label="Add keyboard and mouse" disabled={disabled||desktopAdded} draggable={!disabled&&!desktopAdded} ondragstart={event=>beginDrag(event,{component:{kind:'desktop'},name:'Keyboard and mouse',category:'Keyboard and mouse'})} ondragend={endDrag} onclick={addDesktop}><span class="component-icon"><Icon name="devices" size={17}/></span><span class="component-copy"><strong>Keyboard and mouse</strong><small>{desktopAdded?'Added to profile':'Keys, pointer and buttons'}</small></span><Icon name={desktopAdded?'check':'plus'} size={14}/></button>{/if}
-      </div></details>{/if}
+
     {/each}
     {#if !components.length&&!showVirtual&&!showDesktop&&!visibleGroups.length}<p class="palette-empty">No matching components.</p>{/if}
     {#if !inventory.length&&!refreshing&&!query}<p class="palette-empty">No devices or companions found.</p>{/if}

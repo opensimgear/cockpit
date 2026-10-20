@@ -149,7 +149,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
     if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker"|"profile_desktop_capture_application");}
-    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
+    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_game_preference_save"|"profile_game_preference_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
     if command.starts_with("mapping_") || command=="companion_feedback_routes" { return false; }
     if command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
         return !matches!(command,
@@ -390,7 +390,7 @@ impl GatewayManager {
         let command = request["command"].as_str().ok_or("Choose a profile session operation.")?;
         let fields: &[&str] = match command {
             "profile_apply" => &["id", "expectedRevision", "gameId", "expectedActiveOwner", "activationId"],
-            "profile_game_launch" => &["gameId", "expectedActiveOwner"],
+            "profile_game_launch" => &["gameId", "expectedActiveOwner", "profileId", "rememberChoice"],
             "profile_stop" | "profile_recover" => &["activationId"],
             _ => return Err("Unknown profile session operation.".into()),
         };
@@ -403,7 +403,11 @@ impl GatewayManager {
             .transpose()?;
         let staged_epoch = || native_arrival_epoch.filter(|epoch| self.profile_admission_epoch.load(Ordering::Acquire) == *epoch).ok_or("This staged profile request was cancelled by a newer native control. Submit it again explicitly.");
         match command {
-            "profile_game_launch" => return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).ok_or("Choose a supported native game installation to launch.")?, staged_epoch()?, expected_owner.as_ref()),
+            "profile_game_launch" => {
+                let profile = request.get("profileId").map(|value| value.as_str().ok_or("Choose a saved matching profile identity.")).transpose()?;
+                let remember = request.get("rememberChoice").map(|value| value.as_bool().ok_or("Remember choice must be a boolean.")).transpose()?.unwrap_or(false);
+                return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).ok_or("Choose a supported native game installation to launch.")?, profile, remember, staged_epoch()?, expected_owner.as_ref());
+            },
             "profile_apply" => {
                 let admission_epoch = staged_epoch()?;
                 self.refresh_saved_panel_references()?;
@@ -588,7 +592,7 @@ impl GatewayManager {
             matches!(status.state, crate::profile_session::State::Running | crate::profile_session::State::Degraded)
                 && status.owner.as_ref().is_some_and(|owner| request["document"]["id"] == owner.profile_id)
         };
-        let profile_mutation = editor_save || panel_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = editor_save || panel_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_game_preference_save" | "profile_game_preference_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         // Created before admission guards so notification follows their release,
         // including staged Apply's early-return paths.
         let _wake = profile_mutation.then(|| WakeProfileOnDrop(&self.profile_wake));
@@ -823,6 +827,9 @@ impl GatewayManager {
             }
             if matches!(command.as_str(),"profile_companion_catalogue"|"profile_companion_inspect"){
                 return match self.companion_authoring_request(&request){Ok(page)=>json!({"ok":true,"state":{"profileCompanionAuthoring":page}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
+            }
+            if matches!(command.as_str(),"profile_game_candidates"|"profile_game_preference_save"|"profile_game_preference_remove") {
+                return match self.game_candidate_request(&request){Ok(profiles)=>json!({"ok":true,"state":{"profiles":profiles}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
             }
             if matches!(command.as_str(),"profile_automatic_status"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_selection_mode"){
                 return match self.automatic_request(&request){Ok(profiles)=>json!({"ok":true,"state":{"profiles":profiles}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};

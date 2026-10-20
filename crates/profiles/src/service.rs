@@ -17,6 +17,9 @@ pub struct Service {
 }
 
 impl Service {
+    /// Portable saved graphs for native selection, without hashing a UI projection.
+    pub fn saved_documents(&self) -> &[ProfileDocument] { &self.library.profiles }
+
     pub fn new(root: Option<PathBuf>) -> Self {
         let store = root.map(Store::new);
         let mut library = Library::default();
@@ -95,6 +98,7 @@ impl Service {
                             "id": document.id, "name": document.name, "revision": document.revision,
                             "isDefault": document.id == DEFAULT_PROFILE_ID,
                             "semanticHash": semantic_hash(document)?,
+                            "gameIds": document.eligibility.game_ids,
                         }))
                     })
                     .collect::<Result<Vec<Value>, String>>()?;
@@ -268,7 +272,7 @@ impl Service {
                     .insert(document.id.clone(), assignments.clone());
                 let profiles = library.profiles.iter().map(|profile| {
                     Ok(json!({"id":profile.id,"name":profile.name,"revision":profile.revision,
-                        "isDefault":profile.id == DEFAULT_PROFILE_ID,"semanticHash":semantic_hash(profile)?}))
+                        "isDefault":profile.id == DEFAULT_PROFILE_ID,"semanticHash":semantic_hash(profile)?,"gameIds":profile.eligibility.game_ids}))
                 }).collect::<Result<Vec<Value>, String>>()?;
                 self.persist(&library)?;
                 self.library = library;

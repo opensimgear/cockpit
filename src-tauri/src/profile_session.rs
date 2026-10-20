@@ -268,6 +268,12 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn status(&self) -> &Status {
         &self.status
     }
+    /// A hardware-first launch keeps its original owner identity while the
+    /// completed candidate acquires the live game context afterward.
+    pub(crate) fn active_game_context(&self) -> Option<&str> {
+        self.active_candidate.as_ref()
+            .and_then(|candidate| candidate.game_id.as_deref())
+    }
     pub(crate) fn check_expected_owner(&self, expected: &Option<RunOwner>) -> Result<(), String> {
         if self.status.owner.as_ref() != expected.as_ref() {
             return Err("The active profile changed. Refresh and confirm the activation again.".into());

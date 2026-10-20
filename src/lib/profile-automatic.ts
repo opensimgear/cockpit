@@ -1,5 +1,5 @@
 /** Native game rules and explicit selection mode. Reading this client never selects or applies a profile. */
-import {DEFAULT_PROFILE_ID,type DeepReadonly,type ProfileSelectionMode,type ProfileSummary} from './profiles';
+import {captureProfileSummaries,type DeepReadonly,type ProfileSelectionMode,type ProfileSummary} from './profiles';
 export type AutomaticGameId='dcs'|'assetto-corsa-rally'|'x-plane-11'|'x-plane-12';
 export type ProfileGameRule={identity:{gameId:AutomaticGameId;executable:string};profileId:string;priority:number;enabled:boolean};
 export type ProfileAutomaticTarget={profileId:string;gameId:AutomaticGameId|null;processSession:string|null};
@@ -24,8 +24,7 @@ export function captureAutomaticStatus(value:unknown):DeepReadonly<ProfileAutoma
   return frozen(value as unknown as ProfileAutomaticStatus);
 }
 export function captureAutomaticProfiles(value:unknown):DeepReadonly<ProfileSummary[]>{
-  if(!Array.isArray(value)||!value.length||value.length>32||!value.every(summary=>exact(summary,['id','name','revision','isDefault','semanticHash'])&&uuid(summary.id)&&text(summary.name,320)&&[...summary.name].length<=80&&summary.name.trim()===summary.name&&typeof summary.revision==='number'&&Number.isSafeInteger(summary.revision)&&summary.revision>0&&summary.isDefault===(summary.id===DEFAULT_PROFILE_ID)&&typeof summary.semanticHash==='string'&&/^sha256:[a-f0-9]{64}$/.test(summary.semanticHash))||new Set(value.map(summary=>summary.id)).size!==value.length||value.filter(summary=>summary.id===DEFAULT_PROFILE_ID).length!==1)throw new Error('The unified saved-profile list is malformed. Refresh Profiles before choosing a rule.');
-  return frozen(value as ProfileSummary[]);
+  try{return captureProfileSummaries(value);}catch{throw new Error('The unified saved-profile list is malformed. Refresh Profiles before choosing a rule.');}
 }
 /** Browser requests contain a supported game ID, never an executable or process capability. */
 export class ProfileAutomaticClient{

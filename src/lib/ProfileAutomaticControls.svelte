@@ -8,7 +8,7 @@
   const provided=untrack(()=>supplied),controller=provided??new ProfileAutomaticController(new ProfileAutomaticClient(async request=>{const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Native automatic profile selection is unavailable.');return result;}));
   let view=$state.raw(controller.state),mounted=$state(false);
   const blocked=$derived(!active||!view.status||view.stale||view.status.readOnly||!!view.pending);
-  const description='Manual activates profiles when you choose. Automatic uses matching game rules, with Default as the fallback.';
+  const description='Manual activates profiles when you choose. Automatic activates matching game contexts. Set a remembered profile in game settings when several match.';
   function mountStatus(){mounted=true;const stop=controller.subscribe(next=>view=next);return()=>{mounted=false;stop();};}
   onMount(mountStatus);onDestroy(()=>{if(!provided)controller.dispose();});
   function watchStatus(){if(!mounted||!active)return;const refresh=()=>{if(!document.hidden)void controller.refresh();};refresh();document.addEventListener('visibilitychange',refresh);const timer=window.setInterval(refresh,1000);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};}
@@ -19,7 +19,7 @@
 <div class="automatic-controls">
   <div class="mode-choice" role="group" aria-label="Profile selection mode" title={description}><span class="mode-label">Profile mode</span><span class:current={view.status?.mode==='manual'}>Manual</span><button type="button" class="mode-switch" role="switch" aria-label="Automatic profile selection" aria-checked={view.status?.mode==='automatic'} disabled={blocked} onclick={toggleMode}><span class="switch-thumb"></span></button><span class:current={view.status?.mode==='automatic'}>Automatic</span></div>
   {#if !view.status}<p role="status">Waiting for native profile mode.</p>{/if}
-  {#if view.status?.conflicts.length}<p class="automatic-warning" role="status">Conflicting games: {view.status.conflicts.join(', ')}. Edit priorities in the game details.</p>{:else if view.status?.status==='failed'}<p class="automatic-warning" role="status">{view.status.message}</p>{/if}
+  {#if view.status?.conflicts.length}<p class="automatic-warning" role="status">Conflicting games: {view.status.conflicts.join(', ')}. Review matching profiles and remembered choices in game settings.</p>{:else if view.status?.status==='failed'}<p class="automatic-warning" role="status">{view.status.message}</p>{/if}
   {#if view.status?.readOnly}<p class="automatic-warning" role="status">Profile mode is read-only. Resolve the native storage error before changing it.</p>{/if}
   {#if view.pending}<p role="status">Saving profile mode…</p>{/if}{#if view.error}<p class="automatic-warning" role="status">{view.error} <button class="text-button" disabled={view.loading||!!view.pending} onclick={()=>controller.refresh()}>Refresh mode</button></p>{/if}
 </div>

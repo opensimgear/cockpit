@@ -9,25 +9,33 @@ to edit it. Cockpit has either **No profile active** or one active profile, with
 
 Choose **Add profile** to go straight to an empty editor. Name the profile, then
 use the **Components** palette beside the canvas to add controllers, OSG devices,
-paired companions, game integrations and outputs. Drag a component onto the
+paired companions and outputs. Drag a component onto the
 canvas to preview its position, then drop it to place the block there. Clicking a
 palette component also adds it. Additions keep the current selection; select the
 new block to open its settings. Offline paired companions and closed games remain
 available. Adding a resource creates no routes. A profile supports 64 resource
 blocks. Palette sections collapse independently. Choose **Game context** in the
-editor header to show that game's entry under **Integrations**, or **None** to
-hide integrations from the palette. This filters components available to add;
-it preserves existing blocks and their mappings.
+editor header to save the profile's game association and automatically add its
+integration to the canvas. **None** removes that association and integration.
+Changing context replaces the integration and its routes in one Undo edit.
+There is no separate integration palette section.
 
 Select exact ports from each block's provider catalogue, connect routes and
 choose **Save profile**. Saving commits the graph and local resource assignments
 together and shows a notification. Saving an inactive profile leaves the active
-profile alone. Choose **Activate** on its tile when ready. The editor's context
-selector filters the integration palette; game launch supplies the runtime game
-context.
+profile alone. Choose **Activate** on its tile when ready; it uses the saved game
+context. A game can be closed while hardware remains active and game routes wait.
+Tiles show a badge for their saved game context.
+
+Game settings list profiles with a matching saved context. Launch activates the
+only match automatically. Multiple matches show a chooser with **Remember my
+choice**; game settings can change or remove that preference. With no matches,
+launch uses Default for hardware only. Automatic mode also considers saved
+contexts when a game is detected. An unresolved multiple match leaves the
+current profile active until a choice is made.
 
 Saving the active profile applies the saved changes
-automatically and keeps its game context and Manual/Automatic selection mode.
+automatically, including its saved game context, and keeps Manual/Automatic mode.
 If the changes cannot be applied, they remain saved and Cockpit reports the
 failure; deactivate and activate the saved profile to try again. Typing and graph edits
 remain local until Save.
@@ -88,10 +96,9 @@ The native plan supports eight controllers, with at most 128 controls per
 controller, 16 axes and four hats.
 
 Choose **Keyboard and mouse** in the palette to add an endpoint, then configure
-its actions. In that block choose **Selected game**, **Selected application** or **Desktop-wide
-navigation**. Application capture stores an opaque reference to a native observed
-process; paths and process IDs stay local. Capture again if that application
-restarts. Scope is saved with the profile. See [keyboard and mouse
+its actions. In that block choose **Context scoped** to send output only while the saved
+context game is in front, or **Global** to use it across applications. Scope is
+saved with the profile. See [keyboard and mouse
 mappings](keyboard-mouse.md).
 
 Companions appear in the palette by their paired device names, including devices
@@ -113,6 +120,11 @@ devices to be disabled. Device hiding is separate. Unsupported or unknown
 publishers keep those commands blocked. A publication change while active
 withdraws affected commands until the profile is activated again; unrelated
 controller routes and read-only telemetry can continue.
+
+Closing a game disables its integration routes and context scoped bindings,
+while the active profile and independent hardware remain. When the matching
+game returns, Cockpit verifies the new process and refreshes the integration
+baseline. Controls must be released or centered before scoped bindings rearm.
 
 ## Arrange and inspect
 

@@ -73,7 +73,7 @@ export type ProfileSession = {
   selectedProfileId: string; selectionMode: ProfileSelectionMode; state: 'stopped' | 'running' | 'degraded' | 'faulted' | 'recovery-needed' | 'transitioning' | 'awaiting-game';
   appliedSnapshot: AppliedProfileSnapshot | null; fault: string | null;
 };
-export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string };
+export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string; gameIds?:string[] };
 export type ProfilePublicationReferences = { schemaVersion: 1; libraryFingerprint: string; hashes: string[] };
 export type ProfileCommand = 'profile_companion_references' | 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
 export type ProfileRequest =
@@ -272,7 +272,7 @@ function freeze<T>(value: T): DeepReadonly<T> {
 }
 /** Capture native session state without sharing mutable document or transport objects. */
 function validProfileSummaries(value: unknown): value is ProfileSummary[] {
-  return list(value, MAX_PROFILES) && value.length > 0 && value.every(summary => exact(summary, ['id', 'name', 'revision', 'isDefault', 'semanticHash']) && uuid(summary.id) && text(summary.name) && whole(summary.revision, 1, Number.MAX_SAFE_INTEGER) && summary.isDefault === (summary.id === DEFAULT_PROFILE_ID) && typeof summary.semanticHash === 'string' && /^sha256:[0-9a-f]{64}$/.test(summary.semanticHash)) && new Set(value.map(summary => (summary as ProfileSummary).id)).size === value.length && value.some(summary => (summary as ProfileSummary).id === DEFAULT_PROFILE_ID);
+  return list(value, MAX_PROFILES) && value.length > 0 && value.every(summary => exact(summary, ['id', 'name', 'revision', 'isDefault', 'semanticHash',...(object(summary)&&Object.hasOwn(summary,'gameIds')?['gameIds']:[])]) && uuid(summary.id) && text(summary.name) && whole(summary.revision, 1, Number.MAX_SAFE_INTEGER) && summary.isDefault === (summary.id === DEFAULT_PROFILE_ID) && typeof summary.semanticHash === 'string' && /^sha256:[0-9a-f]{64}$/.test(summary.semanticHash) && (!Object.hasOwn(summary,'gameIds')||list(summary.gameIds,32)&&summary.gameIds.every(identifier)&&new Set(summary.gameIds).size===summary.gameIds.length)) && new Set(value.map(summary => (summary as ProfileSummary).id)).size === value.length && value.some(summary => (summary as ProfileSummary).id === DEFAULT_PROFILE_ID);
 }
 /** Saved display metadata only; it cannot substitute for an applied snapshot. */
 export function captureProfileSummaries(value: unknown): DeepReadonly<ProfileSummary[]> {

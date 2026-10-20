@@ -77,3 +77,23 @@ fn corrupt_unknown_oversized_and_nonregular_settings_are_preserved() {
         .is_err());
     assert_eq!(std::fs::read(parent).unwrap(), b"keep");
 }
+
+#[test]
+fn remembered_context_choices_round_trip_and_older_settings_load_without_them() {
+    let directory = crate::test_directory();
+    let path = directory.path().join("automatic.json");
+    let store = Store::new(Some(path.clone()));
+    let mut saved = settings();
+    saved.preferred_profiles.insert("dcs".into(), DEFAULT_PROFILE_ID.into());
+    store.save(&saved).unwrap();
+    assert_eq!(store.load().unwrap(),Some(saved));
+    let mut legacy = serde_json::to_value(settings()).unwrap();
+    legacy.as_object_mut().unwrap().remove("preferredProfiles");
+    std::fs::write(&path,serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(store.load().unwrap().unwrap().preferred_profiles.is_empty());
+    for (game, profile) in [("unknown",DEFAULT_PROFILE_ID),("dcs","forged")] {
+        let mut invalid = settings();
+        invalid.preferred_profiles.insert(game.into(),profile.into());
+        assert!(store.save(&invalid).is_err());
+    }
+}

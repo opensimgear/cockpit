@@ -1,20 +1,15 @@
 <script lang="ts">
-  import{untrack,onDestroy,onMount,tick}from'svelte';
-  import { desktopActionLabel,desktopActionValid,desktopActionPort,desktopOutputScopeValid,DESKTOP_KEYS,DESKTOP_KEY_CODES,type DesktopAction,type ProfileDesktopOutput,type ProfileDesktopScope } from './profile-desktop';
-  import {desktopStatus,type DesktopApplication}from'./profile-desktop-runtime';
+  import{untrack,onDestroy,tick}from'svelte';
+  import { desktopActionLabel,desktopActionValid,desktopActionPort,DESKTOP_KEYS,DESKTOP_KEY_CODES,type DesktopAction,type ProfileDesktopOutput } from './profile-desktop';
   import {nativeProfileStatus}from'./profile-runtime';
   import type {DeepReadonly} from './profiles';
   import {gatewayRequest}from'./gateway';
   let{output,change}:{output:DeepReadonly<ProfileDesktopOutput>;change:(output:ProfileDesktopOutput)=>void}=$props();
   let draft=$state.raw<ProfileDesktopOutput>(JSON.parse(JSON.stringify(untrack(()=>output)))),error=$state(''),capture=$state(''),captureBusy=$state(false),captureEpoch=0;
   let picker=$state<HTMLInputElement|null>(null);
-  let applications=$state.raw<DesktopApplication[]>([]),applicationBusy=$state(false),applicationEpoch=0;
-  $effect(()=>{draft=JSON.parse(JSON.stringify(output));captureEpoch++;applicationEpoch++;capture='';captureBusy=false;applicationBusy=false;error='';});
-  onMount(()=>{void loadApplications();});
-  onDestroy(()=>{captureEpoch++;applicationEpoch++;});
+  $effect(()=>{draft=JSON.parse(JSON.stringify(output));captureEpoch++;capture='';captureBusy=false;error='';});
+  onDestroy(()=>{captureEpoch++;});
   const valid=$derived(draft.actions.every(definition=>desktopActionValid(definition.action))&&draft.actions.length>0);
-  const applicationReference=$derived(draft.scope?.kind==='application'?draft.scope.applicationReference:undefined);
-  const applicationName=$derived(applications.find(application=>application.reference===applicationReference)?.name??(applicationReference?'Saved application · capture again if it has restarted':'No application selected'));
   const kinds:DesktopAction['kind'][]=['key-hold','key-tap','chord','mouse-hold','mouse-click','wheel','pointer','repeat'];
   function initial(kind:DesktopAction['kind']):DesktopAction{switch(kind){case'key-hold':return{kind,key:44};case'key-tap':return{kind,key:44,downMs:30,upMs:30};case'chord':return{kind,keys:[224,6]};case'mouse-hold':return{kind,button:'left'};case'mouse-click':return{kind,button:'left',downMs:30,upMs:30};case'wheel':return{kind,horizontal:0,vertical:1};case'pointer':return{kind,axis:'x',speed:900,curve:1};case'repeat':return{kind,key:44,delayMs:400,intervalMs:80};}}
   function edit(index:number,action:DesktopAction){draft={...draft,actions:draft.actions.map((definition,i)=>i===index?{...definition,action}:definition)};}
@@ -26,16 +21,17 @@
     const action=draft.actions[index].action;if('key'in action)field(index,'key',usage);else if(action.kind==='chord')field(index,'keys',[...new Set([...action.keys,usage])]);capture='';
   }
   function save(){error='';try{change(draft);}catch(reason){error=reason instanceof Error?reason.message:String(reason);}}
-  function scope(kind:ProfileDesktopScope['kind']){applicationEpoch++;applicationBusy=false;draft={...draft,scope:kind==='application'?{kind,...(applicationReference?{applicationReference}:{})}:{kind}};save();}
-  async function loadApplications(){try{applications=desktopStatus((await gatewayRequest({command:'profile_desktop_status'})).desktop).applications??[];}catch{/* Application capture reports actionable connection errors. */}}
-  async function captureApplication(){const epoch=++applicationEpoch;applicationBusy=true;error='';try{const status=desktopStatus((await gatewayRequest({command:'profile_desktop_capture_application'})).desktop);if(epoch!==applicationEpoch)return;const selected:ProfileDesktopScope={kind:'application',applicationReference:status.capturedApplicationReference??undefined};if(!desktopOutputScopeValid(selected)||!selected.applicationReference)throw Error('The native application capture returned no saved application. Focus the application and try again.');applications=status.applications??[];draft={...draft,scope:selected};save();}catch(reason){if(epoch===applicationEpoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(epoch===applicationEpoch)applicationBusy=false;}}
+  function scope(kind:'selected-game'|'desktop-wide'){draft={...draft,scope:{kind}};save();}
 </script>
 <section class="desktop-editor" aria-label="Keyboard and mouse action editor">
   <h4>Keyboard and mouse actions</h4>
   <p>Exact physical key and mouse inputs for this graph. Each input needs an explicit route.</p>
   <label>Endpoint label<input value={draft.name} maxlength="80" oninput={event=>draft={...draft,name:event.currentTarget.value}}/></label>
-  <label>Output scope<select aria-label="Keyboard and mouse scope" value={draft.scope?.kind??'legacy'} onchange={event=>scope(event.currentTarget.value as ProfileDesktopScope['kind'])}>{#if !draft.scope}<option value="legacy" disabled>Current game or previously selected application</option>{/if}<option value="selected-game">Selected game</option><option value="application">Selected application</option><option value="desktop-wide">Desktop-wide navigation</option></select></label>
-  {#if draft.scope?.kind==='application'}<p>Selected application: <strong>{applicationName}</strong></p><button class="secondary-button" disabled={applicationBusy} onclick={captureApplication}>{applicationBusy?'Capturing application…':'Use last focused external application'}</button><p>Focus the application, return to Cockpit, then capture it. Output is available only while that exact application is in front. Capture again after restarting the application.</p>{:else if draft.scope?.kind==='selected-game'}<p>Uses the verified game selected when this profile is activated or launched. Output is available only while that game is in front.</p>{:else if draft.scope?.kind==='desktop-wide'}<p>Keyboard and mouse output can operate across applications while this profile is active.</p>{/if}
+  <label>Output scope<select aria-label="Keyboard and mouse scope" value={draft.scope?.kind??'legacy'} onchange={event=>scope(event.currentTarget.value as 'selected-game'|'desktop-wide')}>
+    {#if !draft.scope}<option value="legacy" disabled>Legacy scope · choose a scope</option>{:else if draft.scope.kind==='application'}<option value="application" disabled>Saved application (legacy)</option>{/if}
+    <option value="selected-game">Context scoped</option><option value="desktop-wide">Global</option>
+  </select></label>
+  {#if draft.scope?.kind==='application'}<p>This block retains its saved application scope. Choose Context scoped or Global to update it.</p>{:else if draft.scope?.kind==='selected-game'}<p>Bindings work only while this profile's game is in front. They wait while the game is closed and resume with neutral controls when it returns.</p>{:else if draft.scope?.kind==='desktop-wide'}<p>Bindings work everywhere while this profile is active.</p>{/if}
   <p>Scope is saved with this keyboard and mouse block. Save the profile to use the change.</p>
   <label class="check"><input type="checkbox" checked={draft.required} onchange={event=>draft={...draft,required:event.currentTarget.checked}}/>Required desktop backend</label>
   {#each draft.actions as definition,index (definition.portId)}

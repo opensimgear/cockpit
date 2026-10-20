@@ -1,4 +1,19 @@
 #[test]
+fn editor_save_applies_the_new_saved_context_and_none_to_its_active_profile() {
+    let (manager, _) = setup();
+    let id=osg_profiles::DEFAULT_PROFILE_ID;
+    assert_eq!(request(&manager,"profile_apply",None,json!({"id":id,"expectedRevision":1}))["ok"],true);
+    for (revision,context) in [(1,Some("dcs")),(2,Some("x-plane-12")),(3,None)] {
+        let mut document=request(&manager,"profile_get",None,json!({"id":id}))["state"]["profiles"]["document"].clone();
+        document["eligibility"]["gameIds"]=context.map_or_else(||json!([]),|id|json!([id]));
+        let saved=request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":revision,"assignments":[]}));
+        assert_eq!(saved["ok"],true,"{saved}");
+        assert_eq!(saved["state"]["profiles"]["saveApplication"]["state"],"applied","{saved}");
+        assert_eq!(saved["state"]["profiles"]["profileSession"]["owner"]["gameId"],json!(context));
+    }
+}
+
+#[test]
 fn editor_save_updates_only_its_active_profile_and_keeps_manual_selection() {
     let (manager, provider) = setup();
     let id = osg_profiles::DEFAULT_PROFILE_ID;

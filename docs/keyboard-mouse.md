@@ -26,34 +26,25 @@ are refused. Text paste, media keys and program execution are not actions.
 
 Each keyboard/mouse endpoint saves its own **Output scope**:
 
-- **Selected game** uses the profile's verified game context. A game launch binds
-  its actual started process independently of telemetry setup. Starting without
-  a game context reports an error.
-- **Selected application** uses **Use last focused external application**. Focus
-  the target, return to Cockpit and capture it. Cockpit stores an immutable local
-  observation and saves only an opaque reference in this block. Capturing an
-  application for one profile cannot retarget another profile. The reference
-  survives Cockpit restart; capture again if the target application itself
-  restarts. An application captured explicitly stays selected during game launch.
-- **Desktop-wide navigation** permits the profile's keyboard/mouse output across
-  applications while it runs.
+- **Context scoped** uses the profile's saved game context. Bindings work only
+  while that game's verified process is in front. When it closes, bindings stay
+  inactive until the game returns. Cockpit binds the new verified process and
+  waits for released/neutral controls before rearming. Telemetry setup is not
+  required for process scoping.
+- **Global** permits keyboard/mouse output across applications while the profile
+  is active. Game exit does not disable global bindings.
 
-Scope changes and application captures update the draft immediately. **Save
-profile** persists them. Native paths, process IDs and process creation times
-stay local and are never accepted from a browser request. Imported references
-unavailable on this computer require a fresh application capture.
-
-Older profiles without a saved scope retain an application-only default: use
-their explicit game context or the previously captured local application. A
-legacy machine-wide desktop setting does not broaden an old profile's scope.
+Scope changes update the draft immediately; **Save profile** persists them.
+Existing application scopes remain readable for older profiles; choose either
+current scope when editing them. Native process identity stays local.
 
 ## Save, activate and deactivate
 
-Saving an inactive profile stores it and shows a notification; choose **Activate
-profile** when ready. Saving the active profile applies its changes automatically while
-retaining game context and selection mode. If that update fails, the changes
-remain saved and Cockpit offers **Retry saved changes**. Opening an editor,
-importing and application capture do not activate output. If another profile is
+Saving an inactive profile stores it and shows a notification; choose **Activate**
+on its tile when ready. Saving the active profile applies its changes using the
+saved game context and retaining selection mode. If that update fails, the
+changes remain saved; deactivate and activate the saved profile to retry.
+Opening an editor and importing do not activate output. If another profile is
 active, activation asks for confirmation before switching profiles.
 
 Application-scoped output only runs while its exact target process is in front.
@@ -62,7 +53,7 @@ requires fresh released/neutral controls before rearming. **Waiting** means some
 controls still need release or centering; already armed actions can continue.
 
 **Deactivate** cancels pending work and prevents automatic rearming. Cockpit
-then shows **No profile active**. Use **Activate profile** again, or explicitly select Automatic to resume automatic
+then shows **No profile active**. Use **Activate** again, or explicitly select Automatic to resume automatic
 selection. A mixed profile must pass the readiness checks of
 every required output backend. Failed activation does not turn into recording.
 

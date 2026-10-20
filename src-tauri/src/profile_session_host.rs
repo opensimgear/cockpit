@@ -71,6 +71,8 @@ struct NativeRun {
     game: crate::profile_session_games::GameSources,
     game_preparation: Option<crate::games::PreparedGame>,
     child_game_owner: Option<crate::game_context::ProfileOwner>,
+    game_retry: Option<u64>,
+    game_resume: Option<std::sync::mpsc::Receiver<Result<Option<NativeGameResume>,String>>>,
     launch_epoch_bound: bool,
     launch_context_installed: bool,
     companions: crate::profile_session_companions::CompanionSources,
@@ -81,6 +83,11 @@ struct NativeRun {
     publication: crate::profile_session_overrides::Overrides,
     dcs_hid: dcs_hid::Guard,
     acquisition_plan: Option<ExecutionPlan>,
+}
+struct NativeGameResume {
+    game: crate::profile_session_games::GameSources,
+    proof: crate::games::PreparedGame,
+    plan: ExecutionPlan,
 }
 pub(crate) struct NativeProfileHost {
     resources: Arc<crate::profile_resources::Runtime>,
@@ -334,6 +341,21 @@ impl NativeProfileHost {
                     .collect(),
             });
     }
+    fn context_desktop(document:&osg_profiles::ProfileDocument)->bool {
+        document.desktop_outputs.first().is_some_and(|output|matches!(output.scope.as_ref(),None|Some(osg_profiles::DesktopScope::SelectedGame)))
+    }
+    fn refresh_desktop_context(games:&crate::games::GamesRuntime,state:&mut NativeRun)->Result<Vec<String>,String>{
+        if !Self::context_desktop(&state.document)||state.desktop.is_none(){return Ok(vec![]);}
+        let id=state.child_game_owner.as_ref().and_then(|owner|owner.game_id.as_deref()).or(state.owner.game_id.as_deref());
+        let Some(id)=id else{return Ok(vec![]);};
+        let (scope,diagnostics)=match games.desktop_process(id) {
+            Ok(process)=>(process.map(|process|osg_desktop_output::Scope::Application{identity:crate::profile_session_desktop::identity(&process)}),vec![]),
+            Err(error)=>(None,vec![format!("Context scoped bindings are waiting: {error}")]),
+        };
+        state.desktop.as_mut().unwrap().refresh_context(scope.clone())?;
+        state.desktop_scope=scope;
+        Ok(diagnostics)
+    }
     fn withdraw_game(resources: &crate::profile_resources::Runtime, state: &NativeRun) -> Result<(), String> {
         if let Some((game, reader)) = state.game.provider_identity() {
             resources.withdraw_profile_game_delivery(game, reader)?;
@@ -341,18 +363,68 @@ impl NativeProfileHost {
         Ok(())
     }
     fn game_poll(
-        resources: &crate::profile_resources::Runtime,
-        games: &crate::games::GamesRuntime,
+        resources: &Arc<crate::profile_resources::Runtime>,
+        games: &Arc<crate::games::GamesRuntime>,
         state: &mut NativeRun,
         now_us: u64,
     ) -> Result<crate::profile_session_games::GamePoll, String> {
+        let mut resume_diagnostics=vec![];
+        if let Some(receiver)=state.game_resume.take() {
+            match receiver.try_recv() {
+                Ok(result)=>match result {
+                    Ok(Some(mut replacement))=>{
+                        if state.game.accepts_replacement(&replacement.proof) {
+                            replacement.game.inherit_source_counters(&state.game);
+                            match replacement.game.admit(games) {
+                                Ok(())=>{state.game=replacement.game;state.game_preparation=Some(replacement.proof);state.delivery=Some(replacement.plan);},
+                                Err(error)=>resume_diagnostics.push(format!("Game integration is waiting: {error}")),
+                            }
+                        }
+                    },
+                    Ok(None)=>{},
+                    Err(error)=>resume_diagnostics.push(format!("Game integration is waiting: {error}")),
+                },
+                Err(std::sync::mpsc::TryRecvError::Empty)=>state.game_resume=Some(receiver),
+                Err(std::sync::mpsc::TryRecvError::Disconnected)=>resume_diagnostics.push("The game preparation worker ended; waiting to retry.".into()),
+            }
+        }
+        if state.game.needs_context() && state.game_resume.is_none() && state.game_retry.is_none_or(|next|now_us>=next) {
+            state.game_retry=Some(now_us.saturating_add(500_000));
+            let id=state.child_game_owner.as_ref().and_then(|owner|owner.game_id.as_ref()).or(state.owner.game_id.as_ref()).cloned();
+            if let Some(id)=id {
+                let (sender,receiver)=std::sync::mpsc::channel();
+                let games=games.clone();let resources=resources.clone();
+                let document=state.document.clone();let assignments=state.assignments.clone();let backend=state.backend.clone();
+                let program_hash=state.report.program_hash.clone();let previous=state.game.preparation_session().map(str::to_owned);
+                // Catalogue and executable inspection can be slow. Keep it off
+                // the active owner's health/lease renewal path. Late readers
+                // have no command authority and are dropped after Stop.
+                std::thread::spawn(move||{
+                    let result=(||->Result<Option<NativeGameResume>,String>{
+                        let Some(proof)=games.prepare_profile_game_context(&id)? else{return Ok(None);};
+                        if previous.as_deref()==Some(proof.proof.session.as_str()){return Ok(None);}
+                        let mut snapshot=resources.snapshot_for_compile(assignments)?;
+                        snapshot.backend=backend;Self::game_capture(&mut snapshot,Some(&proof));
+                        let report=osg_profiles::compiler::compile(&document,&snapshot);
+                        if report.program_hash!=program_hash||matches!(report.readiness,PlanReadiness::Invalid|PlanReadiness::Blocked){return Err("The returning game's mappings changed or are unavailable; save the profile to update them.".into());}
+                        let plan=report.plan.ok_or("The returning game has no native delivery plan.")?;
+                        let mut game=crate::profile_session_games::GameSources::prepare(&plan,Some(proof.clone()))?;
+                        game.acquire(&games)?;
+                        Ok(Some(NativeGameResume{game,proof,plan}))
+                    })();
+                    let _=sender.send(result);
+                });
+                state.game_resume=Some(receiver);
+            }
+        }
         let mut sample = state.game.poll(games, now_us);
+        sample.diagnostics.extend(resume_diagnostics);
         if let Some(batch) = state.game.delivery_batch() {
             if let Err(error) = resources.publish_profile_game_delivery(batch) {
                 sample = state.game.fail(now_us, error);
             }
         }
-        if !sample.context_lost && state.game.requires_baseline() {
+        if !sample.context_lost && state.game.requires_baseline() && state.game.has_delivery_publication() {
             let validation = state.game.provider_identity()
                 .ok_or_else(|| "The acquired game reader has no native inventory owner.".to_owned())
                 .and_then(|(game, reader)| resources.validate_profile_game_delivery(game, reader));
@@ -361,7 +433,7 @@ impl NativeProfileHost {
         if sample.context_lost {
             Self::withdraw_game(resources, state)?;
             if sample.diagnostics.is_empty() {
-                sample.diagnostics.push("The game branch is disarmed; prepare a fresh verified game session to resume it.".into());
+                sample.diagnostics.push("Game integration routes are waiting for the game to return with a fresh verified context.".into());
             }
         } else if state.game.requires_baseline() && !sample.fresh {
             sample.diagnostics.push("Game telemetry is stale; its branches await a fresh native baseline.".into());
@@ -377,6 +449,7 @@ impl NativeProfileHost {
     ) -> Result<Vec<String>, String> {
         let mut diagnostics = std::collections::BTreeSet::new();
         for effect in effects {
+            if !state.game.can_command() { continue; }
             let sink = state.delivery.as_ref().and_then(|plan| plan.sinks.iter().find(|sink|
                 sink.endpoint.node_id == effect.endpoint.node_id && sink.endpoint.port_id == effect.endpoint.port_id)).cloned();
             let Some(sink) = sink.filter(|sink| sink.adapter == SinkAdapter::SimulatorCommand) else {
@@ -404,6 +477,11 @@ impl NativeProfileHost {
                         return Err("The native game delivery program identity changed.".into());
                     }
                     state.delivery = report.plan;
+                    // A returning game can make a previously dormant command
+                    // ready. Validate its HID publication obligations after
+                    // that transition, before the first resumed invocation.
+                    dcs_hid::append_diagnostics(&mut diagnostics,dcs_hid::refresh(state,resources,panels));
+                    if state.dcs_hid.blocked(&effect.endpoint){return Ok(());}
                 }
                 let sink = state.delivery.as_ref().and_then(|plan| plan.sinks.iter().find(|sink|
                     sink.endpoint.node_id == effect.endpoint.node_id && sink.endpoint.port_id == effect.endpoint.port_id))
@@ -714,7 +792,7 @@ impl Host for NativeProfileHost {
             document: candidate.document.clone(), backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
-            child_game_owner: None, launch_epoch_bound: false, launch_context_installed: false,
+            child_game_owner: None, game_retry: None, game_resume: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_retry: None, companion_initial_operations:BTreeMap::new(), visibility,
             actions,
             publication, dcs_hid, acquisition_plan: None,
@@ -790,8 +868,12 @@ impl Host for NativeProfileHost {
                 state: json!({"journal":crate::profile_session_virtual::journal_name(owner)?}) });
         }
         if prepared.plan.requirements.desktop_input {
+            // Context scopes can follow a restarted process. The receipt pins
+            // the exact run journal; that journal durably records each newly
+            // verified process scope before any binding can be armed.
+            let scope=if Self::context_desktop(&state.document){None}else{state.desktop_scope.clone()};
             receipts.push(Receipt { kind: "desktop-output".into(), resource_id: "desktop-output".into(),
-                state: json!({"journal":crate::profile_session_desktop::journal_name(owner)?,"scope":state.desktop_scope,"gameId":owner.game_id}) });
+                state: json!({"journal":crate::profile_session_desktop::journal_name(owner)?,"scope":scope,"gameId":owner.game_id}) });
         }
         Ok(receipts)
     }
@@ -1182,6 +1264,7 @@ impl Host for NativeProfileHost {
         // emit effects, withdrawing only branches that depend on that game.
         let now_us = controllers.stream_page("", 0).captured_us;
         let game = Self::game_poll(&resources, &games, state, now_us)?;
+        degraded.extend(Self::refresh_desktop_context(&games,state)?);
         degraded.extend(dcs_hid::refresh(state, &resources, &panels_io));
         degraded.extend(game.diagnostics);
         let panels = state.panels.poll(|token| Self::validate_token(&resources, token))?;

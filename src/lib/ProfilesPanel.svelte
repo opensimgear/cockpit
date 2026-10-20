@@ -17,6 +17,7 @@
   import {ProfileEditorUndo}from'./profile-graph-history';
   import {profilePaletteCanAdd,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag}from'./profile-palette';
   import type {CanvasPoint}from'./profile-canvas';
+  import {profileGameContext,profileGameContextNeedsSync,profileGameName,profileSetGameContext}from'./profile-game-context';
   import {ProfileCompilerClient}from'./profile-compilation';
   import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
@@ -49,9 +50,9 @@
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
   let routingEditor=$state.raw<{addVirtual:(position?:CanvasPoint)=>void;addDesktop:(position?:CanvasPoint)=>void;addGroup:()=>string|undefined;focusGroup:(id:string)=>void;renameGroup:(id:string,name:string)=>void;deleteGroup:(id:string)=>void}>();
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
-  let selectedGame=$state<GameId|''>('');
   let editingName = $state(false), nameDraft = $state('');
   const editor = $derived(workspace.editor);
+  const selectedGame=$derived(editor?profileGameContext(editor.document):'');
   const editorIdentity=$derived(editor?.document.id??'');
   const canRename = $derived(!!editor && editor.document.id!==DEFAULT_PROFILE_ID && !workspace.readOnly && !workspace.busy && !libraryBusy);
   const nameChanged = $derived(!!editor && editingName && nameDraft.trim()!==editor.document.name);
@@ -70,12 +71,7 @@
   $effect(()=>{void editorIdentity;routingSelection='';});
   $effect(()=>{void editorContext;editingName=false;});
   $effect(()=>{void editorContext;paletteDrag=null;});
-  $effect(()=>{void editorContext;selectedGame=untrack(()=>{
-    if(!editor)return '';
-    const assigned=editor.assignments.filter(assignment=>editor.document.resources.some(resource=>resource.id===assignment.resourceId&&resource.kind==='game')).map(assignment=>workspace.inventory.find(resource=>resource.id===assignment.sourceId)?.attributes.gameId);
-    const contexts=[...new Set(assigned.filter((id):id is GameId=>supportedGames.some(game=>game.id===id)))];
-    return contexts.length===1?contexts[0]:'';
-  });});
+  $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,workspace.inventory))untrack(()=>setGameContext(selectedGame));});
   $effect(()=>{if(paletteDrag&&(!active||debugOpen||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
@@ -103,6 +99,7 @@
   function focusName(node:HTMLInputElement) { node.focus();node.select(); }
   function finishName() { if(!editingName)return;editingName=false;const title=nameDraft.trim();if(canRename&&title!==editor?.document.name)name(title); }
   function historyStep(direction:'undo'|'redo'){report(()=>{history.step(direction);});}
+  function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,workspace.inventory);change(next.document,next.assignments,'Change game context');}); }
   export function requestNavigation(continueNavigation:()=>void,cancelNavigation?:()=>void):void {
     finishName();
     notice='';
@@ -148,7 +145,8 @@
   }
   async function activateProfile(profile:DeepReadonly<ProfileSummary>) {
     if(activationDisabled(profile))return;
-    await runtime.apply({id:profile.id,revision:profile.revision,baseRevision:profile.revision,dirty:false,readOnly:workspace.readOnly});
+    const gameId=supportedGames.find(game=>game.id===profile.gameIds?.[0])?.id;
+    await runtime.apply({id:profile.id,revision:profile.revision,baseRevision:profile.revision,dirty:false,readOnly:workspace.readOnly},gameId);
   }
 </script>
 
@@ -166,7 +164,7 @@
     <div class="editor-title">
       <div class="profile-heading-copy"><p class="eyebrow">{editor.baseRevision===null?'NEW PROFILE DRAFT':'PROFILE EDITOR'}</p><h1 aria-label={editor.document.name||'Untitled profile'}>{#if editingName}<input class="profile-name-input" aria-label="Profile name" maxlength="80" bind:value={nameDraft} use:focusName onblur={finishName} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();finishName();}else if(event.key==='Escape'){event.preventDefault();editingName=false;}}}/>{:else if editor.document.id!==DEFAULT_PROFILE_ID}<button class="profile-title-button" aria-label="Edit profile name" title="Edit profile name" disabled={!canRename} onclick={editName}><span>{editor.document.name||'Untitled profile'}</span><Icon name="pencil" size={18}/></button>{:else}{editor.document.name}{/if}</h1><p>{dirty?'Unsaved changes. ':''}{appliedSnapshot?.profileId===editor.document.id?'Saving updates this active profile.':'Activate this profile when ready.'}</p></div>
       <div class="editor-save-actions">
-        <label class="game-context">Game context<select aria-label="Game context" bind:value={selectedGame}><option value="">None</option>{#each supportedGames as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label>
+        <label class="game-context" title="Saved with the profile. Selecting a context adds its integration and makes this profile available for that game.">Game context<select aria-label="Game context" value={selectedGame} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#each supportedGames as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label>
         <button class="secondary-button" onclick={()=>debugOpen=true}><Icon name="bug" size={14}/>Debug</button>
         <button class="secondary-button" aria-label="Export saved profile" title="Export saved profile" disabled={workspace.busy||libraryBusy||!savedEditor} onclick={()=>savedEditor&&libraryTools?.askExport(savedEditor)}><Icon name="download" size={14}/>Export</button>
         {#if editor.baseRevision===null}<button class="text-button" disabled={workspace.busy} onclick={cancel}>Cancel creation</button>{/if}
@@ -181,13 +179,13 @@
   {#if notice||workspace.error}<p class="workspace-error" role="alert">{notice||workspace.error}</p>{/if}
   {#if workspace.view==='list'}
     <div class="list-tools"><span>{rows.length} {rows.length===1?'profile':'profiles'}</span></div>
-    <ul class="profile-list" aria-label="Saved profiles">{#each rows as profile (profile.id)}<li class="profile-tile" class:profile-active={activeProfileId===profile.id} class:profile-muted={!!activeProfileId&&activeProfileId!==profile.id}><button class="profile-row" disabled={workspace.busy||libraryBusy} onclick={()=>openProfile(profile.id)} title={profile.name} aria-label={`Edit ${profile.name}`}><span class="profile-tile-heading"><span class="profile-mark"><Icon name="network" size={22}/></span><span class="profile-badges">{#if activeProfileId===profile.id}<span>Active</span>{/if}</span></span><span class="profile-copy"><strong>{profile.name}</strong>{#if profile.isDefault}<span class="built-in-badge">Built-in</span>{/if}</span></button><div class="profile-row-actions"><button class="secondary-button activate-profile" title={runtimeState.status?.owner?.profileId===profile.id?'Deactivate profile':'Activate saved profile (hardware only)'} aria-label={runtimeState.status?.owner?.profileId===profile.id?`Deactivate ${profile.name}`:`Activate ${profile.name}`} disabled={runtimeState.status?.owner?.profileId===profile.id?runtimeState.pending==='stop':activationDisabled(profile)} onclick={()=>runtimeState.status?.owner?.profileId===profile.id?runtime.stop():activateProfile(profile)}><Icon name={runtimeState.status?.owner?.profileId===profile.id?'stop':'play'} size={14}/>{runtimeState.status?.owner?.profileId===profile.id?'Deactivate':'Activate'}</button><button class="icon-button" title="Export profile" aria-label={`Export ${profile.name}`} disabled={workspace.busy||libraryBusy} onclick={()=>libraryTools?.askExport(profile)}><Icon name="download" size={16}/></button>{#if !profile.isDefault}<button class="icon-button delete-profile" title="Delete profile" aria-label={`Delete ${profile.name}`} disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={()=>libraryTools?.askDelete(profile)}><Icon name="trash" size={16}/></button>{/if}</div></li>{:else}<li class="empty-profiles">{workspace.busy?'Loading profiles…':'No saved profiles are available.'}</li>{/each}</ul>
+    <ul class="profile-list" aria-label="Saved profiles">{#each rows as profile (profile.id)}<li class="profile-tile" class:profile-active={activeProfileId===profile.id} class:profile-muted={!!activeProfileId&&activeProfileId!==profile.id}><button class="profile-row" disabled={workspace.busy||libraryBusy} onclick={()=>openProfile(profile.id)} title={profile.name} aria-label={`Edit ${profile.name}`}><span class="profile-tile-heading"><span class="profile-mark"><Icon name="network" size={22}/></span><span class="profile-badges">{#each profile.gameIds??[] as gameId (gameId)}<span class="profile-game-badge" title={`Game context: ${profileGameName(gameId)}`}><Icon name="gamepad" size={12}/>{profileGameName(gameId)}</span>{/each}{#if activeProfileId===profile.id}<span>Active</span>{/if}</span></span><span class="profile-copy"><strong>{profile.name}</strong>{#if profile.isDefault}<span class="built-in-badge">Built-in</span>{/if}</span></button><div class="profile-row-actions"><button class="secondary-button activate-profile" title={runtimeState.status?.owner?.profileId===profile.id?'Deactivate profile':profile.gameIds?.length?'Activate saved profile for its game context':'Activate saved profile (hardware only)'} aria-label={runtimeState.status?.owner?.profileId===profile.id?`Deactivate ${profile.name}`:`Activate ${profile.name}`} disabled={runtimeState.status?.owner?.profileId===profile.id?runtimeState.pending==='stop':activationDisabled(profile)} onclick={()=>runtimeState.status?.owner?.profileId===profile.id?runtime.stop():activateProfile(profile)}><Icon name={runtimeState.status?.owner?.profileId===profile.id?'stop':'play'} size={14}/>{runtimeState.status?.owner?.profileId===profile.id?'Deactivate':'Activate'}</button><button class="icon-button" title="Export profile" aria-label={`Export ${profile.name}`} disabled={workspace.busy||libraryBusy} onclick={()=>libraryTools?.askExport(profile)}><Icon name="download" size={16}/></button>{#if !profile.isDefault}<button class="icon-button delete-profile" title="Delete profile" aria-label={`Delete ${profile.name}`} disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={()=>libraryTools?.askDelete(profile)}><Icon name="trash" size={16}/></button>{/if}</div></li>{:else}<li class="empty-profiles">{workspace.busy?'Loading profiles…':'No saved profiles are available.'}</li>{/each}</ul>
     {#if workspace.inventoryError}<p class="workspace-error" role="status">{workspace.inventoryError}</p><button class="secondary-button" disabled={workspace.inventoryBusy} onclick={()=>store.refreshInventory()}>Refresh resource inventory</button>{/if}
   {:else if editor}
     {#if editor.baseRevision===null}<div class="editor-basics panel"><fieldset class="draft-source"><legend>Start from</legend><button class="secondary-button" disabled={workspace.busy||workspace.readOnly} onclick={()=>source('blank')}>Blank profile</button><label>Copy saved profile<select aria-label="Copy source profile" bind:value={copyId} disabled={workspace.busy}>{#each rows as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label><button class="secondary-button" disabled={workspace.busy||workspace.readOnly||!copyId} onclick={()=>source(copyId)}>Use copy</button><p>Copies retain the graph and layout with a new identity. Select devices for the copy; machine assignments are excluded.</p></fieldset></div>{/if}
     {#if error}<p class="workspace-error" role="alert">{error}</p>{/if}
     <div class="profile-authoring">
-      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} {selectedGame} editorGroups={editor.document.editor.groups??[]} addGroup={()=>routingEditor?.addGroup()} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.length} desktopAdded={!!editor.document.desktopOutputs?.length} disabled={workspace.readOnly||workspace.busy||libraryBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>void store.refreshInventory()} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDesktop={()=>{if(canDropComponent({kind:'desktop'}))routingEditor?.addDesktop();}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
+      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} editorGroups={editor.document.editor.groups??[]} addGroup={()=>routingEditor?.addGroup()} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.length} desktopAdded={!!editor.document.desktopOutputs?.length} disabled={workspace.readOnly||workspace.busy||libraryBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>void store.refreshInventory()} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDesktop={()=>{if(canDropComponent({kind:'desktop'}))routingEditor?.addDesktop();}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
       <div class="profile-canvas-workspace">{#key editor.document.id}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} active={active&&!debugOpen} runtimeIdle={learningIdle} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}</div>
     </div>
   {/if}
@@ -199,6 +197,7 @@
 </section>
 
 <style>
+  .profile-game-badge{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%}
   .game-context{display:grid;gap:5px;font-size:9px;color:var(--muted)}.game-context select{min-width:180px;max-width:220px;padding:9px 12px;font-size:11px;background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px}
   .profile-authoring{display:grid;grid-template-columns:236px minmax(0,1fr);align-items:start;gap:18px}.profile-canvas-workspace{min-width:0}@media(max-width:1050px){.profile-authoring{grid-template-columns:minmax(0,1fr)}}
   .profile-heading-copy{min-width:0;flex:1}.profile-title-button{display:inline-flex;align-items:center;gap:10px;max-width:100%;padding:0;background:transparent;color:inherit;font:inherit;letter-spacing:inherit;text-align:left}.profile-title-button span{min-width:0;overflow-wrap:anywhere}.profile-title-button :global(svg){flex-shrink:0;color:var(--muted);opacity:0;transition:opacity .15s}.profile-title-button:hover:enabled :global(svg),.profile-title-button:focus-visible :global(svg){opacity:1}.profile-name-input{width:100%;min-width:0;margin:0;padding:0 6px;font:inherit;letter-spacing:inherit;line-height:inherit;background:var(--input-bg);border:1px solid var(--line);border-radius:4px}.editor-save-actions{flex-shrink:0}@media(hover:none){.profile-title-button:enabled :global(svg){opacity:1}}

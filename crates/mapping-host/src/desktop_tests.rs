@@ -204,6 +204,23 @@ fn fixture(
     (desktop, phase, focused, events)
 }
 #[test]
+fn returning_process_requires_new_neutral_input_before_rearming_held_bindings() {
+    let (mut desktop,mut phase,_,events)=prepared_fixture(Action::KeyHold{key:Key(4)},false);
+    frame(&mut phase,2,2,Reason::Change,true);
+    desktop.start_waiting_for_neutral().unwrap();
+    assert!(events.lock().unwrap().is_empty());
+    desktop.poll_focused(&[],&phase,true).unwrap();
+    let frames=frame(&mut phase,3,3,Reason::Change,true);
+    desktop.poll_focused(&frames,&phase,true).unwrap();
+    assert!(events.lock().unwrap().is_empty(),"Held input from before the new game cannot replay");
+    let frames=frame(&mut phase,4,4,Reason::Change,false);
+    desktop.poll_focused(&frames,&phase,true).unwrap();
+    assert!(events.lock().unwrap().is_empty());
+    let frames=frame(&mut phase,5,5,Reason::Change,true);
+    desktop.poll_focused(&frames,&phase,true).unwrap();
+    assert_eq!(events.lock().unwrap().len(),1);
+}
+#[test]
 fn deferred_game_scope_never_registers_or_injects_before_start_and_failed_launch_cleans_neutrally()
 {
     let (mut desktop, mut phase, _, events) =
