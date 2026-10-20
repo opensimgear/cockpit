@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./profile-editor','./profile-diagram']);
+const modules=await loadModules(['./profile-editor','./profile-diagram','./profile-canvas']);
 const {profileAutoLayout,PROFILE_BLOCK_WIDTH:width,PROFILE_BLOCK_HEIGHT:height}=modules.get('./profile-editor');
 const {diagramRoutes}=modules.get('./profile-diagram');
 const edge=(from,to,id=`${from}-${to}`)=>({id,from:{nodeId:from,portId:'out'},to:{nodeId:to,portId:'in'}});
@@ -14,8 +14,8 @@ function verifyRoutes(nodes,bindings){
   assert.equal(routes.length,bindings.length,'Every saved route stays visible');
   for(const {binding,points,path}of routes){
     const from=nodes.find(node=>node.id===binding.from.nodeId),to=nodes.find(node=>node.id===binding.to.nodeId);
-    assert.deepEqual(plain(points[0]),{x:from.position.x+width,y:from.position.y+height/2});
-    assert.deepEqual(plain(points.at(-1)),{x:to.position.x,y:to.position.y+height/2});
+    assert.equal(points[0].x,from.position.x+width);assert.ok(points[0].y>=from.position.y+24&&points[0].y<=from.position.y+height-24);
+    assert.equal(points.at(-1).x,to.position.x);assert.ok(points.at(-1).y>=to.position.y+24&&points.at(-1).y<=to.position.y+height-24);
     assert.ok(!/NaN|Infinity/.test(path));
     for(let i=1;i<points.length;i++){
       const a=points[i-1],b=points[i];assert.ok(a.x===b.x||a.y===b.y,'Routes use orthogonal channels');
@@ -24,6 +24,16 @@ function verifyRoutes(nodes,bindings){
           a.y>p.y&&a.y<p.y+height&&Math.max(a.x,b.x)>p.x&&Math.min(a.x,b.x)<p.x+width;
         assert.equal(crosses,false,`${binding.id} crosses block ${id}`);
       }
+    }
+  }
+  for(let i=0;i<routes.length;i++)for(let j=i+1;j<routes.length;j++){
+    for(let a=1;a<routes[i].points.length;a++)for(let b=1;b<routes[j].points.length;b++){
+      const p=routes[i].points[a-1],q=routes[i].points[a],r=routes[j].points[b-1],s=routes[j].points[b];
+      const vertical=p.x===q.x&&r.x===s.x&&Math.abs(p.x-r.x)<1e-6;
+      const horizontal=p.y===q.y&&r.y===s.y&&Math.abs(p.y-r.y)<1e-6;
+      const overlap=vertical?Math.min(Math.max(p.y,q.y),Math.max(r.y,s.y))-Math.max(Math.min(p.y,q.y),Math.min(r.y,s.y)):
+        horizontal?Math.min(Math.max(p.x,q.x),Math.max(r.x,s.x))-Math.max(Math.min(p.x,q.x),Math.min(r.x,s.x)):0;
+      assert.ok(overlap<1e-6,`${routes[i].binding.id} and ${routes[j].binding.id} share a connection segment`);
     }
   }
   return routes;
@@ -62,4 +72,24 @@ test('complete profile layout preserves every binding and clears all blocks',asy
   const start=performance.now();verifyRoutes(placed(positions),doc.bindings);
   assert.ok(performance.now()-start<3000,'Routing a complete profile should remain interactive');
   assert.equal(JSON.stringify(doc),before);
+});
+
+
+test('parallel signals and fan-in/fan-out get distinct attachments and deterministic lanes',()=>{
+  const bindings=[...Array.from({length:8},(_,i)=>edge('source','target',`parallel-${i}`)),edge('source','lower','branch'),edge('lower','target','merge')];
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}},{id:'lower',position:{x:450,y:350}}];
+  const routes=verifyRoutes(nodes,bindings),parallel=routes.filter(route=>route.binding.id.startsWith('parallel'));
+  assert.equal(new Set(parallel.map(route=>route.path)).size,8);
+  assert.equal(new Set(parallel.map(route=>route.points[0].y)).size,8);
+  assert.equal(new Set(parallel.map(route=>route.points.at(-1).y)).size,8);
+  const reversed=new Map(diagramRoutes(nodes,[...bindings].reverse(),width,height).map(route=>[route.binding.id,route.path]));
+  for(const route of routes)assert.equal(reversed.get(route.binding.id),route.path);
+  verifyRoutes(nodes.map(node=>node.id==='lower'?{...node,position:{x:450,y:-100}}:node),bindings);
+});
+
+
+test('tight saved layouts preserve all separate paths without requiring auto-layout',async()=>{
+  const doc=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8'));
+  const nodes=modules.get('./profile-canvas').canvasNodes(doc,[],[]);
+  verifyRoutes(nodes,doc.bindings);
 });

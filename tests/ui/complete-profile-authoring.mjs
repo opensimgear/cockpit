@@ -224,11 +224,29 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, and inspect a
     const boxes=[...world.querySelectorAll('[data-node-id]')].map(node=>({id:node.dataset.nodeId,x:parseFloat(node.style.left),y:parseFloat(node.style.top),w:parseFloat(node.style.width),h:parseFloat(node.style.height)}));
     const paths=[...world.querySelectorAll('.signal-edge')];const collisions=[];
     for(const path of paths){const length=path.getTotalLength();for(let distance=0;distance<=length;distance+=4){const p=path.getPointAtLength(distance);for(const box of boxes)if(p.x>box.x+.5&&p.x<box.x+box.w-.5&&p.y>box.y+.5&&p.y<box.y+box.h-.5){collisions.push({edge:path.dataset.bindingId,block:box.id});break;}}}
-    return{edges:paths.length,collisions};
+    const segments=[];
+    for(const path of paths){let previous;for(const match of path.getAttribute('d').matchAll(/([MLQ])([^MLQ]*)/g)){
+      const numbers=match[2].match(/[-+]?(?:\d*\.?\d+)(?:e[-+]?\d+)?/gi).map(Number),point={x:numbers.at(-2),y:numbers.at(-1)};
+      if(match[1]==='L')segments.push({edge:path.dataset.bindingId,a:previous,b:point});previous=point;
+    }}
+    const overlaps=[];
+    for(let i=0;i<segments.length;i++)for(let j=i+1;j<segments.length;j++){
+      const p=segments[i],q=segments[j];if(p.edge===q.edge)continue;
+      const vertical=p.a.x===p.b.x&&q.a.x===q.b.x&&Math.abs(p.a.x-q.a.x)<.01;
+      const horizontal=p.a.y===p.b.y&&q.a.y===q.b.y&&Math.abs(p.a.y-q.a.y)<.01;
+      const overlap=vertical?Math.min(Math.max(p.a.y,p.b.y),Math.max(q.a.y,q.b.y))-Math.max(Math.min(p.a.y,p.b.y),Math.min(q.a.y,q.b.y)):
+        horizontal?Math.min(Math.max(p.a.x,p.b.x),Math.max(q.a.x,q.b.x))-Math.max(Math.min(p.a.x,p.b.x),Math.min(q.a.x,q.b.x)):0;
+      if(overlap>.01)overlaps.push([p.edge,q.edge]);
+    }
+    return{edges:paths.length,collisions,overlaps};
   });
   assert.equal(routed.edges,18);assert.deepEqual(routed.collisions,[],'Rendered routes must clear every block, including rounded corners');
+  assert.deepEqual(routed.overlaps,[],'Each rendered connection must have its own path');
   await page.getByRole('button',{name:'Close node details',exact:true}).click();
   await expect(page.getByLabel('Selected block inspector')).toHaveCount(0);
+  const firstRoute=page.locator('.signal-edge').first();
+  const hoverPoint=await firstRoute.evaluate(path=>{const p=path.getPointAtLength(Math.min(20,path.getTotalLength()/2));const screen=new DOMPoint(p.x,p.y).matrixTransform(path.getScreenCTM());return{x:screen.x,y:screen.y};});
+  await page.mouse.move(hoverPoint.x,hoverPoint.y);await expect(firstRoute).toHaveCSS('stroke-width','3px');
   await page.locator('.canvas-layout').screenshot({path:resolve(artifacts,'auto-layout-clear-routes.png'),animations:'disabled'});
 
   // Author portable editor metadata through the production controls as well.

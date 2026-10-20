@@ -72,14 +72,41 @@ function crosses(a:DiagramPoint,b:DiagramPoint,box:Box){
 export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number){
   const clearance=20, byId=new Map(nodes.map(node=>[node.id,node]));
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+width+clearance,top:node.position.y-clearance,bottom:node.position.y+height+clearance}));
-  const xs=[...new Set(boxes.flatMap(box=>[box.left,box.right]))].sort((a,b)=>a-b);
-  const ys=[...new Set(nodes.flatMap((node,i)=>[boxes[i].top,boxes[i].bottom,node.position.y+height/2]))].sort((a,b)=>a-b);
-  const xIndex=new Map(xs.map((x,index)=>[x,index])),yIndex=new Map(ys.map((y,index)=>[y,index]));
+  const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
+  const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
+  for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:{x:from.position.x+width,y:from.position.y+height/2},end:{x:to.position.x,y:to.position.y+height/2}});}
+  for(const node of nodes)for(const side of ['from','to'] as const){
+    const incident=valid.filter(binding=>binding[side].nodeId===node.id).sort((a,b)=>{
+      const peer=(binding:DeepReadonly<ProfileBinding>)=>byId.get(binding[side==='from'?'to':'from'].nodeId)!;
+      return peer(a).position.y-peer(b).position.y||peer(a).position.x-peer(b).position.x||a.id.localeCompare(b.id);
+    });
+    const spacing=Math.min(12,(height-48)/Math.max(1,incident.length-1));
+    incident.forEach((binding,index)=>{anchors.get(binding.id)![side==='from'?'start':'end'].y+= (index-(incident.length-1)/2)*spacing;});
+  }
+  const xs=new Set(boxes.flatMap(box=>[box.left,box.right]));
+  const ys=new Set([...boxes.flatMap(box=>[box.top,box.bottom]),...[...anchors.values()].flatMap(pair=>[pair.start.y,pair.end.y])]);
   const segmentCache=new Map<string,boolean>();
-  const point=(index:number)=>({x:xs[index%xs.length],y:ys[Math.floor(index/xs.length)]});
-  function clear(a:number,b:number){const key=a<b?`${a}:${b}`:`${b}:${a}`;let value=segmentCache.get(key);if(value===undefined){value=!boxes.some(box=>crosses(point(a),point(b),box));segmentCache.set(key,value);}return value;}
+  type Interval={start:number;end:number};
+  const horizontal=new Map<number,Interval[]>(),vertical=new Map<number,Interval[]>();
+  function free(a:DiagramPoint,b:DiagramPoint){
+    const upright=a.x===b.x,track=(upright?vertical:horizontal).get(upright?a.x:a.y)??[];
+    const start=Math.min(upright?a.y:a.x,upright?b.y:b.x),end=Math.max(upright?a.y:a.x,upright?b.y:b.x);
+    return !track.some(segment=>Math.min(end,segment.end)-Math.max(start,segment.start)>1e-6);
+  }
+  function reserve(points:DiagramPoint[]){
+    for(let i=1;i<points.length;i++){
+      const a=points[i-1],b=points[i],upright=a.x===b.x,tracks=upright?vertical:horizontal,key=upright?a.x:a.y;
+      tracks.set(key,[...(tracks.get(key)??[]),{start:Math.min(upright?a.y:a.x,upright?b.y:b.x),end:Math.max(upright?a.y:a.x,upright?b.y:b.x)}]);
+      // Offer the next connection its own parallel lane on either side.
+      const coordinates=upright?xs:ys;coordinates.add(key-12);coordinates.add(key+12);
+    }
+  }
+  function clear(a:DiagramPoint,b:DiagramPoint){const key=`${a.x},${a.y}:${b.x},${b.y}`;let value=segmentCache.get(key);if(value===undefined){value=!boxes.some(box=>crosses(a,b,box));segmentCache.set(key,value);}return value&&free(a,b);}
   function route(start:DiagramPoint,end:DiagramPoint):DiagramPoint[]{
-    const source=yIndex.get(start.y)!*xs.length+xIndex.get(start.x)!,target=yIndex.get(end.y)!*xs.length+xIndex.get(end.x)!;
+    const columns=[...xs].sort((a,b)=>a-b),rows=[...ys].sort((a,b)=>a-b);
+    const xIndex=new Map(columns.map((x,index)=>[x,index])),yIndex=new Map(rows.map((y,index)=>[y,index]));
+    const point=(index:number)=>({x:columns[index%columns.length],y:rows[Math.floor(index/columns.length)]});
+    const source=yIndex.get(start.y)!*columns.length+xIndex.get(start.x)!,target=yIndex.get(end.y)!*columns.length+xIndex.get(end.x)!;
     type Step={key:number;cost:number;estimate:number;remaining:number};
     const heap:Step[]=[],costs=new Map<number,number>(),parent=new Map<number,number>();
     const before=(a:Step,b:Step)=>a.estimate<b.estimate||a.estimate===b.estimate&&a.remaining<b.remaining;
@@ -91,25 +118,38 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
       const current=pop();if(current.cost!==costs.get(current.key))continue;
       const id=Math.floor(current.key/3),direction=current.key%3;
       if(id===target){const points:DiagramPoint[]=[];let key:number|undefined=current.key;while(key!==undefined){points.push(point(Math.floor(key/3)));key=parent.get(key);}return points.reverse();}
-      const x=id%xs.length,y=Math.floor(id/xs.length),p=point(id);
+      const x=id%columns.length,y=Math.floor(id/columns.length),p=point(id);
       for(const [nx,ny,axis]of [[x-1,y,1],[x+1,y,1],[x,y-1,2],[x,y+1,2]]){
-        if(nx<0||ny<0||nx>=xs.length||ny>=ys.length)continue;
-        const next=ny*xs.length+nx;if(!clear(id,next))continue;
-        const q=point(next),key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction&&direction!==axis?16:0);
+        if(nx<0||ny<0||nx>=columns.length||ny>=rows.length)continue;
+        const next=ny*columns.length+nx,q=point(next);if(!clear(p,q))continue;
+        const key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction&&direction!==axis?16:0);
         if(cost>=(costs.get(key)??Infinity))continue;
         costs.set(key,cost);parent.set(key,current.key);const remaining=distance(next);push({key,cost,estimate:cost+remaining,remaining});
       }
     }
     return [];
   }
-  return bindings.flatMap(binding=>{
-    const from=byId.get(binding.from.nodeId),to=byId.get(binding.to.nodeId);if(!from||!to)return[];
-    const start={x:from.position.x+width,y:from.position.y+height/2},end={x:to.position.x,y:to.position.y+height/2};
-    const points=[start,...route({x:start.x+clearance,y:start.y},{x:end.x-clearance,y:end.y}),end];
+  // Short connections claim their compact paths first; longer ones use free lanes.
+  const span=(binding:DeepReadonly<ProfileBinding>)=>{const {start,end}=anchors.get(binding.id)!;return Math.abs(start.x-end.x)+Math.abs(start.y-end.y);};
+  const routed=[...valid].sort((a,b)=>span(a)-span(b)||a.id.localeCompare(b.id)).flatMap(binding=>{
+    const {start,end}=anchors.get(binding.id)!;
+    const exit={x:start.x+clearance,y:start.y},entry={x:end.x-clearance,y:end.y};
+    let channel=route(exit,entry);
+    // Older saved layouts can leave less than one normal lane between blocks.
+    // Subdivide those tight channels only when the regular tracks are occupied.
+    for(let attempt=0;!channel.length&&attempt<2;attempt++){
+      for(const coordinates of [xs,ys]){
+        const sorted=[...coordinates].sort((a,b)=>a-b);
+        for(let i=1;i<sorted.length;i++){const gap=sorted[i]-sorted[i-1];if(gap>2&&gap<=clearance*2)coordinates.add((sorted[i]+sorted[i-1])/2);}
+      }
+      channel=route(exit,entry);
+    }
+    const points=[start,...channel,end];
     // Overlapping manually placed blocks can enclose a port completely. Never draw
     // an invented direct line through those blocks when there is no visible route.
     if(points.length===2)return[];
     const corners=points.filter((p,index)=>!index||index===points.length-1||!((points[index-1].x===p.x&&p.x===points[index+1].x)||(points[index-1].y===p.y&&p.y===points[index+1].y)));
+    reserve(corners);
     let path=`M${corners[0].x},${corners[0].y}`;
     for(let i=1;i<corners.length-1;i++){
       const a=corners[i-1],b=corners[i],c=corners[i+1];
@@ -121,4 +161,6 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
     const last=corners.at(-1)!;path+=` L${last.x},${last.y}`;
     return[{binding,points:corners,path}];
   });
+  const byBinding=new Map(routed.map(route=>[route.binding.id,route]));
+  return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
 }
