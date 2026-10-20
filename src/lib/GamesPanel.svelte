@@ -50,6 +50,11 @@
     catch(error){notice=error instanceof Error?error.message:String(error);}
     finally{pending=false;}
   }
+  async function discoverInstallation(){
+    if(!selected||locked)return;const gameId=selected.id;
+    const result=await send({command:'game_installation',gameId,executable:null});
+    if(result&&!result.error&&selected?.id===gameId)executablePath=result.catalogue.find(game=>game.id===gameId)?.executable??'';
+  }
   async function integrationCommand(command:'game_integration_check'|'game_integration_setup'|'game_integration_cancel'|'game_integration_recover'){
     if(!selected||command==='game_integration_setup'&&setupDisabled)return;await send(gameIntegrationSetupRequest(selected,command,integrationFolder));
   }
@@ -81,7 +86,7 @@
     </div>
 
     <div class="game-content">
-        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={18} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><Icon name={selected.installed ? 'check' : 'info'} size={14} />{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan</button></div>
+        <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={18} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><Icon name={selected.installed ? 'check' : 'info'} size={14} />{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={discoverInstallation}><Icon name="search" size={14} />Discover automatically</button></div>
           {#if selected.source}<p class="field-help icon-text"><Icon name="folder" size={14} /><span>Source: {selected.source}</span></p>{/if}
           {#if selected.provider === 'x-plane' && selected.installations?.length}
             <label class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
@@ -89,7 +94,6 @@
           <div class="editor-label"><span id="game-executable-label" class="icon-text"><Icon name="play" size={14} />Game executable</span><button type="button" class="executable-picker" aria-label={`Choose ${selected.name} executable`} aria-describedby="game-executable-label" title={selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}`} disabled={locked} onclick={browseExecutable}><span class:empty={!selectedExecutablePath}>{selectedExecutablePath || `Choose ${gameExecutableName(selected.id)}…`}</span><Icon name="folder" size={14}/></button></div>
           <p class="field-help">Choose {gameExecutableName(selected.id)} in your installation folder.</p>
           {#if executablePath && executablePath !== selected.executable}<div class="installation-actions"><button class="secondary-button" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: executablePath })}><Icon name="check" size={14} />Use this path</button></div>{/if}
-          {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}><Icon name="search" size={14} />Use automatic discovery</button>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         </section>
         {#key selected.id}<GameProfileRule game={selected} busy={busy||pending}/>{/key}
@@ -282,13 +286,12 @@
   .executable-picker:not(:disabled):hover {border-color:var(--accent);}
   .installation-panel { padding: 21px; margin-bottom:20px; }
   .sidebar-title { display: flex; gap: 9px; align-items: center; color: var(--soft); }
-  .installation-status-row {display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:20px;}
-  .installation-status-row>button {flex-shrink:0;padding:8px 10px;}
+  .installation-status-row {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-top:20px;}
+  .installation-status-row>button {flex-shrink:0;margin-left:auto;padding:8px 10px;}
   .installation-status {display:flex;align-items:center;gap:7px;color:var(--muted);font-size:var(--game-detail-text-size);}
   .installation-status.found { color: var(--accent); }
   .installation-actions { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
-  .installation-actions button, .automatic-discovery {font-size:var(--game-detail-text-size);}
-  .automatic-discovery { padding-left: 0; margin-top: 15px; }
+  .installation-actions button {font-size:var(--game-detail-text-size);}
   .platform-note {color:#c5a26e;font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:17px;}
   .setup-panel { margin-top: 20px; padding: 21px; }
   .setup-readiness {display:flex;align-items:center;gap:7px;color:var(--muted);font-size:var(--game-detail-text-size);margin-top:19px;line-height:var(--game-detail-line-height);}
