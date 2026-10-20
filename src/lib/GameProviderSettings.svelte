@@ -68,6 +68,17 @@
       <div class="path-field"><span class="provider-field-label"><Icon name="folder" size={14}/>DCS Saved Games folder</span><button class="path-picker" type="button" aria-label="DCS Saved Games folder" title={gameDisplayPath(draft.userFolder)||'Choose the DCS Saved Games folder'} disabled={busy||saving||picking} onclick={()=>browseFolder('saved-games')}><span class:placeholder={!draft.userFolder}>{gameDisplayPath(draft.userFolder)||'Choose Saved Games folder…'}</span><Icon name="folder" size={16}/></button></div>
       <div class="path-field"><span class="provider-field-label"><Icon name="folder" size={14}/>DCS-BIOS doc/json directory</span><button class="path-picker" type="button" aria-label="DCS-BIOS doc/json directory" title={gameDisplayPath(dcs.cataloguePath)||'Choose the installed doc/json directory'} disabled={busy||saving||picking} onclick={()=>browseFolder('catalogue')}><span class:placeholder={!dcs.cataloguePath}>{gameDisplayPath(dcs.cataloguePath)||'Choose doc/json directory…'}</span><Icon name="folder" size={16}/></button></div>
     </section>
+    <section class="settings-section aircraft-hooks" aria-label="Aircraft mod export hooks">
+      <h3><Icon name="command" size={18}/>Aircraft mod export hooks</h3>
+      {#if game.integrationSetup?.aircraftExports?.length}
+        <table aria-label="Aircraft mod export hooks">
+          <thead><tr><th scope="col">Name</th><th scope="col">Available</th><th scope="col">Status</th></tr></thead>
+          <tbody>{#each game.integrationSetup.aircraftExports as hook (hook.aircraft)}
+            <tr><th scope="row">{hook.aircraft==='OH-6A'?'OH-6A Cayuse':hook.aircraft}</th><td>{hook.capability==='common-data-only'?'Common flight telemetry':'Controls and cockpit instruments'}</td><td><span class="hook-status" class:installed={hook.installed}><Icon name={hook.installed?'check':hook.compatible?'info':'alert'} size={14}/><span>{hook.message}</span></span></td></tr>
+          {/each}</tbody>
+        </table>
+      {:else}<p class="help">No aircraft mod export hooks detected.</p>{/if}
+    </section>
   {/if}
   <section class="settings-section" aria-label="Network and timing">
     <div class="settings-heading"><h3><Icon name="network" size={18}/>Network and timing</h3>{#if saving}<span class="saving" role="status"><Icon name="refresh" size={14}/>Saving…</span>{/if}</div>
@@ -97,5 +108,12 @@
   .settings-section{display:grid;gap:12px;min-width:0}.settings-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;min-width:0}h3{display:flex;align-items:center;gap:8px;font-size:var(--game-detail-heading-size,14px);font-weight:600;line-height:var(--game-detail-line-height,1.6);margin:0}p{margin:0}
   label,.path-field{display:grid;gap:7px;min-width:0;font-size:var(--game-detail-text-size,12px);color:var(--muted)}.provider-field-label{display:flex;align-items:center;gap:6px}input,select{min-width:0;width:100%;max-width:100%;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6)}
   .path-picker{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--text);text-align:left;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);cursor:pointer}.path-picker>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.path-picker:hover:not(:disabled){border-color:var(--accent)}.path-picker:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.path-picker:disabled{cursor:default;opacity:.5}.placeholder{color:var(--muted)}
+  .aircraft-hooks table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);text-align:left}
+  .aircraft-hooks th,.aircraft-hooks td{padding:10px 12px;vertical-align:top;overflow-wrap:anywhere;border-bottom:1px solid var(--line)}
+  .aircraft-hooks thead th{color:var(--muted);font-weight:500;background:var(--surface-raised)}
+  .aircraft-hooks thead th:first-child{width:22%}.aircraft-hooks thead th:nth-child(2){width:34%}
+  .aircraft-hooks tbody th{color:var(--soft);font-weight:500}.aircraft-hooks td{color:var(--muted)}
+  .hook-status{display:flex;align-items:flex-start;gap:7px}.hook-status :global(svg){margin-top:3px}.hook-status.installed{color:var(--accent)}
+  @media(max-width:650px){.aircraft-hooks th,.aircraft-hooks td{padding:8px 5px}}
   .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.help{font-size:var(--game-detail-text-size,12px);color:var(--muted);line-height:var(--game-detail-line-height,1.6);overflow-wrap:anywhere}.saving{display:inline-flex;align-items:center;gap:6px;color:var(--muted);white-space:nowrap}.warning{display:flex;align-items:flex-start;gap:7px;color:var(--warn,#e2b76a)}.warning span{min-width:0;overflow-wrap:anywhere}.provider-settings :global(svg){flex-shrink:0}@media(max-width:650px){.fields{grid-template-columns:1fr}}
 </style>

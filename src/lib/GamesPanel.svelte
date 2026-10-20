@@ -132,18 +132,9 @@
           <p class="field-help">{selected.integrationContext?.message ?? 'Game discovery identifies an installation. A verified running game and an active matching profile are required for live integration.'}</p>
           {#if selected.integrationSetup?.state==='setting-up'}<div class="setup-progress" role="status" aria-live="polite"><Icon name="refresh" size={14}/><span>{selected.integrationSetup.progress??'Preparing integration…'}</span></div>{:else if selected.integrationSetup?.recoveryNeeded}<p class="setup-warning">Recover the interrupted setup before trying again.</p>{:else if setupBlocked}<p class="field-help">{setupBlocked}</p>{/if}
           {#if integrationInstalled&&selected.integrationSetup?.removalMessage}<p class="field-help">{selected.integrationSetup.removalMessage}</p>{/if}
-          {#if selected.id === 'dcs'}
-            {#if selected.integrationSetup?.aircraftExports?.length}
-              <details class="telemetry-channel-details aircraft-hooks"><summary><span class="icon-text"><Icon name="command" size={14} />Aircraft mod export hooks</span></summary>
-                <p>Only mods in the selected DCS installation and Saved Games folder are included. Recheck and run setup after adding, updating or removing a mod.</p>
-                <dl>{#each selected.integrationSetup.aircraftExports as hook (hook.aircraft)}
-                  <div><dt>{hook.aircraft === 'OH-6A' ? 'OH-6A Cayuse' : hook.aircraft}<small>{hook.capability === 'common-data-only' ? 'Common flight telemetry' : 'Controls and cockpit instruments'}</small></dt><dd>{hook.message}</dd></div>
-                {/each}</dl>
-              </details>
-            {/if}
-          {:else if selected.provider === 'x-plane'}
+          {#if selected.provider === 'x-plane'}
             <p class="field-help">RREF telemetry uses the saved UDP connection. Integration does not change game files.</p>
-          {:else}
+          {:else if selected.id==='assetto-corsa-rally'}
             {#if !gameIntegrationNativeVerified(selected)}<div class="native-verification"><Icon name="info" size={14}/><span>{gameIntegrationVerificationLabel(selected)}</span></div><p class="field-help">Start ACR and enter a driving session, then recheck to verify compatible native telemetry.</p>{/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.probeChannels && Object.keys(selected.integrationSetup.probeChannels).length}
               <details class="telemetry-channel-details"><summary><span class="icon-text"><Icon name="search" size={14} />Last native check</span></summary><p>Channel availability from the last compatibility check. Live values appear separately when telemetry is receiving.</p><dl>{#each Object.entries(selected.integrationSetup.probeChannels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}</dd></div>{/each}</dl></details>
@@ -324,8 +315,6 @@
   .telemetry-channel-details dl > div>* {min-width:0;}
   .telemetry-channel-details dt { text-transform: capitalize; }
   .telemetry-channel-details dd { text-align: right; margin: 0; }
-  .aircraft-hooks dt { text-transform: none; }
-  .aircraft-hooks dt small {display:block;margin-top:4px;color:var(--muted);font-weight:normal;font-size:var(--game-detail-text-size);}
   .setup-warning {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:12px;}
   .setup-recheck {padding-left:0;font-size:var(--game-detail-text-size);margin-top:13px;}
   .setup-progress {display:flex;align-items:center;gap:8px;color:var(--accent);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:15px;}
