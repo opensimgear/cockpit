@@ -172,6 +172,29 @@ test('actual Add handler opens an empty editor immediately without requiring or 
  }
 });
 
-test('profile mode switch is inside the top runtime card with no duplicate mode control below the tiles',async()=>{
- const h=harness();await h.store.refresh();const body=html(h.store,h.client),runtimeCard=body.match(/<section\b[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];assert.ok(runtimeCard);assert.match(runtimeCard,/<button\b[^>]*role="switch"[^>]*aria-label="Automatic profile selection"/);assert.equal((body.match(/aria-label="Profile selection mode"/g)??[]).length,1);assert.deepEqual(h.calls,[]);
+test('profile mode switch shares the Debug and Add action bar and appears only once on the list',async()=>{
+ const h=harness();await h.store.refresh();const body=html(h.store,h.client),actions=body.match(/<div\b[^>]*class="[^"]*\bpage-actions\b[^"]*"[^>]*>([^]*?)<\/div><\/div>/)?.[1],runtimeCard=body.match(/<section\b[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];
+ assert.ok(actions);assert.match(actions,/<button\b[^>]*role="switch"[^>]*aria-label="Automatic profile selection"/);assert.ok(actions.includes('Debug'));assert.ok(actions.includes('Add profile'));assert.ok(runtimeCard);assert.ok(!runtimeCard.includes('Profile selection mode'));assert.ok(!runtimeCard.includes('Activate a saved profile from its tile'));assert.equal((body.match(/aria-label="Profile selection mode"/g)??[]).length,1);assert.deepEqual(h.calls,[]);
+ await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
+});
+
+test('fresh active ownership puts its tile first and stale or absent ownership restores ordinary ordering and tile appearance',async()=>{
+ const h=harness(),activeId=uid(3);h.docs.set(activeId,{...blankProfile(activeId,'Zulu rig'),revision:3});h.docs.set(uid(2),blankProfile(uid(2),'Alpha rig'));await h.store.refresh();
+ const before=plain(h.store.state.profiles),{ProfileRuntimeClient}=modules.get('./profile-runtime'),{ProfileRuntimeController}=modules.get('./profile-runtime-controller');
+ const appliedSnapshot={profileId:activeId,revision:3,semanticHash:hash},stopped={state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null};
+ let status={...stopped,state:'running',appliedSnapshot,owner:{session:uid(81),generation:1,profileId:activeId,profileRevision:3,gameId:null}},failStatus=false;
+ const runtime=new ProfileRuntimeController(new ProfileRuntimeClient(async request=>{assert.equal(request.command,'profile_status');if(failStatus)throw new Error('Native status disconnected');return status;}));await runtime.refresh();
+ const filename=new URL('./ProfilesPanel.svelte',import.meta.url),{js}=compile(await readFile(filename,'utf8'),{filename:filename.pathname,generate:'server'}),exports={};
+ vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){
+  if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onDestroy(){}};
+  if(name==='./profile-runtime-controller')return{...modules.get(name),ProfileRuntimeController:class{constructor(){return runtime;}}};
+  if(name.endsWith('.svelte'))return{default:()=>{}};if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected tile dependency ${name}`);
+ }},{filename:filename.pathname});
+ const tiles=()=>[...render(exports.default,{props:{editorStore:h.store,resourceClient:h.client}}).body.matchAll(/<li\b[^>]*class="([^"]*\bprofile-tile\b[^"]*)"[^>]*>([^]*?)<\/li>/g)].map(([,classes,body])=>({classes:classes.split(/\s+/),name:body.match(/aria-label="Edit ([^"]+)"/)?.[1],body}));
+ let rows=tiles();assert.deepEqual(rows.map(row=>row.name),['Zulu rig','Default','Alpha rig']);assert.ok(rows[0].classes.includes('profile-active'));assert.ok(!rows[0].classes.includes('profile-muted'));assert.ok(rows[0].body.includes('Deactivate Zulu rig'));for(const row of rows.slice(1)){assert.ok(row.classes.includes('profile-muted'));assert.ok(!row.classes.includes('profile-active'));}
+ failStatus=true;assert.equal(await runtime.refresh(),false);assert.equal(runtime.state.status.owner.profileId,activeId);
+ rows=tiles();assert.deepEqual(rows.map(row=>row.name),['Default','Alpha rig','Zulu rig']);for(const row of rows)assert.ok(!row.classes.includes('profile-active')&&!row.classes.includes('profile-muted'));
+ failStatus=false;status={...stopped,appliedSnapshot};await runtime.refresh();rows=tiles();assert.deepEqual(rows.map(row=>row.name),['Default','Alpha rig','Zulu rig']);for(const row of rows){assert.ok(!row.classes.includes('profile-active')&&!row.classes.includes('profile-muted'));assert.ok(!row.body.includes('<span>Active</span>'));}
+ status={...status,state:'degraded',degradation:['Optional resource unavailable'],owner:{session:uid(82),generation:2,profileId:activeId,profileRevision:3,gameId:null}};await runtime.refresh();rows=tiles();assert.equal(rows[0].name,'Zulu rig');assert.ok(rows[0].classes.includes('profile-active'));assert.ok(rows[1].classes.includes('profile-muted'));
+ assert.deepEqual(plain(h.store.state.profiles),before,'Active-first presentation must not reorder saved profile metadata.');assert.deepEqual(h.calls,[]);runtime.dispose();
 });

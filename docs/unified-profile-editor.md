@@ -135,9 +135,12 @@ are not an event history or input-learning mechanism.
 
 ## Runtime and concurrency details
 
-The top card shows **No profile active** or the one active profile and the
-Manual/Automatic toggle. Tiles show an **Active** badge only for that active
-profile. **Activate** and **Activate profile** request activation. When another
+The profile list action bar contains the Manual/Automatic toggle beside **Debug**
+and **Add profile**. The active profile is first and carries an **Active** badge.
+Other tiles are greyed out while remaining available to edit or activate; they
+return to full contrast on hover or keyboard focus. Without an active profile,
+all tiles have normal contrast and Default is first.
+**Activate** and **Activate profile** request activation. When another
 profile is active, a confirmation offers **Cancel** or **Switch
 profile**. Cancelling changes nothing; confirming deactivates the active profile
 before activating the requested profile.

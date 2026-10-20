@@ -64,3 +64,25 @@ test('waiting launch displays neutral hardware, blocks Apply and keeps Stop avai
   const view=await component(),h=harness();h.setStatus({...running(),state:'awaiting-game',owner:{...running().owner,gameId:null}});await h.controller.refresh();h.calls.length=0;
   const result=view.render({controller:h.controller,profiles,editor:{...editor(),id:other}});assert.ok(result.html.includes('Outputs remain neutral'));assert.ok(result.html.includes('game context is verified'));assert.match(button(result.html,'Activate profile'),/disabled/);assert.ok(!button(result.html,'Deactivate').includes('disabled'));assert.equal(button(result.html,'Pause'),'');await result.handlers.apply();assert.deepEqual(h.calls,[]);await result.handlers.stop();assert.deepEqual(h.calls,[{command:'profile_stop'}]);
 });
+
+test('compact list runtime keeps status polling without repeating healthy profile headings, help or tile actions',async()=>{
+  const view=await component(),h=harness();await h.controller.refresh();h.calls.length=0;
+  let result=view.render({controller:h.controller,profiles,compact:true});assert.ok(!result.html.includes('No profile active'));assert.ok(!result.html.includes('Activate a saved profile from its tile'));assert.equal(button(result.html,'Activate profile'),'');assert.equal(button(result.html,'Deactivate'),'');assert.deepEqual(h.calls,[]);
+  const cleanup=result.handlers.mountStatus();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(h.calls,[{command:'profile_status'}]);cleanup();assert.equal(view.timers.size,0);assert.equal(view.events.size,0);
+  h.setStatus(running());await h.controller.refresh();h.calls.length=0;
+  result=view.render({controller:h.controller,profiles,compact:true});assert.ok(!result.html.includes('Active profile'));assert.equal(button(result.html,'Deactivate'),'');assert.ok(!result.html.includes('Activate a saved profile from its tile'));assert.deepEqual(h.calls,[]);
+  result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Active profile · DCS rig'));assert.ok(button(result.html,'Deactivate'));assert.ok(result.html.includes('Saving this profile updates its active configuration'));assert.deepEqual(h.calls,[]);
+});
+
+test('compact list runtime preserves recovery actions, unavailable-resource notices and native status errors',async()=>{
+  const view=await component(),h=harness();h.setStatus({...stopped(),state:'recovery-needed',fault:'Native output release must be retried.'});await h.controller.refresh();h.calls.length=0;
+  let result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Native output release must be retried.'));assert.ok(button(result.html,'Recover outputs'));assert.equal(button(result.html,'Activate profile'),'');await result.handlers.recover();assert.deepEqual(h.calls,[{command:'profile_recover'}]);
+  h.setStatus({...running(),state:'degraded',degradation:['Optional companion disconnected.']});await h.controller.refresh();result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Some profile resources are unavailable. Open Debug for details.'));assert.equal(button(result.html,'Deactivate'),'');
+  h.client.status=async()=>{throw new Error('Native service disconnected.');};assert.equal(await h.controller.refresh(),false);result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Current native status is unavailable:'));assert.ok(result.html.includes('Native service disconnected.'));
+});
+
+test('compact list runtime retains Deactivate cancellation during a slow activation and rejects its late acknowledgement',async()=>{
+  const view=await component(),h=harness();await h.controller.refresh();const pending=deferred();h.client.apply=async()=>pending.promise;
+  const applying=h.controller.apply(editor());let result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Activating profile…'));assert.ok(result.html.includes('Deactivate cancels this activation.'));assert.ok(button(result.html,'Deactivate'));assert.ok(!button(result.html,'Deactivate').includes('disabled'));
+  await result.handlers.stop();pending.resolve(running());assert.equal(await applying,false);result=view.render({controller:h.controller,profiles,compact:true});assert.equal(button(result.html,'Deactivate'),'');assert.ok(!result.html.includes('Activating profile…'));assert.equal(h.controller.state.status.owner,null);assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,1);
+});

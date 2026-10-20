@@ -12,6 +12,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
   const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
   const page=browser.contexts().flatMap(context=>context.pages()).find(page=>/127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(page.url()));
   assert.ok(page,'Start the native dev cockpit before running this test.');
+  await page.reload();
   await mkdir(artifacts,{recursive:true});
   const errors=[],names=new Set(),name=`Profile workflow ${Date.now()}`;
   page.on('pageerror',error=>errors.push(error.message));
@@ -29,7 +30,32 @@ test('native cockpit saves with notifications and confirms exclusive profile act
   }
   async function noSelectedBadge(){await expect(page.getByText('Selected for runtime',{exact:true})).toHaveCount(0);}
   const navigation=page.getByRole('navigation',{name:'Main navigation'});
+  const profileList=page.getByRole('list',{name:'Saved profiles',exact:true});
+  const tiles=profileList.locator('.profile-tile');
+  const tileFor=value=>tiles.filter({has:page.getByRole('button',{name:`Edit ${value}`,exact:true})});
+  const pageActions=page.locator('.page-actions');
+  const runtime=page.getByRole('region',{name:'Runtime profile status',exact:true});
+  async function healthyList(){
+    await expect(runtime).not.toBeVisible();
+    await expect(pageActions.getByRole('switch',{name:'Automatic profile selection',exact:true})).toBeVisible();
+    await expect(pageActions.getByRole('button',{name:'Debug',exact:true}).locator('svg')).toHaveCount(1);
+  }
+  async function activeList(value){
+    await healthyList();
+    const selected=tileFor(value);
+    await expect(selected).toHaveClass(/\bprofile-active\b/);
+    await expect(tiles.first().getByRole('button',{name:`Edit ${value}`,exact:true})).toBeVisible();
+    await expect(profileList.locator('.profile-active')).toHaveCount(1);
+    await expect(profileList.locator('.profile-muted')).toHaveCount(await tiles.count()-1);
+    await expect(selected).not.toHaveClass(/\bprofile-muted\b/);
+    for(const tile of await tiles.all()){
+      await expect(tile.getByRole('button',{name:/^Edit /})).toBeEnabled();
+      await expect(tile.getByRole('button',{name:/^(Activate|Deactivate) /})).toBeEnabled();
+    }
+  }
   async function list(){
+    const switchDialog=page.getByRole('dialog',{name:'Switch active profile?',exact:true});
+    if(await switchDialog.isVisible().catch(()=>false))await switchDialog.getByRole('button',{name:'Cancel',exact:true}).click();
     await navigation.getByRole('button',{name:'Profiles',exact:true}).click();
     const debugBack=page.getByRole('button',{name:/^← Back to profile/});if(await debugBack.isVisible().catch(()=>false))await debugBack.click();
     const back=page.getByRole('button',{name:/^← Back to Profiles/});if(await back.isVisible().catch(()=>false))await back.click();
@@ -40,12 +66,14 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await list();
     if((await status()).state==='recovery-needed')await page.getByRole('button',{name:'Recover outputs',exact:true}).click();
     await native({command:'profile_stop'});
-    const runtime=page.getByRole('region',{name:'Runtime profile status',exact:true});
-    const modeSwitch=runtime.getByRole('switch',{name:'Automatic profile selection',exact:true});
+    const modeSwitch=pageActions.getByRole('switch',{name:'Automatic profile selection',exact:true});
     const profileBadge=page.locator('.topbar .profile-status'),modeBadge=profileBadge.locator('.mode-badge');
-    await expect(modeSwitch).toBeEnabled();await expect(modeSwitch).toHaveAttribute('aria-checked','false');
-    await expect(runtime.getByText('No profile active',{exact:true})).toBeVisible();
+    await expect(modeSwitch).toBeEnabled();
+    if(await modeSwitch.getAttribute('aria-checked')==='true')await modeSwitch.click();
+    await expect(modeSwitch).toHaveAttribute('aria-checked','false');
+    await expect(profileBadge.getByText('No profile active',{exact:true})).toBeVisible();
     await expect(runtime.getByRole('button',{name:'Deactivate current profile',exact:true})).toHaveCount(0);
+    await healthyList();
     await noSelectedBadge();
     await expect(page.getByRole('region',{name:'Automatic profile selection',exact:true})).toHaveCount(0);
     await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
@@ -53,12 +81,11 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(modeBadge).toHaveText('Automatic');
     await modeSwitch.click();await expect(modeSwitch).toHaveAttribute('aria-checked','false');
     await expect.poll(async()=>(await native({command:'profile_status'})).profiles.automatic.mode).toBe('manual');
-    const deactivate=runtime.getByRole('button',{name:'Deactivate current profile',exact:true});
-    if(await deactivate.count())await deactivate.click();await native({command:'profile_stop'});
+    await native({command:'profile_stop'});
     await expect.poll(async()=>(await status()).owner).toBeNull();
-    await expect(runtime.getByText('No profile active',{exact:true})).toBeVisible();
+    await expect(profileBadge.getByText('No profile active',{exact:true})).toBeVisible();
     await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
-    await runtime.screenshot({path:resolve(artifacts,'profile-mode.png')});
+    await pageActions.screenshot({path:resolve(artifacts,'profile-mode.png')});
     await page.getByRole('button',{name:'Settings',exact:true}).click();
     const setup=page.getByRole('region',{name:'Controller and desktop output settings'});
     await expect(setup.getByRole('button',{name:'Configure vJoy',exact:true})).toBeVisible();
@@ -129,6 +156,9 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     // An activation request alone must not select, deactivate or replace an owner.
     // Exercise the actual tile buttons and both choices of the native-guarded dialog.
     await list();await noSelectedBadge();
+    assert.equal(first.isDefault,false,'The active ordering acceptance profile must be independent of Default.');
+    await activeList(updated);
+    await page.screenshot({path:resolve(artifacts,'profile-active-list.png'),fullPage:true});
     await expect(page.getByRole('button',{name:`Deactivate ${updated}`,exact:true})).toBeEnabled();
     const activateSecond=page.getByRole('button',{name:`Activate ${inactive}`,exact:true});
     await activateSecond.click();
@@ -139,9 +169,12 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await switchDialog.getByRole('button',{name:'Cancel',exact:true}).click();
     await expect(switchDialog).toHaveCount(0);
     assert.deepEqual((await status()).owner,changed.owner,'Cancelling a switch must preserve the exact active owner.');
+    await activeList(updated);
     await activateSecond.click();await switchDialog.getByRole('button',{name:'Switch profile',exact:true}).click();
     await expect.poll(async()=>(await status()).owner?.profileId).toBe(second.id);
     const switched=await status();assert.ok(switched.owner.generation>changed.owner.generation);
+    await activeList(inactive);
+    await expect(tileFor(updated)).toHaveClass(/\bprofile-muted\b/);
     await expect(page.getByRole('button',{name:`Activate ${updated}`,exact:true})).toBeEnabled();
     await expect(page.getByRole('button',{name:`Deactivate ${inactive}`,exact:true})).toBeEnabled();
     assert.ok(!(await native({command:'profile_desktop_status'})).desktop.runtime||
@@ -156,11 +189,20 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     const inactiveStatus=await status();assert.equal(inactiveStatus.appliedSnapshot,null);
     await expect(debug.getByText('No profile active',{exact:true})).toBeVisible();
     await list();await noSelectedBadge();
-    await expect(runtime.getByText('No profile active',{exact:true})).toBeVisible();
+    await healthyList();
+    await expect(profileBadge.getByText('No profile active',{exact:true})).toBeVisible();
+    await expect(profileList.locator('.profile-active,.profile-muted')).toHaveCount(0);
+    const allProfiles=(await native({command:'profile_list'})).profiles.profiles;
+    const normalOrder=[...allProfiles.filter(profile=>profile.isDefault),...allProfiles.filter(profile=>!profile.isDefault).sort((a,b)=>a.name.localeCompare(b.name))].map(profile=>profile.name);
+    await expect.poll(()=>tiles.locator('.profile-copy strong').allTextContents()).toEqual(normalOrder);
+    for(const tile of await tiles.all()){
+      await expect(tile.getByRole('button',{name:/^Edit /})).toBeEnabled();
+      await expect(tile.getByRole('button',{name:/^Activate /})).toBeEnabled();
+    }
     await expect(page.getByRole('button',{name:/^Deactivate /})).toHaveCount(0);
-    assert.ok(!/\b(running|stopped)\b/i.test(await runtime.innerText()),'The profile card must use activation terminology.');
+    assert.ok(!/\b(running|stopped)\b/i.test(await profileList.innerText()),'The profile tiles must use activation terminology.');
     assert.deepEqual(errors,[]);
-    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,headerModeBadge:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,saveNotifications:true,savedBannerAbsent:true,selectedBadgeAbsent:true,activeSave:{before:activated.owner,after:changed.owner},desktopQualified:desktopActive.qualified,desktopRuntimeAcquired:!!desktopActive.runtime,debugSeparated:true,activation:{cancelPreservedOwner:changed.owner,switchedOwner:switched.owner,deactivated:inactiveStatus},pageErrors:errors},null,2)+'\n');
+    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,modeInPageActions:true,healthyRuntimeCardHidden:true,debugIcon:true,activeTileFirst:true,remainingTilesMutedAndEnabled:true,deactivationRestoredOrder:normalOrder,headerModeBadge:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,saveNotifications:true,savedBannerAbsent:true,selectedBadgeAbsent:true,activeSave:{before:activated.owner,after:changed.owner},desktopQualified:desktopActive.qualified,desktopRuntimeAcquired:!!desktopActive.runtime,debugSeparated:true,activation:{cancelPreservedOwner:changed.owner,switchedOwner:switched.owner,deactivated:inactiveStatus},pageErrors:errors},null,2)+'\n');
   }catch(error){await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true});throw error;}
   finally{
     try{await native({command:'profile_stop'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();}

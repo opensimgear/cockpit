@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount, untrack, type Snippet } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { ProfileRuntimeController, type RuntimeControlState, type RuntimeEditorTarget } from './profile-runtime-controller';
   import type { ProfileGameId } from './profile-runtime';
   import type { DeepReadonly, ProfileSummary } from './profiles';
-  let { controller, editor = null, profiles = [], gameIds = [], active = true, onState, modeControl }: {
+  let { controller, editor = null, profiles = [], gameIds = [], active = true, onState, compact = false }: {
     controller: ProfileRuntimeController; editor?: RuntimeEditorTarget|null; profiles?: readonly DeepReadonly<ProfileSummary>[];
-    gameIds?: readonly string[]; active?: boolean; onState?: (state: DeepReadonly<RuntimeControlState>)=>void; modeControl?:Snippet;
+    gameIds?: readonly string[]; active?: boolean; onState?: (state: DeepReadonly<RuntimeControlState>)=>void; compact?:boolean;
   } = $props();
   const runtime = untrack(()=>controller);
   let view = $state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
@@ -33,19 +33,19 @@
   async function recover(){await runtime.recover();}
 </script>
 
-<section class="profile-runtime panel" aria-label="Runtime profile status">
-  <div class="runtime-heading"><div><strong>{native?.owner?`Active profile · ${appliedName}`:native?'No profile active':'Checking active profile…'}</strong></div>{#if modeControl}{@render modeControl()}{/if}</div>
+<section class="profile-runtime" class:panel={!compact} class:compact aria-label="Runtime profile status">
+  {#if !compact}<div class="runtime-heading"><strong>{native?.owner?`Active profile · ${appliedName}`:native?'No profile active':'Checking active profile…'}</strong></div>{/if}
   {#if native}
     {#if native.state==='awaiting-game'}<p class="runtime-notice">Outputs remain neutral while the game context is verified. Deactivate cancels this activation.</p>{/if}
     {#if native.fault}<p class="runtime-error" role="alert">{native.fault}</p>{/if}
     {#if native.degradation.length}<p class="runtime-notice">Some profile resources are unavailable. Open Debug for details.</p>{/if}
   {/if}
-  <div class="runtime-actions">
+  {#if !compact||native?.state==='recovery-needed'||native?.state==='faulted'||view.pending==='apply'||native?.state==='transitioning'}<div class="runtime-actions">
     {#if editor&&!activeEditor}<label>Game context<select aria-label="Game context" bind:value={gameId} disabled={!!view.pending}><option value="">Hardware only</option>{#each choices as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label><button class="primary-button" disabled={applyDisabled} onclick={apply}>Activate profile</button>{:else if savedChangesPending}<button class="primary-button" disabled={applyDisabled} onclick={()=>editor&&runtime.apply(editor,native?.owner?.gameId??undefined)}>Retry saved changes</button>{/if}
     {#if native?.owner||view.pending==='apply'||native?.state==='transitioning'}<button class="secondary-button stop-runtime" aria-label="Deactivate current profile" disabled={view.pending==='stop'} onclick={stop}>Deactivate</button>{/if}
     {#if native?.state==='recovery-needed'||native?.state==='faulted'}<button class="secondary-button" disabled={view.pending==='recover'} onclick={recover}>Recover outputs</button>{/if}
-  </div>
-  {#if activeEditor}<p class="runtime-help">Saving this profile updates its active configuration.</p>{:else if editor&&!saved}<p class="runtime-help">Save your changes before activating this profile.</p>{:else if editor}<p class="runtime-help">Activate this profile when ready. Saving it keeps the current active profile.</p>{:else}<p class="runtime-help">Activate a saved profile from its tile for hardware only, or open it to choose a game context.</p>{/if}
+  </div>{/if}
+  {#if !compact}{#if activeEditor}<p class="runtime-help">Saving this profile updates its active configuration.</p>{:else if editor&&!saved}<p class="runtime-help">Save your changes before activating this profile.</p>{:else if editor}<p class="runtime-help">Activate this profile when ready. Saving it keeps the current active profile.</p>{:else}<p class="runtime-help">Activate a saved profile from its tile for hardware only, or open it to choose a game context.</p>{/if}{/if}
   {#if invalidGame}<p class="runtime-notice">Choose a game context eligible for this profile, or explicitly choose Hardware only.</p>{/if}
   {#if view.pending}<p class="runtime-notice" role="status">{view.pending==='apply'?'Activating profile…':view.pending==='stop'?'Deactivating profile…':'Recovering outputs…'}{#if view.pending==='apply'} Deactivate cancels this activation.{/if}</p>{/if}
   {#if view.error}<p class="runtime-error" role="alert">{view.error}</p>{/if}
@@ -53,5 +53,6 @@
 </section>
 
 <style>
-  .profile-runtime{padding:17px;margin-bottom:22px;}.runtime-heading,.runtime-heading>div,.runtime-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}.runtime-heading{justify-content:space-between;}.runtime-heading strong{font-size:12px;}.profile-runtime button{font-size:10px;}.runtime-actions{align-items:end;}.runtime-actions label{display:grid;gap:6px;font-size:9px;color:var(--muted);}.runtime-actions select{font-size:10px;max-width:220px;}.runtime-help{font-size:9px;color:var(--muted);line-height:1.8;margin:12px 0 0;overflow-wrap:anywhere;}.runtime-notice,.runtime-error{font-size:10px;line-height:1.8;margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:5px;}.runtime-notice{color:var(--soft);}.runtime-error{color:#c9ab7b;border-color:#ad875440;}.stop-runtime{border-color:#ad875460;}
+  .profile-runtime.compact{padding:0;margin:0}.profile-runtime.compact:has(>*){margin-bottom:18px}
+  .profile-runtime{padding:17px;margin-bottom:22px;}.runtime-heading,.runtime-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}.runtime-heading{justify-content:space-between;}.runtime-heading strong{font-size:12px;}.profile-runtime button{font-size:10px;}.runtime-actions{align-items:end;}.runtime-actions label{display:grid;gap:6px;font-size:9px;color:var(--muted);}.runtime-actions select{font-size:10px;max-width:220px;}.runtime-help{font-size:9px;color:var(--muted);line-height:1.8;margin:12px 0 0;overflow-wrap:anywhere;}.runtime-notice,.runtime-error{font-size:10px;line-height:1.8;margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:5px;}.runtime-notice{color:var(--soft);}.runtime-error{color:#c9ab7b;border-color:#ad875440;}.stop-runtime{border-color:#ad875460;}
 </style>
