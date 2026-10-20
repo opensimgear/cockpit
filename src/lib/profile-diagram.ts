@@ -70,7 +70,7 @@ function crosses(a:DiagramPoint,b:DiagramPoint,box:Box){
 
 /** Shared compressed visibility grid; search only visits the channels an edge needs. */
 export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number){
-  const clearance=20, byId=new Map(nodes.map(node=>[node.id,node]));
+  const clearance=20,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+width+clearance,top:node.position.y-clearance,bottom:node.position.y+height+clearance}));
   const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
@@ -80,7 +80,7 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
       const peer=(binding:DeepReadonly<ProfileBinding>)=>byId.get(binding[side==='from'?'to':'from'].nodeId)!;
       return peer(a).position.y-peer(b).position.y||peer(a).position.x-peer(b).position.x||a.id.localeCompare(b.id);
     });
-    const spacing=Math.min(12,(height-48)/Math.max(1,incident.length-1));
+    const spacing=Math.min(laneSpacing,(height-48)/Math.max(1,incident.length-1));
     incident.forEach((binding,index)=>{anchors.get(binding.id)![side==='from'?'start':'end'].y+= (index-(incident.length-1)/2)*spacing;});
   }
   const xs=new Set(boxes.flatMap(box=>[box.left,box.right]));
@@ -98,7 +98,7 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
       const a=points[i-1],b=points[i],upright=a.x===b.x,tracks=upright?vertical:horizontal,key=upright?a.x:a.y;
       tracks.set(key,[...(tracks.get(key)??[]),{start:Math.min(upright?a.y:a.x,upright?b.y:b.x),end:Math.max(upright?a.y:a.x,upright?b.y:b.x)}]);
       // Offer the next connection its own parallel lane on either side.
-      const coordinates=upright?xs:ys;coordinates.add(key-12);coordinates.add(key+12);
+      const coordinates=upright?xs:ys;coordinates.add(key-laneSpacing);coordinates.add(key+laneSpacing);
     }
   }
   function clear(a:DiagramPoint,b:DiagramPoint){const key=`${a.x},${a.y}:${b.x},${b.y}`;let value=segmentCache.get(key);if(value===undefined){value=!boxes.some(box=>crosses(a,b,box));segmentCache.set(key,value);}return value&&free(a,b);}
@@ -113,7 +113,7 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
     function push(step:Step){let index=heap.length;heap.push(step);while(index){const up=(index-1)>>1;if(!before(step,heap[up]))break;heap[index]=heap[up];index=up;}heap[index]=step;}
     function pop(){const first=heap[0],last=heap.pop()!;if(heap.length){let index=0;while(index*2+1<heap.length){let child=index*2+1;if(child+1<heap.length&&before(heap[child+1],heap[child]))child++;if(!before(heap[child],last))break;heap[index]=heap[child];index=child;}heap[index]=last;}return first;}
     const distance=(id:number)=>{const p=point(id);return Math.abs(p.x-end.x)+Math.abs(p.y-end.y);};
-    costs.set(source*3,0);push({key:source*3,cost:0,estimate:distance(source),remaining:distance(source)});
+    costs.set(source*3+1,0);push({key:source*3+1,cost:0,estimate:distance(source),remaining:distance(source)});
     while(heap.length){
       const current=pop();if(current.cost!==costs.get(current.key))continue;
       const id=Math.floor(current.key/3),direction=current.key%3;
@@ -122,7 +122,11 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
       for(const [nx,ny,axis]of [[x-1,y,1],[x+1,y,1],[x,y-1,2],[x,y+1,2]]){
         if(nx<0||ny<0||nx>=columns.length||ny>=rows.length)continue;
         const next=ny*columns.length+nx,q=point(next);if(!clear(p,q))continue;
-        const key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction&&direction!==axis?16:0);
+        const crossing=(axis===1?vertical.get(q.x):horizontal.get(q.y))?.some(segment=>{const at=axis===1?q.y:q.x;return at>segment.start&&at<segment.end;});
+        // Disjoint lines on one vertical column can still look like a single wire.
+        // Prefer a fresh bend column and avoid crossings when a short detour works.
+        const reuse=axis===2&&direction!==2&&vertical.has(p.x)?256:0;
+        const key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction!==axis?16:0)+(next===target&&axis===2?16:0)+reuse+(crossing?80:0);
         if(cost>=(costs.get(key)??Infinity))continue;
         costs.set(key,cost);parent.set(key,current.key);const remaining=distance(next);push({key,cost,estimate:cost+remaining,remaining});
       }

@@ -93,3 +93,17 @@ test('tight saved layouts preserve all separate paths without requiring auto-lay
   const nodes=modules.get('./profile-canvas').canvasNodes(doc,[],[]);
   verifyRoutes(nodes,doc.bindings);
 });
+
+
+test('joystick axes and direct buttons do not look merged at a shared controller',()=>{
+  const nodes=placed([{nodeId:'right',x:0,y:156},{nodeId:'left',x:0,y:468},{nodeId:'roll',x:432,y:0},{nodeId:'pitch',x:432,y:312},{nodeId:'collective',x:432,y:624},{nodeId:'controller',x:864,y:312}]);
+  const bindings=[edge('right','roll'),edge('right','pitch'),edge('right','controller'),edge('left','collective'),edge('left','controller'),edge('roll','controller'),edge('pitch','controller'),edge('collective','controller')];
+  const routes=verifyRoutes(nodes,bindings),verticalOwners=new Map();
+  for(const route of routes)for(let i=1;i<route.points.length;i++){
+    const a=route.points[i-1],b=route.points[i];if(a.x!==b.x)continue;
+    assert.ok(!verticalOwners.has(a.x)||verticalOwners.get(a.x)===route.binding.id,'Separate connections need separate bend columns');
+    verticalOwners.set(a.x,route.binding.id);
+  }
+  const inputHeights=routes.filter(route=>route.binding.to.nodeId==='controller').map(route=>route.points.at(-1).y).sort((a,b)=>a-b);
+  for(let i=1;i<inputHeights.length;i++)assert.ok(inputHeights[i]-inputHeights[i-1]>=20);
+});
