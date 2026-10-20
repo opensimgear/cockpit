@@ -17,12 +17,12 @@ const editor=()=>({id,revision:3,baseRevision:3,dirty:false,readOnly:false});
 const profiles=[{id,name:'DCS rig',revision:3,isDefault:false,semanticHash:hash}];
 const plain=value=>JSON.parse(JSON.stringify(value));
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
-function harness(){const calls=[];let response=stopped();const client=new ProfileRuntimeClient(async request=>{calls.push(plain(request));if(request.command==='profile_status')return response;if(request.command==='profile_apply')return running();return stopped();});return{calls,client,controller:new ProfileRuntimeController(client),setStatus(value){response=value;}};}
+function harness(){const calls=[];let response=stopped(),progress={};const client=new ProfileRuntimeClient(async request=>{calls.push(plain(request));if(request.command==='profile_status')return response;if(request.command.startsWith('profile_activation_')){if(request.command==='profile_activation_cancel')progress={...progress,phase:'cancelling',cancelRequested:true,canCancel:false};return{activationId:request.activationId,profileId:controller.state.activation?.profileId??id,phase:'preparing',cancelRequested:false,canCancel:true,message:'Preparing profile devices.',companions:[],outcome:null,error:null,...progress};}if(request.command==='profile_apply')return running();return stopped();});const controller=new ProfileRuntimeController(client);return{calls,client,controller,setStatus(value){response=value;},setProgress(value){progress=value;}};}
 
 // Expose the actual Svelte handlers and poll lifecycle; SSR has no DOM or mounted effects.
 async function component({gameContext=''}={}){
   const filename=new URL('./ProfileRuntimeControls.svelte',import.meta.url);
-  const source=(await readFile(filename,'utf8')).replace("gameId = $state('');","gameId = $state(initialGameContext);").replace('</script>',`captureRuntimeControls({apply,stop,recover,watchStatus,mountStatus(){mounted=true;return watchStatus();},setActive(value){active=value;},get view(){return view;}});</script>`);
+  const source=(await readFile(filename,'utf8')).replace("gameId = $state('');","gameId = $state(initialGameContext);").replace('</script>',`captureRuntimeControls({apply,stop,recover,cancelPending,watchStatus,mountStatus(){mounted=true;return watchStatus();},setActive(value){active=value;},get view(){return view;}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
   const timers=new Map(),events=new Map(),document={hidden:false,addEventListener(name,listener){events.set(name,listener);},removeEventListener(name,listener){if(events.get(name)===listener)events.delete(name);}};
   const window={setInterval(callback){timers.set(1,callback);return 1;},clearInterval(id){timers.delete(id);}};
@@ -40,16 +40,18 @@ test('runtime SSR/navigation is read-only and unsaved, new, read-only or stale e
 test('starting a saved profile sends its exact saved state and explicit game while the UI shows the active profile',async()=>{
   const view=await component({gameContext:'dcs'}),h=harness();await h.controller.refresh();h.calls.length=0;
   let result=view.render({controller:h.controller,profiles,editor:editor(),gameIds:['dcs']});assert.ok(!button(result.html,'Activate profile').includes('disabled'));assert.ok(result.html.includes('DCS World'));assert.ok(!result.html.includes('X-Plane 12'));
-  await result.handlers.apply();assert.deepEqual(h.calls,[{command:'profile_apply',id,expectedRevision:3,gameId:'dcs',expectedActiveOwner:null}]);
+  await result.handlers.apply();assert.match(h.calls[0].activationId,/^[a-f0-9-]{36}$/);assert.deepEqual(h.calls,[{command:'profile_apply',id,expectedRevision:3,gameId:'dcs',expectedActiveOwner:null,activationId:h.calls[0].activationId}]);
   result=view.render({controller:h.controller,profiles,editor:{...editor(),revision:4,baseRevision:4,dirty:true}});assert.ok(result.html.includes('Active profile \u00b7 DCS rig'));assert.ok(!result.html.includes('revision'));assert.ok(!result.html.includes('Generation'));assert.ok(!result.html.includes(session));assert.ok(!result.html.includes('Activate profile'));assert.ok(result.html.includes('Saving this profile updates its active configuration'));assert.match(button(result.html,'Retry saved changes'),/disabled/);
 });
 test('a game choice retained from another profile never silently falls back to hardware-only Apply',async()=>{
   const view=await component({gameContext:'x-plane-12'}),h=harness();await h.controller.refresh();h.calls.length=0;const result=view.render({controller:h.controller,profiles,editor:editor(),gameIds:['dcs']});assert.match(button(result.html,'Activate profile'),/disabled/);assert.ok(result.html.includes('Choose a game context eligible for this profile'));await result.handlers.apply();assert.deepEqual(h.calls,[]);
 });
-test('Stop stays enabled during slow Apply and its actual handler prevents late Apply acknowledgement from reviving the run',async()=>{
+test('Cancel activation stays enabled during preparation and targets its exact attempt without deactivating another profile',async()=>{
   const view=await component(),h=harness();await h.controller.refresh();const pending=deferred();h.client.apply=async()=>{h.calls.push({command:'profile_apply'});return pending.promise;};const applying=h.controller.apply(editor());
-  let result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Deactivate cancels'));assert.ok(!button(result.html,'Deactivate').includes('disabled'));assert.equal(button(result.html,'Pause'),'');
-  await result.handlers.stop();pending.resolve(running());assert.equal(await applying,false);result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('No profile active'));assert.equal(button(result.html,'Deactivate'),'');assert.ok(!result.html.includes(session));assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,1);assert.equal(h.calls.filter(call=>call.command==='profile_apply').length,1);
+  let result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Activating DCS rig'));assert.ok(!button(result.html,'Cancel activation').includes('disabled'));assert.equal(button(result.html,'Deactivate'),'');assert.equal(button(result.html,'Pause'),'');
+  const activationId=h.controller.state.activation.id;await result.handlers.cancelPending();assert.equal(h.controller.state.pending,'apply');result=view.render({controller:h.controller,profiles,editor:editor()});assert.match(button(result.html,'Cancelling…'),/disabled/);
+  h.setProgress({phase:'cancelled',cancelRequested:true,canCancel:false,outcome:'inactive',message:'Activation cancelled.'});pending.reject(new Error('Profile preparation was cancelled by a newer native control.'));assert.equal(await applying,false);
+  result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('No profile active'));assert.ok(result.html.includes('Activation cancelled.'));assert.ok(!result.html.includes('newer native control'));assert.equal(button(result.html,'Deactivate'),'');assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,0);assert.equal(h.calls.find(call=>call.command==='profile_activation_cancel').activationId,activationId);
 });
 test('recovery reports native results without retrying failed Apply',async()=>{
   const view=await component(),h=harness();let result;h.setStatus({...stopped(),state:'recovery-needed',fault:'Native output release must be retried.'});await h.controller.refresh();result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Native output release must be retried.'));assert.ok(button(result.html,'Recover'));await result.handlers.recover();assert.equal(h.calls.at(-1).command,'profile_recover');
@@ -69,6 +71,15 @@ test('failed activation renders the same native and request fault once with Reco
 
 test('recovery without a native fault still has an explanatory banner and a Recover action',async()=>{
   const view=await component(),h=harness();h.setStatus({...stopped(),state:'recovery-needed'});await h.controller.refresh();const result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Recover this profile before activating it again.'));assert.ok(button(result.html,'Recover'));assert.equal((result.html.match(/role="alert"/g)??[]).length,1);
+});
+
+test('cancelled takeover gives one clear recovery message instead of the internal cancellation fault',async()=>{
+  const view=await component(),h=harness(),pending=deferred();await h.controller.refresh();h.client.apply=()=>pending.promise;
+  const applying=h.controller.apply(editor());await h.controller.cancelPendingActivation();
+  const message='Activation cancelled. Recover outputs before activating another profile.';
+  h.setProgress({phase:'cancelled',cancelRequested:true,canCancel:false,message,outcome:'recovery-needed',error:'Internal takeover was cancelled.'});h.setStatus({...stopped(),state:'recovery-needed',fault:'Internal takeover was cancelled.'});
+  pending.reject(new Error('Profile preparation was cancelled by a newer native control.'));await applying;
+  const result=view.render({controller:h.controller,profiles,compact:true});assert.equal(result.html.split(message).length-1,1);assert.ok(!result.html.includes('Internal takeover'));assert.ok(button(result.html,'Recover'));assert.ok(!result.html.includes('newer native control'));
 });
 
 test('actual status poll lifecycle is read-only, suspends during game settings or hidden document, and cleanup never stops a native run',async()=>{
@@ -97,8 +108,8 @@ test('compact list runtime preserves recovery actions, unavailable-resource noti
   h.client.status=async()=>{throw new Error('Native service disconnected.');};assert.equal(await h.controller.refresh(),false);result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Current native status is unavailable:'));assert.ok(result.html.includes('Native service disconnected.'));
 });
 
-test('compact list runtime retains Deactivate cancellation during a slow activation and rejects its late acknowledgement',async()=>{
+test('compact list shows activation target and a dedicated Cancel button while keeping completion truthful',async()=>{
   const view=await component(),h=harness();await h.controller.refresh();const pending=deferred();h.client.apply=async()=>pending.promise;
-  const applying=h.controller.apply(editor());let result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Activating profile…'));assert.ok(result.html.includes('Deactivate cancels this activation.'));assert.ok(button(result.html,'Deactivate'));assert.ok(!button(result.html,'Deactivate').includes('disabled'));
-  await result.handlers.stop();pending.resolve(running());assert.equal(await applying,false);result=view.render({controller:h.controller,profiles,compact:true});assert.equal(button(result.html,'Deactivate'),'');assert.ok(!result.html.includes('Activating profile…'));assert.equal(h.controller.state.status.owner,null);assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,1);
+  const applying=h.controller.apply(editor());let result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Activating DCS rig'));assert.ok(button(result.html,'Cancel activation'));assert.equal(button(result.html,'Deactivate'),'');
+  pending.resolve(running());assert.equal(await applying,true);result=view.render({controller:h.controller,profiles,compact:true});assert.equal(button(result.html,'Cancel activation'),'');assert.equal(h.controller.state.status.owner.profileId,id);assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,0);
 });

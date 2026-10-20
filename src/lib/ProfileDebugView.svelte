@@ -47,7 +47,7 @@
 <section class="profile-debug" aria-label="Profile debug">
   <button class="text-button back-debug" onclick={close}>← Back to {editor?'profile':'Profiles'}</button>
   <div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>Profile debug</h1><p>Inspect a draft or saved profile, watch running signals, and investigate output recovery.</p></div></div>
-  {#if runtime}<ProfileRuntimeControls controller={runtime} {profiles} {active} onState={onRuntimeState}/>{/if}
+  {#if runtime}<ProfileRuntimeControls controller={runtime} {profiles} {active} onState={onRuntimeState} manageActivationProgress={false}/>{/if}
   <section class="panel preflight" aria-label="Native graph preflight">
     <div class="debug-toolbar"><label>Profile to inspect<select aria-label="Debug profile" bind:value={source} onchange={read} disabled={busy||loading}>{#if editor}<option value="draft">Current editor draft · {editor.document.name}</option>{/if}{#each profiles as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label><button class="secondary-button" disabled={!draft||busy||loading} onclick={compile}>{busy?'Inspecting…':preview?'Refresh preflight':'Inspect draft preflight'}</button></div>
     <p>Preflight checks this profile and its local assignments without saving or starting it.</p>

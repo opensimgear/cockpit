@@ -7,6 +7,10 @@
   ],
   "permissions": [
     "allow-gateway-request",
+    "allow-profile-activation-window-open",
+    "allow-profile-activation-window-update",
+    "allow-profile-activation-window-state",
+    "allow-profile-activation-window-close",
     "allow-open-companion-browser",
     "allow-export-companion-certificate",
     "allow-optional-dependencies",

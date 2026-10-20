@@ -76,7 +76,7 @@ test('saved panels have one current choice and UI Save refreshes an active profi
     // Reload the real UI so its persisted designer library includes the fixtures.
     await native.send('Page.reload');
     await until(()=>native.evaluate(`!!window.__TAURI_INTERNALS__&&!!document.querySelector('nav[aria-label="Main navigation"]')`),'Cockpit UI did not reload');
-    await click('Profiles','nav[aria-label="Main navigation"]');await click('Refresh profiles','.profiles-workspace');await click(`Edit ${profileName}`,'.profiles-workspace');
+    await click('Profiles','nav[aria-label="Main navigation"]');await click(`Edit ${profileName}`,'.profiles-workspace');
     await until(()=>native.evaluate(`(()=>{const button=document.querySelector('[data-node-id="screen"] .block-heading');if(!button)return false;button.click();return true;})()`),'Profile companion block was not available');
     await click('Refresh panels','section[aria-label="Profile companion panel selection"]');
     const picker=await until(()=>native.evaluate(`(()=>{const root=document.querySelector('section[aria-label="Profile companion panel selection"]');const select=[...(root?.querySelectorAll('label')??[])].find(label=>label.firstChild?.textContent.trim()==='Panel')?.querySelector('select');if(!select||select.options.length<2)return null;return{options:[...select.options].map(option=>({value:option.value,text:option.textContent})),selected:select.value,text:root.innerText};})()`),'Latest saved panel picker did not load');

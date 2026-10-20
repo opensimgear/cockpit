@@ -341,7 +341,10 @@ def main():
             phase["endMarker"] = marker(service, 2 + index * 2)
             phase["uiAfter"] = control(service, "latency_ui_load", enabled=False, profileName=saved["name"])
             if index == 1:
-                assert phase["uiAfter"]["refreshClicks"] >= 20 and phase["uiAfter"]["domMutations"] > 0 and phase["uiAfter"]["busyTransitions"] > 0, phase["uiAfter"]
+                ui = phase["uiAfter"]
+                assert ui["mode"] == "real-svelte-profiles-auto-refresh" and ui["realProfilesView"] and ui["nativeCockpit"], ui
+                assert ui["targetProfileVisible"] and ui["profileName"] == saved["name"], ui
+                assert ui["refreshEvents"] >= 20 and ui["refreshEventsDelivered"] == ui["refreshEvents"], ui
             # Cleanup input is deliberately outside the phase marker interval.
             for peer in peers: send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=0)])
             mapping.wait_for(lambda: native.desktop_status(service)["runtime"]["backend"]["held"] == [], "Neutral cleanup retained native keys")
@@ -354,7 +357,8 @@ def main():
                 companion.wait_native_companions(service, configurations, peers, previous=phase["nativeSources"])
         evidence["injected"] = True
         evidence["checks"] = ["Two independent authenticated real WSS sources drove immediate distinct KeyA/KeyB holds and explicit normalized pointer processing load",
-            "Idle and real Svelte Profiles refresh phases retain exact accepted source sequences and changed-key receiver/native ownership counts between native audit markers",
+            "Idle and real Svelte Profiles automatic-refresh phases retain exact accepted source sequences and changed-key receiver/native ownership counts between native audit markers",
+            "The UI-load phase delivers at least 20 focus-refresh events to the actual mounted native Profiles view, reports event counts accurately and never relies on passive reads making the UI busy",
             "Every phase uses a fresh receiver, exact native scope and explicit Apply, followed by neutral cleanup, clean Stop and an acknowledged bounded audit checkpoint"]
     except Exception as error:
         evidence["failure"] = str(error)

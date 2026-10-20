@@ -99,28 +99,33 @@ async function profilesUi(page) {
 async function uiLoad(page, start, profileName) {
  if (start) {
   await profilesUi(page);
-  await page.evaluate(() => [...document.querySelectorAll('.profiles-workspace button')].find(node => node.textContent.trim() === 'Refresh profiles')?.click());
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await page.waitForFunction(name => [...document.querySelectorAll('.profile-list .profile-copy strong')].some(node => node.textContent.trim() === name), profileName, {timeout: 5000});
  }
  return page.evaluate(({start, profileName}) => {
   const previous = window.__osgDesktopLatencyUi;
-  if (previous) { clearInterval(previous.timer); previous.observer.disconnect(); }
-  const snapshot = state => state ? {mode: 'real-svelte-profiles-refresh', refreshClicks: state.clicks,
-   domMutations: state.mutations, busyTransitions: state.busy, elapsedMs: performance.now() - state.began,
-   profileName: state.profileName, realProfilesView: !!document.querySelector('.profiles-workspace .profile-list'),
+  if (previous) previous.cleanup();
+  const snapshot = state => state ? {mode: 'real-svelte-profiles-auto-refresh', refreshEvents: state.events, refreshEventsDelivered: state.delivered,
+   domMutations: state.mutations, elapsedMs: performance.now() - state.began,
+   profileName: state.profileName, realProfilesView: !!document.querySelector('.profiles-workspace .profile-list'), nativeCockpit: !!window.__TAURI_INTERNALS__,
+   targetProfileVisible: [...document.querySelectorAll('.profile-list .profile-copy strong')].some(node => node.textContent.trim() === state.profileName),
    visibleRuntimeStatus: document.querySelector('[aria-label="Runtime profile status"]')?.textContent?.trim() ?? ''}
-   : {mode: 'idle', refreshClicks: 0, domMutations: 0, busyTransitions: 0, elapsedMs: 0};
+   : {mode: 'idle', refreshEvents: 0, refreshEventsDelivered: 0, domMutations: 0, elapsedMs: 0};
   if (!start) { delete window.__osgDesktopLatencyUi; return snapshot(previous); }
   const section = document.querySelector('.profiles-workspace');
-  const button = [...section.querySelectorAll('button')].find(node => node.textContent.trim() === 'Refresh profiles');
-  if (!button) throw Error('The actual Svelte Refresh profiles handler is unavailable');
-  const state = {clicks: 0, mutations: 0, busy: 0, began: performance.now(), profileName};
+  if (!section?.querySelector('.profile-list') || !window.__TAURI_INTERNALS__) throw Error('The actual native Svelte Profiles list is unavailable');
+  const state = {events: 0, delivered: 0, currentEvent: null, mutations: 0, began: performance.now(), profileName};
+  // Exercise the real focus-refresh handler without making the WebView foreground.
+  // Count event delivery, not native completions or UI busy transitions: passive
+  // refresh deliberately coalesces pending reads and keeps the controls usable.
+  const observedFocus = event => { if (event === state.currentEvent) state.delivered++; };
+  window.addEventListener('focus', observedFocus);
   state.observer = new MutationObserver(records => {
    state.mutations += records.length;
-   state.busy += records.filter(record => record.type === 'attributes' && record.target === button && record.attributeName === 'disabled').length;
   });
   state.observer.observe(section, {subtree: true, attributes: true, childList: true, characterData: true});
-  state.timer = setInterval(() => { if (!button.disabled && button.isConnected) { button.click(); state.clicks++; } }, 40);
+  state.timer = setInterval(() => { if (!document.hidden && section.isConnected) { state.events++; state.currentEvent = new Event('focus'); window.dispatchEvent(state.currentEvent); state.currentEvent = null; } }, 40);
+  state.cleanup = () => { clearInterval(state.timer); state.observer.disconnect(); window.removeEventListener('focus', observedFocus); };
   window.__osgDesktopLatencyUi = state;
   return snapshot(state);
  }, {start, profileName});

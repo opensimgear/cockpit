@@ -44,6 +44,18 @@ test('passive saved changes preserve dirty drafts and fence edits made during an
   assert.equal(h.store.state.editor.document.name,'Typing during refresh');assert.equal(h.store.state.editor.baseRevision,2);
 });
 
+test('overlapping passive refresh triggers share one native read without blocking editing or replaying save feedback',async()=>{
+  const h=harness();await h.store.refresh();await h.store.open(DEFAULT_PROFILE_ID);
+  const pending=deferred(),notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));
+  let reads=0;h.api.list=async()=>{reads++;return pending.promise;};
+  const first=h.store.refreshSaved();await Promise.all([h.store.refreshSaved(),h.store.refreshSaved()]);
+  assert.equal(reads,1);assert.equal(h.store.state.busy,false);
+  const edited=plain(h.store.state.editor.document);edited.name='Editing during focus burst';h.store.update(edited);
+  const latest={...plain(h.docs.get(DEFAULT_PROFILE_ID)),name:'Externally saved',revision:2};pending.resolve({profiles:[summary(latest)],session:session()});await first;
+  assert.equal(h.store.state.editor.document.name,'Editing during focus burst');assert.equal(h.store.state.editor.baseRevision,1);
+  assert.deepEqual(notifications,[]);
+});
+
 test('blank seeding includes every resource category and closed game, with no selected ports, routes or effects',()=>{
   const input=inventory();const seeded=seedProfile(uid(1),input);
   assert.equal(seeded.document.resources.length,8);assert.equal(seeded.assignments.length,8);

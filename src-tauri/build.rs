@@ -44,6 +44,11 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "gateway_request",
+            "profile_activation_window_open",
+            "profile_activation_window_update",
+            "profile_activation_window_state",
+            "profile_activation_window_cancel",
+            "profile_activation_window_close",
             "open_companion_browser",
             "export_companion_certificate",
             "optional_dependencies",

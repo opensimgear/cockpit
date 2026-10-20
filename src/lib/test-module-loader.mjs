@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import {webcrypto} from 'node:crypto';
 
 /** Load pure TS helpers with their real dependencies and source filenames so
  * Node's built-in coverage reports include the exercised production code. */
@@ -16,7 +17,7 @@ export async function loadModules(names) {
     // New pure helpers may add dependencies without every consumer fixture
     // needing to repeat their transitive import order.
     for(const match of code.matchAll(/require\(["'](\.\/[^"']+)["']\)/g))await load(match[1]);
-    vm.runInNewContext(code, { exports, TextEncoder, require(name) {
+    vm.runInNewContext(code, { exports, TextEncoder, crypto:webcrypto, require(name) {
       const key=name.replace(/\.ts$/,'');
       if (!exportsByName.has(key)) throw new Error(`Load dependency ${name} before its consumer.`);
       return exportsByName.get(key);

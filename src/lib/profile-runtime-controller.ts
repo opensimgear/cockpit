@@ -1,16 +1,18 @@
-import {nativeProfileStatus,type NativeProfileOwner,type NativeProfileStatus,type ProfileGameId,type ProfileRuntimeClient} from './profile-runtime';
+import {nativeProfileStatus,nativeProfileActivation,type NativeProfileActivation,type NativeProfileOwner,type NativeProfileStatus,type ProfileGameId,type ProfileRuntimeClient} from './profile-runtime';
 import type{DeepReadonly}from'./profiles';
 
 export type RuntimeEditorTarget={id:string;revision:number;baseRevision:number|null;dirty:boolean;readOnly:boolean};
 export type ProfileActivationConfirmation={target:RuntimeEditorTarget;gameId?:ProfileGameId;previousOwner:DeepReadonly<NativeProfileOwner>};
-export type RuntimeControlState={status:DeepReadonly<NativeProfileStatus>|null;pending:'apply'|'stop'|'recover'|null;activationConfirmation:DeepReadonly<ProfileActivationConfirmation>|null;loading:boolean;stale:boolean;error:string;statusError:string};
-type Client=Pick<ProfileRuntimeClient,'status'|'apply'|'stop'|'recover'>;
+export type RuntimeActivation={id:string;profileId:string;startedAt:number;cancelling:boolean};
+export type RuntimeControlState={status:DeepReadonly<NativeProfileStatus>|null;pending:'apply'|'stop'|'recover'|null;activationConfirmation:DeepReadonly<ProfileActivationConfirmation>|null;activation:DeepReadonly<RuntimeActivation>|null;progress:DeepReadonly<NativeProfileActivation>|null;progressError:string;notice:string;loading:boolean;stale:boolean;error:string;statusError:string};
+type Client=Pick<ProfileRuntimeClient,'status'|'apply'|'stop'|'recover'>&Partial<Pick<ProfileRuntimeClient,'activationStatus'|'cancelActivation'>>;
 /** UI admission and stale-reply fencing only; native owns every run and output. */
 export class ProfileRuntimeController{
-  private value:RuntimeControlState={status:null,pending:null,activationConfirmation:null,loading:false,stale:true,error:'',statusError:''};
+  private value:RuntimeControlState={status:null,pending:null,activationConfirmation:null,activation:null,progress:null,progressError:'',notice:'',loading:false,stale:true,error:'',statusError:''};
   private listeners=new Set<(state:DeepReadonly<RuntimeControlState>)=>void>();
   private epoch=0;
   private reading=false;
+  private readingProgress=false;
   private disposed=false;
   constructor(private client:Client){}
   get state():DeepReadonly<RuntimeControlState>{return Object.freeze(this.value);}
@@ -31,7 +33,7 @@ export class ProfileRuntimeController{
       this.set({activationConfirmation:Object.freeze({target:Object.freeze({...editor}),...(gameId?{gameId}:{}),previousOwner}),error:''});return false;
     }
     const id=editor.id,revision=editor.baseRevision;
-    return this.run('apply',()=>this.client.apply(id,revision,gameId,previousOwner));
+    return this.activate(id,revision,gameId,previousOwner);
   }
   cancelActivation():void{this.set({activationConfirmation:null});}
   async confirmActivation():Promise<boolean>{
@@ -40,7 +42,33 @@ export class ProfileRuntimeController{
     this.set({activationConfirmation:null});
     if(this.value.stale||!this.value.status?.owner||(['session','generation','profileId','profileRevision','gameId'] as const).some(key=>this.value.status!.owner![key]!==confirmation.previousOwner[key])){this.set({error:'The active profile changed. Choose the profile to activate again.'});return false;}
     const {target,gameId,previousOwner}=confirmation;
-    return this.run('apply',()=>this.client.apply(target.id,target.revision,gameId,previousOwner));
+    return this.activate(target.id,target.revision,gameId,previousOwner);
+  }
+  private activate(id:string,revision:number,gameId:ProfileGameId|undefined,previousOwner:DeepReadonly<NativeProfileOwner>|null):Promise<boolean>{
+    const activation=Object.freeze({id:crypto.randomUUID(),profileId:id,startedAt:Date.now(),cancelling:false});
+    this.set({activation,progress:null,progressError:'',notice:''});
+    return this.run('apply',()=>this.client.cancelActivation?this.client.apply(id,revision,gameId,previousOwner,activation.id):this.client.apply(id,revision,gameId,previousOwner));
+  }
+  async refreshProgress():Promise<void>{
+    const activation=this.value.activation,epoch=this.epoch;
+    if(this.disposed||this.readingProgress||this.value.pending!=='apply'||!activation||!this.client.activationStatus)return;
+    this.readingProgress=true;
+    try{
+      const progress=nativeProfileActivation(await this.client.activationStatus(activation.id),activation.id);
+      if(epoch===this.epoch&&this.value.activation?.id===activation.id)this.set({progress,progressError:''});
+    }catch(error){if(epoch===this.epoch&&this.value.activation?.id===activation.id)this.set({progressError:error instanceof Error?error.message:String(error)});}
+    finally{this.readingProgress=false;}
+  }
+  async cancelPendingActivation(operationId=this.value.activation?.id):Promise<boolean>{
+    const activation=this.value.activation,epoch=this.epoch;
+    if(this.disposed||this.value.pending!=='apply'||!activation||activation.id!==operationId||activation.cancelling||!this.client.cancelActivation)return false;
+    this.set({activation:Object.freeze({...activation,cancelling:true}),error:''});
+    try{
+      const progress=nativeProfileActivation(await this.client.cancelActivation(activation.id),activation.id);
+      if(epoch!==this.epoch||this.value.activation?.id!==activation.id)return false;
+      this.set({progress,progressError:'',activation:Object.freeze({...activation,cancelling:progress.cancelRequested})});
+      return progress.cancelRequested;
+    }catch(error){if(epoch===this.epoch&&this.value.activation?.id===activation.id)this.set({activation,error:error instanceof Error?error.message:String(error)});return false;}
   }
   stop():Promise<boolean>{this.cancelActivation();return this.run('stop',()=>this.client.stop());}
   recover():Promise<boolean>{return this.run('recover',()=>this.client.recover());}
@@ -49,10 +77,29 @@ export class ProfileRuntimeController{
     if(this.disposed)return false;
     const interrupt=action==='stop'||action==='recover';
     if(this.value.pending&&(!interrupt||this.value.pending===action))return false;
-    const epoch=++this.epoch;this.set({pending:action,activationConfirmation:null,loading:false,stale:true,error:''});let failed=false;
-    try{const status=nativeProfileStatus(await request());if(this.disposed||epoch!==this.epoch)return false;this.set({status,stale:false,statusError:''});return true;}
-    catch(error){if(epoch===this.epoch){failed=true;this.set({error:error instanceof Error?error.message:String(error),stale:true});}return false;}
-    finally{if(epoch===this.epoch){this.set({pending:null});if(failed)await this.refresh();}}
+    const activation=action==='apply'?this.value.activation:null;
+    const epoch=++this.epoch;this.set({pending:action,activationConfirmation:null,...(action==='apply'?{}:{activation:null,progress:null,progressError:''}),notice:'',loading:false,stale:true,error:''});let failed=false;
+    try{
+      const status=nativeProfileStatus(await request());if(this.disposed||epoch!==this.epoch)return false;
+      let notice='';
+      if(activation&&(this.value.activation?.cancelling||this.value.progress?.cancelRequested)&&this.client.activationStatus){
+        try{const progress=nativeProfileActivation(await this.client.activationStatus(activation.id),activation.id);if(epoch===this.epoch){this.set({progress});if(progress.cancelRequested&&progress.phase==='succeeded')notice=progress.message;}}catch{/* Activation succeeded even if its optional progress read is unavailable. */}
+      }
+      if(this.disposed||epoch!==this.epoch)return false;
+      this.set({status,stale:false,statusError:'',error:'',progressError:'',notice});return true;
+    }
+    catch(error){if(epoch===this.epoch){
+      failed=true;
+      if(activation&&this.client.activationStatus){
+        try{const progress=nativeProfileActivation(await this.client.activationStatus(activation.id),activation.id);if(epoch===this.epoch)this.set({progress,progressError:''});}catch{/* The original activation error remains authoritative when progress is unavailable. */}
+      }
+      if(epoch===this.epoch){
+        const progress=this.value.progress;
+        const cancelled=progress?.activationId===activation?.id&&progress?.phase==='cancelled';
+        this.set({error:cancelled?'':error instanceof Error?error.message:String(error),notice:cancelled?progress.message:'',stale:true});
+      }
+    }return false;}
+    finally{if(epoch===this.epoch){this.set({pending:null,activation:null});if(failed)await this.refresh();}}
   }
   dispose():void{this.disposed=true;this.epoch++;this.listeners.clear();}
 }

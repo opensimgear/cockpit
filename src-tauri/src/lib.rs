@@ -27,6 +27,7 @@ mod module_usb;
 mod module_usb_fleet;
 mod module_configuration_routes;
 mod profile_resources;
+mod profile_activation_window;
 mod profile_compilation;
 mod profile_desktop_preview;
 mod profile_input_learning;
@@ -203,11 +204,17 @@ pub fn run() {
             let gateway = Arc::new(gateways::GatewayManager::new());
             gateway.start_automatic();
             app.manage(NativeGateway(gateway));
+            app.manage(profile_activation_window::ActivationWindowState::default());
             desktop::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             gateway_request,
+            profile_activation_window::profile_activation_window_open,
+            profile_activation_window::profile_activation_window_update,
+            profile_activation_window::profile_activation_window_state,
+            profile_activation_window::profile_activation_window_cancel,
+            profile_activation_window::profile_activation_window_close,
             open_companion_browser,
             export_companion_certificate,
             optional_dependencies,

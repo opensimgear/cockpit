@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ProfileRuntimeClient, nativeProfileStatus } from './profile-runtime.ts';
+import { ProfileRuntimeClient, nativeProfileStatus,nativeProfileActivation } from './profile-runtime.ts';
 const id='00000000-0000-4000-8000-000000000001',run='11111111-1111-4111-8111-111111111111';
 const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
 const running=()=>({...stopped(),state:'running',appliedSnapshot:{profileId:id,revision:3,semanticHash:`sha256:${'a'.repeat(64)}`},owner:{session:run,generation:4,profileId:id,profileRevision:3,gameId:null}});
+
+test('activation progress and cancellation bind exact operation identity without ordinary stop authority',async()=>{
+  const calls=[],progress={activationId:run,profileId:id,phase:'preparing',canCancel:true,cancelRequested:false,message:'Checking devices.',companions:[],outcome:null,error:null};
+  const client=new ProfileRuntimeClient(async request=>{calls.push(request);return request.command==='profile_apply'?running():progress;});
+  await client.apply(id,3,undefined,null,run);const snapshot=await client.activationStatus(run);await client.cancelActivation(run);
+  assert.deepEqual(calls,[{command:'profile_apply',id,expectedRevision:3,expectedActiveOwner:null,activationId:run},{command:'profile_activation_status',activationId:run},{command:'profile_activation_cancel',activationId:run}]);
+  progress.message='changed';assert.equal(snapshot.message,'Checking devices.');assert.ok(Object.isFrozen(snapshot));
+  for(const patch of [{activationId:id},{phase:['preparing']},{phase:'ready'},{outcome:['active']},{profileId:'other'},{companions:Array(9).fill({})}])assert.throws(()=>nativeProfileActivation({...progress,...patch},run),/progress is unavailable/);
+  await assert.rejects(client.activationStatus('old'),/exact profile activation/);assert.throws(()=>client.apply(id,3,undefined,null,'old'),/exact saved/);
+});
 
 test('native runtime snapshots retain exact applied authority and never share mutable transport state',()=>{
   const wire=running(),captured=nativeProfileStatus(wire);wire.owner.generation=7;wire.appliedSnapshot.revision=9;wire.degradation.push('later');

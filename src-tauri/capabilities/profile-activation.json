@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "profile-activation",
+  "description": "The owned profile activation window can display progress and request cancellation of its current operation.",
+  "windows": ["profile-activation"],
+  "permissions": [
+    "allow-profile-activation-window-state",
+    "allow-profile-activation-window-cancel"
+  ]
+}

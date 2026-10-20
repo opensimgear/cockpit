@@ -90,7 +90,7 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     assert.deepEqual(imported.profiles.document.virtualOutputs,[]);
     const recordingName=`${name} recording`,recordingSaved=(await native({command:'profile_import',document:recordingDocument,name:recordingName})).profiles.document;
     await page.getByRole('button',{name:/Back to Profiles/}).click();
-    await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await page.getByRole('button',{name:`Edit ${recordingName}`,exact:true}).click();
     await page.getByRole('button',{name:'Debug',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Profile debug',exact:true})).toBeVisible();

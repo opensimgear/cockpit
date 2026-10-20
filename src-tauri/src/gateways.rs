@@ -38,6 +38,8 @@ pub(crate) mod recovery_transport;
 mod profile_editor_save;
 #[path = "profile_panel_save.rs"]
 mod profile_panel_save;
+#[path = "profile_activation_progress.rs"]
+mod profile_activation_progress;
 
 trait Adapter: Send + Sync {
     fn publication(&self,_request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{Err("This transport does not support native controller publication overrides.".into())}
@@ -194,6 +196,7 @@ pub struct GatewayManager {
     profile_prepare: ProfilePrepare,
     profile_native: bool,
     profile_admission_epoch: Arc<AtomicU64>,
+    profile_activations: profile_activation_progress::Tracker,
     profile_pending: AtomicUsize,
     profile_learning: crate::profile_input_learning::Runtime,
     retired_output_until:Mutex<Option<std::time::Instant>>,
@@ -344,6 +347,7 @@ impl GatewayManager {
             profile_prepare,
             profile_native: native,
             profile_admission_epoch,
+            profile_activations: profile_activation_progress::Tracker::default(),
             profile_pending:AtomicUsize::new(0),
             retired_output_until:Mutex::new(None),
             profile_learning,
@@ -382,7 +386,7 @@ impl GatewayManager {
     fn profile_session_request(&self, request: &Value, native_arrival_epoch: Option<u64>) -> Result<Value, String> {
         let command = request["command"].as_str().ok_or("Choose a profile session operation.")?;
         let fields: &[&str] = match command {
-            "profile_apply" => &["id", "expectedRevision", "gameId", "expectedActiveOwner"],
+            "profile_apply" => &["id", "expectedRevision", "gameId", "expectedActiveOwner", "activationId"],
             "profile_game_launch" => &["gameId", "expectedActiveOwner"],
             "profile_stop" | "profile_recover" => &[],
             _ => return Err("Unknown profile session operation.".into()),
@@ -404,6 +408,7 @@ impl GatewayManager {
                 let expected = request["expectedRevision"].as_u64().filter(|revision| *revision > 0 && *revision <= osg_profiles::MAX_REVISION).ok_or("Activation requires the current saved profile version.")?;
                 let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
                 if document.revision != expected { return Err("The saved profile changed. Reload it before activating.".into()); }
+                self.capture_profile_activation(request, &document, &assignments);
                 let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
                 self.pin_staged_manual(id,admission_epoch,expected_owner.as_ref())?;
@@ -425,6 +430,7 @@ impl GatewayManager {
                             document, assignments, read_only, game_id: candidate.game_id.clone(), admission_epoch: candidate.admission_epoch, stage: None,
                         };
                         candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
+                        if let Some(activation)=request["activationId"].as_str(){self.profile_activations.activating(activation);}
                         profiles.request(&json!({"command":"profile_select","id":id,"selectionSource":"manual"}))?;
                         Ok((admission, game_admission))
                     },
@@ -536,6 +542,11 @@ impl GatewayManager {
     }
     pub fn request(&self, request: Value) -> Value {
         let command = request["command"].as_str().unwrap_or("");
+        // Activation progress and cancellation remain responsive while takeover
+        // owns the admission/coordinator locks. These APIs never claim outputs.
+        if matches!(command,"profile_activation_status"|"profile_activation_cancel") {
+            return self.profile_activation_request(&request);
+        }
         // System observation is independent of profile ownership, recovery,
         // learning and game admission. It only opens read-only native handles.
         if command == "system_inventory" {
@@ -579,15 +590,30 @@ impl GatewayManager {
         let learning_passive=matches!(request["command"].as_str(),Some("profile_input_learn_status"|"profile_input_learn_cancel"));
         let _pending=if staging&&!panel_save{self.profile_pending.fetch_add(1,Ordering::AcqRel);Some(PendingProfileApply(&self.profile_pending))}else{None};
         let interrupt=save_running || learning_interrupt(&request);
-        let arrival_epoch=if interrupt {Some(self.invalidate_learning())} else if editor_save||panel_save {Some(self.profile_admission_epoch.load(Ordering::Acquire))} else {None};
-        if staging && !editor_save&&!panel_save {let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)){return self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);}}
+        let tracked_activation=command=="profile_apply"&&request.get("activationId").is_some();
+        let arrival_epoch=if tracked_activation {
+            match self.begin_profile_activation(&request) {Ok(epoch)=>Some(epoch),Err(error)=>return self.error(&error,None)}
+        } else if interrupt {Some(self.invalidate_learning())} else if editor_save||panel_save {Some(self.profile_admission_epoch.load(Ordering::Acquire))} else {None};
+        if staging && !editor_save&&!panel_save {
+            let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+            if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)) {
+                let response=self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);
+                if tracked_activation {if let Some(id)=request["activationId"].as_str(){self.finish_profile_activation(id,&response);}}
+                return response;
+            }
+        }
         if learning_start||learning_passive{return self.request_inner(request);}
         let _profile_write = (profile_mutation && !staging).then(|| self.profile_admission.write().unwrap_or_else(|p| p.into_inner()));
         let _profile_read = (!profile_mutation&&!publication_transport).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
         if interrupt&&!staging{self.invalidate_learning();}
         // Slow read-only staging holds neither admission lock. Final takeover
         // acquires profile then game admission together in the established order.
-        if staging { return self.request_inner_at(request,arrival_epoch); }
+        if staging {
+            let activation=request["activationId"].as_str().filter(|_|tracked_activation).map(str::to_owned);
+            let response=self.request_inner_at(request,arrival_epoch);
+            if let Some(activation)=activation {self.finish_profile_activation(&activation,&response);}
+            return response;
+        }
         // Starting a game waits for manual requests admitted before it. Normal
         // requests share this lock, preserving independent gateway workers.
         // Coordinator callbacks address adapters directly after admission.
@@ -1356,6 +1382,7 @@ mod tests {
             adapter
         }
     }
+    pub(super) fn manager_fixture() -> Arc<GatewayManager> { setup().0 }
     fn setup() -> (Arc<GatewayManager>, Arc<MockProvider>) {
         let provider = Arc::new(MockProvider {
             ports: Mutex::new(vec![
@@ -1374,6 +1401,7 @@ mod tests {
     include!("profile_editor_save_tests.rs");
     include!("profile_panel_save_tests.rs");
     include!("profile_activation_tests.rs");
+    include!("profile_activation_gateway_tests.rs");
     fn request(manager: &GatewayManager, command: &str, id: Option<&str>, fields: Value) -> Value {
         let mut request = json!({"command":command,"clientId":CLIENT});
         if let Some(id) = id {

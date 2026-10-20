@@ -4,6 +4,51 @@ const id='11111111-1111-4111-8111-111111111111',run='22222222-2222-4222-8222-222
 const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});const running=()=>({...stopped(),state:'running',appliedSnapshot:{profileId:id,revision:3,semanticHash:hash},owner:{session:run,generation:1,profileId:id,profileRevision:3,gameId:null}});
 const editor=()=>({id,revision:3,baseRevision:3,dirty:false,readOnly:false});const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 function harness(){const calls=[],client={async status(){calls.push(['status']);return stopped();},async apply(id,revision,game,expectedOwner){calls.push(['apply',id,revision,game,expectedOwner]);return running();},async stop(){calls.push(['stop']);return stopped();},async recover(){calls.push(['recover']);return stopped();}};return{client,calls,controller:new ProfileRuntimeController(client)};}
+const activationProgress=(activation,patch={})=>({activationId:activation.id,profileId:activation.profileId,phase:'preparing',cancelRequested:false,canCancel:true,message:'Preparing profile.',companions:[],outcome:null,error:null,...patch});
+
+test('dedicated cancellation preserves the previous active profile and waits for the original activation to settle',async()=>{
+  const h=harness(),pending=deferred();h.client.status=async()=>running();await h.controller.refresh();
+  let progress;h.client.activationStatus=async()=>progress;h.client.cancelActivation=async activationId=>{h.calls.push(['cancel',activationId]);return progress={...progress,phase:'cancelling',cancelRequested:true,canCancel:false};};
+  h.client.apply=async(...args)=>{h.calls.push(['apply',...args]);return pending.promise;};
+  await h.controller.apply({...editor(),id:other});const applying=h.controller.confirmActivation(),activation=h.controller.state.activation;
+  progress=activationProgress(activation);await h.controller.refreshProgress();assert.equal(h.controller.state.progress.phase,'preparing');
+  assert.equal(await h.controller.cancelPendingActivation('stale-operation'),false);assert.equal(await h.controller.cancelPendingActivation(activation.id),true);
+  assert.equal(h.controller.state.pending,'apply');assert.equal(h.controller.state.activation.cancelling,true);assert.equal(await h.controller.cancelPendingActivation(activation.id),false);
+  assert.equal(h.calls.some(call=>call[0]==='stop'),false);assert.equal(h.calls[0][5],activation.id);
+  progress=activationProgress(activation,{phase:'cancelled',cancelRequested:true,canCancel:false,outcome:'previous-active',message:'Activation cancelled. Your previous profile is still active.'});
+  pending.reject(new Error('Profile preparation was cancelled by a newer native control.'));
+  assert.equal(await applying,false);assert.equal(h.controller.state.pending,null);assert.equal(h.controller.state.activation,null);assert.equal(h.controller.state.status.owner.profileId,id);assert.equal(h.controller.state.error,'');assert.match(h.controller.state.notice,/previous profile is still active/);
+});
+
+test('late progress and cancellation replies cannot change a newer explicit deactivation',async()=>{
+  const h=harness(),pending=deferred(),read=deferred(),cancel=deferred();h.client.apply=()=>pending.promise;h.client.activationStatus=()=>read.promise;h.client.cancelActivation=()=>cancel.promise;
+  const applying=h.controller.apply(editor()),activation=h.controller.state.activation;
+  const reading=h.controller.refreshProgress(),cancelling=h.controller.cancelPendingActivation(activation.id);
+  assert.equal(await h.controller.stop(),true);read.resolve(activationProgress(activation));cancel.resolve(activationProgress(activation,{phase:'cancelling',cancelRequested:true,canCancel:false}));
+  await reading;assert.equal(await cancelling,false);pending.resolve(running());assert.equal(await applying,false);
+  assert.equal(h.controller.state.status.owner,null);assert.equal(h.controller.state.progress,null);assert.equal(h.controller.state.activation,null);assert.equal(h.controller.state.notice,'');
+});
+
+test('failed cancellation remains retryable and progress failure never abandons an activation',async()=>{
+  const h=harness(),pending=deferred();h.client.apply=()=>pending.promise;let fail=true;
+  h.client.activationStatus=async()=>{throw new Error('Progress temporarily unavailable.');};
+  h.client.cancelActivation=async()=>{if(fail)throw new Error('Cancellation connection failed.');return activationProgress(h.controller.state.activation,{phase:'cancelling',cancelRequested:true,canCancel:false});};
+  const applying=h.controller.apply(editor());await h.controller.refreshProgress();assert.equal(h.controller.state.pending,'apply');assert.match(h.controller.state.progressError,/temporarily unavailable/);
+  assert.equal(await h.controller.cancelPendingActivation(),false);assert.equal(h.controller.state.activation.cancelling,false);assert.match(h.controller.state.error,/Cancellation connection failed/);
+  fail=false;assert.equal(await h.controller.cancelPendingActivation(),true);pending.resolve(running());assert.equal(await applying,true);assert.equal(h.controller.state.status.owner.profileId,id);
+});
+
+test('successful activation clears transient cancellation errors and reports a cancellation that lost the commit race',async()=>{
+  for(const lostRace of [false,true]){
+    const h=harness(),pending=deferred();h.client.apply=()=>pending.promise;
+    h.client.cancelActivation=async()=>{if(lostRace)return activationProgress(h.controller.state.activation,{phase:'cancelling',cancelRequested:true,canCancel:false});throw new Error('Cancellation connection failed.');};
+    let progress;h.client.activationStatus=async()=>progress;
+    const applying=h.controller.apply(editor()),activation=h.controller.state.activation;
+    progress=activationProgress(activation);assert.equal(await h.controller.cancelPendingActivation(),lostRace);if(!lostRace)assert.match(h.controller.state.error,/Cancellation connection failed/);
+    progress=activationProgress(activation,{phase:'succeeded',canCancel:false,cancelRequested:lostRace,outcome:'active',message:lostRace?'The profile became active before cancellation could take effect.':'Profile activated.'});
+    pending.resolve(running());assert.equal(await applying,true);assert.equal(h.controller.state.error,'');assert.equal(h.controller.state.progressError,'');assert.equal(h.controller.state.status.owner.profileId,id);assert.equal(h.controller.state.notice,lostRace?progress.message:'');
+  }
+});
 
 test('construction, observation and disposal cannot select, apply or stop a native run',async()=>{
   const h=harness();assert.deepEqual(h.calls,[]);const observed=[];const unsubscribe=h.controller.subscribe(value=>observed.push(value));assert.equal(h.controller.state.status,null);await h.controller.refresh();assert.deepEqual(h.calls,[['status']]);assert.equal(h.controller.state.status.state,'stopped');assert.equal(h.controller.state.stale,false);assert.ok(observed.length>=3);unsubscribe();h.controller.dispose();assert.equal(await h.controller.refresh(),false);assert.deepEqual(h.calls,[['status']]);
