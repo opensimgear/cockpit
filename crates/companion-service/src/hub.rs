@@ -416,6 +416,13 @@ impl Hub {
         })).collect()
     }
 
+    /// Read-only authoring metadata without copying retained image assets or opening a session.
+    pub fn publication_document(&self, publication_hash:&str) -> Result<Value,String> {
+        let inner=self.inner.lock().unwrap_or_else(|p|p.into_inner());
+        let publication=inner.publications.get(publication_hash).ok_or("Choose an available saved panel.")?;
+        serde_json::from_str(&publication.canonical_document).map_err(|error|error.to_string())
+    }
+
     /// Trusted local persistence boundary; never exposed as a wire operation.
     pub fn publication_uploads(&self) -> Vec<PublicationUpload> {
         self.inner.lock().unwrap_or_else(|p|p.into_inner()).publications.values().map(|p|PublicationUpload {

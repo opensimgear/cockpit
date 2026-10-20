@@ -19,6 +19,16 @@ pub(crate) struct PanelSummary {
     pub title: String,
     pub control_count: usize,
     pub asset_count: usize,
+    #[serde(default)]
+    pub compatibility: Vec<PanelCompatibility>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PanelCompatibility {
+    pub companion_id: String,
+    pub compatible: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +56,28 @@ fn digest(value: &str) -> bool {
         && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
 }
 impl Runtime {
+    fn profile_panel_compatibility(&self,hub:&osg_companion_service::Hub,publication:&str)->Result<Vec<PanelCompatibility>,String>{
+        use std::io::Read;
+        let metadata=self.metadata(false)?;
+        let mut bytes=vec![];
+        if let Ok(file)=std::fs::File::open(metadata.directory.join("companion-firmware.json")){
+            let _=file.take(65537).read_to_end(&mut bytes);
+        }
+        let firmware=if bytes.len()<=65536 {serde_json::from_slice::<serde_json::Value>(&bytes).ok().filter(serde_json::Value::is_object)}else{None}.unwrap_or(serde_json::json!({}));
+        let devices=self.services.get().and_then(|services|services.as_ref().ok()).map(|services|services.usb.statuses()).unwrap_or_default();
+        let document=hub.publication_document(publication)?;
+        Ok(hub.resource_companions().into_iter().map(|companion|{
+            let reason=if companion.kind=="esp32"{
+                let current=devices.iter().find(|usb|usb["connected"]==true&&usb["device"]["companionId"]==companion.companion_id);
+                let profile=current.and_then(|usb|usb["device"]["boardProfile"].as_str()).or_else(||firmware[&companion.companion_id]["profile"].as_str());
+                match profile.and_then(super::screen_dimensions){
+                    Some(size)=>super::validate_screen_document(&document,size).err(),
+                    None=>Some("Connect this ESP32 screen by USB to identify its screen size before assigning a panel.".into()),
+                }
+            }else{None};
+            PanelCompatibility {companion_id:companion.companion_id,compatible:reason.is_none(),reason}
+        }).collect())
+    }
     pub(crate) fn profile_authoring_catalogue(&self) -> Result<Catalogue, String> {
         let hub = self.profile_metadata()?;
         let updates=self.saved_panel_updates()?;
@@ -63,9 +95,10 @@ impl Runtime {
         for panel in &panels {
             if !digest(&panel.publication_hash) || !digest(&panel.capability_fingerprint)
                 || panel.title.is_empty() || panel.title.len()>1024 || panel.title.chars().any(char::is_control)
-                || !(1..=128).contains(&panel.control_count) || panel.asset_count>64
+                || panel.control_count>128 || panel.asset_count>64
             { return Err("A retained panel has an invalid immutable identity or advertised control count.".into()); }
         }
+        for panel in &mut panels {panel.compatibility=self.profile_panel_compatibility(&hub,&panel.publication_hash)?;}
         panels.sort_by(|a,b| a.publication_hash.cmp(&b.publication_hash));
         let bytes = serde_json::to_vec(&panels).map_err(|error|error.to_string())?;
         Ok(Catalogue {schema_version:1,revision:format!("sha256:{:x}",Sha256::digest(bytes)),panels,diagnostics:vec![]})
@@ -80,9 +113,11 @@ impl Runtime {
         { return Err("Choose an exact companion resource, retained publication and a page of 1–64 ports.".into()); }
         let hub = self.profile_metadata()?;
         let proof = hub.prepare_profile_assignment(instance_id,publication_hash)?;
+        if let Some(reason)=self.profile_panel_compatibility(&hub,publication_hash)?.into_iter()
+            .find(|row|row.companion_id==proof.companion_id()).and_then(|row|row.reason){return Err(reason);}
         let definition = osg_mapping_host::companions::native_definition(proof.definition())?;
-        if !(1..=128).contains(&definition.controls.len()) {
-            return Err("A real companion panel must advertise 1–128 interactive controls.".into());
+        if definition.controls.len()>128 {
+            return Err("A companion panel may advertise at most 128 interactive controls.".into());
         }
         let mut descriptors = crate::profile_resource_ports::companion(&definition,proof.feedback())?;
         if descriptors.len()>MAX_PORTS || offset>descriptors.len() {

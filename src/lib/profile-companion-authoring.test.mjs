@@ -11,15 +11,29 @@ test('read-only client captures bounded real panel metadata and prospective port
   assert.equal(retained.panels[0].title,'Actual immutable panel');assert.equal(ports.ports[0].descriptor.name,'Declared indicator');assert.ok(Object.isFrozen(ports.ports[0].descriptor.contract));
   assert.deepEqual(calls,[{command:'profile_companion_catalogue'},{command:'profile_companion_inspect',resourceId:'opaque-local-instance',publicationHash:hash(1),offset:0,limit:32}]);
 });
-test('invalid requests, fake zero-control panels and malformed replies fail without silent coercion',async()=>{
+test('invalid requests, out-of-range control counts and malformed replies fail without silent coercion',async()=>{
   let calls=0;const client=new api.ProfileCompanionAuthoringClient(async()=>{calls++;return catalogue();});
   for(const args of [['',hash(1)],['x','bad'],['x',hash(1),-1],['x',hash(1),0,65],['x',hash(1),NaN],['x',hash(1),0,0]])await assert.rejects(client.inspect(...args));assert.equal(calls,0);
-  for(const alter of [value=>value.schemaVersion=2,value=>value.panels[0].controlCount=0,value=>value.panels[0].controlCount=129,value=>value.panels.push(panel()),value=>value.token='forged',value=>value.revision=['manual'],value=>value.panels[0].title='bad\nname']){
+  for(const alter of [value=>value.schemaVersion=2,value=>value.panels[0].controlCount=-1,value=>value.panels[0].controlCount=129,value=>value.panels.push(panel()),value=>value.token='forged',value=>value.revision=['manual'],value=>value.panels[0].title='bad\nname']){
     const value=catalogue();alter(value);await assert.rejects(new api.ProfileCompanionAuthoringClient(async()=>value).catalogue());
   }
   for(const alter of [value=>value.resourceId='another-instance',value=>value.publicationHash=hash(2),value=>value.offset=1,value=>value.total=0,value=>value.ports=[],value=>value.ports[0].current=true,value=>value.ports[0].routeIds=['fake-live-route'],value=>value.ports[0].descriptor.contract.freshnessMs=NaN,value=>value.ports[0].contractHash='bad',value=>value.ports.push(observed())]){
     const value=page();alter(value);await assert.rejects(new api.ProfileCompanionAuthoringClient(async()=>value).inspect('opaque-local-instance',hash(1)));
   }
+});
+
+test('a zero-control saved panel keeps the complete catalogue usable and exposes a genuinely empty port page',async()=>{
+  const empty={...panel(6),panelId:'acr-display',title:'ACR display',controlCount:0},metadata={...catalogue(),panels:[panel(),empty]},emptyPage={...page(0,0,[]),publicationHash:hash(6)},calls=[];
+  const client=new api.ProfileCompanionAuthoringClient(async request=>{calls.push(plain(request));return request.command==='profile_companion_catalogue'?metadata:emptyPage;});
+  const retained=await client.catalogue();assert.equal(retained.panels.length,2);assert.equal(retained.panels[1].controlCount,0);assert.ok(Object.isFrozen(retained.panels[1]));
+  const browser=new api.ProfileCompanionPortBrowser(client);await browser.open('opaque-local-instance',hash(6));assert.equal(browser.page.total,0);assert.deepEqual(plain(browser.page.ports),[]);assert.ok(Object.isFrozen(browser.page.ports));assert.equal(browser.hasNext,false);assert.equal(browser.hasPrevious,false);await browser.next();await browser.previous();assert.equal(calls.length,2);
+  const captured=api.graphCaptureCompanionPanel(draft(),'screen',retained.panels[1]);assert.deepEqual(plain(captured.document.companionAssignments),[{resourceId:'screen',panelId:'acr-display',publicationHash:hash(6)}]);assert.deepEqual(plain(captured.document.resources[0].ports),[]);assert.deepEqual(plain(captured.assignments[0].ports),[]);assert.deepEqual(plain(captured.document.bindings),[]);
+});
+
+test('panel compatibility metadata is captured read-only and malformed companion verdicts are rejected',async()=>{
+  const value=catalogue();value.panels[0].compatibility=[{companionId:'paired-screen',compatible:true},{companionId:'small-screen',compatible:false,reason:'Panel dimensions exceed this companion display.'}];
+  const retained=await new api.ProfileCompanionAuthoringClient(async()=>value).catalogue();assert.deepEqual(plain(retained.panels[0].compatibility),value.panels[0].compatibility);assert.ok(Object.isFrozen(retained.panels[0].compatibility[0]));value.panels[0].compatibility[0].compatible=false;assert.equal(retained.panels[0].compatibility[0].compatible,true);
+  for(const invalid of [null,{},[{companionId:'screen',compatible:'true'}],[{companionId:'',compatible:true}],[{companionId:'x'.repeat(257),compatible:true}],[{companionId:'screen',compatible:false,reason:'bad\nmessage'}],[{companionId:'screen',compatible:false,reason:'x'.repeat(4097)}],[{companionId:'screen',compatible:true,token:'forged'}],[{companionId:'screen',compatible:true},{companionId:'screen',compatible:false}],Array.from({length:129},(_,index)=>({companionId:`screen-${index}`,compatible:true}))]){const malformed=catalogue();malformed.panels[0].compatibility=invalid;await assert.rejects(new api.ProfileCompanionAuthoringClient(async()=>malformed).catalogue());}
 });
 test('paged prospective browser follows actual lengths, preserves page on changed pairing and fences late replies',async()=>{
   const calls=[],browser=new api.ProfileCompanionPortBrowser({inspect:async(resource,publication,offset)=>{calls.push(offset);return page(offset,3,[observed(`port-${offset}`)]);}});

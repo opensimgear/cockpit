@@ -40,6 +40,30 @@ test('paired component configuration automatically browses panels without select
   const old=draft();old.assignments[0].sourceId='legacy-instance';
   const retained=await view(old,{},{inventory:[paired,legacy]});assert.ok(retained.html.includes('Legacy panel title'));
 });
+
+test('an empty companion block can choose an unused paired target and saved panel in one draft edit',async()=>{
+  const source={id:'unused-paired',name:'Unused paired display',resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:0,cachedPortCount:0,connections:[],attributes:{componentKind:'paired-companion',companionId:'unused'},diagnostics:[]};
+  for(const unassigned of [false,true]){const value=draft();if(unassigned)value.assignments=[];const h=await view(value,{catalogue:catalogue(),chosen:hash(1),target:source.id},{inventory:[source]});assert.doesNotMatch(h.html,/<button[^>]*disabled[^>]*>Use panel in profile<\/button>/);h.handlers.capture();assert.equal(h.edits.length,1);assert.deepEqual(h.edits[0].next.assignments,[{resourceId:'screen',sourceId:source.id,ports:[]}]);assert.deepEqual(h.edits[0].next.document.companionAssignments,[{resourceId:'screen',publicationHash:hash(1)}]);assert.deepEqual(h.edits[0].next.document.resources[0].ports,[]);assert.deepEqual(h.edits[0].next.document.bindings,[]);assert.deepEqual(h.calls,[]);assert.deepEqual(value.document.companionAssignments,[]);}
+});
+
+test('a zero-control saved panel is selectable and an empty native port page creates no dummy controls',async()=>{
+  const empty={...panel(),panelId:'acr-display',title:'ACR display',controlCount:0},emptyPage={...page(),total:0,ports:[]},h=await view(draft(),{catalogue:{...catalogue(),panels:[empty,panel(6)]},chosen:hash(1),page:emptyPage});
+  assert.ok(h.html.includes('ACR display · 0 controls'));assert.ok(h.html.includes('0 actual interactive controls'));assert.ok(h.html.includes('No ports from this group on this page.'));assert.ok(h.html.replace(/<!--[\s\S]*?-->/g,'').includes('0 declared ports'));assert.ok(!h.html.includes('1–0'));assert.doesNotMatch(h.html,/>Add (?:feedback input|control output)</);h.handlers.capture();assert.equal(h.edits.length,1);assert.deepEqual(h.edits[0].next.document.companionAssignments,[{resourceId:'screen',panelId:'acr-display',publicationHash:hash(1)}]);assert.deepEqual(h.edits[0].next.document.resources[0].ports,[]);assert.deepEqual(h.edits[0].next.document.bindings,[]);assert.deepEqual(h.calls,[]);
+});
+
+test('panel selection honors the chosen companion compatibility and cannot capture an incompatible or unknown target',async()=>{
+  const source={id:'opaque-instance',name:'Paired display',resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:0,cachedPortCount:0,connections:[],attributes:{componentKind:'paired-companion',companionId:'screen'},diagnostics:[]},reason='This panel exceeds the selected companion display size.',incompatible={...panel(),title:'Oversized panel',compatibility:[{companionId:'screen',compatible:false,reason}]},compatible={...panel(6),title:'Compatible panel',compatibility:[{companionId:'screen',compatible:true}]},metadata={...catalogue(),panels:[incompatible,compatible]};
+  let h=await view(draft(),{catalogue:metadata,chosen:hash(6)},{inventory:[source]});assert.ok(h.html.includes('Compatible panel · 1 controls'));assert.ok(!h.html.includes('Oversized panel · 1 controls'));h.handlers.capture();assert.equal(h.edits.length,1);assert.equal(h.edits[0].next.document.companionAssignments[0].publicationHash,hash(6));
+  h=await view(draft(),{catalogue:metadata,chosen:hash(1)},{inventory:[source]});h.handlers.capture();assert.deepEqual(h.edits,[]);
+  const captured=api.graphCaptureCompanionPanel(draft(),'screen',panel());h=await view(captured,{catalogue:metadata,chosen:hash(1)},{inventory:[source]});assert.ok(h.html.includes(reason));assert.match(h.html,/<button[^>]*disabled[^>]*>Use panel in profile<\/button>/);h.handlers.capture();assert.deepEqual(h.edits,[]);
+  h=await view(draft(),{catalogue:metadata,chosen:hash(6),target:'missing-instance'},{inventory:[source]});h.handlers.capture();assert.deepEqual(h.edits,[]);assert.match(h.html,/<button[^>]*disabled[^>]*>Use panel in profile<\/button>/);
+});
+
+test('changing a companion with routed ports still requires explicit reconciliation',async()=>{
+  let value=api.graphCaptureCompanionPanel(draft(),'screen',panel());value=api.graphSelectCompanionPort(value,'screen',page(),port());value=graph.graphConnect(value,{nodeId:'telemetry',portId:'active'},{nodeId:'screen',portId:value.document.resources[0].ports[0].id});
+  const source={id:'unused-paired',name:'Unused paired display',resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:1,cachedPortCount:1,connections:[],attributes:{componentKind:'paired-companion',companionId:'unused'},diagnostics:[]},h=await view(value,{catalogue:catalogue(),chosen:hash(1),target:source.id},{inventory:[source]});
+  assert.match(h.html,/<button[^>]*disabled[^>]*>Use panel in profile<\/button>/);h.handlers.capture();assert.deepEqual(h.edits,[]);assert.equal(value.document.bindings.length,1);assert.equal(value.assignments[0].sourceId,'opaque-instance');
+});
 test('companion choices exclude other blocks by exact source and paired installation aliases while retaining the current legacy assignment',async()=>{
   const base={resourceType:'companion',availability:'offline',generation:'1',capabilityRevision:hash(7),portCount:0,cachedPortCount:0,connections:[],diagnostics:[]};
   const inventory=[

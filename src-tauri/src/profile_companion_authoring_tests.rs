@@ -42,6 +42,75 @@ fn passive_catalogue_has_bounded_real_metadata_no_assets_and_stable_content_fing
     let mut summary=hub.publication_summaries();summary.pop();assert_eq!(hub.publication_summaries().len(),2);
     runtime.shutdown();
 }
+fn publish_zero_control_panel(hub:&Hub,feedback_only:bool)->Publication {
+    let mut upload:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+    let mut document:serde_json::Value=serde_json::from_str(&upload.canonical_document).unwrap();
+    document["ui"]["id"]=json!(if feedback_only {"feedback-only-panel"}else{"empty-panel"});
+    document["ui"]["title"]=json!(if feedback_only {"Feedback only"}else{"Empty saved panel"});
+    document["ui"]["controls"]=json!([]);document["bindings"]=json!([]);document["targets"]=json!([]);
+    document["presentation"]["widgets"].as_array_mut().unwrap().retain(|widget|feedback_only&&widget["controlIds"].as_array().unwrap().is_empty());
+    for page in document["ui"]["pages"].as_array_mut().unwrap(){page["items"].as_array_mut().unwrap().retain(|item|feedback_only&&item["kind"]=="feedback");}
+    if !feedback_only{
+        document["ui"]["feedbackWidgets"]=json!([]);
+        document["presentation"]["widgets"]=json!([{"id":"static-image","pageId":document["ui"]["pages"][0]["id"],"kind":"image","label":"Image placeholder","bounds":{"x":0,"y":0,"width":1,"height":1},"controlIds":[],"feedbackIds":[],"config":{}}]);
+    }
+    upload.canonical_document=serde_json::to_string(&document).unwrap();
+    upload.publication_hash=format!("sha256:{:x}",Sha256::digest(upload.canonical_document.as_bytes()));upload.capability_fingerprint=None;
+    let publication=Publication::validate(upload.clone()).unwrap();
+    let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");hub.command(&command).unwrap();publication
+}
+#[test]
+fn zero_control_panels_do_not_block_catalogue_and_inspect_real_feedback_or_empty_ports() {
+    let(runtime,hub,current,_,_directory)=fixture();
+    let empty=publish_zero_control_panel(&hub,false);
+    let feedback=publish_zero_control_panel(&hub,true);
+    let catalogue=runtime.profile_authoring_catalogue().unwrap();
+    assert_eq!(catalogue.panels.len(),3);
+    for panel in [&empty,&feedback]{assert_eq!(catalogue.panels.iter().find(|summary|summary.publication_hash==panel.publication_hash).unwrap().control_count,0);}
+    let blank=runtime.profile_authoring_inspect("companion-resource","instance",&empty.publication_hash,0,32).unwrap();
+    assert_eq!(blank.total,0);assert!(blank.ports.is_empty());
+    assert!(runtime.profile_authoring_inspect("companion-resource","instance",&empty.publication_hash,1,32).is_err());
+    let outputs=runtime.profile_authoring_inspect("companion-resource","instance",&feedback.publication_hash,0,32).unwrap();
+    assert!(!outputs.ports.is_empty());
+    assert!(outputs.ports.iter().all(|port|port.descriptor.direction==osg_profiles::Direction::Input));
+    assert_eq!(hub.assigned_publication("instance").unwrap().publication_hash,current.publication_hash);
+    assert!(runtime.services.get().is_none());runtime.shutdown();
+}
+#[test]
+fn catalogue_compatibility_matches_paired_screen_size_and_device_support_without_transports() {
+    let(runtime,hub,_,_,directory)=fixture();
+    for companion in ["sunton","waveshare","unknown-screen"]{
+        let offer=hub.command(&json!({"command":"companion_pair_offer","kind":"esp32"})).unwrap();
+        let pending=hub.handle_wire(json!({"type":"pair","secret":offer["secret"],"companionId":companion,"name":companion}),companion,hub.now_ms());
+        hub.command(&json!({"command":"companion_approve","requestId":pending["requestId"],"companionId":companion})).unwrap();
+    }
+    std::fs::write(directory.path().join("companion-firmware.json"),serde_json::to_vec(&json!({"sunton":{"profile":"sunton-3248s035r"},"waveshare":{"profile":"waveshare-lcd7-s3"}})).unwrap()).unwrap();
+    let blank=publish_zero_control_panel(&hub,true);
+    let mut document=hub.publication_document(&blank.publication_hash).unwrap();
+    document["ui"]["id"]=json!("sunton-panel");document["ui"]["title"]=json!("Sunton display only");
+    document["presentation"]["widgets"].as_array_mut().unwrap().retain(|widget|widget["kind"]=="numeric");
+    let feedback_id=document["presentation"]["widgets"][0]["feedbackIds"][0].clone();
+    document["ui"]["feedbackWidgets"].as_array_mut().unwrap().retain(|feedback|feedback["id"]==feedback_id);
+    for page in document["ui"]["pages"].as_array_mut().unwrap(){page["items"].as_array_mut().unwrap().retain(|item|item["refId"]==feedback_id);}
+    for viewport in document["presentation"]["viewports"].as_array_mut().unwrap(){viewport["width"]=json!(480);viewport["height"]=json!(320);}
+    let canonical=serde_json::to_string(&document).unwrap();
+    let hash=format!("sha256:{:x}",Sha256::digest(canonical.as_bytes()));
+    hub.command(&json!({"command":"companion_publish","canonicalDocument":canonical,"publicationHash":hash,"assets":[]})).unwrap();
+    let catalogue=runtime.profile_authoring_catalogue().unwrap();
+    let panel=catalogue.panels.iter().find(|panel|panel.publication_hash==hash).unwrap();
+    let row=|id:&str|panel.compatibility.iter().find(|row|row.companion_id==id).unwrap();
+    assert!(row("screen").compatible,"Browser/desktop companions can use any valid publication");
+    assert!(row("sunton").compatible);assert!(row("sunton").reason.is_none());
+    assert!(!row("waveshare").compatible);assert!(row("waveshare").reason.as_ref().unwrap().contains("800 × 480"));
+    assert!(!row("unknown-screen").compatible);assert!(row("unknown-screen").reason.as_ref().unwrap().contains("USB"));
+    let sunton=osg_companion_service::profile::profile_instance_id("sunton");
+    assert_eq!(runtime.profile_authoring_inspect("resource",&sunton,&hash,0,32).unwrap().total,1);
+    let waveshare=osg_companion_service::profile::profile_instance_id("waveshare");
+    assert!(runtime.profile_authoring_inspect("resource",&waveshare,&hash,0,32).unwrap_err().contains("800 × 480"));
+    assert!(catalogue.panels.iter().find(|panel|panel.panel_id=="flight-panel").unwrap().compatibility.iter().find(|row|row.companion_id=="sunton").unwrap().reason.as_ref().unwrap().contains("ESP32"));
+    assert!(runtime.services.get().is_none());assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(),1);
+    runtime.shutdown();
+}
 #[test]
 fn desired_panel_inspection_preserves_actual_assignment_and_returns_only_exact_prospective_contracts() {
     let(runtime,hub,a,b,_directory)=fixture();
