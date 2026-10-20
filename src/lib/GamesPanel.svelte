@@ -146,7 +146,6 @@
           {#if selected.executable || selected.source === 'manual'}<button class="text-button automatic-discovery" disabled={locked} onclick={() => send({ command: 'game_installation', gameId: selected.id, executable: null })}>Use automatic discovery</button>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         </section>
-        <section class="session-explainer"><Icon name="zap" size={20} /><h3>One click, your setup</h3><p>Launching prepares the selected saved unified profile before opening the game. Game launch uses matching profile contexts and remembered choices. Automatic mode also activates matching profiles when games are detected.</p><p>Live game branches wait for the matching verified process and provider setup. Game exit invalidates that context; native ownership determines cleanup and recovery.</p><p>Edit devices, routing, virtual controllers and companion assignments in Profiles. Keep Cockpit open while its native profile is active.</p></section>
       </aside>
     </div>
   {:else}
@@ -310,10 +309,6 @@
   .setup-live .live-dot { margin-top: 4px; }
   .setup-live strong { font-size: 10px; font-weight: 500; color: var(--soft); }
   .setup-live p { font-size: 9px; color: var(--muted); line-height: 1.8; margin-top: 7px; }
-  .session-explainer { padding: 24px 4px; color: var(--muted); }
-  .session-explainer :global(svg) { color: var(--accent); }
-  .session-explainer h3 { color: var(--soft); margin-top: 12px; }
-  .session-explainer p { font-size: 10px; line-height: 1.9; margin-top: 12px; }
   .session-banner { display: flex; align-items: center; gap: 13px; padding: 17px; background: var(--accent-bg); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 22px; }
   .session-icon { color: var(--accent); }
   .session-copy { flex: 1; min-width: 0; }
@@ -326,9 +321,8 @@
   .session-warning .session-icon { color: #c5a26e; }
   @media (hover: none) { .tile-launch {padding:0 20px 18px;} }
   @media (max-width: 1050px) { .games-detail-layout { grid-template-columns: minmax(0, 1fr); }
-  .game-sidebar { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .setup-panel { margin-top: 0; }
-  .session-explainer { padding: 20px 4px; } }
+  }
   @media (max-width: 600px) { .games-toolbar { align-items: start; }
   .toolbar-controls { align-items: end; flex-direction: column-reverse; gap: 12px; }
   .game-grid { grid-template-columns: 1fr; }
@@ -336,7 +330,6 @@
   .game-details-heading h2 { font-size: 19px; }
   .game-detail-mark { width: 50px; height: 50px; }
   .detail-launch { margin-left: 0; width: 100%; }
-  .game-sidebar { grid-template-columns: 1fr; }
   .session-banner { flex-wrap: wrap; }
   .session-banner > button { margin-left: 33px; } }
   @media (prefers-reduced-motion: reduce) { .game-tile, .tile-launch, .switch-track, .switch-track::after { transition: none; } }
