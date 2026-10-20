@@ -108,7 +108,7 @@ C2's native Hub implements authentication, instance authorization and session
 ordering before its `SourceSink` callbacks can update mapping input. One controller instance has one writer. A second writer is
 rejected; explicit takeover first releases the old instance and increments its
 generation. Peer disconnect/revocation invalidates that instance's contributions;
-unrelated admitted branches can continue. Host Stop/Pause affects the owning
+unrelated admitted branches can continue. Host Stop affects the owning
 profile. No standalone `mapping_stop` authority remains.
 
 Input starts disarmed. A complete neutral baseline uses sequence `0`, then input
@@ -213,11 +213,11 @@ One effective ProfileSession owns the typed reducer and participating workers. P
 
 Applied source-to-destination inspection shows the captured revision's node summaries, typed values, freshness and requested destinations. It does not prove OS submission or game-confirmed state. Companion controls remain sources; presentation feedback cannot synthesize a control input. Unit conversion, hysteresis, conditions and invocation arguments are explicit graph nodes. The shared renderer accepts only supported advertised widget properties; stale/disconnected feedback cannot masquerade as fresh confirmation.
 
-Stop, Pause, switching and context loss revoke affected owned contributions and feedback. Disconnect/reconnect isolates peers and needs new baselines; late messages cannot mutate replacement panels or owners. Crash recovery restores only exact still-owned state without replaying input/actions, running a prior graph or silently rehiding devices. Retained C4 mapping/output journals are cleanup-only; they cannot restart a standalone companion mapping.
+Stop, switching and context loss revoke affected owned contributions and feedback. Disconnect/reconnect isolates peers and needs new baselines; late messages cannot mutate replacement panels or owners. Crash recovery restores only exact still-owned state without replaying input/actions, running a prior graph or silently rehiding devices. Retained C4 mapping/output journals are cleanup-only; they cannot restart a standalone companion mapping.
 
 Browser and mobile clients share native authorization boundaries; the client OS does not qualify the host output backend. Designer preview and portable tests work while live output remains unqualified. Linux/macOS output and existing Windows output/script/hiding gates remain unchanged. No test-only feeder can be selected from the UI.
 
-The actual loopback browser/native WSS proof exercises the real profile host, reducer and shared renderer through conversion/hysteresis, live/stale feedback, disconnect/reconnect, Pause, Default and Stop. Its source is an explicitly authored altitude preset, not simulator altitude. See [the evidence](verification/2026-10-17-profile-companion-browser-wss.md). Real-game routing, binding retention, physical fallback and supported client/host combinations remain [#66](https://github.com/opensimgear/cockpit/issues/66) and the release matrix's scoped qualification stories.
+The actual loopback browser/native WSS proof exercises the real profile host, reducer and shared renderer through conversion/hysteresis, live/stale feedback, disconnect/reconnect, Default and Stop. Its source is an explicitly authored altitude preset, not simulator altitude. See [the evidence](verification/2026-10-17-profile-companion-browser-wss.md). Real-game routing, binding retention, physical fallback and supported client/host combinations remain [#66](https://github.com/opensimgear/cockpit/issues/66) and the release matrix's scoped qualification stories.
 
 ## Historical milestones and current validation
 

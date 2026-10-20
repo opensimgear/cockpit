@@ -2,8 +2,8 @@ import {nativeProfileStatus,type NativeProfileStatus,type ProfileGameId,type Pro
 import type{DeepReadonly}from'./profiles';
 
 export type RuntimeEditorTarget={id:string;revision:number;baseRevision:number|null;dirty:boolean;readOnly:boolean};
-export type RuntimeControlState={status:DeepReadonly<NativeProfileStatus>|null;pending:'apply'|'pause'|'clear-pause'|'stop'|'recover'|null;loading:boolean;stale:boolean;error:string;statusError:string};
-type Client=Pick<ProfileRuntimeClient,'status'|'apply'|'pause'|'stop'|'recover'>;
+export type RuntimeControlState={status:DeepReadonly<NativeProfileStatus>|null;pending:'apply'|'stop'|'recover'|null;loading:boolean;stale:boolean;error:string;statusError:string};
+type Client=Pick<ProfileRuntimeClient,'status'|'apply'|'stop'|'recover'>;
 /** UI admission and stale-reply fencing only; native owns every run and output. */
 export class ProfileRuntimeController{
   private value:RuntimeControlState={status:null,pending:null,loading:false,stale:true,error:'',statusError:''};
@@ -27,13 +27,12 @@ export class ProfileRuntimeController{
     const id=editor.id,revision=editor.baseRevision;
     return this.run('apply',()=>this.client.apply(id,revision,gameId));
   }
-  pause(paused=true):Promise<boolean>{return this.run(paused?'pause':'clear-pause',()=>this.client.pause(paused));}
   stop():Promise<boolean>{return this.run('stop',()=>this.client.stop());}
   recover():Promise<boolean>{return this.run('recover',()=>this.client.recover());}
   dismissError():void{this.set({error:''});}
   private async run(action:NonNullable<RuntimeControlState['pending']>,request:()=>Promise<DeepReadonly<NativeProfileStatus>>):Promise<boolean>{
     if(this.disposed)return false;
-    const interrupt=action==='stop'||action==='pause'||action==='recover';
+    const interrupt=action==='stop'||action==='recover';
     if(this.value.pending&&(!interrupt||this.value.pending===action))return false;
     const epoch=++this.epoch;this.set({pending:action,loading:false,stale:true,error:''});let failed=false;
     try{const status=nativeProfileStatus(await request());if(this.disposed||epoch!==this.epoch)return false;this.set({status,stale:false,statusError:''});return true;}

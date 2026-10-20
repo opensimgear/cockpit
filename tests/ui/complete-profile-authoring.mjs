@@ -58,7 +58,7 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, Start and ins
  const page=await browser.newPage({viewport:{width:1600,height:1100}}),requests=[],unexpected=[],pageErrors=[];
  const defaults={...copy(blank),id:defaultId,name:'Default'},documents=new Map([[defaultId,defaults]]),assignments=new Map([[defaultId,[]]]),resources=inventory();
  let appliedDocument=null,captureMode='known',clock=1000,inventoryRevision=1,saveCount=0;
- let profileSession={state:'stopped',paused:false,appliedSnapshot:null,owner:null,degradation:[],fault:null};
+ let profileSession={state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null};
  const session=()=>({selectedProfileId:defaultId,selectionMode:'manual',state:profileSession.state,appliedSnapshot:profileSession.appliedSnapshot,fault:null});
  const automatic=()=>({schemaVersion:1,mode:'manual',manualProfileId:defaultId,rules:[],status:'manual',message:'Fixture Manual pin; editor operations do not select a run.',conflicts:[],lastAttempt:null,target:null,readOnly:false});
  const listing=()=>({profiles:[...documents.values()].map(document=>({id:document.id,name:document.name,revision:document.revision,isDefault:document.id===defaultId,semanticHash:hash(document)})),session:session(),profileSession:copy(profileSession),automatic:automatic(),readOnly:false,diagnostics:[]});
@@ -105,7 +105,7 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, Start and ins
   if(request.command==='profile_apply'){
    assert.equal(saveCount,1);assert.equal(request.expectedRevision,documents.get(request.id)?.revision);assert.equal(request.gameId,'dcs');
    appliedDocument=copy(documents.get(request.id));const appliedSnapshot={profileId:request.id,revision:appliedDocument.revision,semanticHash:hash(appliedDocument)};
-   profileSession={state:'running',paused:false,appliedSnapshot,owner:{session:'44444444-4444-4444-8444-444444444444',generation:1,profileId:request.id,profileRevision:appliedDocument.revision,gameId:'dcs'},degradation:[],fault:null};
+   profileSession={state:'running',appliedSnapshot,owner:{session:'44444444-4444-4444-8444-444444444444',generation:1,profileId:request.id,profileRevision:appliedDocument.revision,gameId:'dcs'},degradation:[],fault:null};
    return{ok:true,state:{profiles:listing()}};
   }
   if(request.command==='profile_runtime_topology'){

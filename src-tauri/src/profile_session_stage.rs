@@ -66,8 +66,8 @@ impl Stage {
 }
 
 /// The long read-only phase deliberately has no coordinator guard. The health
-/// worker keeps renewing the previous run while it waits. Apply rechecks Pause,
-/// recovery and native pins after the one-use payload returns.
+/// worker keeps renewing the previous run while it waits. Apply rechecks recovery
+/// and native pins after the one-use payload returns.
 pub(crate) fn apply_staged<H: Host>(
     coordinator: &Mutex<Coordinator<H>>,
     candidate: Candidate,

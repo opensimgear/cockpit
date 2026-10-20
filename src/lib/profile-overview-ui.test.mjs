@@ -13,7 +13,7 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'a'.repeat(64)}`;
-const stopped=()=>({state:'stopped',paused:false,appliedSnapshot:null,owner:null,degradation:[],fault:null});
+const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
 const running=()=>({...stopped(),state:'running',appliedSnapshot:{profileId:id,revision:3,semanticHash:hash},owner:{session,generation:4,profileId:id,profileRevision:3,gameId:'dcs'}});
 const view=status=>({status,pending:null,loading:false,stale:!status,error:'',statusError:''});
 const profiles=[{id,name:'Applied saved rig',revision:9,isDefault:false,semanticHash:hash},{id:other,name:'Unapplied editor selection',revision:7,isDefault:false,semanticHash:hash}];
@@ -43,11 +43,11 @@ test('actual overview reads the native applied revision and exact profile identi
  const retired={...games(),session:{phase:'running',profileId:'legacy'},profiles:[{id:'legacy',name:'Retired independent profile'}]};const inactive=overview(view(stopped()),{games:retired});assert.ok(inactive.includes('No active profile'));assert.ok(!inactive.includes('Retired independent profile'));assert.ok(!inactive.includes('Activate a profile in Games'));
 });
 
-test('actual overview distinguishes hardware-only, awaiting-game, degradation, pause and recovery without inventing telemetry or active ownership',()=>{
+test('actual overview distinguishes hardware-only, awaiting-game, degradation and recovery without inventing telemetry or active ownership',()=>{
  let status=running();status.owner.gameId=null;assert.ok(overview(view(status)).includes('Hardware-only profile'));
  status=running();status.state='awaiting-game';let html=overview(view(status));assert.ok(html.includes('Hardware remains neutral'));assert.ok(html.includes('Waiting for the verified game'));
  status=running();status.state='degraded';status.degradation=['Exact optional companion is offline.'];html=overview(view(status));assert.ok(html.includes('Running with unavailable branches'));assert.ok(html.includes(status.degradation[0]));
- for(const state of ['paused','faulted','recovery-needed','transitioning']){status={...stopped(),state,paused:state==='paused',fault:state==='faulted'?'Native source continuity failed.':null};notifications.length=0;html=overview(view(status));assert.ok(!html.includes('No active profile'));if(status.fault)assert.ok(notifications.includes(status.fault));}
+ for(const state of ['faulted','recovery-needed','transitioning']){status={...stopped(),state,fault:state==='faulted'?'Native source continuity failed.':null};notifications.length=0;html=overview(view(status));assert.ok(!html.includes('No active profile'));if(status.fault)assert.ok(notifications.includes(status.fault));}
  html=overview({...view(running()),stale:true,statusError:'Current status unavailable.'});assert.ok(html.includes('Native status unavailable'));assert.ok(!html.includes('Applied saved rig'));assert.ok(!html.includes('Matching game context verified'));
  assert.ok(overview(view(null)).includes('Checking profile…'));
  const cleanup=games();cleanup.cleanup={phase:'recovery-needed',error:'A retained output receipt remains.'};html=overview(view(stopped()),{games:cleanup});assert.ok(html.includes('Previous owned setup'));assert.ok(html.includes('No active profile'));assert.ok(html.includes('Review cleanup'));

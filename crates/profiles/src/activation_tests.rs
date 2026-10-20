@@ -92,17 +92,13 @@ fn ties_hold_current_even_for_the_same_profile_and_ignore_lower_priority() {
     );
 }
 #[test]
-fn manual_pause_stop_fault_and_recovery_cannot_be_overridden() {
+fn manual_stop_fault_and_recovery_cannot_be_overridden() {
     let profiles = [default_document()];
     assert!(matches!(
         select(SelectionMode::Manual, Locks::default(), &[], &[], &profiles).unwrap(),
         Decision::Hold(_)
     ));
     for locks in [
-        Locks {
-            paused: true,
-            ..Locks::default()
-        },
         Locks {
             emergency_stopped: true,
             ..Locks::default()

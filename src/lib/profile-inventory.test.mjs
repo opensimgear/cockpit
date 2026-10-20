@@ -163,7 +163,7 @@ test('mismatched/malformed tokens are rejected and provider failures propagate',
 
 test('inventory capability errors preserve dirty editor documents and captured profile sessions', async () => {
   const document = parseProfileDocument(await readFile(new URL('../../tests/fixtures/profiles/blank.json', import.meta.url), 'utf8'));
-  const session = { selectedProfileId: document.id, selectionMode: 'manual', state: 'paused', appliedSnapshot: null, fault: null };
+  const session = { selectedProfileId: document.id, selectionMode: 'manual', state: 'stopped', appliedSnapshot: null, fault: null };
   const profileCalls = [];
   const profiles = new ProfilesClient(async request => { profileCalls.push(request.command); return request.command === 'profile_get' ? { document } : { session }; });
   await profiles.status();

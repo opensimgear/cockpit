@@ -208,16 +208,16 @@ def main():
             assert not service.request('profile_apply',id=document['id'],expectedRevision=1)['ok']
             duplicate=service.profiles('profile_duplicate',id=document['id'],name='Copy')['document']
             assert duplicate['id']!=document['id'] and service.profiles('profile_assignments_get',id=duplicate['id'])['assignments']==[]
-            paused=service.profiles('profile_pause',paused=True)
-            assert paused['profileSession']['paused'] and paused['profileSession']['owner'] is None
+            stopped=service.profiles('profile_stop')
+            assert stopped['profileSession']['state']=='stopped' and stopped['profileSession']['owner'] is None
+            assert stopped['profileSession']['appliedSnapshot'] is None
             assert not service.request('profile_runtime_inspect',owner=owner)['ok']
-            service.profiles('profile_pause',paused=False)
             fresh=apply(service,renamed)
             assert fresh!=owner
             service.profiles('profile_stop')
             assert not service.request('profile_runtime_inspect',owner=fresh)['ok']
             assert_preserved(obsolete)
-            evidence['checks'].append('actual schema2 CRUD/compile/Apply/native values, immutable applied revision, local-free Copy, Pause/Stop and old-owner fences')
+            evidence['checks'].append('actual schema2 CRUD/compile/Apply/native values, immutable applied revision, local-free Copy, Stop/restart and old-owner fences')
             if args.physical:
                 vendor,product=[int(part,16) for part in args.physical.split(':')]
                 def physical():

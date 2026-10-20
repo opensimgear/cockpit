@@ -37,7 +37,7 @@ test('Save revision rebases every undo/redo snapshot without changing graph sema
 test('editor identity/revision replacement requires reset and cannot enter another profile history',()=>{
   const history=new ProfileGraphHistory(initial());const other=initial();other.document.id='22222222-2222-4222-8222-222222222222';assert.throws(()=>history.commit(other,'Other profile'),/identity/);const newer=initial();newer.document.revision=2;assert.throws(()=>history.commit(newer,'New revision'),/revision/);history.reset(other);assert.equal(history.current.document.id,other.document.id);assert.equal(history.canUndo,false);
 });
-function editorHarness(){const document=initial().document,hash=`sha256:${'1'.repeat(64)}`,session={selectedProfileId:document.id,selectionMode:'manual',state:'paused',appliedSnapshot:{profileId:document.id,revision:1,semanticHash:hash},fault:null},calls=[];let persisted=plain(document);
+function editorHarness(){const document=initial().document,hash=`sha256:${'1'.repeat(64)}`,session={selectedProfileId:document.id,selectionMode:'manual',state:'stopped',appliedSnapshot:{profileId:document.id,revision:1,semanticHash:hash},fault:null},calls=[];let persisted=plain(document);
   const result=doc=>({document:plain(doc),assignments:[],profiles:[{id:doc.id,name:doc.name,revision:doc.revision,isDefault:false,semanticHash:hash}],session});
   const api={async list(){return result(persisted);},async getAssignments(){return result(persisted);},async editorSave(document,revision){calls.push('save');persisted={...plain(document),revision:revision+1};return result(persisted);}};
   const store=new ProfileEditorStore(api,{async listAll(){return{resources:[]};}}),undo=new ProfileEditorUndo(store);return{store,undo,api,calls,result,id:document.id};

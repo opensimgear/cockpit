@@ -1,6 +1,6 @@
 // Real running development Cockpit and native IPC. No intercepted transport,
 // fixture acknowledgements, enablement changes or output activation.
-// Key capture uses the real native Pause; cleanup restores its prior value.
+// Key capture uses the real native Stop and leaves output stopped.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire}from'node:module';
@@ -44,14 +44,18 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     await inspector.getByRole('button',{name:'Capture a physical key',exact:true}).click();
     const picker=inspector.getByLabel('Physical key capture',{exact:true});
     await expect(picker).toBeFocused();
-    const capturePause=(await native({command:'profile_status'})).profiles.profileSession;
-    assert.equal(capturePause.paused,true,'Native Pause must finish before the picker receives focus');
+    const captureStop=(await native({command:'profile_status'})).profiles.profileSession;
+    assert.equal(captureStop.state,'stopped','Native Stop must finish before the picker receives focus');
+    assert.equal(captureStop.owner,null);
+    assert.equal(captureStop.appliedSnapshot,null);
     // No click or explicit focus call: the very first key must reach the picker.
     await page.keyboard.press('ArrowRight');
     await expect(inspector.getByLabel('Physical key',{exact:true})).toHaveValue('79');
     await expect(picker).toHaveCount(0);
-    assert.equal((await native({command:'profile_status'})).profiles.profileSession.paused,true,'Capturing a key must leave output paused');
-    await native({command:'profile_pause',paused:before.profiles.profileSession.paused});
+    const captured=(await native({command:'profile_status'})).profiles.profileSession;
+    assert.equal(captured.state,'stopped','Capturing a key must leave output stopped');
+    assert.equal(captured.owner,null);
+    assert.equal(captured.appliedSnapshot,null);
     await inspector.getByRole('button',{name:'Update desktop actions',exact:true}).click();
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
     await expect(page.getByText('All changes saved · Save now and start this profile when ready.',{exact:true})).toBeVisible();
@@ -101,19 +105,21 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     await expect(recordingUi.getByRole('table')).toContainText('recorded-key');
     await recordingUi.screenshot({path:resolve(artifacts,'recording-preview-ui.png')});
     const after=await native({command:'profile_status'}),desktopAfter=await native({command:'profile_desktop_status'});
-    assert.deepEqual(after.profiles.profileSession,before.profiles.profileSession);
+    assert.equal(after.profiles.profileSession.state,'stopped');
+    assert.equal(after.profiles.profileSession.owner,null);
+    assert.equal(after.profiles.profileSession.appliedSnapshot,null);
     assert.equal(desktopAfter.desktop.enabled,desktopBefore.desktop.enabled);
     assert.deepEqual(desktopAfter.desktop.scope,desktopBefore.desktop.scope);
-    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({name,document,importedId:imported.profiles.document.id,recordingUiProfileId:recordingSaved.id,recordingUiVerified:true,keyCapture:{focusedWithoutManualFocus:true,firstKey:'ArrowRight',capturedUsage:79,nativePausedBeforeFocus:capturePause.paused,remainedPausedAfterKey:true},compilation:compiled.profileCompilation,recording,before:before.profiles.profileSession,after:after.profiles.profileSession,desktop:desktopAfter.desktop},null,2)+'\n');
+    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({name,document,importedId:imported.profiles.document.id,recordingUiProfileId:recordingSaved.id,recordingUiVerified:true,keyCapture:{focusedWithoutManualFocus:true,firstKey:'ArrowRight',capturedUsage:79,nativeStoppedBeforeFocus:captureStop.state==='stopped',remainedStoppedAfterKey:true},compilation:compiled.profileCompilation,recording,before:before.profiles.profileSession,after:after.profiles.profileSession,desktop:desktopAfter.desktop},null,2)+'\n');
     await page.screenshot({path:resolve(artifacts,'desktop-profile-reopened.png'),fullPage:true});
   }catch(error){await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true});throw error;}
   finally {
     try {
-      await native({command:'profile_pause',paused:before.profiles.profileSession.paused});
+      await native({command:'profile_stop'});
       const library=(await native({command:'profile_list'})).profiles;
       const created=library.profiles.filter(profile=>createdNames.has(profile.name));
       for(const profile of created)await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});
-      await writeFile(resolve(artifacts,'cleanup.json'),JSON.stringify({deletedTestProfiles:created.length,pausedRestored:before.profiles.profileSession.paused},null,2)+'\n');
+      await writeFile(resolve(artifacts,'cleanup.json'),JSON.stringify({deletedTestProfiles:created.length,outputStopped:true},null,2)+'\n');
     } finally { await browser.close(); } // Disconnect CDP; the native app stays open.
   }
 });

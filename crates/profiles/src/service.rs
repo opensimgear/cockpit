@@ -71,7 +71,6 @@ impl Service {
             "profile_editor_save" => &["document", "expectedRevision", "assignments"],
             "profile_import" => &["document", "name"],
             "profile_select" => &["id", "selectionSource"],
-            "profile_pause" => &["paused"],
             "profile_selection_mode" => &["mode"],
             "profile_reset" => &["confirm"],
             _ => return Err("Unknown profile command.".into()),
@@ -124,13 +123,6 @@ impl Service {
                 self.document(id)?;
                 let source = selection_mode(required_text(request, "selectionSource")?)?;
                 self.session.select(id, source);
-                Ok(self.status())
-            }
-            "profile_pause" => {
-                let paused = request["paused"]
-                    .as_bool()
-                    .ok_or("paused must be a boolean.")?;
-                self.session.set_paused(paused)?;
                 Ok(self.status())
             }
             "profile_selection_mode" => {

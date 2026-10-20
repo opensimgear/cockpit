@@ -69,12 +69,12 @@ export type ProfileLocalAssignment = { resourceId: string; sourceId: string; por
 export type ProfileSelectionMode = 'manual' | 'automatic';
 export type AppliedProfileSnapshot = { profileId: string; revision: number; semanticHash: string };
 export type ProfileSession = {
-  selectedProfileId: string; selectionMode: ProfileSelectionMode; state: 'stopped' | 'running' | 'degraded' | 'paused' | 'faulted' | 'recovery-needed' | 'transitioning' | 'awaiting-game';
+  selectedProfileId: string; selectionMode: ProfileSelectionMode; state: 'stopped' | 'running' | 'degraded' | 'faulted' | 'recovery-needed' | 'transitioning' | 'awaiting-game';
   appliedSnapshot: AppliedProfileSnapshot | null; fault: string | null;
 };
 export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string };
 export type ProfilePublicationReferences = { schemaVersion: 1; libraryFingerprint: string; hashes: string[] };
-export type ProfileCommand = 'profile_companion_references' | 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_pause' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
+export type ProfileCommand = 'profile_companion_references' | 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
 export type ProfileRequest =
   | { command: 'profile_list' | 'profile_status' | 'profile_companion_references' }
   | { command: 'profile_get' | 'profile_export' | 'profile_assignments_get'; id: string }
@@ -89,7 +89,6 @@ export type ProfileRequest =
   | { command: 'profile_select'; id: string; selectionSource: ProfileSelectionMode }
   | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: 'dcs' | 'x-plane-11' | 'x-plane-12' | 'assetto-corsa-rally' }
   | { command: 'profile_stop' | 'profile_recover' }
-  | { command: 'profile_pause'; paused: boolean }
   | { command: 'profile_selection_mode'; mode: ProfileSelectionMode }
   | { command: 'profile_reset'; confirm: true };
 export type ProfileSaveApplication = { state: 'inactive' | 'applied' | 'failed'; error: string | null };
@@ -398,7 +397,6 @@ export class ProfilesClient {
     return result;
   }
   async select(id: string, selectionSource: ProfileSelectionMode = 'manual'): Promise<ProfileResult> { return this.request({ command: 'profile_select', id, selectionSource }); }
-  async pause(paused = true): Promise<ProfileResult> { return this.request({ command: 'profile_pause', paused }); }
   async selectionMode(mode: ProfileSelectionMode): Promise<ProfileResult> { return this.request({ command: 'profile_selection_mode', mode }); }
   async reset(): Promise<ProfileResult> {
     const result = await this.request({ command: 'profile_reset', confirm: true });

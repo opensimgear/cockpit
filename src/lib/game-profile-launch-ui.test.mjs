@@ -2,8 +2,8 @@ import assert from'node:assert/strict';import test from'node:test';import{readFi
 const modules=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-provider-settings']);
 const id='11111111-1111-4111-8111-111111111111',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`,plain=value=>JSON.parse(JSON.stringify(value));
 const game=()=>({id:'dcs',name:'DCS World',provider:'dcs-bios',installed:true,executable:'C:\Games\DCS\bin\DCS.exe',launchSupported:true,integrationSetup:{state:'setup-required',message:'Not configured'},integrationContext:{status:'waiting-profile',message:'Waiting',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
-const stopped=()=>({state:'stopped',paused:false,appliedSnapshot:null,owner:null,degradation:[],fault:null});
-const running=()=>({state:'running',paused:false,appliedSnapshot:{profileId:id,revision:7,semanticHash:hash},owner:{session,generation:3,profileId:id,profileRevision:7,gameId:'dcs'},degradation:[],fault:null});
+const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
+const running=()=>({state:'running',appliedSnapshot:{profileId:id,revision:7,semanticHash:hash},owner:{session,generation:3,profileId:id,profileRevision:7,gameId:'dcs'},degradation:[],fault:null});
 const success=()=>({launch:{gameId:'dcs',profileId:id,selectedGameId:'dcs',state:'started'},profileSession:running()});
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 const settle=()=>new Promise(resolve=>setImmediate(resolve));

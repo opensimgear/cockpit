@@ -112,7 +112,7 @@
   const savedEditor=$derived(editor?workspace.profiles.find(row=>row.id===editor.document.id):undefined);
   function activationDisabled(profile:DeepReadonly<ProfileSummary>):boolean {
     const status=runtimeState.status;
-    return workspace.busy||workspace.readOnly||libraryBusy||!status||runtimeState.stale||!!runtimeState.pending||status.paused||['recovery-needed','transitioning','awaiting-game'].includes(status.state)||status.owner?.profileId===profile.id;
+    return workspace.busy||workspace.readOnly||libraryBusy||!status||runtimeState.stale||!!runtimeState.pending||['recovery-needed','transitioning','awaiting-game'].includes(status.state)||status.owner?.profileId===profile.id;
   }
   async function activateProfile(profile:DeepReadonly<ProfileSummary>) {
     if(activationDisabled(profile))return;

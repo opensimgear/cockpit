@@ -93,7 +93,6 @@ pub enum Decision {
 }
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Locks {
-    pub paused: bool,
     pub emergency_stopped: bool,
     pub recovery_needed: bool,
     pub faulted: bool,
@@ -129,9 +128,9 @@ pub fn select(
             "Explicit native recovery is required before automatic activation.".into(),
         ));
     }
-    if locks.paused || locks.emergency_stopped {
+    if locks.emergency_stopped {
         return Ok(Decision::Hold(
-            "Pause or emergency Stop prevents automatic activation.".into(),
+            "Stop prevents automatic activation.".into(),
         ));
     }
     if mode != SelectionMode::Automatic {

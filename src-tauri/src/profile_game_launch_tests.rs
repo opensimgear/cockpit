@@ -105,7 +105,6 @@ fn admission(candidate: &Candidate) -> LaunchAdmission {
         locks: Locks::default(),
         status: Status {
             state: State::AwaitingGame,
-            paused: false,
             applied_snapshot: Some(
                 osg_profiles::session::AppliedSnapshot::capture(&candidate.document)
                     .unwrap()
@@ -194,19 +193,17 @@ fn unstaged_read_only_game_scoped_ineligible_and_already_running_candidates_do_n
 #[test]
 fn arming_requires_exact_ready_snapshot_and_respects_every_native_operator_latch() {
     let (runtime, platform, candidate, _directory) = fixture();
-    for variant in 0..13 {
+    for variant in 0..11 {
         let mut state = admission(&candidate);
         match variant {
             0 => state.status.state = State::Degraded,
             1 => state.status.state = State::Transitioning,
-            2 => state.status.paused = true,
-            3 => state.locks.paused = true,
-            4 => state.locks.emergency_stopped = true,
-            5 => state.locks.recovery_needed = true,
-            6 => state.locks.faulted = true,
-            7 => state.status.fault = Some("fault".into()),
-            8 => state.status.owner.as_mut().unwrap().game_id = Some("dcs".into()),
-            9 => {
+            2 => state.locks.emergency_stopped = true,
+            3 => state.locks.recovery_needed = true,
+            4 => state.locks.faulted = true,
+            5 => state.status.fault = Some("fault".into()),
+            6 => state.status.owner.as_mut().unwrap().game_id = Some("dcs".into()),
+            7 => {
                 state
                     .status
                     .applied_snapshot
@@ -214,8 +211,8 @@ fn arming_requires_exact_ready_snapshot_and_respects_every_native_operator_latch
                     .unwrap()
                     .semantic_hash = "sha256:changed".into()
             }
-            10 => state.status.owner.as_mut().unwrap().profile_revision += 1,
-            11 => state.status.state = State::Running,
+            8 => state.status.owner.as_mut().unwrap().profile_revision += 1,
+            9 => state.status.state = State::Running,
             _ => state.candidate.document.revision += 1,
         }
         let prepared = runtime.prepare_profile_launch("dcs", &candidate).unwrap();

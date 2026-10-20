@@ -16,7 +16,7 @@
   const status = $derived(profileState.stale ? null : profileState.status);
   const applied = $derived(status?.owner ? status.appliedSnapshot : null);
   const profile = $derived(profiles.find(item => item.id === applied?.profileId));
-  const stateLabels = { stopped: 'Stopped', running: 'Running', degraded: 'Degraded', paused: 'Paused', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Applying…', 'awaiting-game': 'Awaiting game' };
+  const stateLabels = { stopped: 'Stopped', running: 'Running', degraded: 'Degraded', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Applying…', 'awaiting-game': 'Awaiting game' };
   const profileStatus = $derived(profileState.pending ? 'Updating…' : status ? stateLabels[status.state] : 'Unavailable');
   const profileLabel = $derived(applied ? profile?.name ?? `Profile ${applied.profileId.slice(0, 8)}` : status ? 'None' : 'Unavailable');
   const profileTitle = $derived(applied ? `${profileLabel} · ${profileStatus}` : profileState.statusError || profileStatus);

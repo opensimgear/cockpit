@@ -217,23 +217,20 @@ fn every_uncertain_activation_phase_is_compensated_and_never_replayed() {
     }
 }
 #[test]
-fn pause_latch_survives_restart_and_selection_cannot_rearm_it() {
+fn legacy_paused_journal_opens_stopped_and_new_save_drops_the_latch() {
     let folder = temp();
     let path = folder.path().join("session.json");
-    let (mut runtime, _) = coordinator(Some(path.clone()));
+    std::fs::write(&path, br#"{"schemaVersion":1,"paused":true,"active":null,"pending":null}"#).unwrap();
+    let (mut runtime, probe) = coordinator(Some(path.clone()));
+    assert_eq!(runtime.status().state, State::Stopped);
+    assert!(probe.lock().unwrap().calls.is_empty());
     runtime.apply(candidate()).unwrap();
-    runtime.pause(true).unwrap();
-    assert!(runtime.apply(candidate()).is_err());
-    drop(runtime);
-    let (mut restarted, probe) = coordinator(Some(path));
-    assert_eq!(restarted.status().state, State::Paused);
-    assert!(probe.lock().unwrap().calls.is_empty());
-    assert!(restarted.apply(candidate()).is_err());
-    restarted.pause(false).unwrap();
-    assert!(probe.lock().unwrap().calls.is_empty());
-    restarted.apply(candidate()).unwrap();
-    assert_eq!(restarted.status().state, State::Running);
+    assert_eq!(runtime.status().state, State::Running);
+    runtime.stop().unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert!(saved.get("paused").is_none());
 }
+
 #[test]
 fn restart_requires_explicit_owned_recovery_without_starting_workers_or_rehiding() {
     let folder = temp();
@@ -415,34 +412,32 @@ fn recovery_envelope_rejects_missing_fields_forged_phases_and_oversized_data() {
 }
 
 #[test]
-fn resume_during_unresolved_recovery_preserves_persistent_pause() {
+fn legacy_pause_does_not_bypass_owned_recovery_or_block_apply_after_cleanup() {
     let folder = temp();
     let path = folder.path().join("session.json");
-    let (mut runtime, probe) = coordinator(Some(path.clone()));
+    let (mut runtime, _) = coordinator(Some(path.clone()));
     runtime.apply(candidate()).unwrap();
-    probe.lock().unwrap().fail = Some("restore:false".into());
-    assert!(runtime.pause(true).is_err());
-    assert!(runtime.pause(false).is_err());
     drop(runtime);
-    let (mut restarted, _) = coordinator(Some(path));
-    assert!(restarted.status().paused);
+    let mut saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    saved["paused"] = serde_json::json!(true);
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let (mut restarted, probe) = coordinator(Some(path));
+    assert_eq!(restarted.status().state, State::RecoveryNeeded);
+    assert!(probe.lock().unwrap().calls.is_empty());
+    assert!(restarted.apply(candidate()).is_err());
     restarted.recover().unwrap();
-    assert_eq!(restarted.status().state, State::Paused);
+    assert_eq!(restarted.status().state, State::Stopped);
+    restarted.apply(candidate()).unwrap();
+    assert_eq!(restarted.status().state, State::Running);
 }
 
 #[test]
-fn pause_revokes_workers_and_hiding_even_when_durable_storage_fails() {
+fn stop_revokes_workers_and_hiding_even_when_durable_storage_fails() {
     let (mut runtime, probe) = coordinator(None);
     runtime.apply(candidate()).unwrap();
     let owner = runtime.status().owner.clone().unwrap();
-    runtime.pause(false).unwrap();
-    assert!(
-        runtime.validates(&owner),
-        "Idempotent Resume cannot orphan an already running owner."
-    );
     runtime.store.fail_save = true;
-    assert!(runtime.pause(true).is_err());
-    assert!(runtime.status().paused);
+    assert!(runtime.stop().is_err());
     assert_eq!(runtime.status().state, State::RecoveryNeeded);
     assert!(!runtime.validates(&owner));
     assert!(probe.lock().unwrap().owner.is_none());
@@ -450,7 +445,7 @@ fn pause_revokes_workers_and_hiding_even_when_durable_storage_fails() {
     assert!(runtime.apply(candidate()).is_err());
     runtime.store.fail_save = false;
     runtime.recover().unwrap();
-    assert_eq!(runtime.status().state, State::Paused);
+    assert_eq!(runtime.status().state, State::Stopped);
 }
 
 #[test]
@@ -545,7 +540,7 @@ fn blocked_native_preflight_does_not_block_active_health_or_change_the_owner() {
 }
 
 #[test]
-fn staged_apply_rechecks_pause_and_drops_unarmed_payloads() {
+fn staged_apply_rechecks_stop_admission_and_drops_unarmed_payloads() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Unarmed(Arc<AtomicUsize>);
     impl Drop for Unarmed {
@@ -557,18 +552,17 @@ fn staged_apply_rechecks_pause_and_drops_unarmed_payloads() {
     runtime.apply(candidate()).unwrap();
     let runtime = Mutex::new(runtime);
     let dropped = Arc::new(AtomicUsize::new(0));
-    let result = apply_staged(&runtime, candidate(), |candidate| {
+    let result = apply_staged_admitted(&runtime, candidate(), |candidate| {
         let stage = Stage::new(candidate, Unarmed(dropped.clone()))?;
-        // Pause can arrive from an internal emergency-stop path after staging
-        // began; the later lock must not install the prepared owner.
-        runtime.lock().unwrap().pause(true)?;
+        // Stop revokes the run while preparation is off-lock. Manager's
+        // admission fence rejects its late result before ownership can return.
+        runtime.lock().unwrap().stop()?;
         Ok(stage)
-    });
+    }, |_| Err::<(), _>("Stop cancelled the staged admission.".to_owned()), || {});
     assert!(result.is_err());
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
-    assert!(runtime.lock().unwrap().status().paused);
+    assert_eq!(runtime.lock().unwrap().status().state, State::Stopped);
     assert!(probe.lock().unwrap().owner.is_none());
-    assert!(apply_staged(&runtime, candidate(), |_| panic!("Paused must not stage")).is_err());
     let (runtime, _) = coordinator(None);
     let runtime = Mutex::new(runtime);
     let mut read_only = candidate();
@@ -612,8 +606,6 @@ fn visibility_handoff_source_is_passive_exact_active_provenance_and_never_pendin
     runtime.status.state = State::RecoveryNeeded;
     assert!(runtime.visibility_handoff_source().is_err());
     runtime.status.state = State::Running;
-    runtime.pause(true).unwrap();
-    assert!(runtime.visibility_handoff_source().is_err());
-    runtime.pause(false).unwrap();
+    runtime.stop().unwrap();
     assert!(runtime.visibility_handoff_source().unwrap().is_none());
 }

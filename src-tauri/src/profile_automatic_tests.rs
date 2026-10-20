@@ -62,7 +62,8 @@ struct Fixture {
     directory: tempfile::TempDir,
 }
 impl Fixture {
-    fn new() -> Self {
+    fn new() -> Self { Self::with_legacy_stop(false) }
+    fn with_legacy_stop(legacy_stop: bool) -> Self {
         let mut manager = GatewayManager::with_provider(Arc::new(NoPorts));
         let directory = crate::test_directory();
         let games = Arc::new(Games::default());
@@ -106,6 +107,9 @@ impl Fixture {
             false,
             manager.profile_admission_epoch.clone(),
         );
+        if legacy_stop {
+            std::fs::write(directory.path().join("session.json"), br#"{"schemaVersion":1,"paused":true,"active":null,"pending":null}"#).unwrap();
+        }
         manager.profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             host,
             Some(directory.path().join("session.json")),
@@ -287,7 +291,7 @@ fn automatic_apply_is_idempotent_and_editor_save_preserves_game_and_automatic_po
     );
 }
 #[test]
-fn ties_manual_pin_pause_emergency_stop_and_explicit_automatic_resume_are_authoritative() {
+fn ties_manual_pin_emergency_stop_and_explicit_automatic_resume_are_authoritative() {
     let fixture = Fixture::new();
     let manager = &fixture.manager;
     let a = create(manager, "A");
@@ -323,13 +327,6 @@ fn ties_manual_pin_pause_emergency_stop_and_explicit_automatic_resume_are_author
     mode(manager, "automatic");
     manager.poll_automatic();
     assert_eq!(owner(manager).unwrap().profile_id, b);
-    ok(manager, "profile_pause", json!({"paused":true}));
-    manager.poll_automatic();
-    assert!(owner(manager).is_none());
-    assert_eq!(manager.profile_automatic.view()["status"], "blocked");
-    ok(manager, "profile_pause", json!({"paused":false}));
-    manager.poll_automatic();
-    assert!(owner(manager).is_some());
     ok(manager, "profile_stop", json!({}));
     fixture.process("x-plane-12", 2);
     manager.poll_automatic();
@@ -626,4 +623,66 @@ fn failed_manual_pin_storage_inhibits_automatic_events_after_explicit_selection(
         fixture.manager.profile_automatic.view()["status"],
         "blocked"
     );
+}
+
+#[test]
+fn legacy_pause_is_migrated_to_durable_stop_before_automatic_startup() {
+    let mut fixture = Fixture::with_legacy_stop(true);
+    let path = fixture.directory.path().join("automatic.json");
+    fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
+    mode(&fixture.manager, "automatic");
+    fixture.manager.restore_automatic_selection();
+    fixture.manager.poll_automatic();
+    assert!(owner(&fixture.manager).is_none());
+    assert_eq!(fixture.manager.profile_automatic.view()["mode"], "manual");
+    assert_eq!(Store::new(Some(path)).load().unwrap().unwrap().mode, SelectionMode::Manual);
+    let saved: Value = serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
+    assert!(saved.get("paused").is_none());
+    ok(&fixture.manager, "profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+    assert!(owner(&fixture.manager).is_some());
+}
+
+#[test]
+fn legacy_stop_migration_preserves_the_old_intent_until_both_writes_succeed() {
+    for fail_pin in [true, false] {
+        let mut fixture = Fixture::with_legacy_stop(true);
+        let path = fixture.directory.path().join("automatic.json");
+        fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
+        mode(&fixture.manager, "automatic");
+        if fail_pin {
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+        } else {
+            fixture.manager.profile_session.lock().unwrap().fail_journal_saves(true);
+        }
+        fixture.manager.restore_automatic_selection();
+        fixture.manager.poll_automatic();
+        assert!(owner(&fixture.manager).is_none());
+        let saved: Value = serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
+        assert_eq!(saved["paused"], true);
+        if fail_pin { std::fs::remove_dir(&path).unwrap(); }
+        fixture.manager.profile_session.lock().unwrap().fail_journal_saves(false);
+        fixture.manager.restore_automatic_selection();
+        assert_eq!(Store::new(Some(path)).load().unwrap().unwrap().mode, SelectionMode::Manual);
+        let saved: Value = serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
+        assert!(saved.get("paused").is_none());
+    }
+}
+
+#[test]
+fn desktop_stop_persists_manual_even_when_owned_cleanup_fails() {
+    let mut fixture = Fixture::new();
+    let path = fixture.directory.path().join("automatic.json");
+    fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
+    ok(&fixture.manager, "profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+    mode(&fixture.manager, "automatic");
+    fixture.manager.profile_session.lock().unwrap().fail_journal_saves(true);
+    assert_eq!(request(&fixture.manager,"profile_desktop_stop",json!({}))["ok"], false);
+    assert!(owner(&fixture.manager).is_none());
+    assert_eq!(fixture.manager.profile_automatic.view()["mode"],"manual");
+    assert_eq!(Store::new(Some(path)).load().unwrap().unwrap().mode, SelectionMode::Manual);
+    fixture.manager.profile_session.lock().unwrap().fail_journal_saves(false);
+    ok(&fixture.manager, "profile_recover", json!({}));
+    fixture.manager.poll_automatic();
+    assert!(owner(&fixture.manager).is_none());
 }

@@ -23,7 +23,9 @@ pub(super) struct Transition {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Manifest {
     pub schema_version: u32,
-    pub paused: bool,
+    /// Read old journals without retaining the removed operator Pause latch.
+    #[serde(default, rename = "paused", skip_serializing)]
+    pub(super) legacy_paused: bool,
     #[serde(deserialize_with = "super::required_option")]
     pub active: Option<OwnedRun>,
     #[serde(deserialize_with = "super::required_option")]
@@ -33,7 +35,7 @@ impl Default for Manifest {
     fn default() -> Self {
         Self {
             schema_version: 1,
-            paused: false,
+            legacy_paused: false,
             active: None,
             pending: None,
         }

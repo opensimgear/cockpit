@@ -124,15 +124,15 @@ stay dormant. Lost or stale inputs release their affected contributions.
 Reconnection needs fresh input baselines; held inputs and old events are not
 replayed.
 
-**Stop** cancels pending starts/launches and releases owned output. **Pause** stops
-the run and retains the pause latch. **Clear pause** permits Automatic selection
-to resume; in Manual mode use **Start profile**. **Recover outputs** restores
+**Stop** cancels pending starts/launches and releases owned output. Use **Start
+profile** to run a saved profile again, or explicitly select Automatic to resume
+automatic selection. **Recover outputs** restores
 retained ownership without restarting mappings or commands. Retired ownership
 cleanup is available in Profile debug.
 
 Manual mode retains an explicit profile pin. Automatic uses enabled game rules
 and the unique highest priority among verified running games; no match uses
-Default. A priority tie holds selection. Stop, Pause, recovery and faults inhibit
+Default. A priority tie holds selection. Stop, recovery and faults inhibit
 automatic activation until resolved. Saving a running profile preserves this
 selection mode; saving another profile does not switch to it.
 

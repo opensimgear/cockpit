@@ -108,7 +108,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
   });
   const owner = { session: defaultId, generation: 1, profileId: defaultId, profileRevision: 1, gameId: 'dcs' };
   const appliedSnapshot = { profileId: defaultId, revision: 1, semanticHash: hash };
-  const session = { state: 'running', paused: false, appliedSnapshot, owner, degradation: [], fault: null };
+  const session = { state: 'running', appliedSnapshot, owner, degradation: [], fault: null };
   const profileDocument = { schemaVersion: 2, id: defaultId, name: 'Default', revision: 1,
     eligibility: { gameIds: [] }, resources: ['retained-throttle-binding', 'retained-wheel-binding', 'retained-virtual-binding']
       .map(id => ({ id, name: id, kind: 'device', required: false, ports: [] })),

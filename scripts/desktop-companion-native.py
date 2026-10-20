@@ -447,7 +447,7 @@ def main():
             selected = mapping.state(service, "profile_desktop_capture_application", "desktop")
             assert selected["application"]["pid"] == identity["pid"], selected
             mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
-            service.profiles("profile_pause", paused=False)
+            service.profiles("profile_stop")
             apply_attempted = True
             owner = mapping.apply(service, saved)
             time.sleep(.2)

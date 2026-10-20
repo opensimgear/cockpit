@@ -18,7 +18,6 @@ struct Capture {
 }
 fn locks(status: &Status, emergency: bool) -> Locks {
     Locks {
-        paused: status.paused,
         emergency_stopped: emergency,
         recovery_needed: status.state == SessionState::RecoveryNeeded,
         faulted: status.state == SessionState::Faulted,

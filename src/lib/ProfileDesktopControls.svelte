@@ -18,7 +18,7 @@
     {#if status.reason}<p role="status">{status.reason}</p>{/if}{#if status.error}<p class="error" role="alert">{status.error}</p>{/if}
   {/if}
   <div class="actions"><button class="secondary-button" disabled={busy==='profile_desktop_stop'} onclick={()=>request({command:'profile_desktop_stop'})}>Stop keyboard and mouse output</button><button class="text-button" disabled={!!busy} onclick={()=>request({command:'profile_desktop_recover'})}>Recover desktop outputs</button></div>
-  <p>Stop cancels pending work across the active profile and persists Pause against automatic rearming. Focus loss clears holds and requires neutral controls before rearming.</p>
+  <p>Stop cancels pending work across the active profile and releases its outputs. Use Start profile when ready to run again. Focus loss clears holds and requires neutral controls before rearming.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
 <style>

@@ -50,10 +50,12 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
     for(const field of ['settingsErases','settingsPrograms','moduleReconnects','descriptorHex'])assert.deepEqual(after[field],before[field],field);
     assert.deepEqual(after.module.config,before.module.config);assert.equal(after.module.owner,0,'Profile output never acquires a persistent configuration writer');
     for(const command of ['mapping_virtual_start','mapping_preview_start','integration_start','integration_save','dcs_start','game_activate','controller_visibility_apply','controller_visibility_launch'])assert.equal((await request(command,{})).ok,false,command);
-    await ok('profile_pause',{paused:true});
-    await wait(()=>admin(device,'direct_action state'),state=>state.actions.states.find(action=>action.id==='led.rgb.set_color').values[0]==='112233','Pause restores actual captured prior output');
+    const stopped=(await ok('profile_stop')).profiles.profileSession;
+    assert.equal(stopped.state,'stopped');assert.equal(stopped.owner,null);assert.equal(stopped.appliedSnapshot,null);
+    assert.equal(Object.hasOwn(stopped,'paused'),false);
+    await wait(()=>admin(device,'direct_action state'),state=>state.actions.states.find(action=>action.id==='led.rgb.set_color').values[0]==='112233','Stop restores actual captured prior output');
     assert.equal((await request('profile_runtime_inspect',{owner})).ok,false);
-    await ok('profile_pause',{paused:false});const fresh=(await ok('profile_apply',{id:saved.id,expectedRevision:1})).profiles.profileSession.owner;assert.notDeepEqual(fresh,owner);
+    const fresh=(await ok('profile_apply',{id:saved.id,expectedRevision:1})).profiles.profileSession.owner;assert.notDeepEqual(fresh,owner);
     await wait(()=>admin(device,'direct_action state'),state=>state.actions.states.find(action=>action.id==='led.rgb.set_color').values[0]==='445566','fresh Apply output');
     await ok('profile_stop');
     await wait(()=>admin(device,'direct_action state'),state=>state.actions.states.find(action=>action.id==='led.rgb.set_color').values[0]==='112233','Stop exact captured baseline restore');
@@ -187,6 +189,6 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
     await checkpoint('explicit-cold-recovery-complete',{status:finalStatus,route:routeOf(finalGateway),publication:publicationOf(finalGateway),
       actual:actualRgb(quiet),ownership:ownershipOf(quiet),passiveObservationMs:quiet.clockMs-afterRecover.clockMs,
       noNewClaim:true,noProductiveReplay:true,journalCleared:true,noPersistentConfigWrites:true});
-    await writeFile(resolve(directory,'result.json'),JSON.stringify({scope:'software simulation',hardware:false,qualification:false,unifiedProfile:true,capturedBaseline:true,endpointConflict:true,pause:true,stop:true,noPersistentConfigWrites:true,restartWithoutOwner:true,activeHostSigkill:true,watchdogRestorationWhileHostDead:true,explicitColdRecovery:true,noProductiveReplay:true,activeLeaseReleaseAfterRestart:false,heldInputReplayTested:false,publicationOverrideTested:false},null,2));
+    await writeFile(resolve(directory,'result.json'),JSON.stringify({scope:'software simulation',hardware:false,qualification:false,unifiedProfile:true,capturedBaseline:true,endpointConflict:true,stopRestart:true,stop:true,noPersistentConfigWrites:true,restartWithoutOwner:true,activeHostSigkill:true,watchdogRestorationWhileHostDead:true,explicitColdRecovery:true,noProductiveReplay:true,activeLeaseReleaseAfterRestart:false,heldInputReplayTested:false,publicationOverrideTested:false},null,2));
   }finally{await service.stop();await Promise.all(peers.reverse().map(peer=>peer.stop()));}
 });

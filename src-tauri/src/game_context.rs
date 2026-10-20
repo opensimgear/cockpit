@@ -489,7 +489,7 @@ mod tests {
         assert!(broker.validate(&original).is_err());
     }
     #[test]
-    fn profile_pause_setup_and_capability_changes_require_new_admission() {
+    fn profile_stop_setup_and_capability_changes_require_new_admission() {
         let mut broker = Broker::default();
         broker.set_owner(Some(owner(Some("dcs")))).unwrap();
         observe(&mut broker, "dcs", observed()).unwrap();

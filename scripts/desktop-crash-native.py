@@ -223,7 +223,7 @@ def main():
         assert captured["application"]["pid"] == receiver_identity["pid"] and windows.path(captured["application"]["path"]) == windows.path(receiver_identity["executable"])
         assert captured["recentApplication"] == receiver_identity
         mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
-        service.profiles("profile_pause", paused=False)
+        service.profiles("profile_stop")
         owner = mapping.apply(service, saved)
         peer.input([dict(controlId="flight-input-0", value=False)])
         mapping.wait_for(lambda: desktop(service)["runtime"]["state"] == "active" and not desktop(service)["runtime"]["waitingNeutral"], "Neutral scoped desktop route did not arm")

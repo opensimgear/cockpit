@@ -61,7 +61,7 @@ the selected installation's `Resources/plugins/DataRefs.txt`; see the
    creation time; the profile/rule never stores a durable PID. Enter a flight and
    leave pause/replay to establish a fresh baseline. Inspect the applied port and
    path samples in Profiles. Wrong/no game leaves the X-Plane branch dormant.
-6. **Stop**, **Pause** or game-context loss withdraws affected output. Interrupted
+6. **Stop** or game-context loss withdraws affected output. Interrupted
    ownership uses explicit profile recovery; recovery does not replay a process,
    commands or old telemetry. Unrelated admitted hardware branches can continue
    after game-context loss.

@@ -6,13 +6,12 @@ export type NativeProfileOwner = {
   session: string; generation: number; profileId: string; profileRevision: number; gameId: ProfileGameId | null;
 };
 export type NativeProfileStatus = {
-  state: 'stopped' | 'running' | 'degraded' | 'paused' | 'faulted' | 'recovery-needed' | 'transitioning' | 'awaiting-game';
-  paused: boolean; appliedSnapshot: AppliedProfileSnapshot | null; owner: NativeProfileOwner | null;
+  state: 'stopped' | 'running' | 'degraded' | 'faulted' | 'recovery-needed' | 'transitioning' | 'awaiting-game';
+  appliedSnapshot: AppliedProfileSnapshot | null; owner: NativeProfileOwner | null;
   degradation: string[]; fault: string | null;
 };
 export type ProfileRuntimeRequest = { command: 'profile_status' | 'profile_stop' | 'profile_recover' }
-  | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: ProfileGameId }
-  | { command: 'profile_pause'; paused: boolean };
+  | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: ProfileGameId };
 export type ProfileRuntimeSend = (request: ProfileRuntimeRequest) => Promise<unknown>;
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -26,13 +25,13 @@ const owner = (value: unknown): value is NativeProfileOwner => object(value) && 
   && uuid(value.profileId) && revision(value.profileRevision) && (value.gameId === null || game(value.gameId));
 
 export function nativeProfileStatus(value: unknown): DeepReadonly<NativeProfileStatus> {
-  if (!object(value) || typeof value.state !== 'string' || !['stopped', 'running', 'degraded', 'paused', 'faulted', 'recovery-needed', 'transitioning', 'awaiting-game'].includes(value.state)
-    || typeof value.paused !== 'boolean' || !(value.appliedSnapshot === null || snapshot(value.appliedSnapshot))
+  if (!object(value) || typeof value.state !== 'string' || !['stopped', 'running', 'degraded', 'faulted', 'recovery-needed', 'transitioning', 'awaiting-game'].includes(value.state)
+    || !(value.appliedSnapshot === null || snapshot(value.appliedSnapshot))
     || !(value.owner === null || owner(value.owner)) || !(value.fault === null || text(value.fault))
     || !Array.isArray(value.degradation) || value.degradation.length > 1024 || !value.degradation.every(text)) {
     throw new Error('Native profile runtime status is malformed. Refresh its current state.');
   }
-  if (value.owner !== null && (value.paused || !['running', 'degraded', 'awaiting-game'].includes(value.state)
+  if (value.owner !== null && (!['running', 'degraded', 'awaiting-game'].includes(value.state)
     || !snapshot(value.appliedSnapshot) || value.owner.profileId !== value.appliedSnapshot.profileId
     || value.owner.profileRevision !== value.appliedSnapshot.revision)
     || ['running', 'degraded', 'awaiting-game'].includes(value.state) && value.owner === null) {
@@ -56,10 +55,6 @@ export class ProfileRuntimeClient {
       throw new Error('Apply requires an exact saved profile revision and a supported optional game context.');
     }
     return this.request({ command: 'profile_apply', id, expectedRevision, ...(gameId === undefined ? {} : { gameId }) });
-  }
-  pause(paused = true): Promise<DeepReadonly<NativeProfileStatus>> {
-    if (typeof paused !== 'boolean') throw new Error('Choose whether to pause profile processing.');
-    return this.request({ command: 'profile_pause', paused });
   }
   stop(): Promise<DeepReadonly<NativeProfileStatus>> { return this.request({ command: 'profile_stop' }); }
   recover(): Promise<DeepReadonly<NativeProfileStatus>> { return this.request({ command: 'profile_recover' }); }

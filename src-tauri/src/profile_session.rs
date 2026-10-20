@@ -205,7 +205,6 @@ pub(crate) enum State {
     Stopped,
     Running,
     Degraded,
-    Paused,
     Faulted,
     RecoveryNeeded,
     Transitioning,
@@ -215,7 +214,6 @@ pub(crate) enum State {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Status {
     pub state: State,
-    pub paused: bool,
     pub applied_snapshot: Option<SnapshotSummary>,
     pub owner: Option<RunOwner>,
     pub degradation: Vec<String>,
@@ -238,8 +236,7 @@ impl<H: Host> Coordinator<H> {
         let (store, manifest, error) = Store::open(path);
         let pending = manifest.pending.is_some() || manifest.active.is_some();
         let status = Status {
-            state: if error.is_some() || pending { State::RecoveryNeeded } else if manifest.paused { State::Paused } else { State::Stopped },
-            paused: manifest.paused,
+            state: if error.is_some() || pending { State::RecoveryNeeded } else { State::Stopped },
             applied_snapshot: None,
             owner: None,
             degradation: vec![],
@@ -255,6 +252,16 @@ impl<H: Host> Coordinator<H> {
             active_candidate: None,
             launch: None,
         }
+    }
+    /// Upgrade old operator Pause intent to a durable Stop before Automatic can run.
+    pub(crate) fn legacy_stop_requested(&self) -> bool {
+        self.manifest.legacy_paused
+    }
+    pub(crate) fn complete_legacy_stop_migration(&mut self) -> Result<(), String> {
+        if !self.manifest.legacy_paused { return Ok(()); }
+        let mut next = self.manifest.clone();
+        next.legacy_paused = false;
+        self.persist(next)
     }
     pub(crate) fn status(&self) -> &Status {
         &self.status
@@ -272,7 +279,6 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn validates(&self, owner: &RunOwner) -> bool {
         matches!(self.status.state, State::Running | State::Degraded)
             && self.status.owner.as_ref() == Some(owner)
-            && !self.status.paused
     }
     /// Native-only provenance for off-lock visibility preparation. The adapter
     /// must still prove its exact receipt and driver state before takeover.
@@ -336,12 +342,6 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn check_apply(&self) -> Result<(), String> {
         if self.launch.is_some() || self.manifest.pending.is_some() {
             return Err("Stop or recover the pending profile transition before another Apply.".into());
-        }
-        if self.status.paused {
-            return Err(
-                "The profile session is paused. Explicitly resume before applying a profile."
-                    .into(),
-            );
         }
         if self.status.state == State::RecoveryNeeded {
             return Err(
@@ -447,7 +447,7 @@ impl<H: Host> Coordinator<H> {
         }
         if hold {
             let run = self.manifest.pending.as_ref().unwrap().incoming.as_ref().unwrap();
-            self.status = Status { state: State::AwaitingGame, paused: false,
+            self.status = Status { state: State::AwaitingGame,
                 applied_snapshot: Some(run.snapshot.clone()), owner: Some(owner.clone()),
                 degradation: prepared.admission.optional_unavailable.clone(), fault: None };
             self.launch = Some(launch::Held::new(candidate, prepared, owner));
@@ -481,7 +481,6 @@ impl<H: Host> Coordinator<H> {
             } else {
                 State::Degraded
             },
-            paused: false,
             applied_snapshot: Some(run.snapshot.clone()),
             owner: Some(owner),
             degradation: prepared.admission.optional_unavailable,
@@ -538,11 +537,7 @@ impl<H: Host> Coordinator<H> {
         let restore = self.compensate(false);
         match revoke.and(neutralize).and(restore) {
             Ok(()) => {
-                self.status.state = if self.status.paused {
-                    State::Paused
-                } else {
-                    State::Stopped
-                };
+                self.status.state = State::Stopped;
                 self.status.fault = None;
                 self.status.degradation.clear();
                 Ok(())
@@ -574,36 +569,6 @@ impl<H: Host> Coordinator<H> {
             Err(errors.join("; "))
         }
     }
-    pub(crate) fn pause(&mut self, paused: bool) -> Result<(), String> {
-        // Persist the latch before releasing hiding or stopping workers. Resume
-        // never reapplies a graph; a fresh explicit Apply is required.
-        if !paused && self.status.state == State::RecoveryNeeded {
-            return Err("Recover the profile session before resuming.".into());
-        }
-        if !paused && !self.status.paused {
-            return Ok(());
-        }
-        let mut next = self.manifest.clone();
-        next.paused = paused;
-        if let Err(error) = self.persist(next) {
-            if paused {
-                self.status.paused = true;
-                let emergency = self.stop().err();
-                self.status.state = State::RecoveryNeeded;
-                let message = format!("Pause could not be persisted: {error}. The run was revoked; recovery is required{}", emergency.map(|error|format!(": {error}")).unwrap_or_default());
-                self.status.fault = Some(message.clone());
-                return Err(message);
-            }
-            return Err(error);
-        }
-        self.status.paused = paused;
-        if paused {
-            self.stop()
-        } else {
-            self.status.state = State::Stopped;
-            Ok(())
-        }
-    }
     pub(crate) fn recover(&mut self) -> Result<(), String> {
         self.launch = None;
         self.status.owner = None;
@@ -624,11 +589,7 @@ impl<H: Host> Coordinator<H> {
         let neutralize = self.neutralize_owned();
         let restore = self.compensate(true);
         revoke.and(retry).and(neutralize).and(restore)?;
-        self.status.state = if self.status.paused {
-            State::Paused
-        } else {
-            State::Stopped
-        };
+        self.status.state = State::Stopped;
         self.status.fault = None;
         self.status.degradation.clear();
         Ok(())
@@ -705,6 +666,9 @@ mod tests;
 
 #[cfg(test)]
 impl<H: Host> Coordinator<H> {
+    pub(crate) fn fail_journal_saves(&mut self, fail: bool) {
+        self.store.fail_save = fail;
+    }
     pub(crate) fn fail_save_when_attempting(&mut self, phase: ApplyPhase) {
         self.store.fail_save_phase = Some(phase);
     }

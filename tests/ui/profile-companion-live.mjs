@@ -115,10 +115,10 @@ test('actual browser WSS runs authored altitude presets through native profile a
    await snapshot('disconnected-feedback',true);
    await page.evaluate(()=>{window.__osgProof.disconnect=false;});await active();
    await expect(toggle).toHaveAttribute('aria-pressed','false');await expect(label.locator('output')).toHaveText('Unknown');await snapshot('reconnected-baseline',true);
-   await high();const paused=await action('pause');assert.equal(paused.profileSession.state,'paused');
-   await expect(indicator.locator('.indicator-value')).not.toHaveClass(/on/);await expect(label.locator('output')).not.toHaveText('ALT 3657.6 m');await snapshot('native-pause',true);
-   const resumed=await action('resume');assert.equal(resumed.profileSession.state,'stopped');
-   await sleep(400);await expect(label.locator('output')).not.toHaveText('ALT 3657.6 m');await snapshot('resume-requires-apply');
+   await high();const stoppedBeforeRestart=await action('stop');assert.equal(stoppedBeforeRestart.profileSession.state,'stopped');
+   assert.equal(stoppedBeforeRestart.profileSession.owner,null);
+   await expect(indicator.locator('.indicator-value')).not.toHaveClass(/on/);await expect(label.locator('output')).not.toHaveText('ALT 3657.6 m');await snapshot('native-stop',true);
+   await sleep(400);await expect(label.locator('output')).not.toHaveText('ALT 3657.6 m');await snapshot('stop-requires-apply');
    await action('apply');await active();await expect(toggle).toHaveAttribute('aria-pressed','false');await high();
    const defaulted=await action('default');assert.equal(defaulted.profileSession.state,'running');assert.equal(defaulted.profileSession.appliedSnapshot.profileId,'00000000-0000-4000-8000-000000000001');
    await expect(label.locator('output')).not.toHaveText('ALT 3657.6 m');await expect(indicator.locator('.indicator-value')).not.toHaveClass(/on/);await snapshot('switched-default',true);

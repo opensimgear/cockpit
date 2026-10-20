@@ -218,25 +218,21 @@ fn editor_navigation_and_crud_never_select_or_apply() {
     service
         .request(&json!({"command":"profile_selection_mode","mode":"automatic"}))
         .unwrap();
-    service
-        .request(&json!({"command":"profile_pause","paused":true}))
-        .unwrap();
     let selected = service
         .request(
             &json!({"command":"profile_select","id":document["id"],"selectionSource":"automatic"}),
         )
         .unwrap();
-    assert_eq!(selected["session"]["state"], "paused");
+    assert_eq!(selected["session"]["state"], "stopped");
     assert_eq!(selected["session"]["selectedProfileId"], document["id"]);
     let deleted = service
         .request(&json!({"command":"profile_delete","id":document["id"],"expectedRevision":1}))
         .unwrap();
     assert_eq!(deleted["session"]["selectedProfileId"], DEFAULT_PROFILE_ID);
-    assert_eq!(deleted["session"]["state"], "paused");
-    let resumed = service
-        .request(&json!({"command":"profile_pause","paused":false}))
-        .unwrap();
-    assert_eq!(resumed["session"]["state"], "stopped");
+    assert_eq!(deleted["session"]["state"], "stopped");
+    for paused in [true, false] {
+        assert!(service.request(&json!({"command":"profile_pause","paused":paused})).is_err());
+    }
 }
 
 #[test]

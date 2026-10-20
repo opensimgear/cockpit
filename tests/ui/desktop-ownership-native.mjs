@@ -15,7 +15,7 @@ const allowed = new Set(['companion_status', 'companion_enable', 'companion_disa
  'companion_approve', 'companion_revoke', 'companion_assign', 'companion_unassign', 'companion_publish_begin',
  'companion_publish_chunk', 'companion_publish_commit', 'profile_status', 'profile_list', 'profile_delete',
  'profile_resources_list', 'profile_resources_inspect', 'profile_editor_save', 'profile_compile', 'profile_apply',
- 'profile_stop', 'profile_pause', 'profile_select', 'profile_desktop_status', 'profile_desktop_configure',
+ 'profile_stop', 'profile_select', 'profile_desktop_status', 'profile_desktop_configure',
  'profile_desktop_capture_application']);
 
 async function invoke(page, request) {

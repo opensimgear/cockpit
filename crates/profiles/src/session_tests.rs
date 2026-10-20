@@ -20,25 +20,18 @@ fn selected_draft_and_captured_snapshot_are_independent() {
 }
 
 #[test]
-fn automatic_selection_never_clears_pause_or_fault() {
+fn automatic_selection_never_clears_fault() {
     let mut session = Session::default();
     let document = new_document("Flight").unwrap();
     assert!(!session.select(&document.id, SelectionMode::Automatic));
     assert_ne!(session.status().selected_profile_id, document.id);
     session.set_mode(SelectionMode::Automatic);
-    session.set_paused(true).unwrap();
     assert!(session.select(&document.id, SelectionMode::Automatic));
-    assert_eq!(session.status().state, SessionState::Paused);
-    assert!(session.capture_selected(&document).is_err());
-    session.set_paused(false).unwrap();
     session.capture_selected(&document).unwrap();
     session.fault("Output unavailable".into());
     session.select(DEFAULT_PROFILE_ID, SelectionMode::Automatic);
     assert_eq!(session.status().state, SessionState::Faulted);
-    assert!(session.set_paused(false).is_err());
     assert!(session.capture_selected(&default_document()).is_err());
-    assert!(session.set_paused(true).is_ok());
-    assert_eq!(session.status().state, SessionState::Faulted);
 }
 
 #[test]
@@ -60,12 +53,12 @@ fn removed_selection_falls_back_without_rearming() {
     let mut session = Session::default();
     let document = new_document("Flight").unwrap();
     session.select(&document.id, SelectionMode::Manual);
-    session.set_paused(true).unwrap();
+    session.fault("Output unavailable".into());
     session.fallback_if_removed("another-id");
     assert_eq!(session.status().selected_profile_id, document.id);
     session.fallback_if_removed(&document.id);
     assert_eq!(session.status().selected_profile_id, DEFAULT_PROFILE_ID);
-    assert_eq!(session.status().state, SessionState::Paused);
+    assert_eq!(session.status().state, SessionState::Faulted);
 }
 
 #[test]

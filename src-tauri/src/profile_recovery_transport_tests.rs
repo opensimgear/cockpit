@@ -7,7 +7,6 @@ const MODULE: &str = "0123456789abcdef0123456789abcdef";
 fn status() -> Status {
     Status {
         state: State::RecoveryNeeded,
-        paused: false,
         applied_snapshot: None,
         owner: None,
         degradation: vec![],
@@ -39,7 +38,6 @@ fn only_unapplied_recovery_state_can_receive_the_exception() {
         State::Stopped,
         State::Running,
         State::Degraded,
-        State::Paused,
         State::Faulted,
         State::Transitioning,
         State::AwaitingGame,

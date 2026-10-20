@@ -2,7 +2,7 @@
 
 The P9 acceptance cutover uses unified Profile schema2 documents and native resource/port pins. Independent mapping, DCS, integration, game-profile and visibility starts are negative boundaries. Existing device configuration/manual action scenarios, private feeder startup checks, WSS pairing/framing/isolation, and all qualification gates remain in place.
 
-The native service scenarios run on isolated CI hosts. Running another gateway service beside the Cockpit development desktop would create a second native discovery/hardware owner, so local verification deliberately did not start it. CI exercises the actual Profile Host with production-C gateway/peripheral processes, including owned Setter output, competing writer rejection, atomically captured prior-state restoration on Pause/Stop, no persistent configuration writes and restart without automatic output activation.
+The native service scenarios run on isolated CI hosts. Running another gateway service beside the Cockpit development desktop would create a second native discovery/hardware owner, so local verification deliberately did not start it. CI exercises the actual Profile Host with production-C gateway/peripheral processes, including owned Setter output, competing writer rejection, atomically captured prior-state restoration on Stop, no persistent configuration writes and restart without automatic output activation.
 
 The initiating E2E manifest pins gateway
 `b47a19ab489935eefee08623866ddb3b450d866b`, module

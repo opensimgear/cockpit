@@ -82,8 +82,8 @@ fn inactive_editor_save_and_draft_application_capture_do_not_cancel_input_learni
 }
 
 #[test]
-fn slow_editor_save_keeps_stop_pause_and_recovery_responsive_without_late_rearm() {
-    for operation in ["profile_stop","profile_pause","profile_recover"] {
+fn slow_editor_save_keeps_stop_and_recovery_responsive_without_late_rearm() {
+    for operation in ["profile_stop","profile_recover"] {
         let (mut manager, _) = setup();
         let id = osg_profiles::DEFAULT_PROFILE_ID;
         assert_eq!(request(&manager,"profile_apply",None,json!({"id":id,"expectedRevision":1}))["ok"],true);
@@ -104,7 +104,7 @@ fn slow_editor_save_keeps_stop_pause_and_recovery_responsive_without_late_rearm(
         let (done_tx, done_rx) = mpsc::channel();
         let control = manager.clone();
         let control = std::thread::spawn(move || {
-            let fields = if operation == "profile_pause" {json!({"paused":true})} else {json!({})};
+            let fields = json!({});
             done_tx.send(request(&control,operation,None,fields)).unwrap();
         });
         let completed = done_rx.recv_timeout(Duration::from_secs(2));

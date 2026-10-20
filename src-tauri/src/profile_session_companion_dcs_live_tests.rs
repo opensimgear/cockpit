@@ -540,8 +540,6 @@ fn actual_browser_wss_dcs_commondata_feedback_proof() {
                             "apply" => { handoff["phase"] = json!("applying"); write_json(&path,&handoff); let candidate = live.candidate(false); live.coordinator.apply(candidate) },
                             "default" => { let candidate = live.candidate(true); live.coordinator.apply(candidate) },
                             "stop" => live.coordinator.stop(),
-                            "pause" => live.coordinator.pause(true),
-                            "resume" => live.coordinator.pause(false),
                             "snapshot" => Ok(()),
                             "fixture-low" => { live.wire.set(FixtureMode::Low); Ok(()) },
                             "fixture-high" => { live.wire.set(FixtureMode::High); Ok(()) },

@@ -330,7 +330,7 @@ def main():
         captured_file = json.loads(args.desktop_settings_file.read_text())["application"]
         assert captured_file["pid"] == identity["pid"] and int(captured_file["epoch"]) == int(identity["created"]), captured_file
         mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
-        service.profiles("profile_pause", paused=False)
+        service.profiles("profile_stop")
         apply_attempted = True
         owner = mapping.apply(service, saved)
         evidence["receiverPositioning"]["initialApplied"] = position_receiver(service, args.receiver, identity)

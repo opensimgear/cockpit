@@ -13,7 +13,6 @@ pub enum SelectionMode {
 #[serde(rename_all = "lowercase")]
 pub enum SessionState {
     Stopped,
-    Paused,
     Faulted,
 }
 
@@ -100,26 +99,12 @@ impl Session {
             self.status.selection_mode = SelectionMode::Manual;
         }
         self.status.selected_profile_id = id.to_owned();
-        // Selection is metadata. In particular it cannot clear a pause/fault.
+        // Selection is metadata. In particular it cannot clear a fault.
         true
     }
 
     pub fn set_mode(&mut self, mode: SelectionMode) {
         self.status.selection_mode = mode;
-    }
-
-    pub fn set_paused(&mut self, paused: bool) -> Result<(), String> {
-        if self.status.state == SessionState::Faulted && !paused {
-            return Err("A fault must be explicitly cleared before resuming.".into());
-        }
-        if self.status.state != SessionState::Faulted {
-            self.status.state = if paused {
-                SessionState::Paused
-            } else {
-                SessionState::Stopped
-            };
-        }
-        Ok(())
     }
 
     pub fn fault(&mut self, message: String) {
@@ -130,7 +115,7 @@ impl Session {
     /// Capture only; there is deliberately no hardware activation in P0.
     pub fn capture_selected(&mut self, document: &ProfileDocument) -> Result<(), String> {
         if self.status.state != SessionState::Stopped {
-            return Err("Paused or faulted sessions cannot capture a new apply candidate.".into());
+            return Err("Faulted sessions cannot capture a new apply candidate.".into());
         }
         if document.id != self.status.selected_profile_id {
             return Err("Only the selected profile may be captured.".into());

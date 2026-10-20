@@ -10,8 +10,8 @@ const require=createRequire(import.meta.url),module=process.env.OSG_PLAYWRIGHT_M
 const{chromium}=require(module),{expect}=require(module+'/test');
 const endpoint=process.env.OSG_LAUNCH_UI_URL??'http://127.0.0.1:1420',artifacts=resolve(process.env.OSG_LAUNCH_UI_ARTIFACTS??'.research/profile-game-launch-browser');
 const id='00000000-0000-4000-8000-000000000001',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`;
-const stopped=()=>({state:'stopped',paused:false,appliedSnapshot:null,owner:null,degradation:[],fault:null});
-const running=()=>({state:'running',paused:false,appliedSnapshot:{profileId:id,revision:1,semanticHash:hash},owner:{session,generation:1,profileId:id,profileRevision:1,gameId:null},degradation:[],fault:null});
+const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
+const running=()=>({state:'running',appliedSnapshot:{profileId:id,revision:1,semanticHash:hash},owner:{session,generation:1,profileId:id,profileRevision:1,gameId:null},degradation:[],fault:null});
 const deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve};};
 
 test('keyboard launch uses unified selection, Stop wins late acknowledgement, and game navigation never starts output',{timeout:60000},async()=>{

@@ -67,8 +67,8 @@ changes do not change the semantic hash, which excludes layout and document
 identity/name/revision metadata.
 
 Session metadata separates selected profile, manual/automatic selection mode,
-paused/faulted state and the captured applied revision. Automatic selection must
-honor manual mode, Pause and faults. Selecting a document cannot rearm processing.
+stopped/faulted state and the captured applied revision. Automatic selection must
+honor manual mode, Stop and faults. Selecting a document cannot rearm processing.
 Pure snapshot/session metadata does not submit output. The native coordinator
 owns preflight, acquisition, execution, neutralization, compensation and recovery.
 Process restart never replays a saved applied snapshot. Automatic selection, when
@@ -117,7 +117,6 @@ development. Profile requests have a dedicated frontend queue and return
 | `profile_import` | `document`, optional `name`; creates a fresh identity |
 | `profile_select` | `id`, `selectionSource` (`manual` or `automatic`); metadata only |
 | `profile_selection_mode` | `mode` (`manual` or `automatic`) |
-| `profile_pause` | `paused` boolean; cannot clear a fault |
 | `profile_apply` | Saved `id`, `expectedRevision`, optional logical `gameId` |
 | `profile_game_launch` | Logical `gameId`; selection and process authority are native |
 | `profile_stop`, `profile_recover` | None; cleanup does not replay the graph |
@@ -143,5 +142,5 @@ gateway and browser transport regressions. Native profile checks require at leas
 Fixtures cover Default, a blank document and a mixed-routing graph. Tests include
 schema/round trips, document and library limits, corrupt storage, interrupted
 writes, optimistic revisions, copy independence, import/export boundaries,
-immutable snapshots, paused/faulted selection and editor navigation. These are
+immutable snapshots, stopped/faulted selection and editor navigation. These are
 contract/storage checks; they do not qualify driver, hardware or game execution.

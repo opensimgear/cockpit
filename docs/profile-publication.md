@@ -29,7 +29,7 @@ If saving refreshed receipts fails before Acquire, cleanup validates the durable
 seals and discards only action preparations whose drivers were never dispatched.
 Once Acquire was attempted, cleanup still requires exact captured receipts.
 
-Stop, Pause, Default and switching first restore owned physical actions, then
+Stop, Default and switching first restore owned physical actions, then
 release publication. Firmware restores only the still-owned original layout;
 foreign ownership or external edits are preserved and reported as recovery
 conflicts. Cleanup waits are bounded and retain sealed receipts when a device is

@@ -239,21 +239,18 @@ test('client storage CRUD and editor opening never select or apply a runtime', a
   client.close(); assert.equal(client.editor, null);
 });
 
-test('selection, mode, pause and explicit recovery consume native state without activating', async () => {
+test('selection, mode and explicit recovery consume native state without activating', async () => {
   const calls = [], session = nativeSession();
   const client = new ProfilesClient(async request => {
     calls.push(request);
     if (request.command === 'profile_select') session.selectedProfileId = request.id;
     if (request.command === 'profile_selection_mode') session.selectionMode = request.mode;
-    if (request.command === 'profile_pause') session.state = request.paused ? 'paused' : 'stopped';
     return { session };
   });
   await client.select('other');
   assert.equal(client.session.selectedProfileId, 'other');
   assert.equal(calls.at(-1).selectionSource, 'manual');
   await client.selectionMode('automatic'); await client.select(DEFAULT_PROFILE_ID, 'automatic');
-  await client.pause(); assert.equal(client.session.state, 'paused');
-  await client.pause(false); assert.equal(client.session.state, 'stopped');
   session.state = 'faulted'; session.fault = 'Test fault';
   await client.status(); assert.equal(client.session.fault, 'Test fault');
   await client.reset(); assert.deepEqual(calls.at(-1), { command: 'profile_reset', confirm: true });

@@ -10,7 +10,7 @@ const uid=n=>`11111111-1111-4111-8111-${String(n).padStart(12,'0')}`;
 const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8').catch(()=>readFile(new URL('../../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8')));
 const summary=document=>({id:document.id,name:document.name,revision:document.revision,isDefault:document.id===DEFAULT_PROFILE_ID,semanticHash:`sha256:${'3'.repeat(64)}`});
 const savedResult=document=>({document,assignments:[],session:session(),profiles:[summary(document)]});
-const session=()=>({selectedProfileId:DEFAULT_PROFILE_ID,selectionMode:'manual',state:'paused',appliedSnapshot:{profileId:DEFAULT_PROFILE_ID,revision:2,semanticHash:`sha256:${'1'.repeat(64)}`},fault:null});
+const session=()=>({selectedProfileId:DEFAULT_PROFILE_ID,selectionMode:'manual',state:'stopped',appliedSnapshot:{profileId:DEFAULT_PROFILE_ID,revision:2,semanticHash:`sha256:${'1'.repeat(64)}`},fault:null});
 const resource=(type,n)=>({id:`native:${type}:${n}`,name:`${type} ${n}`,resourceType:type,availability:type==='game-integration'?'unavailable':'online',generation:'1',capabilityRevision:`sha256:${'2'.repeat(64)}`,portCount:type==='game-integration'?20000:20,cachedPortCount:type==='game-integration'?20000:20,connections:[{scope:'fixture',key:String(n),route:{id:`route${n}`,transport:type==='osg-module'?(n%2?'usb':'can'):type==='game-integration'?'integration':'hid',providerGeneration:'boot1',attributes:{gateway:'gateway-1',owner:'fixture'},baselineReady:false,writable:false,priority:1}}],attributes:{gameId:type==='game-integration'?'dcs':'',context:'waiting-profile'},diagnostics:type==='game-integration'?['Waiting for the matching game']:[]});
 const inventory=()=>['host-controller','osg-module','companion','game-integration'].flatMap(type=>[resource(type,1),resource(type,2)]);
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
@@ -55,7 +55,7 @@ test('copies preserve the entire portable graph and layout with independent iden
 test('Default-only list and exact editor opening never select, apply or change captured runtime state',async()=>{
   const h=harness();await h.store.refresh();assert.equal(h.store.state.view,'list');assert.equal(h.store.state.profiles[0].id,DEFAULT_PROFILE_ID);
   const snapshots=[];const stop=h.store.subscribe(state=>snapshots.push(state));await h.store.open(DEFAULT_PROFILE_ID);
-  assert.equal(h.store.state.editor.document.id,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'paused');assert.equal(h.store.state.session.appliedSnapshot.revision,2);
+  assert.equal(h.store.state.editor.document.id,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'stopped');assert.equal(h.store.state.session.appliedSnapshot.revision,2);
   assert.ok(Object.isFrozen(h.store.state.session.appliedSnapshot));assert.equal(h.store.back(),true);stop();assert.ok(snapshots.length>1);
   assert.deepEqual(h.calls,['list',['get',DEFAULT_PROFILE_ID]]);h.store.dispose();
 });
@@ -121,7 +121,7 @@ test('saving an inactive empty profile needs no inventory or separate Apply requ
   await h.store.save();
   assert.equal(h.store.state.inventoryLoaded,false);assert.equal(h.store.state.editor.document.resources.length,0);
   assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.store.state.saveMessage,'Profile saved.');assert.equal(h.store.state.error,'');
-  assert.equal(h.store.state.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'paused');
+  assert.equal(h.store.state.session.selectedProfileId,DEFAULT_PROFILE_ID);assert.equal(h.store.state.session.state,'stopped');
   assert.equal(h.store.state.session.appliedSnapshot.revision,2);
   assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
 });
@@ -165,7 +165,7 @@ test('sidebar guard keeps a canceled draft mounted and only discards after the e
 test('clean sidebar navigation and guarded save preserve runtime selection and continue exactly once',async()=>{
   const h=harness();await h.store.refresh();const guard=new ProfileNavigationGuard(h.store);let navigated=0;assert.equal(guard.request(()=>navigated++),'left');assert.equal(navigated,1);
   await h.store.open(DEFAULT_PROFILE_ID);assert.equal(guard.request(()=>navigated++),'left');assert.equal(navigated,2);assert.equal(h.store.state.editor,null);
-  await h.store.refreshInventory();h.store.beginBlank();assert.equal(guard.request(()=>navigated++),'confirm');assert.equal(await guard.save(),true);assert.equal(navigated,3);assert.equal(h.docs.size,2);assert.equal(h.store.state.session.state,'paused');assert.equal(h.store.state.session.appliedSnapshot.revision,2);
+  await h.store.refreshInventory();h.store.beginBlank();assert.equal(guard.request(()=>navigated++),'confirm');assert.equal(await guard.save(),true);assert.equal(navigated,3);assert.equal(h.docs.size,2);assert.equal(h.store.state.session.state,'stopped');assert.equal(h.store.state.session.appliedSnapshot.revision,2);
   assert.equal(await guard.save(),false);assert.equal(navigated,3);
 });
 test('failed guarded saves stay in the editor and show the native error before retrying the same continuation',async()=>{

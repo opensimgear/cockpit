@@ -6,13 +6,13 @@ use crate::profile_session::{Candidate, RunOwner, State};
 impl GatewayManager {
     pub(super) fn save_profile_editor(&self, request: &Value, arrival: Option<u64>) -> Result<Value, String> {
         // Capture the run and commit storage under the same admission guard. A
-        // later Stop/Pause or replacement owner must never be rearmed by Save.
+        // later Stop or replacement owner must never be rearmed by Save.
         let (mut response, owner, candidate) = {
             let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
             let status = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
             let owner = status.owner.filter(|owner| {
                 matches!(status.state, State::Running | State::Degraded)
-                    && !status.paused && request["document"]["id"] == owner.profile_id
+                    && request["document"]["id"] == owner.profile_id
             });
             let mut profiles = self.profiles.lock().unwrap_or_else(|p|p.into_inner());
             let response = profiles.request(request)?;
@@ -54,7 +54,7 @@ impl GatewayManager {
         let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
         let _game = self.game_admission.read().unwrap_or_else(|p|p.into_inner());
         if self.closed.load(Ordering::Acquire) || self.profile_admission_epoch.load(Ordering::Acquire) != epoch {
-            return Err("Applying the saved changes was cancelled by Stop, Pause, recovery or a newer profile control.".into());
+            return Err("Applying the saved changes was cancelled by Stop, recovery or a newer profile control.".into());
         }
         self.guard_retired_recovery()?;
         let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(&previous.profile_id)?;

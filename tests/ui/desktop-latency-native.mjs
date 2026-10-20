@@ -14,7 +14,7 @@ const allowed = new Set(['companion_status', 'companion_enable', 'companion_disa
  'companion_approve', 'companion_revoke', 'companion_assign', 'companion_unassign', 'companion_publish_begin',
  'companion_publish_chunk', 'companion_publish_commit', 'profile_status', 'profile_list', 'profile_delete',
  'profile_resources_list', 'profile_resources_inspect', 'profile_editor_save', 'profile_compile', 'profile_apply',
- 'profile_stop', 'profile_pause', 'profile_select', 'profile_desktop_status', 'profile_desktop_configure',
+ 'profile_stop', 'profile_select', 'profile_desktop_status', 'profile_desktop_configure',
  'profile_desktop_capture_application', 'profile_desktop_audit_checkpoint', 'profile_desktop_audit_marker']);
 
 async function invoke(page, request) {
@@ -227,7 +227,6 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
    if (clear) {
     await attempt('Restore desktop enablement/scope', async () => { const result = await invoke(page, {command: 'profile_desktop_configure', enabled: preferences.enabled, scope: preferences.scope}); assert.equal(result.ok, true); });
     await attempt('Restore prior Manual selection', async () => { const result = await invoke(page, {command: 'profile_select', id: profileBefore.session.selectedProfileId, selectionSource: 'manual'}); assert.equal(result.ok, true); });
-    await attempt('Restore prior Pause without an active owner', async () => { const result = await invoke(page, {command: 'profile_pause', paused: profileBefore.profileSession.paused}); assert.equal(result.ok, true); });
     for (const instanceId of assigned) await attempt('Unassign exact test instance', async () => { const result = await invoke(page, {command: 'companion_unassign', companion: {instanceId}}); assert.equal(result.ok, true); });
     for (const companionId of paired) await attempt('Revoke exact test peer', async () => { const result = await invoke(page, {command: 'companion_revoke', companion: {companionId}}); assert.equal(result.ok, true); });
     if (!listenerBefore) await attempt('Restore disabled listener', async () => { const result = await invoke(page, {command: 'companion_disable'}); assert.equal(result.ok, true); });

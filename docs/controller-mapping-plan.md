@@ -182,7 +182,7 @@ For a combined session, first validate dependencies, acquire/publish fallback vJ
 
 For HidHide-only sessions, **Apply visibility**/**Restore visibility** in the real-device section provides independent explicit Start/Stop and shows that no vJoy replacement is active. Do not require vJoy or a mapping profile merely to manage visibility. A standalone hiding session must not accidentally combine with a game-owned session for the same physical instance; all sessions participate in the shared global-policy compatibility check.
 
-Stop pauses forwarding, neutralizes any owned virtual output, removes Cockpit-owned hiding entries and then releases virtual ownership. Restore prior visibility rather than assuming devices hidden by another tool will become visible. Keep **Stop hiding** and dependency recovery available during a game session. Do not change unrelated hidden devices, existing allowlist entries or another application's configuration. Journal any setup changes Cockpit performs explicitly; ordinary runtime cleanup must not reset all HidHide settings or disable another tool's cloaking.
+Stop ends forwarding, neutralizes any owned virtual output, removes Cockpit-owned hiding entries and then releases virtual ownership. Restore prior visibility rather than assuming devices hidden by another tool will become visible. Keep **Stop hiding** and dependency recovery available during a game session. Do not change unrelated hidden devices, existing allowlist entries or another application's configuration. Journal any setup changes Cockpit performs explicitly; ordinary runtime cleanup must not reset all HidHide settings or disable another tool's cloaking.
 
 ## Linux and macOS backends and limitations
 

@@ -19,7 +19,7 @@ edited action parameters into the graph, then Save the profile.
 
 Keys identify physical positions. The same position can produce different
 characters under US and German layouts. Left/right modifiers remain distinct.
-The physical key picker pauses the profile before taking focus. Unsupported keys
+The physical key picker stops the profile before taking focus. Unsupported keys
 are refused. Text paste, media keys and program execution are not actions.
 
 ## Choose this block's scope
@@ -60,9 +60,9 @@ Focus loss cancels pending actions and releases this profile's holds. Returning
 requires fresh released/neutral controls before rearming. **Waiting** means some
 controls still need release or centering; already armed actions can continue.
 
-**Stop** cancels pending work and pauses the shared profile session against
-automatic rearming. Use **Clear pause** for Automatic selection, or **Start
-profile** in Manual mode. A mixed profile must pass the readiness checks of
+**Stop** cancels pending work and prevents automatic rearming. Use **Start
+profile** to run again, or explicitly select Automatic to resume automatic
+selection. A mixed profile must pass the readiness checks of
 every required output backend. Failed activation does not turn into recording.
 
 ## Debug and recovery

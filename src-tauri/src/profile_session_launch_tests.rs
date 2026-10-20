@@ -177,19 +177,13 @@ fn verified_context_starts_once_without_reacquiring_or_changing_hardware_owner()
     );
 }
 #[test]
-fn stop_or_pause_cancels_hold_and_late_context_cannot_stop_a_newer_owner() {
-    for pause in [false, true] {
+fn stop_cancels_hold_and_late_context_cannot_stop_a_newer_owner() {
+    {
         let (mut c, p) = fixture(None);
         let owner = c.begin_launch(hardware_candidate()).unwrap();
         c.bind_launch_epoch(&owner, 42).unwrap();
         let late = context(&c, &owner);
-        if pause {
-            c.pause(true).unwrap();
-            assert!(c.status.paused);
-            c.pause(false).unwrap();
-        } else {
-            c.stop().unwrap();
-        }
+        c.stop().unwrap();
         assert!(c.finish_launch(&owner, late).is_err());
         c.apply(candidate()).unwrap();
         let newer = c.status.owner.clone().unwrap();

@@ -60,7 +60,7 @@ pub(crate) struct PreparedLaunch {
     pub enumeration: EnumerationIntents,
 }
 /// Captured by Manager while its shared admission guard is held. Nothing here
-/// is accepted from IPC; paused/recovery/operator latches remain authoritative.
+/// is accepted from IPC; recovery/operator latches remain authoritative.
 pub(crate) struct LaunchAdmission {
     pub candidate: Candidate,
     pub status: Status,
@@ -102,16 +102,14 @@ impl PreparedLaunch {
         }
         if !admission.candidate.launch_preparation || admission.candidate.game_id.is_some()
             || admission.candidate.read_only
-            || admission.locks.paused
             || admission.locks.emergency_stopped
             || admission.locks.recovery_needed
             || admission.locks.faulted
-            || admission.status.paused
             || admission.status.state != State::AwaitingGame
             || admission.status.fault.is_some()
             || admission.status.applied_snapshot.as_ref() != Some(&self.snapshot)
         {
-            return Err("Launch requires the unchanged neutral hardware hold without Pause, Stop or recovery.".into());
+            return Err("Launch requires the unchanged neutral hardware hold without Stop or recovery.".into());
         }
         self.candidate
             .stage

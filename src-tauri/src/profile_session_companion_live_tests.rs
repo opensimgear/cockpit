@@ -390,8 +390,6 @@ fn actual_browser_wss_profile_altitude_feedback_proof() {
                             "apply"=>{handoff["phase"]=json!("applying");write_json(&path,&handoff);let candidate=live.candidate(false);live.coordinator.apply(candidate)},
                             "default"=>{let candidate=live.candidate(true);live.coordinator.apply(candidate)},
                             "stop"=>live.coordinator.stop(),
-                            "pause"=>live.coordinator.pause(true),
-                            "resume"=>live.coordinator.pause(false),
                             "snapshot"=>Ok(()),
                             "finish"=>{finished=true;live.coordinator.stop()},
                             _=>Err("Unknown native proof control; input values are never accepted here".into()),

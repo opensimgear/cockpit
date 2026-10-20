@@ -47,7 +47,7 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
   }
   const applied = {profileId:defaultId,revision:1,semanticHash:hash};
   const owner = {session:'11111111-1111-4111-8111-111111111111',generation:7,profileId:defaultId,profileRevision:1,gameId:null};
-  const profileSession = {state:'running',paused:false,appliedSnapshot:applied,owner,degradation:[],fault:null};
+  const profileSession = {state:'running',appliedSnapshot:applied,owner,degradation:[],fault:null};
   const session = {selectedProfileId:defaultId,selectionMode:'manual',state:'running',appliedSnapshot:applied,fault:null};
   const automatic = {schemaVersion:1,mode:'manual',manualProfileId:defaultId,rules:[],status:'manual',message:'Manual selection is pinned.',conflicts:[],lastAttempt:null,target:null,readOnly:false};
   const listing = () => ({profiles:[...documents.values()].map(document=>({id:document.id,name:document.name,revision:document.revision,isDefault:document.id===defaultId,semanticHash:hash})),session,profileSession,automatic,readOnly:false,diagnostics:[]});

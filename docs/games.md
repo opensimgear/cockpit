@@ -94,7 +94,7 @@ executable or receiving packets does not admit an integration branch.
 The native coordinator admits a branch only for an immutable applied profile
 owner and its matching verified game context. A manually applied profile may
 have no game context while ordinary hardware routes remain useful. Process exit,
-PID reuse, process replacement, profile pause, provider edits and catalogue
+PID reuse, process replacement, profile stop, provider edits and catalogue
 revision changes revoke the old context. The running integration is bound to its
 original token; a newly available same-game process cannot inherit that worker.
 Only the affected integration stops; ordinary mapping routes are not stopped by
@@ -123,8 +123,8 @@ while another game is launched. The returned state shows that actual decision.
 
 Stop cancels pending launch and releases owned output without terminating the
 game. An uncertain spawn or failed post-spawn admission is not replayed; a game
-may remain open while its profile requires cleanup. Pause retains its latch.
-Automatic selection is inhibited by Stop, Pause, recovery and faults until the
+may remain open while its profile requires cleanup.
+Automatic selection is inhibited by Stop, recovery and faults until the
 corresponding explicit controls are resolved. Game/context loss revokes affected
 integration authority; Automatic reevaluates saved rules and Default fallback.
 

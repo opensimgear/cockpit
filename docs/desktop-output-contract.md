@@ -21,7 +21,7 @@ These are Cockpit ownership guarantees. Windows physical keyboard state shares t
 | Held key, chord or mouse button | Desired contribution, no unchanged-state replay |
 | Tap/click | Ordered down/up dwell; default 30 ms down and 30 ms up; per-action queue bounded to 32 taps |
 | Repeat | Explicit profile delay/interval; skip missed intervals, never catch up in a burst |
-| Pointer | 8 ms scheduler interval (125 Hz target); elapsed-time clamp 50 ms; retain fractional motion and clear it on pause; actual host cadence requires qualification |
+| Pointer | 8 ms scheduler interval (125 Hz target); elapsed-time clamp 50 ms; retain fractional motion and clear it on focus loss or Stop; actual host cadence requires qualification |
 | Wheel | Ordered horizontal/vertical steps; each unit is one Windows `WHEEL_DELTA` |
 | Native batch | At most 64 native `INPUT` records; both wheel axes count separately |
 | Native held ledger | At most 64 distinct native controls; at most 1,024 armed producers |

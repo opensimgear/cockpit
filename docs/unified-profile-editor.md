@@ -136,8 +136,8 @@ are not an event history or input-learning mechanism.
 
 The runtime card shows the active profile and state. Save running changes or
 use **Start profile** for another saved profile. **Stop** cancels pending starts
-or launches and releases output. **Pause** retains its latch; **Clear pause**
-permits Automatic selection, while Manual mode requires an explicit start.
+or launches and releases output. Use **Start profile** to run again, or explicitly
+select Automatic to resume automatic selection.
 **Recover outputs** performs native cleanup without replaying mappings. Leaving
 the editor leaves the running profile active.
 

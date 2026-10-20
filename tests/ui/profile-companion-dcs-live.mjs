@@ -12,7 +12,7 @@ import {randomUUID,createHash} from 'node:crypto';
 const require=createRequire(import.meta.url),playwrightModule=process.env.OSG_PLAYWRIGHT_MODULE??'playwright';
 const {chromium}=require(playwrightModule),{expect}=require(playwrightModule+'/test');
 const nativeTest='profile_session_host::companion::tests::live::dcs_live::actual_browser_wss_dcs_commondata_feedback_proof';
-const controls=new Set(['apply','default','stop','pause','resume','snapshot','finish','fixture-low','fixture-high','fixture-hysteresis','fixture-below-release','fixture-stale','fixture-frozen','fixture-wrong-aircraft','fixture-none','fixture-context-loss','fixture-context-restore']);
+const controls=new Set(['apply','default','stop','snapshot','finish','fixture-low','fixture-high','fixture-hysteresis','fixture-below-release','fixture-stale','fixture-frozen','fixture-wrong-aircraft','fixture-none','fixture-context-loss','fixture-context-restore']);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 async function atomicJson(path,value){
@@ -125,8 +125,8 @@ test('actual DCS-BIOS CommonData protocol fixtures reach the real companion thro
     await action('fixture-context-loss');await observed('dcs','altitude','unavailable');await safe();await snapshot('process-context-lost');
     await action('stop');await action('fixture-context-restore');await action('fixture-low');
     const reapplied=await action('apply');assert.equal(reapplied.profileSession.state,'running');assert.notDeepEqual(reapplied.profileSession.owner,applied.profileSession.owner);await low();await snapshot('explicit-new-context-baseline');
-    await action('fixture-high');await high();const paused=await action('pause');assert.equal(paused.profileSession.state,'paused');await safe();await snapshot('native-pause');
-    const resumed=await action('resume');assert.equal(resumed.profileSession.state,'stopped');await sleep(400);await safe();await snapshot('resume-does-not-apply');
+    await action('fixture-high');await high();const stoppedBeforeRestart=await action('stop');assert.equal(stoppedBeforeRestart.profileSession.state,'stopped');assert.equal(stoppedBeforeRestart.profileSession.owner,null);await safe();await snapshot('native-stop');
+    await sleep(400);await safe();await snapshot('stop-requires-apply');
     await action('fixture-low');await action('apply');await low();await action('fixture-high');await high();
     const defaulted=await action('default');assert.equal(defaulted.profileSession.state,'running');assert.equal(defaulted.profileSession.appliedSnapshot.profileId,'00000000-0000-4000-8000-000000000001');await safe();await snapshot('default-withdraws-feedback');
     await action('fixture-low');await action('apply');await low();await action('fixture-high');await high();

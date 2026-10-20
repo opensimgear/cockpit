@@ -14,7 +14,7 @@ const root = resolve('.'), artifacts = resolve('.research/desktop-game-native');
 const allowed = new Set(['companion_status', 'companion_enable', 'companion_disable', 'companion_pair_offer',
  'companion_approve', 'companion_revoke', 'companion_assign', 'companion_publish_begin', 'companion_publish_chunk',
  'companion_publish_commit', 'profile_status', 'profile_resources_list', 'profile_resources_inspect', 'profile_editor_save',
- 'profile_compile', 'profile_assignments_get', 'profile_stop', 'profile_pause', 'profile_runtime_inspect',
+ 'profile_compile', 'profile_assignments_get', 'profile_stop', 'profile_runtime_inspect',
  'profile_desktop_status', 'profile_desktop_configure', 'profile_select', 'profile_selection_mode',
  'profile_automatic_status', 'profile_game_launch', 'game_get_state']);
 

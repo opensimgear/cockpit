@@ -5,7 +5,6 @@ fn cold_recovery_connection_uses_only_the_production_snapshot_handshake() {
     let (mut gateway, context) = harness();
     let recovery = crate::profile_session::Status {
         state: crate::profile_session::State::RecoveryNeeded,
-        paused: false,
         applied_snapshot: None,
         owner: None,
         degradation: vec![],

@@ -54,7 +54,7 @@ test('native profile acquires and restores vJoy and HidHide, then owns a neutral
     const initial=(await native({command:'profile_status'})).profiles;selectedBefore=initial.session.selectedProfileId;
     evidence.initial=conciseSession(initial.profileSession);
     if(initial.profileSession.state==='recovery-needed')await native({command:'profile_recover'});
-    await native({command:'profile_stop'});await native({command:'profile_pause',paused:false});
+    await native({command:'profile_stop'});
     assert.equal((await status()).owner,null);
     const list=(await native({command:'profile_list'})).profiles.profiles;
     const base=list.find(profile=>/MH-6J.*hidden pedals/i.test(profile.name));

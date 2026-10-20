@@ -144,7 +144,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
     if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker"|"profile_desktop_capture_application");}
-    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_pause"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
+    if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
     if command.starts_with("mapping_") || command=="companion_feedback_routes" { return false; }
     if command.starts_with("module_usb_")||command.starts_with("controller_")||command.starts_with("integration_")||command.starts_with("dcs_")||command.starts_with("game_")||command.starts_with("companion_"){
         return !matches!(command,
@@ -370,7 +370,7 @@ impl GatewayManager {
     fn decorate_profile_session(&self, response: &mut Value) {
         let status = serde_json::to_value(self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).status()).unwrap();
         if let Some(session) = response.get_mut("session").and_then(Value::as_object_mut) {
-            for key in ["state", "paused", "appliedSnapshot", "fault"] { session.insert(key.into(), status[key].clone()); }
+            for key in ["state", "appliedSnapshot", "fault"] { session.insert(key.into(), status[key].clone()); }
         }
         response["profileSession"] = status;
         response["automatic"] = self.profile_automatic.view();
@@ -380,7 +380,6 @@ impl GatewayManager {
         let fields: &[&str] = match command {
             "profile_apply" => &["id", "expectedRevision", "gameId"],
             "profile_game_launch" => &["gameId"],
-            "profile_pause" => &["paused"],
             "profile_stop" | "profile_recover" => &[],
             _ => return Err("Unknown profile session operation.".into()),
         };
@@ -408,7 +407,7 @@ impl GatewayManager {
                         let game_admission = self.game_admission.read().unwrap_or_else(|p| p.into_inner());
                         if self.closed.load(Ordering::Acquire)
                             || self.profile_admission_epoch.load(Ordering::Acquire) != admission_epoch {
-                            return Err("Profile Apply was cancelled by Stop, Pause, recovery or a newer activation. Apply again explicitly.".into());
+                            return Err("Profile Apply was cancelled by Stop, recovery or a newer activation. Apply again explicitly.".into());
                         }
                         self.guard_retired_recovery()?;
                         let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
@@ -423,7 +422,6 @@ impl GatewayManager {
                     || { self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); },
                 )?;
             },
-            "profile_pause" => {let result=self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).pause(request["paused"].as_bool().ok_or("paused must be a boolean.")?);self.profile_automatic.retry_event();result?;},
             "profile_stop" => {let stopped=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).stop();let pinned=self.automatic_stop_pin();stopped.and(pinned)?;},
             "profile_recover" => {let result=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).recover();self.profile_automatic.retry_event();result?;},
             _ => unreachable!(),
@@ -552,13 +550,13 @@ impl GatewayManager {
             matches!(status.state, crate::profile_session::State::Running | crate::profile_session::State::Degraded)
                 && status.owner.as_ref().is_some_and(|owner| request["document"]["id"] == owner.profile_id)
         };
-        let profile_mutation = editor_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = editor_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         // Created before admission guards so notification follows their release,
         // including staged Apply's early-return paths.
         let _wake = profile_mutation.then(|| WakeProfileOnDrop(&self.profile_wake));
         let automatic_control = match request["command"].as_str().unwrap_or("") {
             "profile_desktop_stop" => "profile_stop",
-            "profile_desktop_configure" => "profile_pause",
+            "profile_desktop_configure" => "profile_stop",
             "profile_desktop_recover" => "profile_recover", other => other,
         };
         let _policy=self.profile_automatic.begin_control(automatic_control);
@@ -758,7 +756,7 @@ impl GatewayManager {
             if matches!(command.as_str(),"profile_automatic_status"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_selection_mode"){
                 return match self.automatic_request(&request){Ok(profiles)=>json!({"ok":true,"state":{"profiles":profiles}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
             }
-            if matches!(command.as_str(), "profile_apply" | "profile_game_launch" | "profile_stop" | "profile_pause" | "profile_recover") {
+            if matches!(command.as_str(), "profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover") {
                 return match self.profile_session_request(&request,native_arrival_epoch) {
                     Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
                     Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
@@ -1180,9 +1178,10 @@ mod tests {
             assert_eq!(rejected["ok"],false,"{rejected}");
         }
         assert_eq!(request(&manager,"profile_desktop_stop",None,json!({}))["ok"],true);
-        let paused=request(&manager,"profile_status",None,json!({}));
-        assert_eq!(paused["state"]["profiles"]["profileSession"]["paused"],true);
-        assert!(paused["state"]["profiles"]["profileSession"]["owner"].is_null());
+        let stopped=request(&manager,"profile_status",None,json!({}));
+        assert_eq!(stopped["state"]["profiles"]["profileSession"]["state"],"stopped");
+        assert!(stopped["state"]["profiles"]["profileSession"].get("paused").is_none());
+        assert!(stopped["state"]["profiles"]["profileSession"]["owner"].is_null());
         assert_eq!(request(&manager,"profile_desktop_status",None,json!({}))["state"]["desktop"]["enabled"],false);
     }
     #[test]
@@ -1378,7 +1377,7 @@ mod tests {
     }
     #[test]
     fn slow_profile_preflight_keeps_status_and_stop_responsive_without_late_rearm() {
-        for operation in ["profile_stop", "profile_pause", "profile_recover"] {
+        for operation in ["profile_stop", "profile_recover"] {
             let (mut manager, _) = setup();
             let fields = json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1});
             assert_eq!(request(&manager,"profile_apply",None,fields.clone())["ok"],true);
@@ -1402,7 +1401,7 @@ mod tests {
                 // the active unified owner rejects their independent mutation.
                 let settings = request(&control,"game_profile_save",None,json!({}));
                 assert_eq!(settings["ok"],false);
-                let fields = if operation == "profile_pause" { json!({"paused":true}) } else { json!({}) };
+                let fields = json!({});
                 let stopped = request(&control,operation,None,fields);
                 completed_tx.send((status,stopped)).unwrap();
             });
@@ -1417,7 +1416,6 @@ mod tests {
             assert!(result["error"].as_str().unwrap().contains("cancelled"),"{operation}: {result}");
             let status = request(&manager,"profile_status",None,json!({}));
             assert!(status["state"]["profiles"]["profileSession"]["owner"].is_null());
-            if operation == "profile_pause" { assert_eq!(status["state"]["profiles"]["profileSession"]["paused"],true); }
         }
     }
     #[test]
@@ -1653,22 +1651,22 @@ mod tests {
     }
 
     #[test]
-    fn profile_pause_latches_and_legacy_stop_stops_the_profile() {
+    fn profile_stop_releases_owner_and_removed_pause_is_rejected() {
         let (manager, _) = setup();
         let fields=json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1});
         assert_eq!(request(&manager,"profile_apply",None,fields.clone())["ok"],true);
-        assert_eq!(request(&manager,"profile_pause",None,json!({"paused":true}))["ok"],true);
-        assert_eq!(request(&manager,"profile_selection_mode",None,json!({"mode":"automatic"}))["ok"],true);
-        assert_eq!(request(&manager,"profile_select",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"selectionSource":"automatic"}))["ok"],true);
-        assert_eq!(request(&manager,"profile_apply",None,fields.clone())["ok"],false);
-        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["session"]["state"],"paused");
-        assert_eq!(request(&manager,"profile_pause",None,json!({"paused":false}))["ok"],true);
-        assert_eq!(request(&manager,"profile_status",None,json!({}))["state"]["profiles"]["session"]["state"],"stopped");
-        assert_eq!(request(&manager,"profile_apply",None,fields)["ok"],true);
-        let _=request(&manager,"profile_stop",None,json!({}));
+        let owner = manager.profile_session.lock().unwrap().status().owner.clone();
+        for paused in [true, false] {
+            assert_eq!(request(&manager,"profile_pause",None,json!({"paused":paused}))["ok"],false);
+            assert_eq!(manager.profile_session.lock().unwrap().status().owner,owner);
+        }
+        assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
         let status=request(&manager,"profile_status",None,json!({}));
         assert_eq!(status["state"]["profiles"]["session"]["state"],"stopped");
         assert!(status["state"]["profiles"]["profileSession"]["owner"].is_null());
+        assert!(status["state"]["profiles"]["profileSession"].get("paused").is_none());
+        assert!(status["state"]["profiles"]["session"].get("paused").is_none());
+        assert_eq!(request(&manager,"profile_apply",None,fields)["ok"],true);
     }
 
     #[test]

@@ -310,7 +310,7 @@ def main():
             assert captured["pid"] == identity["pid"] and int(captured["epoch"]) == int(identity["created"])
             phase["exactCapturedApplication"] = captured
             mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
-            service.profiles("profile_pause", paused=False)
+            service.profiles("profile_stop")
             apply_attempted = True
             owner = mapping.apply(service, saved)
             phase["owner"] = owner

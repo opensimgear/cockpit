@@ -31,7 +31,7 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
   try{
     await list();
     if((await status()).state==='recovery-needed')await page.getByRole('button',{name:'Recover outputs',exact:true}).click();
-    await native({command:'profile_stop'});await native({command:'profile_pause',paused:false});
+    await native({command:'profile_stop'});
     await page.getByRole('button',{name:'Settings',exact:true}).click();
     const setup=page.getByRole('region',{name:'Controller and desktop output settings'});
     await expect(setup.getByRole('button',{name:'Configure vJoy',exact:true})).toBeVisible();
@@ -40,7 +40,7 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     assert.equal((await native({command:'profile_desktop_status'})).desktop.qualified,true);
     assert.equal(await setup.getByLabel('Application scope',{exact:true}).count(),0);
     await setup.screenshot({path:resolve(artifacts,'output-settings.png')});
-    await list();await native({command:'profile_pause',paused:false});await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
     await expect(page.getByRole('heading',{name:'New profile',exact:true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Choose resources for new profile'})).toHaveCount(0);
     await expect(page.getByText('0 blocks',{exact:true})).toBeVisible();
@@ -76,11 +76,14 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     const changed=await status();assert.equal(changed.owner.profileId,first.id);assert.ok(changed.owner.generation>running.owner.generation);
     assert.equal(changed.owner.gameId,running.owner.gameId);
     assert.equal((await native({command:'profile_status'})).profiles.session.selectionMode,'manual');
+    assert.equal(Object.hasOwn(changed,'paused'),false,'Profile runtime status must not expose a Pause latch.');
+    await expect(page.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Clear pause',exact:true})).toHaveCount(0);
     assert.ok(!/\brevision\b/i.test(await page.locator('main').innerText()),'Normal profile editing must not expose revision numbers.');
     await page.getByRole('button',{name:'Debug',exact:true}).click();
     const debug=page.getByRole('region',{name:'Profile debug'});await expect(debug).toBeVisible();
     await expect(debug.getByRole('button',{name:'Stop current profile',exact:true})).toBeEnabled();
-    await expect(debug.getByRole('button',{name:'Pause',exact:true})).toBeEnabled();
+    await expect(debug.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
     await debug.getByRole('button',{name:'Inspect draft preflight',exact:true}).click();
     await expect(debug.getByText('Readiness:',{exact:false})).toBeVisible();
     await expect(debug.getByRole('region',{name:'Applied profile port inspection'})).toBeVisible();
@@ -92,11 +95,16 @@ test('running cockpit creates directly, saves inactive profiles, reapplies activ
     const inactive=`${name} inactive`;names.add(inactive);await page.getByLabel('Profile name',{exact:true}).fill(inactive);await page.getByRole('button',{name:'Save profile',exact:true}).click();
     await expect(page.getByText('Profile saved.',{exact:true})).toBeVisible();assert.deepEqual((await status()).owner,changed.owner,'Saving another profile must leave the running owner unchanged.');
     await page.screenshot({path:resolve(artifacts,'inactive-save.png'),fullPage:true});
+    await page.getByRole('button',{name:'Debug',exact:true}).click();
+    await expect(debug.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
+    await debug.getByRole('button',{name:'Stop current profile',exact:true}).click();
+    await expect.poll(async()=>(await status()).state).toBe('stopped');
+    const stopped=await status();assert.equal(stopped.owner,null);assert.equal(stopped.appliedSnapshot,null);
     assert.deepEqual(errors,[]);
-    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,activeSave:{before:running.owner,after:changed.owner},desktopQualified:desktopRunning.qualified,desktopRuntimeAcquired:!!desktopRunning.runtime,debugSeparated:true,pageErrors:errors},null,2)+'\n');
+    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,activeSave:{before:running.owner,after:changed.owner},desktopQualified:desktopRunning.qualified,desktopRuntimeAcquired:!!desktopRunning.runtime,debugSeparated:true,stopOnly:true,debugStop:stopped,pageErrors:errors},null,2)+'\n');
   }catch(error){await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true});throw error;}
   finally{
-    try{await native({command:'profile_stop'});await native({command:'profile_pause',paused:false});await native({command:'profile_select',id:'00000000-0000-4000-8000-000000000001',selectionSource:'manual'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();}
+    try{await native({command:'profile_stop'});await native({command:'profile_select',id:'00000000-0000-4000-8000-000000000001',selectionSource:'manual'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.getByRole('button',{name:'Refresh profiles',exact:true}).click();}
     finally{await browser.close();}
   }
 });

@@ -1,4 +1,4 @@
-//! Bounded desktop controls use the same native admission and profile pause fence.
+//! Bounded desktop controls use the same native admission and profile Stop fence.
 use super::*;
 use crate::{profile_desktop_settings as settings, profile_session_desktop as desktop};
 use osg_desktop_output::audit;
@@ -55,7 +55,10 @@ impl GatewayManager {
                 // run first. Saving settings never constitutes an Apply.
                 if command == "profile_desktop_configure" {
                     let mut coordinator = self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
-                    if coordinator.status().owner.is_some() { coordinator.pause(true)?; }
+                    let stopped = if coordinator.status().owner.is_some() { coordinator.stop() } else { Ok(()) };
+                    drop(coordinator);
+                    let pinned = self.automatic_stop_pin();
+                    stopped.and(pinned)?;
                     let enabled = request["enabled"].as_bool().ok_or("Desktop enablement must be a boolean.")?;
                     let scope = serde_json::from_value(request["scope"].clone()).map_err(|e|format!("Invalid desktop scope: {e}"))?;
                     preferences.configure(enabled, scope)?;
@@ -66,8 +69,9 @@ impl GatewayManager {
                 }
             }
             "profile_desktop_stop" => {
-                self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).pause(true)?;
-                self.automatic_stop_pin()?;
+                let stopped = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).stop();
+                let pinned = self.automatic_stop_pin();
+                stopped.and(pinned)?;
             }
             "profile_desktop_recover" => {
                 self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).recover()?;
@@ -99,11 +103,11 @@ mod tests {
     #[test]
     fn audit_checkpoint_requires_exact_stopped_state_without_an_owner() {
         let mut status = Status {
-            state: State::Stopped, paused: false, applied_snapshot: None,
+            state: State::Stopped, applied_snapshot: None,
             owner: None, degradation: vec![], fault: None,
         };
         assert!(require_audit_checkpoint_idle(&status).is_ok());
-        for state in [State::Running, State::Degraded, State::Paused, State::Faulted,
+        for state in [State::Running, State::Degraded, State::Faulted,
             State::RecoveryNeeded, State::Transitioning, State::AwaitingGame] {
             status.state = state;
             assert!(require_audit_checkpoint_idle(&status).is_err(), "{state:?}");

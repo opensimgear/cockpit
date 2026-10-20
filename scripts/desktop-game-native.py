@@ -249,7 +249,7 @@ def main():
         mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
         service.profiles("profile_select", id=saved["id"], selectionSource="manual")
         service.profiles("profile_selection_mode", mode="manual")
-        service.profiles("profile_pause", paused=False)
+        service.profiles("profile_stop")
         selected = service.profiles("profile_automatic_status")["automatic"]
         assert selected["mode"] == "manual" and selected["manualProfileId"] == saved["id"], selected
         evidence["actualLaunchRequested"] = True

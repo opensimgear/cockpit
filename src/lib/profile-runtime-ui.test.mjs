@@ -11,18 +11,18 @@ import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller']);
 const {ProfileRuntimeClient}=modules.get('./profile-runtime'),{ProfileRuntimeController}=modules.get('./profile-runtime-controller');
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`;
-const stopped=()=>({state:'stopped',paused:false,appliedSnapshot:null,owner:null,degradation:[],fault:null});
+const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
 const running=()=>({...stopped(),state:'running',appliedSnapshot:{profileId:id,revision:3,semanticHash:hash},owner:{session,generation:4,profileId:id,profileRevision:3,gameId:'dcs'}});
 const editor=()=>({id,revision:3,baseRevision:3,dirty:false,readOnly:false});
 const profiles=[{id,name:'DCS rig',revision:3,isDefault:false,semanticHash:hash}];
 const plain=value=>JSON.parse(JSON.stringify(value));
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
-function harness(){const calls=[];let response=stopped();const client=new ProfileRuntimeClient(async request=>{calls.push(plain(request));if(request.command==='profile_status')return response;if(request.command==='profile_apply')return running();if(request.command==='profile_pause')return{...stopped(),paused:request.paused,state:request.paused?'paused':'stopped'};return stopped();});return{calls,client,controller:new ProfileRuntimeController(client),setStatus(value){response=value;}};}
+function harness(){const calls=[];let response=stopped();const client=new ProfileRuntimeClient(async request=>{calls.push(plain(request));if(request.command==='profile_status')return response;if(request.command==='profile_apply')return running();return stopped();});return{calls,client,controller:new ProfileRuntimeController(client),setStatus(value){response=value;}};}
 
 // Expose the actual Svelte handlers and poll lifecycle; SSR has no DOM or mounted effects.
 async function component({gameContext=''}={}){
   const filename=new URL('./ProfileRuntimeControls.svelte',import.meta.url);
-  const source=(await readFile(filename,'utf8')).replace("gameId = $state('');","gameId = $state(initialGameContext);").replace('</script>',`captureRuntimeControls({apply,pause,stop,recover,watchStatus,mountStatus(){mounted=true;return watchStatus();},setActive(value){active=value;},get view(){return view;}});</script>`);
+  const source=(await readFile(filename,'utf8')).replace("gameId = $state('');","gameId = $state(initialGameContext);").replace('</script>',`captureRuntimeControls({apply,stop,recover,watchStatus,mountStatus(){mounted=true;return watchStatus();},setActive(value){active=value;},get view(){return view;}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
   const timers=new Map(),events=new Map(),document={hidden:false,addEventListener(name,listener){events.set(name,listener);},removeEventListener(name,listener){if(events.get(name)===listener)events.delete(name);}};
   const window={setInterval(callback){timers.set(1,callback);return 1;},clearInterval(id){timers.delete(id);}};
@@ -48,12 +48,11 @@ test('a game choice retained from another profile never silently falls back to h
 });
 test('Stop stays enabled during slow Apply and its actual handler prevents late Apply acknowledgement from reviving the run',async()=>{
   const view=await component(),h=harness();await h.controller.refresh();const pending=deferred();h.client.apply=async()=>{h.calls.push({command:'profile_apply'});return pending.promise;};const applying=h.controller.apply(editor());
-  let result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Stop or Pause can interrupt'));assert.ok(!button(result.html,'Stop').includes('disabled'));assert.ok(!button(result.html,'Pause').includes('disabled'));
+  let result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Stop can interrupt'));assert.ok(!button(result.html,'Stop').includes('disabled'));assert.equal(button(result.html,'Pause'),'');
   await result.handlers.stop();pending.resolve(running());assert.equal(await applying,false);result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Active profile \u00b7 None'));assert.ok(result.html.includes('aria-label="Stop current profile"'));assert.ok(!result.html.includes(session));assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,1);assert.equal(h.calls.filter(call=>call.command==='profile_apply').length,1);
 });
-test('paused UI clears only the persisted pause latch; recovery reports native results without retrying failed Apply',async()=>{
-  const view=await component(),h=harness();h.setStatus({...stopped(),state:'paused',paused:true});await h.controller.refresh();h.calls.length=0;let result=view.render({controller:h.controller,profiles,editor:editor()});assert.match(button(result.html,'Start profile'),/disabled/);assert.ok(result.html.includes('Clear pause to allow Automatic selection'));assert.ok(result.html.includes('start a saved profile in Manual mode'));await result.handlers.pause();assert.deepEqual(h.calls,[{command:'profile_pause',paused:false}]);assert.equal(h.calls.filter(call=>call.command==='profile_apply').length,0);assert.equal(h.controller.state.status.state,'stopped');
-  h.setStatus({...stopped(),state:'recovery-needed',fault:'Native output release must be retried.'});await h.controller.refresh();result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Native output release must be retried.'));assert.ok(result.html.includes('Recover outputs'));await result.handlers.recover();assert.equal(h.calls.at(-1).command,'profile_recover');
+test('recovery reports native results without retrying failed Apply',async()=>{
+  const view=await component(),h=harness();let result;h.setStatus({...stopped(),state:'recovery-needed',fault:'Native output release must be retried.'});await h.controller.refresh();result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Native output release must be retried.'));assert.ok(result.html.includes('Recover outputs'));await result.handlers.recover();assert.equal(h.calls.at(-1).command,'profile_recover');
   h.client.apply=async()=>{h.calls.push({command:'profile_apply'});throw new Error('Backend unavailable.');};h.setStatus({...running(),state:'degraded',degradation:['Optional companion disconnected.']});await h.controller.apply(editor());result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Backend unavailable.'));assert.ok(result.html.includes('Some profile resources are unavailable. Open Debug for details.'));assert.ok(!result.html.includes('Optional companion disconnected.'));assert.equal(h.calls.filter(call=>call.command==='profile_apply').length,1);
 });
 test('actual status poll lifecycle is read-only, suspends during game settings or hidden document, and cleanup never stops a native run',async()=>{
@@ -61,7 +60,7 @@ test('actual status poll lifecycle is read-only, suspends during game settings o
   view.document.hidden=true;view.timers.get(1)();assert.equal(h.calls.length,1);view.document.hidden=false;view.events.get('visibilitychange')();await new Promise(resolve=>setImmediate(resolve));assert.equal(h.calls.length,2);cleanup();assert.equal(view.timers.size,0);assert.equal(view.events.size,0);result.handlers.setActive(false);assert.equal(result.handlers.watchStatus(),undefined);assert.ok(h.calls.every(call=>call.command==='profile_status'));
 });
 
-test('waiting launch displays neutral hardware, blocks Apply and keeps actual Stop and Pause available',async()=>{
+test('waiting launch displays neutral hardware, blocks Apply and keeps Stop available',async()=>{
   const view=await component(),h=harness();h.setStatus({...running(),state:'awaiting-game',owner:{...running().owner,gameId:null}});await h.controller.refresh();h.calls.length=0;
-  const result=view.render({controller:h.controller,profiles,editor:{...editor(),id:other}});assert.ok(result.html.includes('held neutral'));assert.ok(result.html.includes('Processing has not started'));assert.match(button(result.html,'Start profile'),/disabled/);assert.ok(!button(result.html,'Stop').includes('disabled'));assert.ok(!button(result.html,'Pause').includes('disabled'));await result.handlers.apply();assert.deepEqual(h.calls,[]);await result.handlers.stop();assert.deepEqual(h.calls,[{command:'profile_stop'}]);
+  const result=view.render({controller:h.controller,profiles,editor:{...editor(),id:other}});assert.ok(result.html.includes('held neutral'));assert.ok(result.html.includes('Processing has not started'));assert.match(button(result.html,'Start profile'),/disabled/);assert.ok(!button(result.html,'Stop').includes('disabled'));assert.equal(button(result.html,'Pause'),'');await result.handlers.apply();assert.deepEqual(h.calls,[]);await result.handlers.stop();assert.deepEqual(h.calls,[{command:'profile_stop'}]);
 });

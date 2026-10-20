@@ -131,7 +131,7 @@ test('profile runtime controls and status bypass slow Apply while older unsent A
   }});
   const firstApply=api.gatewayRequest({command:'profile_apply',id:'first',expectedRevision:1});
   const queuedApply=api.gatewayRequest({command:'profile_apply',id:'old-queued',expectedRevision:1});
-  const rejected=assert.rejects(queuedApply,/cancelled by Stop, Pause or recovery/);
+  const rejected=assert.rejects(queuedApply,/cancelled by Stop or recovery/);
   await tick();
   await api.gatewayRequest({command:'profile_status'});
   await api.gatewayRequest({command:'profile_stop'});
@@ -142,7 +142,7 @@ test('profile runtime controls and status bypass slow Apply while older unsent A
 });
 
 test('new explicit Apply waits for prior Save and priority control completion without replaying cancelled requests',async()=>{
-  for(const command of ['profile_stop','profile_pause','profile_recover','controller_visibility_restore']){
+  for(const command of ['profile_stop','profile_recover','controller_visibility_restore']){
     const saved=deferred(),stopping=deferred();
     const api=transport({invokeResults:async(_name,request)=>{
       if(request.command==='profile_editor_save')await saved.promise;
@@ -151,8 +151,8 @@ test('new explicit Apply waits for prior Save and priority control completion wi
     }});
     const save=api.gatewayRequest({command:'profile_editor_save',document:{id:'draft'},expectedRevision:1,assignments:[]});
     const old=api.gatewayRequest({command:'profile_apply',id:'cancelled',expectedRevision:2});
-    const rejected=assert.rejects(old,/cancelled by Stop, Pause or recovery/);
-    const stop=api.gatewayRequest({command,...(command==='profile_pause'?{paused:true}:{})});
+    const rejected=assert.rejects(old,/cancelled by Stop or recovery/);
+    const stop=api.gatewayRequest({command});
     const fresh=api.gatewayRequest({command:'profile_apply',id:'fresh',expectedRevision:2});
     await api.gatewayRequest({command:'profile_status'});
     assert.deepEqual(api.calls.map(call=>call.args.request.command),['profile_editor_save',command,'profile_status']);

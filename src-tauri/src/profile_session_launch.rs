@@ -41,8 +41,7 @@ impl<H: Host> Coordinator<H> {
             .as_ref()
             .filter(|h| &h.owner == owner && h.deadline > Instant::now())
             .ok_or("The exact native launch hold expired or was cancelled.")?;
-        if self.status.paused
-            || self.status.state != State::AwaitingGame
+        if self.status.state != State::AwaitingGame
             || self.status.owner.as_ref() != Some(&held.owner)
         {
             return Err("The native launch hold no longer owns its prepared hardware.".into());

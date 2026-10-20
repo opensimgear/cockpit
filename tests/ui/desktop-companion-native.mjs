@@ -5,8 +5,8 @@ const require=createRequire(import.meta.url),playwright=process.env.OSG_PLAYWRIG
 const{chromium}=require(playwright),inject=process.env.OSG_DESKTOP_NATIVE_INJECT==='1';
 const root=resolve('.'),artifacts=resolve('.research/desktop-companion-native');
 const python=process.env.OSG_PYTHON??(process.platform==='win32'?'python':'python3');
-const allowed=new Set(['companion_status','companion_enable','companion_disable','companion_pair_offer','companion_approve','companion_revoke','companion_assign','companion_publish_begin','companion_publish_chunk','companion_publish_commit','profile_status','profile_resources_list','profile_resources_inspect','profile_editor_save','profile_compile','profile_assignments_get','profile_apply','profile_stop','profile_pause','profile_runtime_inspect','profile_desktop_status','profile_desktop_configure','profile_desktop_capture_application','profile_desktop_stop']);
-const live=new Set(['profile_apply','profile_stop','profile_pause','profile_desktop_configure','profile_desktop_capture_application','profile_desktop_stop']);
+const allowed=new Set(['companion_status','companion_enable','companion_disable','companion_pair_offer','companion_approve','companion_revoke','companion_assign','companion_publish_begin','companion_publish_chunk','companion_publish_commit','profile_status','profile_resources_list','profile_resources_inspect','profile_editor_save','profile_compile','profile_assignments_get','profile_apply','profile_stop','profile_runtime_inspect','profile_desktop_status','profile_desktop_configure','profile_desktop_capture_application','profile_desktop_stop']);
+const live=new Set(['profile_apply','profile_stop','profile_desktop_configure','profile_desktop_capture_application','profile_desktop_stop']);
 async function startReceiver(file){
  for(const path of [file,file.replace(/\.json$/,'.focus'),file.replace(/\.json$/,'.stop')])await rm(path,{force:true});
  const executable=process.env.OSG_DESKTOP_RECEIVER??resolve('crates/desktop-output/target/debug/examples/native_receiver.exe');

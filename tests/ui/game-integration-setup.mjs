@@ -3,7 +3,7 @@
 import test from'node:test';import assert from'node:assert/strict';import{createRequire}from'node:module';import{mkdir}from'node:fs/promises';import{resolve}from'node:path';
 const require=createRequire(import.meta.url),module=process.env.OSG_PLAYWRIGHT_MODULE??'playwright',{chromium}=require(module),{expect}=require(module+'/test');
 const endpoint=process.env.OSG_SETUP_UI_URL??'http://127.0.0.1:1420',artifacts=resolve(process.env.OSG_SETUP_UI_ARTIFACTS??'.research/setup-ui-acceptance'),id='00000000-0000-4000-8000-000000000001',session='11111111-1111-4111-8111-111111111111',hash=n=>`sha256:${String(n).repeat(64)}`;
-const stopped={state:'stopped',paused:false,appliedSnapshot:null,owner:null,degradation:[],fault:null},clean={required:false,outputs:[],provisioning:[],job:null,diagnostics:[],outputQualified:false,provisioningQualified:false};
+const stopped={state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null},clean={required:false,outputs:[],provisioning:[],job:null,diagnostics:[],outputQualified:false,provisioningQualified:false};
 const profiles={profiles:[{id,name:'Default',revision:1,isDefault:true,semanticHash:hash(1)}],profileSession:stopped,automatic:{schemaVersion:1,mode:'manual',manualProfileId:id,rules:[],status:'manual',message:'Fixture Manual pin.',conflicts:[],lastAttempt:null,target:null,readOnly:false}};
 async function fixture(retained=clean){
  await mkdir(artifacts,{recursive:true});const browser=await chromium.launch({headless:true,...(process.env.OSG_BROWSER_CHANNEL?{channel:process.env.OSG_BROWSER_CHANNEL}:{})}),page=await browser.newPage({viewport:{width:1440,height:1080}}),requests=[],errors=[],unexpected=[];
