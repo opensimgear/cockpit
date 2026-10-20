@@ -48,7 +48,7 @@
     <button class="secondary-button stop-runtime" aria-label="Stop current profile" disabled={view.pending==='stop'} onclick={stop}>Stop</button>
     {#if native?.state==='recovery-needed'||native?.state==='faulted'}<button class="secondary-button" disabled={view.pending==='recover'} onclick={recover}>Recover outputs</button>{/if}
   </div>
-  {#if runningEditor}<p class="runtime-help">Saving this profile applies its changes while it is running.</p>{:else if editor&&!saved}<p class="runtime-help">Save your changes before starting this profile.</p>{:else if editor}<p class="runtime-help">Start this profile when ready. Saving it leaves the current profile running.</p>{:else}<p class="runtime-help">Open a profile to edit or start it.</p>{/if}
+  {#if runningEditor}<p class="runtime-help">Saving this profile applies its changes while it is running.</p>{:else if editor&&!saved}<p class="runtime-help">Save your changes before starting this profile.</p>{:else if editor}<p class="runtime-help">Start this profile when ready. Saving it leaves the current profile running.</p>{:else}<p class="runtime-help">Activate a saved profile from its tile for hardware only, or open it to choose a game context.</p>{/if}
   {#if invalidGame}<p class="runtime-notice">Choose a game context eligible for this profile, or explicitly choose Hardware only.</p>{/if}
   {#if view.pending}<p class="runtime-notice" role="status">Native {view.pending==='clear-pause'?'pause clearing':view.pending} in progress…{#if view.pending==='apply'} Stop or Pause can interrupt this request.{/if}</p>{/if}
   {#if view.error}<p class="runtime-error" role="alert">{view.error}</p>{/if}
