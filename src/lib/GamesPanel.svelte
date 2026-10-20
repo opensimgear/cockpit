@@ -178,7 +178,6 @@
         </article>
       {/each}
     </div>
-    {#if games.length}<p class="library-help"><Icon name="info" size={13} /> Open game details for installation, integration settings and matching profiles and remembered launch choices. Author hardware and routes in Profiles.</p>{/if}
   {/if}
 </section>
 
@@ -262,7 +261,6 @@
   .unavailable .tile-copy { opacity: .5; }
   .unavailable .tile-status { color: var(--muted); }
   .unavailable:hover, .unavailable:focus-within { border-color: var(--soft); }
-  .library-help { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; margin-top: 20px; line-height: 1.6; }
   .games-empty { padding: 65px 25px; border: 1px dashed var(--line); border-radius: 9px; text-align: center; }
   .empty-icon { color: var(--accent); background: var(--accent-bg); width: 64px; height: 64px; margin: 0 auto 21px; border-radius: 15px; display: grid; place-items: center; }
   .games-empty h2 { font-size: 19px; letter-spacing: -.3px; }
