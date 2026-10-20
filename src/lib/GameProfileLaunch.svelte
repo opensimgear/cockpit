@@ -6,18 +6,18 @@
   import {captureGameProfileCandidates,type GameProfileCandidates,type GameProfileContextRequest} from './game-profile-context';
   import {DEFAULT_PROFILE_ID,type DeepReadonly} from './profiles';
   import type {Game,GameId} from './games';
-  type Request={command:'profile_game_launch';gameId:GameId;expectedActiveOwner:DeepReadonly<NativeProfileOwner>|null;profileId?:string;rememberChoice?:boolean}|{command:'profile_stop'|'profile_status'}|GameProfileContextRequest;
+  type Request={command:'profile_game_launch';gameId:GameId;expectedActiveOwner:DeepReadonly<NativeProfileOwner>|null;profileId?:string;rememberChoice?:boolean}|{command:'profile_status'}|GameProfileContextRequest;
   let {game,busy=false,compact=false,send}: {game:Game;busy?:boolean;compact?:boolean;send?:(request:Request)=>Promise<unknown>}=$props();
   const transport=untrack(()=>send)??(async(request:Request)=>{const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Native profile launch is unavailable. Reconnect the service.');return result;});
-  let launching=$state(false),stopping=$state(false),reading=$state(false),error=$state(''),message=$state(''),status=$state.raw<DeepReadonly<NativeProfileStatus>|null>(null);
+  let launching=$state(false),reading=$state(false),error=$state(''),message=$state(''),status=$state.raw<DeepReadonly<NativeProfileStatus>|null>(null);
   let switchOpen=$state(false),switchOwner=$state.raw<DeepReadonly<NativeProfileOwner>|null>(null);
   let choiceOpen=$state(false),candidates=$state.raw<DeepReadonly<GameProfileCandidates>|null>(null),profileId=$state(''),rememberChoice=$state(false);
   function gameKey():string{return JSON.stringify([game.id,game.executable??null,game.installed,game.launchSupported]);}
   let epoch=0,readEpoch=0,disposed=false,contextId=untrack(gameKey);
   const unavailable=$derived(!game.installed?'Choose the game executable first.':!game.launchSupported?game.launchUnavailableReason??game.launchReason??'Launching is unavailable on this platform.':'');
-  const disabled=$derived(busy||launching||stopping||switchOpen||choiceOpen||!!unavailable);
+  const disabled=$derived(busy||launching||switchOpen||choiceOpen||!!unavailable);
   onDestroy(()=>{disposed=true;epoch++;readEpoch++;});
-  function syncGame(){const key=gameKey();if(key!==contextId){contextId=key;epoch++;readEpoch++;launching=false;stopping=false;reading=false;switchOpen=false;switchOwner=null;choiceOpen=false;candidates=null;profileId='';rememberChoice=false;error='';message='';status=null;}}
+  function syncGame(){const key=gameKey();if(key!==contextId){contextId=key;epoch++;readEpoch++;launching=false;reading=false;switchOpen=false;switchOwner=null;choiceOpen=false;candidates=null;profileId='';rememberChoice=false;error='';message='';status=null;}}
   $effect(syncGame);
   function current(requestEpoch:number,context:string):boolean{return !disposed&&requestEpoch===epoch&&gameKey()===context;}
   const object=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
@@ -26,7 +26,7 @@
   function showDialog(node:HTMLDialogElement){node.showModal();return()=>node.close();}
   function cancelSwitch(){switchOpen=false;switchOwner=null;choiceOpen=false;profileId='';rememberChoice=false;epoch++;message='';}
   async function launch(){
-    if(disposed||busy||launching||stopping||switchOpen||choiceOpen||!game.installed||!game.launchSupported)return;
+    if(disposed||busy||launching||switchOpen||choiceOpen||!game.installed||!game.launchSupported)return;
     const requestEpoch=++epoch,context=gameKey();readEpoch++;reading=false;launching=true;error='';message='Finding matching profiles…';rememberChoice=false;profileId='';
     try{const matching=captureGameProfileCandidates(await transport({command:'profile_game_candidates',gameId:game.id}),game.id);if(!current(requestEpoch,context))return;candidates=matching;
       profileId=matching.preferredProfileId??(matching.profiles.length===1?matching.profiles[0].id:'');
@@ -36,7 +36,7 @@
     finally{if(current(requestEpoch,context))launching=false;}
   }
   async function confirmChoice(){
-    if(disposed||!choiceOpen||busy||launching||stopping||!candidates?.profiles.some(profile=>profile.id===profileId))return;
+    if(disposed||!choiceOpen||busy||launching||!candidates?.profiles.some(profile=>profile.id===profileId))return;
     const requestEpoch=++epoch,context=gameKey();choiceOpen=false;launching=true;error='';
     try{await checkActiveProfile(requestEpoch,context);}catch(cause){if(current(requestEpoch,context)){error=cause instanceof Error?cause.message:String(cause);message='Launch did not complete successfully. Refresh profile status before trying again.';}}
     finally{if(current(requestEpoch,context))launching=false;}
@@ -47,7 +47,7 @@
     await launchWithOwner(checked.owner,requestEpoch,context);
   }
   async function confirmSwitch(){
-    if(disposed||!switchOpen||!switchOwner||busy||launching||stopping)return;
+    if(disposed||!switchOpen||!switchOwner||busy||launching)return;
     const expected=switchOwner,requestEpoch=++epoch,context=gameKey();readEpoch++;reading=false;switchOpen=false;switchOwner=null;launching=true;error='';
     try{await launchWithOwner(expected,requestEpoch,context);}
     finally{if(current(requestEpoch,context))launching=false;}
@@ -62,12 +62,6 @@
       status=started;message=`${status.state==='degraded'?'Game started with unavailable branches.':'Game launch completed.'} ${statusLabel(status)}. ${ack.selectedGameId===null?'Hardware context only.':`Selected profile context: ${ack.selectedGameId}.`}`;
     }catch(cause){if(current(requestEpoch,context)){error=cause instanceof Error?cause.message:String(cause);message='Launch did not complete successfully. A spawned game may remain open; refresh profile status for owned cleanup or recovery.';}}
   }
-  async function stop(){
-    if(disposed||stopping)return;const requestEpoch=++epoch,context=gameKey();readEpoch++;reading=false;launching=false;switchOpen=false;switchOwner=null;choiceOpen=false;stopping=true;error='';message='Deactivating the profile and cancelling any pending launch…';status=null;
-    try{const result=await transport({command:'profile_stop'});if(!current(requestEpoch,context))return;status=response(result);message=`${statusLabel(status)}.`;
-    }catch(cause){if(current(requestEpoch,context)){error=cause instanceof Error?cause.message:String(cause);message='Deactivation was not confirmed. Refresh profile status and recover owned setup if needed.';}}
-    finally{if(current(requestEpoch,context))stopping=false;}
-  }
   async function refreshStatus(){
     if(disposed||reading)return;const requestRead=++readEpoch,requestEpoch=epoch,context=gameKey();reading=true;
     try{const result=await transport({command:'profile_status'});if(!current(requestEpoch,context)||requestRead!==readEpoch)return;status=response(result);error='';}
@@ -77,7 +71,7 @@
 </script>
 
 <div class="unified-launch" class:compact aria-label={`Unified profile launch for ${game.name}`}>
-  <div class="launch-actions"><button class="primary-button" disabled={disabled} aria-label={`Launch ${game.name}`} onclick={launch}><Icon name={launching?'refresh':'play'} size={14}/>{launching?'Preparing launch…':'Launch'}</button>{#if !compact}<button class="secondary-button" disabled={stopping} onclick={stop}><Icon name="stop" size={13}/>{stopping?'Deactivating…':'Deactivate profile'}</button>{/if}</div>
+  <div class="launch-actions"><button class="primary-button" disabled={disabled} aria-label={`Launch ${game.name}`} onclick={launch}><Icon name={launching?'refresh':'play'} size={14}/>{launching?'Preparing launch…':'Launch'}</button></div>
   {#if !compact}<p class="launch-help">A profile with this game context is activated before launch. With multiple matching profiles, choose one or use your remembered choice. When no profiles match, Default provides hardware only.</p>{/if}
   {#if unavailable}<p class="launch-help">{unavailable}</p>{/if}
   {#if message}<p class="launch-message" role="status" aria-live="polite">{message}</p>{/if}
@@ -91,19 +85,19 @@
     <p>These profiles share this game context. The selected profile will be activated before the game launches.</p>
     <label class="profile-choice-label">Profile<select aria-label="Profile for game launch" bind:value={profileId}><option value="" disabled>Choose a profile</option>{#each candidates?.profiles??[] as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label>
     <label class="remember-choice"><input type="checkbox" bind:checked={rememberChoice}/> Remember my choice</label>
-    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}>Cancel</button><button class="primary-button" disabled={busy||launching||stopping||!profileId} onclick={confirmChoice}>Launch</button></div>
+    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}>Cancel</button><button class="primary-button" disabled={busy||launching||!profileId} onclick={confirmChoice}>Launch</button></div>
   </dialog>
 {/if}
 {#if switchOpen}
   <dialog class="profile-switch-dialog" role="alertdialog" aria-modal="true" aria-labelledby="game-profile-switch-title" oncancel={event=>{event.preventDefault();cancelSwitch();}} {@attach showDialog}>
     <h2 id="game-profile-switch-title">Switch active profile?</h2>
     <p>A profile is already active. Launching {game.name} will deactivate it and activate the profile for this game.</p>
-    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}>Cancel</button><button class="primary-button" disabled={busy||launching||stopping} onclick={confirmSwitch}>Switch profile</button></div>
+    <div class="launch-actions"><button class="secondary-button" onclick={cancelSwitch}>Cancel</button><button class="primary-button" disabled={busy||launching} onclick={confirmSwitch}>Switch profile</button></div>
   </dialog>
 {/if}
 
 <style>
   .profile-switch-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(100% - 40px);max-width:480px;padding:24px;margin:0;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 20px 80px #0005}.profile-switch-dialog::backdrop{background:#0009}.profile-switch-dialog h2{font-size:17px}.profile-switch-dialog p{font-size:12px;line-height:1.7;color:var(--muted);margin:16px 0}.profile-switch-dialog .launch-actions{justify-content:flex-end}
   .profile-choice-label{display:grid;gap:8px;font-size:12px;color:var(--muted)}.profile-choice-label select{width:100%;min-width:0}.remember-choice{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--soft);margin:18px 0 24px}
-  .unified-launch{min-width:0;}.launch-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;}.compact>.launch-actions{justify-content:flex-end;}.launch-actions button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:10px;}.launch-help,.launch-message,.launch-error{font-size:10px;line-height:1.75;margin-top:10px;max-width:480px;overflow-wrap:anywhere;}.launch-help{color:var(--muted);}.launch-message{color:var(--soft);}.launch-error{color:#d3a078;}.launch-degradation{font-size:10px;color:#d3a078;line-height:1.75;padding-left:16px;margin-top:9px;}.status-read{font-size:9px;margin-top:7px;padding-left:0;}.compact .launch-help,.compact .launch-message,.compact .launch-error{font-size:9px;}
+  .unified-launch{min-width:0;}.launch-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;}.unified-launch>.launch-actions{justify-content:flex-end;}.launch-actions button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:10px;}.launch-help,.launch-message,.launch-error{font-size:10px;line-height:1.75;margin-top:10px;max-width:480px;overflow-wrap:anywhere;}.launch-help{color:var(--muted);}.launch-message{color:var(--soft);}.launch-error{color:#d3a078;}.launch-degradation{font-size:10px;color:#d3a078;line-height:1.75;padding-left:16px;margin-top:9px;}.status-read{font-size:9px;margin-top:7px;padding-left:0;}.compact .launch-help,.compact .launch-message,.compact .launch-error{font-size:9px;}
 </style>
