@@ -63,6 +63,46 @@ int main(void){
     incoming="{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"7\",\"frame\":{\"type\":\"transfer-end\",\"id\":\"missing-start\"}}\n";
     assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
     assert(!strcmp(socket.request_error,"Invalid USB reply data or checksum"));
+    /* USB writes can be delivered in any number of reads. The outer network
+     * task may have consumed any prefix of a status probe before starting its
+     * heartbeat. Every handoff must keep that prefix instead of parsing only
+     * the suffix as a new JSON record. */
+    char probe[128],frames[512];
+    unsigned fragmented=0;
+    for(size_t split=1;;split++){
+        snprintf(probe,sizeof(probe),"{\"command\":\"status\",\"requestId\":\"probe-%u\"}\r\n",probes+1);
+        if(split>=strlen(probe)-2)break;
+        for(size_t at=0;at<split;at++){
+            assert(osg_serial_json_byte(probe[at],&reply)==OSG_SERIAL_INCOMPLETE&&!reply);
+        }
+        snprintf(frames,sizeof(frames),"%s{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"%" PRIu64 "\",\"frame\":{\"ok\":true}}\n",probe+split,socket.serial_sequence+1);
+        incoming=frames;
+        assert(osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+        assert(reply&&!strcmp(socket.request_error?socket.request_error:"",""));
+        cJSON_Delete(reply);fragmented++;
+    }
+    assert(fragmented>30&&probes==5+fragmented);
+    /* The reverse handoff also retains an incomplete reply if its deadline
+     * expires. Idle polling can finish and discard it without corrupting the
+     * next console command or heartbeat. */
+    incoming="{\"command\":\"serial-reply\",\"linkId\":\"test-link\",";
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(!reply&&!strcmp(socket.request_error,"USB response timed out"));
+    const char *tail="\"requestId\":\"expired\",\"frame\":{\"ok\":true}}\n";
+    for(size_t at=0;tail[at];at++){
+        osg_serial_record record=osg_serial_json_byte(tail[at],&reply);
+        if(tail[at+1])assert(record==OSG_SERIAL_INCOMPLETE&&!reply);
+        else assert(record==OSG_SERIAL_JSON&&reply&&!strcmp(osg_string(reply,"command"),"serial-reply"));
+    }
+    cJSON_Delete(reply);
+    /* Overflow spans the same handoff, and draining its newline resets the
+     * decoder so the following bounded reply remains usable. */
+    for(unsigned at=0;at<OSG_PROVISION_BYTES+1;at++)assert(osg_serial_json_byte('x',&reply)==OSG_SERIAL_INCOMPLETE&&!reply);
+    incoming="\n";assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(!reply&&!strcmp(socket.request_error,"USB reply exceeds buffer"));
+    snprintf(frames,sizeof(frames),"{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"%" PRIu64 "\",\"frame\":{\"ok\":true}}\n",socket.serial_sequence+1);
+    incoming=frames;assert(osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));cJSON_Delete(reply);
     osg_serial_close(&socket);
-    puts("Serial status probes remain responsive across image requests; commands stay deferred");
+    assert(!osg_json_allocated());
+    puts("Serial status probes remain responsive; fragmented records survive idle/request handoffs and timeouts");
 }

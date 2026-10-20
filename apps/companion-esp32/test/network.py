@@ -16,15 +16,16 @@ includes = ["test/include", "core", "network", "third_party/cjson", "test"]
 flags += ["-I" + str(APP / p) for p in includes]
 common = ["core/companion.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
 for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c"), ("serial-wire-test", "serial_wire_test.c")):
-    subprocess.run([*flags, *[str(APP / p) for p in common], str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
+    serial = [str(APP / "network/serial_json.c")] if binary in ("client-test", "serial-wire-test") else []
+    subprocess.run([*flags, *[str(APP / p) for p in common], *serial, str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
     with (OUT / (binary + ".log")).open("w") as log:
         subprocess.run([str(OUT / binary), str(APP / "test/live-publication.json")], check=True, cwd=ROOT, stdout=log)
     print(binary, "passed")
 subprocess.run([*flags, str(APP / "test/pixels_test.c"), "-o", str(OUT / "pixels-test")], check=True, cwd=ROOT)
 subprocess.run([str(OUT / "pixels-test")], check=True, cwd=ROOT)
-subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "input-test-input.gcno", "pixels-test-pixels_test.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
+subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "serial-wire-test-serial_json.gcno", "input-test-input.gcno", "pixels-test-pixels_test.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
 report = {}
-for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):
+for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("serial_json", "serial-wire-test-serial_json"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):
     data = json.loads(gzip.decompress((OUT / (artifact + ".gcov.json.gz")).read_bytes()))
     source = next(f for f in data["files"] if f["file"].replace("/../", "/").endswith("/network/" + module + ".c"))
     lines, functions = source["lines"], source["functions"]

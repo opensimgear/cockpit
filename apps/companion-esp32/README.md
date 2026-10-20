@@ -134,3 +134,5 @@ Detailed local evidence: [live-input checkpoint](../../docs/verification/2026-10
 The ESP32-3248S035R resistive-touch board has a dedicated [display/touch profile](boards/sunton-3248s035r/README.md) and Cockpit firmware installation option. It uses the original ESP32 target, not ESP32-S3.
 
 Firmware 2026.10.20.1 adds the shared flash image cache and structured panel progress/failure feedback. USB and Wi-Fi failures distinguish timeouts, malformed replies and connection errors. Long messages wrap beneath the centered status icon and are also reported to Cockpit.
+
+Firmware 2026.10.20.2 preserves partial USB records across idle polling and protocol requests. A status probe interrupted by a heartbeat no longer makes the heartbeat parse a truncated JSON record and stop the panel.

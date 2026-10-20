@@ -230,7 +230,11 @@ int main(int argc,char **argv){
     storage_available=false;before=requests;cmd(persisted_text);assert(requests==before);
     storage_available=true;cmd(persisted_text);assert(state==PAIR_BEGIN);advance();fake_ms+=400;advance();assert(state==AUTH);
     store_ok=false;cmd("{\"command\":\"forget\"}");store_ok=true;
-    const char *serial="{\"command\":\"status\"}\r\nnot-json\n";for(size_t i=0;serial[i];i++)serial_byte(serial[i]);for(size_t i=0;i<OSG_PROVISION_BYTES+20;i++)serial_byte('a');serial_byte('\n');assert(serial_used==0&&!serial_overflow);for(size_t i=0;i<sizeof(serial_line);i++)assert(serial_line[i]==0);
+    const char *serial="{\"command\":\"status\"}\r\nnot-json\n";for(size_t i=0;serial[i];i++)serial_byte(serial[i]);for(size_t i=0;i<OSG_PROVISION_BYTES+20;i++)serial_byte('a');serial_byte('\n');
+    /* A completed oversized record must leave the common decoder ready for
+     * the next command; delayed transport replies stay invisible to commands. */
+    serial="{\"command\":\"serial-reply\",\"frame\":{\"ok\":true}}\n";for(size_t i=0;serial[i];i++)serial_byte(serial[i]);
+    cJSON *empty=NULL;assert(osg_serial_json_byte('\n',&empty)==OSG_SERIAL_INCOMPLETE&&!empty);
     const char *choices[]={"{}","{\"assignments\":[{\"instanceId\":\"bad id\"}]}","{\"assignments\":[{\"instanceId\":\"instance\",\"publicationHash\":\"bad\"}]}","{\"assignments\":[]}"};
     for(size_t i=0;i<sizeof(choices)/sizeof(choices[0]);i++){cJSON *v=osg_json_parse(choices[i],strlen(choices[i]));assert(v);(void)choose(v);cJSON_Delete(v);}
     cmd("{\"command\":\"scan-wifi\"}");

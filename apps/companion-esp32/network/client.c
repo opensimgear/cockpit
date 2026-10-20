@@ -2,6 +2,7 @@
 #include "firmware.h"
 #include "input.h"
 #include "serial.h"
+#include "serial_json.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "mbedtls/platform_util.h"
@@ -32,7 +33,6 @@ static const char *request_label="Request";
 static void update_screen(void);
 static char pending[65], assigned[65], publication[72];
 static uint64_t next_request, pair_deadline;
-static char serial_line[OSG_PROVISION_BYTES+1];
 static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error","panel-error"};
 typedef struct {
     char instance[65],publication[72],session[65],generation[21];
@@ -570,29 +570,24 @@ static void command(cJSON *v){
     if(!settings.direct&&!osg_wifi_start(&settings)){osg_wifi_stop();fail("wifi-connection-failed");return;}
     state=settings.token[0]?AUTH:PAIR_BEGIN;next_request=millis();report(phases[state]);
 }
-static size_t serial_used;
-static bool serial_overflow;
 static bool command_mutates(const char *type){
     return equal(type,"stop")||equal(type,"disarm")||equal(type,"page")||equal(type,"forget")||equal(type,"connect")||
         equal(type,"provision-direct")||equal(type,"provision")||equal(type,"resume")||equal(type,"scan-wifi")||
         (equal(type,"arm")&&state==LIVE&&!remote_armed);
 }
 static void serial_byte(int c){
-    if(c=='\n'||c=='\r'){
-        if(serial_overflow){report("provisioning-line-too-large");serial_overflow=false;}
-        else if(serial_used){
-            serial_line[serial_used]=0;cJSON *v=osg_json_parse(serial_line,serial_used);
-            if(v){
-                const char *type=osg_string(v,"command");
-                /* Duplicate transport replies and rejected/no-op commands do
-                 * not cancel panel work. Status stays responsive throughout. */
-                if(capture_command&&equal(type,"serial-reply"))cJSON_Delete(v);
-                else if(capture_command&&command_mutates(type))interrupted_command=v;
-                else {command(v);cJSON_Delete(v);}
-            }else report("invalid-command-json");
-        }
-        mbedtls_platform_zeroize(serial_line,sizeof(serial_line));serial_used=0;
-    }else if(!serial_overflow){if(serial_used<OSG_PROVISION_BYTES)serial_line[serial_used++]=(char)c;else serial_overflow=true;}
+    cJSON *v=NULL;
+    osg_serial_record record=osg_serial_json_byte(c,&v);
+    if(record==OSG_SERIAL_TOO_LARGE)report("provisioning-line-too-large");
+    else if(record==OSG_SERIAL_INVALID_JSON)report("invalid-command-json");
+    else if(v){
+        const char *type=osg_string(v,"command");
+        /* A late transport reply can finish after its request timed out. It is
+         * never a console command or authority to cancel current panel work. */
+        if(equal(type,"serial-reply"))cJSON_Delete(v);
+        else if(capture_command&&command_mutates(type))interrupted_command=v;
+        else {command(v);cJSON_Delete(v);}
+    }
 }
 static void update_screen(void){
     osg_screen_state screen=state==FAULT ? OSG_SCREEN_ERROR :

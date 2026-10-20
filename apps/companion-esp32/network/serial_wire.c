@@ -1,5 +1,6 @@
 /* Bounded USB serial transport for the existing companion protocol. */
 #include "platform.h"
+#include "serial_json.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "mbedtls/platform_util.h"
@@ -31,19 +32,14 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     puts(outbound);fflush(stdout);mbedtls_platform_zeroize(outbound,sizeof(outbound));
     memset(osg_transport_reply,0,OSG_REPLY_BYTES);
     osg_transfer transfer={.bytes=osg_transport_reply,.capacity=OSG_REPLY_BYTES};
-    size_t used=0;bool overflow=false;
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
     while(esp_timer_get_time()<deadline){
         int c=getchar();
         if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(1));continue;}
-        if(c!='\r'&&c!='\n'){
-            if(used<8192&&!overflow)osg_transport_frame[used++]=(char)c;else overflow=true;
-            continue;
-        }
-        if(!used&&!overflow)continue;
-        if(overflow){s->request_error="USB reply exceeds buffer";break;}
-        v=osg_json_parse(osg_transport_frame,used);used=0;
-        if(!v){s->request_error="Invalid USB reply JSON";break;}
+        osg_serial_record record=osg_serial_json_byte(c,&v);
+        if(record==OSG_SERIAL_INCOMPLETE)continue;
+        if(record==OSG_SERIAL_TOO_LARGE){s->request_error="USB reply exceeds buffer";break;}
+        if(record==OSG_SERIAL_INVALID_JSON){s->request_error="Invalid USB reply JSON";break;}
         const char *command=osg_string(v,"command");
         /* Keep USB liveness responsive throughout multi-chunk panel downloads.
          * Mutating commands still wait for the outer network task. */
