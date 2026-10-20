@@ -351,7 +351,7 @@
     } catch (error) {
       if (!disposed) gamesStale = true;
       if (!disposed && error instanceof GatewayError && error.state?.games) games = error.state.games;
-      if (!quiet) notify(error instanceof Error ? error.message : 'Game request failed.');
+      if (!quiet) throw error;
       return false;
     } finally { if (quiet) gamesPolling = false; else gamesBusy = false; }
   }

@@ -19,7 +19,8 @@
   let showAll=$state(false),pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
   let recoveryDialog:HTMLDialogElement|undefined;
   function attachRecoveryDialog(node:HTMLDialogElement){recoveryDialog=node;return()=>{recoveryDialog=undefined;};}
-  const gameState:GamesState=$derived(status??response??{catalogue:supportedGames});
+  const receivedStatus=$derived(status??response);
+  const gameState:GamesState=$derived(receivedStatus??{catalogue:supportedGames});
   const games=$derived(visibleGames(gameState.catalogue,showAll));
   const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
   const selectedExecutablePath=$derived(gameDisplayPath(selected?.executable));
@@ -28,16 +29,17 @@
   const occupied=$derived(!!cleanup&&!['idle','failed'].includes(cleanup.phase));
   const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up'));
   const locked=$derived(busy||pending||occupied||setupRunning);
-  const setupBlocked=$derived(selected?gameIntegrationSetupBlockedReason(selected,cleanup,profileBlockedReason):'');
+  const setupBlocked=$derived(!receivedStatus?'Loading game status…':selected?gameIntegrationSetupBlockedReason(selected,cleanup,profileBlockedReason):'');
   const folderError=$derived(selected?gameIntegrationTargetError(selected,integrationFolder):'');
   const setupDisabled=$derived(locked||!!setupBlocked||!!folderError);
   onMount(()=>{if(!status)void send({command:'game_get_state'});});
   $effect(()=>{if(selected&&initializedGameId!==selected.id)initializeGame(selected);});
   async function send(command:GameRequest):Promise<GamesState|false>{
-    pending=true;notice='';
-    try{const result=await request(command);if(result){response=result;notice=result.error??'';}else notice='The request did not complete. Check the connection and try again.';return result;}
-    catch(error){notice=error instanceof Error?error.message:String(error);return false;}
-    finally{pending=false;}
+    const passive=command.command==='game_get_state';
+    if(!passive){pending=true;notice='';}
+    try{const result=await request(command);if(result){response=result;if(!passive)notice=result.error??'';}else if(!passive)notice='The request did not complete. Check the connection and try again.';return result;}
+    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);return false;}
+    finally{if(!passive)pending=false;}
   }
   function initializeGame(game:Game){initializedGameId=game.id;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??'';notice='';}
   function chooseGame(game:Game){initializeGame(game);onNavigate?.(game.id);}
@@ -55,7 +57,7 @@
 </script>
 
 <section class="games-workspace" aria-label="Games">
-  {#if !cleanup}<Notification message="Native cleanup metadata is unavailable. Refresh game status before changing provider setup." kind="error" />{:else if cleanup.phase !== 'idle'}
+  {#if !receivedStatus}<p class="game-status-loading" role="status" aria-live="polite">Loading game status…</p>{:else if !cleanup}<Notification message="Native cleanup metadata is unavailable. Refresh game status before changing provider setup." kind="error" />{:else if cleanup.phase !== 'idle'}
     <div class={['session-banner', { 'session-warning': ['failed', 'recovery-needed'].includes(cleanup.phase) }]} role="status" aria-live="polite">
       <div class="session-icon"><Icon name={'refresh'} size={20} /></div>
       <div class="session-copy"><strong>Previous owned setup recovery · {gameCleanupLabel(cleanup)}</strong><p>Existing saved session only. New launches use unified Profiles.<br />{gameState.catalogue.find(game => game.id === cleanup.gameId)?.name ?? 'Game session'}</p>
@@ -67,7 +69,7 @@
       {#if cleanup.phase === 'recovery-needed'}<button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.showModal()}>Keep current setup</button>{/if}
     </div>
   {/if}
-  {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} />{/if}
+  {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} kind="error" />{/if}
 
   {#if returnToEditor}<button class="text-button back-link" onclick={returnToEditor}><span aria-hidden="true">←</span> {returnLabel ?? 'Return to profile'}</button>{/if}
   {#if selected}
@@ -146,7 +148,7 @@
     </div>
   {:else}
     <div class="page-heading games-toolbar"><div><div class="eyebrow">YOUR GAMES</div><h1>Games</h1><p>{gameState.catalogue.filter(game => game.installed).length} found · {gameState.catalogue.length} supported</p></div><div class="toolbar-controls"><button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={13} /> Rescan</button><label class="supported-switch"><input type="checkbox" role="switch" bind:checked={showAll} /><span class="switch-track" aria-hidden="true"></span> Show all supported</label></div></div>
-    {#if !games.length}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31} /></div><h2>No supported games found</h2><p>Rescan your installations, or show all supported games to select a custom location.</p><div><button class="primary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan games</button><button class="secondary-button" onclick={() => { showAll = true; }}>Show supported games</button></div></div>{/if}
+    {#if receivedStatus&&!games.length}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31} /></div><h2>No supported games found</h2><p>Rescan your installations, or show all supported games to select a custom location.</p><div><button class="primary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan games</button><button class="secondary-button" onclick={() => { showAll = true; }}>Show supported games</button></div></div>{/if}
     <div class="game-grid">
       {#each games as game (game.id)}
         {@const liveLabel=gameIntegrationLiveLabel(game)}
@@ -201,6 +203,7 @@
   .review-warning { color: #c5a26e; padding: 13px; background: #b18b550a; border: 1px solid #b18b5540; border-radius: 6px; }
   .review-actions { display: flex; justify-content: end; gap: 10px; margin-top: 23px; }
   .games-workspace { padding-bottom: 30px; }
+  .game-status-loading {margin-bottom:20px;color:var(--muted);font-size:11px;line-height:1.7;}
   button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
   .games-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 27px; }
   .game-kicker { color: var(--muted); font-size: 8px; letter-spacing: 1.7px; text-transform: uppercase; font-weight: 600; }
