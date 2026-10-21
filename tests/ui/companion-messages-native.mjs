@@ -77,16 +77,16 @@ test('native companion messages use independent severity icons and accessible fu
       await expect(details).toHaveCount(0);
       tile = icon.locator('xpath=ancestor::article[contains(@class,"companion-tile")]');
       checks.push('Real tile status icons are independent of Edit; clicking a message preserves the companion list');
-    } else checks.push('No actual list status needs a message; verified native detail autosave hints instead');
+    } else checks.push('No actual list status needs a message');
     const edit = tile.getByRole('button', { name: /^Edit / });
     const editName = await edit.getAttribute('aria-label');
     await edit.click();
     await expect(details.getByRole('heading', { name: editName.replace(/^Edit /, ''), exact: true })).toBeVisible();
+    await expect(details.getByRole('button', { name: /^Info: Changes save/ })).toHaveCount(0);
     const detailIcons = messageButtons(details);
-    await expect.poll(() => detailIcons.count()).toBeGreaterThan(0);
     for (const button of await detailIcons.all()) await checkIcon(button);
-    const detailMessage = await checkTooltip(detailIcons.first(), 'details-message.png');
-    checks.push('Real settings messages use icons with full-text tooltips on hover and keyboard focus; pointer transfer preserves them, Escape dismisses them, and measured tooltips remain inside the viewport');
+    const detailMessage = await detailIcons.count() ? await checkTooltip(detailIcons.first(), 'details-message.png') : null;
+    checks.push('Settings omit routine autosave hints; any current messages retain accessible full-text tooltips');
     await details.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await companions.getByRole('button', { name: 'Pair', exact: true }).click();
     const pairing = companions.getByRole('region', { name: 'Pair companion', exact: true });
@@ -95,8 +95,10 @@ test('native companion messages use independent severity icons and accessible fu
     await expect(setup).toBeVisible();
     const setupIcons = messageButtons(setup);
     await expect.poll(() => setupIcons.count()).toBeGreaterThan(0);
-    const setupMessages = [];
-    for (const button of await setupIcons.all()) setupMessages.push(await checkIcon(button));
+    // USB detection can remove a transient hint between individual locator reads.
+    const setupLabels = await setupIcons.evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')));
+    for (const label of setupLabels) assert.match(label, /^(Info|Warning|Error): .+/);
+    const setupMessages = setupLabels.map(label => label.replace(/^(Info|Warning|Error): /, ''));
     assert.ok(setupMessages.includes('Choose a USB device'));
     assert.ok(setupMessages.includes('Select a port to detect firmware'));
     const setupMessage = await checkTooltip(setupIcons.first(), 'esp32-setup-message.png');
