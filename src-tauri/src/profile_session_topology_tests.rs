@@ -214,6 +214,7 @@ fn transform_summaries_are_bounded_even_for_extreme_numbers_and_never_expose_tex
             factor: 1e-300,
             offset: 1e300,
         },
+        Operation::Clamp { min: -1e300, max: 1e300 },
         Operation::Deadzone {
             center: 1e300,
             radius: 1e-300,
@@ -243,6 +244,7 @@ fn transform_summaries_are_bounded_even_for_extreme_numbers_and_never_expose_tex
     }
     assert_eq!(number(0.25), "0.25");
     assert_eq!(number(0.0), "0");
+    assert_eq!(summary(&Operation::Clamp { min: 0.0, max: 10.0 }), "Clamp 0…10");
     assert_eq!(
         summary(&Operation::DeclareQuantity {
             quantity: "Reported MSL altitude".into(),

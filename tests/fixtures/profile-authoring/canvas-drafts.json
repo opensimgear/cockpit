@@ -1,0 +1,1487 @@
+{
+  "schemaVersion": 2,
+  "id": "11111111-1111-4111-8111-111111111111",
+  "name": "Canvas transformation drafts",
+  "revision": 1,
+  "eligibility": {
+    "gameIds": []
+  },
+  "resources": [],
+  "bindings": [],
+  "processingNodes": [
+    {
+      "id": "transform-1",
+      "name": "Identity",
+      "operation": {
+        "kind": "identity"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "identity"
+      }
+    },
+    {
+      "id": "transform-2",
+      "name": "Interpret raw quantity",
+      "operation": {
+        "kind": "declare-quantity",
+        "quantity": "Raw count",
+        "unit": "count"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": "count"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "declare-quantity"
+      }
+    },
+    {
+      "id": "transform-3",
+      "name": "Boolean NOT",
+      "operation": {
+        "kind": "not"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "not"
+      }
+    },
+    {
+      "id": "transform-4",
+      "name": "Invert numeric value",
+      "operation": {
+        "kind": "invert"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "invert"
+      }
+    },
+    {
+      "id": "transform-5",
+      "name": "Scale and offset",
+      "operation": {
+        "kind": "scale",
+        "factor": 10,
+        "offset": 0
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 10,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "scale",
+        "configured": [
+          "factor"
+        ]
+      }
+    },
+    {
+      "id": "transform-6",
+      "name": "Clamp",
+      "operation": {
+        "kind": "clamp",
+        "min": 0,
+        "max": 1
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "clamp"
+      }
+    },
+    {
+      "id": "transform-7",
+      "name": "Map numeric range",
+      "operation": {
+        "kind": "range-map",
+        "inputMin": 0,
+        "inputMax": 1,
+        "outputMin": 0,
+        "outputMax": 1,
+        "rounding": "none"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "range-map"
+      }
+    },
+    {
+      "id": "transform-8",
+      "name": "Convert units",
+      "operation": {
+        "kind": "unit-convert",
+        "from": "m",
+        "to": "ft",
+        "rounding": "none"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": "m"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 3.2808398950131235,
+              "unit": "ft"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "unit-convert"
+      }
+    },
+    {
+      "id": "transform-9",
+      "name": "Ratio to percentage (0–100%)",
+      "operation": {
+        "kind": "unit-convert",
+        "from": "ratio",
+        "to": "%",
+        "rounding": "none",
+        "clamp": true
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": "ratio"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "unit": "%"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "ratio-to-percent"
+      }
+    },
+    {
+      "id": "transform-10",
+      "name": "Deadzone",
+      "operation": {
+        "kind": "deadzone",
+        "center": 0,
+        "radius": 0,
+        "rounding": "none"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "deadzone"
+      }
+    },
+    {
+      "id": "transform-11",
+      "name": "Curve",
+      "operation": {
+        "kind": "curve",
+        "points": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 1,
+            "output": 1
+          }
+        ],
+        "rounding": "none"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "curve"
+      }
+    },
+    {
+      "id": "transform-12",
+      "name": "Compare",
+      "operation": {
+        "kind": "compare",
+        "comparison": "greater-equal",
+        "threshold": 0.5
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "compare"
+      }
+    },
+    {
+      "id": "transform-13",
+      "name": "Condition with hysteresis",
+      "operation": {
+        "kind": "hysteresis",
+        "comparison": "greater-equal",
+        "press": 0.6,
+        "release": 0.4
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "hysteresis"
+      }
+    },
+    {
+      "id": "transform-14",
+      "name": "Gate",
+      "operation": {
+        "kind": "gate"
+      },
+      "inputs": [
+        {
+          "id": "gate",
+          "name": "gate",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        },
+        {
+          "id": "value",
+          "name": "value",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "gate"
+      }
+    },
+    {
+      "id": "transform-15",
+      "name": "Boolean OR",
+      "operation": {
+        "kind": "any"
+      },
+      "inputs": [
+        {
+          "id": "first",
+          "name": "first",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        },
+        {
+          "id": "second",
+          "name": "second",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "any"
+      }
+    },
+    {
+      "id": "transform-16",
+      "name": "Boolean AND",
+      "operation": {
+        "kind": "all"
+      },
+      "inputs": [
+        {
+          "id": "first",
+          "name": "first",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        },
+        {
+          "id": "second",
+          "name": "second",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "all"
+      }
+    },
+    {
+      "id": "transform-17",
+      "name": "Explicit input priority",
+      "operation": {
+        "kind": "priority",
+        "order": [
+          "first",
+          "second"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "first",
+          "name": "first",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        },
+        {
+          "id": "second",
+          "name": "second",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "priority"
+      }
+    },
+    {
+      "id": "transform-18",
+      "name": "State to event edge",
+      "operation": {
+        "kind": "event-edge",
+        "edge": "change"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "event",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            }
+          }
+        }
+      ],
+      "draft": {
+        "preset": "event-edge"
+      }
+    },
+    {
+      "id": "transform-19",
+      "name": "Event to state",
+      "operation": {
+        "kind": "event-to-state"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "event",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "event-to-state"
+      }
+    },
+    {
+      "id": "transform-20",
+      "name": "Choose values",
+      "operation": {
+        "kind": "select",
+        "whenTrue": true,
+        "whenFalse": false
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "select"
+      }
+    },
+    {
+      "id": "transform-21",
+      "name": "Format text",
+      "operation": {
+        "kind": "format",
+        "decimals": 0,
+        "prefix": "",
+        "suffix": "",
+        "rounding": "nearest",
+        "overflow": "reject"
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "text",
+              "maxBytes": 256,
+              "encoding": "utf8"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "format"
+      }
+    },
+    {
+      "id": "transform-22",
+      "name": "Explicit unknown/stale fallback",
+      "operation": {
+        "kind": "fallback",
+        "unknown": 0,
+        "stale": 0,
+        "unavailable": 0
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "fallback"
+      }
+    },
+    {
+      "id": "transform-23",
+      "name": "Constant value",
+      "operation": {
+        "kind": "constant",
+        "value": 0
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "transform-24",
+      "name": "Toggle",
+      "operation": {
+        "kind": "builtin",
+        "rule": {
+          "kind": "toggle"
+        },
+        "inputs": [
+          "in"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "toggle"
+      }
+    },
+    {
+      "id": "transform-25",
+      "name": "Pulse",
+      "operation": {
+        "kind": "builtin",
+        "rule": {
+          "kind": "pulse",
+          "durationUs": 100000,
+          "repeatUs": 0
+        },
+        "inputs": [
+          "in"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "pulse"
+      }
+    },
+    {
+      "id": "transform-26",
+      "name": "Tap",
+      "operation": {
+        "kind": "builtin",
+        "rule": {
+          "kind": "gesture",
+          "gesture": "tap",
+          "holdUs": 500000,
+          "doubleUs": 250000,
+          "pulseUs": 100000
+        },
+        "inputs": [
+          "in"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "tap"
+      }
+    },
+    {
+      "id": "transform-27",
+      "name": "Hold",
+      "operation": {
+        "kind": "builtin",
+        "rule": {
+          "kind": "gesture",
+          "gesture": "hold",
+          "holdUs": 500000,
+          "doubleUs": 250000,
+          "pulseUs": 100000
+        },
+        "inputs": [
+          "in"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "hold"
+      }
+    },
+    {
+      "id": "transform-28",
+      "name": "Double tap",
+      "operation": {
+        "kind": "builtin",
+        "rule": {
+          "kind": "gesture",
+          "gesture": "double-tap",
+          "holdUs": 500000,
+          "doubleUs": 250000,
+          "pulseUs": 100000
+        },
+        "inputs": [
+          "in"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "double-tap"
+      }
+    },
+    {
+      "id": "transform-29",
+      "name": "Timed macro",
+      "operation": {
+        "kind": "builtin",
+        "rule": {
+          "kind": "macro",
+          "steps": [
+            {
+              "afterUs": 0,
+              "pressed": true
+            },
+            {
+              "afterUs": 100000,
+              "pressed": false
+            }
+          ]
+        },
+        "inputs": [
+          "in"
+        ]
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "boolean"
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "macro"
+      }
+    },
+    {
+      "id": "transform-30",
+      "name": "Script with declared ports",
+      "operation": {
+        "kind": "script",
+        "source": "fn on_start(ctx) { transaction(ctx.state, #{}, []) }\nfn on_event(ctx) { transaction(ctx.state, #{}, []) }",
+        "parameters": {}
+      },
+      "inputs": [
+        {
+          "id": "in",
+          "name": "in",
+          "direction": "input",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "name": "out",
+          "direction": "output",
+          "contract": {
+            "delivery": "state",
+            "schema": {
+              "type": "number",
+              "min": 0,
+              "max": 1,
+              "unit": null
+            },
+            "freshnessMs": 1000,
+            "fallback": null
+          }
+        }
+      ],
+      "draft": {
+        "preset": "script"
+      }
+    }
+  ],
+  "virtualOutputs": [],
+  "visibility": [],
+  "overrides": [],
+  "companionAssignments": [],
+  "editor": {
+    "positions": [],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}

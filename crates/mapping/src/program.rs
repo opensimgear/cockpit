@@ -97,6 +97,10 @@ pub enum Operation {
         factor: f64,
         offset: f64,
     },
+    Clamp {
+        min: f64,
+        max: f64,
+    },
     RangeMap {
         input_min: f64,
         input_max: f64,

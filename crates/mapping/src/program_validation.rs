@@ -313,6 +313,12 @@ pub fn validate_operation(
         Operation::Scale { factor, offset } if same_delivery && finite(&[*factor, *offset]) => {
             numeric_operation(input, output, *factor, *offset, Rounding::None, None, false)
         }
+        Operation::Clamp { min, max } if same_delivery && finite(&[*min, *max]) && min <= max => {
+            let (Some((input_min, input_max, input_unit)), Some((out_min, out_max, output_unit))) = (input.and_then(numeric), output.and_then(numeric)) else { return fail(); };
+            let same_type = matches!((input, output), (Some(ScalarSchema::Number { .. }), Some(ScalarSchema::Number { .. })) | (Some(ScalarSchema::Integer { .. }), Some(ScalarSchema::Integer { .. })));
+            if same_type && input_unit == output_unit && (!matches!(input, Some(ScalarSchema::Integer { .. })) || min.fract() == 0.0 && max.fract() == 0.0)
+                && out_min == input_min.clamp(*min, *max) && out_max == input_max.clamp(*min, *max) { Ok(()) } else { fail() }
+        }
         Operation::RangeMap {
             input_min,
             input_max,

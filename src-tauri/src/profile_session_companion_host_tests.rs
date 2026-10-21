@@ -726,7 +726,7 @@ impl NativeFixture {
         candidate
             .document
             .processing_nodes
-            .push(osg_profiles::ProcessingNode {
+            .push(osg_profiles::ProcessingNode { draft: None,
                 id: "constant".into(),
                 name: "Feedback only".into(),
                 operation: osg_profiles::Operation::Constant {

@@ -43,7 +43,7 @@ fn fixture() -> (ProfileDocument, Phase, OwnedRun) {
             port("unused", Direction::Output),
         ],
     });
-    document.processing_nodes.push(ProcessingNode {
+    document.processing_nodes.push(ProcessingNode { draft: None,
         id: "invert".into(),
         name: "Invert".into(),
         operation: Operation::Not {},

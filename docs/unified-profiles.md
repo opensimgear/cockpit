@@ -45,6 +45,16 @@ port declarations, duplicate graph identities, missing endpoints, incompatible
 connections, implicit type/unit conversion and cycles. Runtime compilation and
 capability/resource admission remain separate from document validation.
 
+Canvas transformations may carry optional `draft: { preset, configured? }`
+metadata while awaiting their first source. Their placeholder port contracts
+grant no execution authority: compilation reports `unresolvedTransformation`
+and produces no runnable plan. The draft and configured operation parameters
+survive save, export and duplication and participate in the semantic hash.
+Connecting the first input resolves its exact contract and derives output bounds
+in the same graph edit. Existing resolved nodes are never implicitly retyped.
+`Clamp` is an explicit saturating numeric operation; range mapping alone does not
+clamp values outside its declared input range.
+
 Live route observations, hardware identities/evidence, OS device paths, backend
 slots, pairing credentials, process IDs, raw calibration, game installation and
 provider connection settings are not portable graph fields. Local resource

@@ -498,7 +498,7 @@ fn missing_ports_and_multiple_writers_are_fatal_even_when_native_readiness_is_ab
 #[test]
 fn explicit_or_replaces_ambiguous_button_writers_and_unbound_inputs_are_errors() {
     let mut document = button_graph();
-    document.processing_nodes.push(ProcessingNode {
+    document.processing_nodes.push(ProcessingNode { draft: None,
         id: "or".into(),
         name: "Explicit OR".into(),
         operation: Operation::Any {},
@@ -528,7 +528,7 @@ fn explicit_or_replaces_ambiguous_button_writers_and_unbound_inputs_are_errors()
 fn internal_cycles_fail_but_external_command_telemetry_pairs_are_independent() {
     let mut document = crate::new_document("Cycle fixture").unwrap();
     for id in ["first", "second"] {
-        document.processing_nodes.push(ProcessingNode {
+        document.processing_nodes.push(ProcessingNode { draft: None,
             id: id.into(),
             name: id.into(),
             operation: Operation::Identity {},
@@ -600,7 +600,7 @@ fn raw_native_ranges_need_an_explicit_range_map_and_changed_contracts_block_pref
         .find(|port| port.id == "throttle")
         .unwrap()
         .clone();
-    document.processing_nodes.push(ProcessingNode {
+    document.processing_nodes.push(ProcessingNode { draft: None,
         id: "native-range".into(),
         name: "Explicit native range".into(),
         operation: Operation::RangeMap {

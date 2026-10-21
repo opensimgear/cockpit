@@ -125,7 +125,7 @@ test('declared port and builtin bounds remain consistent with native validation'
   const pulse=make('pulse','pulse');pulse.operation.rule.repeatUs=pulse.operation.rule.durationUs;assert.ok(error(pulse));pulse.operation.rule.repeatUs=200000;assertValid(pulse);
   const macro=make('macro','macro');macro.operation.rule.steps[1].pressed=true;assert.ok(error(macro));
   const enumNode=make('event-to-state','enum',event({type:'enum',values:['one','two']}));enumNode.outputs[0].contract.schema.values.reverse();assert.ok(error(enumNode));
-  assert.equal(PROCESSING_PRESETS.length,29);
+  assert.equal(PROCESSING_PRESETS.length,30);
 });
 test('native-validated fixed authoring fixture retains the exact generated preset and atomic invocation contracts',async()=>{
   const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profile-authoring/visible-presets.json',import.meta.url),'utf8'));

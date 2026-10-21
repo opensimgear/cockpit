@@ -5,7 +5,7 @@
   import {processingNodeError,processingSummary} from './profile-processing';
   import {portContractLabel} from './profile-canvas';
   import type{DeepReadonly,ProfileActionParameter,ProfileOperation,ProfilePort,ProfilePortContract,ProfileProcessingNode,ProfileScalarSchema,ProfileValue}from'./profiles';
-  let {node,change,actions=[]}:{node:DeepReadonly<ProfileProcessingNode>;change:(node:ProfileProcessingNode)=>void;actions?:{label:string;contract:DeepReadonly<ProfilePortContract>}[]}=$props();
+  let {node,change,actions=[],portsEditable=true}:{node:DeepReadonly<ProfileProcessingNode>;change:(node:ProfileProcessingNode)=>void;actions?:{label:string;contract:DeepReadonly<ProfilePortContract>}[];portsEditable?:boolean}=$props();
   const copy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value));
   let draft=$state<ProfileProcessingNode>(copy(untrack(()=>node)) as ProfileProcessingNode),signature=$state(JSON.stringify(untrack(()=>node))),actionIndex=$state('');
   const error=$derived(processingNodeError(draft));
@@ -61,10 +61,12 @@
     {/if}
   {/if}
   <details><summary>Declared ports · {draft.inputs.length} inputs / {draft.outputs.length} outputs</summary>
+    <fieldset disabled={!portsEditable}>
     {#each draft.inputs as port,index (index)}{#if packed||declaringQuantity}<div class="argument"><strong>{port.name}</strong><code>{port.id}</code><p>{portContractLabel(port.contract)}</p></div>{:else}<ProfilePortEditor {port} change={next=>editPort('input',index,next)}/><button class="text-button" onclick={()=>draft={...draft,inputs:draft.inputs.filter((_,i)=>i!==index)}}>Remove input {port.id}</button>{/if}{/each}
     {#each draft.outputs as port,index (index)}{#if declaringQuantity}<div class="argument"><strong>{port.name}</strong><code>{port.id}</code><p>{portContractLabel(port.contract)}</p></div>{:else}<ProfilePortEditor {port} identityEditable={!packed} change={next=>editPort('output',index,next)}/>{#if !packed}<button class="text-button" onclick={()=>draft={...draft,outputs:draft.outputs.filter((_,i)=>i!==index)}}>Remove output {port.id}</button>{/if}{/if}{/each}
     {#if !packed&&!declaringQuantity}<div class="actions"><button class="secondary-button" disabled={draft.inputs.length>=(draft.operation.kind==='script'?32:128)} onclick={()=>addPort('input')}>Add input port</button><button class="secondary-button" disabled={draft.outputs.length>=16} onclick={()=>addPort('output')}>Add output port</button></div>{/if}
     {#if draft.operation.kind==='script'&&actions.length}<label>Invocation output target<select bind:value={actionIndex}><option value="">Choose an advertised action</option>{#each actions as action,index}<option value={index}>{action.label}</option>{/each}</select></label><button class="secondary-button" disabled={actionIndex===''||draft.outputs.length>=16} onclick={invocation}>Declare invocation output</button>{/if}
+    </fieldset>
   </details>
   {#if error}<p class="error" role="status">{error}</p>{/if}
   <button class="primary-button" disabled={!!error} onclick={save}>Update visible node</button>

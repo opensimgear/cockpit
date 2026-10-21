@@ -117,7 +117,7 @@ fn capture(
         PortContract::Action { parameters, .. } => parameters.clone(),
         _ => unreachable!(),
     };
-    document.processing_nodes.push(crate::ProcessingNode {
+    document.processing_nodes.push(crate::ProcessingNode { draft: None,
         id: "setter".into(),
         name: "Setter".into(),
         operation: osg_mapping::program::Operation::SetOnChange {

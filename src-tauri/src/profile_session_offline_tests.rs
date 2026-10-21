@@ -56,8 +56,8 @@ impl Fixture {
         let mut document = new_document("Offline native peripheral").unwrap();
         document.resources.push(Resource { id: "controls".into(), name: "Flight controls".into(), kind: ResourceKind::Device, required: true, ports: vec![port("pressed", Direction::Output)] });
         document.processing_nodes = vec![
-            ProcessingNode { id: "read-controls".into(), name: "Read controls".into(), operation: Operation::Identity {}, inputs: vec![port("value", Direction::Input)], outputs: vec![port("output", Direction::Output)] },
-            ProcessingNode { id: "base".into(), name: "Always active Base".into(), operation: Operation::Constant { value: PortValue::Boolean(true) }, inputs: vec![], outputs: vec![port("value", Direction::Output)] },
+            ProcessingNode { draft: None, id: "read-controls".into(), name: "Read controls".into(), operation: Operation::Identity {}, inputs: vec![port("value", Direction::Input)], outputs: vec![port("output", Direction::Output)] },
+            ProcessingNode { draft: None, id: "base".into(), name: "Always active Base".into(), operation: Operation::Constant { value: PortValue::Boolean(true) }, inputs: vec![], outputs: vec![port("value", Direction::Output)] },
         ];
         document.bindings.push(Binding { id: "read-input".into(), from: Endpoint { node_id: "controls".into(), port_id: "pressed".into() }, to: Endpoint { node_id: "read-controls".into(), port_id: "value".into() } });
         let candidate = Candidate { launch_preparation: false, document, assignments: vec![LocalAssignment { resource_id: "controls".into(), source_id: source, ports: vec![PortExpectation { profile_port_id: "pressed".into(), observed_port_id: descriptor.id.clone(), expected_contract_hash: descriptor.contract_hash().unwrap() }] }], read_only: false, game_id: None, admission_epoch: Some(1), stage: None };

@@ -1764,7 +1764,7 @@ mod tests {
         let mut document=osg_profiles::default_document();
         let contract=PortContract::State {schema:osg_profiles::resources_ports::ScalarSchema::Boolean{},freshness_ms:1000,fallback:None};
         document.resources.push(Resource{id:"display".into(),name:"Optional display".into(),kind:ResourceKind::Companion,required:false,ports:vec![Port{id:"indicator".into(),name:"Indicator".into(),direction:Direction::Input,contract:contract.clone()}]});
-        document.processing_nodes.push(ProcessingNode{id:"constant".into(),name:"Constant".into(),operation:osg_mapping::program::Operation::Constant{value:PortValue::Boolean(true)},inputs:vec![],outputs:vec![Port{id:"value".into(),name:"Value".into(),direction:Direction::Output,contract}]});
+        document.processing_nodes.push(ProcessingNode{ draft: None,id:"constant".into(),name:"Constant".into(),operation:osg_mapping::program::Operation::Constant{value:PortValue::Boolean(true)},inputs:vec![],outputs:vec![Port{id:"value".into(),name:"Value".into(),direction:Direction::Output,contract}]});
         document.bindings.push(Binding{id:"to-display".into(),from:Endpoint{node_id:"constant".into(),port_id:"value".into()},to:Endpoint{node_id:"display".into(),port_id:"indicator".into()}});
         let saved=request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":[]}));
         assert_eq!(saved["ok"],true,"{saved}");
@@ -1815,7 +1815,7 @@ mod tests {
         let contract:osg_profiles::PortContract=serde_json::from_value(observed["descriptor"]["contract"].clone()).unwrap();
         let mut document=osg_profiles::default_document();
         document.resources.push(Resource{id:"panel".into(),name:"Panel".into(),kind:ResourceKind::Device,required:true,ports:vec![Port{id:"pressed".into(),name:"Pressed".into(),direction:Direction::Output,contract:contract.clone()}]});
-        document.processing_nodes.push(ProcessingNode{id:"invert".into(),name:"Readout".into(),operation:osg_mapping::program::Operation::Not{},inputs:vec![Port{id:"input".into(),name:"Input".into(),direction:Direction::Input,contract:contract.clone()}],outputs:vec![Port{id:"output".into(),name:"Output".into(),direction:Direction::Output,contract}]});
+        document.processing_nodes.push(ProcessingNode{ draft: None,id:"invert".into(),name:"Readout".into(),operation:osg_mapping::program::Operation::Not{},inputs:vec![Port{id:"input".into(),name:"Input".into(),direction:Direction::Input,contract:contract.clone()}],outputs:vec![Port{id:"output".into(),name:"Output".into(),direction:Direction::Output,contract}]});
         document.bindings.push(Binding{id:"to-readout".into(),from:Endpoint{node_id:"panel".into(),port_id:"pressed".into()},to:Endpoint{node_id:"invert".into(),port_id:"input".into()}});
         let assignments=json!([{"resourceId":"panel","sourceId":resource["id"],"ports":[{"profilePortId":"pressed","observedPortId":"button:0","expectedContractHash":observed["contractHash"]}]}]);
         assert_eq!(request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":assignments}))["ok"],true);

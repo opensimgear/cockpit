@@ -75,7 +75,7 @@ fn document(required: bool) -> ProfileDocument {
         ports: vec![port("write", Direction::Input, action_contract())],
     });
     doc.processing_nodes = vec![
-        ProcessingNode {
+        ProcessingNode { draft: None,
             id: "constant".into(),
             name: "Constant".into(),
             operation: Operation::Constant {
@@ -84,7 +84,7 @@ fn document(required: bool) -> ProfileDocument {
             inputs: vec![],
             outputs: vec![port("value", Direction::Output, state_contract())],
         },
-        ProcessingNode {
+        ProcessingNode { draft: None,
             id: "pack".into(),
             name: "Explicit Setter".into(),
             operation: Operation::SetOnChange {

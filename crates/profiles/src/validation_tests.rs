@@ -335,7 +335,7 @@ fn identity_node(name: &str, prototype: &Port) -> ProcessingNode {
     let mut output = prototype.clone();
     output.id = "output".into();
     output.direction = Direction::Output;
-    ProcessingNode {
+    ProcessingNode { draft: None,
         id: name.into(),
         name: name.into(),
         operation: Operation::Identity {},
@@ -489,7 +489,7 @@ fn semantic_identity_preserves_action_arguments_controller_order_and_script_para
         name: id.into(),
         schema: crate::resources_ports::ScalarSchema::Boolean {},
     };
-    graph.processing_nodes.push(ProcessingNode {
+    graph.processing_nodes.push(ProcessingNode { draft: None,
         id: "pack".into(),
         name: "Ordered arguments".into(),
         operation: Operation::SetOnChange {
@@ -593,7 +593,7 @@ fn native_argument_port_names_roundtrip_without_relaxing_node_identities() {
             })
             .collect(),
     });
-    graph.processing_nodes.push(ProcessingNode {
+    graph.processing_nodes.push(ProcessingNode { draft: None,
         id: "pack".into(),
         name: "Explicit argument tuple".into(),
         operation: Operation::SetOnChange {

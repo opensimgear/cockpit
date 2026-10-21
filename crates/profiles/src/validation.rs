@@ -241,6 +241,12 @@ fn validate_graph_document(document: &ProfileDocument) -> Result<(), String> {
     for node in &document.processing_nodes {
         id(&node.id)?;
         label(&node.name)?;
+        if let Some(draft) = &node.draft {
+            check(matches!(draft.preset.as_str(), "identity"|"declare-quantity"|"not"|"invert"|"scale"|"clamp"|"range-map"|"unit-convert"|"ratio-to-percent"|"deadzone"|"curve"|"compare"|"hysteresis"|"gate"|"any"|"all"|"priority"|"event-edge"|"event-to-state"|"select"|"format"|"fallback"|"toggle"|"pulse"|"tap"|"hold"|"double-tap"|"macro"|"script"), "Choose a supported unresolved transformation preset.")?;
+            check(!node.inputs.is_empty(), "An unresolved transformation requires an explicit source input.")?;
+            let operation = serde_json::to_value(&node.operation).map_err(|error|error.to_string())?;
+            check(draft.configured.len() <= 32 && draft.configured.iter().all(|key| key != "kind" && operation.get(key).is_some()) && draft.configured.iter().collect::<BTreeSet<_>>().len() == draft.configured.len(), "Draft parameters must name unique existing operation fields.")?;
+        }
         let all = ports(node.inputs.iter().chain(&node.outputs))?;
         operation(node)?;
         check(

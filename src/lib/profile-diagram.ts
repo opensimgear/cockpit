@@ -5,6 +5,31 @@ export type DiagramPoint = { x:number; y:number };
 type Node = {id:string;position:DiagramPoint};
 type Box = {left:number;right:number;top:number;bottom:number};
 
+/** The side of each footer is the single attachment shared by all its signals. */
+export function diagramPortAnchor(position:DiagramPoint,direction:'input'|'output',width:number,height:number):DiagramPoint {
+  return {x:position.x+(direction==='output'?width:0),y:position.y+height-20};
+}
+
+/** A tangent-continuous preview uses the same attachment as a saved connection. */
+export function diagramPendingPath(start:DiagramPoint,end:DiagramPoint,direction:'input'|'output') {
+  const reach=Math.max(48,Math.min(240,Math.abs(end.x-start.x)*.5)),sign=direction==='output'?1:-1;
+  return `M${start.x},${start.y} C${start.x+reach*sign},${start.y} ${end.x-reach*sign},${end.y} ${end.x},${end.y}`;
+}
+
+/** Round every channel bend, retaining horizontal tangents at both block handles. */
+export function diagramSmoothPath(points:readonly DiagramPoint[]) {
+  if(!points.length)return '';
+  let path=`M${points[0].x},${points[0].y}`;
+  for(let i=1;i<points.length-1;i++){
+    const a=points[i-1],b=points[i],c=points[i+1];
+    const radius=Math.min(48,Math.hypot(a.x-b.x,a.y-b.y)/2,Math.hypot(c.x-b.x,c.y-b.y)/2);
+    const before={x:b.x+Math.sign(a.x-b.x)*radius,y:b.y+Math.sign(a.y-b.y)*radius};
+    const after={x:b.x+Math.sign(c.x-b.x)*radius,y:b.y+Math.sign(c.y-b.y)*radius};
+    path+=` L${before.x},${before.y} Q${b.x},${b.y} ${after.x},${after.y}`;
+  }
+  const last=points.at(-1)!;return path+` L${last.x},${last.y}`;
+}
+
 /** Rank the directed graph, keeping independent signal chains in separate bands. */
 export function diagramLayout(ids:readonly string[], bindings:readonly Edge[], width:number, height:number) {
   const known=new Set(ids), outgoing=new Map(ids.map(id=>[id,new Set<string>()])), incoming=new Map(ids.map(id=>[id,new Set<string>()]));
@@ -74,33 +99,16 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+width+clearance,top:node.position.y-clearance,bottom:node.position.y+height+clearance}));
   const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
-  for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:{x:from.position.x+width,y:from.position.y+height/2},end:{x:to.position.x,y:to.position.y+height/2}});}
-  const attachments=nodes.flatMap(node=>(['to','from'] as const).map(side=>({node,side,incident:valid.filter(binding=>binding[side].nodeId===node.id)})));
-  // Match ordering at the actual opposite attachment, not the other block's top.
-  // An input fan can move a destination above/below a neighbouring block's port.
-  for(let sweep=0;sweep<12;sweep++){
-    let changed=false;
-    for(const side of ['to','from'] as const)for(const group of attachments.filter(group=>group.side===side)){
-      const opposite=(binding:DeepReadonly<ProfileBinding>)=>anchors.get(binding.id)![side==='from'?'end':'start'];
-      group.incident.sort((a,b)=>opposite(a).y-opposite(b).y||opposite(a).x-opposite(b).x||a.id.localeCompare(b.id));
-      const spacing=Math.min(laneSpacing,(height-48)/Math.max(1,group.incident.length-1));
-      group.incident.forEach((binding,index)=>{
-        const attachment=anchors.get(binding.id)![side==='from'?'start':'end'];
-        const y=group.node.position.y+height/2+(index-(group.incident.length-1)/2)*spacing;
-        if(attachment.y!==y)changed=true;attachment.y=y;
-      });
-    }
-    if(!changed)break;
-  }
+  for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:diagramPortAnchor(from.position,'output',width,height),end:diagramPortAnchor(to.position,'input',width,height)});}
   const xs=new Set(boxes.flatMap(box=>[box.left,box.right]));
   const ys=new Set([...boxes.flatMap(box=>[box.top,box.bottom]),...[...anchors.values()].flatMap(pair=>[pair.start.y,pair.end.y])]);
   const segmentCache=new Map<string,boolean>();
   type Interval={start:number;end:number};
   const horizontal=new Map<number,Interval[]>(),vertical=new Map<number,Interval[]>();
-  function free(a:DiagramPoint,b:DiagramPoint){
+  function overlap(a:DiagramPoint,b:DiagramPoint){
     const upright=a.x===b.x,track=(upright?vertical:horizontal).get(upright?a.x:a.y)??[];
     const start=Math.min(upright?a.y:a.x,upright?b.y:b.x),end=Math.max(upright?a.y:a.x,upright?b.y:b.x);
-    return !track.some(segment=>Math.min(end,segment.end)-Math.max(start,segment.start)>1e-6);
+    return track.reduce((total,segment)=>total+Math.max(0,Math.min(end,segment.end)-Math.max(start,segment.start)),0);
   }
   function reserve(points:DiagramPoint[]){
     for(let i=1;i<points.length;i++){
@@ -110,7 +118,7 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
       const coordinates=upright?xs:ys;coordinates.add(key-laneSpacing);coordinates.add(key+laneSpacing);
     }
   }
-  function clear(a:DiagramPoint,b:DiagramPoint){const key=`${a.x},${a.y}:${b.x},${b.y}`;let value=segmentCache.get(key);if(value===undefined){value=!boxes.some(box=>crosses(a,b,box));segmentCache.set(key,value);}return value&&free(a,b);}
+  function clear(a:DiagramPoint,b:DiagramPoint){const key=`${a.x},${a.y}:${b.x},${b.y}`;let value=segmentCache.get(key);if(value===undefined){value=!boxes.some(box=>crosses(a,b,box));segmentCache.set(key,value);}return value;}
   function route(start:DiagramPoint,end:DiagramPoint):DiagramPoint[]{
     const columns=[...xs].sort((a,b)=>a-b),rows=[...ys].sort((a,b)=>a-b);
     const xIndex=new Map(columns.map((x,index)=>[x,index])),yIndex=new Map(rows.map((y,index)=>[y,index]));
@@ -135,7 +143,9 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
         // Disjoint lines on one vertical column can still look like a single wire.
         // Prefer a fresh bend column and avoid crossings when a short detour works.
         const reuse=axis===2&&direction!==2&&vertical.has(p.x)?256:0;
-        const key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction!==axis?16:0)+(next===target&&axis===2?16:0)+reuse+(crossing?80:0);
+        // Sharing the exact footer is intentional. Elsewhere prefer distinct lanes,
+        // while allowing a short shared trunk when crowded layouts require one.
+        const key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction!==axis?16:0)+(next===target&&axis===2?16:0)+reuse+(crossing?80:0)+overlap(p,q)*6;
         if(cost>=(costs.get(key)??Infinity))continue;
         costs.set(key,cost);parent.set(key,current.key);const remaining=distance(next);push({key,cost,estimate:cost+remaining,remaining});
       }
@@ -163,16 +173,7 @@ export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReado
     if(points.length===2)return[];
     const corners=points.filter((p,index)=>!index||index===points.length-1||!((points[index-1].x===p.x&&p.x===points[index+1].x)||(points[index-1].y===p.y&&p.y===points[index+1].y)));
     reserve(corners);
-    let path=`M${corners[0].x},${corners[0].y}`;
-    for(let i=1;i<corners.length-1;i++){
-      const a=corners[i-1],b=corners[i],c=corners[i+1];
-      const radius=Math.min(10,(Math.abs(a.x-b.x)+Math.abs(a.y-b.y))/2,(Math.abs(c.x-b.x)+Math.abs(c.y-b.y))/2);
-      const before={x:b.x+Math.sign(a.x-b.x)*radius,y:b.y+Math.sign(a.y-b.y)*radius};
-      const after={x:b.x+Math.sign(c.x-b.x)*radius,y:b.y+Math.sign(c.y-b.y)*radius};
-      path+=` L${before.x},${before.y} Q${b.x},${b.y} ${after.x},${after.y}`;
-    }
-    const last=corners.at(-1)!;path+=` L${last.x},${last.y}`;
-    return[{binding,points:corners,path}];
+    return[{binding,points:corners,path:diagramSmoothPath(corners)}];
   });
   const byBinding=new Map(routed.map(route=>[route.binding.id,route]));
   return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);

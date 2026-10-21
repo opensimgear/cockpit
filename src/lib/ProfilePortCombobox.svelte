@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import Icon from './Icon.svelte';
 
-  type PortOption = { value: string; label: string; description?: string; searchText?: string };
+  type PortOption = { value: string; label: string; description?: string; searchText?: string; reason?: string };
   let {
     label,
     placeholder = 'Search ports by name or ID',
@@ -11,6 +11,7 @@
     query = $bindable(''),
     disabled = false,
     limit = 200,
+    onselect,
   }: {
     label: string;
     placeholder?: string;
@@ -19,41 +20,50 @@
     query?: string;
     disabled?: boolean;
     limit?: number;
+    onselect?: (value:string)=>void;
   } = $props();
 
   const uid = $props.id();
   let open = $state(false);
   let activeIndex = $state(-1);
   let listbox = $state<HTMLDivElement>();
+  let inputElement=$state<HTMLInputElement>();
+  let dropdownAbove=$state(false),dropdownHeight=$state(280);
+  let scrollTop=$state(0);
+  const rowHeight=76;
   const selected = $derived(options.find(option => option.value === value));
   const pageLimit = $derived(Math.max(1, Math.min(200, Math.floor(limit) || 200)));
+  const indexed=$derived(options.map(option=>({option,text:`${option.label} ${option.description??''} ${option.searchText??''}`.toLowerCase()})));
   const matches = $derived.by(() => {
     const search = query.trim().toLowerCase();
-    return search ? options.filter(option => `${option.label} ${option.description ?? ''} ${option.searchText ?? ''}`.toLowerCase().includes(search)) : options;
+    return search ? indexed.filter(item=>item.text.includes(search)).map(item=>item.option) : options;
   });
-  const visibleOptions = $derived(matches.slice(0, pageLimit));
+  const windowStart=$derived(Math.max(0,Math.floor(scrollTop/rowHeight)-3));
+  const visibleOptions = $derived(matches.slice(windowStart, windowStart+Math.min(pageLimit,16)));
   const displayValue = $derived(open ? query : selected?.label ?? query);
-  const activeId = $derived(open && activeIndex >= 0 && activeIndex < visibleOptions.length ? `${uid}-option-${activeIndex}` : undefined);
+  const activeId = $derived(open && activeIndex >= 0 && activeIndex < matches.length ? `${uid}-option-${activeIndex}` : undefined);
 
   $effect(() => {
     if (disabled && open) close();
-    if (activeIndex >= visibleOptions.length) activeIndex = visibleOptions.length ? 0 : -1;
+    if (activeIndex >= matches.length) activeIndex = matches.length ? 0 : -1;
   });
 
   $effect(() => {
     if (!open || activeIndex < 0) return;
     const index = activeIndex;
     void tick().then(() => {
-      if (open && activeIndex === index) listbox?.children.item(index)?.scrollIntoView({ block: 'nearest' });
+      if(open&&activeIndex===index&&listbox){const top=index*rowHeight;if(top<listbox.scrollTop)listbox.scrollTop=top;else if(top+rowHeight>listbox.scrollTop+listbox.clientHeight)listbox.scrollTop=top+rowHeight-listbox.clientHeight;scrollTop=listbox.scrollTop;}
     });
   });
 
   function show() {
     if (disabled || open) return;
+    if(inputElement&&typeof window!=='undefined'){const rect=inputElement.getBoundingClientRect(),below=window.innerHeight-rect.bottom-60,above=rect.top-60;dropdownAbove=below<200&&above>below;dropdownHeight=Math.max(76,Math.min(280,dropdownAbove?above:below));}
     query = '';
     open = true;
+    scrollTop=0;
     const selectedIndex = options.findIndex(option => option.value === value);
-    activeIndex = options.length ? selectedIndex >= 0 && selectedIndex < pageLimit ? selectedIndex : 0 : -1;
+    activeIndex = options.length ? selectedIndex >= 0 ? selectedIndex : 0 : -1;
   }
 
   function close() {
@@ -66,6 +76,7 @@
     if (disabled) return;
     value = option.value;
     close();
+    onselect?.(option.value);
   }
 
   function input(event: Event) {
@@ -74,6 +85,7 @@
     value = '';
     open = true;
     activeIndex = 0;
+    scrollTop=0;if(listbox)listbox.scrollTop=0;
   }
 
   function keydown(event: KeyboardEvent) {
@@ -82,13 +94,13 @@
       event.preventDefault();
       if (!open) {
         show();
-        if (event.key === 'ArrowUp') activeIndex = visibleOptions.length - 1;
-      } else if (visibleOptions.length) {
-        activeIndex = (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + visibleOptions.length) % visibleOptions.length;
+        if (event.key === 'ArrowUp') activeIndex = matches.length - 1;
+      } else if (matches.length) {
+        activeIndex = (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
       }
     } else if (event.key === 'Enter' && open) {
       event.preventDefault();
-      if (visibleOptions[activeIndex]) select(visibleOptions[activeIndex]);
+      if (matches[activeIndex]) select(matches[activeIndex]);
     } else if (event.key === 'Escape' && open) {
       event.preventDefault();
       event.stopPropagation();
@@ -109,6 +121,7 @@
   <div class="input-wrap">
     <input
       id={`${uid}-input`}
+      bind:this={inputElement}
       role="combobox"
       aria-label={label}
       aria-autocomplete="list"
@@ -130,15 +143,19 @@
     <span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span>
   </div>
   {#if open && !disabled}
-    <div class="port-dropdown">
-      <div id={`${uid}-listbox`} class="port-options" role="listbox" aria-labelledby={`${uid}-label`} bind:this={listbox}>
-        {#each visibleOptions as option, index (option.value)}
+    <div class="port-dropdown" class:above={dropdownAbove}>
+      <div id={`${uid}-listbox`} class="port-options" role="listbox" aria-labelledby={`${uid}-label`} style={`max-height:${dropdownHeight}px`} bind:this={listbox} onscroll={event=>scrollTop=event.currentTarget.scrollTop}>
+        <div class="virtual-spacer" aria-hidden="true" style={`height:${windowStart*rowHeight}px`}></div>
+        {#each visibleOptions as option, offset (option.value)}
+          {@const index=windowStart+offset}
           <button
             id={`${uid}-option-${index}`}
             type="button"
             role="option"
             tabindex="-1"
             aria-selected={option.value === value}
+            aria-posinset={index+1}
+            aria-setsize={matches.length}
             data-value={option.value}
             class:active={index === activeIndex}
             onpointerdown={event => event.preventDefault()}
@@ -147,13 +164,14 @@
           >
             <span class="port-name">{option.label}</span>
             {#if option.description}<span class="port-description">{option.description}</span>{/if}
+            {#if option.reason}<span class="port-reason">{option.reason}</span>{/if}
           </button>
         {/each}
+        <div class="virtual-spacer" aria-hidden="true" style={`height:${Math.max(0,matches.length-windowStart-visibleOptions.length)*rowHeight}px`}></div>
       </div>
       <p id={`${uid}-count`} class="port-count" role="status">
         {#if !matches.length}No matching ports.
-        {:else if matches.length > pageLimit}Showing {pageLimit} of {matches.length} results. Type to narrow the list.
-        {:else}{matches.length} {matches.length === 1 ? 'result' : 'results'}{/if}
+        {:else}{matches.length} {matches.length === 1 ? 'result' : 'results'}{#if matches.length>16} · Scroll or type to filter.{/if}{/if}
       </p>
     </div>
   {/if}
@@ -169,12 +187,14 @@
   input::placeholder { color: var(--muted); }
   .chevron { position: absolute; right: 8px; top: 50%; display: flex; transform: translateY(-50%) rotate(90deg); color: var(--text); pointer-events: none; }
   .port-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 8px 22px #0004; overflow: hidden; }
+  .port-dropdown.above{top:auto;bottom:100%;margin-top:0;margin-bottom:4px}
   .port-options { max-height: min(280px, 35vh); overflow-y: auto; overscroll-behavior: contain; }
-  .port-options button { display: grid; gap: 3px; box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); color: var(--text); background: var(--surface); text-align: left; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+  .port-options button { display: flex; flex-direction:column;justify-content:center;gap:3px; box-sizing: border-box; width: 100%;height:76px; min-width: 0; padding: 9px 10px; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); color: var(--text); background: var(--surface); text-align: left; font: inherit; cursor: pointer; overflow:hidden; }
   .port-options button:last-child { border-bottom: 0; }
   .port-options button.active, .port-options button:hover { background: var(--surface-raised); box-shadow: inset 2px 0 var(--accent); }
   .port-options button[aria-selected='true'] .port-name { color: var(--accent); }
   .port-name { font-size: 11px; line-height: 1.4; }
-  .port-description { color: var(--muted); font-size: 10px; line-height: 1.4; }
+  .port-description { color: var(--muted); font-size: 10px; line-height: 1.4; white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis; }
+  .port-name{white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}.port-reason{color:#d3a078;font-size:9px;line-height:1.3;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}.virtual-spacer{pointer-events:none}
   .port-count { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.5; }
 </style>

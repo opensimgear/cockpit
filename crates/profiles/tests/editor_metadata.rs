@@ -92,7 +92,7 @@ fn collapsed_categories_require_known_unique_nodes_and_exact_supported_values() 
 fn compiled_program_hash_is_unchanged_by_grouping_and_collapsed_ports() {
     use osg_profiles::compiler_models::{BackendCapabilities,CompileSnapshot};
     let mut plain=osg_profiles::default_document();
-    plain.processing_nodes.push(ProcessingNode{id:"constant".into(),name:"Constant".into(),inputs:vec![],outputs:vec![Port{id:"value".into(),name:"Value".into(),direction:Direction::Output,contract:PortContract::State{schema:osg_mapping::signal::ScalarSchema::Boolean{},freshness_ms:1000,fallback:Some(PortValue::Boolean(false))}}],operation:Operation::Constant{value:PortValue::Boolean(true)}});
+    plain.processing_nodes.push(ProcessingNode{ draft: None,id:"constant".into(),name:"Constant".into(),inputs:vec![],outputs:vec![Port{id:"value".into(),name:"Value".into(),direction:Direction::Output,contract:PortContract::State{schema:osg_mapping::signal::ScalarSchema::Boolean{},freshness_ms:1000,fallback:Some(PortValue::Boolean(false))}}],operation:Operation::Constant{value:PortValue::Boolean(true)}});
     let capture=CompileSnapshot{inventory_session:"metadata-test".into(),inventory_revision:"1".into(),assignments:vec![],resources:vec![],game_context:None,backend:BackendCapabilities::default(),inventory_diagnostics:vec![],read_only:false};
     let first=osg_profiles::compiler::compile(&plain,&capture);
     assert!(first.plan.is_some(),"{first:?}");

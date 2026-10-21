@@ -5,7 +5,7 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./profile-editor','./profile-diagram','./profile-canvas']);
 const {profileAutoLayout,PROFILE_BLOCK_WIDTH:width,PROFILE_BLOCK_HEIGHT:height}=modules.get('./profile-editor');
-const {diagramRoutes}=modules.get('./profile-diagram');
+const {diagramRoutes,diagramPortAnchor,diagramPendingPath,diagramSmoothPath}=modules.get('./profile-diagram');
 const edge=(from,to,id=`${from}-${to}`)=>({id,from:{nodeId:from,portId:'out'},to:{nodeId:to,portId:'in'}});
 const placed=positions=>positions.map(({nodeId,...position})=>({id:nodeId,position}));
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -14,8 +14,8 @@ function verifyRoutes(nodes,bindings){
   assert.equal(routes.length,bindings.length,'Every saved route stays visible');
   for(const {binding,points,path}of routes){
     const from=nodes.find(node=>node.id===binding.from.nodeId),to=nodes.find(node=>node.id===binding.to.nodeId);
-    assert.equal(points[0].x,from.position.x+width);assert.ok(points[0].y>=from.position.y+24&&points[0].y<=from.position.y+height-24);
-    assert.equal(points.at(-1).x,to.position.x);assert.ok(points.at(-1).y>=to.position.y+24&&points.at(-1).y<=to.position.y+height-24);
+    assert.deepEqual(plain(points[0]),{x:from.position.x+width,y:from.position.y+height-20});
+    assert.deepEqual(plain(points.at(-1)),{x:to.position.x,y:to.position.y+height-20});
     assert.ok(!/NaN|Infinity/.test(path));
     for(let i=1;i<points.length;i++){
       const a=points[i-1],b=points[i];assert.ok(a.x===b.x||a.y===b.y,'Routes use orthogonal channels');
@@ -26,16 +26,9 @@ function verifyRoutes(nodes,bindings){
       }
     }
   }
-  for(let i=0;i<routes.length;i++)for(let j=i+1;j<routes.length;j++){
-    for(let a=1;a<routes[i].points.length;a++)for(let b=1;b<routes[j].points.length;b++){
-      const p=routes[i].points[a-1],q=routes[i].points[a],r=routes[j].points[b-1],s=routes[j].points[b];
-      const vertical=p.x===q.x&&r.x===s.x&&Math.abs(p.x-r.x)<1e-6;
-      const horizontal=p.y===q.y&&r.y===s.y&&Math.abs(p.y-r.y)<1e-6;
-      const overlap=vertical?Math.min(Math.max(p.y,q.y),Math.max(r.y,s.y))-Math.max(Math.min(p.y,q.y),Math.min(r.y,s.y)):
-        horizontal?Math.min(Math.max(p.x,q.x),Math.max(r.x,s.x))-Math.max(Math.min(p.x,q.x),Math.min(r.x,s.x)):0;
-      assert.ok(overlap<1e-6,`${routes[i].binding.id} and ${routes[j].binding.id} share a connection segment`);
-    }
-  }
+  // Shared footer attachments intentionally permit a short shared trunk. Each
+  // bend is drawn as a tangent-continuous quadratic instead of a sharp corner.
+  for(const route of routes)assert.equal((route.path.match(/ Q/g)??[]).length,Math.max(0,route.points.length-2));
   return routes;
 }
 
@@ -75,13 +68,13 @@ test('complete profile layout preserves every binding and clears all blocks',asy
 });
 
 
-test('parallel signals and fan-in/fan-out get distinct attachments and deterministic lanes',()=>{
+test('parallel signals and fan-in/fan-out share footer anchors and have deterministic separate paths',()=>{
   const bindings=[...Array.from({length:8},(_,i)=>edge('source','target',`parallel-${i}`)),edge('source','lower','branch'),edge('lower','target','merge')];
   const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}},{id:'lower',position:{x:450,y:350}}];
   const routes=verifyRoutes(nodes,bindings),parallel=routes.filter(route=>route.binding.id.startsWith('parallel'));
   assert.equal(new Set(parallel.map(route=>route.path)).size,8);
-  assert.equal(new Set(parallel.map(route=>route.points[0].y)).size,8);
-  assert.equal(new Set(parallel.map(route=>route.points.at(-1).y)).size,8);
+  assert.equal(new Set(parallel.map(route=>route.points[0].y)).size,1);
+  assert.equal(new Set(parallel.map(route=>route.points.at(-1).y)).size,1);
   const reversed=new Map(diagramRoutes(nodes,[...bindings].reverse(),width,height).map(route=>[route.binding.id,route.path]));
   for(const route of routes)assert.equal(reversed.get(route.binding.id),route.path);
   verifyRoutes(nodes.map(node=>node.id==='lower'?{...node,position:{x:450,y:-100}}:node),bindings);
@@ -95,29 +88,23 @@ test('tight saved layouts preserve all separate paths without requiring auto-lay
 });
 
 
-test('joystick axes and direct buttons do not look merged at a shared controller',()=>{
+test('joystick axes and direct buttons use a single common input and output handle per block',()=>{
   const nodes=placed([{nodeId:'right',x:0,y:156},{nodeId:'left',x:0,y:468},{nodeId:'roll',x:432,y:0},{nodeId:'pitch',x:432,y:312},{nodeId:'collective',x:432,y:624},{nodeId:'controller',x:864,y:312}]);
   const bindings=[edge('right','roll'),edge('right','pitch'),edge('right','controller'),edge('left','collective'),edge('left','controller'),edge('roll','controller'),edge('pitch','controller'),edge('collective','controller')];
-  const routes=verifyRoutes(nodes,bindings),verticalOwners=new Map();
+  const routes=verifyRoutes(nodes,bindings);
   for(const node of nodes){
-    const outgoing=routes.filter(route=>route.binding.from.nodeId===node.id).sort((a,b)=>a.points[0].y-b.points[0].y);
-    const incoming=routes.filter(route=>route.binding.to.nodeId===node.id).sort((a,b)=>a.points.at(-1).y-b.points.at(-1).y);
-    for(let i=1;i<outgoing.length;i++)assert.ok(outgoing[i-1].points.at(-1).y<=outgoing[i].points.at(-1).y,'Source attachments must follow final destination attachment order');
-    for(let i=1;i<incoming.length;i++)assert.ok(incoming[i-1].points[0].y<=incoming[i].points[0].y,'Destination attachments must follow actual source attachment order');
-  }
-
-  for(const route of routes)for(let i=1;i<route.points.length;i++){
-    const a=route.points[i-1],b=route.points[i];if(a.x!==b.x)continue;
-    assert.ok(!verticalOwners.has(a.x)||verticalOwners.get(a.x)===route.binding.id,'Separate connections need separate bend columns');
-    verticalOwners.set(a.x,route.binding.id);
-  }
-  for(let i=0;i<routes.length;i++)for(let j=i+1;j<routes.length;j++)for(let a=1;a<routes[i].points.length;a++)for(let b=1;b<routes[j].points.length;b++){
-    let p=routes[i].points[a-1],q=routes[i].points[a],r=routes[j].points[b-1],s=routes[j].points[b];
-    if(p.x===q.x&&r.y===s.y)[p,q,r,s]=[r,s,p,q];
-    if(p.y!==q.y||r.x!==s.x)continue;
-    const intersects=r.x>Math.min(p.x,q.x)&&r.x<Math.max(p.x,q.x)&&p.y>Math.min(r.y,s.y)&&p.y<Math.max(r.y,s.y);
-    assert.equal(intersects,false,`${routes[i].binding.id} crosses ${routes[j].binding.id} despite orderable endpoints`);
+    const outgoing=routes.filter(route=>route.binding.from.nodeId===node.id),incoming=routes.filter(route=>route.binding.to.nodeId===node.id);
+    assert.ok(new Set(outgoing.map(route=>JSON.stringify(route.points[0]))).size<=1);
+    assert.ok(new Set(incoming.map(route=>JSON.stringify(route.points.at(-1)))).size<=1);
   }
   const inputHeights=routes.filter(route=>route.binding.to.nodeId==='controller').map(route=>route.points.at(-1).y).sort((a,b)=>a-b);
-  for(let i=1;i<inputHeights.length;i++)assert.ok(inputHeights[i]-inputHeights[i-1]>=20);
+  assert.equal(new Set(inputHeights).size,1);
+});
+
+test('saved and pending wires share footer geometry and every bend is smooth',()=>{
+  const output=diagramPortAnchor({x:20,y:40},'output',width,height),input=diagramPortAnchor({x:400,y:40},'input',width,height);
+  assert.deepEqual(plain(output),{x:20+width,y:40+height-20});assert.deepEqual(plain(input),{x:400,y:40+height-20});
+  const pending=diagramPendingPath(output,{x:700,y:400},'output');assert.ok(pending.startsWith(`M${output.x},${output.y} C`));assert.ok(!pending.includes(' L'));
+  assert.match(diagramPendingPath(input,{x:10,y:0},'input'),/ C/);
+  assert.equal(diagramSmoothPath([]),'');assert.match(diagramSmoothPath([{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:200,y:100}]),/ Q100,0 .* Q100,100 /);
 });

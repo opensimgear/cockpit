@@ -76,9 +76,11 @@ test('native palette authors an unassigned production companion and inserts conn
   const click = (label, scope = '.profiles-workspace') => until(() => clickIfPresent(label, scope), `UI action unavailable: ${label}`);
   const input = (selector, value, event = 'input') => native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});if(!element)return false;element.value=${JSON.stringify(value)};element.dispatchEvent(new Event(${JSON.stringify(event)},{bubbles:true}));return true;})()`);
   const selectLabel = (label, value, scope) => until(() => native.evaluate(`(()=>{const root=document.querySelector(${JSON.stringify(scope)});const select=[...(root?.querySelectorAll('label')??[])].find(element=>element.textContent.trim().startsWith(${JSON.stringify(label)}))?.querySelector('select');if(!select||select.disabled||![...select.options].some(option=>option.value===${JSON.stringify(value)}))return false;select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`), `UI select unavailable: ${label}`);
-  const choosePort = async (label, value) => {
-    await until(() => native.evaluate(`(()=>{const input=[...document.querySelectorAll('.canvas-connection-panel input[role="combobox"]')].find(input=>input.getAttribute('aria-label')===${JSON.stringify(label)});if(!input||input.disabled)return false;input.focus();input.click();input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('input',{bubbles:true}));return true;})()`), `Port search unavailable: ${label}`);
-    await until(() => native.evaluate(`(()=>{const input=[...document.querySelectorAll('.canvas-connection-panel input[role="combobox"]')].find(input=>input.getAttribute('aria-label')===${JSON.stringify(label)}),list=document.getElementById(input?.getAttribute('aria-controls'));const option=[...(list?.querySelectorAll('[role="option"]')??[])].find(option=>option.dataset.value===${JSON.stringify(value)});if(!option||option.disabled)return false;option.click();return true;})()`), `Port result unavailable: ${label} ${value}`);
+  const choosePort = async (label, value, scope='.canvas-connection-panel') => {
+    const selector=`${scope} input[role="combobox"]`;
+    if(await native.evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].some(input=>input.getAttribute('aria-label')===${JSON.stringify(label)}&&input.dataset.value===${JSON.stringify(value)})`))return;
+    await until(() => native.evaluate(`(()=>{const input=[...document.querySelectorAll(${JSON.stringify(selector)})].find(input=>input.getAttribute('aria-label')===${JSON.stringify(label)});if(!input||input.disabled)return false;input.focus();input.click();input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('input',{bubbles:true}));return true;})()`), `Port search unavailable: ${label}`);
+    await until(() => native.evaluate(`(()=>{const input=[...document.querySelectorAll(${JSON.stringify(selector)})].find(input=>input.getAttribute('aria-label')===${JSON.stringify(label)}),list=document.getElementById(input?.getAttribute('aria-controls'));const option=[...(list?.querySelectorAll('[role="option"]')??[])].find(option=>option.dataset.value===${JSON.stringify(value)});if(!option||option.disabled)return false;option.click();return true;})()`), `Port result unavailable: ${label} ${value}`);
   };
   const uiGraph = () => native.evaluate(`(()=>{const root=document.querySelector('.profiles-workspace');return{nodes:[...root.querySelectorAll('.resource-block')].map(node=>({id:node.dataset.nodeId,kind:[...node.classList].find(kind=>['resource','processing','virtual','desktop','device','companion','game'].includes(kind))})),processing:root.querySelectorAll('.resource-block.processing').length,edges:root.querySelectorAll('.signal-edge').length};})()`);
   const selectNode = id => until(() => native.evaluate(`(()=>{const node=[...document.querySelectorAll('.profiles-workspace .resource-block')].find(node=>node.dataset.nodeId===${JSON.stringify(id)});if(!node)return false;node.querySelector('.block-heading').click();return true;})()`), `Graph block unavailable: ${id}`);
@@ -187,12 +189,13 @@ test('native palette authors an unassigned production companion and inserts conn
     const catalogue = (await request({ command: 'profile_companion_catalogue' })).profileCompanionAuthoring;
     let selectedPanel, selectedPort;
     for (const panel of catalogue.panels) {
+      if(panel.compatibility&&!panel.compatibility.some(item=>item.companionId===companionId&&item.compatible))continue;
       const page = (await request({ command: 'profile_companion_inspect', resourceId: peerResource.id, publicationHash: panel.publicationHash, offset: 0, limit: 64 })).profileCompanionAuthoring;
       const port = page.ports.find(port => port.descriptor.direction === 'output' && port.descriptor.contract.delivery === 'state' && port.descriptor.contract.schema.type === 'boolean');
       if (port) { selectedPanel = panel; selectedPort = port; break; }
     }
     assert.ok(selectedPanel && selectedPort, 'An existing published panel with a real boolean control is required.');
-    await selectLabel('Published panel', selectedPanel.publicationHash, '[aria-label="Profile companion panel selection"]');
+    await selectLabel('Panel', selectedPanel.publicationHash, '[aria-label="Profile companion panel selection"]');
     await click('Use panel in profile', '[aria-label="Profile companion panel selection"]');
     await click('Inspect exact panel ports', '[aria-label="Profile companion panel selection"]');
     await selectLabel('Port group', 'output', '[aria-label="Profile companion panel selection"]');
@@ -203,10 +206,9 @@ test('native palette authors an unassigned production companion and inserts conn
 
     await collapseInspector();await click('Auto-layout');await click('Fit all');
     await dragWire(`[data-connection-source="${companionNodeId}"]`,`[data-connection-target="${virtualId}"]`);
-    assert.deepEqual(await native.evaluate(`(()=>{const panel=document.querySelector('.canvas-connection-panel');return{source:panel.querySelector('[aria-label="Source block"]').value,target:panel.querySelector('[aria-label="Destination block"]').value};})()`),{source:companionNodeId,target:virtualId});
+    assert.deepEqual(await native.evaluate(`(()=>{const panel=document.querySelector('.canvas-connection-panel');return{source:panel.dataset.fromNode,target:panel.dataset.toNode,blockSelects:panel.querySelectorAll('select[aria-label="Source block"],select[aria-label="Destination block"]').length};})()`),{source:companionNodeId,target:virtualId,blockSelects:0});
     for (const [label, value] of [['Find an output', sourcePortId], ['Find an input', state.document.virtualOutputs[0].ports[0].id]]) await choosePort(label, value);
-    await click('Create exact route', '.canvas-connection-panel');
-    await until(()=>native.evaluate(`!document.querySelector('.canvas-connection-panel')`),'Creating the exact route did not close the port picker');
+    await until(()=>native.evaluate(`!document.querySelector('.canvas-connection-panel')`),'Selecting the final port did not commit and close the port picker');
     await collapseInspector();
     await click('Fit all');
     await until(async () => (await uiGraph()).edges === 1, 'The explicit companion-to-virtual route was not drawn');
@@ -214,16 +216,16 @@ test('native palette authors an unassigned production companion and inserts conn
     await native.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hit.x, y: hit.y });
     await native.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: hit.x, y: hit.y, button: 'left', clickCount: 1 });
     await native.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: hit.x, y: hit.y, button: 'left', clickCount: 1 });
-    await until(() => native.evaluate(`!!document.querySelector('.connection-dialog[open]')`), 'Clicking the real SVG connection did not open transformations');
-    await selectLabel('Transformation', 'identity', '.connection-dialog');
-    await click('Insert transformation', '.connection-dialog');
+    await until(() => native.evaluate(`!!document.querySelector('.wire-actions')`), 'Clicking the real SVG connection did not open its canvas actions');
+    await click('Insert transformation', '.wire-actions');
+    await choosePort('Insert transformation','identity','.wire-actions');
     await until(async () => { const graph = await uiGraph(); return graph.processing === 1 && graph.edges === 2; }, 'Transformation insertion was not atomic').catch(async error => { console.error('Actual inserted graph', await uiGraph()); throw error; });
     await click('Undo'); await until(async () => { const graph = await uiGraph(); return graph.processing === 0 && graph.edges === 1; }, 'One Undo did not restore the original connection');
     await click('Redo'); await until(async () => { const graph = await uiGraph(); return graph.processing === 1 && graph.edges === 2; }, 'One Redo did not restore the inserted transformation');
     state = await save(); assert.equal(state.document.processingNodes[0].operation.kind, 'identity'); assert.equal(state.document.bindings.length, 2);
     await collapseInspector();
     await click('Fit all'); state = await save(); await native.evaluate(`document.querySelector('.profile-canvas-workspace').scrollIntoView({block:'start'})`); await capture('connection-transformation.png');
-    checks.push('Actual SVG hit testing opens transformations; Identity replaces one edge with two in a single Undo/Redo edit');
+    checks.push('Actual SVG hit testing opens canvas actions; selecting Identity inserts it between the exact endpoints in one Undo/Redo edit');
 
     // Exercise activation without acquiring a controller output or sending a key.
     // Keep the real companion-to-identity route so native baseline acquisition remains necessary.

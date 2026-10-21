@@ -133,6 +133,9 @@ fn compile_mode(
         return finish(report);
     }
     graph_diagnostics(document, &mut report.diagnostics);
+    for node in document.processing_nodes.iter().filter(|node| node.draft.is_some()) {
+        error(&mut report.diagnostics, "unresolvedTransformation", "This transformation needs its first input connection before it can execute. Choose an explicit source to establish its signal contract.", GraphLocation { node_id: Some(node.id.clone()), ..Default::default() });
+    }
     if let Err(message) = crate::validate_document(document) {
         error(
             &mut report.diagnostics,

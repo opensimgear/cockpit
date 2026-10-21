@@ -477,6 +477,20 @@ fn unit_conversion_hysteresis_and_missing_status_replay() {
 }
 
 #[test]
+fn explicit_clamp_saturates_reported_values_and_rejects_changed_units_or_lossy_integer_bounds() {
+    let operation=Operation::Clamp{min:0.0,max:10.0};
+    let mut engine=phase(unary(operation.clone(),number_contract(-100.0,100.0,Some("g")),number_contract(0.0,10.0,Some("g"))));
+    for (sequence,value,expected) in [(1,-100.0,0.0),(2,7.25,7.25),(3,100.0,10.0)] {
+        feed(&mut engine,sequence,sequence,sample(value));assert_eq!(scalar_output(&engine),expected);
+    }
+    assert!(!operation_valid(operation.clone(),vec![number_contract(-100.0,100.0,Some("g"))],number_contract(0.0,10.0,Some("rpm"))));
+    assert!(!operation_valid(operation.clone(),vec![number_contract(-100.0,100.0,None)],number_contract(0.0,11.0,None)));
+    assert!(!operation_valid(Operation::Clamp{min:0.5,max:10.0},vec![integer_contract(-100,100)],integer_contract(1,10)));
+    assert!(!operation_valid(Operation::Clamp{min:20.0,max:10.0},vec![number_contract(-100.0,100.0,None)],number_contract(0.0,10.0,None)));
+    assert!(operation_valid(operation,vec![integer_contract(-100,100)],integer_contract(0,10)));
+}
+
+#[test]
 fn clamped_ratio_percentage_conversion_keeps_scale_boundaries_and_missing_status() {
     let mut engine = phase(unary(
         Operation::UnitConvert {

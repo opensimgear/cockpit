@@ -47,6 +47,8 @@ export function graphConnectionError(document: DeepReadonly<ProfileDocument>, fr
   const source=graphPort(document,from),target=graphPort(document,to);
   if(!source||!target)return 'Choose an existing concrete source output and destination port.';
   if(source.direction!=='output'||target.direction!=='input')return 'Connect a source output to a destination input or action.';
+  if(document.processingNodes.some(node=>node.id===from.nodeId&&node.draft))return 'This transformation needs an input connection before its output can connect.';
+  if(document.processingNodes.some(node=>node.id===to.nodeId&&node.draft))return 'Choose a source to resolve this transformation before connecting its input.';
   const contractError=graphContractError(source.contract,target.contract);if(contractError)return contractError;
   const fromTab=nodeTab(document,from.nodeId),toTab=nodeTab(document,to.nodeId);
   if(fromTab&&toTab&&fromTab!==toTab)return 'Connect blocks within one vehicle tab or Base. Different vehicle tabs are never active together.';

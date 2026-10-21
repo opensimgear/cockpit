@@ -1327,6 +1327,7 @@ impl Phase {
                 let (min, max, _) = schema(input).and_then(numeric).unwrap();
                 let result = match operation {
                     Operation::Scale { factor, offset } => value * factor + offset,
+                    Operation::Clamp { min, max } => value.clamp(*min, *max),
                     Operation::RangeMap {
                         input_min,
                         input_max,

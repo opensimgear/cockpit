@@ -24,7 +24,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,wireClick,move,finish,keyboard,lostPointer,choose,blockPorts,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,drag,view,selectedId,suppressWireClick};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,drag,view,selectedId,suppressWireClick,paletteConnectionId};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
@@ -57,7 +57,7 @@ function harness(props = {}) {
   } }).body;
   handlers.setStage({
     setPointerCapture: id => captured.add(id), hasPointerCapture: id => captured.has(id), releasePointerCapture: id => captured.delete(id),
-    getBoundingClientRect: () => ({ left: 100, top: 50 }), contains: target => target.inside !== false
+    getBoundingClientRect: () => ({ left: 100, top: 50, right: 1100, bottom: 850 }), contains: target => target.inside !== false
   });
   return { handlers, body, calls, edits, captured, document, before, setHit(value) { hit = value; } };
 }
@@ -89,11 +89,11 @@ test('both wire directions preserve output-to-input routing, world coordinates a
     assert.equal(h.handlers.state.wire.moved, true);
     h.setHit(direction === 'output' ? element({ nodeId: 'target', input: 'target' }) : element({ nodeId: 'source', output: 'source' }));
     h.handlers.finish(pointer(320, 180));
-    assert.deepEqual(h.calls, [['connect', 'source', 'target']]);
+    assert.deepEqual(plain(h.calls), [['connect', 'source', 'target', {x:320,y:180}]]);
     assert.equal(h.handlers.state.wire, null);
     assert.equal(h.captured.size, 0);
     h.handlers.wireClick(click(), origin, direction);
-    assert.deepEqual(h.calls, [['connect', 'source', 'target']], 'The native follow-up click must not replace the paired mapping.');
+    assert.deepEqual(plain(h.calls), [['connect', 'source', 'target', {x:320,y:180}]], 'The native follow-up click must not replace the paired mapping.');
     assert.equal(h.edits.length, 0);
     assert.deepEqual(h.document, h.before, 'Dragging only opens the chooser; exact ports are saved later.');
   }
@@ -194,4 +194,40 @@ test('port discovery falls back to intrinsic processing, virtual and desktop con
   const panel = harness({ selectedId: 'source', connectionOpen: true, connectionPanel: svelte.createRawSnippet(() => ({ render: () => '<p>Exact port choices</p>' })) });
   assert.ok(panel.body.includes('aria-label="Exact connection editor"'));assert.ok(panel.body.includes('Exact port choices'));assert.ok(!panel.body.includes('aria-label="Selected block inspector"'));
   const inspected = harness({ selectedId: 'source' });assert.ok(inspected.body.includes('aria-label="Selected block inspector"'));assert.ok(!inspected.body.includes('aria-label="Exact connection editor"'));
+});
+
+test('selected wires expose endpoint labels, highlighted boxes, reconnect handles and delete access',()=>{
+  const document=profile();document.bindings=[{id:'route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}}];
+  const selected=[],removed=[],h=harness({document,selectedEdgeId:'route',selectConnection:id=>selected.push(id),disconnectConnection:id=>removed.push(id),reconnectConnection(){}});
+  assert.match(h.body,/data-reconnect-side="from"/);assert.match(h.body,/data-reconnect-side="to"/);
+  assert.match(h.body,/class="connection-port-label[^\"]*"[^>]*>saved-fire/);
+  assert.match(button(h.body,'data-connection-source','source'),/data-connection-active="true"/);
+  assert.match(button(h.body,'data-connection-target','target'),/data-connection-active="true"/);
+  h.handlers.chooseConnection('route');assert.deepEqual(selected,['route']);assert.equal(h.handlers.state.selectedId,'');
+  h.handlers.keyboard({key:'Delete',target:{closest:()=>null},preventDefault(){}});assert.deepEqual(removed,['route']);
+  h.handlers.keyboard({key:'Escape',target:{closest:()=>null},preventDefault(){}});assert.deepEqual(selected,['route','']);
+  const locked=harness({document,selectedEdgeId:'route',readOnly:true,reconnectConnection(){}});assert.ok(!locked.body.includes('data-reconnect-side='));
+});
+
+test('dragging either selected endpoint opens only the matching reconnection operation',()=>{
+  for(const side of ['from','to']){
+    const document=profile();document.bindings=[{id:'route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}}];
+    const reconnected=[],h=harness({document,reconnectConnection:(...args)=>reconnected.push(args)});
+    h.handlers.beginReconnect(pointer(),'route',side);assert.equal(h.captured.has(7),true);
+    const target=side==='from'?element({nodeId:'other-source',output:'other-source'}):element({nodeId:'other-target',input:'other-target'});
+    h.setHit(target);h.handlers.move(pointer(550,280));assert.equal(h.handlers.state.wireTargetId,side==='from'?'other-source':'other-target');
+    h.handlers.finish(pointer(550,280));assert.deepEqual(plain(reconnected),[['route',side,side==='from'?'other-source':'other-target',{x:550,y:280}]]);
+    assert.equal(h.handlers.state.wire,null);assert.equal(h.captured.size,0);assert.deepEqual(h.edits,[]);assert.deepEqual(h.calls,[]);
+    h.handlers.beginReconnect(pointer(),'route',side);h.handlers.finish(pointer(600,300),true);assert.equal(reconnected.length,1);
+  }
+});
+
+test('dropping a transformation on a wire inserts there and ordinary canvas drops retain graph coordinates',()=>{
+  const component={kind:'transformation',preset:'scale'},insertions=[],drops=[],ended=[],h=harness({paletteDrag:{component,name:'Multiply',category:'Transformation'},dropComponent:(...args)=>drops.push(args),dropOnConnection:(...args)=>insertions.push(args),endPaletteDrag:()=>ended.push(true)});
+  const target={closest:selector=>selector==='[data-connection-id]'?{dataset:{connectionId:'route'}}:null};
+  const event={clientX:500,clientY:300,target,dataTransfer:{},preventDefault(){},stopPropagation(){}};
+  h.handlers.overPalette(event);assert.equal(h.handlers.state.paletteConnectionId,'route');h.handlers.dropPalette(event);
+  assert.deepEqual(plain(insertions),[[component,'route',{x:400-modules.get('./profile-editor').PROFILE_BLOCK_WIDTH/2,y:250-modules.get('./profile-editor').PROFILE_BLOCK_HEIGHT/2}]]);
+  assert.deepEqual(drops,[]);assert.equal(ended.length,1);
+  h.handlers.dropPalette({...event,target:{closest:()=>null}});assert.equal(drops.length,1);assert.equal(insertions.length,1);assert.equal(ended.length,2);
 });

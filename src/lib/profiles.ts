@@ -39,6 +39,7 @@ export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 
   | { kind: 'declare-quantity'; quantity: string; unit: string }
   | { kind: 'constant'; value: Exclude<ProfileValue, null> }
   | { kind: 'scale'; factor: number; offset: number }
+  | { kind: 'clamp'; min: number; max: number }
   | { kind: 'range-map'; inputMin: number; inputMax: number; outputMin: number; outputMax: number; rounding: ProfileRounding }
   | { kind: 'unit-convert'; from: string; to: string; rounding: ProfileRounding; clamp?: boolean }
   | { kind: 'deadzone'; center: number; radius: number; rounding: ProfileRounding }
@@ -53,7 +54,7 @@ export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 
   | { kind: 'action-pack' | 'set-on-change'; arguments: string[] }
   | { kind: 'builtin'; rule: ProfileBuiltin; inputs: string[] }
   | { kind: 'script'; source: string; parameters: Record<string, Exclude<ProfileValue, null>> };
-export type ProfileProcessingNode = { id: string; name: string; operation: ProfileOperation; inputs: ProfilePort[]; outputs: ProfilePort[] };
+export type ProfileProcessingNode = { id: string; name: string; operation: ProfileOperation; inputs: ProfilePort[]; outputs: ProfilePort[]; draft?: { preset: string; configured?: string[] } };
 export type ProfileVirtualOutput = { id: string; name: string; required: boolean; ports: ProfilePort[]; layout: ProfileControllerLayout };
 export type ProfileEditorGroupBounds = { x: number; y: number; width: number; height: number };
 export type ProfileEditorGroup = { id: string; name: string; members: string[]; bounds?: ProfileEditorGroupBounds };
@@ -191,6 +192,7 @@ function operation(value: unknown): boolean {
   if (kind === 'declare-quantity') return exact(value, ['kind', 'quantity', 'unit']) && boundedText(value.quantity, 128) && value.quantity.trim() === value.quantity && boundedText(value.unit, 128) && value.unit.trim() === value.unit;
   if (kind === 'constant') return exact(value, ['kind', 'value']) && scalarValue(value.value);
   if (kind === 'scale') return exact(value, ['kind', 'factor', 'offset']) && coefficient(value.factor) && coefficient(value.offset);
+  if (kind === 'clamp') return exact(value, ['kind', 'min', 'max']) && finite(value.min) && finite(value.max) && coefficient(value.min) && coefficient(value.max) && value.min <= value.max;
   if (kind === 'range-map') return exact(value, ['kind', 'inputMin', 'inputMax', 'outputMin', 'outputMax', 'rounding']) && [value.inputMin, value.inputMax, value.outputMin, value.outputMax].every(coefficient) && rounding(value.rounding);
   if (kind === 'unit-convert') return exact(value, ['kind', 'from', 'to', 'rounding', ...(Object.hasOwn(value, 'clamp') ? ['clamp'] : [])]) && boundedText(value.from, 128) && boundedText(value.to, 128) && rounding(value.rounding) && (!Object.hasOwn(value, 'clamp') || typeof value.clamp === 'boolean');
   if (kind === 'deadzone') return exact(value, ['kind', 'center', 'radius', 'rounding']) && coefficient(value.center) && coefficient(value.radius) && (value.radius as number) >= 0 && rounding(value.rounding);
@@ -207,6 +209,12 @@ function operation(value: unknown): boolean {
   if (kind === 'builtin') return exact(value, ['kind', 'rule', 'inputs']) && names(value.inputs, 128) && builtin(value.rule);
   return kind === 'script' && exact(value, ['kind', 'source', 'parameters']) && typeof value.source === 'string' && bytes(value.source) > 0 && bytes(value.source) <= 16384 && object(value.parameters) && Object.keys(value.parameters).length <= 64 && bytes(JSON.stringify(value.parameters)) <= 4096 && Object.entries(value.parameters).every(([key, value]) => boundedText(key, 80) && scalarValue(value) && (typeof value !== 'number' || coefficient(value)));
 }
+function processingDraftValid(value:unknown,operation:unknown):boolean {
+  if(!object(value)||!exact(value,['preset',...(Object.hasOwn(value,'configured')?['configured']:[])]))return false;
+  if(typeof value.preset!=='string'||!['identity','declare-quantity','not','invert','scale','clamp','range-map','unit-convert','ratio-to-percent','deadzone','curve','compare','hysteresis','gate','any','all','priority','event-edge','event-to-state','select','format','fallback','toggle','pulse','tap','hold','double-tap','macro','script'].includes(value.preset))return false;
+  return !Object.hasOwn(value,'configured')||list(value.configured,32)&&value.configured.every(key=>typeof key==='string'&&key!=='kind'&&object(operation)&&Object.hasOwn(operation,key))&&new Set(value.configured).size===value.configured.length;
+}
+
 function layout(value: unknown): boolean {
   return exact(value, ['buttons', 'axes', 'hats']) && names(value.buttons, 128) && names(value.hats, 4) && list(value.axes, 16) && value.axes.every(axis => exact(axis, ['portId', 'range', 'fallback']) && profilePortIdValid(axis.portId) && ['bipolar', 'unipolar'].includes(String(axis.range)) && whole(axis.fallback, axis.range === 'bipolar' ? -32768 : 0, 32767))
     && new Set([...(value.buttons as string[]), ...value.axes.map(axis => (axis as {portId: string}).portId), ...(value.hats as string[])]).size === value.buttons.length + value.axes.length + value.hats.length && value.buttons.length + value.axes.length + value.hats.length > 0;
@@ -224,7 +232,7 @@ export function profileDocumentError(value: unknown): string {
   if (value.schemaVersion !== PROFILE_SCHEMA_VERSION || !uuid(value.id) || !text(value.name) || !whole(value.revision, 1, Number.MAX_SAFE_INTEGER)) return 'Choose a supported profile schema, canonical UUID, name and revision.';
   if (!exact(value.eligibility, ['gameIds']) || !list(value.eligibility.gameIds, 32) || !value.eligibility.gameIds.every(identifier) || new Set(value.eligibility.gameIds).size !== value.eligibility.gameIds.length) return 'Choose unique logical game identifiers.';
   if (!list(value.resources, 64) || !value.resources.every(row => exact(row, [...labelKeys, 'kind', 'required', 'ports']) && nodeLabel(row) && ['device', 'companion', 'game'].includes(String(row.kind)) && typeof row.required === 'boolean' && ports(row.ports))) return 'Use valid logical resources and typed ports.';
-  if (!list(value.processingNodes, 256) || !value.processingNodes.every(row => exact(row, [...labelKeys, 'operation', 'inputs', 'outputs']) && nodeLabel(row) && operation(row.operation) && ports(row.inputs) && ports(row.outputs) && ((row.operation as ProfileOperation).kind !== 'script' || row.inputs.length >= 1 && row.inputs.length <= 32 && row.outputs.length >= 1 && row.outputs.length <= 16))) return 'Use supported processing nodes and typed ports.';
+  if (!list(value.processingNodes, 256) || !value.processingNodes.every(row => exact(row, [...labelKeys, 'operation', 'inputs', 'outputs',...(object(row)&&Object.hasOwn(row,'draft')?['draft']:[])]) && nodeLabel(row) && operation(row.operation) && ports(row.inputs) && ports(row.outputs) && (!Object.hasOwn(row,'draft') || row.inputs.length>0 && processingDraftValid(row.draft,row.operation)) && ((row.operation as ProfileOperation).kind !== 'script' || row.inputs.length >= 1 && row.inputs.length <= 32 && row.outputs.length >= 1 && row.outputs.length <= 16))) return 'Use supported processing nodes and typed ports.';
   if (!list(value.virtualOutputs, 16) || !value.virtualOutputs.every(row => exact(row, [...labelKeys, 'required', 'ports', 'layout']) && nodeLabel(row) && typeof row.required === 'boolean' && ports(row.ports) && layout(row.layout))) return 'Use valid logical virtual outputs.';
   const desktops=Object.hasOwn(value,'desktopOutputs')?value.desktopOutputs:[];
   if(!list(desktops,Object.hasOwn(value,'vehicleTabs')?33:1)||!desktops.every(desktopOutput))return 'Use one desktop endpoint per active tab with one exact typed action per input port.';

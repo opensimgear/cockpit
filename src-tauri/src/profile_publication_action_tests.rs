@@ -245,7 +245,7 @@ impl Fixture {
             name: "Value".into(),
             schema: ScalarSchema::Boolean {},
         }];
-        candidate.document.processing_nodes = vec![ProcessingNode {
+        candidate.document.processing_nodes = vec![ProcessingNode { draft: None,
             id: "pack".into(),
             name: "Explicit setter".into(),
             operation: Operation::SetOnChange {

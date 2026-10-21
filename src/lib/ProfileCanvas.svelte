@@ -1,25 +1,27 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
-  import { profileInspectorHover } from './profile-inspector-hover';
   import type { DeepReadonly, ProfileDocument, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout } from './profile-editor';
   import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
-  import { diagramRoutes } from './profile-diagram';
+  import { diagramPendingPath, diagramPortAnchor, diagramRoutes } from './profile-diagram';
   import {processingSummary} from './profile-processing';
   import type{CompileDiagnostic}from'./profile-compilation';
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
-    inspector?:Snippet<[CanvasNode]>; selectProviderPort?:(nodeId:string,port:DeepReadonly<ObservedResourcePort>)=>void; removeProviderPort?:(nodeId:string,portId:string)=>void;
-    connectBlocks?:(fromNodeId:string,toNodeId:string)=>void;connectionFrom?:(nodeId:string)=>void;connectionTo?:(nodeId:string)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
+    inspector?:Snippet<[CanvasNode]>;nodeControls?:Snippet<[CanvasNode]>; selectProviderPort?:(nodeId:string,port:DeepReadonly<ObservedResourcePort>)=>void; removeProviderPort?:(nodeId:string,portId:string)=>void;
+    connectBlocks?:(fromNodeId:string,toNodeId:string,position?:CanvasPoint)=>void;connectionFrom?:(nodeId:string,position?:CanvasPoint)=>void;connectionTo?:(nodeId:string,position?:CanvasPoint)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
     editConnection?:(bindingId:string)=>void;
+    selectedEdgeId?:string;selectConnection?:(bindingId:string)=>void;connectionSourceId?:string;connectionTargetId?:string;
+    reconnectConnection?:(bindingId:string,side:'from'|'to',nodeId:string,position?:CanvasPoint)=>void;disconnectConnection?:(bindingId:string)=>void;
+    dropOnConnection?:(component:ProfilePaletteComponent,bindingId:string,position:CanvasPoint)=>void;
     diagnostics?:readonly DeepReadonly<CompileDiagnostic>[];
     paletteDrag?:ProfilePaletteDrag|null;canDropComponent?:(component:ProfilePaletteComponent)=>boolean;
     dropComponent?:(component:ProfilePaletteComponent,position:CanvasPoint)=>void;endPaletteDrag?:()=>void;
@@ -31,7 +33,8 @@
   let search = $state('');
   let view = $state<CanvasViewport>({ ...untrack(() => document.editor.viewport) });
   let dragged = $state<{id:string;position:CanvasPoint}|null>(null);
-  let wire=$state<{nodeId:string;direction:'input'|'output';pointer:number;start:CanvasPoint;end:CanvasPoint;moved:boolean}|null>(null);
+  let wire=$state<{nodeId:string;direction:'input'|'output';pointer:number;start:CanvasPoint;end:CanvasPoint;moved:boolean;reconnect?:{bindingId:string;side:'from'|'to'}}|null>(null);
+  let wireTargetId=$state(''),hoveredEdgeId=$state(''),paletteConnectionId=$state('');
   let suppressWireClick=false;
   let palettePreview=$state<CanvasPoint|null>(null);
   let page = $state<DeepReadonly<ResourceDetails>|null>(null), portsBusy = $state(false), portError = $state('');
@@ -52,6 +55,7 @@
   const frames=$derived(canvasGroups(visibleDocument,nodes));
   const dropGroup=$derived(dragged?canvasGroupAt(visibleDocument,{x:dragged.position.x+PROFILE_BLOCK_WIDTH/2,y:dragged.position.y+PROFILE_BLOCK_HEIGHT/2}):palettePreview?canvasGroupAt(visibleDocument,{x:palettePreview.x+PROFILE_BLOCK_WIDTH/2,y:palettePreview.y+PROFILE_BLOCK_HEIGHT/2}):null);
   const selected = $derived(nodes.find(node => node.id === selectedId));
+  const selectedEdge=$derived(document.bindings.find(binding=>binding.id===selectedEdgeId));
   const selectedDiagnostics=$derived(diagnostics.filter(diagnostic=>diagnostic.location.nodeId===selectedId||diagnostic.location.resourceId===selectedId||document.bindings.some(binding=>diagnostic.location.edgeIds.includes(binding.id)&&(binding.from.nodeId===selectedId||binding.to.nodeId===selectedId))));
   const matches = $derived(canvasSearch(nodes, search));
   const inputs = $derived(selected?.resource?.ports.filter(port=>port.direction==='input') ?? selected?.processing?.inputs ?? selected?.virtual?.ports ?? selected?.desktop?.ports ?? []);
@@ -85,7 +89,12 @@
       return next;
     }),'Auto-layout');
   }
-  function choose(id:string) { closeConnectionPanel?.();selectedId=id; }
+  function choose(id:string) { closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
+  function chooseConnection(id:string) {if(selectConnection){selectedId='';selectConnection(id);}else editConnection?.(id);}
+  function portName(nodeId:string,portId:string,direction:'input'|'output') {const node=nodes.find(node=>node.id===nodeId);return node?blockPorts(node,direction).find(port=>port.id===portId)?.name??portId:portId;}
+  function activeHandle(nodeId:string,direction:'input'|'output') {
+    return direction==='output'?(connectionSourceId===nodeId||selectedEdge?.from.nodeId===nodeId||wire?.direction==='output'&&wire.nodeId===nodeId||wire?.direction==='input'&&wireTargetId===nodeId):(connectionTargetId===nodeId||selectedEdge?.to.nodeId===nodeId||wire?.direction==='input'&&wire.nodeId===nodeId||wire?.direction==='output'&&wireTargetId===nodeId);
+  }
   function blockPorts(node:CanvasNode,direction:'input'|'output'):readonly DeepReadonly<ProfilePort>[] {
     if(node.resource)return(discoveredPorts[node.id]??node.resource.ports).filter(port=>port.direction===direction);
     if(node.processing)return direction==='output'?node.processing.outputs:node.processing.inputs;
@@ -93,9 +102,13 @@
   }
   function wireClick(event:MouseEvent,nodeId:string,direction:'input'|'output'){
     event.stopPropagation();if(suppressWireClick&&event.detail!==0){suppressWireClick=false;return;}if(readOnly)return;
-    selectedId=nodeId;if(direction==='output')connectionFrom?.(nodeId);else connectionTo?.(nodeId);
+    selectedId=nodeId;selectConnection?.('');const position=event.detail===0?clientAnchor(nodeId,direction):{x:event.clientX,y:event.clientY};if(direction==='output')connectionFrom?.(nodeId,position);else connectionTo?.(nodeId,position);
   }
-  function clearPalettePreview(){palettePreview=null;}
+  function clientAnchor(nodeId:string,direction:'input'|'output'):CanvasPoint|undefined {
+    const node=renderedNodes.find(node=>node.id===nodeId);if(!node||!stage)return;
+    const anchor=diagramPortAnchor(node.position,direction,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),rect=stage.getBoundingClientRect();return{x:rect.left+view.x+anchor.x*view.zoom,y:rect.top+view.y+anchor.y*view.zoom};
+  }
+  function clearPalettePreview(){palettePreview=null;paletteConnectionId='';}
   function acceptsPaletteDrop(event:DragEvent){
     if(readOnly||!paletteDrag||!dropComponent||canDropComponent?.(paletteDrag.component)===false)return false;
     const target=event.target as Element|null;
@@ -110,13 +123,14 @@
   function overPalette(event:DragEvent){
     if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
     event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect='copy';palettePreview=palettePosition(event);
+    paletteConnectionId=dropOnConnection&&paletteDrag?.component.kind==='transformation'?(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]')?.dataset.connectionId??'':'';
   }
   function leavePalette(event:DragEvent){if(event.relatedTarget&&stage.contains(event.relatedTarget as Node))return;clearPalettePreview();}
   function dropPalette(event:DragEvent){
     if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
     event.preventDefault();event.stopPropagation();
-    const component=paletteDrag!.component,position=palettePosition(event);clearPalettePreview();
-    try{dropComponent?.(component,position);}finally{endPaletteDrag?.();}
+    const component=paletteDrag!.component,position=palettePosition(event),bindingId=component.kind==='transformation'?(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]')?.dataset.connectionId:undefined;clearPalettePreview();
+    try{if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
   }
   function focusNewNode(node:CanvasNode){view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+PROFILE_BLOCK_WIDTH/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+PROFILE_BLOCK_HEIGHT/2)*view.zoom};}
   function slideDetails(_node: HTMLElement) {
@@ -141,7 +155,7 @@
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
-    if(target.closest('.signal-edge-hit')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
+    if(target.closest('.signal-edge-hit,.connection-endpoint')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
     id ??= target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
     event.preventDefault();stage.setPointerCapture(event.pointerId);
     drag={id,origin:id?{...nodes.find(node=>node.id===id)!.position}:{x:0,y:0},start:{x:event.clientX,y:event.clientY},viewport:{...view},pointer:event.pointerId,moved:false};
@@ -159,37 +173,49 @@
   function beginWire(event:PointerEvent,nodeId:string,direction:'input'|'output'){
     if(readOnly||!connectBlocks||event.button!==0)return;event.stopPropagation();event.preventDefault();suppressWireClick=false;
     const node=nodes.find(node=>node.id===nodeId)!;
-    wire={nodeId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:{x:node.position.x+(direction==='output'?PROFILE_BLOCK_WIDTH:0),y:node.position.y+PROFILE_BLOCK_HEIGHT/2},moved:false};stage.setPointerCapture(event.pointerId);
+    wireTargetId='';wire={nodeId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:diagramPortAnchor(node.position,direction,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),moved:false};stage.setPointerCapture(event.pointerId);
   }
-  function move(event:PointerEvent) {if(wire&&event.pointerId===wire.pointer){const rect=stage.getBoundingClientRect();wire={...wire,moved:wire.moved||Math.hypot(event.clientX-wire.start.x,event.clientY-wire.start.y)>=4,end:{x:(event.clientX-rect.left-view.x)/view.zoom,y:(event.clientY-rect.top-view.y)/view.zoom}};return;} if(!drag||event.pointerId!==drag.pointer)return;const delta={x:event.clientX-drag.start.x,y:event.clientY-drag.start.y};if(!drag.moved&&Math.hypot(delta.x,delta.y)<4)return;drag.moved=true;if(drag.group)previewGroup(delta);else if(drag.id&&!readOnly)dragged={id:drag.id,position:{x:drag.origin.x+delta.x/view.zoom,y:drag.origin.y+delta.y/view.zoom}};else if(!drag.id)view=canvasPan(drag.viewport,delta); }
+  function beginReconnect(event:PointerEvent,bindingId:string,side:'from'|'to'){
+    if(readOnly||!reconnectConnection||event.button!==0)return;event.stopPropagation();event.preventDefault();
+    const binding=document.bindings.find(binding=>binding.id===bindingId);if(!binding)return;
+    const nodeId=side==='from'?binding.to.nodeId:binding.from.nodeId,direction=side==='from'?'input':'output',node=nodes.find(node=>node.id===nodeId),moving=nodes.find(node=>node.id===binding[side].nodeId);if(!node||!moving)return;
+    wireTargetId='';wire={nodeId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:diagramPortAnchor(moving.position,side==='from'?'output':'input',PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),moved:false,reconnect:{bindingId,side}};stage.setPointerCapture(event.pointerId);
+  }
+  function reconnectKey(event:KeyboardEvent,bindingId:string,side:'from'|'to') {
+    if(event.key!=='Enter'&&event.key!==' ')return;event.preventDefault();event.stopPropagation();const binding=document.bindings.find(binding=>binding.id===bindingId);if(binding)reconnectConnection?.(bindingId,side,binding[side].nodeId,clientAnchor(binding[side].nodeId,side==='from'?'output':'input'));
+  }
+  function move(event:PointerEvent) {if(wire&&event.pointerId===wire.pointer){const rect=stage.getBoundingClientRect(),hit=window.document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLButtonElement>(wire.direction==='output'?'[data-connection-target]':'[data-connection-source]');wireTargetId=hit&&!hit.disabled?(wire.direction==='output'?hit.dataset.connectionTarget:hit.dataset.connectionSource)??'':'';if(wireTargetId===wire.nodeId)wireTargetId='';wire={...wire,moved:wire.moved||Math.hypot(event.clientX-wire.start.x,event.clientY-wire.start.y)>=4,end:{x:(event.clientX-rect.left-view.x)/view.zoom,y:(event.clientY-rect.top-view.y)/view.zoom}};return;} if(!drag||event.pointerId!==drag.pointer)return;const delta={x:event.clientX-drag.start.x,y:event.clientY-drag.start.y};if(!drag.moved&&Math.hypot(delta.x,delta.y)<4)return;drag.moved=true;if(drag.group)previewGroup(delta);else if(drag.id&&!readOnly)dragged={id:drag.id,position:{x:drag.origin.x+delta.x/view.zoom,y:drag.origin.y+delta.y/view.zoom}};else if(!drag.id)view=canvasPan(drag.viewport,delta); }
   function finish(event:PointerEvent,cancel=false) {
     if(wire&&event.pointerId===wire.pointer){
-      const pending=wire;wire=null;suppressWireClick=true;
+      const pending=wire;wire=null;wireTargetId='';suppressWireClick=true;
       if(!cancel){
         const element=window.document.elementFromPoint(event.clientX,event.clientY);
         const handle=element?.closest<HTMLButtonElement>(pending.direction==='output'?'[data-connection-target]':'[data-connection-source]');
         const target=handle?.disabled?undefined:pending.direction==='output'?handle?.dataset.connectionTarget:handle?.dataset.connectionSource;
         selectedId=pending.nodeId;
-        if(target&&target!==pending.nodeId){if(pending.direction==='output')connectBlocks?.(pending.nodeId,target);else connectBlocks?.(target,pending.nodeId);}
-        else if(!pending.moved){if(pending.direction==='output')connectionFrom?.(pending.nodeId);else connectionTo?.(pending.nodeId);}
-        else if(element&&stage.contains(element)&&!element.closest('[data-node-id],.canvas-inspector,.canvas-connection-panel')){closeConnectionPanel?.();selectedId='';}
+        const position={x:event.clientX,y:event.clientY};
+        if(target&&target!==pending.nodeId){if(pending.reconnect)reconnectConnection?.(pending.reconnect.bindingId,pending.reconnect.side,target,position);else if(pending.direction==='output')connectBlocks?.(pending.nodeId,target,position);else connectBlocks?.(target,pending.nodeId,position);}
+        else if(!pending.moved&&!pending.reconnect){if(pending.direction==='output')connectionFrom?.(pending.nodeId,position);else connectionTo?.(pending.nodeId,position);}
+        else if(element&&stage.contains(element)&&!element.closest('[data-node-id],.canvas-inspector,.canvas-connection-panel')){closeConnectionPanel?.();selectConnection?.('');selectedId='';}
       }
       if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);return;
     }
-    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeConnectionPanel?.();selectedId='';}}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
+    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeConnectionPanel?.();selectConnection?.('');selectedId='';}}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
   }
   function wheel(event:WheelEvent) { event.preventDefault();if(event.ctrlKey||event.metaKey){const rect=stage.getBoundingClientRect();zoom(event.deltaY<0?1.1:1/1.1,{x:event.clientX-rect.left,y:event.clientY-rect.top});}else{view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});persist();} }
   function keyboard(event:KeyboardEvent) {
     if(event.key==='Escape'&&paletteDrag){clearPalettePreview();endPaletteDrag?.();return;}
-    if(event.key==='Escape'&&wire){event.preventDefault();const pointer=wire.pointer;wire=null;suppressWireClick=true;if(stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);return;}
+    if(event.key==='Escape'&&wire){event.preventDefault();const pointer=wire.pointer;wire=null;wireTargetId='';suppressWireClick=true;if(stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);return;}
     if(event.key==='Escape'&&drag){event.preventDefault();const pointer=drag.pointer;view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;layoutError='';if(stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);return;}
     if((event.target as Element).closest('input,textarea,select,[contenteditable="true"]'))return;
+    if(event.key==='Escape'){event.preventDefault();closeConnectionPanel?.();selectConnection?.('');selectedId='';return;}
+    if(!readOnly&&selectedEdgeId&&disconnectConnection&&['Delete','Backspace'].includes(event.key)){event.preventDefault();disconnectConnection(selectedEdgeId);return;}
     if(!readOnly&&(undo||redo)&&(event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())){event.preventDefault();if(event.shiftKey||event.key.toLowerCase()==='y')redo?.();else undo?.();return;}
     if((event.target as Element).closest('button,a'))return;
     if(event.key==='+'||event.key==='='){event.preventDefault();zoom(1.2);}else if(event.key==='-'){event.preventDefault();zoom(1/1.2);}else if(event.key==='0'){event.preventDefault();fit();}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();view=canvasPan(view,{x:event.key==='ArrowLeft'?40:event.key==='ArrowRight'?-40:0,y:event.key==='ArrowUp'?40:event.key==='ArrowDown'?-40:0});persist();}
   }
-  function lostPointer(event:PointerEvent){if(wire?.pointer===event.pointerId){wire=null;suppressWireClick=true;}if(drag?.pointer===event.pointerId){view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;}}
-  function connectionKey(event:KeyboardEvent,id:string){if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();editConnection?.(id);}}
+  function lostPointer(event:PointerEvent){if(wire?.pointer===event.pointerId){wire=null;wireTargetId='';suppressWireClick=true;}if(drag?.pointer===event.pointerId){view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;}}
+  function connectionKey(event:KeyboardEvent,id:string){if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();chooseConnection(id);}else if(!readOnly&&['Delete','Backspace'].includes(event.key)&&disconnectConnection){event.preventDefault();event.stopPropagation();disconnectConnection(id);}}
   function moveBlock(event:KeyboardEvent,id:string) { if(!event.altKey||readOnly||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();const node=nodes.find(node=>node.id===id)!;const step=event.shiftKey?64:16;editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,id,{x:node.position.x+(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0),y:node.position.y+(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)})),'Move component'); }
   function groupKeyboard(event:KeyboardEvent,frame:CanvasGroup,mode:'move'|'resize'){
     if(readOnly||!event.altKey||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;
@@ -208,7 +234,7 @@
 
 <section class="profile-graph" aria-label="Profile resource graph">
   <div class="canvas-toolbar"><label class="canvas-search"><Icon name="search" size={14}/><input aria-label="Search profile blocks" placeholder="Find a block, type or transport…" bind:value={search} onkeydown={event=>{if(event.key==='Enter')focusMatch();}}/></label><button class="text-button" onclick={focusMatch} disabled={!matches.length}>{search?`${matches.length} matches`:`${nodes.length} blocks`}</button><button class="secondary-button" onclick={fit}>Fit all</button><button class="secondary-button" disabled={readOnly} onclick={layout}>Auto-layout</button><div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button><output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output><button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div></div>
-  <p class="canvas-help" id="profile-canvas-help">Drag the background to pan. Ctrl/⌘ + wheel zooms. Drop components into a group to add them; drag them outside to remove them. Drag a group heading to move it, or its corner to resize. Select a block to inspect ports; Alt + arrow keys move its focused heading.{#if connectBlocks}{' '}Drag Inputs / actions to Outputs, or Outputs to Inputs / actions, then choose the exact ports in the side panel. You can also click either port group. Ctrl/⌘ + Z undoes; Shift + Z redoes.{/if}{' '}Every solid line is an explicit signal route.{#if editConnection}{' '}Select a connection line to insert a transformation.{/if}</p>
+  <p class="canvas-help" id="profile-canvas-help">Drop components, then drag Outputs to Inputs / actions and choose a port. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan; Ctrl/⌘ + wheel zooms. Ctrl/⌘ + Z undoes; Shift + Z redoes.</p>
   <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
     <div class="canvas-stage" class:node-dragging={!!dragged||!!groupPreview} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={move} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
@@ -217,7 +243,7 @@
         {#if palettePreview&&paletteDrag}
           <div class="palette-drop-preview" role="img" aria-label="Component drop preview" data-component-kind={paletteDrag.component.kind} data-preview-x={palettePreview.x} data-preview-y={palettePreview.y} style={`left:${palettePreview.x}px;top:${palettePreview.y}px;width:${PROFILE_BLOCK_WIDTH}px;height:${PROFILE_BLOCK_HEIGHT}px`}>
             <div class="preview-heading"><span class="block-category">{paletteDrag.category}</span><strong title={paletteDrag.name}>{paletteDrag.name}</strong></div>
-            <span class="preview-hint"><Icon name="plus" size={18}/>Release to add</span>
+            <span class="preview-hint"><Icon name="plus" size={18}/>{paletteConnectionId?'Release to insert into connection':'Release to add'}</span>
           </div>
         {/if}
         {#each frames as frame (frame.id)}
@@ -227,19 +253,39 @@
             {#if !readOnly}<button class="editor-group-resize" aria-label={`Resize group ${frame.name}`} title="Drag to resize; Alt + arrow keys to adjust" onpointerdown={event=>beginGroup(event,frame,'resize')} onkeydown={event=>groupKeyboard(event,frame,'resize')}></button>{/if}
           </div>
         {/each}
-        <svg class="signal-edges" width="1" height="1" aria-label="Saved signal routes"><defs><marker id="profile-signal-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" /></marker></defs>{#each routes as route (route.binding.id)}{@const binding=route.binding}<path class="signal-edge" data-binding-id={binding.id} class:highlighted={highlightedEdges.includes(binding.id)} class:problem={diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(binding.id))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{binding.id}: {binding.from.portId} → {binding.to.portId}</title></path>{#if editConnection}<path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Edit connection ${binding.id}: ${binding.from.portId} to ${binding.to.portId}`} onpointerdown={event=>event.stopPropagation()} onclick={()=>editConnection?.(binding.id)} onkeydown={event=>connectionKey(event,binding.id)}><title>Click to insert a transformation</title></path>{/if}{/each}{#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={`M${from.position.x+(pending.direction==='output'?PROFILE_BLOCK_WIDTH:0)},${from.position.y+PROFILE_BLOCK_HEIGHT/2} L${pending.end.x},${pending.end.y}`}><title>Choose the other block, then exact ports</title></path>{/if}{/if}</svg>
+        <svg class="signal-edges" width="1" height="1" aria-label="Saved signal routes">
+          <defs><marker id="profile-signal-arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" viewBox="0 0 8 8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Q1,4 0,0 Z" /></marker></defs>
+          {#each routes as route (route.binding.id)}
+            {@const binding=route.binding}
+            {@const visibleLabel=selectedEdgeId===binding.id||hoveredEdgeId===binding.id}
+            <path class="signal-edge" data-binding-id={binding.id} class:selected={selectedEdgeId===binding.id} class:drop-target={paletteConnectionId===binding.id} class:highlighted={highlightedEdges.includes(binding.id)} class:problem={diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(binding.id))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{portName(binding.from.nodeId,binding.from.portId,'output')} → {portName(binding.to.nodeId,binding.to.portId,'input')}</title></path>
+            {#if selectConnection||editConnection||dropOnConnection}
+              <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Select connection ${binding.id}: ${binding.from.portId} to ${binding.to.portId}`} aria-pressed={selectedEdgeId===binding.id} onpointerdown={event=>event.stopPropagation()} onpointerenter={()=>hoveredEdgeId=binding.id} onpointerleave={()=>hoveredEdgeId=''} onclick={()=>chooseConnection(binding.id)} onkeydown={event=>connectionKey(event,binding.id)}><title>Select to manage connection; drag an endpoint to reconnect</title></path>
+            {/if}
+            {#if visibleLabel}
+              {@const start=route.points[0]}{@const end=route.points.at(-1)!}
+              <text class="connection-port-label" x={start.x+12} y={start.y-12} text-anchor="start">{portName(binding.from.nodeId,binding.from.portId,'output')}</text>
+              <text class="connection-port-label" x={end.x-12} y={end.y+24} text-anchor="end">{portName(binding.to.nodeId,binding.to.portId,'input')}</text>
+              {#if selectedEdgeId===binding.id&&reconnectConnection&&!readOnly}
+                <circle class="connection-endpoint" data-reconnect-side="from" data-reconnect-binding={binding.id} cx={start.x} cy={start.y} r="7" role="button" tabindex="0" aria-label={`Reconnect source of ${binding.id}`} onpointerdown={event=>beginReconnect(event,binding.id,'from')} onkeydown={event=>reconnectKey(event,binding.id,'from')}><title>Drag to another output</title></circle>
+                <circle class="connection-endpoint" data-reconnect-side="to" data-reconnect-binding={binding.id} cx={end.x} cy={end.y} r="7" role="button" tabindex="0" aria-label={`Reconnect destination of ${binding.id}`} onpointerdown={event=>beginReconnect(event,binding.id,'to')} onkeydown={event=>reconnectKey(event,binding.id,'to')}><title>Drag to another input</title></circle>
+              {/if}
+            {/if}
+          {/each}
+          {#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={diagramPendingPath(diagramPortAnchor(from.position,pending.direction,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),pending.end,pending.direction)}><title>Choose the other block, then select compatible ports</title></path>{/if}{/if}
+        </svg>
         {#each renderedNodes as node (node.id)}
           {@const blockInputs=blockPorts(node,'input')}
           {@const blockOutputs=blockPorts(node,'output')}
           {@const discovering=discoveryBusy.includes(node.id)}
           <article data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${PROFILE_BLOCK_WIDTH}px;height:${PROFILE_BLOCK_HEIGHT}px`} aria-label={`${node.name} · ${node.category}`}>
             <button class="block-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">{node.category}</span><strong>{node.name}</strong><code>{node.id}</code></button>
-            <div class="block-body"><span class="block-state">{canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else if node.processing}<p class="block-note" title={processingSummary(node.processing)}>{processingSummary(node.processing)}</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}</div>
+            <div class="block-body"><span class="block-state">{node.processing?.draft?'Needs input · choose transformation settings':canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else if node.processing}<p class="block-note" title={processingSummary(node.processing)}>{processingSummary(node.processing)}</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
             <div class="block-port-groups">
-              <button data-connection-target={node.id} aria-label={`Inputs / actions for ${node.name} (${blockInputs.length})`} title="Drag to Outputs on another block, or click to choose an output" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockInputs.length)} onpointerdown={event=>beginWire(event,node.id,'input')} onclick={event=>wireClick(event,node.id,'input')}>
+              <button data-connection-target={node.id} class:connection-active={activeHandle(node.id,'input')} class:connection-hover={wire?.direction==='output'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'input')} aria-label={`Inputs / actions for ${node.name} (${blockInputs.length})`} title="Drag to Outputs on another block, or click to choose an output" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockInputs.length&&!node.processing?.draft)} onpointerdown={event=>beginWire(event,node.id,'input')} onclick={event=>wireClick(event,node.id,'input')}>
                 <span class="port-group-heading">Inputs / actions <span>{discovering&&!blockInputs.length?'…':blockInputs.length}</span></span>
               </button>
-              <button data-connection-source={node.id} aria-label={`Outputs for ${node.name} (${blockOutputs.length})`} title="Drag to Inputs / actions on another block, or click to choose an input" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockOutputs.length)} onpointerdown={event=>beginWire(event,node.id,'output')} onclick={event=>wireClick(event,node.id,'output')}>
+              <button data-connection-source={node.id} class:connection-active={activeHandle(node.id,'output')} class:connection-hover={wire?.direction==='input'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'output')} aria-label={`Outputs for ${node.name} (${blockOutputs.length})`} title="Drag to Inputs / actions on another block, or click to choose an input" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockOutputs.length&&!node.processing?.draft)} onpointerdown={event=>beginWire(event,node.id,'output')} onclick={event=>wireClick(event,node.id,'output')}>
                 <span class="port-group-heading">Outputs <span>{discovering&&!blockOutputs.length?'…':blockOutputs.length}</span></span>
               </button>
             </div>
@@ -251,9 +297,9 @@
     {#if connectionOpen&&connectionPanel}
       <aside class="canvas-connection-panel" aria-label="Exact connection editor" transition:slideDetails>{@render connectionPanel()}</aside>
     {:else if selected}
-    <aside class="canvas-inspector" aria-label="Selected block inspector" data-expanded="false" use:profileInspectorHover transition:slideDetails>
-        <button class="inspector-reveal" data-inspector-reveal aria-label="Show component settings" aria-controls={inspectorContentId} aria-expanded="false" title="Component settings"><Icon name="sliders" size={18}/><span>Settings</span></button>
-        <div class="inspector-content" id={inspectorContentId} data-inspector-content inert aria-hidden="true">
+    <aside class="canvas-inspector" aria-label="Selected block inspector" data-expanded="true" transition:slideDetails>
+        <button class="inspector-close" aria-label="Close component settings" onclick={()=>selectedId=''}><Icon name="close" size={16}/></button>
+        <div class="inspector-content" id={inspectorContentId} data-inspector-content>
         <p class="inspector-category">{selected.category}</p><h3>{selected.name}</h3><p class="inspector-state">{canvasStatus(selected)}</p>
         {#if selected.resource}<p class="inspector-note">{selected.resource.required?'Required':'Optional'} resource. Its saved identity and routes remain when disconnected.</p>{/if}
         {#if gameId&&openGameSettings}<button class="text-button game-settings-link" onclick={()=>openGameSettings?.(gameId!,{profileId:document.id,resourceId:selected.id})}>Open game settings <Icon name="arrow" size={12}/></button>{/if}
@@ -281,14 +327,15 @@
   .signal-edge.problem{stroke:#d3a078;stroke-width:3}.signal-edge.highlighted{stroke:#e0bd7e;stroke-width:4}.pending-wire{fill:none;stroke:var(--accent);stroke-width:2;stroke-dasharray:5 4}.port-row button{font-size:9px;display:block;margin-top:9px}
   .profile-graph{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface);}.canvas-toolbar{display:flex;align-items:center;gap:10px;padding:14px;flex-wrap:wrap;border-bottom:1px solid var(--line);}.canvas-search{display:flex;align-items:center;gap:8px;flex:1;min-width:190px;max-width:350px;color:var(--muted);}.canvas-search input{background:transparent;border:0;color:var(--text);font-size:11px;min-width:0;width:100%;outline:0;}.canvas-search:focus-within{outline:1px solid var(--accent);outline-offset:6px;border-radius:2px;}.canvas-toolbar button{font-size:10px;}.zoom-controls{display:flex;align-items:center;border:1px solid var(--line);border-radius:6px;margin-left:auto;}.zoom-controls button{width:30px;height:30px;background:transparent;color:var(--soft);font-size:16px;}.zoom-controls output{min-width:44px;text-align:center;font-size:10px;color:var(--muted);}.canvas-help{font-size:9px;color:var(--muted);line-height:1.7;padding:10px 14px;margin:0;border-bottom:1px solid var(--line);}.canvas-layout{position:relative;overflow:hidden;}.canvas-stage{position:relative;min-height:620px;height:70vh;max-height:850px;overflow:hidden;touch-action:none;background-color:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:20px 20px;}.canvas-stage:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;}.canvas-world{position:absolute;left:0;top:0;transform-origin:0 0;}.signal-edges{position:absolute;overflow:visible;pointer-events:none;}.signal-edge:hover{stroke:var(--text);stroke-width:3}.signal-edge{pointer-events:stroke;stroke-linejoin:round;stroke-linecap:round;fill:none;stroke:var(--accent);stroke-width:2;}.signal-edges marker path{fill:var(--accent);}.resource-block{position:absolute;cursor:grab;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:0 8px 24px #0002;overflow:hidden;display:flex;flex-direction:column;transition:opacity .12s;}.resource-block.selected{outline:2px solid var(--accent);outline-offset:2px;}.resource-block.processing{border-color:#b794d2;}.resource-block.virtual{border-color:#c6ab6d;}.resource-block.dimmed{opacity:.35;}.block-heading{display:grid;gap:6px;text-align:left;padding:14px;width:100%;background:var(--surface-raised);color:var(--text);border-bottom:1px solid var(--line);cursor:grab;}.block-heading:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;}.block-category{font-size:8px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);}.processing .block-category{color:#c6a0e5;}.virtual .block-category{color:#d3bd85;}.block-heading strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.block-heading code{font-size:8px;color:var(--muted);}.block-body{padding:12px 14px;flex:1;min-height:0;}.block-state{font-size:10px;color:var(--soft);}.transport-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}.transport-badges span{font-size:8px;line-height:1;border:1px solid var(--line);padding:4px 5px;border-radius:4px;color:var(--muted);}.block-note{font-size:9px;color:var(--muted);line-height:1.55;margin-top:8px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;}.block-port-groups{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line);}.block-port-groups button{display:flex;justify-content:space-between;gap:8px;background:transparent;color:var(--soft);font-size:9px;padding:11px;}.block-port-groups button+button{border-left:1px solid var(--line);}.block-port-groups span{color:var(--muted);}.canvas-inspector{position:absolute;inset:0 0 0 auto;width:75%;box-sizing:border-box;padding:24px;min-width:0;overflow:auto;border-left:1px solid var(--line);background:var(--surface);box-shadow:-12px 0 32px #0003;z-index:5;}.canvas-inspector h3{font-size:14px;overflow-wrap:anywhere;}.inspector-category{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin-bottom:9px;}.inspector-state{font-size:10px;color:var(--soft);margin:10px 0;}.inspector-note{font-size:10px;color:var(--muted);line-height:1.75;margin:10px 0;}.canvas-inspector details{margin:18px 0 0;border-top:1px solid var(--line);padding-top:14px;}.canvas-inspector summary{font-size:10px;color:var(--soft);cursor:pointer;line-height:1.6;}.canvas-inspector details details{margin-top:10px;padding-top:10px;}.port-row{padding:11px 0;border-bottom:1px solid var(--faint-line);overflow-wrap:anywhere;}.port-row strong{display:block;font-size:10px;color:var(--soft);}.port-row code{display:block;font-size:8px;color:var(--muted);margin-top:5px;}.port-row p,.connection-row p{font-size:9px;color:var(--muted);line-height:1.7;margin-top:6px;}.port-row small{font-size:8px;color:var(--muted);}.port-error{font-size:10px;line-height:1.7;color:#d3a078;}.port-page-count{font-size:9px;color:var(--soft);margin-top:10px;}.port-pagination{display:flex;gap:8px;justify-content:space-between;margin-top:13px;}.port-pagination button{font-size:9px;}.connection-row{margin-top:14px;border-bottom:1px solid var(--line);padding-bottom:12px;}.connection-row strong{font-size:10px;color:var(--soft);}dl{font-size:9px;line-height:1.7;margin-top:12px;overflow-wrap:anywhere;}dl>div{margin-top:8px;}dt{color:var(--muted);}dd{margin:0;color:var(--soft);}.block-diagnostics{font-size:9px;color:#c7ad80;line-height:1.8;padding-left:16px;}.game-settings-link{font-size:10px;padding-left:0;}.empty-canvas{position:absolute;top:42%;width:100%;text-align:center;color:var(--muted);font-size:12px;}.graph-result-summary{display:flex;flex-wrap:wrap;gap:18px;padding:13px 16px;border-top:1px solid var(--line);font-size:9px;color:var(--muted);}@media(max-width:1000px){.canvas-stage{height:600px;min-height:400px;}}@media(max-width:600px){.canvas-toolbar{gap:8px;}.canvas-search{max-width:none;flex-basis:100%;}.zoom-controls{margin-left:0;}.canvas-stage{height:480px;}}
   .resource-block{box-sizing:border-box;}.block-heading{flex-shrink:0;padding:11px 12px;gap:4px;}.block-body{padding:9px 12px;overflow:hidden;}.block-note{margin:5px 0 0;}.block-discovery-error{color:#d3a078;}.transport-badges{margin-top:6px;flex-wrap:nowrap;overflow:hidden;}.transport-badges span{white-space:nowrap;}.block-port-groups{flex-shrink:0;height:40px;}.block-port-groups button{min-width:0;display:flex;flex-direction:column;align-items:stretch;justify-content:center;text-align:left;padding:10px;cursor:crosshair;}.block-port-groups button:hover:not(:disabled),.block-port-groups button:focus-visible{background:color-mix(in srgb,var(--accent) 8%,var(--surface));color:var(--text);}.block-port-groups button:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;}.block-port-groups button:disabled{cursor:default;opacity:.55;}.block-port-groups .port-group-heading{display:flex;align-items:center;justify-content:space-between;gap:5px;color:var(--soft);font-size:9px;font-weight:600;}.block-port-groups .port-group-heading>span{font-variant-numeric:tabular-nums;color:var(--accent);}.canvas-connection-panel{position:absolute;inset:0 0 0 auto;width:min(420px,100%);max-width:100%;box-sizing:border-box;padding:22px;overflow:auto;border-left:1px solid var(--line);background:var(--surface);box-shadow:-12px 0 32px #0003;z-index:6;}
-  .canvas-inspector{width:5%;padding:0;overflow:hidden;transition:width .18s ease;}
-  .canvas-inspector:global([data-expanded="true"]){width:50%;}
+  .canvas-inspector{width:min(430px,46%);padding:0;overflow:hidden;}
+  .canvas-inspector:global([data-expanded="true"]){width:min(430px,46%);}
+  .inspector-close{position:absolute;top:9px;right:9px;z-index:2;display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:5px;background:var(--surface-raised);color:var(--soft);cursor:pointer;}
+  .inspector-close:hover{color:var(--text);background:var(--line);}
   .inspector-content{height:100%;box-sizing:border-box;padding:24px;overflow:auto;}
-  .canvas-inspector[data-expanded="false"] .inspector-content{visibility:hidden;pointer-events:none;}
-  .inspector-reveal{position:absolute;inset:0;z-index:1;width:100%;height:100%;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--surface-raised);color:var(--accent);border:0;border-radius:0;cursor:pointer;}
-  .inspector-reveal span{writing-mode:vertical-rl;font-size:10px;letter-spacing:.5px;}
-  .inspector-reveal:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;}
-  .canvas-inspector:global([data-expanded="true"]) .inspector-reveal{opacity:0;pointer-events:none;}
-  .canvas-inspector:global([data-expanded="true"]) .inspector-reveal span{display:none;}
+  .signal-edges{z-index:2;}.signal-edge.selected,.signal-edge.drop-target{stroke:var(--accent);stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent));}
+  .connection-endpoint{fill:var(--surface);stroke:var(--accent);stroke-width:2;pointer-events:all;cursor:crosshair;}.connection-endpoint:hover,.connection-endpoint:focus-visible{fill:var(--accent);stroke:var(--text);outline:none;}
+  .connection-port-label{font-size:10px;fill:var(--text);paint-order:stroke;stroke:var(--bg);stroke-width:5px;stroke-linejoin:round;pointer-events:none;}
+  .block-port-groups button{position:relative;transition:background .12s,box-shadow .12s;}.block-port-groups button.connection-active{background:color-mix(in srgb,var(--accent) 18%,var(--surface));box-shadow:inset 0 0 0 1px var(--accent);}.block-port-groups button.connection-hover{background:color-mix(in srgb,var(--accent) 32%,var(--surface));box-shadow:inset 0 0 0 2px var(--accent);}.block-port-groups button:not(:disabled)::after{content:'';position:absolute;top:50%;width:6px;height:6px;border:1px solid var(--accent);border-radius:50%;background:var(--surface);transform:translateY(-50%);}.block-port-groups button[data-connection-target]::after{left:1px;}.block-port-groups button[data-connection-source]::after{right:1px;}.block-port-groups button.connection-active::after,.block-port-groups button:hover:not(:disabled)::after{background:var(--accent);}
+  @media(max-width:700px){.canvas-inspector,.canvas-inspector:global([data-expanded="true"]){width:min(380px,80%);}}
   @media(prefers-reduced-motion:reduce){.canvas-inspector{transition:none;}}
 </style>

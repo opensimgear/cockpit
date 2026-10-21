@@ -2,7 +2,7 @@ import { profileContractError, profileDocumentError, profilePortIdValid, profile
 import { graphContractError, graphScalarFits } from './profile-graph';
 
 export const PROCESSING_PRESETS = [
-  ['identity','Identity'],['declare-quantity','Interpret raw quantity'],['not','Boolean NOT'],['invert','Invert numeric value'],['scale','Scale and offset'],['range-map','Map numeric range'],['unit-convert','Convert units'],['ratio-to-percent','Ratio to percentage (0–100%)'],['deadzone','Deadzone'],['curve','Curve'],['compare','Compare'],['hysteresis','Condition with hysteresis'],['gate','Gate'],['any','Boolean OR'],['all','Boolean AND'],['priority','Explicit input priority'],['event-edge','State to event edge'],['event-to-state','Event to state'],['select','Choose values'],['format','Format text'],['fallback','Explicit unknown/stale fallback'],['constant','Constant value'],['toggle','Toggle'],['pulse','Pulse'],['tap','Tap'],['hold','Hold'],['double-tap','Double tap'],['macro','Timed macro'],['script','Script with declared ports'],
+  ['identity','Identity'],['declare-quantity','Interpret raw quantity'],['not','Boolean NOT'],['invert','Invert numeric value'],['scale','Scale and offset'],['clamp','Clamp'],['range-map','Map numeric range'],['unit-convert','Convert units'],['ratio-to-percent','Ratio to percentage (0–100%)'],['deadzone','Deadzone'],['curve','Curve'],['compare','Compare'],['hysteresis','Condition with hysteresis'],['gate','Gate'],['any','Boolean OR'],['all','Boolean AND'],['priority','Explicit input priority'],['event-edge','State to event edge'],['event-to-state','Event to state'],['select','Choose values'],['format','Format text'],['fallback','Explicit unknown/stale fallback'],['constant','Constant value'],['toggle','Toggle'],['pulse','Pulse'],['tap','Tap'],['hold','Hold'],['double-tap','Double tap'],['macro','Timed macro'],['script','Script with declared ports'],
 ] as const;
 export type ProcessingPreset = typeof PROCESSING_PRESETS[number][0];
 type ScalarContract = Extract<ProfilePortContract,{delivery:'state'|'event'}>;
@@ -43,6 +43,7 @@ export function processingSummary(node:DeepReadonly<ProfileProcessingNode>):stri
   if(op.kind==='unit-convert'){const output=node.outputs[0]?.contract,schema=output&&scalar(output);return `${op.from} → ${op.to} · ${op.rounding}${op.clamp&&numeric(schema)?` · clamp ${schema.min}–${schema.max}${schema.unit??''}`:''}`;}
   if(op.kind==='range-map')return `${op.inputMin}…${op.inputMax} → ${op.outputMin}…${op.outputMax} · ${op.rounding}`;
   if(op.kind==='scale')return `× ${op.factor} + ${op.offset}`;
+  if(op.kind==='clamp')return `Clamp ${op.min}…${op.max}`;
   if(op.kind==='priority')return `Priority: ${op.order.join(' → ')}`;
   if(op.kind==='builtin')return builtinSummary(op.rule,op.inputs);
   return Object.entries(op).map(([key,value])=>key==='kind'?String(value):`${key}: ${Array.isArray(value)?`${value.length} entries`:String(value)}`).join(' · ');
@@ -63,6 +64,7 @@ export function processingTemplate(preset:ProcessingPreset,id:string,input:DeepR
     case 'not':requireBoolean();operation={kind:'not'};break;
     case 'invert':requireNumeric();operation={kind:'invert'};break;
     case 'scale':requireNumeric();operation={kind:'scale',factor:1,offset:0};break;
+    case 'clamp':{const from=requireNumeric();operation={kind:'clamp',min:from.min,max:from.max};break;}
     case 'range-map':{const from=requireNumeric(),to=target&&numeric(scalar(target))?clone<Numeric>(scalar(target)! as DeepReadonly<Numeric>):from;operation={kind:'range-map',inputMin:from.min,inputMax:from.max,outputMin:to.min,outputMax:to.max,rounding:to.type==='integer'?'nearest':'none'};output=sameDelivery(to);break;}
     case 'unit-convert':{const from=requireNumeric();if(!from.unit)throw new Error('Unit conversion requires a declared source unit.');const to=target&&numeric(scalar(target))?clone<Numeric>(scalar(target)! as DeepReadonly<Numeric>):null;const unit=to?.unit??Object.keys(conversionTable[from.unit]??{})[0];const conversion=unit&&processingUnitConversion(from.unit,unit);if(!unit||!conversion)throw new Error('Choose a supported explicit unit conversion.');const [factor,offset]=conversion;const a=from.min*factor+offset,b=from.max*factor+offset;output=sameDelivery(to??{type:'number',min:Math.min(a,b),max:Math.max(a,b),unit});operation={kind:'unit-convert',from:from.unit,to:unit,rounding:to?.type==='integer'?'nearest':'none'};break;}
     case 'ratio-to-percent':{const from=requireNumeric();if(from.unit!=='ratio')throw new Error('Ratio to percentage requires a ratio source.');const to=target?scalar(target):null;if(target&&(!numeric(to)||to.type!=='number'||to.unit!=='%'||to.min>0||to.max<100))throw new Error('Ratio to percentage requires a number target accepting the full 0–100% range.');output=sameDelivery({type:'number',min:0,max:100,unit:'%'});operation={kind:'unit-convert',from:'ratio',to:'%',rounding:'none',clamp:true};break;}
@@ -152,6 +154,7 @@ export function processingNodeError(node:DeepReadonly<ProfileProcessingNode>):st
     case 'fallback':return same&&!!b&&[op.unknown,op.stale,op.unavailable].every(value=>profileScalarAccepts(b as ProfileScalarSchema,value))?'':fail;
     case 'select':return sameDelivery&&booleanInputs&&!!b&&[op.whenTrue,op.whenFalse].every(value=>profileScalarAccepts(b as ProfileScalarSchema,value))?'':fail;
     case 'scale':return sameDelivery?numericError(a,b,op.factor,op.offset,'none'):fail;
+    case 'clamp':return sameDelivery&&numeric(a)&&numeric(b)&&a.type===b.type&&a.unit===b.unit&&op.min<=op.max&&Number.isFinite(op.min)&&Number.isFinite(op.max)&&(a.type!=='integer'||Number.isSafeInteger(op.min)&&Number.isSafeInteger(op.max))&&b.min===Math.min(op.max,Math.max(op.min,a.min))&&b.max===Math.min(op.max,Math.max(op.min,a.max))?'':fail;
     case 'range-map':return sameDelivery&&numeric(a)&&op.inputMin<op.inputMax&&a.min>=op.inputMin&&a.max<=op.inputMax?numericError(a,b,(op.outputMax-op.outputMin)/(op.inputMax-op.inputMin),op.outputMin-op.inputMin*(op.outputMax-op.outputMin)/(op.inputMax-op.inputMin),op.rounding):fail;
     case 'unit-convert':{const conversion=processingUnitConversion(op.from,op.to);return sameDelivery&&conversion?numericError(a,b,...conversion,op.rounding,[op.from,op.to],op.clamp):fail;}
     case 'deadzone':return same&&numeric(a)&&Number.isFinite(op.center)&&Number.isFinite(op.radius)&&op.radius>=0&&op.center>=a.min&&op.center<=a.max&&op.radius<=Math.max(a.max-op.center,op.center-a.min)&&(b?.type!=='integer'||op.rounding!=='none'||op.radius===0)?'':fail;

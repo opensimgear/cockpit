@@ -3,13 +3,17 @@
   import type {DeepReadonly, ProfileEditorGroup} from './profiles';
   import type {ResourceSummary, ResourceType} from './profile-inventory';
   import {profileCategory} from './profile-editor';
-  import {PROFILE_PALETTE_MIME,type ProfilePaletteDrag} from './profile-palette';
+  import {PROFILE_PALETTE_MIME,profilePalettePanelReason,type ProfilePaletteDrag} from './profile-palette';
+  import {PROCESSING_PRESETS,type ProcessingPreset} from './profile-processing';
+  import {latestCompanionPanels,type ProfileCompanionPanel} from './profile-companion-authoring';
 
-  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, addTransformation=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
     inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; desktopAdded:boolean;
     editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];canAddGroup?:boolean;
     disabled?:boolean; refreshing?:boolean; error?:string; refresh:()=>void;
     addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDesktop:()=>void;
+    processingCount?:number;addTransformation?:(preset:ProcessingPreset)=>void;
+    capturedCompanionIds?:ReadonlySet<string>;companionPanelCount?:number;companionPanels?:readonly DeepReadonly<ProfileCompanionPanel>[];companionPanelsLoaded?:boolean;companionPanelsBusy?:boolean;companionPanelsError?:string;refreshPanels?:()=>void;addCompanionPanel?:(sourceId:string,publicationHash:string)=>void;
     addGroup?:()=>void;focusGroup?:(id:string)=>void;renameGroup?:(id:string,name:string)=>void;deleteGroup?:(id:string)=>void;
     startDrag?:(drag:ProfilePaletteDrag)=>void;endDrag?:()=>void;
   }=$props();
@@ -36,8 +40,14 @@
   const visibleGroups=$derived(editorGroups.filter(group=>!query||`${group.name} groups`.toLocaleLowerCase().includes(query)));
   const showVirtual=$derived(!query||'virtual controller outputs'.includes(query));
   const showDesktop=$derived(!query||'keyboard mouse desktop outputs'.includes(query));
+  const transformations=$derived([
+    {preset:'identity' as ProcessingPreset,label:'Transformation',description:'Choose a type after dropping'},
+    ...PROCESSING_PRESETS.filter(([preset])=>preset!=='identity').map(([preset,label])=>({preset,label:preset==='scale'?'Multiply':preset==='range-map'?'Map range':preset==='format'?'Format text':label,description:preset==='scale'?'Multiply and offset a numeric signal':'Configure on the canvas'})),
+  ].filter(item=>!query||`${item.label} ${item.description} transformation`.toLocaleLowerCase().includes(query)));
+  const pairedCompanions=$derived(inventory.filter(resource=>resource.resourceType==='companion'&&resource.attributes.componentKind==='paired-companion'));
+  const panelComponents=$derived(pairedCompanions.flatMap(source=>latestCompanionPanels(companionPanels).filter(panel=>!profilePalettePanelReason(panel,source)).map(panel=>({source,panel}))).filter(({source,panel})=>!query||`${source.name} ${panel.title} companion panels`.toLocaleLowerCase().includes(query)));
   function isOpen(category:string){return !!query||!!expanded[category];}
-  function rememberOpen(event:Event,category:string){if(!query)expanded={...expanded,[category]:(event.currentTarget as HTMLDetailsElement).open};}
+  function rememberOpen(event:Event,category:string){const open=(event.currentTarget as HTMLDetailsElement).open;if(!query)expanded={...expanded,[category]:open};if(category==='panels'&&open&&!companionPanelsLoaded&&!companionPanelsBusy&&!companionPanelsError)refreshPanels();}
   function added(resource:DeepReadonly<ResourceSummary>){return assignedIds.has(resource.id)||!!resource.attributes.companionId&&companionsInProfile.has(resource.attributes.companionId);}
   function editGroup(group:DeepReadonly<ProfileEditorGroup>){editingGroup=group.id;groupName=group.name;}
   function saveGroupName(){if(editingGroup&&groupName.trim()&&renameGroup)renameGroup(editingGroup,groupName.trim());editingGroup=null;}
@@ -71,6 +81,20 @@
         </div>
       </details>
     {/if}
+    {#if transformations.length}<details class="editor-accordion" aria-label="Transformation components" open={isOpen('transformations')} ontoggle={event=>rememberOpen(event,'transformations')}><summary>Transformations<span class="category-count">{transformations.length}</span></summary><div class="accordion-content">
+      {#each transformations as item (item.preset)}
+        <button class="component" data-processing-preset={item.preset} aria-label={`Add ${item.label}`} disabled={disabled||processingCount>=256} draggable={!disabled&&processingCount<256} ondragstart={event=>beginDrag(event,{component:{kind:'transformation',preset:item.preset},name:item.label,category:'Transformation'})} ondragend={endDrag} onclick={()=>addTransformation(item.preset)}><span class="component-icon"><Icon name="sliders" size={17}/></span><span class="component-copy"><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="plus" size={14}/></button>
+      {/each}
+    </div></details>{/if}
+    {#if pairedCompanions.length&&(!query||panelComponents.length||'companion panels'.includes(query))}<details class="editor-accordion" aria-label="Companion panel components" open={isOpen('panels')} ontoggle={event=>rememberOpen(event,'panels')}><summary>Companion panels<span class="category-count">{panelComponents.length}</span></summary><div class="accordion-content">
+      <button class="refresh-panels" disabled={companionPanelsBusy} onclick={refreshPanels}><Icon name="refresh" size={13}/>{companionPanelsBusy?'Reading saved panels…':companionPanelsError?'Retry saved panels':'Refresh saved panels'}</button>
+      {#if companionPanelsError}<p class="group-hint palette-error" role="status">{companionPanelsError}</p>{/if}
+      {#each panelComponents as {source,panel} (`${source.id}/${panel.publicationHash}`)}
+        {@const inProfile=added(source)||capturedCompanionIds.has(source.id)}
+        <button class="component" data-panel-source-id={source.id} data-panel-publication={panel.publicationHash} aria-label={`Add ${panel.title} to ${source.name}`} title={`${panel.title} · ${source.name}`} disabled={disabled||inProfile||resourceCount>=64||companionPanelCount>=8} draggable={!disabled&&!inProfile&&resourceCount<64&&companionPanelCount<8} ondragstart={event=>beginDrag(event,{component:{kind:'companion-panel',sourceId:source.id,publicationHash:panel.publicationHash},name:panel.title,category:`Companion · ${source.name}`})} ondragend={endDrag} onclick={()=>addCompanionPanel(source.id,panel.publicationHash)}><span class="component-icon"><Icon name="monitor" size={17}/></span><span class="component-copy"><strong>{panel.title}</strong><small>{inProfile?'Companion already added':source.name} · {panel.controlCount} controls</small></span><Icon name={inProfile?'check':'plus'} size={14}/></button>
+      {/each}
+      {#if companionPanelsLoaded&&!panelComponents.length&&!companionPanelsBusy}<p class="group-hint">No compatible saved panels. Save a panel in the panel designer, then refresh.</p>{/if}
+    </div></details>{/if}
       {#if showVirtual||showDesktop}<details class="editor-accordion" aria-label="Output components" open={isOpen('outputs')} ontoggle={event=>rememberOpen(event,'outputs')}><summary>Outputs<span class="category-count">{Number(showVirtual)+Number(showDesktop)}</span></summary><div class="accordion-content">
         {#if showVirtual}<button class="component" aria-label="Add virtual controller" disabled={disabled||virtualCount>=8} draggable={!disabled&&virtualCount<8} ondragstart={event=>beginDrag(event,{component:{kind:'virtual'},name:'Virtual controller',category:'Virtual controller'})} ondragend={endDrag} onclick={addVirtual}><span class="component-icon"><Icon name="gamepad" size={17}/></span><span class="component-copy"><strong>Virtual controller</strong><small>Buttons, axes and hats</small></span><Icon name="plus" size={14}/></button>{/if}
         {#if showDesktop}<button class="component" aria-label="Add keyboard and mouse" disabled={disabled||desktopAdded} draggable={!disabled&&!desktopAdded} ondragstart={event=>beginDrag(event,{component:{kind:'desktop'},name:'Keyboard and mouse',category:'Keyboard and mouse'})} ondragend={endDrag} onclick={addDesktop}><span class="component-icon"><Icon name="devices" size={17}/></span><span class="component-copy"><strong>Keyboard and mouse</strong><small>{desktopAdded?'Added to profile':'Keys, pointer and buttons'}</small></span><Icon name={desktopAdded?'check':'plus'} size={14}/></button>{/if}
@@ -89,14 +113,15 @@
       </div></details>{/if}
 
     {/each}
-    {#if !components.length&&!showVirtual&&!showDesktop&&!visibleGroups.length}<p class="palette-empty">No matching components.</p>{/if}
+    {#if !components.length&&!showVirtual&&!showDesktop&&!visibleGroups.length&&!transformations.length&&!panelComponents.length}<p class="palette-empty">No matching components.</p>{/if}
     {#if !inventory.length&&!refreshing&&!query}<p class="palette-empty">No devices or companions found.</p>{/if}
   </div>
-  <footer>{resourceCount} / 64 resources <span>Drag a component onto the canvas or click to add. Click a connection to add a transformation.</span></footer>
+  <footer>{resourceCount} / 64 resources <span>Drag components onto the canvas. Drop a transformation onto a connection to insert it.</span></footer>
 </aside>
 
 <style>
   .drag-image{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none}.component[draggable="true"]{cursor:grab}.component[draggable="true"]:active{cursor:grabbing}
+  .refresh-panels{display:flex;align-items:center;gap:6px;justify-content:flex-start;padding:7px 6px;border:0;background:transparent;color:var(--muted);font-size:10px}.refresh-panels:hover:enabled{color:var(--accent)}.refresh-panels:disabled{opacity:.5}
   .component-palette{position:sticky;top:12px;display:flex;flex-direction:column;min-width:0;max-height:calc(100dvh - 130px);border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
   header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 14px 11px}h2{font-size:13px}button{font:inherit;color:var(--text)}.refresh{display:grid;place-items:center;padding:5px;background:transparent;color:var(--muted);border-radius:4px}.refresh:hover:enabled{color:var(--accent);background:var(--surface-raised)}
   .palette-search{display:flex;align-items:center;gap:8px;margin:0 12px 12px;padding:9px;border:1px solid var(--line);border-radius:5px;background:var(--input-bg);color:var(--muted)}.palette-search input{width:100%;min-width:0;font:inherit;font-size:11px;border:0;background:transparent;color:var(--text);outline:none}.palette-search:focus-within{outline:2px solid var(--accent);outline-offset:2px}

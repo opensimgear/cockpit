@@ -261,7 +261,7 @@ impl Live {
             preset_output.direction = osg_profiles::Direction::Output;
             authored
                 .processing_nodes
-                .push(osg_profiles::ProcessingNode {
+                .push(osg_profiles::ProcessingNode { draft: None,
                     id: "authored-preset".into(),
                     name: "Explicit authored altitude presets, not simulator telemetry".into(),
                     inputs: vec![preset_input],

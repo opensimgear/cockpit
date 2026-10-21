@@ -255,6 +255,7 @@ fn summary(operation: &Operation) -> String {
         Operation::ActionPack{arguments}=>format!("Event-triggered action pack · {} ordered arguments",arguments.len()),
         Operation::SetOnChange{arguments}=>format!("Setter on argument change · {} ordered arguments",arguments.len()),
         Operation::Builtin{rule,inputs}=>builtin_summary(rule,inputs),
+        Operation::Clamp{min,max}=>format!("Clamp {}…{}",number(*min),number(*max)),
         Operation::Script{..}=>"Isolated script · declared ports only; code is not exposed".into(),
     }
 }

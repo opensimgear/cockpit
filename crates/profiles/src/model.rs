@@ -246,6 +246,20 @@ pub struct ProcessingNode {
     pub operation: Operation,
     pub inputs: Vec<Port>,
     pub outputs: Vec<Port>,
+    /// A persisted canvas transformation awaiting its first explicit source.
+    /// Draft port contracts are editing placeholders and grant no execution.
+    #[serde(default, deserialize_with = "present_processing_draft", skip_serializing_if = "Option::is_none")]
+    pub draft: Option<ProcessingDraft>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessingDraft {
+    pub preset: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configured: Vec<String>,
+}
+fn present_processing_draft<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<ProcessingDraft>, D::Error> {
+    ProcessingDraft::deserialize(deserializer).map(Some)
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
