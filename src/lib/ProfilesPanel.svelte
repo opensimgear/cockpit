@@ -54,7 +54,7 @@
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let editingName = $state(false), nameDraft = $state('');
   let gameCatalogue=$state.raw<Game[]>(supportedGames),vehicleError=$state(''),activeVehicleTabId=$state(''),addingVehicleTab=$state(false),customVehicle=$state(false),vehicleIdDraft=$state(''),vehicleNameDraft=$state('');
-  let vehicleTabsElement:HTMLDivElement|undefined;
+  let vehicleTabsElement=$state.raw<HTMLDivElement|undefined>();
   let dcsCatalogues=$state.raw<Record<string,DeepReadonly<ResourceSummary>>>({}),dcsCatalogueBusy=$state(false),dcsCatalogueError=$state(''),dcsCatalogueRevision=$state(0);
   let requestedDcsCatalogue='',dcsCatalogueEpoch=0;
   const editor = $derived(workspace.editor);

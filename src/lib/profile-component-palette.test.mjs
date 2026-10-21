@@ -28,8 +28,8 @@ test('game integrations are managed by the saved context and never offered as pa
   const html=body({});assert.ok(!html.includes('aria-label="Integrations"'));assert.ok(!html.includes('Add DCS World'));assert.ok(!html.includes('Add X-Plane 12'));
 });
 
-test('groups lead independent native accordions, followed by outputs and devices',()=>{
-  const html=body({}),labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);assert.deepEqual(labels,['Profile groups','Output components','Controllers']);assert.ok(!/<details[^>]*\bname=/.test(html));assert.match(html,/<details[^>]*aria-label="Profile groups"[^>]* open/);assert.match(html,/<details[^>]*aria-label="Output components"[^>]* open/);assert.ok(!/<details[^>]*aria-label="Controllers"[^>]* open/.test(html));
+test('all independent component accordions start closed, with groups leading outputs and devices',()=>{
+  const html=body({inventory:[...props.inventory,{id:'module:1',name:'Module',resourceType:'osg-module',availability:'online',attributes:{}},{id:'companion:1',name:'Display',resourceType:'companion',availability:'online',attributes:{componentKind:'paired-companion'}}]}),labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);assert.deepEqual(labels,['Profile groups','Output components','Controllers','OSG devices','Companions']);assert.ok(!/<details[^>]*\bname=/.test(html));assert.ok(!/<details\b[^>]*\sopen(?:[\s=>])/.test(html));
 });
 
 test('groups list focuses and renames each frame, with removal explicitly preserving components',()=>{

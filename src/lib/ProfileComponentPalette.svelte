@@ -14,7 +14,7 @@
     startDrag?:(drag:ProfilePaletteDrag)=>void;endDrag?:()=>void;
   }=$props();
   let search=$state('');
-  let expanded=$state<Record<string,boolean>>({groups:true,outputs:true});
+  let expanded=$state<Record<string,boolean>>({});
   let editingGroup=$state<string|null>(null), groupName=$state('');
   let dragImage:HTMLSpanElement;
   function beginDrag(event:DragEvent,drag:ProfilePaletteDrag){
