@@ -32,6 +32,10 @@ jobs:
         run: |
           python3 apps/companion-esp32/test/package.py
           python3 apps/companion-esp32/test/content_store.py
+      - name: Portable widget source admission, immutable ownership and differential validation
+        run: |
+          node scripts/widget-source-fixtures.mjs --check
+          python3 apps/companion-esp32/test/widget_source.py
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-portable-evidence
@@ -44,6 +48,8 @@ jobs:
             .research/esp32-content-store-native/content-store-test.log
             .research/esp32-render-package-native/coverage.json
             .research/esp32-render-package-native/package-test.log
+            .research/esp32-widget-source-native/coverage.json
+            .research/esp32-widget-source-native/widget-source-test.log
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json
             .research/esp32-network/*-test.log

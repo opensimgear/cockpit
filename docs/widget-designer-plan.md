@@ -150,6 +150,18 @@ file is a tracker, not evidence that unchecked work exists.
 
 ## Remaining runtime integration
 
+Device-side definition admission now has an independently tested bounded C
+decoder. It matches all 5,965 shared-validator mutations and all resolved layers
+of 15 source/instance examples across eight states. ASan/UBSan pass, with 100%
+line/function and 89.30% branch coverage. Failed candidates preserve already
+admitted bytes; JSON may be destroyed after admission. Native data for 52 layers
+occupies 34,753 bytes. This is software evidence, not a board budget or live
+delivery claim. See `apps/companion-esp32/render/WIDGET_SOURCE.md`.
+The actual dev Cockpit authoring/persistence check passes again with evidence at
+`.research/widgets-native-ui/1792625493148/`. Font commit `0ae2fdb` now passes
+all six ESP32 jobs, including both physical-board cross-builds, in
+[CI run 39692895632](https://github.com/opensimgear/cockpit/actions/runs/39692895632).
+
 W2 allows bounded runtime construction from the portable source. Extend the
 existing authenticated canonical-document delivery and immutable candidate
 snapshots to schema 3, keeping the source publication hash unchanged. This avoids
