@@ -198,14 +198,16 @@ export function resolveWidgetState(definition: WidgetDefinition, context: Widget
   const sample = (name: string | undefined) => name ? currentWidgetSample(context.samples[name], context.now) : undefined;
   const gate = sample(definition.state.enabledPort);
   if (gate?.value === false) return "disabled";
+  if (Object.values(definition.state).some(name => context.samples[name]?.status === "disconnected")) return "disconnected";
+  if (sample(definition.state.warningPort)?.value === true) return "warning";
+  // Local press feedback remains available before telemetry arrives. Indicator
+  // layers independently require fresh game-confirmed samples to illuminate.
+  if (context.pressed) return "pressed";
   for (const name of Object.values(definition.state)) {
     const s = context.samples[name];
-    if (s?.status === "disconnected") return "disconnected";
     if (!s || s.status === "unknown" || s.status === "fresh" && typeof s.value !== "boolean") return "unknown";
   }
   if (Object.values(definition.state).some(name => !sample(name))) return "stale";
-  if (sample(definition.state.warningPort)?.value === true) return "warning";
-  if (context.pressed) return "pressed";
   const confirmed = sample(definition.state.confirmedPort);
   return confirmed?.value === true && confirmed.provenance === "game-confirmed" && confirmed.sourceKind === "simulator" ? "active" : "normal";
 }

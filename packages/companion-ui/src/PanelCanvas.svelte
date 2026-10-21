@@ -4,6 +4,9 @@
   import { boundsContain, boundsOverlap, viewportRegions, type DesignerDocument, type DesignerWidget } from '@opensimgear/companion-designer';
   import { axisPosition, createPreviewController, type PreviewController, type PreviewSnapshot, type PointerData, type PreviewChange } from './controller.ts';
   import { feedbackPresentation, movedBounds, resizedBounds, resizedCornerBounds, type ResizeCorner, safeAssetUrl, viewportWidgetBounds, type FeedbackSamples } from './presentation.ts';
+  import WidgetView from './WidgetView.svelte';
+  import { componentDefinition, componentPresentation } from './widget-presentation.ts';
+  import { resolveWidgetProperties } from '@opensimgear/companion-designer';
   interface Props {
     document: DesignerDocument; pageId?: string; assets?: Record<string, string>; mode?: 'edit' | 'preview'; selectedIds?: string[];
     controller?: PreviewController; feedback?: FeedbackSamples; oncontroller?: (controller: PreviewController) => void;
@@ -21,7 +24,8 @@
   const engine = $derived(controller ?? local);
   let previewState = $state<PreviewSnapshot>({ armed: false, activePointers: 0, values: {}, events: [], reason: 'Disarmed' });
   let now = $state(performance.now());
-  const selectedPage = $derived(pageId ?? document.ui.pages[0]?.id);
+  let localPage = $state<string>();
+  const selectedPage = $derived(localPage ?? pageId ?? document.ui.pages[0]?.id);
   const viewport = $derived(document.presentation.viewports.find(item => item.pageId === selectedPage));
   const widgets = $derived(document.presentation.widgets.filter(item => item.pageId === selectedPage));
   const groups = $derived(document.presentation.groups.filter(item => item.pageId === selectedPage));
@@ -48,7 +52,14 @@
   });
   $effect(() => { if (engine) return engine.subscribe(snapshot => { previewState = snapshot; }); });
   $effect(() => { engine?.setDocument(document); });
+  $effect(() => { pageId; document.ui.id; localPage = undefined; });
   $effect(() => { selectedPage; mode; engine?.disarm('Page or mode changed'); drag = null; viewportDrag = null; });
+  $effect(() => {
+    for (const widget of widgets) if (widget.kind === 'component') {
+      const presentation = componentPresentation(document, widget, feedback, now);
+      engine?.setWidgetEnabled(widget.id, presentation?.interactionEnabled ?? false);
+    }
+  });
   function stop(reason: string) { engine?.disarm(reason); drag = null; viewportDrag = null; }
   function visibility() { if (globalThis.document.visibilityState === 'hidden') stop('Page hidden'); }
   function position(event: PointerEvent, widget: DesignerWidget): PointerData {
@@ -75,6 +86,31 @@
   function choose(widget: DesignerWidget, value: number) {
     const pointer = -10000;
     if (mode === 'preview' && engine?.begin(pointer, widget.id, { value })) engine.release(pointer);
+  }
+  function componentData(widget: DesignerWidget): PointerData {
+    const definition = componentDefinition(document, widget);
+    if (definition?.interaction.kind !== 'selector') return {};
+    const options = definition.interaction.options;
+    const index = options.findIndex(o => o.value === Number(previewState.values[widget.controlIds[0]]));
+    return { value: options[(index + 1) % options.length].value };
+  }
+  function componentNavigate(widget: DesignerWidget) {
+    if (mode !== 'preview' || widget.kind !== 'component') return;
+    const definition = componentDefinition(document, widget);
+    if (definition?.interaction.kind !== 'navigate') return;
+    const page = String(resolveWidgetProperties(definition, widget.config.properties)[definition.interaction.pageProperty]);
+    if (!document.ui.pages.some(p => p.id === page)) return;
+    engine?.disarm('Page changed'); localPage = page;
+  }
+  function componentMove(event: PointerEvent) {
+    const b = event.currentTarget as HTMLElement, r = b.getBoundingClientRect();
+    if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) finish(event, true);
+  }
+  function componentKey(event: KeyboardEvent, widget: DesignerWidget, down: boolean) {
+    if (componentDefinition(document, widget)?.interaction.kind === 'navigate' && [' ', 'Enter'].includes(event.key)) {
+      event.preventDefault(); if (!down) componentNavigate(widget); return;
+    }
+    keyboard(event, widget, down, componentData(widget));
   }
   function axisKey(event: KeyboardEvent, widget: DesignerWidget) {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || mode !== 'preview' || !previewState.armed) return;
@@ -255,12 +291,23 @@
       {@const display = feedbackPresentation(widget, document.ui, feedback, now)}
       {@const size = dimensions(widget)}
       {@const bounds = shownBounds(widget)}
-      <section class="widget" class:image-widget={widget.kind === 'image'} class:selected={selectedIds.includes(widget.id)} class:output={widget.feedbackIds.length > 0} class:feedback-unavailable={widget.feedbackIds.length > 0 && !display.available} class:touch-warning={mode === 'edit' && size.small} class:outside-viewport={mode === 'edit' && !widgetFits(bounds)}
+      {@const composition = componentPresentation(document, widget, feedback, now, { pressed: previewState.pressedWidgetIds?.includes(widget.id), enabled: mode === 'edit' || widget.controlIds.length === 0 || previewState.armed })}
+      <section class="widget" class:component-widget={widget.kind === 'component'} class:image-widget={widget.kind === 'image'} class:selected={selectedIds.includes(widget.id)} class:output={widget.feedbackIds.length > 0} class:feedback-unavailable={widget.kind !== 'component' && widget.feedbackIds.length > 0 && !display.available} class:touch-warning={mode === 'edit' && size.small} class:outside-viewport={mode === 'edit' && !widgetFits(bounds)}
+        data-widget-id={widget.id} data-definition-id={composition?.definition.id} data-definition-version={composition?.definition.version}
         style:left={`${bounds.x * 100}%`} style:top={`${bounds.y * 100}%`} style:width={`${bounds.width * 100}%`} style:height={`${bounds.height * 100}%`}
         style:color={widget.style?.foreground ?? '#dce7ef'} style:background={widget.style?.background ?? '#152532'} style:--widget-accent={widget.style?.accent ?? '#83e3c2'} aria-label={mode === 'edit' ? `${widget.label}, ${size.width} by ${size.height} pixels${size.small ? ", below 44 pixel touch target" : ""}` : widget.label}>
-        {#if widget.kind !== 'image'}<header><span>{widget.label}</span><small>{widget.kind}</small></header>{/if}
+        {#if widget.kind !== 'image' && widget.kind !== 'component'}<header><span>{widget.label}</span><small>{widget.kind}</small></header>{/if}
         <div class="widget-body" inert={mode === 'edit' || (widget.controlIds.length > 0 && !previewState.armed)}>
-          {#if widget.kind === 'image'}
+          {#if widget.kind === 'component' && composition}
+            <WidgetView definition={composition.definition} layers={composition.layers} state={composition.state} samples={composition.outputs} {assets} {now} />
+            {#if composition.definition.interaction.kind !== 'none'}
+              <button class="component-hit" aria-label={String(composition.properties.label ?? widget.label)} aria-pressed={composition.definition.interaction.kind === 'toggle' ? Boolean(previewState.values[widget.controlIds[0]]) : undefined}
+                disabled={!composition.interactionEnabled || widget.controlIds.length > 0 && !previewState.armed}
+                style:left={`${composition.definition.hitArea.x * 100}%`} style:top={`${composition.definition.hitArea.y * 100}%`} style:width={`${composition.definition.hitArea.width * 100}%`} style:height={`${composition.definition.hitArea.height * 100}%`}
+                onpointerdown={(event) => start(event, widget, componentData(widget))} onpointermove={componentMove} onpointerup={(event) => finish(event)} onpointercancel={(event) => finish(event, true)} onlostpointercapture={(event) => finish(event, true)}
+                onkeydown={(event) => componentKey(event, widget, true)} onkeyup={(event) => componentKey(event, widget, false)} onblur={() => keyboardBlur(widget)} onclick={() => componentNavigate(widget)}></button>
+            {/if}
+          {:else if widget.kind === 'image'}
             {#if widget.config.assetId && safeAssetUrl(assets[widget.config.assetId])}<img class="image-content" src={safeAssetUrl(assets[widget.config.assetId])!} alt={widget.label} draggable="false" />{:else}<span>Choose an image asset</span>{/if}
           {:else if widget.kind === 'button'}
             <button class="press-button" class:active={Boolean(previewState.values[widget.controlIds[0]])} aria-pressed={widget.config.buttonMode === 'toggle' ? Boolean(previewState.values[widget.controlIds[0]]) : undefined}
@@ -292,7 +339,7 @@
           {:else if widget.kind === 'gauge'}<div class="gauge-value"><meter min={widget.config.min} max={widget.config.max} value={typeof display.value === 'number' ? display.value : widget.config.min} aria-label={mode === 'edit' ? `${widget.label}, ${size.width} by ${size.height} pixels${size.small ? ", below 44 pixel touch target" : ""}` : widget.label}></meter><output>{display.text}</output></div>
           {:else}<output class:numeric={widget.kind === 'numeric'}>{display.text}</output>{/if}
         </div>
-        {#if widget.feedbackIds.length}<footer class:stale={!display.available}><span>{display.provenance}</span><span>{display.freshness}{display.available ? ` · ${Math.round(display.ageMs)}ms` : ''}</span></footer>{/if}
+        {#if widget.kind !== 'component' && widget.feedbackIds.length}<footer class:stale={!display.available}><span>{display.provenance}</span><span>{display.freshness}{display.available ? ` · ${Math.round(display.ageMs)}ms` : ''}</span></footer>{/if}
         {#if mode === 'edit'}<span class="size-badge" class:warning={size.small}>{size.width} × {size.height}px{size.small ? ' · touch < 44px' : ''}</span><button class="edit-hit" aria-label={`Select or move ${widget.label}`} onpointerdown={(event) => editStart(event, widget)} onpointermove={editMove} onpointerup={editFinish} onpointercancel={() => { drag = null; }} onlostpointercapture={() => { drag = null; }} onkeydown={(event) => editKey(event, widget)}></button>{#each ['nw','ne','sw','se'] as corner}<button class={`resize-corner ${corner}`} aria-label={`Resize ${widget.label} ${corner==='nw'?'top left':corner==='ne'?'top right':corner==='sw'?'bottom left':'bottom right'}`} title="Drag corner to resize" onpointerdown={(event)=>editStart(event,widget,corner as ResizeCorner)} onpointermove={editMove} onpointerup={editFinish} onpointercancel={()=>{drag=null;}} onlostpointercapture={()=>{drag=null;}} onkeydown={(event)=>resizeKey(event,widget,corner as ResizeCorner)}></button>{/each}{/if}
       </section>
     {/each}
@@ -306,4 +353,9 @@
   .viewport-hit{position:absolute;z-index:0;margin:0;padding:0;background:transparent;border:0;border-radius:0;cursor:pointer;touch-action:none}.viewport-hit:focus-visible{outline:2px solid #80bdd8;outline-offset:-3px}.viewport-outline{position:absolute;box-sizing:border-box;border:1px dashed #66849599;pointer-events:none;z-index:4}.viewport-outline.viewport-selected{border:2px solid #86bad4aa;background:#80bdd805}.viewport-outline.viewport-invalid{border-color:#f5a092;background:#e05b4a12}.viewport-label{position:absolute;top:3px;left:3px;max-width:calc(100% - 6px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 6px;border:1px solid #53768c;border-radius:3px;background:#122837e8;color:#b1ccdc;font:9px ui-monospace,monospace;line-height:1.3;pointer-events:auto;cursor:move;touch-action:none;user-select:none}.viewport-selected .viewport-label{border-color:#86bad4;color:#d2eafa}.viewport-label:focus-visible,.viewport-resize:focus-visible{outline:2px solid #b6e3fa;outline-offset:1px}.viewport-resize{position:absolute;right:-1px;bottom:-1px;width:22px;height:22px;padding:0;background:#23455b;border:1px solid #86bad4;border-radius:5px 0 0 0;color:#cce9f9;font:14px ui-monospace,monospace;pointer-events:auto;cursor:nwse-resize;touch-action:none;user-select:none}.viewport-error{position:absolute;bottom:5px;left:5px;right:5px;width:fit-content;max-width:calc(100% - 10px);z-index:8;padding:5px 7px;border:1px solid #d87566;border-radius:4px;background:#401e1df0;color:#ffd2c9;font:10px ui-monospace,monospace;pointer-events:none}.widget{z-index:2}.widget.selected{z-index:3}.widget.outside-viewport{outline:2px solid #f5a092;outline-offset:1px}
 .widget.image-widget{z-index:1;padding:0;border:0;border-radius:0;background:transparent!important}.image-content{width:100%;height:100%;object-fit:fill;pointer-events:none}.image-widget .widget-body[inert]{opacity:1}
 .resize-corner{position:absolute;width:12px;height:12px;margin:0;padding:0!important;background:transparent!important;border:0!important;border-radius:0!important;z-index:6;touch-action:none}.resize-corner::after{content:'';position:absolute;width:6px;height:6px;border:1px solid #83e3c2;background:#18342d;opacity:.65}.resize-corner:hover::after,.resize-corner:focus-visible::after{opacity:1;background:#83e3c2}.resize-corner.nw{top:0;left:0;cursor:nwse-resize}.resize-corner.ne{top:0;right:0;cursor:nesw-resize}.resize-corner.sw{bottom:0;left:0;cursor:nesw-resize}.resize-corner.se{bottom:0;right:0;cursor:nwse-resize}.resize-corner.nw::after{top:2px;left:2px}.resize-corner.ne::after{top:2px;right:2px}.resize-corner.sw::after{bottom:2px;left:2px}.resize-corner.se::after{bottom:2px;right:2px}
+  .widget.component-widget{border:0;border-radius:0;padding:0;background:transparent!important;filter:none!important}
+  .component-widget .widget-body{position:relative;width:100%;height:100%;display:block}
+  .component-widget .widget-body[inert]{opacity:1}
+  .widget .component-hit{position:absolute;padding:0;background:transparent!important;border:0!important;border-radius:0;touch-action:none}
+  .widget .component-hit:disabled{cursor:default}
 </style>

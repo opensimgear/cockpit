@@ -129,6 +129,9 @@ test('state precedence separates local press from fresh game-confirmed status', 
   assert.equal(resolveWidgetState(d, context({ connected: false, pressed: true })), 'disconnected');
   assert.equal(resolveWidgetState(d, context({ enabled: false, pressed: true })), 'disabled');
   assert.equal(resolveWidgetState(d, context({ samples: {} })), 'unknown');
+  assert.equal(resolveWidgetState(d, context({ samples: {}, pressed: true })), 'pressed');
+  assert.equal(resolveWidgetState(d, context({ now: 1100, pressed: true })), 'pressed');
+  assert.equal(resolveWidgetState(d, context({ pressed: true, samples: { active: sample({ status: 'disconnected' }) } })), 'disconnected');
   for (const provenance of ['requested', 'local', 'host-accepted', 'host-submitted']) assert.equal(resolveWidgetState(d, context({ samples: { active: sample({ provenance }) } })), 'normal');
   assert.equal(resolveWidgetState(d, context({ samples: { active: sample({ value: false }) } })), 'normal');
   assert.equal(resolveWidgetState(d, context({ samples: { active: sample({ sourceKind: 'host' }) } })), 'normal');
