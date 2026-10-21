@@ -148,15 +148,16 @@ test('clicks and empty-canvas releases open the matching side once and retain ke
   }
 });
 
-test('blocks preview all discovered counts while bounded names, empty/loading/error handles and read-only state remain clear', () => {
+test('blocks show discovered input and output counts while loading/error handles and read-only state remain clear', () => {
   const discoveredPorts = { source: [port('fire', 'output', 'Fire trigger'), port('axis', 'output', 'Brake axis'), port('switch', 'output', 'Third output'), port('led', 'input', 'Backlight')], target: [] };
   const h = harness({ discoveredPorts });
   assert.match(button(h.body, 'data-connection-source', 'source'), /Outputs for source \(3\)/);
   assert.match(button(h.body, 'data-connection-target', 'source'), /Inputs \/ actions for source \(1\)/);
-  assert.ok(h.body.includes('Fire trigger · Brake axis'));assert.ok(h.body.includes('+1 more'));assert.ok(!h.body.includes('Third output'));
+  for (const name of ['Fire trigger', 'Brake axis', 'Third output', 'Backlight', '+1 more']) assert.ok(!h.body.includes(name));
   assert.ok(!h.body.includes('saved-fire'));assert.ok(!h.body.includes('saved-led'), 'A completed empty discovery replaces the saved preview.');
   assert.match(button(h.body, 'data-connection-target', 'target'), /disabled/);assert.match(button(h.body, 'data-connection-source', 'empty'), /disabled/);
-  assert.ok(h.body.includes('No inputs'));assert.ok(h.body.includes('No outputs'));assert.deepEqual(h.document, h.before);
+  assert.match(button(h.body, 'data-connection-target', 'target'), /Inputs \/ actions for target \(0\)/);
+  assert.match(button(h.body, 'data-connection-source', 'empty'), /Outputs for empty \(0\)/);assert.deepEqual(h.document, h.before);
   const waiting = harness({ discoveryBusy: ['empty'] });
   assert.ok(waiting.body.includes('Discovering inputs and outputs'));assert.doesNotMatch(button(waiting.body, 'data-connection-target', 'empty'), /disabled/);
   const failed = harness({ discoveryErrors: { empty: 'Provider unavailable' } });
